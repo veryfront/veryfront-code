@@ -20,6 +20,44 @@ import {
 
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
+function createMockRedisClient(): {
+  connect: () => Promise<void>;
+  disconnect: () => Promise<void>;
+  eval: (
+    script: string,
+    options: { keys: string[]; arguments: string[] },
+  ) => Promise<[number, number]>;
+  del: (key: string) => Promise<number>;
+  on: (event: string, listener: (...args: unknown[]) => void) => void;
+  _evalCalls: number;
+  _disconnectCalls: number;
+} {
+  let evalCalls = 0;
+  let disconnectCalls = 0;
+
+  return {
+    connect: () => Promise.resolve(),
+    disconnect: () => {
+      disconnectCalls += 1;
+      return Promise.resolve();
+    },
+    eval: (_script: string, options: { keys: string[]; arguments: string[] }) => {
+      evalCalls += 1;
+      assertEquals(options.keys, ["compat:user-1"]);
+      assertEquals(options.arguments, ["30000"]);
+      return Promise.resolve([1, 30000]);
+    },
+    del: () => Promise.resolve(1),
+    on: () => {},
+    get _evalCalls() {
+      return evalCalls;
+    },
+    get _disconnectCalls() {
+      return disconnectCalls;
+    },
+  };
+}
+
 describe("MemoryRateLimitStore", () => {
   let store: MemoryRateLimitStore;
 
@@ -299,6 +337,39 @@ describe("rateLimit middleware", () => {
 
     assertEquals(typeof redisStore.increment, "function");
     assertEquals(typeof redisStore.reset, "function");
+  });
+
+  it("should exercise the legacy Redis rate-limit store export without ext-redis", async () => {
+    const redisStore = new RedisRateLimitStore({ keyPrefix: "compat:" });
+    const mockClient = createMockRedisClient();
+    (redisStore as unknown as {
+      loadClientFactory: () => Promise<() => typeof mockClient>;
+    }).loadClientFactory = () => Promise.resolve(() => mockClient);
+
+    const entry = await redisStore.increment("user-1", 30000);
+    await redisStore.destroy();
+
+    assertEquals(entry.count, 1);
+    assertEquals(entry.resetAt > Date.now(), true);
+    assertEquals(mockClient._evalCalls, 1);
+    assertEquals(mockClient._disconnectCalls, 1);
+  });
+
+  it("should ignore already-closed Redis clients during legacy store destroy", async () => {
+    const redisStore = new RedisRateLimitStore({ keyPrefix: "compat:" });
+    const mockClient = createMockRedisClient();
+    mockClient.disconnect = () => {
+      const error = new Error("The client is closed");
+      error.name = "ClientClosedError";
+      return Promise.reject(error);
+    };
+    (redisStore as unknown as {
+      loadClientFactory: () => Promise<() => typeof mockClient>;
+    }).loadClientFactory = () => Promise.resolve(() => mockClient);
+
+    await redisStore.increment("user-1", 30000);
+    await redisStore.destroy();
+    await redisStore.destroy();
   });
 
   it("should fail closed when custom keys are invalid without calling the store", async () => {

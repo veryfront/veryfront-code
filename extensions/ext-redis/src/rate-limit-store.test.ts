@@ -339,6 +339,24 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         assertEquals((rateStore as any).client, null);
       });
 
+      it("should treat already-closed clients as destroyed", async () => {
+        const { rateStore, mockClient } = createStoreWithMock();
+        let disconnectAttempts = 0;
+        mockClient.disconnect = () => {
+          disconnectAttempts++;
+          const error = new Error("The client is closed");
+          error.name = "ClientClosedError";
+          return Promise.reject(error);
+        };
+
+        await rateStore.destroy();
+        await rateStore.destroy();
+
+        assertEquals(disconnectAttempts, 1);
+        // deno-lint-ignore no-explicit-any
+        assertEquals((rateStore as any).client, null);
+      });
+
       it("should retain a failed disconnect so shutdown can retry it", async () => {
         const { rateStore, mockClient } = createStoreWithMock();
         let disconnectAttempts = 0;

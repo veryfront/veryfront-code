@@ -331,6 +331,12 @@ const ROOT_BUNDLED_EXTENSIONS = new Set([
   "ext-eval-report-mlflow",
 ]);
 
+const ROOT_RUNTIME_EXTENSION_SHARED_DEPENDENCIES = new Set([
+  "react",
+  "react-dom",
+  "redis",
+]);
+
 Deno.test("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests", async () => {
   const denoConfig = JSON.parse(
     await Deno.readTextFile("deno.json"),
@@ -365,7 +371,9 @@ Deno.test("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests",
 
     for (const dependency of dependencies) {
       assertEquals(
-        owned.has(dependency) || optionalPeers.has(dependency),
+        owned.has(dependency) ||
+          optionalPeers.has(dependency) ||
+          ROOT_RUNTIME_EXTENSION_SHARED_DEPENDENCIES.has(dependency),
         true,
         `${dependency} (declared by ${manifestPath}) must be added to EXTENSION_OWNED_DEPENDENCIES so it does not leak into root veryfront npm installs`,
       );
@@ -446,7 +454,7 @@ describe("normalizeNpmPackageMetadata", () => {
     });
   });
 
-  it("keeps first-party extension implementation packages out of root npm metadata", () => {
+  it("keeps extension-only packages out while retaining root middleware Redis support", () => {
     const pkg = normalizeNpmPackageMetadata({
       dependencies: {
         "@babel/parser": "^7.29.2",
@@ -461,7 +469,7 @@ describe("normalizeNpmPackageMetadata", () => {
       },
     });
 
-    assertEquals(pkg.dependencies, { zod: "4.3.6" });
+    assertEquals(pkg.dependencies, { redis: "5.11.0", zod: "4.3.6" });
     assertEquals(pkg.peerDependencies, {
       "@huggingface/transformers": "^4.2.0",
     });
@@ -616,6 +624,8 @@ describe("npm supply-chain policy", () => {
     }
 
     assertStringIncludes(source, "CodeParser was not registered");
+    assertStringIncludes(source, "RedisRateLimitStore");
+    assertStringIncludes(source, "await store.increment('user-1', 30000)");
     assertStringIncludes(source, "getDeferredExtensionState(resolved)");
     assertStringIncludes(source, "await deferred.load(logger)");
     assertStringIncludes(source, "app/page.tsx");

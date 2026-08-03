@@ -157,6 +157,10 @@ export class RedisRateLimitStore implements RateLimitStore {
     try {
       await this.disconnectClient(client);
     } catch (error) {
+      if (isAlreadyClosedClientError(error)) {
+        this.markDisconnected(client);
+        return;
+      }
       logger.warn("client disconnect failed", {
         errorName: error instanceof Error ? error.name : typeof error,
       });
@@ -180,22 +184,36 @@ export class RedisRateLimitStore implements RateLimitStore {
     try {
       Promise.resolve(client.disconnect()).then(
         () => {
-          this.disconnectPromises.delete(client);
-          this.pendingDisconnectClients.delete(client);
-          this.disconnectedClients.add(client);
+          this.markDisconnected(client);
           resolveDisconnect();
         },
         (error) => {
           this.disconnectPromises.delete(client);
+          if (isAlreadyClosedClientError(error)) {
+            this.markDisconnected(client);
+            resolveDisconnect();
+            return;
+          }
           rejectDisconnect(error);
         },
       );
     } catch (error) {
       this.disconnectPromises.delete(client);
-      rejectDisconnect(error);
+      if (isAlreadyClosedClientError(error)) {
+        this.markDisconnected(client);
+        resolveDisconnect();
+      } else {
+        rejectDisconnect(error);
+      }
     }
 
     return pending;
+  }
+
+  private markDisconnected(client: RedisClient): void {
+    this.disconnectPromises.delete(client);
+    this.pendingDisconnectClients.delete(client);
+    this.disconnectedClients.add(client);
   }
 
   private async withTimeout<T>(
@@ -389,6 +407,10 @@ function createTimeoutError(operationName: string, timeoutMs: number): Error {
 
 function isTimeoutError(error: unknown): boolean {
   return error instanceof Error && error.name === "TimeoutError";
+}
+
+function isAlreadyClosedClientError(error: unknown): boolean {
+  return error instanceof Error && error.name === "ClientClosedError";
 }
 
 function parseIncrementResult(result: unknown): [number, number] {
