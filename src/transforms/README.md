@@ -41,7 +41,18 @@ const result = await transformToESM(code, {
 });
 
 // Render MDX (for runtime usage)
-const module = await mdxRenderer.loadModuleESM(compiledCode, { projectDir });
+const compiledCode = `
+  export default function MDXContent() {
+    return null;
+  }
+`;
+const projectDir = Deno.cwd();
+const module = await mdxRenderer.loadModuleESM(compiledCode, {
+  projectId: "example-project",
+  projectDir,
+  projectSlug: "example-project",
+  contentSourceId: "content",
+});
 // Use module.default or module exports
 ```
 
