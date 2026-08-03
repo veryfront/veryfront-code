@@ -46,6 +46,14 @@ In local development, `ragStore()` stores chunks and vectors in `data/index.json
 When Veryfront Cloud bootstrap is present, it uses the Veryfront Cloud RAG
 backend automatically.
 
+If you explicitly select the `local-json` backend, use a writable native
+filesystem that supports atomic same-filesystem rename and verified snapshot
+reads. Keep the index below 64 MiB, and do not modify the UTF-8 JSON index or
+its adjacent `.veryfront-rag.lock` directory while an operation is active.
+Node.js supports these guarantees on Windows. Deno and Bun do not currently
+support `local-json` on Windows; use Node.js there or select
+`veryfront-cloud`.
+
 Set `contentDir: "knowledge"` to index `knowledge/` instead of `content/`.
 
 ## Add upload routes

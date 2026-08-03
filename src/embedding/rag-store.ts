@@ -34,6 +34,7 @@ import type {
 } from "./types.ts";
 import { cosineSimilarity } from "#veryfront/runtime/runtime-bridge.ts";
 import { type LocalJsonStoreLease, withLocalJsonStoreLock } from "./local-json-store-lock.ts";
+import { getCurrentLocalJsonStoreUnsupportedDetail } from "./local-json-store-support.ts";
 
 // Legacy data shapes used only for migrating old upload-store JSON files.
 interface LegacyStoredChunk {
@@ -194,6 +195,15 @@ function isLegacyStoredChunk(value: unknown): value is LegacyStoredChunk {
  * By default, this uses the local JSON store. When Veryfront Cloud bootstrap
  * is present, it automatically upgrades to the cloud-backed store unless
  * explicitly overridden.
+ *
+ * The `local-json` backend requires a writable native filesystem with atomic
+ * same-filesystem rename and verified file-snapshot reads. Its index must be a
+ * regular, non-symlink UTF-8 JSON file no larger than 64 MiB. Cooperating
+ * processes serialize writes through an adjacent `.veryfront-rag.lock`
+ * directory; applications must not modify the index or lock directory while a
+ * store operation is active. Node.js supports these guarantees on Windows.
+ * Deno and Bun do not currently support this backend on Windows; use Node.js
+ * there or configure `veryfront-cloud`.
  *
  * @example
  * ```ts
@@ -401,6 +411,13 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
   }
 
   async function readStoreFileSnapshot(): Promise<StoreFileSnapshot | null> {
+    const unsupportedDetail = getCurrentLocalJsonStoreUnsupportedDetail();
+    if (unsupportedDetail !== null) {
+      throw RAG_STORE_UNAVAILABLE.create({
+        detail: unsupportedDetail,
+        context: { storagePath },
+      });
+    }
     const readSnapshot = persistenceFs.readFileSnapshotWithinLimit?.bind(persistenceFs);
     if (!readSnapshot) {
       throw new Error("The native filesystem cannot safely read the RAG store");
@@ -448,17 +465,22 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
     });
   }
 
+  function classifyStoreSnapshotError(error: unknown): Error {
+    if (isVeryfrontError(error)) return error;
+    if (error instanceof RangeError) return corruptStoreError("file exceeds size limit", error);
+    if (error instanceof InvalidStoreEncodingError) {
+      return corruptStoreError("file is not valid UTF-8", error);
+    }
+    return unavailableStoreError(error);
+  }
+
   async function load(): Promise<LoadedStoreData> {
     let snapshot: StoreFileSnapshot | null;
     try {
       snapshot = await readStoreFileSnapshot();
     } catch (err) {
       storeDataCache = null;
-      if (err instanceof RangeError) throw corruptStoreError("file exceeds size limit", err);
-      if (err instanceof InvalidStoreEncodingError) {
-        throw corruptStoreError("file is not valid UTF-8", err);
-      }
-      throw unavailableStoreError(err);
+      throw classifyStoreSnapshotError(err);
     }
 
     if (snapshot === null) {
@@ -539,7 +561,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
       try {
         currentSnapshot = await readStoreFileSnapshot();
       } catch (error) {
-        throw unavailableStoreError(error);
+        throw classifyStoreSnapshotError(error);
       }
       if (
         expectedSourceBytes === null

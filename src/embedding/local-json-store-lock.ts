@@ -16,12 +16,14 @@ const LOCK_HEARTBEAT_INTERVAL_MS = 5_000;
 const LOCK_RETRY_INITIAL_MS = 10;
 const LOCK_RETRY_MAX_MS = 100;
 const LOCK_METADATA_MAX_BYTES = 4_096;
+const LOCK_MAX_ENTRIES = 1_024;
 const UUID_V4_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const LOCK_TOKEN_PATTERN = new RegExp(`^${UUID_V4_PATTERN}$`, "i");
 const LOCK_OWNER_MARKER_PATTERN = new RegExp(
   `^\\.owner\\.(?:recovering|releasing)\\.${UUID_V4_PATTERN}$`,
   "i",
 );
+const LOCK_LEASE_FILE_PATTERN = new RegExp(`^(${UUID_V4_PATTERN})\\.lease$`, "i");
 const LOCK_TEMPORARY_FILE_PATTERN = new RegExp(`^\\.tmp\\.${UUID_V4_PATTERN}$`, "i");
 const OWNER_FILE_NAME = "owner.json";
 
@@ -38,9 +40,16 @@ interface LockObservation {
   readonly owner: LockOwner | null;
   readonly ownerFileName: string | null;
   readonly ownerText: string | null;
-  readonly leaseFileNames: readonly string[];
-  readonly leasePresent: boolean;
-  readonly leaseMtimeMs: number | null;
+  readonly entryFileNames: readonly string[];
+  readonly leases: readonly LeaseObservation[];
+  readonly temporaryFileNames: readonly string[];
+  readonly newestLeaseMtimeMs: number | null;
+}
+
+interface LeaseObservation {
+  readonly fileName: string;
+  readonly token: string;
+  readonly mtimeMs: number | null;
 }
 
 export interface LocalJsonStoreLease {
@@ -131,99 +140,98 @@ async function readObservation(
     throw new LocalJsonStoreLockError("The RAG store lock path is not a real directory");
   }
 
-  let directoryEntryNames: string[] | null = null;
-  let ownerFileName: string | null = OWNER_FILE_NAME;
-  let ownerText = await readBoundedText(fs, join(lockDirectory, OWNER_FILE_NAME));
-  if (ownerText === null) {
-    directoryEntryNames = [];
-    const ownerMarkers: string[] = [];
-    for await (const entry of fs.readDir(lockDirectory)) {
-      directoryEntryNames.push(entry.name);
-      if (LOCK_OWNER_MARKER_PATTERN.test(entry.name)) ownerMarkers.push(entry.name);
+  const entryFileNames: string[] = [];
+  const seenEntryNames = new Set<string>();
+  for await (const entry of fs.readDir(lockDirectory)) {
+    if (entryFileNames.length >= LOCK_MAX_ENTRIES) {
+      throw new LocalJsonStoreLockError("The RAG store lock contains too many entries");
     }
-    if (ownerMarkers.length > 1) {
+    if (seenEntryNames.has(entry.name)) {
+      throw new LocalJsonStoreLockError("The RAG store lock contains duplicate entries");
+    }
+    seenEntryNames.add(entry.name);
+    entryFileNames.push(entry.name);
+  }
+  entryFileNames.sort();
+
+  const ownerMarkers = entryFileNames.filter((name) => LOCK_OWNER_MARKER_PATTERN.test(name));
+  const hasCanonicalOwner = seenEntryNames.has(OWNER_FILE_NAME);
+  if (ownerMarkers.length > 1 || (hasCanonicalOwner && ownerMarkers.length > 0)) {
+    throw new LocalJsonStoreLockError(
+      "The RAG store lock contains ambiguous ownership metadata",
+    );
+  }
+  const ownerFileName = hasCanonicalOwner ? OWNER_FILE_NAME : ownerMarkers[0] ?? null;
+  const leases: LeaseObservation[] = [];
+  const temporaryFileNames: string[] = [];
+
+  for (const entryName of entryFileNames) {
+    const isOwner = entryName === ownerFileName;
+    const leaseMatch = LOCK_LEASE_FILE_PATTERN.exec(entryName);
+    const isTemporary = LOCK_TEMPORARY_FILE_PATTERN.test(entryName);
+    if (!isOwner && leaseMatch === null && !isTemporary) {
+      throw new LocalJsonStoreLockError("The RAG store lock contains an unexpected entry");
+    }
+
+    let entryInfo;
+    try {
+      entryInfo = await lstat(join(lockDirectory, entryName));
+    } catch (error) {
+      if (isCanonicalNotFoundError(error)) {
+        throw new LocalJsonStoreLockError(
+          "RAG store lock contents changed while they were being inspected",
+          { cause: error },
+        );
+      }
+      throw error;
+    }
+    if (!entryInfo.isFile || entryInfo.isSymlink) {
+      throw new LocalJsonStoreLockError("The RAG store lock entry is not a real file");
+    }
+    if (leaseMatch !== null) {
+      leases.push({
+        fileName: entryName,
+        token: leaseMatch[1]!.toLowerCase(),
+        mtimeMs: entryInfo.mtime?.getTime() ?? null,
+      });
+    } else if (isTemporary) {
+      temporaryFileNames.push(entryName);
+    }
+  }
+
+  let ownerText: string | null = null;
+  if (ownerFileName !== null) {
+    ownerText = await readBoundedText(fs, join(lockDirectory, ownerFileName));
+    if (ownerText === null) {
       throw new LocalJsonStoreLockError(
-        "The RAG store lock contains multiple ownership cleanup markers",
+        "RAG store lock ownership changed while it was being inspected",
       );
-    }
-    ownerFileName = ownerMarkers[0] ?? null;
-    if (ownerFileName !== null) {
-      ownerText = await readBoundedText(fs, join(lockDirectory, ownerFileName));
     }
   }
   const owner = ownerText === null ? null : parseOwner(ownerText);
-  const leaseFileNames: string[] = [];
-  let leaseMtimeMs: number | null = null;
-  if (owner !== null) {
-    const leaseFileName = `${owner.token}.lease`;
-    try {
-      const leaseInfo = await lstat(join(lockDirectory, leaseFileName));
-      if (!leaseInfo.isFile || leaseInfo.isSymlink) {
-        throw new LocalJsonStoreLockError("The RAG store lock lease is not a real file");
-      }
-      leaseFileNames.push(leaseFileName);
-      leaseMtimeMs = leaseInfo.mtime?.getTime() ?? null;
-    } catch (error) {
-      if (!isCanonicalNotFoundError(error)) throw error;
-    }
-  } else {
-    // Ownership metadata may be malformed, oversized, or undecodable while a
-    // live owner is still renewing its token-specific lease. Discover leases
-    // independently so ambiguous ownership can never make a live lock appear
-    // ownerless and stale merely because the directory mtime is old.
-    if (directoryEntryNames === null) {
-      directoryEntryNames = [];
-      for await (const entry of fs.readDir(lockDirectory)) {
-        directoryEntryNames.push(entry.name);
-      }
-    }
-    let newestLeaseMtimeMs: number | null = null;
-    for (const entryName of directoryEntryNames) {
-      if (!entryName.endsWith(".lease")) continue;
-      let leaseInfo;
-      try {
-        leaseInfo = await lstat(join(lockDirectory, entryName));
-      } catch (error) {
-        if (isCanonicalNotFoundError(error)) {
-          throw new LocalJsonStoreLockError(
-            "RAG store lock lease changed while ownership was being inspected",
-            { cause: error },
-          );
-        }
-        throw error;
-      }
-      if (!leaseInfo.isFile || leaseInfo.isSymlink) {
-        throw new LocalJsonStoreLockError("The RAG store lock lease is not a real file");
-      }
-      leaseFileNames.push(entryName);
-      const mtimeMs = leaseInfo.mtime?.getTime() ?? null;
-      if (mtimeMs === null) {
-        newestLeaseMtimeMs = null;
-        break;
-      }
-      newestLeaseMtimeMs = newestLeaseMtimeMs === null
-        ? mtimeMs
-        : Math.max(newestLeaseMtimeMs, mtimeMs);
-    }
-    leaseMtimeMs = newestLeaseMtimeMs;
-  }
+  const newestLeaseMtimeMs = leases.length === 0 || leases.some((lease) => lease.mtimeMs === null)
+    ? null
+    : Math.max(...leases.map((lease) => lease.mtimeMs!));
 
   return {
     directoryMtimeMs: directoryInfo.mtime?.getTime() ?? null,
     owner,
     ownerFileName,
     ownerText,
-    leaseFileNames,
-    leasePresent: leaseFileNames.length > 0,
-    leaseMtimeMs,
+    entryFileNames,
+    leases,
+    temporaryFileNames,
+    newestLeaseMtimeMs,
   };
 }
 
 function isStale(observation: LockObservation, nowMs: number): boolean {
-  if (observation.leasePresent) {
-    // A present lease with unavailable time metadata cannot be safely fenced.
-    return observation.leaseMtimeMs !== null &&
-      observation.leaseMtimeMs <= nowMs - LOCK_STALE_AFTER_MS;
+  if (observation.leases.length > 0) {
+    // Every lease participates in staleness. One unavailable timestamp makes
+    // the entire generation unsafe to fence, and the newest known lease is
+    // authoritative even when ownership metadata points at another token.
+    return observation.newestLeaseMtimeMs !== null &&
+      observation.newestLeaseMtimeMs <= nowMs - LOCK_STALE_AFTER_MS;
   }
   const lastKnownActivityMs = observation.owner?.createdAtMs ?? observation.directoryMtimeMs;
   // A missing lease falls back to immutable owner creation time. Ownerless
@@ -231,16 +239,30 @@ function isStale(observation: LockObservation, nowMs: number): boolean {
   return lastKnownActivityMs !== null && lastKnownActivityMs <= nowMs - LOCK_STALE_AFTER_MS;
 }
 
-function sameOwner(left: LockObservation, right: LockObservation): boolean {
-  return left.ownerText === right.ownerText && left.owner?.token === right.owner?.token;
+function sameStringArray(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-async function removeIfPresent(fs: FileSystem, path: string): Promise<void> {
-  try {
-    await fs.remove(path);
-  } catch (error) {
-    if (!isCanonicalNotFoundError(error)) throw error;
-  }
+function sameLeases(
+  left: readonly LeaseObservation[],
+  right: readonly LeaseObservation[],
+): boolean {
+  return left.length === right.length && left.every((lease, index) => {
+    const candidate = right[index];
+    return candidate !== undefined &&
+      lease.fileName === candidate.fileName &&
+      lease.token === candidate.token &&
+      lease.mtimeMs === candidate.mtimeMs;
+  });
+}
+
+function sameGeneration(left: LockObservation, right: LockObservation): boolean {
+  return left.directoryMtimeMs === right.directoryMtimeMs &&
+    left.ownerFileName === right.ownerFileName &&
+    left.ownerText === right.ownerText &&
+    left.owner?.token === right.owner?.token &&
+    sameStringArray(left.entryFileNames, right.entryFileNames) &&
+    sameLeases(left.leases, right.leases);
 }
 
 type CleanupPhase = "recovering" | "releasing";
@@ -290,27 +312,52 @@ async function removeObservedLockGeneration(
   phase: CleanupPhase,
   knownTemporaryNames?: ReadonlySet<string>,
 ): Promise<void> {
+  if (
+    knownTemporaryNames !== undefined &&
+    observation.temporaryFileNames.some((name) => !knownTemporaryNames.has(name))
+  ) {
+    throw new LocalJsonStoreLockError(
+      "RAG store lock contains a temporary file not owned by this operation",
+    );
+  }
   const ownerMarkerName = await claimObservedOwner(fs, lockDirectory, observation, phase);
-  const leaseNames = new Set(observation.leaseFileNames);
-  const removableNames: string[] = [];
-  for await (const entry of fs.readDir(lockDirectory)) {
-    const isObservedOwner = entry.name === ownerMarkerName;
-    const isObservedLease = leaseNames.has(entry.name);
-    const isOwnedTemporary = LOCK_TEMPORARY_FILE_PATTERN.test(entry.name) &&
-      (knownTemporaryNames === undefined || knownTemporaryNames.has(entry.name));
-    if (!isObservedOwner && !isObservedLease && !isOwnedTemporary) {
-      throw new LocalJsonStoreLockError(
-        "RAG store lock contents changed before cleanup completed",
-      );
-    }
-    removableNames.push(entry.name);
+
+  const claimed = await readObservation(fs, lockDirectory);
+  if (claimed === null) {
+    throw new LocalJsonStoreLockError("RAG store lock disappeared during cleanup");
+  }
+  const expectedEntryNames = observation.entryFileNames.map((name) =>
+    name === observation.ownerFileName && ownerMarkerName !== null ? ownerMarkerName : name
+  ).sort();
+  if (
+    claimed.ownerFileName !== ownerMarkerName ||
+    claimed.ownerText !== observation.ownerText ||
+    claimed.owner?.token !== observation.owner?.token ||
+    !sameStringArray(claimed.entryFileNames, expectedEntryNames) ||
+    !sameLeases(claimed.leases, observation.leases)
+  ) {
+    throw new LocalJsonStoreLockError(
+      "RAG store lock generation changed before cleanup completed",
+    );
   }
 
-  for (const name of removableNames) {
-    if (name !== ownerMarkerName) await removeIfPresent(fs, join(lockDirectory, name));
+  for (const name of claimed.entryFileNames) {
+    if (
+      name !== ownerMarkerName &&
+      !claimed.leases.some((lease) => lease.fileName === name) &&
+      !claimed.temporaryFileNames.includes(name)
+    ) {
+      throw new LocalJsonStoreLockError(
+        "RAG store lock contains an entry outside the fenced generation",
+      );
+    }
+  }
+
+  for (const name of claimed.entryFileNames) {
+    if (name !== ownerMarkerName) await fs.remove(join(lockDirectory, name));
   }
   if (ownerMarkerName !== null) {
-    await removeIfPresent(fs, join(lockDirectory, ownerMarkerName));
+    await fs.remove(join(lockDirectory, ownerMarkerName));
   }
   try {
     await fs.remove(lockDirectory);
@@ -380,7 +427,7 @@ async function tryRecoverStaleLock(
   }
 
   const current = await readObservation(fs, lockDirectory);
-  if (current === null || !sameOwner(observed, current) || !isStale(current, Date.now())) {
+  if (current === null || !sameGeneration(observed, current) || !isStale(current, Date.now())) {
     return false;
   }
 
@@ -393,7 +440,11 @@ async function tryRecoverStaleLock(
 
   const moved = await readObservation(fs, recoveryDirectory);
   if (moved === null) return false;
-  if (!sameOwner(observed, moved) || !isStale(moved, Date.now())) {
+  if (
+    !sameGeneration(observed, moved) ||
+    !sameGeneration(current, moved) ||
+    !isStale(moved, Date.now())
+  ) {
     await restoreUnexpectedRecovery(fs, lockDirectory, recoveryDirectory);
     return false;
   }
@@ -409,7 +460,15 @@ async function releaseOwnedLock(
   temporaryName: string,
 ): Promise<void> {
   const observed = await readObservation(fs, lockDirectory);
-  if (observed?.owner?.token !== token || observed.ownerText !== ownerText) {
+  const expectedLeaseName = `${token}.lease`;
+  if (
+    observed?.ownerFileName !== OWNER_FILE_NAME ||
+    observed.owner?.token !== token ||
+    observed.ownerText !== ownerText ||
+    observed.leases.length !== 1 ||
+    observed.leases[0]?.fileName !== expectedLeaseName ||
+    observed.temporaryFileNames.some((name) => name !== temporaryName)
+  ) {
     throw new LocalJsonStoreLockError("RAG store lock ownership changed during release");
   }
   await removeObservedLockGeneration(
@@ -500,7 +559,14 @@ async function acquireNativeLock(
       });
     }
     const observation = await readObservation(fs, lockDirectory);
-    if (observation?.owner?.token !== token || observation.ownerText !== ownerText) {
+    if (
+      observation?.ownerFileName !== OWNER_FILE_NAME ||
+      observation.owner?.token !== token ||
+      observation.ownerText !== ownerText ||
+      observation.leases.length !== 1 ||
+      observation.leases[0]?.fileName !== `${token}.lease` ||
+      observation.temporaryFileNames.some((name) => name !== temporaryName)
+    ) {
       throw new LocalJsonStoreLockError("RAG store lock ownership was lost");
     }
   };

@@ -430,6 +430,55 @@ describe("ragStore", () => {
     });
   });
 
+  for (const externalChange of ["invalid UTF-8", "oversized"] as const) {
+    it(`classifies a save-time ${externalChange} index as corrupt`, async () => {
+      await withTempDir(async (tempDir) => {
+        const storagePath = join(tempDir, "data", "index.json");
+        await Deno.mkdir(join(tempDir, "data"), { recursive: true });
+        await Deno.writeTextFile(storagePath, JSON.stringify({ documents: [], chunks: [] }));
+        const store = ragStore({ model: "local/test-model", storagePath });
+        const writeDescriptor = Object.getOwnPropertyDescriptor(Deno, "writeTextFile");
+        assert(writeDescriptor !== undefined);
+        const originalWrite = Deno.writeTextFile.bind(Deno);
+        let injected = false;
+        Object.defineProperty(Deno, "writeTextFile", {
+          ...writeDescriptor,
+          value: async (path: string | URL, data: string, options?: Deno.WriteFileOptions) => {
+            await originalWrite(path, data, options);
+            if (injected || !String(path).includes(".tmp.")) return;
+            injected = true;
+            await Deno.writeFile(storagePath, new Uint8Array([0xff]));
+            if (externalChange === "oversized") {
+              await Deno.truncate(storagePath, 64 * 1024 * 1024 + 1);
+            }
+          },
+        });
+
+        try {
+          const error = await assertRejects(
+            () => store.ingest("Stale", "must not overwrite"),
+            VeryfrontError,
+            externalChange === "invalid UTF-8"
+              ? "file is not valid UTF-8"
+              : "file exceeds size limit",
+          );
+          assert(error instanceof VeryfrontError);
+          assertEquals(error.slug, "rag-store-corrupt");
+          assertEquals(error.message.includes(storagePath), false);
+        } finally {
+          Object.defineProperty(Deno, "writeTextFile", writeDescriptor);
+        }
+
+        assertEquals(injected, true);
+        if (externalChange === "invalid UTF-8") {
+          assertEquals(await Deno.readFile(storagePath), new Uint8Array([0xff]));
+        } else {
+          assertEquals((await Deno.stat(storagePath)).size, 64 * 1024 * 1024 + 1);
+        }
+      });
+    });
+  }
+
   it("fences a writer that loses its adjacent lock before publication", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");
