@@ -196,9 +196,10 @@ describe("ProductionEnvironmentResolver", () => {
     let observedAbort = false;
     globalThis.fetch = ((_input, init) =>
       new Promise<Response>((_resolve, reject) => {
-        init?.signal?.addEventListener("abort", () => {
+        const requestInit = init as RequestInit | undefined;
+        requestInit?.signal?.addEventListener("abort", () => {
           observedAbort = true;
-          reject(init.signal?.reason);
+          reject(requestInit.signal?.reason);
         }, { once: true });
       })) as typeof fetch;
 

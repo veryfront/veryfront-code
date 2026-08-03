@@ -12,7 +12,7 @@ import {
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
-import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
+import { type MDXLoadModuleOptions, mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/deno.ts";
 
 describe("server/services/rsc/orchestrators/render-handler", () => {
@@ -286,7 +286,8 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
       };
       let observedIsLocalProject: unknown;
       mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
-        observedIsLocalProject = options?.isLocalProject;
+        const loadOptions = options as MDXLoadModuleOptions | undefined;
+        observedIsLocalProject = loadOptions?.isLocalProject;
         return Promise.resolve({ default: () => null });
       };
 

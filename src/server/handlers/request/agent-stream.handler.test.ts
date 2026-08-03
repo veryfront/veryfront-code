@@ -2068,10 +2068,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
     Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
     Deno.env.delete("VERYFRONT_API_BASE_URL");
     globalThis.fetch = ((url, init) => {
+      const requestInit = init as RequestInit | undefined;
       const urlString = String(url);
       fetchUrls.push(urlString);
       assertEquals(
-        new Headers(init?.headers).get("authorization"),
+        new Headers(requestInit?.headers).get("authorization"),
         "Bearer request-scoped-user-token",
       );
       if (urlString === "https://api.veryfront.org/projects/demo-project/environments") {
@@ -2886,7 +2887,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let discoveryCalls = 0;
     let redirect: RequestRedirect | undefined;
     globalThis.fetch = ((_input, init) => {
-      redirect = init?.redirect;
+      const requestInit = init as RequestInit | undefined;
+      redirect = requestInit?.redirect;
       return Promise.resolve(new Response(null, { status: 403 }));
     }) as typeof fetch;
     const handler = new AgentStreamHandler({

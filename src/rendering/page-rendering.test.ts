@@ -4,7 +4,7 @@ import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import * as React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
+import { type MDXLoadModuleOptions, mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import type { EntityInfo } from "#veryfront/types";
 import { handleMDXPage, prepareMDXPageBundles } from "./page-rendering.ts";
 import { PageRenderer } from "./page-renderer.ts";
@@ -161,7 +161,8 @@ describe("rendering/page-rendering", () => {
       loadModuleESM: typeof mdxRenderer.loadModuleESM;
     };
     mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
-      moduleReactVersion = options?.reactVersion;
+      const loadOptions = options as MDXLoadModuleOptions | undefined;
+      moduleReactVersion = loadOptions?.reactVersion;
       return Promise.resolve({ default: () => null });
     };
 
@@ -199,7 +200,8 @@ describe("rendering/page-rendering", () => {
     };
     let observedIsLocalProject: unknown;
     mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
-      observedIsLocalProject = options?.isLocalProject;
+      const loadOptions = options as MDXLoadModuleOptions | undefined;
+      observedIsLocalProject = loadOptions?.isLocalProject;
       return Promise.resolve({ default: () => null });
     };
 
