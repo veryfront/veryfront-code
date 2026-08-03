@@ -38,21 +38,9 @@ const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectHasOwn = Object.hasOwn;
 
 function cloneLockfileEntry(entry: LockfileEntry): LockfileEntry {
-  const resolved = getOwnDataProperty(entry, "resolved")?.value;
-  const integrity = getOwnDataProperty(entry, "integrity")?.value;
-  if (typeof resolved !== "string" || typeof integrity !== "string") {
-    throw lockfileInputError("invalid-structure");
-  }
-  const dependencies = getOwnDataProperty(entry, "dependencies")?.value as
-    | string[]
-    | undefined;
-  const fetchedAt = getOwnDataProperty(entry, "fetchedAt")?.value as string | undefined;
-  return {
-    resolved,
-    integrity,
-    ...(dependencies === undefined ? {} : { dependencies: [...dependencies] }),
-    ...(fetchedAt === undefined ? {} : { fetchedAt }),
-  };
+  const sanitized = sanitizeLockfileEntry(entry);
+  if (sanitized === null) throw lockfileInputError("invalid-structure");
+  return sanitized;
 }
 
 function defineImportEntry(

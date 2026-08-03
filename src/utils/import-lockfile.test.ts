@@ -1495,7 +1495,7 @@ describe("import-lockfile", () => {
       assertEquals(await fs.readFile("/project/veryfront.lock"), existingLockfile);
     });
 
-    it("should reject inherited public set entry fields before touching disk", async () => {
+    it("should reject invalid public set entry fields before touching disk", async () => {
       let existsCalls = 0;
       let writeCalls = 0;
       const fs: FSAdapter = {
@@ -1509,20 +1509,35 @@ describe("import-lockfile", () => {
           return Promise.resolve();
         },
       };
-      const inheritedEntry = Object.create({
-        resolved: "https://cdn.com/inherited.ts",
-        integrity: "sha256-inherited",
-      }) as LockfileEntry;
       const mgr = createLockfileManager("/project", fs);
 
-      const error = await assertRejects(
-        () => mgr.set("https://cdn.com/inherited.ts", inheritedEntry),
-        VeryfrontError,
-      );
+      const invalidEntries = [
+        Object.create({
+          resolved: "https://cdn.com/inherited.ts",
+          integrity: "sha256-inherited",
+        }) as LockfileEntry,
+        {
+          resolved: "https://cdn.com/bad-dependencies.ts",
+          integrity: "sha256-bad-dependencies",
+          dependencies: "not-an-array",
+        } as unknown as LockfileEntry,
+        {
+          resolved: "https://cdn.com/bad-fetched-at.ts",
+          integrity: "sha256-bad-fetched-at",
+          fetchedAt: 1_234,
+        } as unknown as LockfileEntry,
+      ];
 
-      if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
-      assertEquals(error.slug, "lockfile-read-error");
-      assertEquals((error.context as { reason?: string }).reason, "invalid-structure");
+      for (const entry of invalidEntries) {
+        const error = await assertRejects(
+          () => mgr.set(entry.resolved ?? "https://cdn.com/inherited.ts", entry),
+          VeryfrontError,
+        );
+
+        if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
+        assertEquals(error.slug, "lockfile-read-error");
+        assertEquals((error.context as { reason?: string }).reason, "invalid-structure");
+      }
       assertEquals(existsCalls, 0);
       assertEquals(writeCalls, 0);
     });
