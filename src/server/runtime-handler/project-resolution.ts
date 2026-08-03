@@ -113,6 +113,13 @@ export function extractRequestHeaders(
     ? req.headers.get("x-environment") ?? url.searchParams.get("x-environment") ?? undefined
     : undefined;
 
+  // `x-release-id`, `x-content-source-id`, and `x-project-path` are read
+  // without the identity-trust gate deliberately: local single-project and
+  // eval flows supply them directly, `x-project-path` is re-guarded by the
+  // adapter factory behind the same proxy trust check, and proxy mode rejects
+  // every untrusted request outright in createProxyGuard before these values
+  // can select tenant identity. Do not add tenant-identity headers here
+  // without gating them on identityHeadersTrusted.
   return {
     projectSlug: projectSlugHeader ?? parsedDomain.slug ?? undefined,
     projectId: identityHeadersTrusted ? req.headers.get("x-project-id") ?? undefined : undefined,
