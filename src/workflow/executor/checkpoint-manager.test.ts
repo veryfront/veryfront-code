@@ -63,6 +63,37 @@ describe("CheckpointManager", () => {
     );
   });
 
+  it("cleanup retains the newest appended duplicate IDs regardless of timestamp order", async () => {
+    const runId = "cleanup-duplicate";
+    const backend = new MemoryBackend();
+    await backend.createRun(run(runId));
+    await backend.saveCheckpoint(
+      runId,
+      checkpoint("first", "first-appended", new Date(3_000)),
+    );
+    await backend.saveCheckpoint(
+      runId,
+      checkpoint("same", "middle-appended", new Date(2_000)),
+    );
+    await backend.saveCheckpoint(
+      runId,
+      checkpoint("same", "last-appended", new Date(1_000)),
+    );
+
+    await new CheckpointManager({ backend }).cleanup(runId, 2);
+
+    assertEquals(
+      (await backend.getCheckpoints(runId)).map(({ id, nodeId }) => ({
+        id,
+        nodeId,
+      })),
+      [
+        { id: "same", nodeId: "middle-appended" },
+        { id: "same", nodeId: "last-appended" },
+      ],
+    );
+  });
+
   it("prepareResume resolves an explicitly requested checkpoint", async () => {
     const backend = await seed("resume", 3);
 
