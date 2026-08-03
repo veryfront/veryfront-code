@@ -13,6 +13,7 @@ export const COMPONENT_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"] as const;
 
 /** Regex for matching and removing file extensions */
 const EXTENSION_REGEX = /\.(tsx|jsx|ts|js|mdx|md)$/;
+const ROUTE_PARAMETER_FILE_SUFFIX_REGEX = /^\.(tsx|jsx|ts|js|mdx|md)$/i;
 
 /** Reject control characters before paths reach runtime filesystem adapters. */
 export function containsPathControlCharacters(value: string): boolean {
@@ -70,7 +71,7 @@ export function parseRouteParameterSegment(
   const name = segment.slice(marker.length, closingIndex);
   const suffix = segment.slice(closingIndex + closing.length);
   if (!isValidParameterName(name)) return null;
-  if (suffix && (!suffix.startsWith(".") || /[\/\\[\]]/.test(suffix))) {
+  if (suffix !== "" && !ROUTE_PARAMETER_FILE_SUFFIX_REGEX.test(suffix)) {
     return null;
   }
   return { name, kind, suffix };

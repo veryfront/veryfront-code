@@ -11,6 +11,10 @@ interface DirEntry {
   isDirectory: boolean;
 }
 
+function fileNotFoundError(): Error {
+  return Object.assign(new Error("File not found"), { code: "ENOENT" });
+}
+
 function virtualTextRead(readFile: (path: string) => Promise<string>) {
   return {
     symlinkSemantics: "none" as const,
@@ -88,7 +92,7 @@ describe("rendering/page-resolution/page-resolver", () => {
         fs: {
           ...virtualTextRead(async (path: string) => {
             const source = files.get(path);
-            if (source === undefined) throw new Error("File not found");
+            if (source === undefined) throw fileNotFoundError();
             return source;
           }),
           resolveFile: async (path: string) => {
@@ -104,7 +108,7 @@ describe("rendering/page-resolution/page-resolver", () => {
             if (path === "/project/src/content") {
               return { isFile: false, isDirectory: true, isSymlink: false };
             }
-            throw new Error("File not found");
+            throw fileNotFoundError();
           },
           exists: async (path: string) => path === "/project/src/content",
           readDir: async function* (path: string) {
@@ -145,12 +149,12 @@ describe("rendering/page-resolution/page-resolver", () => {
             if (path === "/project/app/[slug]/page.tsx") {
               return "export default function Page() { return null; }";
             }
-            throw new Error("File not found");
+            throw fileNotFoundError();
           }),
           resolveFile: async () => null,
           stat: async () => {
             statCalls++;
-            throw new Error("File not found");
+            throw fileNotFoundError();
           },
           readDir: async function* (path: string) {
             if (path === "/project/app") {
@@ -210,6 +214,61 @@ describe("rendering/page-resolution/page-resolver", () => {
       await Promise.resolve();
     });
 
+    it("propagates a resolution deadline while auto router detection is active", async () => {
+      let releaseDirectoryReads!: () => void;
+      const directoryReadsReleased = new Promise<void>((resolve) => {
+        releaseDirectoryReads = resolve;
+      });
+      const adapter = {
+        id: "memory",
+        fs: {
+          ...virtualTextRead(() => Promise.resolve("# Page")),
+          resolveFile: async () => null,
+          readDir: () => ({
+            [Symbol.asyncIterator]() {
+              return {
+                async next() {
+                  await directoryReadsReleased;
+                  return { done: true as const, value: undefined };
+                },
+              };
+            },
+          }),
+          writeFile: async () => {},
+          mkdir: async () => {},
+        },
+        env: { get: () => undefined },
+      } as unknown as RuntimeAdapter;
+      const resolver = new PageResolver({
+        projectDir: "/project",
+        projectId: "auto-timeout-project",
+        config: createMockConfig(),
+        adapter,
+      });
+
+      const request = resolver.resolvePage("article", {
+        deadline: Date.now() + 50,
+      });
+      let pendingTimer: ReturnType<typeof setTimeout> | undefined;
+      const outcome = await Promise.race([
+        request.then(
+          () => "resolved" as const,
+          (error) =>
+            error instanceof Error && error.message.includes("deadline")
+              ? "deadline" as const
+              : "other-error" as const,
+        ),
+        new Promise<"still-pending">((resolve) => {
+          pendingTimer = setTimeout(() => resolve("still-pending"), 200);
+        }),
+      ]);
+      if (pendingTimer !== undefined) clearTimeout(pendingTimer);
+      releaseDirectoryReads();
+      await request.catch(() => undefined);
+
+      assertEquals(outcome, "deadline");
+    });
+
     it("resolves optional catch-all App Router pages across remaining segments", async () => {
       const adapter = {
         id: "memory",
@@ -218,7 +277,7 @@ describe("rendering/page-resolution/page-resolver", () => {
             if (path === "/project/app/[[...slug]]/page.tsx") {
               return "export default function Page() { return null; }";
             }
-            throw new Error("File not found");
+            throw fileNotFoundError();
           }),
           resolveFile: async () => null,
           readDir: async function* (path: string) {
@@ -250,7 +309,7 @@ describe("rendering/page-resolution/page-resolver", () => {
             if (path === "/project/app/page.tsx") {
               return "export default function Page() { return null; }";
             }
-            throw new Error("File not found");
+            throw fileNotFoundError();
           }),
           resolveFile: async (path: string) => {
             if (path === "/project/app/page") {
@@ -266,7 +325,7 @@ describe("rendering/page-resolution/page-resolver", () => {
                 isSymlink: false,
               };
             }
-            throw new Error("File not found");
+            throw fileNotFoundError();
           },
           exists: async (path: string) => path === "/project/app",
           readDir: async function* (path: string) {
@@ -306,7 +365,7 @@ describe("rendering/page-resolution/page-resolver", () => {
             if (path === "/project/pages/index.tsx") {
               return "export default function Page() { return null; }";
             }
-            throw new Error("File not found");
+            throw fileNotFoundError();
           }),
           resolveFile: async (path: string) => {
             resolveCalls.push(path);
@@ -333,7 +392,7 @@ describe("rendering/page-resolution/page-resolver", () => {
                 isSymlink: false,
               };
             }
-            throw new Error("File not found");
+            throw fileNotFoundError();
           },
           exists: async (path: string) => path === "/project/pages",
           readDir: async function* (path: string) {
@@ -374,7 +433,7 @@ describe("rendering/page-resolution/page-resolver", () => {
             if (path === "/project/pages/index.tsx") {
               return "export default function Page() { return null; }";
             }
-            throw new Error("File not found");
+            throw fileNotFoundError();
           }),
           resolveFile: async (path: string) => {
             if (path === "/project/app/page") {
@@ -400,7 +459,7 @@ describe("rendering/page-resolution/page-resolver", () => {
                 isSymlink: false,
               };
             }
-            throw new Error("File not found");
+            throw fileNotFoundError();
           },
           exists: async (path: string) => path === "/project/app" || path === "/project/pages",
           readDir: async function* (path: string) {

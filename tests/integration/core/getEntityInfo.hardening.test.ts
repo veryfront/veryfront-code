@@ -655,6 +655,29 @@ describe("getEntityBySlug", () => {
     assertEquals(reads, 0);
   });
 
+  it("preserves Windows drive roots while comparing contained route paths", async () => {
+    let reads = 0;
+    const source = "# Windows root page";
+    const adapter = {
+      fs: {
+        symlinkSemantics: "none",
+        resolveFile: (path: string) =>
+          Promise.resolve(path.endsWith("/pages/about") ? `${path}.mdx` : null),
+        readDir: async function* () {},
+        readFile: () => Promise.resolve(source),
+        readFileBytesWithinLimit: () => {
+          reads++;
+          return Promise.resolve(new TextEncoder().encode(source));
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    const page = await getEntityBySlug("C:\\", "about", adapter);
+
+    assertEquals(page?.entity.content, source);
+    assertEquals(reads, 1);
+  });
+
   it("rejects expired route work before filesystem access", async () => {
     const adapter = createMockAdapter();
     let resolveCalls = 0;

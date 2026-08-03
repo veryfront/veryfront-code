@@ -8,6 +8,7 @@ import type { EntityInfo } from "#veryfront/types";
 import {
   type EntityResolutionOptions,
   getEntityBySlug,
+  withEntityResolutionAdmission,
 } from "#veryfront/types/entities/getEntityInfo.ts";
 import {
   detectAppRouter,
@@ -111,11 +112,19 @@ export class PageResolver {
         } else {
           // Auto mode stays structural: detect the dominant router once, then keep
           // pages fallback available for mixed or in-transition projects.
-          const useAppRouter = await detectAppRouter(
+          const useAppRouter = await withEntityResolutionAdmission(
             this.projectDir,
-            this.config,
             this.adapter,
-            { projectId: this.projectId },
+            resolutionOptions,
+            (session) =>
+              session.awaitOperation(() =>
+                detectAppRouter(
+                  this.projectDir,
+                  this.config,
+                  this.adapter,
+                  { projectId: this.projectId },
+                )
+              ),
           );
 
           if (useAppRouter) {

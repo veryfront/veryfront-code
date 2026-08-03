@@ -10,7 +10,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { logger as baseLogger } from "#veryfront/utils/logger/index.ts";
 import { DEFAULT_MAX_FILE_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
-import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
+import { MAX_PATH_LENGTH_CHARS, MAX_ROUTE_SEGMENTS } from "#veryfront/utils/constants/limits.ts";
 import {
   captureBoundedTextReader,
   type CapturedBoundedTextReader,
@@ -38,7 +38,6 @@ const logger = baseLogger.component("get-entity-by-slug");
 
 const fs = createFileSystem();
 const MAX_ENTITY_SOURCE_BYTES = DEFAULT_MAX_FILE_SIZE_BYTES;
-const MAX_ROUTE_SEGMENTS = 64;
 const MAX_DIRECTORY_ENTRIES = 2_048;
 const MAX_DYNAMIC_DIRECTORIES = 256;
 const MAX_DYNAMIC_ENTRIES = 8_192;
@@ -60,7 +59,13 @@ const LAYOUT_FILE_EXTENSIONS = ["mdx", "md", "tsx", "jsx", "ts", "js"] as const;
 const SUPPORTED_PAGE_EXTENSION_PATTERN = /\.(mdx|md|tsx|jsx|ts|js)$/i;
 const SUPPORTED_PAGE_SUFFIX_PATTERN = /^\.(mdx|md|tsx|jsx|ts|js)$/i;
 
-type DirectoryEntry = { name: string; isFile: boolean; isDirectory: boolean };
+/** @internal Immutable directory-entry snapshot used during route discovery. */
+export interface EntityResolutionDirectoryEntry {
+  readonly name: string;
+  readonly isFile: boolean;
+  readonly isDirectory: boolean;
+}
+type DirectoryEntry = EntityResolutionDirectoryEntry;
 type EntityCandidate = { path: string; root: string; virtualRoot: string };
 type DynamicTraversalBudget = { directoriesVisited: number; entriesInspected: number };
 
@@ -95,6 +100,18 @@ interface CapturedEntityReadAuthority {
 export interface EntityResolutionGate {
   throwIfCancelled(): void;
   awaitOperation<T>(operation: () => Promise<T>): Promise<T>;
+}
+
+/** @internal Captured route-filesystem operations for one admitted lookup. */
+export interface EntityResolutionSession extends EntityResolutionGate {
+  readonly hasResolveFile: boolean;
+  resolveFile(path: string): Promise<string | null>;
+  readDirectory(path: string): Promise<readonly EntityResolutionDirectoryEntry[]>;
+  readEntityWithinRoot(
+    filePath: string,
+    rootDir: string,
+    virtualRoot?: string,
+  ): Promise<EntityInfo | null>;
 }
 
 interface ResolutionLifecycle extends EntityResolutionGate {
@@ -572,14 +589,50 @@ export async function withEntityResolutionAdmission<T>(
   projectDir: string,
   adapter: RuntimeAdapter,
   options: EntityResolutionOptions,
-  operation: (gate: EntityResolutionGate) => Promise<T>,
+  operation: (session: EntityResolutionSession) => Promise<T>,
 ): Promise<T> {
-  const context = createResolutionLifecycle(options);
+  const context = createResolutionContext(adapter, options);
+  const resolveFile = context.authority.resolveFile;
+  const session: EntityResolutionSession = Object.freeze({
+    throwIfCancelled: context.throwIfCancelled,
+    awaitOperation: context.awaitOperation,
+    hasResolveFile: resolveFile !== undefined,
+    async resolveFile(path: string): Promise<string | null> {
+      if (!resolveFile) return null;
+      const resolvedPath = await awaitResolution(
+        context,
+        () => resolveFile.invoke(path),
+      );
+      if (resolvedPath === null) return null;
+      if (typeof resolvedPath !== "string" || !isBoundedPath(resolvedPath)) {
+        throw DYNAMIC_ROUTE_ERROR.create({
+          detail: "Route adapter returned an invalid resolved path",
+        });
+      }
+      return resolvedPath;
+    },
+    readDirectory(path: string): Promise<readonly DirectoryEntry[]> {
+      return readDirectoryEntries(path, context);
+    },
+    readEntityWithinRoot(
+      filePath: string,
+      rootDir: string,
+      virtualRoot = "",
+    ): Promise<EntityInfo | null> {
+      return getEntityInfoWithinRoot(
+        filePath,
+        rootDir,
+        adapter,
+        virtualRoot,
+        context,
+      );
+    },
+  });
   return await withProjectResolutionAdmission(
     getResolutionScope(projectDir, options),
     adapter,
     context,
-    () => operation(context),
+    () => operation(session),
   );
 }
 
@@ -1605,10 +1658,16 @@ function hasPathPrefix(filePath: string, rootDir: string): boolean {
       normalizedPath !== ".." &&
       !normalizedPath.startsWith("../");
   }
-  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`);
+  const descendantPrefix = normalizedRoot.endsWith("/") ? normalizedRoot : `${normalizedRoot}/`;
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(descendantPrefix);
 }
 
 function normalizeComparablePath(path: string): string {
-  const normalized = pathHelper.normalize(path.replace(/\\/g, "/")).replace(/\/$/, "");
-  return /^[A-Za-z]:\//.test(normalized) ? normalized.toLowerCase() : normalized;
+  const normalized = pathHelper.normalize(path.replace(/\\/g, "/"));
+  const withoutTrailingSlash = normalized === "/" || /^[A-Za-z]:\/$/.test(normalized)
+    ? normalized
+    : normalized.replace(/\/$/, "");
+  return /^[A-Za-z]:\//.test(withoutTrailingSlash)
+    ? withoutTrailingSlash.toLowerCase()
+    : withoutTrailingSlash;
 }

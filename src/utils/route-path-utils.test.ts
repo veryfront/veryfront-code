@@ -104,6 +104,8 @@ describe("route-path-utils", () => {
         "[slug.].tsx",
         "[slug..part].tsx",
         "[id]tsx",
+        "[slug].draft",
+        "[slug].draft.mdx",
         "[id]\n.tsx",
       ] as const;
 
