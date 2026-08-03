@@ -1,4 +1,5 @@
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
+import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import "#veryfront/schemas/_test-setup.ts";
 import type { Agent, SuggestionsConfig } from "#veryfront/agent";
 import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent";
@@ -436,6 +437,7 @@ describe("channels/control-plane", () => {
       const response = await listRuntimeAgents(createHandlerContext(), {
         ensureProjectDiscovery: async () => {
           discoveryCalls += 1;
+          return createEmptyDiscoveryResult();
         },
         getAgent: (id) => {
           if (id === "assistant-b") {
@@ -491,7 +493,7 @@ describe("channels/control-plane", () => {
 
     it("filters missing agents and falls back to the runtime id when config metadata is absent", async () => {
       const response = await listRuntimeAgents(createHandlerContext(), {
-        ensureProjectDiscovery: async () => {},
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) =>
           id === "assistant-z"
             ? {
@@ -522,7 +524,7 @@ describe("channels/control-plane", () => {
 
     it("uses the registry id for discovered agents whose factory id was auto-generated", async () => {
       const response = await listRuntimeAgents(createHandlerContext(), {
-        ensureProjectDiscovery: async () => {},
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) =>
           id === "researcher"
             ? {
@@ -562,7 +564,7 @@ describe("channels/control-plane", () => {
       });
 
       const response = await listRuntimeAgents(createHandlerContext(), {
-        ensureProjectDiscovery: async () => {},
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) => id === "support" ? markdownAgent : undefined,
         getAllAgentIds: () => ["support"],
       });
@@ -595,7 +597,7 @@ describe("channels/control-plane", () => {
 
       try {
         const response = await listRuntimeAgents(createHandlerContext(), {
-          ensureProjectDiscovery: async () => {},
+          ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
           getAgent: (id) => id === "assistant" ? createAgent({ id }) : undefined,
           getAllAgentIds: () => ["assistant"],
         });
@@ -624,7 +626,7 @@ describe("channels/control-plane", () => {
 
     it("includes typed suggestions when an agent defines them", async () => {
       const response = await listRuntimeAgents(createHandlerContext(), {
-        ensureProjectDiscovery: async () => {},
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) =>
           id === "assistant"
             ? createAgent({
@@ -687,7 +689,7 @@ describe("channels/control-plane", () => {
 
     it("normalizes flat Studio suggestions for runtime clients", async () => {
       const response = await listRuntimeAgents(createHandlerContext(), {
-        ensureProjectDiscovery: async () => {},
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) =>
           id === "assistant"
             ? createAgent({
@@ -733,7 +735,7 @@ describe("channels/control-plane", () => {
     it("serializes a source avatarUrl as control-plane avatar_url", async () => {
       const avatarUrl = "https://cdn.example.com/agents/support.svg";
       const response = await listRuntimeAgents(createHandlerContext(), {
-        ensureProjectDiscovery: async () => {},
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) =>
           id === "assistant"
             ? createAgent({
@@ -763,7 +765,7 @@ describe("channels/control-plane", () => {
 
     it("omits invalid suggestions instead of failing the whole agent list", async () => {
       const response = await listRuntimeAgents(createHandlerContext(), {
-        ensureProjectDiscovery: async () => {},
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) =>
           id === "assistant"
             ? {
@@ -796,7 +798,7 @@ describe("channels/control-plane", () => {
 
     it("omits legacy suggestion payloads with unsupported fields", async () => {
       const response = await listRuntimeAgents(createHandlerContext(), {
-        ensureProjectDiscovery: async () => {},
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) =>
           id === "assistant"
             ? {

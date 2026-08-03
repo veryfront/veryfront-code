@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import type { AgentMessage } from "#veryfront/agent";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
@@ -95,6 +96,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: () => undefined,
       getAllAgentIds: () => [],
@@ -137,6 +139,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: () => undefined,
       getAllAgentIds: () => [],
@@ -194,6 +197,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -310,6 +314,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -428,7 +433,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("accepts the public control-plane stream route", async () => {
     const handler = createTestAgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -486,7 +491,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let runtimeToolNames: string[] | undefined;
 
     const handler = createTestAgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => agents.get(id),
       getAllAgentIds: () => [...agents.keys()],
       getLocalTools: (agentId) => {
@@ -563,6 +568,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls++;
+        return createEmptyDiscoveryResult();
       },
       getAgent: () => undefined,
       getAllAgentIds: () => [],
@@ -626,7 +632,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     };
 
     const handler = createTestAgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "incident-responder" ? createAgent("incident-responder") : undefined,
       getAllAgentIds: () => ["incident-responder"],
       sessionManager: new AgentRunSessionManager(),
@@ -802,7 +808,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     try {
       const handler = createTestAgentStreamHandler({
-        ensureProjectDiscovery: async () => {},
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
         getAllAgentIds: () => ["assistant-1"],
         sessionManager: new AgentRunSessionManager(),
@@ -890,7 +896,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let capturedAllowedTools: string[] | undefined;
 
     const handler = createTestAgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -955,6 +961,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async (ctx) => {
         discoveryConfig = ctx.config;
+        return createEmptyDiscoveryResult();
       },
       getAgent: (id) =>
         id === "assistant-1"
@@ -1073,6 +1080,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: () => undefined,
       getAllAgentIds: () => [],
@@ -1102,6 +1110,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: () => undefined,
       getAllAgentIds: () => [],
@@ -1131,6 +1140,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: () => undefined,
       getAllAgentIds: () => [],
@@ -1167,7 +1177,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let capturedAllowedTools: string[] | undefined;
 
     const handler = createTestAgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -1267,7 +1277,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     try {
       const handler = createTestAgentStreamHandler({
-        ensureProjectDiscovery: async () => {},
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
         getAllAgentIds: () => ["assistant-1"],
         sessionManager: new AgentRunSessionManager(),
@@ -1359,7 +1369,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     try {
       const handler = createTestAgentStreamHandler({
-        ensureProjectDiscovery: async () => {},
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) =>
           id === "assistant-1"
             ? createAgentWithConfig("assistant-1", {
@@ -1447,7 +1457,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let capturedAllowedTools: string[] | undefined;
 
     const handler = createTestAgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -1518,7 +1528,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     try {
       const handler = createTestAgentStreamHandler({
-        ensureProjectDiscovery: async () => {},
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) =>
           id === "assistant-1"
             ? createAgentWithConfig("assistant-1", {
@@ -1607,7 +1617,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         }) as typeof fetch;
 
         const handler = createTestAgentStreamHandler({
-          ensureProjectDiscovery: async () => {},
+          ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
           getAgent: (id) =>
             id === "assistant-1"
               ? createAgentWithConfig("assistant-1", {
@@ -1746,7 +1756,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     try {
       const handler = createTestAgentStreamHandler({
-        ensureProjectDiscovery: async () => {},
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) =>
           id === "assistant-1"
             ? createAgentWithConfig("assistant-1", {
@@ -1851,7 +1861,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
 
     const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? agent : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -2099,7 +2109,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       system: () => `target=${getEnv("TARGET_ENV_VALUE")}`,
     });
     const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? agent : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -2185,7 +2195,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
 
     const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? agent : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -2355,7 +2365,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("rejects oversized internal agent stream payloads before parsing", async () => {
     const handler = createTestAgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => createAgent("assistant-1"),
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -2385,7 +2395,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("returns 404 when the requested agent is not available", async () => {
     const handler = createTestAgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => undefined,
       getAllAgentIds: () => [],
       sessionManager: new AgentRunSessionManager(),
@@ -2413,7 +2423,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("returns 400 for malformed internal agent stream payloads", async () => {
     const handler = createTestAgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => createAgent("assistant-1"),
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -2441,7 +2451,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("returns 400 when the runtime input exceeds the message limit", async () => {
     const handler = createTestAgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => createAgent("assistant-1"),
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -2475,7 +2485,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("accepts generic control-plane tool names like invoke_agent", async () => {
     const handler = createTestAgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -2573,6 +2583,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       },
       ensureProjectDiscovery: async () => {
         observedCacheCredential = getVerifiedCacheApiCredential();
+        return createEmptyDiscoveryResult();
       },
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -2687,6 +2698,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         observedCacheCredential = getVerifiedCacheApiCredential();
+        return createEmptyDiscoveryResult();
       },
       getAgent: () => undefined,
       getAllAgentIds: () => [],
@@ -2744,7 +2756,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         environmentLoadCalls += 1;
         return Promise.resolve({});
       },
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -2807,7 +2819,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("returns 409 when the same run is started twice", async () => {
     const sessionManager = new AgentRunSessionManager();
     const handler = createTestAgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager,
@@ -2851,7 +2863,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("returns 500 when runtime execution setup fails unexpectedly", async () => {
     const sessionManager = new AgentRunSessionManager();
     const handler = createTestAgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager,
@@ -2892,6 +2904,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const handler = new AgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: () => undefined,
       getAllAgentIds: () => [],
@@ -2963,6 +2976,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const handler = new AgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: () => undefined,
       getAllAgentIds: () => [],
@@ -3016,7 +3030,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       return Promise.reject(new Error("branch source must not fetch an environment"));
     }) as typeof fetch;
     const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => undefined,
       getAllAgentIds: () => [],
       sessionManager: new AgentRunSessionManager(),
@@ -3052,7 +3066,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("emits a cancellation error instead of finishing after an abort during a pending read", async () => {
     const sessionManager = new TrackingSessionManager();
     const handler = createTestAgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager,
@@ -3101,7 +3115,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("keeps a waiting run resumable after the client disconnects", async () => {
     const sessionManager = new TrackingSessionManager();
     const handler = createTestAgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager,
@@ -3190,7 +3204,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const sessionManager = new TrackingSessionManager();
     const resumeHandler = new AgentRunResumeHandler(sessionManager);
     const handler = createTestAgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager,
@@ -3328,6 +3342,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],

@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES } from "#veryfront/internal-agents/request-body.ts";
@@ -28,6 +29,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
     const handler = new InternalAgentsListHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: (id) =>
         id === "assistant-1"
@@ -80,7 +82,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
 
   it("accepts the public control-plane agents list route", async () => {
     const handler = new InternalAgentsListHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgentWithConfig("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
     });
@@ -112,7 +114,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
 
   it("returns 401 when the control-plane signature is missing", async () => {
     const handler = new InternalAgentsListHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => undefined,
       getAllAgentIds: () => [],
     });
@@ -137,7 +139,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
 
   it("returns 401 when the signed claims do not match the request body", async () => {
     const handler = new InternalAgentsListHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => undefined,
       getAllAgentIds: () => [],
     });
@@ -170,7 +172,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
 
   it("returns 401 when the project id in the signed claims does not match the body", async () => {
     const handler = new InternalAgentsListHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => undefined,
       getAllAgentIds: () => [],
     });
@@ -207,7 +209,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
 
   it("rejects oversized list payloads before parsing", async () => {
     const handler = new InternalAgentsListHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => undefined,
       getAllAgentIds: () => [],
     });
@@ -241,7 +243,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
 
   it("returns 400 for malformed internal agents requests", async () => {
     const handler = new InternalAgentsListHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => undefined,
       getAllAgentIds: () => [],
     });
@@ -270,7 +272,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
 
   it("returns 400 when the request body shape is invalid", async () => {
     const handler = new InternalAgentsListHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => undefined,
       getAllAgentIds: () => [],
     });
@@ -308,6 +310,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
     const handler = new InternalAgentsListHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: (id) =>
         id === "assistant-1"
@@ -399,7 +402,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
 
   it("uses the host verification key when project overlays hide adapter env reads", async () => {
     const handler = new InternalAgentsListHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) =>
         id === "assistant-1"
           ? createAgentWithConfig("assistant-1", { name: "Project Smoke Agent" })
@@ -507,7 +510,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
 
   it("ignores non-matching agents list routes", async () => {
     const handler = new InternalAgentsListHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => undefined,
       getAllAgentIds: () => [],
     });

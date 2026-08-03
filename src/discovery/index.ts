@@ -25,7 +25,12 @@ export {
 } from "./project-discovery-config.ts";
 
 // Re-export utilities
-export { clearTrackedAgents, filenameToId, filePathToPattern } from "./discovery-utils.ts";
+export {
+  clearTrackedAgents,
+  createEmptyDiscoveryResult,
+  filenameToId,
+  filePathToPattern,
+} from "./discovery-utils.ts";
 
 // Re-export transpiler utilities
 export { clearTranspileCache } from "./transpiler.ts";

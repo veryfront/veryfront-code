@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import type { Agent, AgentMessage as Message, AgentResponse } from "#veryfront/agent";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -138,6 +139,7 @@ describe("server/handlers/request/channel-invoke.handler", () => {
     const handler = new ChannelInvokeHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: () => createAgent(async () => createAgentResponse()),
       getAllAgentIds: () => ["agent-1"],
@@ -173,7 +175,7 @@ describe("server/handlers/request/channel-invoke.handler", () => {
 
   it("returns 401 when the dispatch signature header is missing", async () => {
     const handler = new ChannelInvokeHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => undefined,
       getAllAgentIds: () => [],
     });
@@ -194,7 +196,7 @@ describe("server/handlers/request/channel-invoke.handler", () => {
 
   it("returns 400 when the signed body does not match the invoke schema", async () => {
     const handler = new ChannelInvokeHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => undefined,
       getAllAgentIds: () => [],
     });
@@ -236,6 +238,7 @@ describe("server/handlers/request/channel-invoke.handler", () => {
     const handler = new ChannelInvokeHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: () => createAgent(async () => createAgentResponse()),
       getAllAgentIds: () => ["agent-1"],

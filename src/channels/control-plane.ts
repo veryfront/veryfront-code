@@ -1,5 +1,6 @@
 import { SECURITY_VIOLATION } from "#veryfront/errors";
 import type { Agent } from "#veryfront/agent/types.ts";
+import type { DiscoveryResult } from "#veryfront/discovery";
 import type { HandlerContext } from "#veryfront/types/server.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
@@ -219,7 +220,7 @@ export type ControlPlaneClaims = InferSchema<ReturnType<typeof getControlPlaneCl
 
 /** Public API contract for runtime agent discovery deps. */
 export interface RuntimeAgentDiscoveryDeps {
-  ensureProjectDiscovery: (ctx: HandlerContext) => Promise<unknown>;
+  ensureProjectDiscovery: (ctx: HandlerContext) => Promise<DiscoveryResult>;
   getAgent: (id: string) => Agent | undefined;
   getAllAgentIds: () => string[];
 }

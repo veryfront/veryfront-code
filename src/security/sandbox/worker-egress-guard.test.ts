@@ -12,6 +12,7 @@ import {
   isInternalEgressOverrideEnabled,
   startWorkerEgressBroker,
   startWorkerEgressSocksProxy,
+  WORKER_INTERNAL_EGRESS_ALLOWED_HOSTS_ENV,
   WORKER_INTERNAL_EGRESS_OVERRIDE_ENV,
   WorkerEgressBlockedError,
 } from "./worker-egress-guard.ts";
@@ -189,6 +190,49 @@ describe("worker-egress-guard", () => {
     });
   });
 
+  it("allows hostnames on the trusted internal allowlist even when they resolve internal", async () => {
+    await assertWorkerHostEgressAllowed("api.veryfront.org", {
+      allowedInternalHosts: ["api.veryfront.org"],
+      resolveHost: () => Promise.resolve(["10.255.128.3"]),
+    });
+  });
+
+  it("ignores IP literals and localhost names on the allowlist", async () => {
+    await assertRejects(
+      () =>
+        assertWorkerHostEgressAllowed("169.254.169.254", {
+          allowedInternalHosts: ["169.254.169.254"],
+        }),
+      WorkerEgressBlockedError,
+      "internal host",
+    );
+    await assertRejects(
+      () =>
+        assertWorkerHostEgressAllowed("localhost", {
+          allowedInternalHosts: ["localhost"],
+          resolveHost: () => Promise.resolve(["127.0.0.1"]),
+        }),
+      WorkerEgressBlockedError,
+      "internal host",
+    );
+  });
+
+  it("normalizes explicit allowlist entries for case and whitespace", async () => {
+    await assertWorkerHostEgressAllowed("api.veryfront.org", {
+      allowedInternalHosts: [" API.VERYFRONT.ORG "],
+      resolveHost: () => Promise.resolve(["10.255.128.3"]),
+    });
+    await assertRejects(
+      () =>
+        assertWorkerHostEgressAllowed("db.veryfront.org", {
+          allowedInternalHosts: [" API.VERYFRONT.ORG "],
+          resolveHost: () => Promise.resolve(["10.255.128.3"]),
+        }),
+      WorkerEgressBlockedError,
+      "blocked for host",
+    );
+  });
+
   it("requires hostname resolution by default", async () => {
     await assertRejects(
       () =>
@@ -209,6 +253,10 @@ describe("worker-egress-guard", () => {
 
   it("parses the explicit internal egress override env value", () => {
     assertEquals(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV, "VERYFRONT_WORKER_ALLOW_INTERNAL_EGRESS");
+    assertEquals(
+      WORKER_INTERNAL_EGRESS_ALLOWED_HOSTS_ENV,
+      "VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS",
+    );
     assertEquals(isInternalEgressOverrideEnabled("1"), true);
     assertEquals(isInternalEgressOverrideEnabled("true"), true);
     assertEquals(isInternalEgressOverrideEnabled("yes"), true);
