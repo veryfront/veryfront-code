@@ -14,6 +14,7 @@ export function setupWebSocketHandlers(
   let cleanupComplete = false;
 
   function sendConnectedMessage(): void {
+    if (cleanupComplete) return;
     logger.debug("HMR client connected", { totalClients: context.clients.size });
 
     try {
@@ -37,6 +38,8 @@ export function setupWebSocketHandlers(
   function cleanup(): void {
     if (cleanupComplete) return;
     cleanupComplete = true;
+    socket.onopen = null;
+    socket.onmessage = null;
     context.clients.delete(socket);
     try {
       context.rateLimiter.cleanup(socket);
@@ -60,6 +63,7 @@ export function setupWebSocketHandlers(
   }
 
   socket.onmessage = (event) => {
+    if (cleanupComplete) return;
     try {
       const messageSize = typeof event.data === "string"
         ? event.data.length

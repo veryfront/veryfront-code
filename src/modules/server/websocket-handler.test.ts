@@ -39,20 +39,26 @@ class StallingWebSocket {
 function createContext(maxMessageSize: number, rateLimitOk = true): {
   context: WebSocketContext;
   cleanups: WebSocket[];
+  checks: WebSocket[];
 } {
   const cleanups: WebSocket[] = [];
+  const checks: WebSocket[] = [];
   return {
     context: {
       clients: new Set<WebSocket>(),
       maxMessageSize,
       rateLimiter: {
-        check: () => rateLimitOk,
+        check: (socket) => {
+          checks.push(socket);
+          return rateLimitOk;
+        },
         cleanup: (socket) => {
           cleanups.push(socket);
         },
       },
     },
     cleanups,
+    checks,
   };
 }
 
@@ -99,6 +105,21 @@ describe("modules/server/websocket-handler", () => {
 
     assertEquals(context.clients.size, 0);
     assertEquals(cleanups, [socket as unknown as WebSocket]);
+  });
+
+  it("ignores messages that arrive after eager cleanup", () => {
+    const { context, cleanups, checks } = createContext(8);
+    const socket = new StallingWebSocket();
+    setupWebSocketHandlers(socket as unknown as WebSocket, context);
+
+    socket.emitMessage("x".repeat(64));
+    socket.emitMessage(JSON.stringify({ type: "ping" }));
+
+    assertEquals(context.clients.size, 0);
+    assertEquals(cleanups, [socket as unknown as WebSocket]);
+    assertEquals(checks, []);
+    assertEquals(socket.closed.length, 1);
+    assertEquals(socket.sent.includes(JSON.stringify({ type: "pong" })), false);
   });
 
   it("keeps a well-behaved client registered until it disconnects", () => {

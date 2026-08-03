@@ -1,4 +1,4 @@
-import { join, toFileUrl } from "#veryfront/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import type * as React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { transformToESM } from "#veryfront/transforms/esm/index.ts";
@@ -12,77 +12,12 @@ import { extractComponent } from "./extract-component.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveDependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { TransformedModuleCoordinator } from "./transformed-module-coordinator.ts";
 
-/**
- * Build the import specifier for a transformed module on disk.
- *
- * Keyed by the content hash rather than a timestamp: repeated loads of
- * unchanged output resolve to one module-map entry instead of adding a new
- * one per load, while edited output still gets a fresh specifier so dev
- * reloads observe the change. `toFileUrl` percent-encodes the path, keeping
- * a `#` or `?` in a directory name from being parsed as a fragment or query.
- */
-export function buildTransformedModuleSpecifier(
-  componentFile: string,
-  contentHash: string,
-): string {
-  const moduleUrl = toFileUrl(componentFile);
-  moduleUrl.searchParams.set("v", contentHash);
-  return moduleUrl.href;
-}
-
-interface TransformedModuleWriter {
-  writeTextFile(path: string, contents: string): Promise<void>;
-}
-
-type TransformedModuleImporter = (
-  specifier: string,
-) => Promise<Record<string, unknown>>;
-
-const transformedModuleFileTails = new Map<string, Promise<void>>();
-
-/**
- * Keep the mutable backing file stable until its versioned import finishes.
- * Different component paths remain independent, and the tail entry is removed
- * after the final waiter so the coordination map does not grow with every file.
- */
-async function withTransformedModuleFileAccess<T>(
-  componentFile: string,
-  operation: () => Promise<T>,
-): Promise<T> {
-  const previous = transformedModuleFileTails.get(componentFile) ?? Promise.resolve();
-  let release!: () => void;
-  const turn = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const tail = previous.then(() => turn);
-  transformedModuleFileTails.set(componentFile, tail);
-
-  await previous;
-  try {
-    return await operation();
-  } finally {
-    release();
-    if (transformedModuleFileTails.get(componentFile) === tail) {
-      transformedModuleFileTails.delete(componentFile);
-    }
-  }
-}
-
-async function writeAndImportTransformedModule(
-  componentFile: string,
-  transformedCode: string,
-  contentHash: string,
-  writer: TransformedModuleWriter,
-  importer: TransformedModuleImporter = (specifier) => import(specifier),
-): Promise<Record<string, unknown>> {
-  return await withTransformedModuleFileAccess(componentFile, async () => {
-    await writer.writeTextFile(componentFile, transformedCode);
-    return await importer(buildTransformedModuleSpecifier(componentFile, contentHash));
-  });
-}
-
-export { writeAndImportTransformedModule as _writeAndImportTransformedModuleForTest };
+const transformedModuleFileSystem = createFileSystem();
+const transformedModuleCoordinator = new TransformedModuleCoordinator(
+  transformedModuleFileSystem,
+);
 
 export async function loadModuleFromSource(
   source: string,
@@ -154,13 +89,11 @@ export async function loadModuleFromSource(
       const componentFile = join(tmpDir, normalizeModulePath(relativeFilePath));
 
       const componentDir = componentFile.substring(0, componentFile.lastIndexOf("/"));
-      const fs = createFileSystem();
-      await fs.mkdir(componentDir, { recursive: true });
-      return await writeAndImportTransformedModule(
+      await transformedModuleFileSystem.mkdir(componentDir, { recursive: true });
+      return await transformedModuleCoordinator.importTransformedModule(
         componentFile,
         transformedCode,
         await computeHash(transformedCode),
-        fs,
       );
     },
     {

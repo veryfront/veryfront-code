@@ -4,74 +4,65 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { readBoundedModuleSource } from "./module-source-reader.ts";
 
 describe("modules/server/module-source-reader", () => {
-  it("reads a regular source within both boundaries", async () => {
+  it("reads exact bounded bytes and decodes strict UTF-8", async () => {
+    const limits: number[] = [];
     const source = await readBoundedModuleSource(
-      { stat: () => Promise.resolve({ isFile: true, size: 2 }) },
+      (_path, byteLimit) => {
+        limits.push(byteLimit);
+        return Promise.resolve(new TextEncoder().encode("é"));
+      },
       "/module.ts",
-      () => Promise.resolve("é"),
       2,
     );
     assertEquals(source, "é");
+    assertEquals(limits, [2]);
   });
 
-  it("rejects oversized metadata before allocating source text", async () => {
-    let reads = 0;
+  it("fails closed when the exact bounded capability is unavailable", async () => {
     await assertRejects(
-      () =>
-        readBoundedModuleSource(
-          { stat: () => Promise.resolve({ isFile: true, size: 11 }) },
-          "/module.ts",
-          () => {
-            reads++;
-            return Promise.resolve("source");
-          },
-          10,
-        ),
-      RangeError,
-      "exceeds 10 bytes",
+      () => readBoundedModuleSource(undefined, "/module.ts", 10),
+      TypeError,
+      "requires an exact bounded byte reader",
     );
-    assertEquals(reads, 0);
   });
 
-  it("rejects text that exceeds inaccurate adapter metadata", async () => {
+  it("rejects a dishonest oversized reader result before decoding", async () => {
     await assertRejects(
       () =>
         readBoundedModuleSource(
-          { stat: () => Promise.resolve({ isFile: true, size: 1 }) },
+          () => Promise.resolve(new Uint8Array(2)),
           "/module.ts",
-          () => Promise.resolve("é"),
           1,
         ),
       RangeError,
-      "exceeds 1 UTF-8 bytes",
+      "exceeds 1 bytes",
     );
   });
 
-  it("rejects a non-file target", async () => {
+  it("rejects malformed UTF-8", async () => {
     await assertRejects(
       () =>
         readBoundedModuleSource(
-          { stat: () => Promise.resolve({ isFile: false, size: 1 }) },
-          "/dir",
-          () => Promise.resolve(""),
+          () => Promise.resolve(new Uint8Array([0xc3, 0x28])),
+          "/module.ts",
           10,
         ),
       TypeError,
-      "target must be a regular file",
+      "valid UTF-8",
     );
   });
 
-  it("rejects invalid stat metadata with a distinct diagnostic", async () => {
+  it("propagates operational reader failures", async () => {
+    const denied = new Deno.errors.PermissionDenied("denied");
     await assertRejects(
       () =>
         readBoundedModuleSource(
-          { stat: () => Promise.resolve({ isFile: true, size: Number.NaN }) },
+          () => Promise.reject(denied),
           "/module.ts",
-          () => Promise.resolve("source"),
           10,
         ),
-      RangeError,
-      "stat size must be a non-negative safe integer",
+      Deno.errors.PermissionDenied,
+      "denied",
     );
   });
 
@@ -79,9 +70,8 @@ describe("modules/server/module-source-reader", () => {
     await assertRejects(
       () =>
         readBoundedModuleSource(
-          { stat: () => Promise.resolve({ isFile: true, size: 1 }) },
+          () => Promise.resolve(new Uint8Array([1])),
           "/module.ts",
-          () => Promise.resolve("a"),
           0,
         ),
       RangeError,

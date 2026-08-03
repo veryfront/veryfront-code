@@ -1,8 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isProductionMode } from "./ssr.handler.ts";
-import type { HandlerContext } from "../../types.ts";
+import { isProductionMode, shouldHideRouteInProduction } from "./route-visibility-policy.ts";
+import type { HandlerContext } from "../types.ts";
 
 function createContext(overrides: Partial<HandlerContext> = {}): HandlerContext {
   return {
@@ -32,12 +32,9 @@ const productionRequestContext = {
   token: "",
 };
 
-describe("isProductionMode", () => {
-  it("returns true when config.productionMode is true", () => {
+describe("request route visibility policy", () => {
+  it("honors an explicit production config override", () => {
     assertEquals(isProductionMode(createContext({ config: prodConfig })), true);
-  });
-
-  it("config.productionMode takes priority over requestContext.mode", () => {
     assertEquals(
       isProductionMode(
         createContext({ config: prodConfig, requestContext: previewRequestContext }),
@@ -46,28 +43,30 @@ describe("isProductionMode", () => {
     );
   });
 
-  it("returns true when requestContext.mode is production", () => {
+  it("uses resolved environment before request context mode", () => {
+    assertEquals(
+      isProductionMode(
+        createContext({
+          resolvedEnvironment: "preview",
+          requestContext: productionRequestContext,
+        }),
+      ),
+      false,
+    );
     assertEquals(
       isProductionMode(createContext({ requestContext: productionRequestContext })),
       true,
     );
-  });
-
-  it("returns false when requestContext.mode is preview", () => {
-    assertEquals(
-      isProductionMode(createContext({ requestContext: previewRequestContext })),
-      false,
-    );
-  });
-
-  it("returns false when no requestContext present", () => {
     assertEquals(isProductionMode(createContext()), false);
   });
 
-  it("works without URL parameter (backward compatible)", () => {
-    assertEquals(
-      isProductionMode(createContext({ requestContext: productionRequestContext })),
-      true,
-    );
+  it("hides dot-segment routes only in production", () => {
+    const production = createContext({ requestContext: productionRequestContext });
+    const preview = createContext({ requestContext: previewRequestContext });
+
+    assertEquals(shouldHideRouteInProduction(production, ".veryfront/secrets"), true);
+    assertEquals(shouldHideRouteInProduction(production, "docs/.draft/page"), true);
+    assertEquals(shouldHideRouteInProduction(production, "docs/public"), false);
+    assertEquals(shouldHideRouteInProduction(preview, ".veryfront/secrets"), false);
   });
 });

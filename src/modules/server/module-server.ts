@@ -700,9 +700,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             source = isFrameworkFile
               ? await platformFs.readTextFile(sourceFile)
               : await readBoundedModuleSource(
-                secureFs,
+                secureFs.readFileBytesWithinLimit,
                 sourceFile,
-                (path) => secureFs.readFile(path),
               );
           }
 
@@ -861,9 +860,8 @@ async function readSourceFileForVersion(
   return findResult.isFrameworkFile
     ? await platformFs.readTextFile(findResult.path)
     : await readBoundedModuleSource(
-      secureFs,
+      secureFs.readFileBytesWithinLimit,
       findResult.path,
-      (path) => secureFs.readFile(path),
     );
 }
 

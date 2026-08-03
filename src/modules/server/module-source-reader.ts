@@ -1,48 +1,59 @@
-import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
+import {
+  copyFixedUint8ArrayWithinLimit,
+} from "#veryfront/platform/adapters/bounded-text-reader.ts";
+import {
+  isNativeErrorWithoutHooks,
+  readNativeErrorNameWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
 import { MAX_SERVABLE_MODULE_SOURCE_BYTES } from "./module-limits.ts";
 
-interface StatCapableTextSource {
-  stat(path: string): Promise<{
-    isFile: boolean;
-    size: number;
-  }>;
+export type ExactModuleSourceReader = (
+  path: string,
+  byteLimit: number,
+) => Promise<Uint8Array>;
+
+const strictUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
+const textDecoderDecode = TextDecoder.prototype.decode;
+
+function isNativeRangeError(value: unknown): boolean {
+  return isNativeErrorWithoutHooks(value) &&
+    readNativeErrorNameWithoutHooks(value) === "RangeError";
 }
 
 /**
- * Read one module source under both a pre-read stat boundary and a post-read
- * UTF-8 boundary.
- *
- * The stat check refuses an oversized file before its bytes are allocated;
- * the second check covers size drift between the two calls and adapters whose
- * reported size does not match the bytes actually returned.
+ * Read one module source through an exact byte-boundary and decode it as strict
+ * UTF-8. Callers must provide the secured exact reader;
+ * an unbounded compatibility read is never accepted.
  */
 export async function readBoundedModuleSource(
-  fs: StatCapableTextSource,
+  readWithinLimit: ExactModuleSourceReader | undefined,
   path: string,
-  readText: (path: string) => Promise<string>,
   maxBytes = MAX_SERVABLE_MODULE_SOURCE_BYTES,
 ): Promise<string> {
   if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
     throw new RangeError("Module source maxBytes must be a positive safe integer");
   }
-
-  const stat = await fs.stat(path);
-  if (!stat.isFile) {
-    throw new TypeError("Module source target must be a regular file");
-  }
-  if (!Number.isSafeInteger(stat.size) || stat.size < 0) {
-    throw new RangeError("Module source stat size must be a non-negative safe integer");
-  }
-  if (stat.size > maxBytes) {
-    throw new RangeError(`Module source exceeds ${maxBytes} bytes`);
+  if (typeof readWithinLimit !== "function") {
+    throw new TypeError("Module source requires an exact bounded byte reader");
   }
 
-  const source = await readText(path);
-  if (
-    typeof source !== "string" ||
-    utf8ByteLength(source, maxBytes) > maxBytes
-  ) {
-    throw new RangeError(`Module source exceeds ${maxBytes} UTF-8 bytes`);
+  let bytes: Uint8Array;
+  try {
+    bytes = copyFixedUint8ArrayWithinLimit(
+      await readWithinLimit(path, maxBytes),
+      maxBytes,
+      "Module source",
+    );
+  } catch (cause) {
+    if (isNativeRangeError(cause)) {
+      throw new RangeError(`Module source exceeds ${maxBytes} bytes`, { cause });
+    }
+    throw cause;
   }
-  return source;
+
+  try {
+    return Reflect.apply(textDecoderDecode, strictUtf8Decoder, [bytes]) as string;
+  } catch (cause) {
+    throw new TypeError("Module source must contain valid UTF-8", { cause });
+  }
 }

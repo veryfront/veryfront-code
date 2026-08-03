@@ -13,13 +13,9 @@ import {
   stripSnapshotHeader,
 } from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
 import { resolveSSRControlOutcome } from "#veryfront/rendering/ssr-outcome.ts";
-import { isProductionMode } from "../ssr/ssr.handler.ts";
+import { shouldHideRouteInProduction } from "../route-visibility-policy.ts";
 
 const DATA_ENDPOINT_PREFIX = "/_veryfront/data/";
-
-function hasDotSegment(slug: string): boolean {
-  return slug.split("/").some((segment) => segment.startsWith("."));
-}
 
 export function handleDataEndpoint(
   req: Request,
@@ -40,7 +36,7 @@ export function handleDataEndpoint(
 
         // Mirrors the dot-segment rejection the SSR handler applies before
         // rendering the same slug; this endpoint reaches renderPage too.
-        if (hasDotSegment(encSlug) && isProductionMode(ctx)) {
+        if (shouldHideRouteInProduction(ctx, encSlug)) {
           serverLogger.warn("[data-endpoint] Dot path blocked in production", { pathname });
           const builder = createResponseBuilder(ctx)
             .withCORS(req, ctx.securityConfig?.cors)

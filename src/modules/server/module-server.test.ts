@@ -230,10 +230,10 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     const secret = "sensitive adapter failure";
     const adapter = createMockAdapter();
     adapter.fs.files.set(sourcePath, "export const page = true;");
-    const originalReadFile = adapter.fs.readFile.bind(adapter.fs);
-    adapter.fs.readFile = (path) => {
+    const originalReadFile = adapter.fs.readFileBytesWithinLimit!.bind(adapter.fs);
+    adapter.fs.readFileBytesWithinLimit = (path, byteLimit) => {
       if (path === sourcePath) return Promise.reject(new Error(secret));
-      return originalReadFile(path);
+      return originalReadFile(path, byteLimit);
     };
     const request = new Request("http://localhost:3000/_vf_modules/page.js");
     const options = {
