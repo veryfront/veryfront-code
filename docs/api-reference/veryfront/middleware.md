@@ -123,7 +123,7 @@ Options accepted by the in-memory rate limit store.
 
 | Property | Type | Description | Source |
 |----------|------|-------------|--------|
-| `maxEntries?` | `number` | Maximum number of active identities retained by the store. Size this above the expected concurrent identities in one rate-limit window. New identities fail closed when all entries are active; existing identities remain tracked until their windows expire. Capacity exhaustion logs `stage=store-increment`, `failureKind=capacity-exhausted`, and `capacity` set to the configured `maxEntries`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L137) |
+| `maxEntries?` | `number` | Maximum number of active identities retained by the store. Size this above the expected concurrent identities in one rate-limit window. New identities fail closed when all entries are active; existing identities remain tracked until their windows expire. When used through `rateLimit()`, capacity exhaustion logs `stage=store-increment`, `failureKind=capacity-exhausted`, and `capacity` set to the configured `maxEntries`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L137) |
 
 ### `LoggerOptions`
 

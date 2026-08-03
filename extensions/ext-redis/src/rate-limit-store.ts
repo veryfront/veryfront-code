@@ -7,6 +7,7 @@ import {
   type RateLimitStore,
   requireRateLimitKey,
   requireRateLimitWindowMs,
+  unrefTimer,
 } from "veryfront/extensions/distributed/rate-limit-support";
 
 const logger = serverLogger.component("redis-ratelimit");
@@ -227,6 +228,7 @@ export class RedisRateLimitStore implements RateLimitStore {
       timeoutId = setTimeout(() => {
         reject(createTimeoutError(operationName, timeoutMs));
       }, timeoutMs);
+      unrefTimer(timeoutId);
     });
 
     try {

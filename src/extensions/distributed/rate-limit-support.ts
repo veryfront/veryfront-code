@@ -9,4 +9,5 @@ export {
   requireRateLimitKey,
   requireRateLimitWindowMs,
 } from "#veryfront/middleware/builtin/security/rate-limit-validation.ts";
+export { unrefTimer } from "#veryfront/platform/compat/process.ts";
 export { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";

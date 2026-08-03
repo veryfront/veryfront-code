@@ -83,6 +83,50 @@ function createStoreWithMock(
   };
 }
 
+async function withTimeoutUnrefProbe<T>(run: () => Promise<T>): Promise<{
+  result: T;
+  unrefCalls: number;
+}> {
+  const runtime = globalThis as unknown as {
+    setTimeout: typeof setTimeout;
+    clearTimeout: typeof clearTimeout;
+  };
+  const originalSetTimeout = runtime.setTimeout;
+  const originalClearTimeout = runtime.clearTimeout;
+  let unrefCalls = 0;
+
+  runtime.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+    const inner = originalSetTimeout(handler, timeout, ...args);
+    return {
+      inner,
+      unref() {
+        unrefCalls++;
+      },
+    } as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+  runtime.clearTimeout = ((id?: ReturnType<typeof setTimeout>) => {
+    const inner = (id as unknown as { inner?: ReturnType<typeof setTimeout> } | undefined)
+      ?.inner;
+    originalClearTimeout(inner ?? id);
+  }) as typeof clearTimeout;
+
+  try {
+    return { result: await run(), unrefCalls };
+  } finally {
+    runtime.setTimeout = originalSetTimeout;
+    runtime.clearTimeout = originalClearTimeout;
+  }
+}
+
+async function withTimeoutRefGuard<T>(run: () => Promise<T>): Promise<T> {
+  const keepAlive = setInterval(() => {}, 1_000);
+  try {
+    return await run();
+  } finally {
+    clearInterval(keepAlive);
+  }
+}
+
 describe("provider-backed RedisRateLimitStore", () => {
   describe("constructor", () => {
     it("uses the stable default key prefix", () => {
@@ -227,14 +271,33 @@ describe("provider-backed RedisRateLimitStore", () => {
         client,
       );
 
-      const error = await assertRejects(
-        () => store.increment("key", 1_000),
-        Error,
-        "timed out",
+      const error = await withTimeoutRefGuard(() =>
+        assertRejects(
+          () => store.increment("key", 1_000),
+          Error,
+          "timed out",
+        )
       );
       assertEquals(isVeryfrontError(error), true);
       assertEquals(isVeryfrontError(error) ? error.slug : undefined, TIMEOUT_ERROR.slug);
       assertEquals(closeCalls(), 1);
+    });
+
+    it("unrefs the operation timeout so it does not hold the process open", async () => {
+      const client = createMockRedisClient();
+      client.eval = () => new Promise<never>(() => {});
+      const { store } = createStoreWithMock({ operationTimeoutMs: 1 }, client);
+
+      const { result: error, unrefCalls } = await withTimeoutUnrefProbe(() =>
+        assertRejects(
+          () => store.increment("key", 1_000),
+          Error,
+          "timed out",
+        )
+      );
+
+      assertEquals(isVeryfrontError(error), true);
+      assertEquals(unrefCalls, 1);
     });
 
     it("does not retire a provider connection for an unrelated TimeoutError name", async () => {
@@ -286,10 +349,12 @@ describe("provider-backed RedisRateLimitStore", () => {
         client,
       );
 
-      await assertRejects(
-        () => store.reset("key"),
-        Error,
-        "timed out",
+      await withTimeoutRefGuard(() =>
+        assertRejects(
+          () => store.reset("key"),
+          Error,
+          "timed out",
+        )
       );
       assertEquals(closeCalls(), 1);
     });

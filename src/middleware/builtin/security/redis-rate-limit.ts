@@ -1,6 +1,7 @@
 import { createError, isVeryfrontError, TIMEOUT_ERROR, toError } from "#veryfront/errors";
 import { OwnedRedisClientConnection } from "#veryfront/extensions/distributed/owned-redis-client.ts";
 import type { RedisClient } from "#veryfront/extensions/distributed";
+import { unrefTimer } from "#veryfront/platform/compat/process.ts";
 import { serverLogger } from "#veryfront/utils";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { requireRateLimitKey, requireRateLimitWindowMs } from "./rate-limit-validation.ts";
@@ -99,6 +100,7 @@ export class RedisRateLimitStore implements RateLimitStore {
         () => reject(createTimeoutError(operationName, this.operationTimeoutMs)),
         this.operationTimeoutMs,
       );
+      unrefTimer(timeoutId);
     });
 
     try {

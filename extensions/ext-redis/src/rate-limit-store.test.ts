@@ -140,6 +140,50 @@ function createStoreWithMock(
   return { rateStore, mockClient };
 }
 
+async function withTimeoutUnrefProbe<T>(run: () => Promise<T>): Promise<{
+  result: T;
+  unrefCalls: number;
+}> {
+  const runtime = globalThis as unknown as {
+    setTimeout: typeof setTimeout;
+    clearTimeout: typeof clearTimeout;
+  };
+  const originalSetTimeout = runtime.setTimeout;
+  const originalClearTimeout = runtime.clearTimeout;
+  let unrefCalls = 0;
+
+  runtime.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+    const inner = originalSetTimeout(handler, timeout, ...args);
+    return {
+      inner,
+      unref() {
+        unrefCalls++;
+      },
+    } as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+  runtime.clearTimeout = ((id?: ReturnType<typeof setTimeout>) => {
+    const inner = (id as unknown as { inner?: ReturnType<typeof setTimeout> } | undefined)
+      ?.inner;
+    originalClearTimeout(inner ?? id);
+  }) as typeof clearTimeout;
+
+  try {
+    return { result: await run(), unrefCalls };
+  } finally {
+    runtime.setTimeout = originalSetTimeout;
+    runtime.clearTimeout = originalClearTimeout;
+  }
+}
+
+async function withTimeoutRefGuard<T>(run: () => Promise<T>): Promise<T> {
+  const keepAlive = setInterval(() => {}, 1_000);
+  try {
+    return await run();
+  } finally {
+    clearInterval(keepAlive);
+  }
+}
+
 function assert_reset_at_is_future(resetAt: number): void {
   assertEquals(resetAt > Date.now() - 1000, true);
 }
@@ -292,10 +336,12 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         });
         mockClient.eval = () => new Promise<never>(() => {});
 
-        const error = await assertRejects(
-          () => rateStore.increment("key", 1000),
-          Error,
-          "timed out",
+        const error = await withTimeoutRefGuard(() =>
+          assertRejects(
+            () => rateStore.increment("key", 1000),
+            Error,
+            "timed out",
+          )
         );
 
         assertEquals(isVeryfrontError(error), true);
@@ -303,6 +349,24 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         assertEquals(mockClient._disconnectCalls, 1);
         // deno-lint-ignore no-explicit-any
         assertEquals((rateStore as any).client, null);
+      });
+
+      it("unrefs the operation timeout so it does not hold the process open", async () => {
+        const { rateStore, mockClient } = createStoreWithMock({
+          operationTimeoutMs: 1,
+        });
+        mockClient.eval = () => new Promise<never>(() => {});
+
+        const { result: error, unrefCalls } = await withTimeoutUnrefProbe(() =>
+          assertRejects(
+            () => rateStore.increment("key", 1000),
+            Error,
+            "timed out",
+          )
+        );
+
+        assertEquals(isVeryfrontError(error), true);
+        assertEquals(unrefCalls, 1);
       });
 
       it("does not retire a client for an unrelated TimeoutError name", async () => {

@@ -135,7 +135,9 @@ export interface MemoryRateLimitStoreOptions {
    * Size this above the peak number of distinct identities expected during one
    * complete rate-limit window, including burst headroom. New identities fail
    * closed when every entry is active; active limits are never evicted because
-   * eviction would let identity-flooding attackers reset their quota.
+   * eviction would let identity-flooding attackers reset their quota. When
+   * used through `rateLimit()`, capacity exhaustion logs structured failure
+   * details for the middleware request path.
    */
   maxEntries?: number;
 }
