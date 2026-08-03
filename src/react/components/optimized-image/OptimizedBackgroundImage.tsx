@@ -8,7 +8,7 @@ export interface OptimizedBackgroundImageProps {
   children?: React.ReactNode;
   format?: OptimizedImageFormat;
   quality?: number;
-  /** Preferred rendered width. The nearest emitted width at or above it is selected. */
+  /** Preferred rendered width. Uses the nearest emitted width at or above it, or the largest emitted width. */
   size?: number;
   /** Intrinsic source width. The original asset is used when this is unknown. */
   width?: number;
