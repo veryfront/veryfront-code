@@ -94,6 +94,7 @@ export async function loadModuleFromSource(
         componentFile,
         transformedCode,
         await computeHash(transformedCode),
+        tmpDir,
       );
     },
     {
