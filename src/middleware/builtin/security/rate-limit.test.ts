@@ -11,6 +11,7 @@ import { scaleMs } from "#veryfront/testing/timing.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
 import { MiddlewareContext } from "../../core/context.ts";
+import { MAX_RATE_LIMIT_KEY_LENGTH } from "./rate-limit-validation.ts";
 import {
   authRateLimit,
   MemoryRateLimitStore,
@@ -217,10 +218,19 @@ describe("rateLimit middleware", () => {
   });
 
   it("should validate numeric configuration before creating middleware", () => {
-    for (const maxRequests of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    for (
+      const maxRequests of [
+        -1,
+        1.5,
+        Number.NaN,
+        Number.MAX_SAFE_INTEGER,
+        Number.POSITIVE_INFINITY,
+      ]
+    ) {
       assertThrows(
         () => rateLimit({ maxRequests }),
         RangeError,
+        "between 0",
       );
     }
 
@@ -335,7 +345,9 @@ describe("rateLimit middleware", () => {
     };
 
     try {
-      const keyFailure = rateLimit({ keyGenerator: () => "x".repeat(1_025) });
+      const keyFailure = rateLimit({
+        keyGenerator: () => "x".repeat(MAX_RATE_LIMIT_KEY_LENGTH + 1),
+      });
       const storeFailure = rateLimit({
         store: {
           increment: () => Promise.reject(new Error("unavailable")),
@@ -396,7 +408,7 @@ describe("rateLimit middleware", () => {
   it("should fail closed when custom keys are invalid without calling the store", async () => {
     let incrementCalled = false;
     const middleware = rateLimit({
-      keyGenerator: () => "x".repeat(1025),
+      keyGenerator: () => "x".repeat(MAX_RATE_LIMIT_KEY_LENGTH + 1),
       store: {
         increment: () => {
           incrementCalled = true;
@@ -430,7 +442,7 @@ describe("rateLimit middleware", () => {
     });
 
     const response = await middleware(
-      createContext("x".repeat(1025)),
+      createContext("x".repeat(MAX_RATE_LIMIT_KEY_LENGTH + 1)),
       () => Promise.resolve(new Response("OK")),
     );
 
@@ -625,6 +637,17 @@ describe("rateLimit middleware", () => {
     } finally {
       store.destroy();
     }
+  });
+
+  it("should require direct auth preset stores to implement reset", () => {
+    assertThrows(
+      () =>
+        authRateLimit({
+          increment: () => Promise.resolve({ count: 1, resetAt: Date.now() + 1000 }),
+        } as never),
+      TypeError,
+      "increment() and reset()",
+    );
   });
 
   it("should separate trusted proxy clients in the auth preset", async () => {

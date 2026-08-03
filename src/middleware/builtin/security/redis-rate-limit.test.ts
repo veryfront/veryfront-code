@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isVeryfrontError, TIMEOUT_ERROR } from "#veryfront/errors";
+import { MAX_RATE_LIMIT_KEY_LENGTH } from "./rate-limit-validation.ts";
 import { type RedisRateLimitOptions, RedisRateLimitStore } from "./redis-rate-limit.ts";
 
 interface MockRedisClient {
@@ -111,7 +113,7 @@ describe("provider-backed RedisRateLimitStore", () => {
         "url",
       );
       assertThrows(
-        () => new RedisRateLimitStore({ keyPrefix: "x".repeat(1_025) }),
+        () => new RedisRateLimitStore({ keyPrefix: "x".repeat(MAX_RATE_LIMIT_KEY_LENGTH + 1) }),
         RangeError,
         "1024",
       );
@@ -165,7 +167,7 @@ describe("provider-backed RedisRateLimitStore", () => {
       const { store, client, getClientCalls } = createStoreWithMock();
 
       await assertRejects(
-        () => store.increment("x".repeat(1_025), 1_000),
+        () => store.increment("x".repeat(MAX_RATE_LIMIT_KEY_LENGTH + 1), 1_000),
         RangeError,
         "1024",
       );
@@ -230,9 +232,29 @@ describe("provider-backed RedisRateLimitStore", () => {
         Error,
         "timed out",
       );
-      if (!(error instanceof Error)) throw new Error("Expected a timeout error");
-      assertEquals(error.name, "TimeoutError");
+      assertEquals(isVeryfrontError(error), true);
+      assertEquals(isVeryfrontError(error) ? error.slug : undefined, TIMEOUT_ERROR.slug);
       assertEquals(closeCalls(), 1);
+    });
+
+    it("does not retire a provider connection for an unrelated TimeoutError name", async () => {
+      const client = createMockRedisClient();
+      client.eval = () => {
+        const error = new Error("foreign timeout");
+        error.name = "TimeoutError";
+        return Promise.reject(error);
+      };
+      const { store, closeCalls } = createStoreWithMock(undefined, client);
+
+      const error = await assertRejects(
+        () => store.increment("key", 1_000),
+        Error,
+        "foreign timeout",
+      );
+
+      if (!(error instanceof Error)) throw new Error("Expected Redis client error");
+      assertEquals(error.name, "TimeoutError");
+      assertEquals(closeCalls(), 0);
     });
   });
 

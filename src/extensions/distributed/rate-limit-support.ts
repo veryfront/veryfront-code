@@ -5,6 +5,7 @@ export type {
   RateLimitStore,
 } from "#veryfront/middleware/builtin/security/types.ts";
 export {
+  MAX_RATE_LIMIT_KEY_LENGTH,
   requireRateLimitKey,
   requireRateLimitWindowMs,
 } from "#veryfront/middleware/builtin/security/rate-limit-validation.ts";

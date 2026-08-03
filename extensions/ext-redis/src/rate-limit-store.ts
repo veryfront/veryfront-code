@@ -1,4 +1,4 @@
-import { createError, toError } from "veryfront/errors";
+import { createError, isVeryfrontError, TIMEOUT_ERROR, toError } from "veryfront/errors";
 import { serverLogger } from "veryfront/utils/logger";
 import { ClientClosedError, createClient } from "redis";
 import {
@@ -400,15 +400,13 @@ function requireTimeoutMs(value: unknown, name: string): number {
 }
 
 function createTimeoutError(operationName: string, timeoutMs: number): Error {
-  const error = new Error(
-    `Redis rate limit ${operationName} timed out after ${timeoutMs}ms`,
-  );
-  error.name = "TimeoutError";
-  return error;
+  return TIMEOUT_ERROR.create({
+    detail: `Redis rate limit ${operationName} timed out after ${timeoutMs}ms`,
+  });
 }
 
 function isTimeoutError(error: unknown): boolean {
-  return error instanceof Error && error.name === "TimeoutError";
+  return isVeryfrontError(error) && error.slug === TIMEOUT_ERROR.slug;
 }
 
 function isAlreadyClosedClientError(error: unknown): boolean {

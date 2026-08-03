@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isVeryfrontError, TIMEOUT_ERROR } from "veryfront/errors";
+import { MAX_RATE_LIMIT_KEY_LENGTH } from "veryfront/extensions/distributed/rate-limit-support";
 import { ClientClosedError } from "redis";
 import { type RedisRateLimitOptions, RedisRateLimitStore } from "./index.ts";
 
@@ -161,7 +163,7 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         assertThrows(
           () =>
             new RedisRateLimitStore({
-              keyPrefix: "x".repeat(1025),
+              keyPrefix: "x".repeat(MAX_RATE_LIMIT_KEY_LENGTH + 1),
             }),
           RangeError,
           "1024",
@@ -254,7 +256,7 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         const { rateStore, mockClient } = createStoreWithMock();
 
         await assertRejects(
-          () => rateStore.increment("x".repeat(1025), 1000),
+          () => rateStore.increment("x".repeat(MAX_RATE_LIMIT_KEY_LENGTH + 1), 1000),
           RangeError,
           "1024",
         );
@@ -290,15 +292,38 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         });
         mockClient.eval = () => new Promise<never>(() => {});
 
-        const outcome = await outcomeWithin(
-          rateStore.increment("key", 1000),
-          50,
+        const error = await assertRejects(
+          () => rateStore.increment("key", 1000),
+          Error,
+          "timed out",
         );
 
-        assertEquals(outcome, "rejected");
+        assertEquals(isVeryfrontError(error), true);
+        assertEquals(isVeryfrontError(error) ? error.slug : undefined, TIMEOUT_ERROR.slug);
         assertEquals(mockClient._disconnectCalls, 1);
         // deno-lint-ignore no-explicit-any
         assertEquals((rateStore as any).client, null);
+      });
+
+      it("does not retire a client for an unrelated TimeoutError name", async () => {
+        const { rateStore, mockClient } = createStoreWithMock();
+        mockClient.eval = () => {
+          const error = new Error("foreign timeout");
+          error.name = "TimeoutError";
+          return Promise.reject(error);
+        };
+
+        const error = await assertRejects(
+          () => rateStore.increment("key", 1000),
+          Error,
+          "foreign timeout",
+        );
+
+        if (!(error instanceof Error)) throw new Error("Expected Redis client error");
+        assertEquals(error.name, "TimeoutError");
+        assertEquals(mockClient._disconnectCalls, 0);
+        // deno-lint-ignore no-explicit-any
+        assertEquals((rateStore as any).client, mockClient);
       });
     });
 
@@ -327,7 +352,7 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         };
 
         await assertRejects(
-          () => rateStore.reset("x".repeat(1025)),
+          () => rateStore.reset("x".repeat(MAX_RATE_LIMIT_KEY_LENGTH + 1)),
           RangeError,
           "1024",
         );
@@ -403,7 +428,7 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         (rateStore as any).loadClientFactory = () => Promise.resolve(() => mockClient);
 
         await assertRejects(
-          () => rateStore.reset("x".repeat(1025)),
+          () => rateStore.reset("x".repeat(MAX_RATE_LIMIT_KEY_LENGTH + 1)),
           RangeError,
           "1024",
         );

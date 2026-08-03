@@ -181,18 +181,21 @@ function isRateLimitStore(value: unknown): value is RateLimitStore {
   return (
     value != null &&
     typeof value === "object" &&
-    "increment" in value &&
-    typeof value.increment === "function"
+    typeof (value as Partial<RateLimitStore>).increment === "function" &&
+    typeof (value as Partial<RateLimitStore>).reset === "function"
+  );
+}
+
+function hasRateLimitStoreMethod(value: unknown): boolean {
+  return (
+    value != null &&
+    typeof value === "object" &&
+    ("increment" in value || "reset" in value)
   );
 }
 
 function requireRateLimitStore(value: unknown): RateLimitStore {
-  if (
-    value === null ||
-    typeof value !== "object" ||
-    typeof (value as Partial<RateLimitStore>).increment !== "function" ||
-    typeof (value as Partial<RateLimitStore>).reset !== "function"
-  ) {
+  if (!isRateLimitStore(value)) {
     throw new TypeError(
       "Rate limit store must implement increment() and reset()",
     );
@@ -204,10 +207,11 @@ function requireMaxRequests(value: unknown): number {
   if (
     typeof value !== "number" ||
     !Number.isSafeInteger(value) ||
-    value < 0
+    value < 0 ||
+    value >= Number.MAX_SAFE_INTEGER
   ) {
     throw new RangeError(
-      "Rate limit maxRequests must be a non-negative safe integer",
+      `Rate limit maxRequests must be an integer between 0 and ${Number.MAX_SAFE_INTEGER - 1}`,
     );
   }
   return value;
@@ -334,6 +338,8 @@ export function authRateLimit(
     ? {}
     : isRateLimitStore(storeOrOptions)
     ? { store: storeOrOptions }
+    : hasRateLimitStoreMethod(storeOrOptions)
+    ? { store: requireRateLimitStore(storeOrOptions) }
     : storeOrOptions;
 
   return rateLimit({
