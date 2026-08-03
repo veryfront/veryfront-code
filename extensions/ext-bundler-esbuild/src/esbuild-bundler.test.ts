@@ -5,7 +5,7 @@
  * @module extensions/ext-bundler-esbuild/esbuild-bundler.test
  */
 
-import { assertEquals, assertExists, assertStringIncludes } from "@std/assert";
+import { assertEquals, assertExists, assertRejects, assertStringIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { createRequire } from "node:module";
 
@@ -718,6 +718,50 @@ describe("EsbuildBundler.bundle", () => {
       assertExists(out.text);
       assertEquals(out.text.includes("hello"), true);
     } finally {
+      await bundler.stop();
+    }
+  });
+
+  it("cancels an active context build through the contract signal", async () => {
+    const bundler = new EsbuildBundler();
+    const controller = new AbortController();
+    const loadStarted = Promise.withResolvers<void>();
+    const releaseLoad = Promise.withResolvers<void>();
+    const abortReason = new DOMException("cancel requested", "AbortError");
+    let bundling: Promise<Awaited<ReturnType<EsbuildBundler["bundle"]>>> | undefined;
+
+    try {
+      bundling = bundler.bundle({
+        entryPoints: ["cancel:entry"],
+        bundle: true,
+        format: "esm",
+        write: false,
+        signal: controller.signal,
+        plugins: [{
+          name: "cancel-active-build",
+          setup(build) {
+            build.onResolve({ filter: /^cancel:/ }, () => ({
+              path: "entry",
+              namespace: "cancel",
+            }));
+            build.onLoad({ filter: /.*/, namespace: "cancel" }, async () => {
+              loadStarted.resolve();
+              await releaseLoad.promise;
+              return { contents: "export default 1;", loader: "ts" };
+            });
+          },
+        }],
+      });
+      void bundling.catch(() => undefined);
+      await loadStarted.promise;
+      controller.abort(abortReason);
+      releaseLoad.resolve();
+
+      const error = await assertRejects(() => bundling!);
+      assertEquals(error, abortReason);
+    } finally {
+      releaseLoad.resolve();
+      await bundling?.catch(() => undefined);
       await bundler.stop();
     }
   });

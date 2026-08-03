@@ -543,6 +543,43 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
+  it("bounds request-triggered RSC client graphs for GET and HEAD", async () => {
+    const projectDir = "/bounded-rsc-project";
+    const adapter = createMockAdapter();
+    const imports: string[] = ['"use client";'];
+    for (let index = 0; index < 1_000; index++) {
+      imports.push(`import "./dependency-${index}.ts";`);
+      adapter.fs.files.set(
+        `${projectDir}/app/dependency-${index}.ts`,
+        `export const value${index} = ${index};`,
+      );
+    }
+    imports.push("export default function Client() { return null; }");
+    adapter.fs.files.set(`${projectDir}/app/client.tsx`, imports.join("\n"));
+
+    const { serveModule } = await import("./module-server.ts");
+    const options = {
+      projectId: "bounded-rsc-project",
+      projectDir,
+      adapter,
+      dev: false,
+      isLocalProject: false,
+      isProxyMode: true,
+      mode: "preview",
+      config: { experimental: { rsc: true } },
+    } as const;
+    const url = "http://localhost:3000/_vf_modules/app/client.js";
+    const [getResponse, headResponse] = await Promise.all([
+      serveModule(new Request(url), options),
+      serveModule(new Request(url, { method: "HEAD" }), options),
+    ]);
+
+    assertEquals(getResponse.status, 413);
+    assertEquals(headResponse.status, 413);
+    assertEquals((await getResponse.text()).includes("value999"), false);
+    assertEquals(await headResponse.text(), "");
+  });
+
   it("does not let remote requests spoof the local SSR module capability", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-remote-ssr-spoof-" });
 

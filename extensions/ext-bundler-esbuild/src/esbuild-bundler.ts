@@ -317,7 +317,8 @@ function toOutput(f: any): BundleOutput {
 }
 
 function mapOptions(options: BundleOptions, scope: OperationScope): MappedBundleOptions {
-  const { plugins, ...rest } = options;
+  // `signal` belongs to the framework contract, not esbuild's BuildOptions.
+  const { plugins, signal: _signal, ...rest } = options;
   const mapped: Record<string, unknown> = { ...rest };
   const pluginDisposals = createPluginDisposalBarrier(scope);
   if (plugins && plugins.length > 0) {
@@ -343,8 +344,38 @@ export class EsbuildBundler implements Bundler {
     return runBundlerOperation(async (scope) => {
       const esbuild = await getEsbuild();
       const mapped = mapOptions(options, scope);
+      const signal = options.signal;
+      let context:
+        | { rebuild(): Promise<unknown>; cancel(): Promise<void>; dispose(): Promise<void> }
+        | undefined;
+      let cancelPromise: Promise<void> | undefined;
+      const abort = (): void => {
+        if (context && !cancelPromise) cancelPromise = context.cancel();
+      };
       try {
-        const result = await invokeEsbuild(() => esbuild.build(mapped.options));
+        signal?.throwIfAborted();
+
+        let result: {
+          outputFiles?: unknown[];
+          warnings?: unknown[];
+          errors?: unknown[];
+          metafile?: unknown;
+        };
+        try {
+          if (signal) {
+            const buildContext = await invokeEsbuild(() => esbuild.context(mapped.options));
+            context = buildContext;
+            signal.addEventListener("abort", abort, { once: true });
+            if (signal.aborted) abort();
+            result = await buildContext.rebuild();
+          } else {
+            result = await invokeEsbuild(() => esbuild.build(mapped.options));
+          }
+        } catch (error) {
+          signal?.throwIfAborted();
+          throw error;
+        }
+        signal?.throwIfAborted();
         return {
           outputFiles: (result.outputFiles ?? []).map(toOutput),
           warnings: toMessages(result.warnings),
@@ -352,7 +383,16 @@ export class EsbuildBundler implements Bundler {
           metafile: result.metafile as Metafile | undefined,
         };
       } finally {
-        mapped.activatePluginDisposals();
+        signal?.removeEventListener("abort", abort);
+        try {
+          await cancelPromise;
+        } finally {
+          try {
+            await context?.dispose();
+          } finally {
+            mapped.activatePluginDisposals();
+          }
+        }
       }
     });
   }
@@ -390,6 +430,10 @@ export class EsbuildBundler implements Bundler {
               errors: toMessages(result.errors),
               metafile: result.metafile as Metafile | undefined,
             };
+          }, contextScope),
+        cancel: () =>
+          runBundlerOperation(async () => {
+            await ctx.cancel();
           }, contextScope),
         dispose: () =>
           runBundlerOperation(async () => {

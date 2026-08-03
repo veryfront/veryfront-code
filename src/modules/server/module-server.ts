@@ -82,6 +82,7 @@ import {
 } from "#veryfront/server/shared/browser-module-boundary.ts";
 import {
   type BrowserModuleBundle,
+  BrowserModuleBundleError,
   bundleBrowserModuleWithMetadata,
 } from "#veryfront/server/shared/browser-module-bundler.ts";
 import { ensureDefaultParserContracts } from "#veryfront/extensions/parser/defaults.ts";
@@ -1011,6 +1012,14 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               dependencyPinningCacheKey,
               dependencyPinningDependencies,
               dependencyPinningSource: dependencySource,
+              signal: req.signal,
+              singleflightKey: [
+                effectiveProjectId,
+                options.contentSourceId ?? options.releaseId ?? branch ?? "working-tree",
+                dependencyPinningCacheKey,
+                url.origin,
+                sourceFile,
+              ].join("\0"),
             });
             const dependencyAdmission = validateBundledClientDependencies(
               bundledClientBoundary,
@@ -1184,12 +1193,19 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         logger.error("Module transform error", { modulePath, error: errorMsg });
 
         const headers = getModuleHeaders(modulePath);
+        const status = error instanceof BrowserModuleBundleError
+          ? error.kind === "limit"
+            ? HttpStatus.PAYLOAD_TOO_LARGE
+            : error.kind === "deadline"
+            ? HttpStatus.GATEWAY_TIMEOUT
+            : HttpStatus.SERVICE_UNAVAILABLE
+          : HTTP_SERVER_ERROR;
         const errorBody = createModuleErrorBody(
           modulePath,
           getClientModuleError(dev, errorMsg),
         );
 
-        return createModuleResponse(method, errorBody, HTTP_SERVER_ERROR, headers);
+        return createModuleResponse(method, errorBody, status, headers);
       }
     },
     { "modules.path": url.pathname, "modules.projectSlug": options.projectSlug || "unknown" },
