@@ -207,7 +207,8 @@ function snapshotBestEffortDiagnostic(
   state.nodes += 1;
 
   if (value === null) return null;
-  if (typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "string") return boundToolErrorText(value);
+  if (typeof value === "boolean") return value;
   if (typeof value === "number") return numberIsFinite(value) ? value : OMIT_DIAGNOSTIC_VALUE;
   if (typeof value !== "object") return OMIT_DIAGNOSTIC_VALUE;
 

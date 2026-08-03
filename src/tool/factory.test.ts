@@ -289,6 +289,74 @@ describe("tool factory", () => {
       );
     });
 
+    it("rejects MCP accessors despite descriptor prototype pollution", () => {
+      const originalValue = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+      let accessorCalls = 0;
+      const mcp = Object.defineProperty({}, "enabled", {
+        enumerable: true,
+        get() {
+          accessorCalls += 1;
+          throw new Error("MCP accessors must not run");
+        },
+      });
+      let thrown: unknown;
+
+      try {
+        Object.defineProperty(Object.prototype, "value", {
+          configurable: true,
+          value: true,
+          writable: true,
+        });
+
+        try {
+          tool({
+            id: "accessor-mcp-config",
+            description: "desc",
+            inputSchema: { type: "object" },
+            execute: async () => null,
+            mcp,
+          });
+        } catch (error) {
+          thrown = error;
+        }
+      } finally {
+        if (originalValue) {
+          Object.defineProperty(Object.prototype, "value", originalValue);
+        } else {
+          Reflect.deleteProperty(Object.prototype, "value");
+        }
+      }
+
+      assertEquals(thrown instanceof Error, true);
+      assertEquals(accessorCalls, 0);
+    });
+
+    it("copies special MCP property names without changing object prototypes", () => {
+      const mcp = Object.create(null) as Record<string, unknown>;
+      Object.defineProperty(mcp, "__proto__", {
+        enumerable: true,
+        value: { polluted: true },
+      });
+      Object.defineProperty(mcp, "enabled", {
+        enumerable: true,
+        value: true,
+      });
+
+      const result = tool({
+        id: "special-key-mcp-config",
+        description: "desc",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => null,
+        mcp,
+      }).mcp as Record<string, unknown>;
+
+      assertEquals(Object.getPrototypeOf(result), Object.prototype);
+      assertEquals(Object.getOwnPropertyDescriptor(result, "__proto__")?.value, {
+        polluted: true,
+      });
+      assertEquals(({} as { polluted?: boolean }).polluted, undefined);
+    });
+
     it("loads MCP config through structured clone when proxy detection is unavailable", async () => {
       const script = `
         Object.defineProperty(globalThis, "caches", {

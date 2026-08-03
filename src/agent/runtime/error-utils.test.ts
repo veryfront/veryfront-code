@@ -102,6 +102,18 @@ describe("agent/runtime/error-utils", () => {
       assertStringIncludes(result, '"details"');
     });
 
+    it("bounds best-effort string leaves before JSON serialization", () => {
+      const result = stringifyToolError({
+        code: "E_TOOL",
+        detail: "x".repeat(MAX_TOOL_ERROR_TEXT_BYTES * 1_024),
+        unsupported: undefined,
+      });
+
+      assertEquals(new TextEncoder().encode(result).byteLength <= MAX_TOOL_ERROR_TEXT_BYTES, true);
+      assertStringIncludes(result, '"code":"E_TOOL"');
+      assertStringIncludes(result, "…");
+    });
+
     it("uses a stable fallback when safe JSON serialization fails", () => {
       const circular: Record<string, unknown> = {};
       circular.self = circular;
