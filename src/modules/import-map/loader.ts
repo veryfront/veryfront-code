@@ -251,7 +251,11 @@ function getConfigImportMap(config: VeryfrontConfig): ImportMapConfig | null {
       "Veryfront config resolve",
     );
     if (importMap === undefined || importMap === null) return null;
-    return snapshotImportMap(importMap);
+    const embedded = readEmbeddedImportMap(
+      importMap,
+      "Veryfront config resolve importMap",
+    );
+    return embedded ?? snapshotImportMap({});
   } catch (error) {
     if (isVeryfrontError(error)) throw error;
     throw IMPORT_MAP_INVALID.create({

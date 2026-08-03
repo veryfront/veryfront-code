@@ -84,6 +84,29 @@ describe("modules/import-map/loader", () => {
       assertEquals(error.detail?.includes("42"), false);
     });
 
+    it("ignores extra explicit config import-map metadata without invoking accessors", async () => {
+      const adapter = createMockAdapter();
+      let metadataCalls = 0;
+      const importMap = {
+        imports: { package: "https://project.example/package.js" },
+      };
+      Object.defineProperty(importMap, "metadata", {
+        enumerable: true,
+        get() {
+          metadataCalls++;
+          return { source: "project" };
+        },
+      });
+      const config = {
+        resolve: { importMap },
+      } as VeryfrontConfig;
+
+      const { imports } = await loadImportMap("/any-project", adapter, config);
+
+      assertEquals(imports?.package, "https://project.example/package.js");
+      assertEquals(metadataCalls, 0);
+    });
+
     it("rejects config accessors without invoking project code", async () => {
       const adapter = createMockAdapter();
       let accessorCalls = 0;

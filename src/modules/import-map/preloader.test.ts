@@ -1104,14 +1104,17 @@ describe("modules/import-map/preloader", () => {
 
       const hungB = preloader.preload("/hung-b", adapter, "hung-b");
       await waitForLoadCount(loads, 2);
-      const recovered = preloader.preload("/next", adapter, "next");
-      await waitForLoadCount(loads, 3);
-      loads[1]!.resolve({ imports: { source: "b" } });
-      loads[2]!.resolve({ imports: { source: "next" } });
-      assertEquals((await hungB).imports?.source, "b");
-      assertEquals((await recovered).imports?.source, "next");
+      const nextBlockedByCapacity = preloader.preload("/next", adapter, "next");
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      assertEquals(loads.length, 2);
 
+      loads[1]!.resolve({ imports: { source: "b" } });
+      assertEquals((await hungB).imports?.source, "b");
       loads[0]!.resolve({ imports: { source: "late" } });
+      await waitForLoadCount(loads, 3);
+      loads[2]!.resolve({ imports: { source: "next" } });
+      assertEquals((await nextBlockedByCapacity).imports?.source, "next");
+
       await Promise.resolve();
       const sameProjectRecovered = preloader.preload("/hung-a", adapter, "hung-a");
       await waitForLoadCount(loads, 4);

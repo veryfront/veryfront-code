@@ -406,6 +406,7 @@ export class ImportMapPreloader {
       removeEmptyProject &&
       mapSize(projectCache) === 0 &&
       mapSize(projectState.identityBuilds) === 0 &&
+      this.projectOrphanCount(cacheKey) === 0 &&
       mapGet(this.projects, cacheKey) === projectState
     ) {
       mapDelete(this.projects, cacheKey);
@@ -499,6 +500,20 @@ export class ImportMapPreloader {
     return this.projectOrphanCount(cacheKey) < this.maxVariantsPerProject;
   }
 
+  private occupiedProjectCount(): number {
+    let orphanOnlyProjects = 0;
+    mapForEach(this.orphanedLoadsByProject, (_orphanedLoads, cacheKey) => {
+      if (!mapGet(this.projects, cacheKey)) orphanOnlyProjects += 1;
+    });
+    return mapSize(this.projects) + orphanOnlyProjects;
+  }
+
+  private hasProjectOccupancyCapacity(cacheKey: string): boolean {
+    return Boolean(mapGet(this.projects, cacheKey)) ||
+      Boolean(mapGet(this.orphanedLoadsByProject, cacheKey)) ||
+      this.occupiedProjectCount() < this.maxProjects;
+  }
+
   private waitForActiveWork(timeoutMs: number): Promise<void> {
     const hasActiveWork = setSize(this.activeLoads) + setSize(this.activeIdentityBuilds) +
         mapSize(this.orphanedLoadsByProject) >
@@ -524,7 +539,7 @@ export class ImportMapPreloader {
     );
   }
 
-  private makeProjectRoom(now: number): void {
+  private makeProjectRoom(now: number, cacheKey: string): void {
     mapForEach(this.projects, (projectState, cacheKey) => {
       const projectCache = projectState.variants;
       mapForEach(projectCache, (entry, variantKey) => {
@@ -541,11 +556,12 @@ export class ImportMapPreloader {
       }
     });
 
-    while (mapSize(this.projects) >= this.maxProjects) {
+    while (!this.hasProjectOccupancyCapacity(cacheKey)) {
       let oldestSettledProject: string | undefined;
       mapForEach(this.projects, (projectState, cacheKey) => {
         if (oldestSettledProject !== undefined) return;
         if (mapSize(projectState.identityBuilds) > 0) return;
+        if (this.projectOrphanCount(cacheKey) > 0) return;
         let hasInFlightEntry = false;
         mapForEach(projectState.variants, (entry) => {
           if (entry.expiresAt === null) {
@@ -587,7 +603,12 @@ export class ImportMapPreloader {
   ): void {
     let orphanedLoads = mapGet(this.orphanedLoadsByProject, cacheKey);
     if (!orphanedLoads) {
-      if (mapSize(this.orphanedLoadsByProject) >= this.maxProjects) {
+      if (!this.hasProjectOccupancyCapacity(cacheKey)) {
+        logger.warn("Import-map load timed out without orphan capacity", {
+          orphanedProjects: mapSize(this.orphanedLoadsByProject),
+          occupiedProjects: this.occupiedProjectCount(),
+          maxProjects: this.maxProjects,
+        });
         return;
       }
       orphanedLoads = new IntrinsicSet<Promise<ImportMapConfig>>();
@@ -717,6 +738,7 @@ export class ImportMapPreloader {
     if (
       mapSize(projectState.identityBuilds) === 0 &&
       mapSize(projectState.variants) === 0 &&
+      this.projectOrphanCount(cacheKey) === 0 &&
       mapGet(this.projects, cacheKey) === projectState
     ) {
       mapDelete(this.projects, cacheKey);
@@ -729,14 +751,11 @@ export class ImportMapPreloader {
     adapter: RuntimeAdapter,
     config: VeryfrontConfig | undefined,
   ): Promise<ImportMapConfig> {
+    if (!this.hasProjectOccupancyCapacity(cacheKey)) {
+      throw this.capacityError("projects");
+    }
     if (!this.hasProjectLoadCapacity(cacheKey)) {
       throw this.capacityError("loads");
-    }
-    if (
-      !mapGet(this.orphanedLoadsByProject, cacheKey) &&
-      mapSize(this.orphanedLoadsByProject) >= this.maxProjects
-    ) {
-      throw this.capacityError("projects");
     }
     if (!this.hasActiveWorkCapacity()) {
       throw this.capacityError("loads");
@@ -808,7 +827,7 @@ export class ImportMapPreloader {
     const admissionNow = this.readNow();
     let projectState = mapGet(this.projects, cacheKey);
     if (!projectState) {
-      this.makeProjectRoom(admissionNow);
+      this.makeProjectRoom(admissionNow, cacheKey);
       projectState = {
         variants: new IntrinsicMap(),
         generation: createGeneration(),
