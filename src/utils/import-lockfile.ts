@@ -1074,6 +1074,9 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   const accessKey = hasSharedCoordinationKey
     ? apply(jsonStringify, NativeJSON, [[`shared:${coordinationKey}`]]) as string
     : apply(jsonStringify, NativeJSON, [[adapterIdentity]]) as string;
+  const logicalQueueKey = hasSharedCoordinationKey
+    ? apply(jsonStringify, NativeJSON, [[accessKey, lockfilePath]]) as string
+    : accessKey;
   let cache: LockfileData | null = null;
   let cacheRevision = -1n;
   let managerOperationTail: Promise<void> = resolveVoidPromise();
@@ -1161,9 +1164,6 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   function withLockfileAccess<T>(
     operation: (state: LockfileSharedState) => Promise<T>,
   ): Promise<T> {
-    const logicalQueueKey = hasSharedCoordinationKey
-      ? apply(jsonStringify, NativeJSON, [[accessKey, lockfilePath]]) as string
-      : accessKey;
     return serializeLockfileAccess(
       logicalQueueKey,
       () =>

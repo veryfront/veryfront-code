@@ -107,9 +107,9 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `computeCodeHash` | Compute code hash. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L29) |
 | `computeHash` | Compute the lowercase hex SHA-256 digest of a UTF-8 string. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L12) |
 | `computeHashBytes` | Compute the lowercase hex SHA-256 digest of raw bytes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L18) |
-| `computeIntegrity` | Compute integrity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L437) |
+| `computeIntegrity` | Compute integrity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L443) |
 | `createAbortError` | Convert an arbitrary abort reason into the framework's stable Error shape. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/abort.ts#L2) |
-| `createLockfileManager` | Create lockfile manager. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L1061) |
+| `createLockfileManager` | Create lockfile manager. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L1067) |
 | `createRunUserLogger` | Create run user logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L779) |
 | `createSubscriberSet` | Create a subscriber set: the canonical subscribe/notify observable used across modules. Notification iterates a snapshot, so a listener that unsubscribes (itself or others) mid-notify is safe, and listener errors are isolated (routed to `onListenerError` when provided, otherwise swallowed). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/subscriber-set.ts#L19) |
 | `encodeBase64` | Encode a string as standard base64. Latin-1 input (all code points &lt;= 0xFF) is encoded with btoa's binary-string semantics; input outside Latin-1 falls back to UTF-8 bytes. Callers that need guaranteed UTF-8 bytes regardless of input (e.g. data: URLs decoded as UTF-8) should use `encodeBase64Bytes(new TextEncoder().encode(value))` instead. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/base64url.ts#L18) |
@@ -119,7 +119,7 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `getBaseLogger` | Get the base logger without request context awareness. Use this when you need to create a request-scoped logger in middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L749) |
 | `getBundleManifestStore` | Return bundle manifest store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/bundle-manifest.ts#L160) |
 | `getDenoStdNodeBase` | Return Deno std node base. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/cdn.ts#L82) |
-| `getLockfileEntryForBuild` | Read a lockfile entry on a build or dev-server hot path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L1456) |
+| `getLockfileEntryForBuild` | Read a lockfile entry on a build or dev-server hot path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L1464) |
 | `getReactImportMap` | Return React import map. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/cdn.ts#L46) |
 | `hasBunRuntime` | Check whether Bun runtime is present. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/runtime-guards.ts#L45) |
 | `hasDenoRuntime` | Check whether Deno runtime is present. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/runtime-guards.ts#L31) |
@@ -146,7 +146,7 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `safeJsonParse` | Parse `value` as JSON without throwing; failures return `{ ok: false, error }` so callers handle them without a surrounding try/catch. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/json.ts#L16) |
 | `sanitizeUrlCredentials` | Strip credentials from URL-shaped strings so they can be safely emitted in free-form text (error messages, stacks, lifted `request_url` fields). Unlike `redactSensitive`, which is key-based, this scrubs secrets embedded in the *value* itself: | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/redact.ts#L733) |
 | `sanitizeUrlForSpan` | Return the URL form safe to attach to observability span attributes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/redact.ts#L857) |
-| `setLockfileEntryForBuild` | Persist a lockfile entry from a build or dev-server hot path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L1478) |
+| `setLockfileEntryForBuild` | Persist a lockfile entry from a build or dev-server hot path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L1486) |
 | `shortHash` | Create short hash. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L51) |
 | `simpleHash` | Create simple hash. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L34) |
 | `sleep` | Resolve after `ms` milliseconds; rejects with `abortSignal.reason` if aborted first. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/sleep.ts#L2) |
@@ -171,7 +171,7 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `GlobalWithDeno` | Public API contract for global with Deno. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/runtime-guards.ts#L2) |
 | `GlobalWithProcess` | Public API contract for global with process. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/runtime-guards.ts#L11) |
 | `HashBundleCode` | Source bundle content used for hash computation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L22) |
-| `LockfileManager` | Public API contract for lockfile manager. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L457) |
+| `LockfileManager` | Public API contract for lockfile manager. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L462) |
 | `LogEntry` | Structured log entry for JSON output. Fields are designed for easy Grafana/Loki filtering. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L32) |
 | `Logger` | Public API contract for logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L93) |
 | `RedactedValue` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/redact.ts#L230) |
