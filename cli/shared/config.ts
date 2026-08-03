@@ -357,8 +357,19 @@ function resolveConfigByMode(
   return resolveConfigBase(projectDir, env ?? getEnvironmentConfig(), interactive);
 }
 
+export interface ApiReadOptions {
+  /** Abort the in-flight HTTP request when this signal fires. */
+  signal?: AbortSignal;
+  /** Use `none` when a higher-level polling loop owns retry timing. */
+  retryPolicy?: "default" | "none";
+}
+
 export interface ApiClient {
-  get<T>(path: string, params?: Record<string, string>): Promise<T>;
+  get<T>(
+    path: string,
+    params?: Record<string, string>,
+    options?: ApiReadOptions,
+  ): Promise<T>;
   post<T>(path: string, body?: unknown): Promise<T>;
   put<T>(path: string, body?: unknown): Promise<T>;
   patch<T>(path: string, body?: unknown): Promise<T>;
@@ -398,9 +409,11 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
     method: string,
     url: string,
     body?: unknown,
+    signal?: AbortSignal,
   ): Promise<T> {
     const response = await fetch(url, {
       method,
+      ...(signal ? { signal } : {}),
       headers: {
         Authorization: `Bearer ${apiToken}`,
         "Content-Type": "application/json",
@@ -443,6 +456,7 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
     path: string,
     body?: unknown,
     params?: Record<string, string>,
+    options: ApiReadOptions = {},
   ): Promise<T> {
     const url = new URL(`${apiUrl}${path}`);
 
@@ -452,10 +466,11 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
 
     const urlStr = url.toString();
     let lastError: unknown;
+    const maxAttempts = options.retryPolicy === "none" ? 1 : API_MAX_RETRIES;
 
-    for (let attempt = 0; attempt < API_MAX_RETRIES; attempt++) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
-        return await requestOnce<T>(method, urlStr, body);
+        return await requestOnce<T>(method, urlStr, body, options.signal);
       } catch (error) {
         lastError = error;
 
@@ -465,7 +480,7 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
         // Non-idempotent: retry only on connection-refused (request never reached server).
         const shouldRetry = isIdempotent(method) ? isRetryableApiReadError(error) : isRefused;
 
-        if (!shouldRetry || attempt >= API_MAX_RETRIES - 1) {
+        if (!shouldRetry || attempt >= maxAttempts - 1) {
           throw error;
         }
 
@@ -481,8 +496,12 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
   }
 
   return {
-    get<T>(path: string, params?: Record<string, string>): Promise<T> {
-      return request<T>("GET", path, undefined, params);
+    get<T>(
+      path: string,
+      params?: Record<string, string>,
+      options?: ApiReadOptions,
+    ): Promise<T> {
+      return request<T>("GET", path, undefined, params, options);
     },
     post<T>(path: string, body?: unknown): Promise<T> {
       return request<T>("POST", path, body);

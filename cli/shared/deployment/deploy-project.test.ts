@@ -15,9 +15,14 @@ import {
   SOURCE_DIGEST_MISMATCH,
   VeryfrontError,
 } from "veryfront/errors";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { createApiClient } from "../config.ts";
 import { computeSourceDigest, writePushReceipt } from "../deployment-provenance.ts";
-import type { DeployControlPlane, DeployReleaseAssetManifestBody } from "./control-plane.ts";
+import {
+  createHttpDeployControlPlane,
+  type DeployControlPlane,
+  type DeployReleaseAssetManifestBody,
+} from "./control-plane.ts";
 import {
   assertProjectOwnership,
   createDeployProject,
@@ -1313,7 +1318,37 @@ describe("release asset manifest", () => {
     await time.tickAsync(50);
 
     await rejection;
-    assertEquals(reads, 4);
+    assertEquals(reads, 3);
+  });
+
+  it("reports missing when a manifest disappears after building", async () => {
+    using time = new FakeTime();
+    const responses = [{ state: "building" }, null];
+    let reads = 0;
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () => {
+        const response = responses[Math.min(reads, responses.length - 1)]!;
+        reads++;
+        return Promise.resolve(response);
+      },
+    });
+
+    const rejection = assertRejects(
+      () =>
+        waitForReleaseAssetManifest(controlPlane, PROJECT_SLUG, "release-1", {
+          ...polling,
+          timeoutMs: 250,
+        }),
+      Error,
+      "last state: missing",
+    );
+    await time.tickAsync(0);
+    await time.tickAsync(100);
+    await time.tickAsync(100);
+    await time.tickAsync(50);
+
+    await rejection;
+    assertEquals(reads, 3);
   });
 
   it("recovers from transient control-plane failures within the polling deadline", async () => {
@@ -1378,7 +1413,65 @@ describe("release asset manifest", () => {
     await time.tickAsync(50);
 
     await rejection;
-    assertEquals(reads, 4);
+    assertEquals(reads, 3);
+  });
+
+  it("enforces the polling deadline through the production HTTP adapter", async () => {
+    using time = new FakeTime();
+    let reads = 0;
+    const signals: AbortSignal[] = [];
+
+    await withMockFetch(
+      ((_input: string | URL | Request, init?: RequestInit) => {
+        reads++;
+        const signal = observeFetchRequestInit(init).signal;
+        if (!signal) return Promise.reject(new Error("asset manifest read has no deadline signal"));
+        signals.push(signal);
+
+        if (reads === 1) {
+          return Promise.resolve(
+            new Response("{}", { status: 503, statusText: "Service Unavailable" }),
+          );
+        }
+
+        return new Promise<Response>((_resolve, reject) => {
+          if (signal.aborted) {
+            reject(signal.reason);
+            return;
+          }
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      }) as typeof fetch,
+      async () => {
+        const config = {
+          apiUrl: "https://control.example.test/api",
+          apiToken: "<TOKEN>",
+          projectSlug: PROJECT_SLUG,
+        };
+        const controlPlane = createHttpDeployControlPlane(config, createApiClient(config));
+        const rejection = assertRejects(
+          () =>
+            waitForReleaseAssetManifest(controlPlane, PROJECT_SLUG, "release-1", {
+              ...polling,
+              timeoutMs: 250,
+            }),
+          Error,
+          "last control-plane failure: HTTP 503",
+        );
+
+        await time.tickAsync(0);
+        assertEquals(reads, 1);
+        await time.tickAsync(100);
+        assertEquals(reads, 2);
+        await time.tickAsync(150);
+
+        await rejection;
+        assertEquals(reads, 2);
+        assertEquals(signals.length, 2);
+        assertEquals(signals[0]?.aborted, false);
+        assertEquals(signals[1]?.aborted, true);
+      },
+    );
   });
 
   it("does not retry authentication, validation, or cancellation failures", async () => {

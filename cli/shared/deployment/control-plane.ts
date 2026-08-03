@@ -50,6 +50,10 @@ export interface DeployReleaseFile {
 
 export type DeployReleaseAssetManifestBody = object | string | number | boolean;
 
+export interface DeployReleaseAssetManifestReadOptions {
+  signal?: AbortSignal;
+}
+
 export interface DeployControlPlane {
   readonly controlPlane: string;
   getProject(reference: string): Promise<DeployProjectRecord>;
@@ -63,10 +67,14 @@ export interface DeployControlPlane {
     reference: string,
     releaseId: string,
   ): AsyncIterable<DeployReleaseFile>;
-  /** Returns null only while the release asset manifest does not exist. */
+  /**
+   * Performs one manifest read and returns null only while it does not exist.
+   * The caller owns polling and retry timing.
+   */
   getReleaseAssetManifest(
     projectSlug: string,
     releaseId: string,
+    options?: DeployReleaseAssetManifestReadOptions,
   ): Promise<DeployReleaseAssetManifestBody | null>;
   createDeployment(
     reference: string,
@@ -287,11 +295,13 @@ export function createHttpDeployControlPlane(
       } while (cursor);
     },
 
-    async getReleaseAssetManifest(projectSlug, releaseId) {
+    async getReleaseAssetManifest(projectSlug, releaseId, options) {
       let response: unknown;
       try {
         response = await client.get<unknown>(
           `/projects/${projectSlug}/releases/${releaseId}/asset-manifest`,
+          undefined,
+          { retryPolicy: "none", signal: options?.signal },
         );
       } catch (error) {
         if (getErrorStatus(error) === 404) return null;

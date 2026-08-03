@@ -617,6 +617,47 @@ function assertReadyManifestCoversPageRoutes(
 /** Upper bound for a plausible manifest state value from the control plane. */
 const MAX_MANIFEST_STATE_LENGTH = 64;
 
+function releaseAssetPollingTimeoutError(
+  timeoutMs: number,
+  lastState: string,
+  lastTransientFailure: string | null,
+): Error {
+  const timeoutSeconds = Math.ceil(timeoutMs / 1000);
+  return new Error(
+    `Release assets were not ready within ${timeoutSeconds}s (last state: ${lastState}${
+      lastTransientFailure === null ? "" : `; last control-plane failure: ${lastTransientFailure}`
+    }). Check the release asset build and run deploy again.`,
+  );
+}
+
+async function readReleaseAssetManifestBeforeDeadline(options: {
+  controlPlane: DeployControlPlane;
+  projectSlug: string;
+  releaseId: string;
+  remainingMs: number;
+  timeoutError: Error;
+}): Promise<Awaited<ReturnType<DeployControlPlane["getReleaseAssetManifest"]>>> {
+  const abortController = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      reject(options.timeoutError);
+      abortController.abort();
+    }, options.remainingMs);
+  });
+
+  try {
+    return await Promise.race([
+      options.controlPlane.getReleaseAssetManifest(options.projectSlug, options.releaseId, {
+        signal: abortController.signal,
+      }),
+      deadline,
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
 export async function waitForReleaseAssetManifest(
   controlPlane: DeployControlPlane,
   projectSlug: string,
@@ -635,10 +676,25 @@ export async function waitForReleaseAssetManifest(
   let lastTransientFailure: string | null = null;
 
   for (;;) {
+    const remainingMs = deadline - Date.now();
+    const timeoutError = releaseAssetPollingTimeoutError(
+      timeoutMs,
+      lastState,
+      lastTransientFailure,
+    );
+    if (remainingMs <= 0) throw timeoutError;
+
     let raw: Awaited<ReturnType<DeployControlPlane["getReleaseAssetManifest"]>> = null;
     try {
-      raw = await controlPlane.getReleaseAssetManifest(projectSlug, releaseId);
+      raw = await readReleaseAssetManifestBeforeDeadline({
+        controlPlane,
+        projectSlug,
+        releaseId,
+        remainingMs,
+        timeoutError,
+      });
       lastTransientFailure = null;
+      if (raw === null) lastState = "missing";
     } catch (error) {
       if (!isRetryableApiReadError(error)) throw error;
       const status = getErrorStatus(error);
@@ -683,19 +739,7 @@ export async function waitForReleaseAssetManifest(
       }
     }
 
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) {
-      const timeoutSeconds = Math.ceil(timeoutMs / 1000);
-      throw new Error(
-        `Release assets were not ready within ${timeoutSeconds}s (last state: ${lastState}${
-          lastTransientFailure === null
-            ? ""
-            : `; last control-plane failure: ${lastTransientFailure}`
-        }). Check the release asset build and run deploy again.`,
-      );
-    }
-
-    await wait(Math.min(pollIntervalMs, remainingMs));
+    await wait(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())));
   }
 }
 
