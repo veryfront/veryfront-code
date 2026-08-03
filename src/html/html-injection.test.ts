@@ -507,5 +507,57 @@ describe("html/html-injection", () => {
         true,
       );
     });
+
+    it("does not treat preload or data attributes as an applied project stylesheet", () => {
+      for (
+        const lookalike of [
+          '<link rel="preload" href="/_vf/css/decoy.css">',
+          '<link rel="preload" id="vf-project-css" href="/decoy.css">',
+          '<link rel="stylesheet" data-href="/_vf/css/decoy.css" href="/decoy.css">',
+          '<style data-id="vf-project-css">body { color: red; }</style>',
+        ]
+      ) {
+        const html = injectHTMLContent(
+          `<!DOCTYPE html><html><head>${lookalike}</head><body>{{ content }}</body></html>`,
+          "<p>content</p>",
+          minMeta,
+          {
+            mode: "production",
+            environment: "production",
+            slug: "test",
+            projectStylesheetHref: "/_vf/css/required.css",
+          },
+        );
+
+        assertEquals(
+          html.includes('<link rel="stylesheet" href="/_vf/css/required.css">'),
+          true,
+          lookalike,
+        );
+      }
+    });
+
+    it("recognizes mixed-case stylesheet rel tokens and genuine project style elements", () => {
+      for (
+        const existingStylesheet of [
+          '<link rel="preload StyleSheet" href="/_vf/css/existing.css">',
+          '<style id = "vf-project-css">body { color: red; }</style>',
+        ]
+      ) {
+        const html = injectHTMLContent(
+          `<!DOCTYPE html><html><head>${existingStylesheet}</head><body>{{ content }}</body></html>`,
+          "<p>content</p>",
+          minMeta,
+          {
+            mode: "production",
+            environment: "production",
+            slug: "test",
+            projectStylesheetHref: "/_vf/css/duplicate.css",
+          },
+        );
+
+        assertEquals(html.includes("/_vf/css/duplicate.css"), false, existingStylesheet);
+      }
+    });
   });
 });

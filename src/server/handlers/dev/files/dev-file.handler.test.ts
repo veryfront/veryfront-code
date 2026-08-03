@@ -19,8 +19,21 @@ import {
   DEPENDENCY_PINS_HEADER,
   SNAPSHOT_CONFLICT_BODY,
 } from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
+import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 const originalPinningFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+
+function createLoopbackRequest(input: string | URL, init?: RequestInit): Request {
+  const headers = new Headers(init?.headers);
+  headers.set("host", new URL(input).host);
+  const request = new Request(input, { ...init, headers });
+  recordRequestPeerFromTransport(request, {
+    runtime: "deno",
+    transport: "tcp",
+    hostname: "127.0.0.1",
+  });
+  return request;
+}
 
 function getImportSpecifiers(source: string): string[] {
   return [...source.matchAll(/\bfrom\s+["']([^"']+)["']/g)]
@@ -71,7 +84,7 @@ describe("server/handlers/dev/files/dev-file.handler", () => {
     );
 
     const encodedPath = base64urlEncode("app/page.tsx");
-    const req = new Request(`http://localhost/_veryfront/fs/${encodedPath}.js`);
+    const req = createLoopbackRequest(`http://localhost/_veryfront/fs/${encodedPath}.js`);
     const ctx = makeCtx({
       adapter,
       isLocalProject: true,
@@ -101,7 +114,7 @@ describe("server/handlers/dev/files/dev-file.handler", () => {
     );
 
     const encodedPath = base64urlEncode("app/page.tsx");
-    const req = new Request(`http://localhost/_veryfront/fs/${encodedPath}.js`);
+    const req = createLoopbackRequest(`http://localhost/_veryfront/fs/${encodedPath}.js`);
     const ctx = makeCtx({
       adapter,
       isLocalProject: true,
@@ -133,7 +146,7 @@ describe("server/handlers/dev/files/dev-file.handler", () => {
     );
 
     const encodedPath = base64urlEncode("app/page.tsx");
-    const req = new Request(`http://localhost/_veryfront/fs/${encodedPath}.js`);
+    const req = createLoopbackRequest(`http://localhost/_veryfront/fs/${encodedPath}.js`);
     const ctx = makeCtx({
       adapter,
       isLocalProject: true,
@@ -203,7 +216,7 @@ describe("server/handlers/dev/files/dev-file.handler", () => {
       );
       const encodedPath = base64urlEncode("app/page.tsx");
       const result = await handler.handle(
-        new Request(
+        createLoopbackRequest(
           `http://localhost/_veryfront/fs/${encodedPath}.js?pins=${
             encodeURIComponent(snapshotA.cacheKey)
           }`,
@@ -268,7 +281,7 @@ describe("server/handlers/dev/files/dev-file.handler", () => {
         ]
       ) {
         const result = await handler.handle(
-          new Request(`http://localhost/_veryfront/fs/${encodedPath}.js${query}`, {
+          createLoopbackRequest(`http://localhost/_veryfront/fs/${encodedPath}.js${query}`, {
             headers: { origin: "https://example.test" },
           }),
           ctx,
@@ -308,7 +321,7 @@ describe("server/handlers/dev/files/dev-file.handler", () => {
     );
 
     const encodedPath = base64urlEncode("app/page.tsx");
-    const req = new Request(`http://localhost/_veryfront/fs/${encodedPath}.js`);
+    const req = createLoopbackRequest(`http://localhost/_veryfront/fs/${encodedPath}.js`);
     const ctx = makeCtx({
       adapter,
       isLocalProject: false,
@@ -327,7 +340,7 @@ describe("server/handlers/dev/files/dev-file.handler", () => {
   it("continues for non-local production requests", async () => {
     const handler = new DevFileHandler();
     const encodedPath = base64urlEncode("app/page.tsx");
-    const req = new Request(`http://localhost/_veryfront/fs/${encodedPath}.js`);
+    const req = createLoopbackRequest(`http://localhost/_veryfront/fs/${encodedPath}.js`);
     const ctx = makeCtx({
       isLocalProject: false,
       requestContext: { mode: "production" } as HandlerContext["requestContext"],
@@ -365,7 +378,7 @@ describe("server/handlers/dev/files/dev-file.handler operational failures", () =
 
   function devFileRequest(): Request {
     const encodedPath = base64urlEncode("app/page.tsx");
-    return new Request(`http://localhost/_veryfront/fs/${encodedPath}.js`);
+    return createLoopbackRequest(`http://localhost/_veryfront/fs/${encodedPath}.js`);
   }
 
   it("returns the existing 404 for canonical stat absence before snapshot or bundling", async () => {
@@ -493,7 +506,7 @@ describe("server/handlers/dev/files/dev-file.handler operational failures", () =
       const encodedPath = base64urlEncode("app/page.tsx");
 
       const result = await handler.handle(
-        new Request(`http://localhost/_veryfront/fs/${encodedPath}.js`),
+        createLoopbackRequest(`http://localhost/_veryfront/fs/${encodedPath}.js`),
         ctx,
       );
 
@@ -523,7 +536,7 @@ describe("server/handlers/dev/files/dev-file.handler operational failures", () =
     const encodedPath = base64urlEncode("app/page.tsx");
 
     const result = await handler.handle(
-      new Request(`http://localhost/_veryfront/fs/${encodedPath}.js`),
+      createLoopbackRequest(`http://localhost/_veryfront/fs/${encodedPath}.js`),
       ctx,
     );
 

@@ -70,6 +70,37 @@ describe("local control request admission", () => {
     }
   });
 
+  it("admits direct and same-origin fetches but rejects sibling or cross-site browser work", () => {
+    for (const fetchSite of [undefined, "none", "same-origin"] as const) {
+      const headers = fetchSite === undefined ? {} : { "sec-fetch-site": fetchSite };
+      assertEquals(
+        isTrustedLocalControlRequest(requestFromPeer("127.0.0.1", headers), {
+          proxyTopologyTrusted: false,
+        }),
+        true,
+        String(fetchSite),
+      );
+    }
+
+    for (
+      const fetchSite of [
+        "same-site",
+        "cross-site",
+        "invalid",
+        "same-origin".repeat(100),
+      ]
+    ) {
+      assertEquals(
+        isTrustedLocalControlRequest(
+          requestFromPeer("127.0.0.1", { "sec-fetch-site": fetchSite }),
+          { proxyTopologyTrusted: false },
+        ),
+        false,
+        fetchSite,
+      );
+    }
+  });
+
   it("allows only exact canonical local-control authorities", () => {
     for (
       const url of [
@@ -102,6 +133,11 @@ describe("local control request admission", () => {
         "http://lvh.me.attacker.example:3000/_dev",
         "http://veryfront.dev:3000/_dev",
         "http://project.veryfront.dev:3000/_dev",
+        "http://production.lvh.me:3000/_dev",
+        "http://project.production.lvh.me:3000/_dev",
+        "http://project.staging.lvh.me:3000/_dev",
+        "http://example.com.prod.lvh.me:3000/_dev",
+        "http://project.unknown.lvh.me:3000/_dev",
         "http://production.veryfront.me:3000/_dev",
         "http://project.staging.veryfront.me:3000/_dev",
         "http://project.unknown.veryfront.me:3000/_dev",

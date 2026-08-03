@@ -23,6 +23,10 @@ import {
   resolveSnapshotForRequest,
   snapshotConflictResponse,
 } from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
+import {
+  createLocalControlAccessDeniedResponse,
+  isTrustedLocalControlRequest,
+} from "#veryfront/security/http/local-control-request.ts";
 
 type DevFileBundler = (
   absPath: string,
@@ -53,6 +57,11 @@ export class DevFileHandler extends BaseHandler {
 
     if (req.method !== "GET" || !pathname.startsWith("/_veryfront/fs/")) {
       return this.continue();
+    }
+    if (!isTrustedLocalControlRequest(req)) {
+      return this.respond(
+        createLocalControlAccessDeniedResponse(req, "Development file request rejected"),
+      );
     }
 
     const fsAdapter = ctx.adapter.fs;

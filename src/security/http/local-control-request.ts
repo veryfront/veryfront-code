@@ -29,7 +29,10 @@ const PROXY_FORWARDING_HEADERS = Object.freeze(
 );
 const MAX_LOCAL_CONTROL_URL_CHARACTERS = 8 * 1024;
 const MAX_LOCAL_CONTROL_AUTHORITY_CHARACTERS = 261;
+const MAX_LOCAL_CONTROL_FETCH_SITE_CHARACTERS = 32;
 const DNS_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const LOCAL_CONTROL_ACCESS_DENIED_MESSAGE =
+  "Local control access requires a direct loopback connection and a trusted local-development host";
 
 export interface LocalControlRequestOptions {
   /** Explicit trusted-proxy topology state, when the caller already resolved it. */
@@ -54,11 +57,52 @@ export function cancelRejectedLocalControlRequestBody(
   }
 }
 
+/** Build the uniform fail-closed response used by privileged local controls. */
+export function createLocalControlAccessDeniedResponse(
+  request: Request,
+  detail = "Local control request rejected",
+): Response {
+  cancelRejectedLocalControlRequestBody(request, detail);
+  return new Response(
+    request.method === "HEAD" ? null : LOCAL_CONTROL_ACCESS_DENIED_MESSAGE,
+    {
+      status: 403,
+      headers: {
+        "Cache-Control": "no-store",
+        "Content-Type": "text/plain; charset=utf-8",
+      },
+    },
+  );
+}
+
 function isCanonicalDnsHostname(hostname: string): boolean {
   return hostname.length > 0 &&
     hostname.length <= 253 &&
     hostname === hostname.toLowerCase() &&
     hostname.split(".").every((label) => DNS_LABEL_PATTERN.test(label));
+}
+
+function hasTrustedNamedLocalControlShape(hostname: string): boolean {
+  const labels = hostname.split(".");
+  const registrableDomain = labels.slice(-2).join(".");
+  if (registrableDomain !== "lvh.me" && registrableDomain !== "veryfront.me") {
+    return false;
+  }
+  if (labels.length === 2) return true;
+  if (labels.length === 3) {
+    return labels[0] !== "production" && labels[0] !== "staging";
+  }
+  return labels.length === 4 && labels[1] === "preview";
+}
+
+function hasTrustedFetchSite(request: Request): boolean {
+  const fetchSite = request.headers.get("sec-fetch-site");
+  if (fetchSite === null) return true;
+
+  // `same-site` is deliberately rejected. Sibling local origins can run
+  // untrusted project code and must not drive privileged host controls.
+  return fetchSite.length <= MAX_LOCAL_CONTROL_FETCH_SITE_CHARACTERS &&
+    (fetchSite === "none" || fetchSite === "same-origin");
 }
 
 /**
@@ -70,7 +114,9 @@ function isCanonicalDnsHostname(hostname: string): boolean {
  * access because `isTrustedLocalControlRequest` still requires an
  * authenticated loopback transport peer and no proxy hop. Other third-party
  * wildcard DNS and development test domains are not control authorities even
- * when normal application routing accepts them.
+ * when normal application routing accepts them. Named domains admit only the
+ * bare host, one project label, or one project below `preview`; production,
+ * staging, custom-domain simulation, and unknown namespaces stay denied.
  */
 export function isTrustedLocalControlHostname(hostname: string): boolean {
   const address = hostname.startsWith("[") && hostname.endsWith("]")
@@ -79,15 +125,7 @@ export function isTrustedLocalControlHostname(hostname: string): boolean {
   if (hostname === "localhost" || isLoopbackAddress(address)) return true;
   if (!isCanonicalDnsHostname(hostname)) return false;
   if (hostname.endsWith(".localhost")) return true;
-  if (hostname === "lvh.me" || hostname.endsWith(".lvh.me")) return true;
-  if (hostname === "veryfront.me") return true;
-
-  const labels = hostname.split(".");
-  if (labels.at(-2) !== "veryfront" || labels.at(-1) !== "me") return false;
-  if (labels.length === 3) {
-    return labels[0] !== "production" && labels[0] !== "staging";
-  }
-  return labels.length === 4 && labels[1] === "preview";
+  return hasTrustedNamedLocalControlShape(hostname);
 }
 
 /** Require an exact, canonical URL and raw Host authority pair. */
@@ -113,7 +151,7 @@ export function hasTrustedLocalControlAuthority(request: Request): boolean {
     host === url.host;
 }
 
-/** Require a native loopback peer and reject every declared proxy path. */
+/** Require a native loopback peer and reject proxy or cross-origin browser paths. */
 export function isTrustedLocalControlRequest(
   request: Request,
   options: LocalControlRequestOptions = {},
@@ -121,6 +159,7 @@ export function isTrustedLocalControlRequest(
   const proxyTopologyTrusted = options.proxyTopologyTrusted ?? isProxyTopologyTrusted();
   return !proxyTopologyTrusted &&
     !hasProxyForwardingHeaders(request) &&
+    hasTrustedFetchSite(request) &&
     isRequestFromLoopbackPeer(request) &&
     hasTrustedLocalControlAuthority(request);
 }

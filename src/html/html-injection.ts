@@ -31,18 +31,22 @@ function escapeRegExpLiteral(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Presence checks are scoped to real stylesheet markup: a token-bounded `id`
-// attribute on a <link>/<style> element and stylesheet hrefs on <link>
-// elements. Bare substrings such as `data-id="..."`, `data-href="..."`, or a
-// CSS URL in ordinary text must not suppress the required injection. The
-// configured ids are regex-escaped before interpolation.
+// Presence checks are scoped to real stylesheet markup. Bare substrings such
+// as `data-id="..."`, `data-href="..."`, non-stylesheet links, or a CSS URL
+// in ordinary text must not suppress the required injection. The configured
+// ids are regex-escaped before interpolation.
 const PROJECT_STYLESHEET_ID_PATTERNS = PROJECT_STYLESHEET_IDS.map((id) =>
-  new RegExp(`<(?:link|style)\\b[^>]*\\sid=["']${escapeRegExpLiteral(id)}["']`, "i")
+  new RegExp(
+    `(?:^|\\s)id\\s*=\\s*(["'])${escapeRegExpLiteral(id)}\\1(?=\\s|/?>|$)`,
+    "i",
+  )
 );
-const PREVIEW_PROJECT_STYLESHEET_PATTERN =
-  /<link\b[^>]*\shref=["'][^"']*\/_vf_styles\/styles\.css(?:\?[^"']*)?["']/i;
-const PRODUCTION_PROJECT_STYLESHEET_PATTERN =
-  /<link\b[^>]*\shref=["'][^"']*\/_vf\/css\/[^"']+\.css["']/i;
+const STYLESHEET_ELEMENT_PATTERN = /<(?:link|style)\b[^>]*>/gi;
+const STYLE_ELEMENT_PATTERN = /^<style\b/i;
+const LINK_REL_ATTRIBUTE_PATTERN = /(?:^|\s)rel\s*=\s*(["'])([^"']*)\1(?=\s|\/?>|$)/i;
+const LINK_HREF_ATTRIBUTE_PATTERN = /(?:^|\s)href\s*=\s*(["'])([^"']*)\1(?=\s|\/?>|$)/i;
+const PREVIEW_PROJECT_STYLESHEET_PATTERN = /\/_vf_styles\/styles\.css(?:\?[^"']*)?$/i;
+const PRODUCTION_PROJECT_STYLESHEET_PATTERN = /\/_vf\/css\/[^"']+\.css$/i;
 
 export interface InjectHTMLContentOptions {
   mode: string;
@@ -98,9 +102,31 @@ function toProjectRelativePath(absolutePath: string, projectDir?: string): strin
 }
 
 function hasProjectStylesheet(html: string): boolean {
-  return PROJECT_STYLESHEET_ID_PATTERNS.some((pattern) => pattern.test(html)) ||
-    PREVIEW_PROJECT_STYLESHEET_PATTERN.test(html) ||
-    PRODUCTION_PROJECT_STYLESHEET_PATTERN.test(html);
+  for (const match of html.matchAll(STYLESHEET_ELEMENT_PATTERN)) {
+    const element = match[0];
+    const hasProjectId = PROJECT_STYLESHEET_ID_PATTERNS.some((pattern) => pattern.test(element));
+    if (STYLE_ELEMENT_PATTERN.test(element)) {
+      if (hasProjectId) return true;
+      continue;
+    }
+
+    const rel = LINK_REL_ATTRIBUTE_PATTERN.exec(element)?.[2];
+    if (!rel?.split(/\s+/).some((token) => token.toLowerCase() === "stylesheet")) {
+      continue;
+    }
+    if (hasProjectId) return true;
+
+    const href = LINK_HREF_ATTRIBUTE_PATTERN.exec(element)?.[2];
+    if (
+      href &&
+      (PREVIEW_PROJECT_STYLESHEET_PATTERN.test(href) ||
+        PRODUCTION_PROJECT_STYLESHEET_PATTERN.test(href))
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export function injectHTMLContent(

@@ -20,7 +20,6 @@ const dashboardSessionToken = base64urlEncodeBytes(tokenBytes);
 
 const MAX_DASHBOARD_REQUEST_URL_CHARACTERS = 8 * 1024;
 const MAX_DASHBOARD_COOKIE_HEADER_CHARACTERS = 8 * 1024;
-const MAX_FETCH_SITE_CHARACTERS = 32;
 
 function getDashboardListenerPort(requestUrl: URL): number | null {
   const defaultPort = requestUrl.protocol === "http:"
@@ -72,26 +71,6 @@ export function isTrustedDashboardRequest(req: Request): boolean {
     requestUrl.username !== "" ||
     requestUrl.password !== "" ||
     getDashboardListenerPort(requestUrl) === null
-  ) {
-    return false;
-  }
-
-  // Browser-initiated cross-site requests cannot read a CORS-protected
-  // response, but they can still make the local dev server perform expensive
-  // work. Only direct navigation and same-origin dashboard subrequests are
-  // admitted when Fetch Metadata is present.
-  //
-  // Deliberate: `sec-fetch-site: same-site` is rejected too. A link from a
-  // rendered project site (e.g. `project.lvh.me:3000`) to `lvh.me:3000/_dev`
-  // is same-site but cross-origin and receives this 403 by design — sibling
-  // local origins run untrusted project code and must not be able to drive
-  // the privileged dashboard. Users reach the dashboard via direct
-  // navigation (address bar or bookmark) instead; this is not a lockout bug.
-  const fetchSite = req.headers.get("sec-fetch-site");
-  if (
-    fetchSite !== null &&
-    (fetchSite.length > MAX_FETCH_SITE_CHARACTERS ||
-      (fetchSite !== "none" && fetchSite !== "same-origin"))
   ) {
     return false;
   }
