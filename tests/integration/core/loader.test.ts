@@ -1,7 +1,7 @@
 // Disable LRU intervals during testing to prevent resource leaks
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
-import { assertEquals, assertRejects } from "#veryfront/testing/assert";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { getAdapter } from "#veryfront/platform";
 import { clearConfigCache, getConfig, type VeryfrontConfig } from "#veryfront/config";
@@ -140,7 +140,8 @@ describe("config/loader", () => {
       const error = await assertRejects(
         () => getConfig(context.projectDir, adapter),
         VeryfrontError,
-      ) as VeryfrontError;
+      );
+      assert(error instanceof VeryfrontError);
       assertEquals(error.slug, "config-validation-failed");
       assertEquals(error.context, {
         field: "<root>",

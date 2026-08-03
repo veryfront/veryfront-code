@@ -4,18 +4,18 @@
  */
 
 import "../../_helpers/contract-init.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
+import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { clearConfigCache, getConfig } from "#veryfront/config";
 import { VeryfrontError } from "#veryfront/errors";
-import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { createMockAdapter, type MockRuntimeAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { join } from "#veryfront/compat/path";
 import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat";
 
 type SetupResult = {
   projectDir: string;
-  adapter: any;
+  adapter: MockRuntimeAdapter;
   cleanup: () => Promise<void>;
 };
 
@@ -44,7 +44,7 @@ async function setupConfigTest(
 
 async function withConfigTest(
   configs: { content: string; filename?: string }[] | string,
-  fn: (ctx: { projectDir: string; adapter: any }) => Promise<void>,
+  fn: (ctx: { projectDir: string; adapter: MockRuntimeAdapter }) => Promise<void>,
   options?: { useAdapter?: boolean },
 ): Promise<void> {
   const { projectDir, adapter, cleanup } = await setupConfigTest(configs, options);
@@ -73,18 +73,19 @@ async function assertConfigValidationFailure(
   expectedIncludes: readonly string[],
 ): Promise<void> {
   const error = await assertRejects(operation);
-  if (!(error instanceof VeryfrontError)) {
-    throw new TypeError(`Expected a VeryfrontError, got ${error}`);
-  }
+  assert(error instanceof VeryfrontError, "Expected config validation to use VeryfrontError");
 
   assertEquals(error.slug, "config-validation-failed");
   assertStringIncludes(error.message, `Invalid veryfront.config at ${field}:`);
 
-  const context = error.context as { field?: unknown; expected?: unknown } | undefined;
-  assertEquals(context?.field, field);
-  assertEquals(typeof context?.expected, "string");
+  assert(typeof error.context === "object" && error.context !== null);
+  const contextField = Reflect.get(error.context, "field");
+  const contextExpected = Reflect.get(error.context, "expected");
+  assertEquals(contextField, field);
+  assertEquals(typeof contextExpected, "string");
+  assert(typeof contextExpected === "string");
   for (const expected of expectedIncludes) {
-    assertStringIncludes(context?.expected as string, expected);
+    assertStringIncludes(contextExpected, expected);
   }
 }
 

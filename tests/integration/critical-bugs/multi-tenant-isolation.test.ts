@@ -81,7 +81,7 @@ describe(
             collectHead({ title: `${project} - ${page}` });
             collectHead({ metas: [{ name: "description", content: `${project} description` }] });
             // Both requests are now mid-flight holding their own head state. A
-            // collector that were process-global instead of request-scoped
+            // collector that was process-global instead of request-scoped
             // would let the write below land in the other request's head.
             await midRequest();
             collectHead({ metas: [{ property: "og:title", content: `${project} OG Title` }] });

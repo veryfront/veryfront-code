@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "#veryfront/testing/assert";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
 import { remove, writeTextFile } from "#veryfront/testing/deno-compat";
@@ -52,7 +52,8 @@ describe("Config validation", () => {
       const error = await assertRejects(
         () => getConfig(context.projectDir, adapter),
         VeryfrontError,
-      ) as VeryfrontError;
+      );
+      assert(error instanceof VeryfrontError);
       assertEquals(error.slug, "config-validation-failed");
       assertEquals(error.context, {
         field: "<root>",
