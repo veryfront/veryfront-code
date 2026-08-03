@@ -10,6 +10,10 @@ function splitAllowedOrigins(value: string): string[] {
   return value.split(",").map((origin) => origin.trim());
 }
 
+function buildVeryfrontMcpUrl(apiUrl: string): string {
+  return `${apiUrl.replace(/\/+$/, "")}/mcp`;
+}
+
 export type AgentServiceRegistrationMode = "auto" | "enabled" | "disabled";
 
 /** Configuration used by agent service. */
@@ -102,7 +106,7 @@ const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
     OTEL_EXPORTER_OTLP_ENDPOINT: v.string().optional(),
   }).transform((env) => ({
     VERYFRONT_API_URL: env.VERYFRONT_API_URL,
-    VERYFRONT_MCP_URL: `${env.VERYFRONT_API_URL}/mcp`,
+    VERYFRONT_MCP_URL: buildVeryfrontMcpUrl(env.VERYFRONT_API_URL),
     VERYFRONT_API_TOKEN: env.VERYFRONT_API_TOKEN,
     VERYFRONT_PROJECT_ID: env.VERYFRONT_PROJECT_ID,
     VERYFRONT_AGENT_SERVICE_URL: env.VERYFRONT_AGENT_SERVICE_URL,

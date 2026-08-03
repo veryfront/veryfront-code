@@ -20,6 +20,7 @@ import {
 } from "./constants.ts";
 import { buildReactUrl } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { resolveVeryfrontSourcePath } from "./path-resolver.ts";
+import { fnv1aHash, hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 
 describe("reactReExportToEsmUrl", () => {
   const reactPath = (name: string) => join(FRAMEWORK_ROOT, "react", name);
@@ -129,8 +130,24 @@ describe("transformFrameworkCode depth-limit fallback", {
     const keyA = buildFrameworkTransformCacheKey(sourcePath, "19.2.4", projectA, source);
     const keyB = buildFrameworkTransformCacheKey(sourcePath, "19.2.4", projectB, source);
 
+    const importMapKeyA = buildFrameworkTransformCacheKey(
+      sourcePath,
+      "19.2.4",
+      projectA,
+      source,
+      "import-map-v1",
+    );
+    const importMapKeyB = buildFrameworkTransformCacheKey(
+      sourcePath,
+      "19.2.4",
+      projectA,
+      source,
+      "import-map-v2",
+    );
+
     try {
       assertEquals(keyA === keyB, false);
+      assertEquals(importMapKeyA === importMapKeyB, false);
 
       await transformFrameworkCode(
         source,
@@ -150,6 +167,66 @@ describe("transformFrameworkCode depth-limit fallback", {
       frameworkFileCache.delete(keyB);
       await Deno.remove(tmp, { recursive: true });
     }
+  });
+
+  it("preserves framed cache-key bytes under inherited Array.prototype.toJSON", () => {
+    const identifier = '/framework/quoted"module.ts';
+    const reactVersion = "19.2.4";
+    const projectDir = "/projects/line\nbreak";
+    const source = 'export const marker = "quoted";\n';
+    const importMapFingerprint = "import-map-v2";
+    const contentFingerprint = `${source.length}:${hashCodeHex(source)}:${fnv1aHash(source)}`;
+    const expectedLegacy = JSON.stringify([
+      projectDir,
+      reactVersion,
+      identifier,
+      contentFingerprint,
+    ]);
+    const expectedScoped = JSON.stringify([
+      projectDir,
+      reactVersion,
+      importMapFingerprint,
+      identifier,
+      contentFingerprint,
+    ]);
+    const originalToJson = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+    let poisonedLegacy: string | undefined;
+    let poisonedScoped: string | undefined;
+    let distinctScoped: string | undefined;
+
+    try {
+      Object.defineProperty(Array.prototype, "toJSON", {
+        configurable: true,
+        value: () => [],
+      });
+      poisonedLegacy = buildFrameworkTransformCacheKey(
+        identifier,
+        reactVersion,
+        projectDir,
+        source,
+      );
+      poisonedScoped = buildFrameworkTransformCacheKey(
+        identifier,
+        reactVersion,
+        projectDir,
+        source,
+        importMapFingerprint,
+      );
+      distinctScoped = buildFrameworkTransformCacheKey(
+        identifier,
+        reactVersion,
+        projectDir,
+        source,
+        "import-map-v3",
+      );
+    } finally {
+      if (originalToJson) Object.defineProperty(Array.prototype, "toJSON", originalToJson);
+      else Reflect.deleteProperty(Array.prototype, "toJSON");
+    }
+
+    assertEquals(poisonedLegacy, expectedLegacy);
+    assertEquals(poisonedScoped, expectedScoped);
+    assertEquals(poisonedScoped === distinctScoped, false);
   });
 
   it("coalesces concurrent transforms instead of reporting a false cycle", async () => {

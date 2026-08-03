@@ -1,4 +1,4 @@
-import { REDACTED, redactForSerialization } from "#veryfront/utils/logger/redact.ts";
+import { stringifyRedactedAttributeValue } from "#veryfront/utils/logger/serialization.ts";
 import { MAX_SPAN_NAME_LENGTH } from "#veryfront/utils/constants/index.ts";
 import {
   MAX_OBSERVABILITY_NAME_LENGTH,
@@ -158,13 +158,7 @@ function toAttributeValue(
   }
 
   if (typeof value === "object") {
-    try {
-      const redacted = redactForSerialization(value);
-      if (typeof redacted === "string") return redacted;
-      return JSON.stringify(redacted) ?? REDACTED;
-    } catch (_) {
-      return REDACTED;
-    }
+    return stringifyRedactedAttributeValue(value);
   }
 
   return value;

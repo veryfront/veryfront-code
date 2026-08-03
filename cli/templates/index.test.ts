@@ -412,7 +412,12 @@ describe("cli/templates", () => {
       "./integrations/_base/files/lib/token-store.ts",
       import.meta.url,
     );
+    const tokenStoreExamplesPath = new URL(
+      "./integrations/_base/files/lib/token-store-examples.ts",
+      import.meta.url,
+    );
     const tokenStore = await Deno.readTextFile(tokenStorePath);
+    const tokenStoreExamples = await Deno.readTextFile(tokenStoreExamplesPath);
 
     assertEquals(
       tokenStore.includes("createDefaultTokenStore"),
@@ -420,9 +425,19 @@ describe("cli/templates", () => {
       "token-store.ts should centralize default store selection",
     );
     assertEquals(
-      tokenStore.includes("OAuth token storage is not configured for production"),
+      tokenStore.includes("only when NODE_ENV is explicitly development or test"),
       true,
-      "token-store.ts should fail closed for production memory storage",
+      "token-store.ts should fail closed outside explicit development and test modes",
+    );
+    assertEquals(
+      tokenStore.includes("The built-in memory store is for development and test."),
+      true,
+      "token-store.ts header should match the development/test memory-store guard",
+    );
+    assertEquals(
+      tokenStoreExamples.includes("Development/test in-memory backend."),
+      true,
+      "token-store-examples.ts should match the development/test memory-store guard",
     );
     assertEquals(
       tokenStore.includes("getDefaultTokenStore"),
@@ -453,6 +468,52 @@ describe("cli/templates", () => {
       tokenStore.includes("export const tokenStore: TokenStore = {"),
       true,
       "token-store.ts should expose a lazy proxy that is safe to import in production",
+    );
+  });
+
+  it("generated OAuth refresh helpers use the shared lock and CAS protocol", async () => {
+    const integrationTemplates = new URL("./integrations/", import.meta.url);
+    const offenders: string[] = [];
+    let helperCount = 0;
+
+    for (const file of await collectTemplateTsFiles(integrationTemplates)) {
+      const source = await Deno.readTextFile(file);
+      if (!source.includes("export async function getValidToken(")) continue;
+
+      helperCount++;
+      if (
+        !source.includes("getRefreshableAccessToken(") ||
+        source.includes("tokenStore.setToken(") ||
+        source.includes("tokenStore.revokeToken(")
+      ) {
+        offenders.push(file.pathname.replace(integrationTemplates.pathname, ""));
+      }
+    }
+
+    assertEquals(helperCount, 3, "Expected every generated getValidToken implementation");
+    assertEquals(
+      offenders,
+      [],
+      `OAuth refresh helpers must use the shared lock/CAS protocol. Offenders: ${
+        offenders.join(", ")
+      }`,
+    );
+  });
+
+  it("keeps Gmail on the shared refresh-capable token store", async () => {
+    const gmailClient = await Deno.readTextFile(
+      new URL("./integrations/gmail/files/lib/gmail-client.ts", import.meta.url),
+    );
+
+    assertEquals(
+      gmailClient.includes("new OAuthService(gmailConfig, tokenStore)"),
+      true,
+      "Gmail must preserve the shared store's refresh lock and revisioned CAS methods",
+    );
+    assertEquals(
+      gmailClient.includes("tokenStoreAdapter"),
+      false,
+      "Gmail must not narrow the refresh-capable token store contract",
     );
   });
 
