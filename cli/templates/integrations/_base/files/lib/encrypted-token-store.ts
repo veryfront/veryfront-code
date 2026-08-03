@@ -187,10 +187,11 @@ function base64ToBytes(encoded: string): Uint8Array<ArrayBuffer> {
 function requireKeyComponent(value: string, label: string): string {
   if (
     typeof value !== "string" || value.length === 0 ||
-    value.length > MAX_KEY_COMPONENT_LENGTH || value.trim() !== value
+    value.length > MAX_KEY_COMPONENT_LENGTH || value.trim() !== value ||
+    hasAsciiControlCharacter(value)
   ) {
     throw new TypeError(
-      `${label} must be a trimmed, non-empty string of at most ${MAX_KEY_COMPONENT_LENGTH} characters`,
+      `${label} must be a trimmed, non-empty string of at most ${MAX_KEY_COMPONENT_LENGTH} characters without control characters`,
     );
   }
   return value;
@@ -241,6 +242,51 @@ function hasAsciiControlCharacter(value: string): boolean {
     if (code <= 0x1f || code === 0x7f) return true;
   }
   return false;
+}
+
+function requireJsonDataValue(value: unknown, label: string): unknown {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new TypeError(`${label} must contain only finite JSON numbers`);
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return Array.from({ length: value.length }, (_, index) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (!descriptor || !("value" in descriptor)) {
+        throw new TypeError(`${label} must contain only own data values`);
+      }
+      return requireJsonDataValue(descriptor.value, label);
+    });
+  }
+  if (!value || typeof value !== "object") {
+    throw new TypeError(`${label} must contain only JSON data values`);
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError(`${label} must contain only plain JSON data objects`);
+  }
+  const snapshot: Record<string, unknown> = {};
+  for (const key of Object.keys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !("value" in descriptor)) {
+      throw new TypeError(`${label} must contain only own data values`);
+    }
+    snapshot[key] = requireJsonDataValue(descriptor.value, label);
+  }
+  return snapshot;
+}
+
+function requireMetadata(value: unknown): Record<string, unknown> | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("Stored OAuth state metadata must be a plain object");
+  }
+  return requireJsonDataValue(value, "Stored OAuth state metadata") as Record<string, unknown>;
 }
 
 function requireOptionalTokenString(
@@ -322,7 +368,7 @@ function requireStateRow(value: unknown): StoredOAuthState {
   const scopes = ownDataValue(value, "scopes");
   const createdAt = ownDataValue(value, "createdAt");
   const codeVerifier = ownDataValue(value, "codeVerifier");
-  const metadata = ownDataValue(value, "metadata");
+  const metadata = requireMetadata(ownDataValue(value, "metadata"));
   if (
     typeof userId !== "string" || userId.length === 0 ||
     userId.length > MAX_KEY_COMPONENT_LENGTH || userId.trim() !== userId
@@ -391,7 +437,7 @@ function requireStateRow(value: unknown): StoredOAuthState {
     scopes: scopeSnapshot,
     createdAt,
     ...(codeVerifier === undefined ? {} : { codeVerifier }),
-    ...(metadata === undefined ? {} : { metadata: metadata as Record<string, unknown> }),
+    ...(metadata === undefined ? {} : { metadata }),
   };
 }
 

@@ -180,6 +180,21 @@ describe("generated encrypted OAuth token store", () => {
     assertEquals((await store.getTokens("github", "alice"))?.scope, "read:user user:email");
   });
 
+  it("rejects control characters in token storage keys", async () => {
+    const store = createEncryptedTokenStore(createMemoryKvBackend());
+
+    await assertRejects(
+      () => store.setTokens("git\nhub", "alice", { accessToken: "access-token" }),
+      TypeError,
+      "serviceId",
+    );
+    await assertRejects(
+      () => store.setTokens("github", "ali\u0000ce", { accessToken: "access-token" }),
+      TypeError,
+      "userId",
+    );
+  });
+
   it("stores detached token snapshots", async () => {
     const store = createEncryptedTokenStore(createMemoryKvBackend());
     const tokens = { accessToken: "original", refreshToken: "refresh" };
@@ -370,6 +385,23 @@ describe("generated encrypted OAuth token store", () => {
       () => store.setState("invalid-scopes", { ...oauthState("alice"), scopes: ["read user"] }),
       TypeError,
       "scopes",
+    );
+  });
+
+  it("rejects OAuth state metadata that requires invoking getters", async () => {
+    const store = createEncryptedTokenStore(createMemoryKvBackend());
+    const metadata = {};
+    Object.defineProperty(metadata, "tenantId", {
+      enumerable: true,
+      get() {
+        throw new Error("getter must not run");
+      },
+    });
+
+    await assertRejects(
+      () => store.setState("state-with-metadata", { ...oauthState("alice"), metadata }),
+      TypeError,
+      "metadata",
     );
   });
 
