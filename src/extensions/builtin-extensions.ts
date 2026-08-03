@@ -12,6 +12,10 @@ import { createDeferredResolvedExtension } from "./deferred-extension.ts";
 import { captureRegistrationId } from "./runtime-validation.ts";
 import type { LLMProvider, LLMProviderRegistry } from "./llm/index.ts";
 import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.ts";
+import {
+  FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES,
+  type FirstPartyEvalExporterSelection,
+} from "./first-party-defaults.ts";
 import { OpenAIProvider } from "@veryfront/ext-llm-openai";
 import { AnthropicProvider } from "@veryfront/ext-llm-anthropic";
 import { GoogleProvider } from "@veryfront/ext-llm-google";
@@ -29,7 +33,7 @@ export type OptionalBuiltinExtensionDefinition = {
   readonly name: string;
   readonly origin: string;
   readonly sourceDirectory: string;
-  readonly evalExporterId?: string;
+  readonly evalExporterSelection?: FirstPartyEvalExporterSelection;
   readonly factory?: ExtensionFactory;
 };
 
@@ -51,67 +55,25 @@ const BUILTIN_LLM_PROVIDERS: BuiltinLLMProviderDefinition[] = [
   },
 ];
 
-export const OPTIONAL_BUILTIN_EXTENSIONS = Object.freeze(([
-  {
-    name: "ext-auth-jwt",
-    origin: "veryfront/ext-auth-jwt",
-    sourceDirectory: "ext-auth-jwt",
-  },
-  {
-    name: "ext-observability-opentelemetry",
-    origin: "veryfront/ext-observability-opentelemetry",
-    sourceDirectory: "ext-observability-opentelemetry",
-  },
-  {
-    name: "ext-bundler-esbuild",
-    origin: "veryfront/ext-bundler-esbuild",
-    sourceDirectory: "ext-bundler-esbuild",
-  },
-  {
-    name: "ext-dev-ui-react",
-    origin: "veryfront/ext-dev-ui-react",
-    sourceDirectory: "ext-dev-ui-react",
-  },
-  {
-    name: "ext-parser-babel",
-    origin: "veryfront/ext-parser-babel",
-    sourceDirectory: "ext-parser-babel",
-  },
-  {
-    name: "ext-yaml",
-    origin: "veryfront/ext-yaml",
-    sourceDirectory: "ext-yaml",
-  },
-  {
-    name: "ext-content-mdx",
-    origin: "veryfront/ext-content-mdx",
-    sourceDirectory: "ext-content-mdx",
-  },
-  {
-    name: "ext-document-kreuzberg",
-    origin: "veryfront/ext-document-kreuzberg",
-    sourceDirectory: "ext-document-kreuzberg",
-  },
-  {
-    name: "ext-db-sqlite",
-    origin: "veryfront/ext-db-sqlite",
-    sourceDirectory: "ext-db-sqlite",
-  },
-  {
-    name: "ext-sandbox-shell-tools",
-    origin: "veryfront/ext-sandbox-shell-tools",
-    sourceDirectory: "ext-sandbox-shell-tools",
-  },
-  {
-    name: "ext-eval-report-mlflow",
-    origin: "veryfront/ext-eval-report-mlflow",
-    sourceDirectory: "ext-eval-report-mlflow",
-    evalExporterId: "mlflow",
-    // MLflow is deliberately shipped inside the root npm package rather than
-    // published as a standalone extension package.
-    factory: extEvalReportMlflow,
-  },
-] satisfies OptionalBuiltinExtensionDefinition[]).map((definition) => Object.freeze(definition)));
+export const OPTIONAL_BUILTIN_EXTENSIONS = Object.freeze(
+  FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES.map((policy) =>
+    Object.freeze({
+      name: policy.name,
+      origin: `veryfront/${policy.sourceDirectory}`,
+      sourceDirectory: policy.sourceDirectory,
+      ...(policy.evalExporterSelection
+        ? { evalExporterSelection: policy.evalExporterSelection }
+        : {}),
+      ...(policy.name === "ext-eval-report-mlflow"
+        ? {
+          // MLflow is deliberately shipped inside the root npm package rather
+          // than published as a standalone extension package.
+          factory: extEvalReportMlflow,
+        }
+        : {}),
+    }) satisfies OptionalBuiltinExtensionDefinition
+  ),
+);
 
 function getOrCreateLLMProviderRegistry(): LLMProviderRegistry {
   const existing = tryResolve<LLMProviderRegistry>(LLMProviderRegistryName);
@@ -299,10 +261,11 @@ export function createEvalCliBuiltinExtensions(
   selectedExporterIds: string[] = [],
 ): ResolvedExtension[] {
   const selected = new Set(selectedExporterIds);
-  const exporterExtensions = OPTIONAL_BUILTIN_EXTENSIONS.filter((definition) =>
-    definition.evalExporterId !== undefined &&
-    selected.has(definition.evalExporterId)
-  );
+  const exporterExtensions = OPTIONAL_BUILTIN_EXTENSIONS.filter((definition) => {
+    const selection = definition.evalExporterSelection;
+    if (!selection) return false;
+    return selection.kind === "any-selected" ? selected.size > 0 : selected.has(selection.id);
+  });
 
   return [
     {

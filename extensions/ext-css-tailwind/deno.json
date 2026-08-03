@@ -4,7 +4,7 @@
   "exports": "./src/index.ts",
   "veryfront": {
     "extension": true,
-    "activation": "explicit",
+    "activation": "auto",
     "contracts": {
       "provides": ["CSSProcessor"]
     },

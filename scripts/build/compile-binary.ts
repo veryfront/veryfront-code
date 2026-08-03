@@ -12,8 +12,8 @@ export const DEFAULT_INCLUDES = [
   "src/proxy/main.ts",
   "src/security/sandbox/worker-script.ts",
   "extensions/ext-auth-jwt/src/index.ts",
-  // Embedding explicit extensions makes them available to compiled binaries;
-  // discovery still requires the caller to select them before activation.
+  // Explicit extensions remain inert until selected. Default extensions are
+  // activated by the normal builtin composition when their source is embedded.
   "extensions/ext-blob-gcs/src/index.ts",
   "extensions/ext-blob-s3/src/index.ts",
   "extensions/ext-node-websocket-ws/src/index.ts",

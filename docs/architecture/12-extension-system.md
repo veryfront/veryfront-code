@@ -36,16 +36,17 @@ request classification, application authorization, request-to-socket
 correlation, cancellation, and shutdown ownership. Those responsibilities do
 not require a WebSocket protocol package and remain in the runtime adapter.
 
-The wire-protocol implementation is supplied by the explicitly activated
+The wire-protocol implementation is supplied by the default
 `@veryfront/ext-node-websocket-ws` package through the dependency-free
 `NodeWebSocketServerProvider` contract. Bootstrap snapshots one immutable
 provider generation before it starts a listener, so later mutation or extension
 reload cannot change the implementation underneath a running server.
 
-The extension is deliberately neither built in nor auto-loaded. Core does not
-probe for `ws` or substitute another implementation. A Node HTTP server can run
-without the provider, but an authorized WebSocket upgrade fails closed and
-identifies the extension needed to enable the feature.
+The standard npm/CLI distribution installs and auto-activates the extension;
+custom service distributions install the package for Node WebSocket support.
+Core does not import `ws`, probe for it, or substitute another implementation.
+A Node HTTP server can run without the provider, but an authorized WebSocket
+upgrade fails closed and identifies the extension needed to restore the feature.
 
 ## Boundaries
 

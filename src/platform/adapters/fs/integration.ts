@@ -4,6 +4,7 @@ import { createFSAdapter } from "./factory.ts";
 import { wrapFSAdapter } from "./wrapper.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 
 const logger = baseLogger.component("fs-integration");
 
@@ -63,6 +64,9 @@ export function enhanceAdapterWithFS(
 
         return enhancedAdapter;
       } catch (error) {
+        if (error instanceof VeryfrontError && error.slug === "config-validation-failed") {
+          throw error;
+        }
         logger.error("Failed to initialize FSAdapter", {
           error: error instanceof Error ? error.message : String(error),
           type: fsType,

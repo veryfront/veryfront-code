@@ -156,5 +156,66 @@ describe("platform/adapters/fs/veryfront/retry", () => {
       assertEquals(result, "ok");
       assertEquals(callCount, 2);
     });
+
+    it("does not retry invalid non-HTTP status values", async () => {
+      for (const status of [499.5, 600, Number.POSITIVE_INFINITY]) {
+        let callCount = 0;
+        await assertRejects(() =>
+          withRetryOnTransient(() => {
+            callCount++;
+            const error = new Error("invalid status");
+            (error as Error & { status: number }).status = status;
+            throw error;
+          }, "test")
+        );
+        assertEquals(callCount, 1);
+      }
+    });
+
+    it("contains hostile throwable introspection hooks", async () => {
+      let callCount = 0;
+      const hostile = new Proxy({}, {
+        getOwnPropertyDescriptor(): never {
+          throw new Error("descriptor trap");
+        },
+        get(): never {
+          throw new Error("get trap");
+        },
+      });
+
+      let caught: unknown;
+      try {
+        await withRetryOnTransient(() => {
+          callCount++;
+          throw hostile;
+        }, "test");
+      } catch (error) {
+        caught = error;
+      }
+
+      assertEquals(callCount, 1);
+      assertEquals(caught === hostile, true);
+    });
+
+    it("uses own status data without invoking a hostile message accessor", async () => {
+      let callCount = 0;
+      const result = await withRetryOnTransient(() => {
+        callCount++;
+        if (callCount === 1) {
+          const error = new Error("hidden");
+          Object.defineProperty(error, "message", {
+            get(): never {
+              throw new Error("message getter");
+            },
+          });
+          (error as Error & { status: number }).status = 503;
+          throw error;
+        }
+        return Promise.resolve("ok");
+      }, "test");
+
+      assertEquals(result, "ok");
+      assertEquals(callCount, 2);
+    });
   });
 });
