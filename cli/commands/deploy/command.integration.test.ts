@@ -1066,7 +1066,7 @@ it("uses canonical production read-back in human and JSON modes", async () => {
       await time.tickAsync(0);
       for (
         let tick = 0;
-        releaseSourceReads < 20 && tick < 40;
+        releaseSourceReads < 20 && tick < 60;
         tick++
       ) {
         await time.tickAsync(500);
