@@ -4,8 +4,10 @@ import {
   assertExists,
   assertInstanceOf,
   assertRejects,
+  assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   createFSAdapterFromConfig,
   enhanceAdapterWithFS,
@@ -99,7 +101,7 @@ describe("integration.ts", () => {
     assertEquals(getFSAdapterType({ fs: {} }), "local");
   });
 
-  describe("enhanceAdapterWithFS error fallback", () => {
+  describe("enhanceAdapterWithFS error propagation", () => {
     it("should preserve invalid retry configuration instead of changing filesystems", async () => {
       let rejection: unknown;
       try {
@@ -174,28 +176,131 @@ describe("integration.ts", () => {
       assertEquals(error.slug, "config-invalid");
     });
 
-    it("should fall back to original adapter for unsupported type", async () => {
-      const adapter = await enhanceAdapterWithFS(denoAdapter, {
-        fs: { type: "unsupported-type" as any },
-      });
-      assertEquals(adapter, denoAdapter);
-    });
-
-    it("should fall back to original adapter for github type without config", async () => {
-      const adapter = await enhanceAdapterWithFS(denoAdapter, {
-        fs: { type: "github" },
-      });
-      assertEquals(adapter, denoAdapter);
-    });
-
-    it("should pass projectDir to FSAdapter config", async () => {
-      // With an unsupported type, it will fail and fall back, but the branch is exercised
-      const adapter = await enhanceAdapterWithFS(
-        denoAdapter,
-        { fs: { type: "unknown-type" as any } },
-        "/some/project/dir",
+    it("should fail closed when the GitHub token contains only whitespace", async () => {
+      let requests = 0;
+      const error = await withMockFetch(
+        () => {
+          requests += 1;
+          return Promise.resolve(new Response("Unauthorized", { status: 401 }));
+        },
+        () =>
+          assertRejects(
+            () =>
+              enhanceAdapterWithFS(denoAdapter, {
+                fs: {
+                  type: "github",
+                  github: { token: " ", owner: "owner", repo: "repo" },
+                },
+              }),
+            VeryfrontError,
+            "token",
+          ),
       );
-      assertEquals(adapter, denoAdapter);
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "config-invalid");
+      assertEquals(requests, 0);
+    });
+
+    it("should propagate GitHub network initialization failures", async () => {
+      const networkFailure = new Error("simulated GitHub outage");
+      const error = await withMockFetch(
+        () => Promise.reject(networkFailure),
+        () =>
+          assertRejects(() =>
+            enhanceAdapterWithFS(denoAdapter, {
+              fs: {
+                type: "github",
+                github: {
+                  token: "test-token",
+                  owner: "owner",
+                  repo: "repo",
+                  retry: { maxRetries: 1, initialDelay: 0, maxDelay: 0 },
+                },
+              },
+            })
+          ),
+      );
+      assertStrictEquals(error, networkFailure);
+    });
+
+    it("should propagate GitHub authentication failures", async () => {
+      const error = await withMockFetch(
+        () => Promise.resolve(new Response("Unauthorized", { status: 401 })),
+        () =>
+          assertRejects(
+            () =>
+              enhanceAdapterWithFS(denoAdapter, {
+                fs: {
+                  type: "github",
+                  github: {
+                    token: "invalid-token",
+                    owner: "owner",
+                    repo: "repo",
+                    retry: { maxRetries: 1, initialDelay: 0, maxDelay: 0 },
+                  },
+                },
+              }),
+            Error,
+            "authentication",
+          ),
+      );
+      assertInstanceOf(error, Error);
+    });
+
+    it("should propagate unsupported adapter failures", async () => {
+      await assertRejects(
+        () =>
+          enhanceAdapterWithFS(denoAdapter, {
+            fs: { type: "unsupported-type" as any },
+          }),
+        Error,
+        'FSAdapter type "unsupported-type" is not implemented',
+      );
+    });
+
+    it("should fail closed for github type without config", async () => {
+      await assertRejects(
+        () =>
+          enhanceAdapterWithFS(denoAdapter, {
+            fs: { type: "github" },
+          }),
+        Error,
+        "GitHub adapter requires github configuration",
+      );
+    });
+
+    it("should not consult VeryfrontError Symbol.hasInstance while propagating", async () => {
+      const originalHasInstance = Object.getOwnPropertyDescriptor(
+        VeryfrontError,
+        Symbol.hasInstance,
+      );
+      Object.defineProperty(VeryfrontError, Symbol.hasInstance, {
+        configurable: true,
+        value() {
+          throw new Error("poisoned VeryfrontError Symbol.hasInstance was used");
+        },
+      });
+
+      let caught: unknown;
+      try {
+        await enhanceAdapterWithFS(denoAdapter, {
+          fs: {
+            type: "github",
+            github: { token: "test-token", owner: "team/other", repo: "repo" },
+          },
+        });
+      } catch (error) {
+        caught = error;
+      } finally {
+        if (originalHasInstance) {
+          Object.defineProperty(VeryfrontError, Symbol.hasInstance, originalHasInstance);
+        } else {
+          Reflect.deleteProperty(VeryfrontError, Symbol.hasInstance);
+        }
+      }
+
+      assertInstanceOf(caught, VeryfrontError);
+      assertEquals(caught.slug, "config-validation-failed");
     });
   });
 

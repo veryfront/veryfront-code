@@ -4,7 +4,7 @@ import { CONFIG_VALIDATION_FAILED } from "#veryfront/errors/error-registry/confi
 const logger = baseLogger.component("path-normalizer");
 const MAX_PATH_CODE_UNITS = 4_096;
 
-// Rejects the full non-printable control range (C0, DEL, and C1) — the same
+// Rejects the full non-printable control range (C0, DEL, and C1), the same
 // policy as the GitHub path normalizer in ../github/path-utils.ts.
 function hasControlCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index++) {

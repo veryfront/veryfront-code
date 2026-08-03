@@ -68,17 +68,19 @@ const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
 const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
 
+function isBlankConfigValue(value: unknown): boolean {
+  return typeof value !== "string" || value.trim().length === 0;
+}
+
 export function createGitHubConfig(config: GitHubConfig): ResolvedGitHubConfig {
-  // CONFIG-category registry errors fail closed in enhanceAdapterWithFS;
-  // legacy plain Errors would trigger its silent local-filesystem fallback.
-  if (!config.token) {
+  if (isBlankConfigValue(config.token)) {
     throw CONFIG_INVALID.create({
       detail:
         "GitHub adapter requires a token. Set GITHUB_TOKEN environment variable or provide token in config.",
     });
   }
 
-  if (!config.owner || !config.repo) {
+  if (isBlankConfigValue(config.owner) || isBlankConfigValue(config.repo)) {
     throw CONFIG_INVALID.create({
       detail:
         "GitHub adapter requires owner and repo. Provide them in config or via GITHUB_OWNER and GITHUB_REPO environment variables.",
