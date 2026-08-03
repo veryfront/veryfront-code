@@ -7,8 +7,6 @@ import {
   createRemoteMCPToolSource,
   createToolsFromRemoteDefinitions,
   type HostToolSet,
-  type RemoteMCPToolSourceConfig,
-  type RemoteToolSource,
   sleepTool,
   type ToolExecutionContext,
 } from "#veryfront/tool";
@@ -30,7 +28,10 @@ import {
   type StartHostedChildForkRuntimeWithHostToolsInput,
 } from "./child-fork-runtime-start.ts";
 import { prepareDefaultHostedChildForkSandboxToolSources } from "./child-fork-tool-sources.ts";
-import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
+import type {
+  AgentServiceMcpServerConfig,
+  AgentServiceRemoteMcpSourceFactory,
+} from "../service/mcp-server-config.ts";
 import { executeHostedChildForkToolInput } from "./child-fork-execution-runner.ts";
 import { createHostedChildInvokeTool } from "./child-invoke-tool.ts";
 import {
@@ -200,7 +201,7 @@ export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedIn
     createAgentServiceSandboxTools?: (
       input: AgentServiceSandboxToolsOptions,
     ) => Promise<AgentServiceSandboxToolsResult>;
-    createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
+    createRemoteToolSource?: AgentServiceRemoteMcpSourceFactory;
     createToolsFromRemoteDefinitions?: typeof createToolsFromRemoteDefinitions;
     createLiveStudioTools?: Parameters<typeof prepareDefaultHostedChildForkSandboxToolSources>[0][
       "createLiveStudioTools"

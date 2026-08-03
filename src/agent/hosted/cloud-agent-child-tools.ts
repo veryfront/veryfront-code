@@ -380,7 +380,12 @@ export function createInvokeAgentTool(
   childContext: ChildRunContext,
   options?: { requireDurable?: boolean },
 ) {
+  // Snapshot host-owned endpoints once, before tenant execution. The child assembly
+  // forwards this same factory to both API and live Studio MCP source creation.
   const config = getInvokeAgentConfig(context);
+  const createRemoteToolSource = createHostedControlPlaneMCPToolSourceFactory(config, {
+    logger: context.infrastructure.logger,
+  });
   return createDefaultHostedInvokeAgentTool({
     context: childContext,
     getConfig: () => config,
@@ -413,9 +418,7 @@ export function createInvokeAgentTool(
       refreshProjectSkillIds(context, projectSkillContext),
     createAgentServiceSandboxTools,
     createLiveStudioTools: createLiveStudioMcpTools,
-    createRemoteToolSource: createHostedControlPlaneMCPToolSourceFactory(config, {
-      logger: context.infrastructure.logger,
-    }),
+    createRemoteToolSource,
     createToolsFromRemoteDefinitions,
     requireDurableInvokeAgent: options?.requireDurable,
   });

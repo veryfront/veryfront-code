@@ -242,6 +242,28 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
   await result.closeStudioMcpTools?.();
 });
 
+Deno.test("prepareDefaultHostedChildForkToolSources forwards the host source factory to live Studio", async () => {
+  const createRemoteToolSource = createRemoteSourceFixtures().createRemoteToolSource;
+  let forwardedFactory: unknown;
+
+  const result = await prepareDefaultHostedChildForkToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "http://veryfront-api:80/mcp",
+    mcpServers: [{ kind: "veryfront-studio" }],
+    studioMcpUrl: "http://veryfront-studio:80/mcp",
+    clientProfile: trustedStudioProfile,
+    getProjectId: () => "project-1",
+    createRemoteToolSource,
+    createLiveStudioTools: (input) => {
+      forwardedFactory = input.createRemoteToolSource;
+      return Promise.resolve({ tools: {}, close: () => Promise.resolve() });
+    },
+  });
+
+  assertEquals(result.ok, true);
+  assertEquals(forwardedFactory, createRemoteToolSource);
+});
+
 Deno.test("prepareDefaultHostedChildForkToolSources filters API MCP tools with the tool access profile", async () => {
   const createRemoteToolSource = (config: RemoteMCPToolSourceConfig): RemoteToolSource => ({
     id: config.id ?? "source",
