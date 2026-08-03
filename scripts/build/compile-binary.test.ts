@@ -1,12 +1,14 @@
-import { assertEquals } from "#std/assert";
 import { walk } from "#std/fs/walk";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
+import { FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES } from "#veryfront/extensions/first-party-defaults.ts";
 import {
   createCompileArgs,
   DEFAULT_INCLUDES,
   PROXY_INCLUDES,
 } from "./compile-binary.ts";
 
-Deno.test("compiled CLI embeds the explicit Node WebSocket extension for opt-in activation", () => {
+it("compiled CLI embeds the default Node WebSocket extension for HMR", () => {
   const args = createCompileArgs({
     entrypoint: "cli/main.ts",
     extraIncludes: [],
@@ -19,7 +21,7 @@ Deno.test("compiled CLI embeds the explicit Node WebSocket extension for opt-in 
   );
 });
 
-Deno.test("compiled CLI embeds the explicit Redis extension for opt-in activation", () => {
+it("compiled CLI embeds the explicit Redis extension for opt-in activation", () => {
   const args = createCompileArgs({
     entrypoint: "cli/main.ts",
     extraIncludes: [],
@@ -32,16 +34,10 @@ Deno.test("compiled CLI embeds the explicit Redis extension for opt-in activatio
   );
 });
 
-Deno.test("compiled CLI embeds optional builtin extension source files", async () => {
-  const source = await Deno.readTextFile(
-    "src/extensions/builtin-extensions.ts",
-  );
-  const sourceDirectories = Array.from(
-    source.matchAll(/sourceDirectory:\s*"([^"]+)"/g),
-    (match) => match[1]!,
-  );
-
-  for (const sourceDirectory of sourceDirectories) {
+it("compiled CLI embeds optional builtin extension source files", () => {
+  for (
+    const { sourceDirectory } of FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES
+  ) {
     assertEquals(
       DEFAULT_INCLUDES.includes(`extensions/${sourceDirectory}/src/index.ts`),
       true,
@@ -50,7 +46,7 @@ Deno.test("compiled CLI embeds optional builtin extension source files", async (
   }
 });
 
-Deno.test("compiled CLI embeds every runtime-resolved sibling module", async () => {
+it("compiled CLI embeds every runtime-resolved sibling module", async () => {
   // Modules picked through a `.ts`/`.js` distribution-format ternary are
   // resolved from a computed URL, so `deno compile` never sees them in the
   // static graph and only DEFAULT_INCLUDES can embed them.
@@ -89,7 +85,7 @@ Deno.test("compiled CLI embeds every runtime-resolved sibling module", async () 
   );
 });
 
-Deno.test("compiled CLI embeds the permissionless parser entry", () => {
+it("compiled CLI embeds the permissionless parser entry", () => {
   assertEquals(
     DEFAULT_INCLUDES.includes(
       "extensions/ext-parser-babel/src/parser-only.ts",
@@ -98,7 +94,7 @@ Deno.test("compiled CLI embeds the permissionless parser entry", () => {
   );
 });
 
-Deno.test("compiled CLI embeds the auto-loaded Sentry reporter", () => {
+it("compiled CLI embeds the auto-loaded Sentry reporter", () => {
   assertEquals(
     DEFAULT_INCLUDES.includes(
       "extensions/ext-observability-sentry/src/index.ts",
@@ -107,7 +103,7 @@ Deno.test("compiled CLI embeds the auto-loaded Sentry reporter", () => {
   );
 });
 
-Deno.test("proxy binary embeds only the runtime-resolved proxy entrypoint", async () => {
+it("proxy binary embeds only the runtime-resolved proxy entrypoint", async () => {
   const args = createCompileArgs({
     entrypoint: "cli/proxy-main.ts",
     extraIncludes: [],
@@ -162,7 +158,7 @@ Deno.test("proxy binary embeds only the runtime-resolved proxy entrypoint", asyn
   }
 });
 
-Deno.test("proxy release verifies lock freshness and publishes an exact SBOM", async () => {
+it("proxy release verifies lock freshness and publishes an exact SBOM", async () => {
   const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
   const denoConfig = JSON.parse(await Deno.readTextFile("deno.json")) as {
     tasks?: Record<string, string>;
@@ -184,7 +180,7 @@ Deno.test("proxy release verifies lock freshness and publishes an exact SBOM", a
   );
 });
 
-Deno.test("compiled proxy smoke covers cache and observability providers", async () => {
+it("compiled proxy smoke covers cache and observability providers", async () => {
   const smoke = await Deno.readTextFile("scripts/build/smoke-proxy-binary.sh");
 
   for (
@@ -217,7 +213,7 @@ Deno.test("compiled proxy smoke covers cache and observability providers", async
   );
 });
 
-Deno.test("proxy binary smoke runs only for same-repository pull requests", async () => {
+it("proxy binary smoke runs only for same-repository pull requests", async () => {
   const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
 
   assertEquals(
@@ -228,7 +224,7 @@ Deno.test("proxy binary smoke runs only for same-repository pull requests", asyn
   );
 });
 
-Deno.test("full binary remains the default compile profile", () => {
+it("full binary remains the default compile profile", () => {
   const args = createCompileArgs({
     entrypoint: "cli/main.ts",
     extraIncludes: [],

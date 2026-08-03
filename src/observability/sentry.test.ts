@@ -50,12 +50,13 @@ describe("observability/sentry", () => {
     assertEquals(state.config, undefined);
   });
 
-  it("Sentry enablement preserves legacy behavior while explicit false always wins", () => {
-    assertEquals(isSentryEnabled("true", false), true);
-    assertEquals(isSentryEnabled("false", true), false);
-    assertEquals(isSentryEnabled("0", true), false);
-    assertEquals(isSentryEnabled(undefined, true), true);
-    assertEquals(isSentryEnabled(undefined, false), false);
+  it("Sentry enablement requires an explicit true value", () => {
+    assertEquals(isSentryEnabled("true"), true);
+    assertEquals(isSentryEnabled(" 1 "), true);
+    assertEquals(isSentryEnabled("false"), false);
+    assertEquals(isSentryEnabled("0"), false);
+    assertEquals(isSentryEnabled("enabled"), false);
+    assertEquals(isSentryEnabled(undefined), false);
   });
 
   it("Sentry startup warns once without exposing secrets when explicitly enabled without a DSN", async () => {
@@ -103,7 +104,7 @@ describe("observability/sentry", () => {
     }
   });
 
-  it("Sentry startup does not warn or load the SDK when disabled or compatibility-unset without a DSN", async () => {
+  it("Sentry startup does not warn or load the SDK when disabled or unset without a DSN", async () => {
     resetSentryForTests();
     const previousEnabled = Deno.env.get("SENTRY_ENABLED");
     const previousProvider = Deno.env.get("VERYFRONT_ERROR_REPORTER");
@@ -153,13 +154,16 @@ describe("observability/sentry", () => {
   });
 
   it("Sentry environment configuration requires explicit provider opt-in", () => {
+    const previousEnabled = Deno.env.get("SENTRY_ENABLED");
     const previousProvider = Deno.env.get("VERYFRONT_ERROR_REPORTER");
     const previousDsn = Deno.env.get("SENTRY_DSN");
     try {
+      Deno.env.set("SENTRY_ENABLED", "true");
       Deno.env.delete("VERYFRONT_ERROR_REPORTER");
       Deno.env.set("SENTRY_DSN", "https://public@example.ingest.sentry.io/1");
       assertEquals(resolveSentryConfigFromEnv(), undefined);
     } finally {
+      restoreEnv("SENTRY_ENABLED", previousEnabled);
       restoreEnv("VERYFRONT_ERROR_REPORTER", previousProvider);
       restoreEnv("SENTRY_DSN", previousDsn);
     }
@@ -172,7 +176,7 @@ describe("observability/sentry", () => {
     const previousServiceName = Deno.env.get("SENTRY_SERVICE_NAME");
     const previousOtelServiceName = Deno.env.get("OTEL_SERVICE_NAME");
     try {
-      Deno.env.delete("SENTRY_ENABLED");
+      Deno.env.set("SENTRY_ENABLED", "true");
       Deno.env.set("VERYFRONT_ERROR_REPORTER", "sentry");
       Deno.env.set("SENTRY_DSN", "https://public@example.ingest.sentry.io/1");
       Deno.env.set("SENTRY_SERVICE_NAME", "   ");
