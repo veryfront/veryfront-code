@@ -30,16 +30,16 @@ const ReflectApply = Reflect.apply;
 const StringSlice = String.prototype.slice;
 const StringStartsWith = String.prototype.startsWith;
 
-/** Function signature for caching an HTTP module and returning its local path. */
-export type CacheHttpModuleFn = (url: string, options: CacheOptions) => Promise<string | null>;
-
-function stringSlice(value: string, start: number): string {
-  return ReflectApply(StringSlice, value, [start]);
+function stringSlice(value: string, start: number, end?: number): string {
+  return ReflectApply(StringSlice, value, end === undefined ? [start] : [start, end]) as string;
 }
 
 function stringStartsWith(value: string, search: string): boolean {
-  return ReflectApply(StringStartsWith, value, [search]);
+  return ReflectApply(StringStartsWith, value, [search]) as boolean;
 }
+
+/** Function signature for caching an HTTP module and returning its local path. */
+export type CacheHttpModuleFn = (url: string, options: CacheOptions) => Promise<string | null>;
 
 function isLocalMappedSpecifier(specifier: string): boolean {
   return stringStartsWith(specifier, "/_vf_modules/") ||

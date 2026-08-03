@@ -115,8 +115,8 @@ function stringReplace(value: string, search: string, replacement: string): stri
   return ReflectApply(StringReplace, value, [search, replacement]);
 }
 
-function stringSlice(value: string, start: number): string {
-  return ReflectApply(StringSlice, value, [start]);
+function stringSlice(value: string, start: number, end?: number): string {
+  return ReflectApply(StringSlice, value, end === undefined ? [start] : [start, end]);
 }
 
 function stringSplit(value: string, separator: string): string[] {
@@ -438,7 +438,8 @@ export function isExternalScheme(specifier: string): boolean {
 }
 
 export function isRelative(specifier: string): boolean {
-  return stringStartsWith(specifier, "./") || stringStartsWith(specifier, "../") ||
+  return stringStartsWith(specifier, "./") ||
+    stringStartsWith(specifier, "../") ||
     stringStartsWith(specifier, "/");
 }
 
