@@ -62,6 +62,9 @@ describe("generate-api-reference", () => {
       const providerReference = await Deno.readTextFile(
         `${outputDir}/veryfront/provider.md`,
       );
+      const releaseAssetsReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/release-assets.md`,
+      );
       const providerTypes = await Deno.readTextFile("src/provider/types.ts");
       assertEquals(
         rootReference.includes(
@@ -123,6 +126,16 @@ describe("generate-api-reference", () => {
         providerReference,
         "| `RuntimeMetadata` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L1) |",
         "first-line declarations must keep a source anchor",
+      );
+      assertStringIncludes(
+        providerReference,
+        "| `DEFAULT_VERYFRONT_CLOUD_MODEL_ID` |",
+        "exported variable nodes must render as constants, not components",
+      );
+      assertStringIncludes(
+        releaseAssetsReference,
+        "| `RELEASE_ASSET_BASE_PATH` |",
+        "release asset variables must render as constants",
       );
       const generateResultIndex = providerTypes.split("\n").findIndex((line) =>
         line.startsWith("export interface ModelRuntimeGenerateResult")

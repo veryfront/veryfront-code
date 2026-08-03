@@ -87,6 +87,14 @@ class InvalidStoreEncodingError extends Error {
   override readonly name = "InvalidStoreEncodingError";
 }
 
+class StoreSizeLimitError extends Error {
+  override readonly name = "StoreSizeLimitError";
+}
+
+function isStoreSizeLimitError(error: unknown): error is RangeError {
+  return error instanceof RangeError && error.message.startsWith("File exceeds byte limit");
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -316,7 +324,6 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
   function withLock<T>(fn: (lease: LocalJsonStoreLease) => Promise<T>): Promise<T> {
     return withLocalJsonStoreLock(storagePath, async (lease) => {
       await validateStoragePath();
-      await cleanupOrphanedTempFiles();
       return await fn(lease);
     }).catch((error) => {
       if (isVeryfrontError(error)) throw error;
@@ -427,6 +434,11 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
       bytes = await readSnapshot(storagePath, dirname(storagePath), MAX_STORED_BYTES);
     } catch (error) {
       if (isCanonicalNotFoundError(error)) return null;
+      if (isStoreSizeLimitError(error)) {
+        throw new StoreSizeLimitError("RAG store exceeds the persisted byte limit", {
+          cause: error,
+        });
+      }
       throw error;
     }
     try {
@@ -467,7 +479,9 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
 
   function classifyStoreSnapshotError(error: unknown): Error {
     if (isVeryfrontError(error)) return error;
-    if (error instanceof RangeError) return corruptStoreError("file exceeds size limit", error);
+    if (error instanceof StoreSizeLimitError) {
+      return corruptStoreError("file exceeds size limit", error);
+    }
     if (error instanceof InvalidStoreEncodingError) {
       return corruptStoreError("file is not valid UTF-8", error);
     }
@@ -535,11 +549,12 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
     lease: LocalJsonStoreLease,
   ): Promise<void> {
     if (!isRagStoreData(data)) {
-      throw RAG_STORE_UNAVAILABLE.create({
+      throw INVALID_ARGUMENT.create({
         detail: "The RAG store update violated persisted-data limits or relationships.",
         context: { storagePath },
       });
     }
+    await cleanupOrphanedTempFiles();
     const dir = dirname(storagePath);
     if (dir && dir !== ".") {
       await mkdir(dir, { recursive: true });

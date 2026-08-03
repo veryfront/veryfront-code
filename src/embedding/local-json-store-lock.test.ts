@@ -77,7 +77,10 @@ describe("local JSON RAG store lock generations", () => {
             if (fromPath === seeded.lockDirectory && toPath === recoveryDirectory) {
               recoveryMoves++;
             }
-            if (fromPath === recoveryDirectory && toPath === seeded.lockDirectory) {
+            if (
+              fromPath.startsWith(`${recoveryDirectory}/`) &&
+              toPath.startsWith(`${seeded.lockDirectory}/`)
+            ) {
               restores++;
             }
             await originalRename(from, to);
@@ -89,8 +92,11 @@ describe("local JSON RAG store lock generations", () => {
           const pending = withLocalJsonStoreLock(storagePath, async () => undefined).finally(() => {
             settled = true;
           });
-          await waitUntil(() => restores === 1);
-          assertEquals(await exists(seeded.lockDirectory), true);
+          if (mutation === "remove") {
+            await waitUntil(() => mutated);
+          } else {
+            await waitUntil(async () => mutated && await exists(seeded.lockDirectory));
+          }
 
           if (mutation === "remove") {
             await pending;
@@ -105,7 +111,7 @@ describe("local JSON RAG store lock generations", () => {
           }
 
           assertEquals(mutated, true);
-          assertEquals(restores, 1);
+          if (mutation !== "remove") assertEquals(restores >= 1, true);
           assertEquals(recoveryMoves >= 2, true);
           assertEquals(await exists(seeded.lockDirectory), false);
           assertEquals(await exists(recoveryDirectory), false);
@@ -156,6 +162,106 @@ describe("local JSON RAG store lock generations", () => {
       } finally {
         Object.defineProperty(Deno, "lstat", lstatDescriptor);
         Object.defineProperty(Deno, "rename", renameDescriptor);
+      }
+    });
+  });
+
+  it("fails closed when a competing acquisition appears before restore", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const seeded = await seedExpiredLock(storagePath);
+      const recoveryDirectory = `${seeded.lockDirectory}.recovering`;
+      const renameDescriptor = Object.getOwnPropertyDescriptor(Deno, "rename");
+      const mkdirDescriptor = Object.getOwnPropertyDescriptor(Deno, "mkdir");
+      assert(renameDescriptor !== undefined);
+      assert(mkdirDescriptor !== undefined);
+      const originalRename = Deno.rename.bind(Deno);
+      const originalMkdir = Deno.mkdir.bind(Deno);
+      let mutatedMovedGeneration = false;
+      let competingDirectoryCreated = false;
+
+      Object.defineProperty(Deno, "rename", {
+        ...renameDescriptor,
+        value: async (from: string | URL, to: string | URL) => {
+          await originalRename(from, to);
+          if (
+            !mutatedMovedGeneration &&
+            String(from) === seeded.lockDirectory &&
+            String(to) === recoveryDirectory
+          ) {
+            mutatedMovedGeneration = true;
+            const replacementToken = crypto.randomUUID();
+            await Deno.remove(join(recoveryDirectory, "owner.json"));
+            await Deno.remove(
+              seeded.ownerLeasePath.replace(seeded.lockDirectory, recoveryDirectory),
+            );
+            await Deno.writeTextFile(
+              join(recoveryDirectory, "owner.json"),
+              `${JSON.stringify({ token: replacementToken, createdAtMs: Date.now() })}\n`,
+            );
+            await Deno.writeTextFile(
+              join(recoveryDirectory, `${replacementToken}.lease`),
+              "replacement\n",
+            );
+          }
+        },
+      });
+      Object.defineProperty(Deno, "mkdir", {
+        ...mkdirDescriptor,
+        value: async (path: string | URL, options?: Deno.MkdirOptions) => {
+          if (
+            mutatedMovedGeneration &&
+            !competingDirectoryCreated &&
+            String(path) === seeded.lockDirectory
+          ) {
+            competingDirectoryCreated = true;
+            await originalMkdir(path, options);
+          }
+          await originalMkdir(path, options);
+        },
+      });
+
+      try {
+        await assertRejects(
+          () => withLocalJsonStoreLock(storagePath, async () => undefined),
+          LocalJsonStoreLockError,
+          "ownership changed during stale-lock recovery",
+        );
+        assertEquals(mutatedMovedGeneration, true);
+        assertEquals(competingDirectoryCreated, true);
+        assertEquals(await exists(seeded.lockDirectory), true);
+      } finally {
+        Object.defineProperty(Deno, "rename", renameDescriptor);
+        Object.defineProperty(Deno, "mkdir", mkdirDescriptor);
+      }
+    });
+  });
+
+  it("retries when lock observation races with a concurrent release", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const seeded = await seedExpiredLock(storagePath);
+      const lstatDescriptor = Object.getOwnPropertyDescriptor(Deno, "lstat");
+      assert(lstatDescriptor !== undefined);
+      const originalLstat = Deno.lstat.bind(Deno);
+      let racedObservation = false;
+      Object.defineProperty(Deno, "lstat", {
+        ...lstatDescriptor,
+        value: async (path: string | URL) => {
+          if (!racedObservation && String(path) === seeded.ownerLeasePath) {
+            racedObservation = true;
+            await Deno.remove(seeded.lockDirectory, { recursive: true });
+          }
+          return await originalLstat(path);
+        },
+      });
+
+      try {
+        await withLocalJsonStoreLock(storagePath, async () => undefined);
+        assertEquals(racedObservation, true);
+        assertEquals(await exists(seeded.lockDirectory), false);
+      } finally {
+        Object.defineProperty(Deno, "lstat", lstatDescriptor);
       }
     });
   });

@@ -183,7 +183,35 @@ describe("ragStore", () => {
     });
   });
 
-  it("cleans an orphaned temp file left by an interrupted process", async () => {
+  it("does not scan the storage directory for read-only operations", async () => {
+    await withTempDir(async (tempDir) => {
+      const storageDirectory = join(tempDir, "data");
+      const storagePath = join(storageDirectory, "index.json");
+      await Deno.mkdir(storageDirectory, { recursive: true });
+      await Deno.writeTextFile(storagePath, JSON.stringify({ documents: [], chunks: [] }));
+      const readDirDescriptor = Object.getOwnPropertyDescriptor(Deno, "readDir");
+      assert(readDirDescriptor !== undefined);
+      const originalReadDir = Deno.readDir.bind(Deno);
+      let storageDirectoryScans = 0;
+      Object.defineProperty(Deno, "readDir", {
+        ...readDirDescriptor,
+        value: (path: string | URL) => {
+          if (String(path) === storageDirectory) storageDirectoryScans++;
+          return originalReadDir(path);
+        },
+      });
+
+      try {
+        const store = ragStore({ model: "local/test-model", storagePath });
+        assertEquals(await store.listDocuments(), []);
+        assertEquals(storageDirectoryScans, 0);
+      } finally {
+        Object.defineProperty(Deno, "readDir", readDirDescriptor);
+      }
+    });
+  });
+
+  it("cleans an orphaned temp file before a write operation", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");
       await Deno.mkdir(join(tempDir, "data"), { recursive: true });
@@ -193,8 +221,8 @@ describe("ragStore", () => {
       await Deno.writeTextFile(orphanPath, "partial");
 
       const store = ragStore({ model: "local/test-model", storagePath });
-      assertEquals(await store.listDocuments(), []);
-      assertEquals(await readTextFile(storagePath), original);
+      await store.ingest("Doc", "Hello world");
+      assertEquals((await readTextFile(storagePath)).includes("Doc"), true);
       assertEquals(await exists(orphanPath), false);
     });
   });

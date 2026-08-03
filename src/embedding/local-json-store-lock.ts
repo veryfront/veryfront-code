@@ -258,11 +258,17 @@ function sameLeases(
 
 function sameGeneration(left: LockObservation, right: LockObservation): boolean {
   return left.directoryMtimeMs === right.directoryMtimeMs &&
+    sameGenerationContents(left, right);
+}
+
+function sameGenerationContents(left: LockObservation, right: LockObservation): boolean {
+  return (
     left.ownerFileName === right.ownerFileName &&
     left.ownerText === right.ownerText &&
     left.owner?.token === right.owner?.token &&
     sameStringArray(left.entryFileNames, right.entryFileNames) &&
-    sameLeases(left.leases, right.leases);
+    sameLeases(left.leases, right.leases)
+  );
 }
 
 type CleanupPhase = "recovering" | "releasing";
@@ -391,8 +397,21 @@ async function restoreUnexpectedRecovery(
   fs: FileSystem,
   lockDirectory: string,
   recoveryDirectory: string,
+  expected: LockObservation,
 ): Promise<void> {
-  if (await fs.exists(lockDirectory)) {
+  try {
+    await fs.mkdir(lockDirectory);
+  } catch (error) {
+    if (isAlreadyExistsError(error)) {
+      throw new LocalJsonStoreLockError(
+        "RAG store lock ownership changed during stale-lock recovery",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+  const recoveryObservation = await readObservation(fs, recoveryDirectory);
+  if (recoveryObservation === null || !sameGeneration(expected, recoveryObservation)) {
     throw new LocalJsonStoreLockError(
       "RAG store lock ownership changed during stale-lock recovery",
     );
@@ -403,7 +422,25 @@ async function restoreUnexpectedRecovery(
       "The native filesystem cannot restore RAG store lock ownership",
     );
   }
-  await rename(recoveryDirectory, lockDirectory);
+  for (const entryName of expected.entryFileNames) {
+    await rename(join(recoveryDirectory, entryName), join(lockDirectory, entryName));
+  }
+  const restoredObservation = await readObservation(fs, lockDirectory);
+  if (restoredObservation === null || !sameGenerationContents(expected, restoredObservation)) {
+    throw new LocalJsonStoreLockError(
+      "RAG store lock ownership changed during stale-lock recovery",
+    );
+  }
+  try {
+    await fs.remove(recoveryDirectory);
+  } catch (error) {
+    if (!isCanonicalNotFoundError(error)) {
+      throw new LocalJsonStoreLockError(
+        "RAG store lock recovery directory could not be removed after restore",
+        { cause: error },
+      );
+    }
+  }
 }
 
 /**
@@ -445,7 +482,7 @@ async function tryRecoverStaleLock(
     !sameGeneration(current, moved) ||
     !isStale(moved, Date.now())
   ) {
-    await restoreUnexpectedRecovery(fs, lockDirectory, recoveryDirectory);
+    await restoreUnexpectedRecovery(fs, lockDirectory, recoveryDirectory, moved);
     return false;
   }
   await removeObservedLockGeneration(fs, recoveryDirectory, moved, "recovering");
@@ -527,7 +564,14 @@ async function acquireNativeLock(
         }
       } catch (error) {
         if (!isAlreadyExistsError(error)) throw error;
-        const observation = await readObservation(fs, lockDirectory);
+        let observation: LockObservation | null = null;
+        try {
+          observation = await readObservation(fs, lockDirectory);
+        } catch (observationError) {
+          if (!(observationError instanceof LocalJsonStoreLockError)) {
+            throw observationError;
+          }
+        }
         if (
           observation !== null && isStale(observation, nowMs) &&
           await tryRecoverStaleLock(fs, lockDirectory, recoveryDirectory, observation)
