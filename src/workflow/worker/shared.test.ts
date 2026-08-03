@@ -59,15 +59,23 @@ function createLogger() {
 }
 
 function createCapturingLogger() {
+  const errors: string[] = [];
+  const infos: string[] = [];
   const warnings: string[] = [];
   return {
     logger: {
-      error: () => undefined,
-      info: () => undefined,
+      error: (message: string) => {
+        errors.push(message);
+      },
+      info: (message: string) => {
+        infos.push(message);
+      },
       warn: (message: string) => {
         warnings.push(message);
       },
     },
+    errors,
+    infos,
     warnings,
   };
 }
@@ -240,6 +248,31 @@ describe("workflow worker shared helpers", () => {
       "Workflow did not reach a durable final state: running (runId: run-token=secret)",
       "Unexpected final status: unexpected (runId: run-token=secret)",
     ]);
+  });
+
+  it("logs sanitized run ids for completed, failed, and waiting runs", () => {
+    const { errors, infos, logger } = createCapturingLogger();
+    const exitCodes = { SUCCESS: 0, WORKFLOW_FAILED: 1 };
+    const runId = "run-\x1b[2Jtoken=secret";
+
+    assertEquals(
+      getFinalRunExitCode(logger, exitCodes, runId, { status: "completed" } as never, true),
+      0,
+    );
+    assertEquals(
+      getFinalRunExitCode(logger, exitCodes, runId, { status: "failed" } as never, false),
+      1,
+    );
+    assertEquals(
+      getFinalRunExitCode(logger, exitCodes, runId, { status: "waiting" } as never, true),
+      0,
+    );
+
+    assertEquals(infos, [
+      "Workflow completed successfully: run-token=secret",
+      "Workflow paused (waiting): run-token=secret",
+    ]);
+    assertEquals(errors, ["Workflow failed: run-token=secret"]);
   });
 
   it("persists approvals before an isolated executor returns a waiting run", async () => {

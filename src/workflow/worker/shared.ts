@@ -105,17 +105,17 @@ export function getFinalRunExitCode(
   switch (finalRun?.status) {
     case "completed":
       if (debug) {
-        logger.info(`Workflow completed successfully: ${runId}`);
+        logger.info(`Workflow completed successfully: ${sanitizedRunId}`);
       }
       return exitCodes.SUCCESS;
 
     case "failed":
-      logger.error(`Workflow failed: ${runId}`, finalRun.error);
+      logger.error(`Workflow failed: ${sanitizedRunId}`, finalRun.error);
       return exitCodes.WORKFLOW_FAILED;
 
     case "waiting":
       if (debug) {
-        logger.info(`Workflow paused (waiting): ${runId}`);
+        logger.info(`Workflow paused (waiting): ${sanitizedRunId}`);
       }
       return exitCodes.SUCCESS;
 

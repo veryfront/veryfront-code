@@ -9,6 +9,9 @@ import {
   isProxyWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
 
+const apply = Reflect.apply;
+const structuredCloneValue = globalThis.structuredClone;
+
 interface ContractSchemaShape {
   __zod?: unknown;
   _output?: unknown;
@@ -206,20 +209,33 @@ function snapshotMcpConfig(
   if (typeof value !== "object" || value === null) {
     schemaError(toolId, "MCP configuration must be a bounded JSON object");
   }
-  if (!canIdentifyProxyWithoutHooks) {
-    schemaError(toolId, "MCP configuration must contain only data properties");
+  let inspectedValue: object = value;
+  if (canIdentifyProxyWithoutHooks) {
+    if (isProxyWithoutHooks(value)) {
+      schemaError(toolId, "MCP configuration must contain only data properties");
+    }
+  } else {
+    if (typeof structuredCloneValue !== "function") {
+      schemaError(toolId, "MCP configuration must contain only data properties");
+    }
+    // Local MCP metadata crosses the same edge-runtime trust boundary as
+    // provider-bound JSON: hosts without no-hook Proxy detection use the
+    // captured structured clone primitive to reject Proxies before reflection
+    // and then validate the owned clone.
+    try {
+      inspectedValue = apply(structuredCloneValue, globalThis, [value]) as object;
+    } catch {
+      schemaError(toolId, "MCP configuration must contain only data properties");
+    }
   }
-  if (isProxyWithoutHooks(value)) {
-    schemaError(toolId, "MCP configuration must contain only data properties");
-  }
-  if (Array.isArray(value)) {
+  if (Array.isArray(inspectedValue)) {
     schemaError(toolId, "MCP configuration must be a bounded JSON object");
   }
 
   const canonicalInput: Record<string, unknown> = {};
   let keys: PropertyKey[];
   try {
-    keys = Reflect.ownKeys(value);
+    keys = Reflect.ownKeys(inspectedValue);
   } catch {
     schemaError(toolId, "MCP configuration must be a bounded JSON object");
   }
@@ -229,7 +245,7 @@ function snapshotMcpConfig(
     }
     let descriptor: PropertyDescriptor | undefined;
     try {
-      descriptor = Object.getOwnPropertyDescriptor(value, key);
+      descriptor = Object.getOwnPropertyDescriptor(inspectedValue, key);
     } catch {
       schemaError(toolId, "MCP configuration must contain only data properties");
     }

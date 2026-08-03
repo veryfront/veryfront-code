@@ -289,7 +289,7 @@ describe("tool factory", () => {
       );
     });
 
-    it("rejects MCP config objects before descriptor inspection when proxy detection is unavailable", async () => {
+    it("loads MCP config through structured clone when proxy detection is unavailable", async () => {
       const script = `
         Object.defineProperty(globalThis, "caches", {
           configurable: true,
@@ -306,7 +306,12 @@ describe("tool factory", () => {
         const { tool } = await import("./src/tool/factory.ts");
 
         let trapCalls = 0;
-        const mcp = new Proxy({ enabled: true }, {
+        const plainMcp = {
+          enabled: true,
+          title: "Edge tool",
+          annotations: { readOnlyHint: true },
+        };
+        const proxiedMcp = new Proxy({ enabled: true }, {
           ownKeys() {
             trapCalls += 1;
             throw new Error("ownKeys trap must not escape");
@@ -319,18 +324,26 @@ describe("tool factory", () => {
         const result = {
           canIdentifyProxyWithoutHooks,
           trapCalls,
-          message: "",
+          plainMcp: undefined,
+          proxyMessage: "",
         };
+        result.plainMcp = tool({
+          id: "edge-mcp-config",
+          description: "desc",
+          inputSchema: { type: "object" },
+          execute: async () => null,
+          mcp: plainMcp,
+        }).mcp;
         try {
           tool({
-            id: "edge-mcp-config",
+            id: "edge-mcp-config-proxy",
             description: "desc",
             inputSchema: { type: "object" },
             execute: async () => null,
-            mcp,
+            mcp: proxiedMcp,
           });
         } catch (error) {
-          result.message = error instanceof Error ? error.message : String(error);
+          result.proxyMessage = error instanceof Error ? error.message : String(error);
           result.trapCalls = trapCalls;
         }
         console.log(JSON.stringify(result));
@@ -348,7 +361,13 @@ describe("tool factory", () => {
       assertEquals(result, {
         canIdentifyProxyWithoutHooks: false,
         trapCalls: 0,
-        message: 'Tool "edge-mcp-config" MCP configuration must contain only data properties',
+        plainMcp: {
+          enabled: true,
+          title: "Edge tool",
+          annotations: { readOnlyHint: true },
+        },
+        proxyMessage:
+          'Tool "edge-mcp-config-proxy" MCP configuration must contain only data properties',
       });
     });
 
