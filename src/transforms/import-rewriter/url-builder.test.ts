@@ -194,8 +194,8 @@ describe("transforms/import-rewriter/url-builder", () => {
         extractDependencyPinningPathKey("/_vf_modules/_pins/not-terminated"),
         {
           pathname: "/_vf_modules/_pins/not-terminated",
-          found: true,
-          malformed: true,
+          found: false,
+          malformed: false,
         },
       );
       assertEquals(
@@ -204,8 +204,19 @@ describe("transforms/import-rewriter/url-builder", () => {
         ),
         {
           pathname: "/_vf_modules/_pins/project-dir/page.js",
+          found: false,
+          malformed: false,
+        },
+      );
+      assertEquals(
+        extractDependencyPinningPathKey(
+          "/_vf_modules/_pins/on%3Aa/_pins/project-dir/page.js",
+        ),
+        {
+          pathname: "/_vf_modules/_pins/project-dir/page.js",
+          cacheKey: "on:a",
           found: true,
-          malformed: true,
+          malformed: false,
         },
       );
       assertEquals(

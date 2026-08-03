@@ -358,9 +358,12 @@ export function extractDependencyPinningPathKey(
     const encodedKey = separatorIndex === -1
       ? encodedKeyAndPath
       : encodedKeyAndPath.slice(0, separatorIndex);
+    if (hasMalformedPercentEncoding(encodedKey)) {
+      return { pathname, found: true, malformed: true };
+    }
     const cacheKey = decodeDependencyPinningPathKey(encodedKey);
     if (!cacheKey) {
-      return { pathname, found: true, malformed: true };
+      return { pathname, found: false, malformed: false };
     }
     if (separatorIndex === -1) {
       return { pathname, found: true, malformed: true };

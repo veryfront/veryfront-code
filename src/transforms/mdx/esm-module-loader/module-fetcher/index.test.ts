@@ -562,18 +562,6 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
           "Malformed dependency snapshot module path",
         ],
         [
-          "an invalid reserved pin key",
-          "/_vf_modules/_pins/project-dir/components/Child.js",
-          "dependency-pin-malformed",
-          "Malformed dependency snapshot module path",
-        ],
-        [
-          "a reserved path with an invalid snapshot key",
-          "/_vf_modules/_pins/not-a-snapshot/components/Child.js",
-          "dependency-pin-malformed",
-          "Malformed dependency snapshot module path",
-        ],
-        [
           "a nested reserved path with malformed percent encoding",
           "/_vf_modules/_pins/on%3Asnapshot-a/_pins/%E0%A4%A/components/Child.js",
           "dependency-pin-malformed",
@@ -606,6 +594,38 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
         assertEquals(resolveCount, 0);
       });
     }
+
+    it("treats decodable non-key _pins segments as ordinary source paths", async () => {
+      let resolveCount = 0;
+      const adapter = {
+        env: { get: (_key: string) => undefined },
+        fs: {
+          resolveFile: () => {
+            resolveCount++;
+            return Promise.resolve(null);
+          },
+        },
+      } as unknown as RuntimeAdapter;
+      const ctx = createModuleFetcherContext("/cache", adapter, "/project", "proj-pinned", {
+        dependencyPinningCacheKey: "on:snapshot-a",
+      });
+
+      for (
+        const path of [
+          "/_vf_modules/_pins/project-dir/components/Child.js",
+          "/_vf_modules/_pins/not-a-snapshot/components/Child.js",
+        ]
+      ) {
+        const error = await assertRejects(
+          () => fetchAndCacheModule(path, ctx),
+          Error,
+          "[MDX] Missing module",
+        );
+        if (!(error instanceof Error)) throw new Error("expected Error");
+        assertEquals(error.name, "MissingModuleError");
+      }
+      assertEquals(resolveCount > 0, true);
+    });
   });
 
   describe("circular imports", () => {
