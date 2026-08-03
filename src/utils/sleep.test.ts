@@ -17,11 +17,11 @@ describe("sleep", () => {
     }
   });
 
-  it("allows a zero-delay asynchronous yield", async () => {
+  it("resolves zero-delay sleeps", async () => {
     assertEquals(await sleep(0), undefined);
   });
 
-  it("accepts fractional retry jitter without scheduling it early", async () => {
+  it("resolves fractional retry jitter delays", async () => {
     assertEquals(await sleep(0.1), undefined);
   });
 });
