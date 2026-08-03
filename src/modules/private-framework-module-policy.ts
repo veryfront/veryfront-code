@@ -1,5 +1,8 @@
 /** Framework modules that must never be resolved from project-authored imports. */
-const PRIVATE_FRAMEWORK_MODULE_PREFIXES = ["agent/hosted/internal/"] as const;
+const PRIVATE_FRAMEWORK_MODULE_PREFIXES = [
+  "agent/hosted/internal/",
+  "tool/internal/",
+] as const;
 
 function repeatedlyDecodePath(value: string): string {
   let decoded = value;

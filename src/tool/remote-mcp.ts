@@ -817,8 +817,39 @@ function buildRunContextMeta(
   return Object.keys(meta).length > 0 ? meta : undefined;
 }
 
-/** @internal Host composition seam. The supplied fetch owns all transport authority. */
-export function createRemoteMCPToolSourceWithFetch(
+function createCapabilityGuardedFetch(
+  requestFetch: typeof fetch,
+  transportAuthority: unknown,
+): typeof fetch {
+  let authorization: Promise<void> | undefined;
+  return async (input, init) => {
+    authorization ??= import("./internal/remote-mcp-transport.ts").then((module) => {
+      if (!module.isRemoteMCPHostTransportAuthority(transportAuthority)) {
+        throw new TypeError("Remote MCP host transport authority required");
+      }
+    });
+    await authorization;
+    return requestFetch(input, init);
+  };
+}
+
+/**
+ * @internal Capability-gated implementation used by the denied host transport
+ * module. A caller-controlled fetch is never invoked without its unforgeable
+ * host authority.
+ */
+export function createRemoteMCPToolSourceWithTransportCapability(
+  config: RemoteMCPToolSourceConfig,
+  requestFetch: typeof fetch,
+  transportAuthority: unknown,
+): RemoteToolSource {
+  return createRemoteMCPToolSourceWithFetch(
+    config,
+    createCapabilityGuardedFetch(requestFetch, transportAuthority),
+  );
+}
+
+function createRemoteMCPToolSourceWithFetch(
   config: RemoteMCPToolSourceConfig,
   requestFetch: typeof fetch,
 ): RemoteToolSource {

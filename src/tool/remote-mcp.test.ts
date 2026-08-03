@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   createRemoteMCPToolSource,
+  createRemoteMCPToolSourceWithTransportCapability,
   MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
   MAX_REMOTE_MCP_TOOL_DEFINITIONS,
   MAX_REMOTE_MCP_TOOL_LIST_PAGES,
@@ -79,6 +80,28 @@ describe("tool/remote-mcp", () => {
       Error,
       "Outbound network egress blocked",
     );
+  });
+
+  it("rejects forged host transport authority before invoking caller-controlled fetch", async () => {
+    let transportCalls = 0;
+    const source = createRemoteMCPToolSourceWithTransportCapability(
+      {
+        id: "forged-host-transport",
+        endpoint: "https://93.184.216.34/mcp",
+      },
+      () => {
+        transportCalls++;
+        return Promise.resolve(Response.json({}));
+      },
+      Object.freeze({}),
+    );
+
+    await assertRejects(
+      () => source.listTools(),
+      TypeError,
+      "Remote MCP host transport authority required",
+    );
+    assertEquals(transportCalls, 0);
   });
 
   it("normalizes non-Error caller abort reasons", async () => {

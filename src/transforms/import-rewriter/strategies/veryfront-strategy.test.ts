@@ -204,6 +204,9 @@ describe("VeryfrontStrategy", () => {
           "#veryfront/agent/hosted/internal./control-plane-mcp-source.ts",
           "#veryfront/agent/hosted/x/..%20/internal/control-plane-mcp-source.ts",
           "#veryfront/agent/hosted/.%20/internal/control-plane-mcp-source.ts",
+          "#veryfront/tool/internal/remote-mcp-transport.ts",
+          "#veryfront/tool/x/../internal/remote-mcp-transport.ts",
+          "#veryfront/tool/Internal/remote-mcp-transport.ts",
         ]
       ) {
         assertThrows(

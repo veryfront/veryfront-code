@@ -329,11 +329,22 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
         "/_vf_modules/_veryfront/agent/hosted/internal./control-plane-mcp-source.js",
         "/_vf_modules/_veryfront/agent/hosted/x/..%20/internal/control-plane-mcp-source.js",
         "/_vf_modules/_veryfront/agent/hosted/.%20/internal/control-plane-mcp-source.js",
+        "/_vf_modules/_veryfront/tool/internal/remote-mcp-transport.js",
+        "/_vf_modules/_veryfront/tool/x/%2e%2e/internal/remote-mcp-transport.js",
+        "/_vf_modules/_veryfront/tool/Internal/remote-mcp-transport.js",
       ]
     ) {
       const response = await serve(new Request(`http://localhost:3000${path}`));
       assertEquals(response.status, 404, path);
     }
+  });
+
+  it("keeps the guarded remote MCP module public while its transport seam stays private", async () => {
+    const response = await serve(
+      new Request("http://localhost:3000/_vf_modules/_veryfront/tool/remote-mcp.js"),
+    );
+
+    assertEquals(response.status, 200);
   });
 
   it("should serve browser-safe framework version modules without #deno-config", async () => {

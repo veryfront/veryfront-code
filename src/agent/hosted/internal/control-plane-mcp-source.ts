@@ -1,10 +1,8 @@
 /** Host-only transport for exact operator-configured control-plane MCP endpoints. */
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { createOutboundFetchBoundary } from "#veryfront/security/http/outbound-fetch.ts";
-import {
-  createRemoteMCPToolSource,
-  createRemoteMCPToolSourceWithFetch,
-} from "#veryfront/tool/remote-mcp.ts";
+import { createRemoteMCPToolSource } from "#veryfront/tool/remote-mcp.ts";
+import { createRemoteMCPToolSourceWithFetch } from "#veryfront/tool/internal/remote-mcp-transport.ts";
 import type { RemoteMCPToolSourceConfig, RemoteToolSource } from "#veryfront/tool";
 
 // Capture the host transport before project execution can replace global fetch.
