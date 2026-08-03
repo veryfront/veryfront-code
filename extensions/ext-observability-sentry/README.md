@@ -10,10 +10,10 @@ VERYFRONT_ERROR_REPORTER=sentry
 SENTRY_DSN=https://public@example.ingest.sentry.io/1
 ```
 
-`SENTRY_ENABLED=false` always disables reporting, even when the adapter and a
-valid DSN are present. During the compatibility rollout, an unset flag keeps
-the existing adapter-selection behavior. `SENTRY_DSN` selects the event
-destination and may use a public HTTPS custom Sentry hostname; `SENTRY_URL` is
+Only `SENTRY_ENABLED=true` or `SENTRY_ENABLED=1` enables reporting. An unset,
+blank, `false`, `0`, or unrecognized value disables reporting even when the
+adapter and a valid DSN are present. `SENTRY_DSN` selects the event destination
+and may use a public HTTPS custom Sentry hostname; `SENTRY_URL` is
 release-tooling configuration and is not read by the runtime adapter.
 
 `SENTRY_DSN` alone does not activate the framework adapter. Official compiled Veryfront
