@@ -1,5 +1,6 @@
-import { assertEquals } from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
+import { parse } from "#std/yaml/parse";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildAuditPackageJson, collectNpmDependencies } from "./audit-npm.ts";
 
 describe("collectNpmDependencies", () => {
@@ -75,6 +76,9 @@ describe("audit task", () => {
     const workflow = await Deno.readTextFile(
       ".github/workflows/security-audit.yml",
     );
+    const pullRequestPaths = (parse(workflow) as {
+      on: { pull_request: { paths: string[] } };
+    }).on.pull_request.paths;
 
     assertEquals(
       denoConfig.tasks.audit.includes(
@@ -82,7 +86,10 @@ describe("audit task", () => {
       ),
       true,
     );
-    assertEquals(workflow.includes('- "storybook/package.json"'), true);
-    assertEquals(workflow.includes('- "storybook/package-lock.json"'), true);
+    assertEquals(pullRequestPaths.includes("storybook/package.json"), true);
+    assertEquals(
+      pullRequestPaths.includes("storybook/package-lock.json"),
+      true,
+    );
   });
 });
