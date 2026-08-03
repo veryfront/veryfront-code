@@ -23,12 +23,14 @@ function readOwnDataProperty(source: unknown, key: string): unknown {
   return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }
 
-async function cancelResponseBody(response: Response): Promise<void> {
+function cancelResponseBodyWithoutWaiting(response: Response): void {
+  let cancellation: Promise<void> | undefined;
   try {
-    await response.body?.cancel();
+    cancellation = response.body?.cancel();
   } catch {
     // Preserve the primary lookup failure when connection cleanup also fails.
   }
+  void cancellation?.catch(() => undefined);
 }
 
 /** Resolver for public project references used by hosted agent tools. */
@@ -74,7 +76,7 @@ export async function resolveHostedProjectReference(input: {
     },
   );
   if (!response.ok) {
-    await cancelResponseBody(response);
+    cancelResponseBodyWithoutWaiting(response);
     throw new Error(`Project lookup failed (${response.status})`);
   }
 
@@ -86,9 +88,7 @@ export async function resolveHostedProjectReference(input: {
   });
   // The response must name the project that was asked for; a lookup that
   // answers with a different identity must not silently retarget the caller.
-  if (
-    !identity
-  ) {
+  if (!identity) {
     throw new Error("Project lookup response did not confirm the requested project identity");
   }
 
