@@ -104,6 +104,33 @@ describe("DevDashboardHandler admission", () => {
     assertEquals(cancelled, true);
   });
 
+  it("rejects shell mutation methods without awaiting body cancellation", async () => {
+    let cancelled = false;
+    const cancellationNeverSettles = new Promise<void>(() => {});
+    const request = requestFromPeer(
+      new Request("http://localhost/_dev", {
+        method: "POST",
+        headers: { host: "localhost" },
+        body: new ReadableStream<Uint8Array>({
+          cancel() {
+            cancelled = true;
+            return cancellationNeverSettles;
+          },
+        }),
+      }),
+    );
+
+    const response = (await new DevDashboardHandler(DEV_UI_PROVIDER).handle(
+      request,
+      localContext(),
+    )).response!;
+
+    assertEquals(response.status, 405);
+    assertEquals(response.headers.get("allow"), "GET, HEAD");
+    assertEquals(response.headers.get("cache-control"), "no-store");
+    assertEquals(cancelled, true);
+  });
+
   it("issues a no-store shell with its session cookie and matching token metadata", async () => {
     const result = await new DevDashboardHandler(DEV_UI_PROVIDER).handle(
       dashboardRequest("http://localhost/_dev"),
@@ -125,6 +152,22 @@ describe("DevDashboardHandler admission", () => {
       html,
       `<meta name="${DASHBOARD_CSRF_META_NAME}" content="${token}">`,
     );
+
+    const headResponse = (await new DevDashboardHandler(DEV_UI_PROVIDER).handle(
+      requestFromPeer(
+        new Request("http://localhost/_dev", {
+          method: "HEAD",
+          headers: { host: "localhost" },
+        }),
+      ),
+      localContext(),
+    )).response!;
+    assertEquals(headResponse.status, response.status);
+    assertEquals(
+      headResponse.headers.get("content-type"),
+      response.headers.get("content-type"),
+    );
+    assertEquals(await headResponse.text(), "");
   });
 
   it("issues a headless session without requiring optional Dev UI assets", async () => {
@@ -209,6 +252,22 @@ describe("DevDashboardHandler admission", () => {
     )).response!;
     assertEquals(unavailableBundle.status, 503);
     assertStringIncludes(await unavailableBundle.text(), "@veryfront/ext-dev-ui-react");
+
+    const unavailableBundleHead = (await unavailable.handle(
+      requestFromPeer(
+        new Request("http://localhost/_dev/ui/index.js", {
+          method: "HEAD",
+          headers: { host: "localhost" },
+        }),
+      ),
+      localContext(),
+    )).response!;
+    assertEquals(unavailableBundleHead.status, unavailableBundle.status);
+    assertEquals(
+      unavailableBundleHead.headers.get("content-type"),
+      unavailableBundle.headers.get("content-type"),
+    );
+    assertEquals(await unavailableBundleHead.text(), "");
   });
 
   it("keeps non-local projects outside the dashboard handler", async () => {

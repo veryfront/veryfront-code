@@ -17,7 +17,10 @@ import { handleProjectsAPI } from "./api.ts";
 import { handleProjectsUI } from "./ui-handler.ts";
 import { createDevNotFoundResponse } from "../shared/not-found-response.ts";
 import { errorResponse } from "../http-helpers.ts";
-import { DEV_UI_ASSET_PROVIDER_MISSING_MESSAGE } from "../shared/dev-ui-bundle-response.ts";
+import {
+  DEV_UI_ASSET_PROVIDER_MISSING_MESSAGE,
+  omitHeadResponseBody,
+} from "../shared/dev-ui-bundle-response.ts";
 import { type DevUiAssetProvider, snapshotDevUiAssetProvider } from "#veryfront/extensions/dev-ui";
 
 const PROJECTS_ALLOWED_METHODS = "GET, HEAD";
@@ -29,16 +32,6 @@ function cancelRejectedRequestBody(req: Request): void {
     // Preserve the deterministic method response if a hostile stream is
     // already locked or fails while cancellation is attempted.
   }
-}
-
-function omitHeadBody(req: Request, response: Response): Response {
-  return req.method === "HEAD"
-    ? new Response(null, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    })
-    : response;
 }
 
 export class ProjectsHandler extends BaseHandler {
@@ -97,14 +90,14 @@ export class ProjectsHandler extends BaseHandler {
     if (pathname === "/" || pathname === "/_projects" || pathname === "/_projects/") {
       if (this.browserBundle === undefined) {
         return this.respond(
-          omitHeadBody(
+          omitHeadResponseBody(
             req,
             errorResponse(DEV_UI_ASSET_PROVIDER_MISSING_MESSAGE, 503),
           ),
         );
       }
       return this.respond(
-        omitHeadBody(
+        omitHeadResponseBody(
           req,
           this.createResponseBuilder(ctx).withCache("no-cache").withContentType(
             "text/html; charset=utf-8",
@@ -117,16 +110,16 @@ export class ProjectsHandler extends BaseHandler {
 
     if (pathname.startsWith("/_projects/ui/")) {
       const response = handleProjectsUI(req, this.browserBundle);
-      if (response) return this.respond(omitHeadBody(req, response));
-      return this.respond(omitHeadBody(req, createDevNotFoundResponse()));
+      if (response) return this.respond(omitHeadResponseBody(req, response));
+      return this.respond(omitHeadResponseBody(req, createDevNotFoundResponse()));
     }
 
     if (pathname.startsWith("/_projects/api/")) {
       const response = await handleProjectsAPI(req, ctx);
-      if (response) return this.respond(omitHeadBody(req, response));
-      return this.respond(omitHeadBody(req, createDevNotFoundResponse()));
+      if (response) return this.respond(omitHeadResponseBody(req, response));
+      return this.respond(omitHeadResponseBody(req, createDevNotFoundResponse()));
     }
 
-    return this.respond(omitHeadBody(req, createDevNotFoundResponse()));
+    return this.respond(omitHeadResponseBody(req, createDevNotFoundResponse()));
   }
 }

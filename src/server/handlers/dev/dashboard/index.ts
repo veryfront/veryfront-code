@@ -13,7 +13,10 @@ import { handleDashboardAPI } from "./api.ts";
 import { handleDashboardUI } from "./ui-handler.ts";
 import { createDevNotFoundResponse } from "../shared/not-found-response.ts";
 import { errorResponse } from "../http-helpers.ts";
-import { DEV_UI_ASSET_PROVIDER_MISSING_MESSAGE } from "../shared/dev-ui-bundle-response.ts";
+import {
+  DEV_UI_ASSET_PROVIDER_MISSING_MESSAGE,
+  omitHeadResponseBody,
+} from "../shared/dev-ui-bundle-response.ts";
 import {
   createDashboardSessionCookie,
   DASHBOARD_ACCESS_DENIED_MESSAGE,
@@ -28,6 +31,7 @@ const HEADLESS_SESSION_HEADERS = Object.freeze({
   "Cache-Control": "no-store",
   "Content-Type": "text/plain; charset=utf-8",
 });
+const DASHBOARD_SHELL_ALLOWED_METHODS = "GET, HEAD";
 
 export class DevDashboardHandler extends BaseHandler {
   private readonly browserBundle?: string;
@@ -58,7 +62,7 @@ export class DevDashboardHandler extends BaseHandler {
       cancelRejectedLocalControlRequestBody(req, "Dashboard request rejected");
       const response = errorResponse(DASHBOARD_ACCESS_DENIED_MESSAGE, 403);
       response.headers.set("Cache-Control", "no-store");
-      return this.respond(response);
+      return this.respond(omitHeadResponseBody(req, response));
     }
 
     const { pathname } = new URL(req.url);
@@ -84,33 +88,53 @@ export class DevDashboardHandler extends BaseHandler {
     }
 
     if (pathname === "/_dev" || pathname === "/_dev/") {
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        cancelRejectedLocalControlRequestBody(req, "Dashboard shell method rejected");
+        return this.respond(
+          new Response("Method not allowed", {
+            status: 405,
+            headers: {
+              ...HEADLESS_SESSION_HEADERS,
+              Allow: DASHBOARD_SHELL_ALLOWED_METHODS,
+            },
+          }),
+        );
+      }
       if (this.browserBundle === undefined) {
-        return this.respond(errorResponse(DEV_UI_ASSET_PROVIDER_MISSING_MESSAGE, 503));
+        return this.respond(
+          omitHeadResponseBody(
+            req,
+            errorResponse(DEV_UI_ASSET_PROVIDER_MISSING_MESSAGE, 503),
+          ),
+        );
       }
       return this.respond(
-        this.createResponseBuilder(ctx)
-          .withCache("no-store")
-          .withHeaders({ "Set-Cookie": createDashboardSessionCookie(req) })
-          .withContentType(
-            "text/html; charset=utf-8",
-            createDashboardShellHtml(getDashboardSessionToken()),
-            HTTP_OK,
-          ),
+        omitHeadResponseBody(
+          req,
+          this.createResponseBuilder(ctx)
+            .withCache("no-store")
+            .withHeaders({ "Set-Cookie": createDashboardSessionCookie(req) })
+            .withContentType(
+              "text/html; charset=utf-8",
+              createDashboardShellHtml(getDashboardSessionToken()),
+              HTTP_OK,
+            ),
+        ),
       );
     }
 
     if (pathname.startsWith("/_dev/ui/")) {
       const response = handleDashboardUI(req, this.browserBundle);
-      if (response) return this.respond(response);
-      return this.respond(createDevNotFoundResponse());
+      if (response) return this.respond(omitHeadResponseBody(req, response));
+      return this.respond(omitHeadResponseBody(req, createDevNotFoundResponse()));
     }
 
     if (pathname.startsWith("/_dev/api/")) {
       const response = await handleDashboardAPI(req, ctx);
-      if (response) return this.respond(response);
-      return this.respond(createDevNotFoundResponse());
+      if (response) return this.respond(omitHeadResponseBody(req, response));
+      return this.respond(omitHeadResponseBody(req, createDevNotFoundResponse()));
     }
 
-    return this.respond(createDevNotFoundResponse());
+    return this.respond(omitHeadResponseBody(req, createDevNotFoundResponse()));
   }
 }
