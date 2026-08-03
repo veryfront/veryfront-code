@@ -1,8 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import {
+  closeSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -263,8 +266,13 @@ describe("cache-dir", () => {
 
       await runWithCacheDir(cacheRoot, ensureCacheNodeModules);
 
-      assert(lstatSync(nodeModulesEntry).isFile());
-      assertEquals(readFileSync(nodeModulesEntry, "utf8"), "keep");
+      const entry = openSync(nodeModulesEntry, "r");
+      try {
+        assert(fstatSync(entry).isFile());
+        assertEquals(readFileSync(entry, "utf8"), "keep");
+      } finally {
+        closeSync(entry);
+      }
     });
   });
 });

@@ -53,6 +53,5 @@
   "src/transforms/md/compiler/md-compiler.test.ts",
   "src/transforms/mdx/compiler/index.test.ts",
   "src/transforms/mdx/esm-module-loader/loader.test.ts",
-  "src/utils/cache/stores/memory/lru-list-manager.test.ts",
   "src/workflow/api/workflow-client.test.ts"
 ]
