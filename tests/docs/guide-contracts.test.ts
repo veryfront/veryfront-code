@@ -588,11 +588,22 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/context.md",
       "../api-reference/veryfront/mdx.md",
     ],
-    snippets: ["app router", "useRouter", "Link"],
+    snippets: ["app router", "useRouter", "Link", "MDXProvider"],
   },
   "guides/project-structure.md": {
     references: ["../api-reference/veryfront/index.md"],
     snippets: ["app/", "agents/", "tools/"],
+  },
+  "guides/project-knowledge.md": {
+    references: ["../api-reference/veryfront/knowledge.md"],
+    snippets: [
+      "projectKnowledge",
+      "createSearchKnowledgeTool",
+      'mode: "browse"',
+      "release-backed content",
+      "lookup_target",
+      "page_info.next",
+    ],
   },
   "guides/project-metrics.md": {
     references: ["../api-reference/veryfront/observability.md"],
