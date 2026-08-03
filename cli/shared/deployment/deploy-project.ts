@@ -4,7 +4,9 @@ import { join, relative, resolve } from "veryfront/platform/path";
 import { isWithinDirectory, normalizePath } from "veryfront/utils";
 import { parseProjectDomain } from "veryfront/server";
 import {
+  isSafeBoundedText,
   parseReadyReleaseAssetManifestResponse,
+  readUntrustedOwnDataProperty,
   type ReadyReleaseAssetManifestResponse,
   type ReleaseAssetManifestResponse,
   routeForPage,
@@ -612,15 +614,8 @@ function assertReadyManifestCoversPageRoutes(
   }
 }
 
-function readReleaseAssetResponseDataProperty(value: unknown, key: PropertyKey): unknown {
-  if (value === null || typeof value !== "object") return undefined;
-  try {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    return descriptor && "value" in descriptor ? descriptor.value : undefined;
-  } catch {
-    return undefined;
-  }
-}
+/** Upper bound for a plausible manifest state value from the control plane. */
+const MAX_MANIFEST_STATE_LENGTH = 64;
 
 export async function waitForReleaseAssetManifest(
   controlPlane: DeployControlPlane,
@@ -652,8 +647,8 @@ export async function waitForReleaseAssetManifest(
         : `HTTP ${status}`;
     }
     if (raw !== null) {
-      const state = readReleaseAssetResponseDataProperty(raw, "state");
-      if (typeof state !== "string" || state.length === 0 || state.length > 64) {
+      const state = readUntrustedOwnDataProperty(raw, "state");
+      if (!isSafeBoundedText(state, MAX_MANIFEST_STATE_LENGTH)) {
         throw new Error(`Release assets for ${releaseId} returned an invalid state response`);
       }
       lastState = state;

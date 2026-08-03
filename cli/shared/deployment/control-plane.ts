@@ -298,7 +298,7 @@ export function createHttpDeployControlPlane(
         throw error;
       }
       if (response == null) {
-        throw new Error(`Release assets for ${releaseId} returned an invalid state response`);
+        throw new Error(`Release assets for ${releaseId} returned an empty manifest response`);
       }
       return response as DeployReleaseAssetManifestBody;
     },

@@ -72,7 +72,7 @@ describe("createHttpDeployControlPlane", () => {
     await assertRejects(
       () => controlPlane.getReleaseAssetManifest("my-project", "release-1"),
       Error,
-      "invalid state response",
+      "empty manifest response",
     );
   });
 
@@ -87,7 +87,7 @@ describe("createHttpDeployControlPlane", () => {
     await assertRejects(
       () => controlPlane.getReleaseAssetManifest("my-project", "release-1"),
       Error,
-      "invalid state response",
+      "empty manifest response",
     );
   });
 

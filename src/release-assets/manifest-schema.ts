@@ -73,7 +73,11 @@ const CSS_ENTRY_KEYS = new Set([
 ]);
 const ROUTE_ENTRY_KEYS = new Set(["modules", "css"]);
 
-function isSafeBoundedText(value: unknown, maxLength: number): value is string {
+/**
+ * Check that an untrusted value is a non-empty, trimmed string within
+ * `maxLength` that contains no control characters.
+ */
+export function isSafeBoundedText(value: unknown, maxLength: number): value is string {
   return typeof value === "string" &&
     value.length > 0 &&
     value.length <= maxLength &&
@@ -357,6 +361,21 @@ export function parseReadyReleaseAssetManifestResponse(
     });
   } catch {
     return null;
+  }
+}
+
+/**
+ * Read an own data property from an untrusted value without invoking accessors.
+ *
+ * Returns undefined for primitives, accessor-backed properties, and values
+ * whose property inspection throws (for example hostile proxies).
+ */
+export function readUntrustedOwnDataProperty(value: unknown, key: PropertyKey): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
+  try {
+    return readOwnDataProperty(value, key);
+  } catch {
+    return undefined;
   }
 }
 
