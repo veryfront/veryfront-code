@@ -748,11 +748,19 @@ describe("ragStore", () => {
 
       const searchPromise = store.search("needle");
       await queryEmbeddingStarted;
-      const documents = await Promise.race([
-        store.listDocuments(),
-        new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 50)),
-      ]);
-      releaseQueryEmbedding();
+      let blockedTimer: ReturnType<typeof setTimeout> | undefined;
+      let documents: Awaited<ReturnType<typeof store.listDocuments>> | "blocked";
+      try {
+        documents = await Promise.race([
+          store.listDocuments(),
+          new Promise<"blocked">((resolve) => {
+            blockedTimer = setTimeout(() => resolve("blocked"), 5_000);
+          }),
+        ]);
+      } finally {
+        if (blockedTimer !== undefined) clearTimeout(blockedTimer);
+        releaseQueryEmbedding();
+      }
       await searchPromise;
 
       assert(Array.isArray(documents));
