@@ -351,23 +351,32 @@ describe("rendering/cache/stores/api-store", () => {
         assertEquals(setResolved, true);
       } finally {
         releaseSet.resolve();
-        await store.destroy();
-        await server.shutdown();
-        await setPromise;
-        if (previousApiBaseUrl === undefined) {
-          Deno.env.delete("VERYFRONT_API_BASE_URL");
-        } else {
-          Deno.env.set("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
-        }
-        if (previousApiToken === undefined) {
-          Deno.env.delete("VERYFRONT_API_TOKEN");
-        } else {
-          Deno.env.set("VERYFRONT_API_TOKEN", previousApiToken);
-        }
-        if (originalAdapter === undefined) {
-          delete globals.__vf_multi_project_adapter;
-        } else {
-          globals.__vf_multi_project_adapter = originalAdapter;
+        try {
+          await withTimeoutThrow(
+            Promise.all([
+              store.destroy(),
+              server.shutdown(),
+              setPromise ?? Promise.resolve(),
+            ]),
+            10_000,
+            "distributed cache write test cleanup",
+          );
+        } finally {
+          if (previousApiBaseUrl === undefined) {
+            Deno.env.delete("VERYFRONT_API_BASE_URL");
+          } else {
+            Deno.env.set("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
+          }
+          if (previousApiToken === undefined) {
+            Deno.env.delete("VERYFRONT_API_TOKEN");
+          } else {
+            Deno.env.set("VERYFRONT_API_TOKEN", previousApiToken);
+          }
+          if (originalAdapter === undefined) {
+            delete globals.__vf_multi_project_adapter;
+          } else {
+            globals.__vf_multi_project_adapter = originalAdapter;
+          }
         }
       }
     });
