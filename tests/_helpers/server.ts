@@ -1,7 +1,6 @@
 import { join } from "#veryfront/compat/path";
 import { isNotFoundError, makeTempDir, mkdir, remove } from "../../src/platform/compat/fs.ts";
 import { startDevServer } from "../../src/server/dev-server.ts";
-import { startProductionServer } from "../../src/server/production-server.ts";
 import { resetApiHandler } from "../../src/server/handlers/request/api/index.ts";
 import { testDelay } from "#veryfront/testing";
 import { CLEANUP_CONFIG, SERVER_CONFIG, TEST_TIMEOUTS } from "./constants.ts";
@@ -197,30 +196,4 @@ export async function createTestProjectDir(): Promise<string> {
   ]);
 
   return dir;
-}
-
-/**
- * Create a production server with proper lifecycle management
- */
-export async function createTestProductionServer(options: {
-  projectDir: string;
-  port?: number;
-  hostname?: string;
-  projectId?: string;
-}): Promise<TestServer> {
-  const port = options.port ?? (await getFreePort());
-  const hostname = options.hostname ?? "127.0.0.1";
-  const server = await startProductionServer({
-    projectDir: options.projectDir,
-    port,
-    bindAddress: hostname,
-    defaultProjectSlug: options.projectId,
-    defaultProjectId: options.projectId,
-  });
-
-  return {
-    ...server,
-    port,
-    hostname,
-  };
 }
