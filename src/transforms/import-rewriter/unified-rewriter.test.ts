@@ -308,6 +308,7 @@ describe("rewriteImports with the default strategies", () => {
         error.message,
         "Private Veryfront host module cannot be imported",
       );
+      assertEquals(error.message.includes(privateModuleUrl), false);
     });
   }
 

@@ -67,7 +67,7 @@ export async function rewriteWithImportRewriteCore(input: TransformCoreInput): P
       isPrivateFrameworkFileSpecifier(imp.specifier, FRAMEWORK_SOURCE_URL)
     ) {
       throw SECURITY_VIOLATION.create({
-        detail: `Private Veryfront host module cannot be imported: ${imp.specifier}`,
+        detail: "Private Veryfront host module cannot be imported",
       });
     }
     const result = rewriteOne(imp.specifier, imp, input.context, input.strategies);
