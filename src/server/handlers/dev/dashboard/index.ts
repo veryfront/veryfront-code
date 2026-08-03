@@ -14,7 +14,7 @@ import { handleDashboardUI } from "./ui-handler.ts";
 import { createDevNotFoundResponse } from "../shared/not-found-response.ts";
 import { errorResponse } from "../http-helpers.ts";
 import {
-  DEV_UI_ASSET_PROVIDER_MISSING_MESSAGE,
+  createDevUiAssetsUnavailableResponse,
   omitHeadResponseBody,
 } from "../shared/dev-ui-bundle-response.ts";
 import {
@@ -101,10 +101,8 @@ export class DevDashboardHandler extends BaseHandler {
         );
       }
       if (this.browserBundle === undefined) {
-        const response = errorResponse(DEV_UI_ASSET_PROVIDER_MISSING_MESSAGE, 503);
-        response.headers.set("Cache-Control", "no-store");
         return this.respond(
-          omitHeadResponseBody(req, response),
+          omitHeadResponseBody(req, createDevUiAssetsUnavailableResponse()),
         );
       }
       return this.respond(

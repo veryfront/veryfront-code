@@ -15,6 +15,13 @@ const UNAVAILABLE_HEADERS = Object.freeze({
 export const DEV_UI_ASSET_PROVIDER_MISSING_MESSAGE =
   "Development UI assets are unavailable. Install and enable @veryfront/ext-dev-ui-react.";
 
+export function createDevUiAssetsUnavailableResponse(): Response {
+  return new Response(DEV_UI_ASSET_PROVIDER_MISSING_MESSAGE, {
+    status: 503,
+    headers: UNAVAILABLE_HEADERS,
+  });
+}
+
 /** Preserve GET status and headers while enforcing the HTTP HEAD body contract. */
 export function omitHeadResponseBody(req: Request, response: Response): Response {
   return req.method === "HEAD"
@@ -47,10 +54,7 @@ export function serveDevUiBundle(
   if (browserBundle === undefined) {
     return omitHeadResponseBody(
       req,
-      new Response(DEV_UI_ASSET_PROVIDER_MISSING_MESSAGE, {
-        status: 503,
-        headers: UNAVAILABLE_HEADERS,
-      }),
+      createDevUiAssetsUnavailableResponse(),
     );
   }
 

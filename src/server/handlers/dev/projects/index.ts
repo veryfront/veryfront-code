@@ -16,9 +16,8 @@ import { PROJECTS_SHELL_HTML } from "./html-shell.ts";
 import { handleProjectsAPI } from "./api.ts";
 import { handleProjectsUI } from "./ui-handler.ts";
 import { createDevNotFoundResponse } from "../shared/not-found-response.ts";
-import { errorResponse } from "../http-helpers.ts";
 import {
-  DEV_UI_ASSET_PROVIDER_MISSING_MESSAGE,
+  createDevUiAssetsUnavailableResponse,
   omitHeadResponseBody,
 } from "../shared/dev-ui-bundle-response.ts";
 import type { DevUiAssetProvider } from "#veryfront/extensions/dev-ui";
@@ -87,10 +86,8 @@ export class ProjectsHandler extends BaseHandler {
 
     if (pathname === "/" || pathname === "/_projects" || pathname === "/_projects/") {
       if (this.browserBundle === undefined) {
-        const response = errorResponse(DEV_UI_ASSET_PROVIDER_MISSING_MESSAGE, 503);
-        response.headers.set("Cache-Control", "no-store");
         return this.respond(
-          omitHeadResponseBody(req, response),
+          omitHeadResponseBody(req, createDevUiAssetsUnavailableResponse()),
         );
       }
       return this.respond(

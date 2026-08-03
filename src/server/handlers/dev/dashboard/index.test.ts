@@ -357,6 +357,7 @@ describe("DevDashboardHandler admission", () => {
     )).response!;
     assertEquals(unavailableShell.status, 503);
     assertEquals(unavailableShell.headers.get("cache-control"), "no-store");
+    assertEquals(unavailableShell.headers.get("content-type"), "text/plain; charset=utf-8");
     assertStringIncludes(await unavailableShell.text(), "@veryfront/ext-dev-ui-react");
 
     const unavailableBundle = (await unavailable.handle(
@@ -364,6 +365,7 @@ describe("DevDashboardHandler admission", () => {
       localContext(),
     )).response!;
     assertEquals(unavailableBundle.status, 503);
+    assertEquals(unavailableBundle.headers.get("content-type"), "text/plain; charset=utf-8");
     assertStringIncludes(await unavailableBundle.text(), "@veryfront/ext-dev-ui-react");
 
     const unavailableBundleHead = (await unavailable.handle(
