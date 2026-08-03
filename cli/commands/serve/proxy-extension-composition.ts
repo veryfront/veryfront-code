@@ -146,7 +146,7 @@ async function registerStandaloneProxyCacheExtensionTeardownInternal(
     } catch (cleanupError) {
       throw createProxyShutdownAggregateError(
         [error, cleanupError],
-        "Failed to register and clean up standalone proxy cache extension teardown",
+        "Failed to register and clean up standalone proxy infrastructure extension teardown",
       );
     }
     throw error;
@@ -169,7 +169,7 @@ async function registerStandaloneProxyCacheExtensionTeardownInternal(
         if (disposalFailed) {
           throw createProxyShutdownAggregateError(
             [disposalError, teardownError],
-            "Failed to unregister and tear down standalone proxy cache extension",
+            "Failed to unregister and tear down standalone proxy infrastructure extensions",
           );
         }
         throw teardownError;
