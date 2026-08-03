@@ -70,6 +70,28 @@ describe("id", () => {
 
       assertEquals(firstEightCount / totalCount < 0.145, true);
     });
+
+    it("should not invoke a typed-array iterator replaced after module import", async () => {
+      const idModuleUrl = new URL("./id.ts", import.meta.url).href;
+      const source = `
+        import { generateId } from ${JSON.stringify(idModuleUrl)};
+
+        Uint8Array.prototype[Symbol.iterator] = function () {
+          throw new Error("poisoned typed-array iterator");
+        };
+        console.log(generateId());
+      `;
+      const command = new Deno.Command(Deno.execPath(), {
+        args: ["eval", "--no-check", "--frozen", "--config=deno.json", source],
+        stdout: "piped",
+        stderr: "piped",
+      });
+
+      const result = await command.output();
+      const stderr = new TextDecoder().decode(result.stderr);
+      assertEquals(result.success, true, stderr);
+      assertMatch(new TextDecoder().decode(result.stdout).trim(), /^[0-9a-zA-Z]{16}$/);
+    });
   });
 
   describe("createIdGenerator", () => {

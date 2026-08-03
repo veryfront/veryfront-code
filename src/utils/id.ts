@@ -21,9 +21,14 @@ function randomString(length: number): string {
       65_536,
       Math.max(32, Math.ceil((remaining * 256) / MAX_UNBIASED_BYTE)),
     );
-    const bytes = crypto.getRandomValues(new Uint8Array(batchSize));
+    const bytes = new Uint8Array(batchSize);
+    crypto.getRandomValues(bytes);
 
-    for (const byte of bytes) {
+    // Iterate the allocated batch directly. A project can replace the ambient
+    // typed-array iterator after framework modules load; ID generation must not
+    // execute or depend on that mutable hook.
+    for (let index = 0; index < batchSize; index++) {
+      const byte = bytes[index] ?? 0;
       if (byte >= MAX_UNBIASED_BYTE) continue;
       result += ALPHABET[byte % ALPHABET.length];
       if (result.length === length) break;
