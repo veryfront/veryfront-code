@@ -46,9 +46,24 @@ const CACHE_EXTENSION_PACKAGE_NAME = "@veryfront/ext-cache-redis";
 const REDIS_EXTENSION_SOURCE_DIRECTORY = "ext-redis";
 const REDIS_EXTENSION_PACKAGE_NAME = "@veryfront/ext-redis";
 
+async function loadFirstPartyExtension(
+  sourceDirectory: string,
+  packageName: string,
+): Promise<ExtensionFactory> {
+  const module = await importFirstPartyExtensionModule<ProxyExtensionModule>(
+    sourceDirectory,
+    packageName,
+  );
+  if (typeof module.default !== "function") {
+    throw new NativeTypeError(`${packageName} must export an ExtensionFactory`);
+  }
+  return module.default;
+}
+
 /**
- * Activate the standalone proxy's explicitly selected cache and Redis runtime
- * providers. The returned loader owns provider teardown.
+ * Activate the standalone proxy's explicitly selected infrastructure extensions.
+ * The returned loader owns provider teardown; the proxy borrows the registered
+ * Redis runtime and optional `TokenCacheStore` providers.
  */
 async function activateStandaloneProxyExtensionsInternal(): Promise<ExtensionLoader | null> {
   const cacheType = getEnv("CACHE_TYPE") || "memory";
@@ -58,41 +73,34 @@ async function activateStandaloneProxyExtensionsInternal(): Promise<ExtensionLoa
     );
   }
 
-  const selected: Array<{
+  const extensions: Array<{
+    extension: ReturnType<ExtensionFactory>;
     origin: string;
-    packageName: string;
-    sourceDirectory: string;
+    source: "config";
   }> = [];
-  if (cacheType === "extension" || cacheType === "redis") {
-    selected.push({
-      origin: "standalone proxy cache selection",
-      packageName: CACHE_EXTENSION_PACKAGE_NAME,
-      sourceDirectory: CACHE_EXTENSION_SOURCE_DIRECTORY,
-    });
-  }
   if (getEnv("REDIS_URL")) {
-    selected.push({
-      origin: "standalone proxy routing invalidation",
-      packageName: REDIS_EXTENSION_PACKAGE_NAME,
-      sourceDirectory: REDIS_EXTENSION_SOURCE_DIRECTORY,
+    const redisExtension = await loadFirstPartyExtension(
+      REDIS_EXTENSION_SOURCE_DIRECTORY,
+      REDIS_EXTENSION_PACKAGE_NAME,
+    );
+    extensions.push({
+      extension: redisExtension(),
+      source: "config",
+      origin: "standalone proxy Redis runtime",
     });
   }
-  if (selected.length === 0) return null;
-
-  const extensions = await NativePromise.all(selected.map(async (definition) => {
-    const module = await importFirstPartyExtensionModule<ProxyExtensionModule>(
-      definition.sourceDirectory,
-      definition.packageName,
+  if (cacheType === "extension" || cacheType === "redis") {
+    const cacheExtension = await loadFirstPartyExtension(
+      CACHE_EXTENSION_SOURCE_DIRECTORY,
+      CACHE_EXTENSION_PACKAGE_NAME,
     );
-    if (typeof module.default !== "function") {
-      throw new NativeTypeError(`${definition.packageName} must export an ExtensionFactory`);
-    }
-    return {
-      extension: module.default(),
-      source: "config" as const,
-      origin: definition.origin,
-    };
-  }));
+    extensions.push({
+      extension: cacheExtension(),
+      source: "config",
+      origin: "standalone proxy cache selection",
+    });
+  }
+  if (extensions.length === 0) return null;
 
   const loader = new ExtensionLoader(cliLogger);
   try {
@@ -110,7 +118,10 @@ async function activateStandaloneProxyExtensionsInternal(): Promise<ExtensionLoa
     try {
       await loader.teardownAll();
     } catch (cleanupError) {
-      cliLogger.error("Failed to clean up standalone proxy extensions", cleanupError);
+      cliLogger.error(
+        "Failed to clean up standalone proxy infrastructure extensions",
+        cleanupError,
+      );
     }
     throw error;
   }
@@ -146,7 +157,7 @@ async function registerStandaloneProxyExtensionTeardownInternal(
     } catch (cleanupError) {
       throw createProxyShutdownAggregateError(
         [error, cleanupError],
-        "Failed to register and clean up standalone proxy extension teardown",
+        "Failed to register and clean up standalone proxy infrastructure extension teardown",
       );
     }
     throw error;
@@ -169,7 +180,7 @@ async function registerStandaloneProxyExtensionTeardownInternal(
         if (disposalFailed) {
           throw createProxyShutdownAggregateError(
             [disposalError, teardownError],
-            "Failed to unregister and tear down standalone proxy extensions",
+            "Failed to unregister and tear down standalone proxy infrastructure extensions",
           );
         }
         throw teardownError;

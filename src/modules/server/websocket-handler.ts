@@ -5,6 +5,7 @@ import {
   serverLogger as logger,
 } from "#veryfront/utils";
 import type { WebSocketContext } from "#veryfront/server/dev-server/hmr-types.ts";
+import { getWebSocketMessageAdmission } from "#veryfront/utils/websocket-message-size.ts";
 
 export function setupWebSocketHandlers(
   socket: WebSocket,
@@ -65,13 +66,14 @@ export function setupWebSocketHandlers(
   socket.onmessage = (event) => {
     if (cleanupComplete) return;
     try {
-      const messageSize = typeof event.data === "string"
-        ? event.data.length
-        : event.data.byteLength ?? 0;
+      const admission = getWebSocketMessageAdmission(
+        event.data,
+        context.maxMessageSize,
+      );
 
-      if (messageSize > context.maxMessageSize) {
+      if (!admission.accepted) {
         logger.warn("HMR message too large, closing connection", {
-          size: messageSize,
+          sizeAtLeast: admission.sizeBytes,
           max: context.maxMessageSize,
         });
         closeAndCleanup(HMR_CLOSE_MESSAGE_TOO_LARGE, "Message too large");

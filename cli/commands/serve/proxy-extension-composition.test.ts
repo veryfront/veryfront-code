@@ -99,6 +99,7 @@ describe("standalone proxy extension composition", () => {
       "shutdown registration failed",
     );
     assertEquals(tryResolve<TokenCacheStore>("TokenCacheStore"), undefined);
+    assertEquals(tryResolve(RedisRuntimeProviderName), undefined);
     loader = null;
   });
 
@@ -119,6 +120,7 @@ describe("standalone proxy extension composition", () => {
       "shutdown-hook disposal failed",
     );
     assertEquals(tryResolve<TokenCacheStore>("TokenCacheStore"), undefined);
+    assertEquals(tryResolve(RedisRuntimeProviderName), undefined);
     loader = null;
   });
 
@@ -159,6 +161,7 @@ describe("standalone proxy extension composition", () => {
     }
     await cleanup;
     assertEquals(tryResolve<TokenCacheStore>("TokenCacheStore"), undefined);
+    assertEquals(tryResolve(RedisRuntimeProviderName), undefined);
     loader = null;
   });
 });

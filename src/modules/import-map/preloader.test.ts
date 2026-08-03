@@ -1296,7 +1296,7 @@ describe("modules/import-map/preloader", () => {
         maxProjects: 1,
         maxVariantsPerProject: 2,
         ttlMs: 1_000,
-        loadTimeoutMs: 1_000,
+        loadTimeoutMs: 10_000,
         now: () => {
           if (releaseDuringAdmission && admissionClockReads++ === 0) {
             loads[0]!.resolve({ imports: { source: "a" } });

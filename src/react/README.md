@@ -193,7 +193,7 @@ export default function BlogPost({ post }) {
 ### OptimizedImage Component
 
 ```typescript
-import { OptimizedImage } from "veryfront";
+import { OptimizedBackgroundImage, OptimizedImage, SimpleOptimizedImage } from "veryfront/react";
 
 export default function Gallery() {
   return (
@@ -205,7 +205,7 @@ export default function Gallery() {
         width={1200}
         height={630}
         sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-        formats={["avif", "webp", "jpg"]}
+        formats={["avif", "webp", "jpeg"]}
         loading="lazy"
       />
 
@@ -219,9 +219,19 @@ export default function Gallery() {
         priority
       />
 
+      <SimpleOptimizedImage
+        src="/images/card.jpg"
+        alt="Card"
+        width={640}
+        height={360}
+        sizes="(max-width: 768px) 100vw, 320px"
+        format="webp"
+      />
+
       {/* Background image */}
       <OptimizedBackgroundImage
         src="/images/background.jpg"
+        width={1920}
         className="hero-section"
       >
         <h1>Welcome</h1>
@@ -399,11 +409,22 @@ export default defineConfig({
 });
 ```
 
-`OptimizedImage` consumes the manifest produced by the build pipeline. Core
-does not probe for Sharp or infer an environment-variable fallback. If image
-optimization is enabled, explicitly compose an `ImageOptimizationEngine` such
-as `@veryfront/ext-image-sharp`; a missing or invalid provider fails the build
-before replacing the last known-good image output.
+The runtime image APIs do not read the build manifest. If you customize
+`assetPipeline.images.sizes`, pass the same values as `targetWidths` to all four
+image APIs. If you customize `assetPipeline.images.formats`, pass the same
+`formats` to `OptimizedImage` and `useOptimizedImage`, and select a build-emitted
+`format` for `SimpleOptimizedImage` and `OptimizedBackgroundImage`.
+This changes earlier runtime behavior: `width` is the intrinsic source width,
+not the rendered width. Missing or invalid intrinsic widths use the original
+asset instead of generating unverified variant URLs. Runtime `src` values must
+identify app asset paths. Query strings and fragments do not affect the emitted
+variant path, and spaces or commas are URL-encoded to match build output.
+Invalid runtime dimensions emit one value-free development diagnostic;
+production stays silent. Build-time image validation remains strict.
+Core does not probe for Sharp or infer an environment-variable fallback. If
+image optimization is enabled, explicitly compose an `ImageOptimizationEngine`
+such as `@veryfront/ext-image-sharp`; a missing or invalid provider fails the
+build before replacing the last known-good image output.
 
 ### Link Prefetch Not Working
 

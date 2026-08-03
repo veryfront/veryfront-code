@@ -124,6 +124,24 @@ describe("image optimization engine boundary", () => {
     );
   });
 
+  it("accepts only the configured width and intrinsic width for a custom target plan", async () => {
+    const session = createImageOptimizationSession(
+      engine(() =>
+        Promise.resolve({
+          sourceWidth: 1_000,
+          sourceHeight: 500,
+          variants: [
+            { format: "webp", width: 1_000, height: 500, data: new Uint8Array([2]) },
+            { format: "webp", width: 320, height: 160, data: new Uint8Array([1]) },
+          ],
+        })
+      ),
+    );
+
+    const output = await session.run(request({ targetWidths: [320] }));
+    assertEquals(output.variants.map(({ width }) => width), [320, 1_000]);
+  });
+
   it("enforces the legacy no-enlargement aspect-ratio contract", async () => {
     const invalid = result({
       variants: [

@@ -72,7 +72,7 @@ export class LRUCache<K, V> {
   }
 
   has(key: K): boolean {
-    return this.adapter.get(this.toStringKey(key)) !== undefined;
+    return this.adapter.has(this.toStringKey(key));
   }
 
   get(key: K): V | undefined {
@@ -85,7 +85,7 @@ export class LRUCache<K, V> {
 
   delete(key: K): boolean {
     const stringKey = this.toStringKey(key);
-    const had = this.adapter.get(stringKey) !== undefined;
+    const had = this.adapter.has(stringKey);
     this.adapter.delete(stringKey);
     return had;
   }

@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.1190",
+  "version": "0.1.1191",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "minimumDependencyAge": {
@@ -545,7 +545,7 @@
     "sbom": "deno run --allow-read --allow-write scripts/build/generate-sbom.ts",
     "sbom:all": "deno run --allow-read --allow-write scripts/build/generate-sbom.ts --all-manifests",
     "submit-deps": "deno run --allow-read --allow-env --allow-net=api.github.com scripts/security/submit-dependency-snapshot.ts",
-    "audit": "deno run --allow-read --allow-run --allow-write scripts/security/audit-npm.ts"
+    "audit": "deno run --allow-read --allow-run --allow-write scripts/security/audit-npm.ts && npm --prefix storybook audit --package-lock-only --audit-level=high"
   },
   "lint": {
     "include": [

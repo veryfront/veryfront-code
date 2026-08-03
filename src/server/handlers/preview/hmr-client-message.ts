@@ -3,6 +3,10 @@ import {
   HMR_CLOSE_RATE_LIMIT,
   HMR_MAX_MESSAGE_SIZE_BYTES,
 } from "#veryfront/utils";
+import {
+  getWebSocketMessageAdmission,
+  getWebSocketMessageSizeBytes,
+} from "#veryfront/utils/websocket-message-size.ts";
 
 export type HmrClientMessageSocket = {
   send(message: string): void;
@@ -13,13 +17,7 @@ type HmrClientRateLimiter<TSocket> = {
   check(socket: TSocket): boolean;
 };
 
-export function getHmrWebSocketMessageSize(data: unknown): number {
-  if (typeof data === "string") return data.length;
-  if (data instanceof ArrayBuffer) return data.byteLength;
-  if (ArrayBuffer.isView(data)) return data.byteLength;
-  if (data instanceof Blob) return data.size;
-  return 0;
-}
+export const getHmrWebSocketMessageSize = getWebSocketMessageSizeBytes;
 
 export function handleHmrClientMessage<TSocket extends HmrClientMessageSocket>(
   input: {
@@ -29,8 +27,11 @@ export function handleHmrClientMessage<TSocket extends HmrClientMessageSocket>(
     onActivity?: () => void;
   },
 ): void {
-  const messageSize = getHmrWebSocketMessageSize(input.data);
-  if (messageSize > HMR_MAX_MESSAGE_SIZE_BYTES) {
+  const admission = getWebSocketMessageAdmission(
+    input.data,
+    HMR_MAX_MESSAGE_SIZE_BYTES,
+  );
+  if (!admission.accepted) {
     try {
       input.socket.close(HMR_CLOSE_MESSAGE_TOO_LARGE, "Message too large");
     } catch (_) {

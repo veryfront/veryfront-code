@@ -64,12 +64,14 @@ describe("build/asset-pipeline/image-optimizer/image-finder", () => {
       }
     });
 
-    it("should skip unsupported extensions like .svg and .gif", async () => {
+    it("should skip unsupported extensions and extension-only dotfiles", async () => {
       const tmpDir = await Deno.makeTempDir();
       try {
         await Deno.writeTextFile(`${tmpDir}/logo.svg`, "");
         await Deno.writeTextFile(`${tmpDir}/anim.gif`, "");
         await Deno.writeTextFile(`${tmpDir}/photo.bmp`, "");
+        await Deno.writeTextFile(`${tmpDir}/.jpg`, "");
+        await Deno.writeTextFile(`${tmpDir}/.png`, "");
 
         const result = await findImages(tmpDir);
         assertEquals(result.length, 0);
