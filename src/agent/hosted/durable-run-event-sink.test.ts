@@ -8,6 +8,11 @@ import { createGenerateModel } from "../../runtime/runtime-bridge.test-helpers.t
 import { runWithRunEventSink } from "../../runtime/run-event-sink-context.ts";
 import type { AgentRunModelCallContextEvent } from "../../runtime/model-call-context.ts";
 import {
+  getPrivateRunEventAppendRequestByteLength,
+  MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+  MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+} from "../conversation/run-event-limits.ts";
+import {
   createDurableRunEventSink,
   DurableRunEventPersistenceError,
 } from "./durable-run-event-sink.ts";
@@ -47,6 +52,18 @@ function mirror(input: {
     },
   };
   return { result, appended, isDisposed: () => disposed };
+}
+
+function createModelCallContextEventWithText(
+  textLength: number,
+): AgentRunModelCallContextEvent {
+  return {
+    type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+    messages: [{
+      role: "user",
+      content: [{ type: "text", text: "x".repeat(textLength) }],
+    }],
+  };
 }
 
 describe("agent/hosted/durable-run-event-sink", () => {
@@ -92,17 +109,38 @@ describe("agent/hosted/durable-run-event-sink", () => {
 
   it("persists a direct context above 2 MiB as one unchanged event", async () => {
     const target = mirror();
-    const event: AgentRunModelCallContextEvent = {
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
-      messages: [{
-        role: "user",
-        content: [{ type: "text", text: "x".repeat(2 * 1024 * 1024 + 1) }],
-      }],
-    };
+    const event = createModelCallContextEventWithText(
+      MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES + 1,
+    );
 
     await createDurableRunEventSink({ mirror: target.result })(event);
 
     assertEquals(target.appended, [[event]]);
+  });
+
+  it("accepts the exact append request byte limit and rejects one byte over", async () => {
+    const baseEvent = createModelCallContextEventWithText(0);
+    const exactTextLength = MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES -
+      getPrivateRunEventAppendRequestByteLength(baseEvent);
+    const exactEvent = createModelCallContextEventWithText(exactTextLength);
+    assertEquals(
+      getPrivateRunEventAppendRequestByteLength(exactEvent),
+      MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+    );
+
+    const exactTarget = mirror();
+    await createDurableRunEventSink({ mirror: exactTarget.result })(exactEvent);
+    assertEquals(exactTarget.appended, [[exactEvent]]);
+
+    const oversizedTarget = mirror();
+    const oversizedEvent = createModelCallContextEventWithText(exactTextLength + 1);
+    await assertRejects(
+      async () =>
+        await createDurableRunEventSink({ mirror: oversizedTarget.result })(oversizedEvent),
+      DurableRunEventPersistenceError,
+      "Run event append request exceeds the supported payload size",
+    );
+    assertEquals(oversizedTarget.appended, []);
   });
 
   it("serializes concurrent events that share a durable mirror", async () => {
@@ -146,6 +184,48 @@ describe("agent/hosted/durable-run-event-sink", () => {
     await Promise.all([first, second]);
 
     assertEquals(order, ["append:first", "flush", "append:second", "flush"]);
+  });
+
+  it("does not mask later persistence failures with a rejected tail", async () => {
+    const firstAppendStarted = Promise.withResolvers<void>();
+    const releaseFirstAppend = Promise.withResolvers<void>();
+    let secondAppendCount = 0;
+    const target: ConversationRunChunkMirror = {
+      handleChunk: async () => {},
+      appendEvents: async (events) => {
+        const content = (events[0] as unknown as {
+          messages: [{ content: string }];
+        }).messages[0].content;
+        if (content === "first") {
+          firstAppendStarted.resolve();
+          await releaseFirstAppend.promise;
+          throw new Error("first append failed");
+        }
+        secondAppendCount += 1;
+        throw new Error("second append failed");
+      },
+      flush: async () => snapshot(),
+      getSnapshot: () => snapshot(),
+      dispose: () => {},
+    };
+    const first = createDurableRunEventSink({ mirror: target })({
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      messages: [{ role: "system", content: "first" }],
+    });
+    await firstAppendStarted.promise;
+    const second = createDurableRunEventSink({ mirror: target })({
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      messages: [{ role: "system", content: "second" }],
+    });
+
+    releaseFirstAppend.resolve();
+    await assertRejects(async () => await first, Error, "first append failed");
+    await assertRejects(
+      async () => await second,
+      Error,
+      "second append failed",
+    );
+    assertEquals(secondAppendCount, 1);
   });
 
   it("rejects append failures and a request over the general body limit", async () => {

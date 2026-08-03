@@ -35,7 +35,7 @@ async function serializePersistence(
   operation: () => Promise<void>,
 ): Promise<void> {
   const previous = persistenceTails.get(mirror) ?? Promise.resolve();
-  const current = previous.then(operation);
+  const current = previous.then(operation, operation);
   persistenceTails.set(mirror, current);
   try {
     await current;
