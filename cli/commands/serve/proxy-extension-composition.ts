@@ -16,7 +16,7 @@ import {
   registerProxyShutdownHook,
 } from "veryfront/proxy/shutdown-hooks";
 
-type CacheExtensionModule = Readonly<{ default: ExtensionFactory }>;
+type FirstPartyExtensionModule = Readonly<{ default: ExtensionFactory }>;
 
 // This module is evaluated before extension activation. Pin promises created
 // by the later teardown path so extension code cannot replace Promise species
@@ -42,37 +42,66 @@ const resolvedBeforeExtensionActivation = pinCompositionPromise(
 
 const CACHE_EXTENSION_SOURCE_DIRECTORY = "ext-cache-redis";
 const CACHE_EXTENSION_PACKAGE_NAME = "@veryfront/ext-cache-redis";
+const REDIS_EXTENSION_SOURCE_DIRECTORY = "ext-redis";
+const REDIS_EXTENSION_PACKAGE_NAME = "@veryfront/ext-redis";
+
+async function loadFirstPartyExtension(
+  sourceDirectory: string,
+  packageName: string,
+): Promise<ExtensionFactory> {
+  const module = await importFirstPartyExtensionModule<FirstPartyExtensionModule>(
+    sourceDirectory,
+    packageName,
+  );
+  if (typeof module.default !== "function") {
+    throw new NativeTypeError(`${packageName} must export an ExtensionFactory`);
+  }
+  return module.default;
+}
 
 /**
- * Activate the standalone proxy's explicitly selected cache extension.
- * Memory mode performs no extension import. The returned loader owns provider
- * teardown; the proxy borrows its registered `TokenCacheStore`.
+ * Activate the standalone proxy's explicitly selected infrastructure extensions.
+ * The returned loader owns provider teardown; the proxy borrows the registered
+ * Redis runtime and optional `TokenCacheStore` providers.
  */
 async function activateStandaloneProxyCacheExtensionInternal(): Promise<ExtensionLoader | null> {
   const cacheType = getEnv("CACHE_TYPE") || "memory";
   if (cacheType !== "memory" && cacheType !== "extension") {
     throw new NativeTypeError("CACHE_TYPE must be memory or extension");
   }
-  if (cacheType === "memory") return null;
 
-  const module = await importFirstPartyExtensionModule<CacheExtensionModule>(
-    CACHE_EXTENSION_SOURCE_DIRECTORY,
-    CACHE_EXTENSION_PACKAGE_NAME,
-  );
-  if (typeof module.default !== "function") {
-    throw new NativeTypeError(`${CACHE_EXTENSION_PACKAGE_NAME} must export an ExtensionFactory`);
+  const extensions: Array<{
+    extension: ReturnType<ExtensionFactory>;
+    origin: string;
+    source: "config";
+  }> = [];
+  if (getEnv("REDIS_URL")) {
+    const redisExtension = await loadFirstPartyExtension(
+      REDIS_EXTENSION_SOURCE_DIRECTORY,
+      REDIS_EXTENSION_PACKAGE_NAME,
+    );
+    extensions.push({
+      extension: redisExtension(),
+      source: "config",
+      origin: "standalone proxy Redis runtime",
+    });
   }
+  if (cacheType === "extension") {
+    const cacheExtension = await loadFirstPartyExtension(
+      CACHE_EXTENSION_SOURCE_DIRECTORY,
+      CACHE_EXTENSION_PACKAGE_NAME,
+    );
+    extensions.push({
+      extension: cacheExtension(),
+      source: "config",
+      origin: "standalone proxy cache selection",
+    });
+  }
+  if (extensions.length === 0) return null;
 
   const loader = new ExtensionLoader(cliLogger);
   try {
-    await loader.setupAll(
-      [{
-        extension: module.default(),
-        source: "config",
-        origin: "standalone proxy cache selection",
-      }],
-      {},
-    );
+    await loader.setupAll(extensions, {});
     return loader;
   } catch (error) {
     try {

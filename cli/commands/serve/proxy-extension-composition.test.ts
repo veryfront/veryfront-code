@@ -3,6 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { type ExtensionLoader, tryResolve } from "veryfront/extensions";
+import { RedisRuntimeProviderName } from "veryfront/extensions/distributed";
 import type { TokenCacheStore } from "#veryfront/extensions/cache/index.ts";
 import { createCacheFromEnv, TracingTokenCache } from "#veryfront/proxy/cache/index.ts";
 import { acquireExtensionTokenCacheStoreFromEnv } from "#veryfront/proxy/cache/extension-store.ts";
@@ -28,10 +29,21 @@ describe("standalone proxy extension composition", () => {
 
   it("does not import or activate a cache provider for the memory backend", async () => {
     Deno.env.set("CACHE_TYPE", "memory");
+    Deno.env.delete("REDIS_URL");
 
     loader = await activateStandaloneProxyCacheExtension();
 
     assertEquals(loader, null);
+  });
+
+  it("activates ext-redis when routing invalidation uses Redis", async () => {
+    Deno.env.set("CACHE_TYPE", "memory");
+    Deno.env.set("REDIS_URL", "redis://127.0.0.1:6379");
+
+    loader = await activateStandaloneProxyCacheExtension();
+
+    assertEquals(loader !== null, true);
+    assertEquals(tryResolve(RedisRuntimeProviderName) !== undefined, true);
   });
 
   it("activates ext-cache-redis before standalone cache acquisition", async () => {
@@ -44,6 +56,7 @@ describe("standalone proxy extension composition", () => {
     const acquisition = await acquireExtensionTokenCacheStoreFromEnv();
 
     assertEquals(loader !== null, true);
+    assertEquals(tryResolve(RedisRuntimeProviderName) !== undefined, true);
     assertEquals(acquisition.kind, "borrowed");
     assertStrictEquals(
       acquisition.store,
