@@ -205,7 +205,7 @@ export default function Gallery() {
         width={1200}
         height={630}
         sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-        formats={["avif", "webp", "jpg"]}
+        formats={["avif", "webp", "jpeg"]}
         loading="lazy"
       />
 
@@ -222,6 +222,7 @@ export default function Gallery() {
       {/* Background image */}
       <OptimizedBackgroundImage
         src="/images/background.jpg"
+        width={1920}
         className="hero-section"
       >
         <h1>Welcome</h1>
