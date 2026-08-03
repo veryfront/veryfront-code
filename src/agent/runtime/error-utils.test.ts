@@ -140,6 +140,185 @@ describe("agent/runtime/error-utils", () => {
       assertEquals(calls, 0);
     });
 
+    it("fails closed without Proxy introspection in a fresh Cloudflare process", async () => {
+      const script = `
+        Object.defineProperty(globalThis, "caches", {
+          configurable: true,
+          value: {},
+        });
+        Object.defineProperty(globalThis, "WebSocketPair", {
+          configurable: true,
+          value: function WebSocketPair() {},
+        });
+
+        const { runtimeKind } = await import("./src/platform/compat/runtime.ts");
+        const {
+          canIdentifyProxyWithoutHooks,
+          isNativeErrorWithoutHooks,
+        } = await import("./src/platform/compat/error-introspection.ts");
+        const { stringifyToolError } = await import("./src/agent/runtime/error-utils.ts");
+
+        let calls = 0;
+        const handler = {
+          get(target, property, receiver) {
+            calls += 1;
+            return Reflect.get(target, property, receiver);
+          },
+          getOwnPropertyDescriptor(target, property) {
+            calls += 1;
+            return Reflect.getOwnPropertyDescriptor(target, property);
+          },
+          getPrototypeOf(target) {
+            calls += 1;
+            return Reflect.getPrototypeOf(target);
+          },
+          ownKeys(target) {
+            calls += 1;
+            return Reflect.ownKeys(target);
+          },
+        };
+        const proxy = new Proxy({}, handler);
+        const errorProxy = new Proxy(new Error("private"), handler);
+
+        const result = {
+          runtimeKind,
+          canIdentifyProxyWithoutHooks,
+          proxy: stringifyToolError(proxy),
+          errorProxy: stringifyToolError(errorProxy),
+          calls,
+          nativeError: isNativeErrorWithoutHooks(new Error("native")),
+          error: stringifyToolError(new Error("tool exploded")),
+          domException: stringifyToolError(
+            new DOMException("provider timed out", "TimeoutError"),
+          ),
+          object: stringifyToolError({ code: "E_TOOL" }),
+          callable: stringifyToolError(() => undefined),
+          nullValue: stringifyToolError(null),
+          booleanValue: stringifyToolError(true),
+          numberValue: stringifyToolError(42),
+          undefinedValue: stringifyToolError(undefined),
+          bigintValue: stringifyToolError(1n),
+          symbolValue: stringifyToolError(Symbol("private")),
+        };
+        console.log(JSON.stringify(result));
+      `;
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: ["eval", "--config=deno.json", script],
+        cwd: new URL("../../../", import.meta.url),
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const stderr = new TextDecoder().decode(output.stderr);
+      assertEquals(output.code, 0, stderr);
+
+      const result = JSON.parse(new TextDecoder().decode(output.stdout));
+      assertEquals(result, {
+        runtimeKind: "cloudflare",
+        canIdentifyProxyWithoutHooks: false,
+        proxy: "Unknown error",
+        errorProxy: "Unknown error",
+        calls: 0,
+        nativeError: true,
+        error: "tool exploded",
+        domException: "provider timed out",
+        object: "Unknown error",
+        callable: "Unknown error",
+        nullValue: "null",
+        booleanValue: "true",
+        numberValue: "42",
+        undefinedValue: "undefined",
+        bigintValue: "bigint",
+        symbolValue: "symbol",
+      });
+    });
+
+    it("uses captured primordials for native and primitive diagnostics", () => {
+      const defineProperty = Object.defineProperty;
+      const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+      const descriptors = {
+        apply: getOwnPropertyDescriptor(Reflect, "apply")!,
+        charCodeAt: getOwnPropertyDescriptor(String.prototype, "charCodeAt")!,
+        domMessage: getOwnPropertyDescriptor(DOMException.prototype, "message")!,
+        getOwnPropertyDescriptor: getOwnPropertyDescriptor(
+          Object,
+          "getOwnPropertyDescriptor",
+        )!,
+        hasOwnProperty: getOwnPropertyDescriptor(
+          Object.prototype,
+          "hasOwnProperty",
+        )!,
+        jsonStringify: getOwnPropertyDescriptor(JSON, "stringify")!,
+        slice: getOwnPropertyDescriptor(String.prototype, "slice")!,
+      };
+      const domException = new DOMException("provider timed out", "TimeoutError");
+      const oversized = "é".repeat(MAX_TOOL_ERROR_TEXT_BYTES);
+      let hookCalls = 0;
+      const hostile = () => {
+        hookCalls += 1;
+        throw new Error("mutable primordial must not run");
+      };
+      let result:
+        | {
+          bounded: string;
+          domException: string;
+          error: string;
+          nullValue: string;
+        }
+        | undefined;
+
+      try {
+        for (
+          const [owner, key] of [
+            [Reflect, "apply"],
+            [String.prototype, "charCodeAt"],
+            [DOMException.prototype, "message"],
+            [Object, "getOwnPropertyDescriptor"],
+            [Object.prototype, "hasOwnProperty"],
+            [JSON, "stringify"],
+            [String.prototype, "slice"],
+          ] as const
+        ) {
+          defineProperty(owner, key, {
+            configurable: true,
+            value: hostile,
+            writable: true,
+          });
+        }
+
+        result = {
+          bounded: stringifyToolError(oversized),
+          domException: stringifyToolError(domException),
+          error: stringifyToolError(new Error("tool exploded")),
+          nullValue: stringifyToolError(null),
+        };
+      } finally {
+        defineProperty(Reflect, "apply", descriptors.apply);
+        defineProperty(String.prototype, "charCodeAt", descriptors.charCodeAt);
+        defineProperty(DOMException.prototype, "message", descriptors.domMessage);
+        defineProperty(
+          Object,
+          "getOwnPropertyDescriptor",
+          descriptors.getOwnPropertyDescriptor,
+        );
+        defineProperty(
+          Object.prototype,
+          "hasOwnProperty",
+          descriptors.hasOwnProperty,
+        );
+        defineProperty(JSON, "stringify", descriptors.jsonStringify);
+        defineProperty(String.prototype, "slice", descriptors.slice);
+      }
+
+      assertEquals(result?.error, "tool exploded");
+      assertEquals(result?.domException, "provider timed out");
+      assertEquals(result?.nullValue, "null");
+      assertEquals(
+        new TextEncoder().encode(result?.bounded).byteLength <= MAX_TOOL_ERROR_TEXT_BYTES,
+        true,
+      );
+      assertEquals(hookCalls, 0);
+    });
+
     it("bounds direct and Error diagnostic text by UTF-8 byte length", () => {
       const oversized = "é".repeat(MAX_TOOL_ERROR_TEXT_BYTES);
       const direct = stringifyToolError(oversized);
