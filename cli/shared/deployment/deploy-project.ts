@@ -1,9 +1,16 @@
 import { type EnvironmentConfig, getConfig, getEnvironmentConfig } from "veryfront/config";
-import { createFileSystem, runtime } from "veryfront/platform";
+import { createFileSystem, isNotFoundError, runtime } from "veryfront/platform";
 import { join, relative, resolve } from "veryfront/platform/path";
 import { isWithinDirectory, normalizePath } from "veryfront/utils";
 import { parseProjectDomain } from "veryfront/server";
-import { type ReleaseAssetManifestResponse, routeForPage } from "veryfront/release-assets";
+import {
+  isSafeBoundedText,
+  parseReadyReleaseAssetManifestResponse,
+  readUntrustedOwnDataProperty,
+  type ReadyReleaseAssetManifestResponse,
+  type ReleaseAssetManifestResponse,
+  routeForPage,
+} from "veryfront/release-assets";
 import {
   DEPLOYMENT_ERROR,
   ENVIRONMENT_NOT_FOUND,
@@ -23,6 +30,7 @@ import {
 import { normalizeProjectSlug } from "../slug.ts";
 import { reserveProjectSlug } from "../reserve-slug.ts";
 import {
+  getErrorStatus,
   inferProjectSlugFromDirectory,
   projectApiReference,
   ProjectReferenceNotFoundError,
@@ -32,6 +40,7 @@ import {
   shouldPersistProjectLink,
 } from "../project-resolution.ts";
 import {
+  isRetryableApiReadError,
   type ProjectReferenceSource,
   resolveConfigWithAuth,
   resolveConfigWithAuthDetails,
@@ -547,8 +556,9 @@ async function collectProjectPageRoutes(projectDir: string): Promise<string[]> {
     try {
       if (!(await fs.exists(dir))) return;
       entries = await fs.readDir(dir);
-    } catch {
-      return;
+    } catch (error) {
+      if (isNotFoundError(error)) return;
+      throw error;
     }
 
     for await (const entry of entries) {
@@ -604,6 +614,50 @@ function assertReadyManifestCoversPageRoutes(
   }
 }
 
+/** Upper bound for a plausible manifest state value from the control plane. */
+const MAX_MANIFEST_STATE_LENGTH = 64;
+
+function releaseAssetPollingTimeoutError(
+  timeoutMs: number,
+  lastState: string,
+  lastTransientFailure: string | null,
+): Error {
+  const timeoutSeconds = Math.ceil(timeoutMs / 1000);
+  return new Error(
+    `Release assets were not ready within ${timeoutSeconds}s (last state: ${lastState}${
+      lastTransientFailure === null ? "" : `; last control-plane failure: ${lastTransientFailure}`
+    }). Check the release asset build and run deploy again.`,
+  );
+}
+
+async function readReleaseAssetManifestBeforeDeadline(options: {
+  controlPlane: DeployControlPlane;
+  projectSlug: string;
+  releaseId: string;
+  remainingMs: number;
+  timeoutError: Error;
+}): Promise<Awaited<ReturnType<DeployControlPlane["getReleaseAssetManifest"]>>> {
+  const abortController = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      reject(options.timeoutError);
+      abortController.abort();
+    }, options.remainingMs);
+  });
+
+  try {
+    return await Promise.race([
+      options.controlPlane.getReleaseAssetManifest(options.projectSlug, options.releaseId, {
+        signal: abortController.signal,
+      }),
+      deadline,
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
 export async function waitForReleaseAssetManifest(
   controlPlane: DeployControlPlane,
   projectSlug: string,
@@ -613,36 +667,79 @@ export async function waitForReleaseAssetManifest(
     pollIntervalMs?: number;
     timeoutMs?: number;
   } = {},
-): Promise<ReleaseAssetManifestResponse> {
+): Promise<ReadyReleaseAssetManifestResponse> {
   const pollIntervalMs = Math.max(100, options.pollIntervalMs ?? 2_000);
   const timeoutMs = Math.max(pollIntervalMs, options.timeoutMs ?? 120_000);
   const expectedRoutes = options.expectedRoutes ?? [];
   const deadline = Date.now() + timeoutMs;
   let lastState = "missing";
+  let lastTransientFailure: string | null = null;
 
   for (;;) {
-    const result = await controlPlane.getReleaseAssetManifest(projectSlug, releaseId);
-    if (result) {
-      lastState = result.state;
+    const remainingMs = deadline - Date.now();
+    const timeoutError = releaseAssetPollingTimeoutError(
+      timeoutMs,
+      lastState,
+      lastTransientFailure,
+    );
+    if (remainingMs <= 0) throw timeoutError;
 
-      if (result.state === "ready") {
+    let raw: Awaited<ReturnType<DeployControlPlane["getReleaseAssetManifest"]>> = null;
+    try {
+      raw = await readReleaseAssetManifestBeforeDeadline({
+        controlPlane,
+        projectSlug,
+        releaseId,
+        remainingMs,
+        timeoutError,
+      });
+      lastTransientFailure = null;
+      if (raw === null) lastState = "missing";
+    } catch (error) {
+      if (!isRetryableApiReadError(error)) throw error;
+      const status = getErrorStatus(error);
+      lastTransientFailure = status === undefined
+        ? "a transient connection failure"
+        : `HTTP ${status}`;
+    }
+    if (raw !== null) {
+      const state = readUntrustedOwnDataProperty(raw, "state");
+      if (!isSafeBoundedText(state, MAX_MANIFEST_STATE_LENGTH)) {
+        throw new Error(`Release assets for ${releaseId} returned an invalid state response`);
+      }
+      lastState = state;
+
+      if (state === "ready") {
+        const result = parseReadyReleaseAssetManifestResponse(raw, releaseId);
+        if (!result) {
+          throw new Error(
+            `Release assets for ${releaseId} returned an invalid or mismatched ready manifest. Rebuild the release assets and run deploy again.`,
+          );
+        }
         assertReadyManifestCoversPageRoutes(releaseId, result, expectedRoutes);
         return result;
       }
-      if (result.state === "failed") {
+      if (state === "partial") {
+        throw new Error(
+          `Release asset build produced an unsupported partial manifest for release ${releaseId}. Rebuild the release assets and run deploy again.`,
+        );
+      }
+      if (state === "failed") {
         throw new Error(`Release asset build failed for release ${releaseId}`);
+      }
+      if (state === "superseded") {
+        throw new Error(
+          `Release assets for ${releaseId} were superseded by a newer build. Run deploy again.`,
+        );
+      }
+      if (state !== "queued" && state !== "building") {
+        throw new Error(
+          `Release assets for ${releaseId} returned an unsupported state response: ${state}`,
+        );
       }
     }
 
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) {
-      const timeoutSeconds = Math.ceil(timeoutMs / 1000);
-      throw new Error(
-        `Release assets were not ready within ${timeoutSeconds}s (last state: ${lastState}). Check the release asset build and run deploy again.`,
-      );
-    }
-
-    await wait(Math.min(pollIntervalMs, remainingMs));
+    await wait(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())));
   }
 }
 
@@ -1038,14 +1135,17 @@ export function createDeployProject(options: {
         };
       }
 
-      const source = await step(observer, "verify-source", async () =>
-        resolvePushedSource({
+      const { source, expectedPageRoutes } = await step(observer, "verify-source", async () => {
+        const source = await resolvePushedSource({
           projectDir: request.projectDir,
           controlPlane: config.apiUrl,
           projectId: project!.id,
           projectSlug: project!.slug,
           branch,
-        }));
+        });
+        const expectedPageRoutes = await collectProjectPageRoutes(request.projectDir);
+        return { source, expectedPageRoutes };
+      });
 
       const release = await step(observer, "create-release", async () => {
         const created = await controlPlane.createRelease(project!.id, {
@@ -1071,14 +1171,12 @@ export function createDeployProject(options: {
           }),
       );
 
-      const expectedPageRoutes = await step(observer, "wait-release-assets", async () => {
-        const routes = await collectProjectPageRoutes(request.projectDir);
+      await step(observer, "wait-release-assets", async () => {
         await waitForReleaseAssetManifest(controlPlane, project!.slug, release.id, {
-          expectedRoutes: routes,
+          expectedRoutes: expectedPageRoutes,
           pollIntervalMs: polling.assetManifestPollIntervalMs,
           timeoutMs: polling.assetManifestTimeoutMs,
         });
-        return routes;
       });
 
       const deployment = await step(

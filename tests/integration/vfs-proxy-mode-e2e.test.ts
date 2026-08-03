@@ -104,6 +104,7 @@ async function startVFSServer(
     ...withoutHostBinaryInfraEnv(Deno.env.toObject()),
     NODE_ENV: "production",
     PROXY_MODE: "1",
+    VERYFRONT_TRUST_FORWARDED_HEADERS: "1",
     VERYFRONT_API_BASE_URL: "https://api.veryfront.com",
     LOG_FORMAT: "text",
     VERYFRONT_CACHE_DIR: cacheDir,

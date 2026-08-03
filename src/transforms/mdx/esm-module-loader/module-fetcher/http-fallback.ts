@@ -48,6 +48,7 @@ export async function resolveUnresolvedModuleViaHttpFallback(
     input.projectSlug,
     input.isLocalProject,
     input.dependencyPinningCacheKey,
+    { moduleServerOrigin: input.moduleServerOrigin },
   );
 
   if (moduleCode) {

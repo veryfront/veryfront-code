@@ -22,6 +22,12 @@ export function createMockAdapter(
     }>;
   } = {},
 ): RuntimeAdapter {
+  const exists = fsOverrides.exists ??
+    ((path: string) => Promise.resolve(fsOverrides.knownFiles?.includes(path) === true));
+  const readFile = fsOverrides.readFile ?? (async (path: string) => {
+    if (await exists(path)) return "";
+    throw new Deno.errors.NotFound("not found");
+  });
   return {
     id: "memory",
     name: "mock",
@@ -34,14 +40,20 @@ export function createMockAdapter(
       workers: false,
     },
     fs: {
-      exists: fsOverrides.exists ?? (() => Promise.resolve(false)),
-      readFile: fsOverrides.readFile ?? (() => Promise.resolve("")),
+      symlinkSemantics: "none" as const,
+      exists,
+      readFile,
+      readFileBytesWithinLimit: async (path: string, byteLimit: number) => {
+        const bytes = new TextEncoder().encode(await readFile(path));
+        if (bytes.byteLength > byteLimit) throw new RangeError("mock file exceeds byte limit");
+        return bytes;
+      },
       writeFile: () => Promise.resolve(),
       readDir: fsOverrides.readDir ?? createKnownFilesReader(fsOverrides.knownFiles ?? []),
       mkdir: () => Promise.resolve(),
       remove: () => Promise.resolve(),
       stat: fsOverrides.stat ?? (async (path: string) => {
-        if (await (fsOverrides.exists?.(path) ?? Promise.resolve(false))) {
+        if (await exists(path)) {
           return { isFile: true, isDirectory: false, size: 0, mtime: null };
         }
         throw new Deno.errors.NotFound("not found");

@@ -69,6 +69,74 @@ Ambiguous environment configuration fails closed. Unauthorized responses are
 non-cacheable and receive the resolved CORS and security policy. Credential
 verification uses constant-time comparison.
 
+### Shared proxy identity and project environments
+
+Production shared-proxy mode requires an operator-owned, private edge and
+`VERYFRONT_TRUST_FORWARDED_HEADERS=1`. That edge must remove client-supplied
+forwarding, project, environment, release, branch, path, and token headers
+before setting the canonical values. The runtime origin must not be reachable
+directly. Every tenant-bearing route, including module and WebSocket routes,
+requires the edge-supplied project slug and request credential; a process-level
+API token is never substituted for a missing shared-request credential.
+
+Project and environment IDs become cache or secret-fetch authority only after
+that same proxy trust check succeeds. The proxy forwards an environment ID only
+with the canonical environment name selected from project metadata; the runtime
+rejects partial pairs and ignores both headers outside the trusted topology.
+Environment cache identity includes the canonical project slug, project ID,
+environment ID, and a digest of the request credential. Fetch failure, timeout,
+credential rejection, or explicit invalidation never returns stale or empty
+secret data.
+
+If both `VERYFRONT_API_INTERNAL_USER` and `VERYFRONT_API_INTERNAL_PASS` are
+configured, `VERYFRONT_API_BASE_URL` must provide the canonical
+`/internal/project-environment-variables` endpoint. Before using those host
+credentials, the runtime verifies the request bearer token against the
+project-scoped management endpoint. A missing, redirected, or failed internal
+endpoint is an error; there is no compatibility fallback to masked management
+values. Leave both internal credential variables unset when that endpoint is
+not deployed.
+
+#### Trust boundary and residual risk
+
+With `VERYFRONT_TRUST_FORWARDED_HEADERS=1` set, identity headers are trusted
+purely on network topology: any peer that can reach the runtime origin can
+assert project, environment, and branch identity on routes outside the signed
+control-plane path. There is no per-request cryptographic binding on the
+proxy-to-runtime hop, so the design has no defence in depth if pod network
+privacy fails. Operators must keep the runtime origin unreachable except from
+the proxy (private service plus network policy). Planned follow-up: an
+authenticated proxy-to-runtime hop (mTLS or a per-hop shared secret) so
+identity headers are honoured only on an authenticated channel. Agent-run
+dispatch is already independent of this hop; its branch and environment
+binding comes from the signed control-plane request body.
+
+#### Rollout ordering for hosted identity changes
+
+The hosted runtime fails closed at boot without
+`VERYFRONT_TRUST_FORWARDED_HEADERS=1`, and hosted agent runs fail closed
+without the branch identity that only the current proxy derives from the
+signed control-plane body. Upgrading an existing deployment is safe in this
+order:
+
+1. Set `VERYFRONT_TRUST_FORWARDED_HEADERS=1` (and ensure
+   `CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY` is set) on the runtime environment
+   while it still runs the previous version. Earlier runtimes already accept
+   the variable as an explicit operator trust opt-in, so this step is
+   behaviour-preserving inside the required private topology.
+2. Deploy the proxy tier. Earlier runtimes ignore the added
+   `x-default-branch-name` header, and the `vf-utf8:` branch-name encoding is
+   applied only to values an earlier proxy could not forward at all.
+3. Deploy the runtime tier. A new runtime booted without step 1 crash-loops
+   intentionally; a new runtime behind an old proxy rejects hosted
+   preview-branch and non-default-branch agent runs with `PERMISSION_DENIED`
+   because branch identity must come from the verified control-plane binding.
+
+Roll back in the reverse order (runtime first, then proxy). The trust variable
+can remain set during rollback. There is deliberately no warn-only
+compatibility mode for a missing trust declaration or missing branch binding:
+either one would let unbound identity select tenant data.
+
 ### Input validation
 
 Each standalone body, form, and query parser applies the same snapshotted

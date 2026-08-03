@@ -10,6 +10,7 @@
 import { basename } from "#veryfront/compat/path/index.ts";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
+import { appendSameOriginSSRDependencyPinningKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
 import { isServerOnlyPackage } from "../shared/server-only-packages.ts";
 import { parseImports, replaceSpecifiers } from "./lexer.ts";
@@ -89,9 +90,14 @@ async function resolveSpecifier(
       return resolveSpecifier(mapped, baseUrl, options, cacheHttpModule);
     }
 
-    const cached = await cacheHttpModule(specifier, options);
+    const effectiveSpecifier = appendSameOriginSSRDependencyPinningKey(
+      specifier,
+      options.dependencyPinningCacheKey,
+      options.moduleServerOrigin,
+    );
+    const cached = await cacheHttpModule(effectiveSpecifier, options);
     if (!cached) {
-      throw new Error(`Failed to cache absolute HTTP module ${specifier}`);
+      throw new Error(`Failed to cache absolute HTTP module ${effectiveSpecifier}`);
     }
 
     if (isParentHttpModule(baseUrl)) {

@@ -438,30 +438,36 @@ testSuite("WorkerPool", () => {
     const controlled = createControlledPool();
     await pool.shutdown();
     pool = controlled.pool;
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-worker-pool-ssr-permissions-" });
+    const projectRoot = Deno.makeTempDirSync({
+      prefix: "vf-worker-permissions-project-",
+    });
 
-    const stream = pool.executeStream(
-      "ssr-permissions",
-      [projectDir],
-      makeSSRRequest("ssr-permissions-request", {
-        pageModulePath: `${projectDir}/page.tsx`,
-      }),
-    );
-    const worker = latestWorker(controlled.workers, "ssr-permissions");
-    const readPermissions = worker.permissions.read;
-    assert(Array.isArray(readPermissions));
-    assert(
-      TEST_ISOLATED_SSR_RENDERER_PROVIDER.readRootUrls.every((rootUrl) =>
-        readPermissions.includes(Deno.realPathSync(fromFileUrl(rootUrl)))
-      ),
-    );
-    assertEquals(
-      worker.isolatedSsrRendererModuleUrl,
-      TEST_ISOLATED_SSR_RENDERER_PROVIDER.moduleUrl,
-    );
+    try {
+      const stream = pool.executeStream(
+        "ssr-permissions",
+        [projectRoot],
+        makeSSRRequest("ssr-permissions-request", {
+          pageModulePath: `${projectRoot}/page.tsx`,
+        }),
+      );
+      const worker = latestWorker(controlled.workers, "ssr-permissions");
+      const readPermissions = worker.permissions.read;
+      assert(Array.isArray(readPermissions));
+      assert(
+        TEST_ISOLATED_SSR_RENDERER_PROVIDER.readRootUrls.every((rootUrl) =>
+          readPermissions.includes(Deno.realPathSync(fromFileUrl(rootUrl)))
+        ),
+      );
+      assertEquals(
+        worker.isolatedSsrRendererModuleUrl,
+        TEST_ISOLATED_SSR_RENDERER_PROVIDER.moduleUrl,
+      );
 
-    worker.completeStream("ssr-permissions-request");
-    await new Response(stream).arrayBuffer();
+      worker.completeStream("ssr-permissions-request");
+      await new Response(stream).arrayBuffer();
+    } finally {
+      Deno.removeSync(projectRoot, { recursive: true });
+    }
   });
 
   it("returns the same worker for the same project", () => {

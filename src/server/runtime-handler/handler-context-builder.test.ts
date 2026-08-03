@@ -30,6 +30,7 @@ function makeOpts(overrides: Partial<HandlerContextOptions> = {}): HandlerContex
     },
     routeRegistry: {} as any,
     isLocalProject: false,
+    isProxyMode: true,
     moduleServerUrl: "https://modules.example.com",
     environmentId: "env-789",
     ...overrides,
@@ -57,6 +58,7 @@ describe("buildHandlerContext", () => {
     assertEquals(ctx.resolvedEnvironment, "production");
     assertEquals(ctx.routeRegistry, opts.routeRegistry);
     assertEquals(ctx.isLocalProject, false);
+    assertEquals(ctx.isProxyMode, true);
     assertEquals(ctx.environmentId, "env-789");
     assertEquals(ctx.enriched !== undefined, true);
   });

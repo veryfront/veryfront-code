@@ -467,6 +467,18 @@ function getDependencyPinningSnapshotSync(
 }
 
 /**
+ * Return an already verified snapshot without consulting project metadata.
+ * Browser-module callers use this as an I/O-free fast path so a remembered
+ * request snapshot need not re-read package metadata.
+ */
+export function getRememberedDependencyPinningSnapshot(
+  source: DependencyPinningSourceInput,
+  cacheKey: string,
+): DependencyPinningSnapshot | undefined {
+  return getDependencyPinningSnapshotSync(source, cacheKey);
+}
+
+/**
  * Return whether a snapshot is still the authoritative current package state
  * for this exact source namespace. Remembered historical snapshots deliberately
  * return false even though they remain valid render inputs.
@@ -723,6 +735,7 @@ async function readProjectDependencyVersionsUncoalesced(
     if (
       cached &&
       !pinningOn &&
+      mtimeMs !== null &&
       cached.mtimeMs === mtimeMs
     ) {
       return {

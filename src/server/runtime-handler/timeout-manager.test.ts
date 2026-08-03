@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { PERMISSION_DENIED } from "#veryfront/errors";
 import { HTTP_GATEWAY_TIMEOUT } from "./request-utils.ts";
 import { withRequestTimeout } from "./timeout-manager.ts";
 
@@ -47,6 +48,34 @@ describe("timeout-manager", () => {
       assertEquals(response.status, 500);
       assertExists(error);
       assertEquals(error.message, "Synchronous handler failure");
+    });
+
+    it("preserves registered env authorization errors at the outer request boundary", async () => {
+      const registeredError = PERMISSION_DENIED.create({
+        detail: "Project credential is not authorized for the requested environment",
+      });
+      const handler = async (): Promise<Response> => {
+        throw registeredError;
+      };
+
+      const { response, error } = await withRequestTimeout(
+        handler,
+        "/hosted-project",
+        "GET",
+      );
+
+      assertEquals(error, registeredError);
+      assertEquals(response.status, 403);
+      assertEquals(response.headers.get("content-type"), "application/problem+json");
+      assertEquals(await response.json(), {
+        type: "https://veryfront.com/docs/errors/permission-denied",
+        title: "File/resource permission denied",
+        status: 403,
+        detail: "Project credential is not authorized for the requested environment",
+        instance: "/hosted-project",
+        category: "GENERAL",
+        suggestion: "Check file permissions and access rights",
+      });
     });
 
     it("aborts the handler signal on timeout and reports settlement separately", async () => {

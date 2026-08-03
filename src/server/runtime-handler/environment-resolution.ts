@@ -67,9 +67,14 @@ export function resolveEnvironment(
   const isControlPlanePath = opts.pathname.startsWith("/api/control-plane/");
 
   // Skip releaseId validation for development assets and signed control-plane
-  // requests because they do not require a user-facing release context.
+  // requests because they do not require a user-facing release context. Module
+  // transports are deliberately excluded: both the canonical and legacy paths
+  // can resolve tenant source, so hosted production requests must carry an
+  // immutable release identity before they reach the module server.
+  const isBrowserModulePath = opts.pathname.startsWith("/_vf_modules/") ||
+    opts.pathname.startsWith("/_veryfront/modules/");
   const canSkipReleaseIdValidation = opts.pathname === "/_ws" ||
-    opts.pathname.startsWith("/_veryfront/") ||
+    (opts.pathname.startsWith("/_veryfront/") && !isBrowserModulePath) ||
     isControlPlanePath;
 
   // Validate releaseId in proxy mode production

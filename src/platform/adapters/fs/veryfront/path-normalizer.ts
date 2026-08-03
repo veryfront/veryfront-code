@@ -1,12 +1,15 @@
 import { logger as baseLogger } from "#veryfront/utils";
+import { CONFIG_VALIDATION_FAILED } from "#veryfront/errors/error-registry/config.ts";
 
 const logger = baseLogger.component("path-normalizer");
 const MAX_PATH_CODE_UNITS = 4_096;
 
-function hasAsciiControlCharacter(value: string): boolean {
+// Rejects the full non-printable control range (C0, DEL, and C1), the same
+// policy as the GitHub path normalizer in ../github/path-utils.ts.
+function hasControlCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index++) {
     const codeUnit = value.charCodeAt(index);
-    if (codeUnit <= 0x1f || codeUnit === 0x7f) return true;
+    if (codeUnit <= 0x1f || (codeUnit >= 0x7f && codeUnit <= 0x9f)) return true;
   }
   return false;
 }
@@ -27,7 +30,16 @@ export class PathNormalizer {
 
   constructor(private readonly projectDir?: string) {
     if (projectDir !== undefined) {
-      this.assertSafePath(projectDir, "project directory");
+      try {
+        this.assertSafePath(projectDir, "project directory");
+      } catch (cause) {
+        throw CONFIG_VALIDATION_FAILED.create({
+          detail: cause instanceof Error
+            ? cause.message
+            : "Filesystem project directory is invalid",
+          cause,
+        });
+      }
       this.projectDirPrefix = normalizeForComparison(projectDir);
     }
   }
@@ -87,7 +99,7 @@ export class PathNormalizer {
         `Filesystem ${label} exceeds the ${MAX_PATH_CODE_UNITS}-character limit`,
       );
     }
-    if (hasAsciiControlCharacter(path)) {
+    if (hasControlCharacter(path)) {
       throw new TypeError(`Filesystem ${label} must not contain control characters`);
     }
     if (path.includes("\\")) {

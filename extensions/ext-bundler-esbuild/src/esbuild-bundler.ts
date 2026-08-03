@@ -21,6 +21,7 @@ import type {
   TransformOptions,
   TransformResult,
 } from "veryfront/extensions/bundler";
+import { rebuildContextWithSignal } from "./context-build-lifecycle.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
@@ -317,7 +318,8 @@ function toOutput(f: any): BundleOutput {
 }
 
 function mapOptions(options: BundleOptions, scope: OperationScope): MappedBundleOptions {
-  const { plugins, ...rest } = options;
+  // `signal` belongs to the framework contract, not esbuild's BuildOptions.
+  const { plugins, signal: _signal, ...rest } = options;
   const mapped: Record<string, unknown> = { ...rest };
   const pluginDisposals = createPluginDisposalBarrier(scope);
   if (plugins && plugins.length > 0) {
@@ -343,8 +345,28 @@ export class EsbuildBundler implements Bundler {
     return runBundlerOperation(async (scope) => {
       const esbuild = await getEsbuild();
       const mapped = mapOptions(options, scope);
+      const signal = options.signal;
       try {
-        const result = await invokeEsbuild(() => esbuild.build(mapped.options));
+        signal?.throwIfAborted();
+
+        let result: {
+          outputFiles?: unknown[];
+          warnings?: unknown[];
+          errors?: unknown[];
+          metafile?: unknown;
+        };
+        try {
+          if (signal) {
+            const buildContext = await invokeEsbuild(() => esbuild.context(mapped.options));
+            result = await rebuildContextWithSignal(buildContext, signal);
+          } else {
+            result = await invokeEsbuild(() => esbuild.build(mapped.options));
+          }
+        } catch (error) {
+          signal?.throwIfAborted();
+          throw error;
+        }
+        signal?.throwIfAborted();
         return {
           outputFiles: (result.outputFiles ?? []).map(toOutput),
           warnings: toMessages(result.warnings),
@@ -390,6 +412,10 @@ export class EsbuildBundler implements Bundler {
               errors: toMessages(result.errors),
               metafile: result.metafile as Metafile | undefined,
             };
+          }, contextScope),
+        cancel: () =>
+          runBundlerOperation(async () => {
+            await ctx.cancel();
           }, contextScope),
         dispose: () =>
           runBundlerOperation(async () => {

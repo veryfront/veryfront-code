@@ -205,7 +205,16 @@ export class FileCache {
     // Note: key already includes the full prefix from buildFileCacheKeyPrefix (e.g., "file:env:project:...")
     const backend = this.getBackend();
     if (backend) {
-      const serialized = JSON.stringify(entry);
+      let serialized: string;
+      try {
+        serialized = JSON.stringify(entry);
+      } catch (error) {
+        logger.debug("Backend set skipped because the cache entry is not serializable", {
+          key,
+          error,
+        });
+        return;
+      }
       // Update request-scoped cache so subsequent reads in same request see the new value
       setInRequestCache(key, serialized);
       backend.set(key, serialized, this.backendTtlSeconds).catch((error) => {

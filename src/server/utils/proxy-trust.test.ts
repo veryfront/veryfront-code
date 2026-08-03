@@ -80,12 +80,12 @@ describe("server/utils/proxy-trust", () => {
       assertEquals(await isProxyTrusted(req), false);
     });
 
-    it("returns true for a validly signed, fresh dispatch JWS", async () => {
+    it("does not promote a valid dispatch JWS to generic proxy trust", async () => {
       const { jws, publicKeyPem } = await mintDispatchJws();
       const req = new Request("http://example.com/", {
         headers: { "x-veryfront-dispatch-jws": jws },
       });
-      assertEquals(await isProxyTrusted(req, { publicKeyPem }), true);
+      assertEquals(await isProxyTrusted(req, { publicKeyPem }), false);
     });
 
     it("returns false when a dispatch JWS is present but no public key is configured", async () => {
@@ -176,12 +176,12 @@ describe("server/utils/proxy-trust", () => {
       assertEquals(await isProxyTrusted(req, { publicKeyPem }), false);
     });
 
-    it("is case-insensitive on the dispatch JWS header name", async () => {
+    it("does not trust differently-cased dispatch JWS headers", async () => {
       const { jws, publicKeyPem } = await mintDispatchJws();
       const req = new Request("http://example.com/", {
         headers: { "X-Veryfront-Dispatch-JWS": jws },
       });
-      assertEquals(await isProxyTrusted(req, { publicKeyPem }), true);
+      assertEquals(await isProxyTrusted(req, { publicKeyPem }), false);
     });
 
     it('returns true when VERYFRONT_TRUST_FORWARDED_HEADERS === "1"', async () => {
