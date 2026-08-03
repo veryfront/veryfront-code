@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertExists,
+  assertInstanceOf,
   assertRejects,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
@@ -67,6 +68,7 @@ describe("GitHubApiClient", () => {
           VeryfrontError,
           "GitHub",
         );
+        assertInstanceOf(error, VeryfrontError);
         assertEquals(error.slug, "config-validation-failed");
       }
     });
