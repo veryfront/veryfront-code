@@ -140,27 +140,42 @@ function parseVerifiedBranchBinding(rawBody: string): VerifiedControlPlaneBranch
   }
 
   const request = value as Record<string, unknown>;
+  const run = request.run;
+  if (!run || typeof run !== "object" || Array.isArray(run)) {
+    throw new ControlPlaneBranchBindingError(400, "Invalid control-plane request body");
+  }
+  const project = (run as Record<string, unknown>).project;
+  if (!project || typeof project !== "object" || Array.isArray(project)) {
+    throw new ControlPlaneBranchBindingError(400, "Invalid control-plane runtime target");
+  }
+  const target = project as Record<string, unknown>;
   const source = request.agentSource;
   if (!source || typeof source !== "object" || Array.isArray(source)) {
     throw new ControlPlaneBranchBindingError(400, "Invalid control-plane source target");
   }
   const sourceRecord = source as Record<string, unknown>;
 
-  switch (request.runtimeTargetKind) {
+  switch (target.runtimeTargetKind ?? "main_branch") {
     case "preview_branch": {
       if (
         sourceRecord.type !== "branch" ||
-        !isCanonicalOpaqueProjectIdentifier(request.runtimeTargetBranchId)
+        !isCanonicalOpaqueProjectIdentifier(target.runtimeTargetBranchId) ||
+        target.runtimeTargetEnvironmentId !== null &&
+          target.runtimeTargetEnvironmentId !== undefined
       ) {
         throw new ControlPlaneBranchBindingError(400, "Invalid control-plane preview target");
       }
       return Object.freeze({
-        branchId: request.runtimeTargetBranchId,
+        branchId: target.runtimeTargetBranchId,
         branchName: requireBranchName(sourceRecord.branch),
       });
     }
     case "main_branch":
-      if (request.runtimeTargetBranchId !== null && request.runtimeTargetBranchId !== undefined) {
+      if (
+        target.runtimeTargetBranchId !== null && target.runtimeTargetBranchId !== undefined ||
+        target.runtimeTargetEnvironmentId !== null &&
+          target.runtimeTargetEnvironmentId !== undefined
+      ) {
         throw new ControlPlaneBranchBindingError(
           400,
           "Invalid control-plane default branch target",
@@ -172,7 +187,11 @@ function parseVerifiedBranchBinding(rawBody: string): VerifiedControlPlaneBranch
       if (sourceRecord.type === "release") return Object.freeze({});
       throw new ControlPlaneBranchBindingError(400, "Invalid control-plane default branch source");
     case "environment":
-      if (sourceRecord.type !== "environment") {
+      if (
+        sourceRecord.type !== "environment" ||
+        !isCanonicalOpaqueProjectIdentifier(target.runtimeTargetEnvironmentId) ||
+        target.runtimeTargetBranchId !== null && target.runtimeTargetBranchId !== undefined
+      ) {
         throw new ControlPlaneBranchBindingError(400, "Invalid control-plane environment source");
       }
       return Object.freeze({});

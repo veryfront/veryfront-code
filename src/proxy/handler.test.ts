@@ -1,4 +1,4 @@
-import "#veryfront/schemas/_test-setup.ts";
+import { ensureTestSchemaValidator } from "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertNotEquals,
@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
 import { createProxyHandler, injectContextHeaders, type ProxyContext } from "./handler.ts";
 import { extractRequestHeaders } from "#veryfront/server/runtime-handler/project-resolution.ts";
+import { parseRuntimeAgentRunInvocation } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import { register, reset } from "../extensions/contracts.ts";
 import type { AuthProvider, TokenHeader, TokenPayload } from "../extensions/auth/index.ts";
 
@@ -146,16 +147,40 @@ function createSignedPreviewTargetBody(
   branchName = "feature-branch",
 ): string {
   return JSON.stringify({
-    runtimeTargetKind: "preview_branch",
-    runtimeTargetBranchId: branchId,
+    run: {
+      agentServiceId: "veryfront-platform-agent",
+      agentId: "assistant-1",
+      conversationId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      messageId: "10000000-1000-4000-8000-100000000002",
+      inputAnchorMessageId: "10000000-1000-4000-8000-100000000003",
+      requestedByUserId: "10000000-1000-4000-8000-100000000004",
+      project: {
+        projectId: "10000000-1000-4000-8000-100000000005",
+        projectSlug: "protected-project",
+        runtimeTargetKind: "preview_branch",
+        runtimeTargetBranchId: branchId,
+      },
+    },
     agentSource: { type: "branch", branch: branchName },
   });
 }
 
 function createSignedDefaultBranchTargetBody(branchName = "trunk"): string {
   return JSON.stringify({
-    runtimeTargetKind: "main_branch",
-    runtimeTargetBranchId: null,
+    run: {
+      agentServiceId: "veryfront-platform-agent",
+      agentId: "assistant-1",
+      conversationId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      messageId: "10000000-1000-4000-8000-100000000002",
+      inputAnchorMessageId: "10000000-1000-4000-8000-100000000003",
+      requestedByUserId: "10000000-1000-4000-8000-100000000004",
+      project: {
+        projectId: "10000000-1000-4000-8000-100000000005",
+        projectSlug: "protected-project",
+      },
+    },
     agentSource: { type: "branch", branch: branchName },
   });
 }
@@ -3031,7 +3056,7 @@ describe("Proxy Handler", () => {
       }
     });
 
-    it("allows cryptographically signed control-plane run stream requests through protected preview using inbound token", async () => {
+    it("forwards one canonical signed preview invocation through proxy and runtime parsing", async () => {
       let tokenEndpointHits = 0;
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
@@ -3087,6 +3112,17 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.branchId, "10000000-1000-4000-8000-100000000006");
         assertEquals(ctx.branchName, "feature-branch");
         const forwarded = injectContextHeaders(req, ctx);
+        ensureTestSchemaValidator();
+        const invocation = await parseRuntimeAgentRunInvocation(forwarded.clone());
+        assertEquals(invocation.run.project.runtimeTargetKind, "preview_branch");
+        assertEquals(
+          invocation.run.project.runtimeTargetBranchId,
+          "10000000-1000-4000-8000-100000000006",
+        );
+        assertEquals(invocation.agentSource, {
+          type: "branch",
+          branch: "feature-branch",
+        });
         const runtimeHeaders = extractRequestHeaders(
           forwarded,
           new URL(forwarded.url),
