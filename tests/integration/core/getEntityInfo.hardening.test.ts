@@ -1138,6 +1138,9 @@ describe("getEntityBySlug", () => {
       VeryfrontError,
       "invalid resolved path",
     );
+    if (!(error instanceof VeryfrontError)) {
+      throw new Error("Expected a VeryfrontError for an overlong resolved path");
+    }
     assertEquals(error.slug, "dynamic-route-error");
     assertEquals(statCalls, 0);
   });
