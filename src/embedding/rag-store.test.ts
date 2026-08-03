@@ -125,7 +125,7 @@ describe("ragStore", () => {
         const error = await assertRejects(
           () => store.ingest("Must not persist", "replacement content"),
           VeryfrontError,
-          "could not be read",
+          "could not be completed safely",
         );
         assert(error instanceof VeryfrontError);
         assertEquals(error.slug, "rag-store-unavailable");
@@ -168,7 +168,7 @@ describe("ragStore", () => {
         const error = await assertRejects(
           () => store.ingest("Must not persist", "replacement content"),
           VeryfrontError,
-          "could not be read",
+          "could not be completed safely",
         );
         assert(error instanceof VeryfrontError);
         assertEquals(error.slug, "rag-store-unavailable");
@@ -302,6 +302,50 @@ describe("ragStore", () => {
     });
   });
 
+  it("does not fence a fresh lease when owner metadata cannot be trusted", async () => {
+    const ownerCases = [
+      { name: "malformed JSON", bytes: new TextEncoder().encode("{") },
+      { name: "invalid UTF-8", bytes: new Uint8Array([0xff]) },
+      { name: "oversized metadata", bytes: new Uint8Array(4_097).fill(0x61) },
+    ];
+    for (const ownerCase of ownerCases) {
+      await withTempDir(async (tempDir) => {
+        const storagePath = join(tempDir, ownerCase.name.replaceAll(" ", "-"), "index.json");
+        const lockDirectory = `${storagePath}.veryfront-rag.lock`;
+        const leasePath = join(lockDirectory, `${crypto.randomUUID()}.lease`);
+        await Deno.mkdir(lockDirectory, { recursive: true });
+        await Deno.writeFile(join(lockDirectory, "owner.json"), ownerCase.bytes);
+        await Deno.writeTextFile(leasePath, "live\n");
+        await Deno.writeTextFile(storagePath, JSON.stringify({ documents: [], chunks: [] }));
+        await Deno.utime(lockDirectory, new Date(0), new Date(0));
+        const freshTime = new Date();
+        await Deno.utime(leasePath, freshTime, freshTime);
+
+        let settled = false;
+        const pendingDocuments = ragStore({
+          model: "local/test-model",
+          storagePath,
+        }).listDocuments().finally(() => {
+          settled = true;
+        });
+
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 150));
+        const liveLeaseWasPreserved = await exists(lockDirectory) &&
+          await exists(leasePath) &&
+          !await exists(`${lockDirectory}.recovering`) &&
+          !settled;
+
+        // Let the pending contender recover naturally after proving that the
+        // fresh lease, rather than the old directory mtime, governed staleness.
+        await Deno.utime(leasePath, new Date(0), new Date(0));
+        assertEquals(await pendingDocuments, []);
+        assertEquals(liveLeaseWasPreserved, true, ownerCase.name);
+        assertEquals(await exists(lockDirectory), false);
+        assertEquals(await exists(`${lockDirectory}.recovering`), false);
+      });
+    }
+  });
+
   it("rejects a stale update when the live index changes before publication", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");
@@ -417,7 +461,7 @@ describe("ragStore", () => {
         const error = await assertRejects(
           () => store.ingest("Fenced", "must not overwrite"),
           VeryfrontError,
-          "could not be read",
+          "could not be completed safely",
         );
         assert(error instanceof VeryfrontError);
         assertEquals(error.slug, "rag-store-unavailable");
@@ -469,7 +513,7 @@ describe("ragStore", () => {
         const error = await assertRejects(
           () => store.ingest("Fenced at rename", "must not overwrite"),
           VeryfrontError,
-          "could not be read",
+          "could not be completed safely",
         );
         assert(error instanceof VeryfrontError);
         assertEquals(error.slug, "rag-store-unavailable");

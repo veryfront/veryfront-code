@@ -442,7 +442,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
 
   function unavailableStoreError(cause: unknown): Error {
     return RAG_STORE_UNAVAILABLE.create({
-      detail: "RAG store file could not be read. It was left untouched.",
+      detail: "RAG store operation could not be completed safely. Check storage and retry.",
       cause,
       context: { storagePath },
     });

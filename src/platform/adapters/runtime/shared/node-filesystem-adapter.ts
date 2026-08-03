@@ -147,12 +147,13 @@ function detectNodeCompatibleRuntime(): NodeCompatibleRuntimeProvenance {
   return "unknown";
 }
 
-export function hasLosslessWindowsSnapshotIdentity(
+export function hasUsableWindowsSnapshotIdentity(
   runtime: NodeCompatibleRuntimeProvenance,
 ): boolean {
-  // Node's BigIntStats preserve native file identity and nanosecond generation
-  // fields on Windows. Bun and Deno do not currently document an equivalent
-  // lossless contract, so their Windows adapters must fail closed.
+  // Node exposes bigint file identity and generation fields on Windows. Each
+  // snapshot still validates that the native identity is present and usable.
+  // Bun and Deno do not currently document an equivalent contract, so their
+  // Windows adapters must fail closed.
   return runtime === "node";
 }
 
@@ -235,11 +236,14 @@ export async function readNodeFileSnapshotWithinLimit(
   }
   const lexicalRoot = resolve(containmentRoot);
   const candidate = resolve(path);
-  if (!isPathContainedBy(candidate, lexicalRoot)) {
+  const canonicalRoot = await operations.realpath(lexicalRoot);
+  if (
+    !isPathContainedBy(candidate, lexicalRoot) &&
+    !isPathContainedBy(candidate, canonicalRoot)
+  ) {
     throw new TypeError("Snapshot path must be contained by the requested root");
   }
 
-  const canonicalRoot = await operations.realpath(lexicalRoot);
   const pathnameBefore = await operations.lstat(candidate);
   if (pathnameBefore.isSymbolicLink()) {
     throw new TypeError("Snapshot path must not be a symbolic link");
@@ -403,7 +407,7 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
     const noFollow = hasOwn(options, "noFollow") ? options.noFollow : nodeFsConstants.O_NOFOLLOW;
     const platform = options.platform ?? (runtimeUsesWindowsPaths() ? "windows" : "posix");
     const canOpenExactSnapshot = platform === "windows"
-      ? hasLosslessWindowsSnapshotIdentity(detectNodeCompatibleRuntime())
+      ? hasUsableWindowsSnapshotIdentity(detectNodeCompatibleRuntime())
       : typeof noFollow === "number" && noFollow !== 0;
     if (canOpenExactSnapshot) {
       Object.defineProperty(this, "readFileSnapshotWithinLimit", {

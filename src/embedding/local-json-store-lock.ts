@@ -38,6 +38,7 @@ interface LockObservation {
   readonly owner: LockOwner | null;
   readonly ownerFileName: string | null;
   readonly ownerText: string | null;
+  readonly leaseFileNames: readonly string[];
   readonly leasePresent: boolean;
   readonly leaseMtimeMs: number | null;
 }
@@ -130,11 +131,14 @@ async function readObservation(
     throw new LocalJsonStoreLockError("The RAG store lock path is not a real directory");
   }
 
+  let directoryEntryNames: string[] | null = null;
   let ownerFileName: string | null = OWNER_FILE_NAME;
   let ownerText = await readBoundedText(fs, join(lockDirectory, OWNER_FILE_NAME));
   if (ownerText === null) {
+    directoryEntryNames = [];
     const ownerMarkers: string[] = [];
     for await (const entry of fs.readDir(lockDirectory)) {
+      directoryEntryNames.push(entry.name);
       if (LOCK_OWNER_MARKER_PATTERN.test(entry.name)) ownerMarkers.push(entry.name);
     }
     if (ownerMarkers.length > 1) {
@@ -148,19 +152,60 @@ async function readObservation(
     }
   }
   const owner = ownerText === null ? null : parseOwner(ownerText);
-  let leasePresent = false;
+  const leaseFileNames: string[] = [];
   let leaseMtimeMs: number | null = null;
   if (owner !== null) {
+    const leaseFileName = `${owner.token}.lease`;
     try {
-      const leaseInfo = await lstat(join(lockDirectory, `${owner.token}.lease`));
+      const leaseInfo = await lstat(join(lockDirectory, leaseFileName));
       if (!leaseInfo.isFile || leaseInfo.isSymlink) {
         throw new LocalJsonStoreLockError("The RAG store lock lease is not a real file");
       }
-      leasePresent = true;
+      leaseFileNames.push(leaseFileName);
       leaseMtimeMs = leaseInfo.mtime?.getTime() ?? null;
     } catch (error) {
       if (!isCanonicalNotFoundError(error)) throw error;
     }
+  } else {
+    // Ownership metadata may be malformed, oversized, or undecodable while a
+    // live owner is still renewing its token-specific lease. Discover leases
+    // independently so ambiguous ownership can never make a live lock appear
+    // ownerless and stale merely because the directory mtime is old.
+    if (directoryEntryNames === null) {
+      directoryEntryNames = [];
+      for await (const entry of fs.readDir(lockDirectory)) {
+        directoryEntryNames.push(entry.name);
+      }
+    }
+    let newestLeaseMtimeMs: number | null = null;
+    for (const entryName of directoryEntryNames) {
+      if (!entryName.endsWith(".lease")) continue;
+      let leaseInfo;
+      try {
+        leaseInfo = await lstat(join(lockDirectory, entryName));
+      } catch (error) {
+        if (isCanonicalNotFoundError(error)) {
+          throw new LocalJsonStoreLockError(
+            "RAG store lock lease changed while ownership was being inspected",
+            { cause: error },
+          );
+        }
+        throw error;
+      }
+      if (!leaseInfo.isFile || leaseInfo.isSymlink) {
+        throw new LocalJsonStoreLockError("The RAG store lock lease is not a real file");
+      }
+      leaseFileNames.push(entryName);
+      const mtimeMs = leaseInfo.mtime?.getTime() ?? null;
+      if (mtimeMs === null) {
+        newestLeaseMtimeMs = null;
+        break;
+      }
+      newestLeaseMtimeMs = newestLeaseMtimeMs === null
+        ? mtimeMs
+        : Math.max(newestLeaseMtimeMs, mtimeMs);
+    }
+    leaseMtimeMs = newestLeaseMtimeMs;
   }
 
   return {
@@ -168,7 +213,8 @@ async function readObservation(
     owner,
     ownerFileName,
     ownerText,
-    leasePresent,
+    leaseFileNames,
+    leasePresent: leaseFileNames.length > 0,
     leaseMtimeMs,
   };
 }
@@ -245,13 +291,11 @@ async function removeObservedLockGeneration(
   knownTemporaryNames?: ReadonlySet<string>,
 ): Promise<void> {
   const ownerMarkerName = await claimObservedOwner(fs, lockDirectory, observation, phase);
-  const leaseName = observation.owner !== null && observation.leasePresent
-    ? `${observation.owner.token}.lease`
-    : null;
+  const leaseNames = new Set(observation.leaseFileNames);
   const removableNames: string[] = [];
   for await (const entry of fs.readDir(lockDirectory)) {
     const isObservedOwner = entry.name === ownerMarkerName;
-    const isObservedLease = entry.name === leaseName;
+    const isObservedLease = leaseNames.has(entry.name);
     const isOwnedTemporary = LOCK_TEMPORARY_FILE_PATTERN.test(entry.name) &&
       (knownTemporaryNames === undefined || knownTemporaryNames.has(entry.name));
     if (!isObservedOwner && !isObservedLease && !isOwnedTemporary) {

@@ -9,7 +9,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FileSnapshotChangedError } from "../../file-snapshot-error.ts";
 import { isNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 import {
-  hasLosslessWindowsSnapshotIdentity,
+  hasUsableWindowsSnapshotIdentity,
   NodeCompatibleFileSystemAdapter,
   readNodeFileSnapshotWithinLimit,
 } from "./node-filesystem-adapter.ts";
@@ -69,6 +69,24 @@ describe("NodeCompatibleFileSystemAdapter", () => {
     }
   });
 
+  it("accepts a canonical candidate beneath a symlinked containment root", async () => {
+    if (Deno.build.os === "windows") return;
+    const workspace = await Deno.makeTempDir({ prefix: "veryfront-node-snapshot-root-" });
+    const physicalRoot = `${workspace}/physical`;
+    const linkedRoot = `${workspace}/linked`;
+    try {
+      await Deno.mkdir(physicalRoot);
+      await Deno.writeFile(`${physicalRoot}/asset.bin`, new Uint8Array([1, 2, 3]));
+      await Deno.symlink(physicalRoot, linkedRoot);
+      const canonicalCandidate = await Deno.realPath(`${linkedRoot}/asset.bin`);
+
+      const readSnapshot = requireSnapshotReader(new NodeCompatibleFileSystemAdapter());
+      assertEquals([...await readSnapshot(canonicalCandidate, linkedRoot, 3)], [1, 2, 3]);
+    } finally {
+      await Deno.remove(workspace, { recursive: true });
+    }
+  });
+
   it("omits snapshot authority on POSIX when O_NOFOLLOW is absent or zero", () => {
     for (const noFollow of [undefined, 0]) {
       const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
@@ -125,7 +143,7 @@ describe("NodeCompatibleFileSystemAdapter", () => {
     assertEquals(openedWith, ["r"]);
   });
 
-  it("rejects a Windows lexical containment escape before filesystem access", async () => {
+  it("rejects a Windows lexical containment escape before candidate filesystem access", async () => {
     let operationCalls = 0;
     const operations = {
       realpath: () => {
@@ -155,7 +173,9 @@ describe("NodeCompatibleFileSystemAdapter", () => {
       TypeError,
       "Snapshot path must be contained",
     );
-    assertEquals(operationCalls, 0);
+    // Canonicalizing the trusted root is required to admit canonical candidates
+    // beneath symlinked roots. The untrusted candidate is never inspected.
+    assertEquals(operationCalls, 1);
   });
 
   it("rejects a Windows canonical target outside the containment root", async () => {
@@ -244,10 +264,10 @@ describe("NodeCompatibleFileSystemAdapter", () => {
     assertEquals(opens, 0);
   });
 
-  it("publishes Windows snapshot authority only for Node's lossless contract", () => {
-    assertEquals(hasLosslessWindowsSnapshotIdentity("node"), true);
+  it("publishes Windows snapshot authority only for Node's usable identity contract", () => {
+    assertEquals(hasUsableWindowsSnapshotIdentity("node"), true);
     for (const runtime of ["bun", "deno", "unknown"] as const) {
-      assertEquals(hasLosslessWindowsSnapshotIdentity(runtime), false);
+      assertEquals(hasUsableWindowsSnapshotIdentity(runtime), false);
     }
 
     // This suite runs under Deno, so forcing Windows path semantics must not

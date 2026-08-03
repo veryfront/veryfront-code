@@ -142,13 +142,13 @@ export const RAG_STORE_CORRUPT = defineError({
   suggestion: "Repair or move the store file aside, then retry; it was not overwritten",
 });
 
-/** Persisted RAG index could not be read and was left untouched. */
+/** A persisted RAG index operation could not be completed safely. */
 export const RAG_STORE_UNAVAILABLE = defineError({
   slug: "rag-store-unavailable",
   category: "SERVER",
   status: 500,
   title: "RAG store file is unavailable",
-  suggestion: "Check storage availability and file permissions, then retry",
+  suggestion: "Check storage availability, permissions, and concurrent operations, then retry",
 });
 
 /** Registry fragment for SERVER errors (slug → definition). */
