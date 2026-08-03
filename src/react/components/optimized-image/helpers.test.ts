@@ -51,7 +51,15 @@ describe("optimized-image helpers", () => {
     });
 
     it("keeps source types without build-emitted variants on the original asset", () => {
-      for (const src of ["/images/photo.gif", "/images/photo.svg", "/images/photo"]) {
+      for (
+        const src of [
+          "/images/photo.gif",
+          "/images/photo.svg",
+          "/images/photo",
+          "/images/.jpg",
+          "/images/.png",
+        ]
+      ) {
         assertEquals(getOptimizedPath(src, "webp", 640), src);
         assertEquals(generateSrcSet(src, "webp", [320, 640], 80), "");
       }

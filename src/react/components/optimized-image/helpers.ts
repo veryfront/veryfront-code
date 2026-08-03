@@ -1,7 +1,7 @@
 import { isDevelopment } from "#veryfront/platform/environment.ts";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import {
-  isOptimizableImageSourceExtension,
+  getOptimizableImageSourceExtension,
   isValidImageVariantWidth,
   resolveImageVariantWidths,
 } from "#veryfront/utils/image-variant-widths.ts";
@@ -76,8 +76,9 @@ function encodedAppAssetPath(src: string): string | null {
     }
   }
 
-  const sourceExtension = getExtensionName(encodedSegments[encodedSegments.length - 1]!);
-  if (!isOptimizableImageSourceExtension(sourceExtension)) return null;
+  if (getOptimizableImageSourceExtension(encodedSegments[encodedSegments.length - 1]!) === null) {
+    return null;
+  }
 
   return `/${encodedSegments.join("/")}`;
 }

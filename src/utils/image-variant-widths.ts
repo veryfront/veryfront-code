@@ -7,6 +7,9 @@ const freeze = Object.freeze;
 const isSafeInteger = Number.isSafeInteger;
 const MAX_IMAGE_DIMENSION = IMAGE_OPTIMIZATION.MAX_DIMENSION;
 const NativeTypeError = TypeError;
+const stringLastIndexOf = String.prototype.lastIndexOf;
+const stringSlice = String.prototype.slice;
+const stringToLowerCase = String.prototype.toLowerCase;
 const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
 const SetConstructor = Set;
@@ -28,6 +31,22 @@ export function isOptimizableImageSourceExtension(extension: string): boolean {
     if (extension === OPTIMIZABLE_IMAGE_SOURCE_EXTENSIONS[index]) return true;
   }
   return false;
+}
+
+/** Extract a build-supported extension using the same basename rule as path.extname. */
+export function getOptimizableImageSourceExtension(path: string): string | null {
+  const lastSlash = apply(stringLastIndexOf, path, ["/"]) as number;
+  const lastBackslash = apply(stringLastIndexOf, path, ["\\"]) as number;
+  const lastSeparator = lastSlash > lastBackslash ? lastSlash : lastBackslash;
+  const lastDot = apply(stringLastIndexOf, path, ["."]) as number;
+  if (lastDot <= lastSeparator + 1 || lastDot === path.length - 1) return null;
+
+  const extension = apply(
+    stringToLowerCase,
+    apply(stringSlice, path, [lastDot + 1]) as string,
+    [],
+  ) as string;
+  return isOptimizableImageSourceExtension(extension) ? extension : null;
 }
 
 export function isValidImageVariantWidth(value: unknown): value is number {

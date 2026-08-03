@@ -374,7 +374,15 @@ describe("OptimizedImage", () => {
     });
 
     it("uses the original asset for source types the build does not optimize", () => {
-      for (const src of ["/images/photo.gif", "/images/photo.svg", "/images/photo"]) {
+      for (
+        const src of [
+          "/images/photo.gif",
+          "/images/photo.svg",
+          "/images/photo",
+          "/images/.jpg",
+          "/images/.png",
+        ]
+      ) {
         assertPublicImageApisUseOriginalAsset(640, undefined, src);
       }
     });
