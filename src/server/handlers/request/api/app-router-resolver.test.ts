@@ -167,6 +167,33 @@ describe("resolveAppRouteFile", () => {
     });
   });
 
+  it("keeps special parameter names as own keys on a null-prototype record", async () => {
+    const ctx = createMockCtx({
+      statMap: {
+        "/project/app": { isFile: false, isDirectory: true },
+        "/project/app/api/[__proto__]/[toString]/route.ts": {
+          isFile: true,
+          isDirectory: false,
+        },
+      },
+      dirMap: {
+        "/project/app": [dir("api")],
+        "/project/app/api": [dir("[__proto__]")],
+        "/project/app/api/[__proto__]": [dir("[toString]")],
+        "/project/app/api/[__proto__]/[toString]": [],
+      },
+    });
+
+    const result = await resolveAppRouteFile("/api/prototype/value", ctx);
+
+    assertEquals(result?.file, "/project/app/api/[__proto__]/[toString]/route.ts");
+    assertEquals(Object.getPrototypeOf(result?.params), null);
+    assertEquals(Object.hasOwn(result?.params ?? {}, "__proto__"), true);
+    assertEquals(Object.hasOwn(result?.params ?? {}, "toString"), true);
+    assertEquals(result?.params["__proto__"], "prototype");
+    assertEquals(Object.getOwnPropertyDescriptor(result?.params ?? {}, "toString")?.value, "value");
+  });
+
   it("matches a dotted dynamic name through the canonical route parser", async () => {
     const ctx = createMockCtx({
       statMap: {

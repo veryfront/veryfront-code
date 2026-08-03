@@ -18,6 +18,22 @@ interface RouteParameterDirectory {
   readonly parameter: ParsedRouteParameter;
 }
 
+type RouteParams = Record<string, string | string[]>;
+
+function createRouteParams(): RouteParams {
+  return Object.create(null) as RouteParams;
+}
+
+function withRouteParam(
+  params: RouteParams,
+  name: string,
+  value: string | string[],
+): RouteParams {
+  const next = Object.assign(createRouteParams(), params);
+  next[name] = value;
+  return next;
+}
+
 function parameterDirectories(
   names: readonly string[],
   kind: ParsedRouteParameter["kind"],
@@ -67,7 +83,7 @@ async function resolveFromDirectory(
   current: string,
   segments: string[],
   index: number,
-  params: Record<string, string | string[]>,
+  params: RouteParams,
   ctx: HandlerContext,
 ): Promise<AppRouteMatch | null> {
   if (index >= segments.length) {
@@ -85,10 +101,7 @@ async function resolveFromDirectory(
       if (optionalFile) {
         return {
           file: optionalFile,
-          params: {
-            ...params,
-            [optionalCatchAll.parameter.name]: [],
-          },
+          params: withRouteParam(params, optionalCatchAll.parameter.name, []),
         };
       }
     }
@@ -117,10 +130,7 @@ async function resolveFromDirectory(
       joinPath(current, dynamicSegment.directory),
       segments,
       index + 1,
-      {
-        ...params,
-        [dynamicSegment.parameter.name]: seg,
-      },
+      withRouteParam(params, dynamicSegment.parameter.name, seg),
       ctx,
     );
     if (dynamicMatch) return dynamicMatch;
@@ -133,10 +143,7 @@ async function resolveFromDirectory(
       joinPath(current, catchAllSegment.directory),
       segments,
       segments.length,
-      {
-        ...params,
-        [catchAllSegment.parameter.name]: remainingSegments,
-      },
+      withRouteParam(params, catchAllSegment.parameter.name, remainingSegments),
       ctx,
     );
     if (catchAllMatch) return catchAllMatch;
@@ -147,10 +154,7 @@ async function resolveFromDirectory(
       joinPath(current, optionalCatchAll.directory),
       segments,
       segments.length,
-      {
-        ...params,
-        [optionalCatchAll.parameter.name]: remainingSegments,
-      },
+      withRouteParam(params, optionalCatchAll.parameter.name, remainingSegments),
       ctx,
     );
     if (optionalMatch) return optionalMatch;
@@ -175,5 +179,5 @@ export async function resolveAppRouteFile(
 
   const normalized = path === "/" ? "/" : path.replace(/\/$/, "");
   const segments = normalized.split("/").filter(Boolean);
-  return resolveFromDirectory(appRoot, segments, 0, {}, ctx);
+  return resolveFromDirectory(appRoot, segments, 0, createRouteParams(), ctx);
 }
