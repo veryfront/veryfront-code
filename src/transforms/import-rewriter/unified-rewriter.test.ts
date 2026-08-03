@@ -253,6 +253,36 @@ describe("rewriteImports with the default strategies", () => {
     });
   }
 
+  for (
+    const [variant, privateModuleUrl] of [
+      [
+        "hosted control-plane source",
+        import.meta.resolve("#veryfront/agent/hosted/internal/control-plane-mcp-source.ts"),
+      ],
+      [
+        "remote MCP transport",
+        import.meta.resolve("#veryfront/tool/internal/remote-mcp-transport.ts"),
+      ],
+    ] as const
+  ) {
+    it(`rejects a literal file URL for the private ${variant}`, async () => {
+      const error = await assertRejects(
+        () =>
+          rewriteImports(
+            `export const load = () => import(${JSON.stringify(privateModuleUrl)});`,
+            defaultCtx({ target: "ssr" }),
+          ),
+        Error,
+      );
+
+      assertInstanceOf(error, Error);
+      assertStringIncludes(
+        error.message,
+        "Project-authored filesystem module import is not allowed",
+      );
+    });
+  }
+
   it("preserves ordinary computed dynamic imports", async () => {
     const projectModule = await loadTransformedProjectModule(
       [

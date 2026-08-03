@@ -1,8 +1,10 @@
 import {
   applyComputedDynamicImportPinning,
   applyImportEdits,
+  isFilesystemImportSpecifier,
   parseImportEdits,
 } from "./import-edit.ts";
+import { SECURITY_VIOLATION } from "#veryfront/errors";
 import { relativeToProjectDir } from "./project-paths.ts";
 import {
   appendDependencyPinningPathKey,
@@ -54,9 +56,18 @@ export async function rewriteWithImportRewriteCore(input: TransformCoreInput): P
   }
 
   const rewrites = new Map<number, { specifier?: string | null; statement?: string }>();
+  const guardFrameworkImports = input.strategies.some((strategy) => strategy.name === "veryfront");
 
   for (let i = 0; i < parsed.imports.length; i++) {
     const imp = parsed.imports[i]!;
+    if (
+      guardFrameworkImports && input.context.target === "ssr" &&
+      isFilesystemImportSpecifier(imp.specifier)
+    ) {
+      throw SECURITY_VIOLATION.create({
+        detail: `Project-authored filesystem module import is not allowed: ${imp.specifier}`,
+      });
+    }
     const result = rewriteOne(imp.specifier, imp, input.context, input.strategies);
 
     if (result.specifier !== null || result.statement !== undefined) {
@@ -70,7 +81,6 @@ export async function rewriteWithImportRewriteCore(input: TransformCoreInput): P
   const isCrossProjectSSRPinning = input.context.target === "ssr" &&
     pinningEnabled &&
     input.context.moduleServerUrl?.includes("/_vf_modules/_cross/") === true;
-  const guardFrameworkImports = input.strategies.some((strategy) => strategy.name === "veryfront");
   if (!isBrowserPinning && !isCrossProjectSSRPinning && !guardFrameworkImports) {
     return rewritten;
   }
