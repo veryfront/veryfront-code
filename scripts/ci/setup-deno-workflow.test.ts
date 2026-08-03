@@ -68,19 +68,23 @@ describe("setup-deno CI contract", () => {
     assertStringIncludes(cacheKey, "${{ runner.arch }}");
     assertStringIncludes(cacheKey, "2.7.7");
     assertStringIncludes(cacheKey, "veryfront-deno-v2-");
-    assertStringIncludes(cacheKey, "hashFiles(");
+    for (
+      const dependencyInput of [
+        "'deno.lock'",
+        "'scripts/deno.lock'",
+        "'deno.json'",
+        "'**/deno.json'",
+      ]
+    ) {
+      assertStringIncludes(cacheKey, dependencyInput);
+    }
     assertStringIncludes(String(cacheInputs.path), "runner.temp");
 
     const saveStep = steps.find((step) => step.uses === CACHE_SAVE_ACTION);
     assert(saveStep, "setup-deno must use the pinned save-only cache action");
-    assertStringIncludes(String(saveStep.if), "inputs.warm-cache == 'true'");
-    assertStringIncludes(
+    assertEquals(
       String(saveStep.if),
-      "inputs.warm-redis-cache == 'true'",
-    );
-    assertStringIncludes(
-      String(saveStep.if),
-      "steps.deno-cache.outputs.cache-hit != 'true'",
+      "inputs.warm-cache == 'true' && inputs.warm-redis-cache == 'true' && steps.deno-cache.outputs.cache-hit != 'true'",
     );
     const saveInputs = asRecord(saveStep.with, "cache save inputs");
     assertEquals(
@@ -121,14 +125,24 @@ describe("setup-deno CI contract", () => {
     assert(redisWarm && dependencyWarm, "both warm-cache steps must exist");
 
     for (
-      const [name, step, deadline] of [
-        ["Redis", redisWarm, "2m"],
-        ["dependency", dependencyWarm, "3m"],
+      const [name, step, deadline, expectedCondition] of [
+        [
+          "Redis",
+          redisWarm,
+          "2m",
+          "inputs.warm-redis-cache == 'true' && steps.deno-cache.outputs.cache-hit != 'true'",
+        ],
+        [
+          "dependency",
+          dependencyWarm,
+          "3m",
+          "inputs.warm-cache == 'true' && steps.deno-cache.outputs.cache-hit != 'true'",
+        ],
       ] as const
     ) {
       const condition = String(step.if);
       const command = String(step.run);
-      assertStringIncludes(condition, "steps.deno-cache.outputs.cache-hit");
+      assertEquals(condition, expectedCondition);
       assertMatch(
         command,
         new RegExp(`timeout[^\\n]+${deadline}`),
