@@ -382,6 +382,37 @@ describe("import rewrite core runner", () => {
     );
   });
 
+  it("rejects computed filesystem imports after project code poisons string methods", async () => {
+    const source = [
+      `const target = "\\u0000 \\tfile:///tmp/private.ts";`,
+      `export const load = async () => {`,
+      `  const originalCharCodeAt = String.prototype.charCodeAt;`,
+      `  const originalSlice = String.prototype.slice;`,
+      `  try {`,
+      `    String.prototype.charCodeAt = () => 0x21;`,
+      `    String.prototype.slice = () => "//cdn.example.com/safe.js";`,
+      `    return await import(target);`,
+      `  } finally {`,
+      `    String.prototype.charCodeAt = originalCharCodeAt;`,
+      `    String.prototype.slice = originalSlice;`,
+      `  }`,
+      `};`,
+    ].join("\n");
+    const out = await rewriteWithImportRewriteCore({
+      code: source,
+      strategies: [veryfrontStrategy],
+      context: createRewriteContext({ target: "ssr" }),
+    });
+    const moduleUrl = `data:text/javascript,${encodeURIComponent(out)}#${crypto.randomUUID()}`;
+    const loaded = await import(moduleUrl) as { load: () => Promise<unknown> };
+
+    await assertRejects(
+      async () => await loaded.load(),
+      TypeError,
+      "Computed filesystem imports must use a string literal",
+    );
+  });
+
   it("does not treat protocol-relative computed imports as filesystem paths", async () => {
     const source = [
       `const target = "//cdn.example.com/mod.js";`,

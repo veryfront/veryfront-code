@@ -163,10 +163,10 @@ function ${name}HasPrefixAt(value, prefix, offset) {
   }
   return true;
 }
-function ${name}TrimLeadingSpecifierControls(value) {
+function ${name}LeadingSpecifierOffset(value) {
   let start = 0;
-  while (start < value.length && value.charCodeAt(start) <= 0x20) start++;
-  return start === 0 ? value : value.slice(start);
+  while (start < value.length && value[start] <= " ") start++;
+  return start;
 }
 function ${name}IsUnsafePathSegment(value, start, end) {
   const segmentLength = end - start;
@@ -198,21 +198,22 @@ function ${name}IsSafeModulePath(value, offset) {
   return !${name}IsUnsafePathSegment(value, segmentStart, value.length);
 }
 function ${name}IsFilesystemSpecifier(value) {
-  value = ${name}TrimLeadingSpecifierControls(value);
-  const isFileUrl = value.length >= 5 &&
-    (value[0] === "f" || value[0] === "F") &&
-    (value[1] === "i" || value[1] === "I") &&
-    (value[2] === "l" || value[2] === "L") &&
-    (value[3] === "e" || value[3] === "E") &&
-    value[4] === ":";
-  if (isFileUrl || value[0] === "\\\\") return true;
-  if (value[0] === "/") {
-    if (value[1] !== "/") return !${name}IsSafeModulePath(value, 0);
+  const offset = ${name}LeadingSpecifierOffset(value);
+  const isFileUrl = value.length - offset >= 5 &&
+    (value[offset] === "f" || value[offset] === "F") &&
+    (value[offset + 1] === "i" || value[offset + 1] === "I") &&
+    (value[offset + 2] === "l" || value[offset + 2] === "L") &&
+    (value[offset + 3] === "e" || value[offset + 3] === "E") &&
+    value[offset + 4] === ":";
+  if (isFileUrl || value[offset] === "\\\\") return true;
+  if (value[offset] === "/") {
+    if (value[offset + 1] !== "/") return !${name}IsSafeModulePath(value, offset);
     if (
-      value[2] !== undefined && value[2] !== "/" && value[2] !== "\\\\" &&
-      value[2] !== "?" && value[2] !== "#"
+      value[offset + 2] !== undefined && value[offset + 2] !== "/" &&
+      value[offset + 2] !== "\\\\" && value[offset + 2] !== "?" &&
+      value[offset + 2] !== "#"
     ) return false;
-    let pathStart = 2;
+    let pathStart = offset + 2;
     while (
       pathStart < value.length && value[pathStart] !== "/" &&
       value[pathStart] !== "\\\\" && value[pathStart] !== "?" && value[pathStart] !== "#"
@@ -220,11 +221,11 @@ function ${name}IsFilesystemSpecifier(value) {
     return !${name}IsSafeModulePath(value, pathStart);
   }
 
-  const first = value[0];
+  const first = value[offset];
   const isDriveLetter = first !== undefined &&
     ((first >= "a" && first <= "z") || (first >= "A" && first <= "Z"));
-  return isDriveLetter && value[1] === ":" &&
-    (value[2] === "/" || value[2] === "\\\\");
+  return isDriveLetter && value[offset + 1] === ":" &&
+    (value[offset + 2] === "/" || value[offset + 2] === "\\\\");
 }
 ${
     guardFrameworkImports
