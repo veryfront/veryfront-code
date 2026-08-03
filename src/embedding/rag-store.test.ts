@@ -143,6 +143,79 @@ describe("ragStore", () => {
     });
   });
 
+  it("retries the orphan scan after publication cleanup fails", async () => {
+    await withTempDir(async (tempDir) => {
+      const storageDirectory = join(tempDir, "data");
+      const storagePath = join(storageDirectory, "index.json");
+      await Deno.mkdir(storageDirectory, { recursive: true });
+      await Deno.writeTextFile(storagePath, JSON.stringify({ documents: [], chunks: [] }));
+
+      const renameDescriptor = Object.getOwnPropertyDescriptor(Deno, "rename");
+      const removeDescriptor = Object.getOwnPropertyDescriptor(Deno, "remove");
+      const readDirDescriptor = Object.getOwnPropertyDescriptor(Deno, "readDir");
+      assert(renameDescriptor !== undefined);
+      assert(removeDescriptor !== undefined);
+      assert(readDirDescriptor !== undefined);
+      const originalRename = Deno.rename.bind(Deno);
+      const originalRemove = Deno.remove.bind(Deno);
+      const originalReadDir = Deno.readDir.bind(Deno);
+      let orphanPath: string | null = null;
+      let failedCleanupOnce = false;
+      let storageDirectoryScans = 0;
+      Object.defineProperty(Deno, "rename", {
+        ...renameDescriptor,
+        value: (from: string | URL, to: string | URL) => {
+          if (String(to) === storagePath) {
+            orphanPath = String(from);
+            return Promise.reject(new Error("simulated publication failure"));
+          }
+          return originalRename(from, to);
+        },
+      });
+      Object.defineProperty(Deno, "remove", {
+        ...removeDescriptor,
+        value: (path: string | URL, options?: Deno.RemoveOptions) => {
+          if (!failedCleanupOnce && String(path) === orphanPath) {
+            failedCleanupOnce = true;
+            return Promise.reject(new Error("simulated cleanup failure"));
+          }
+          return originalRemove(path, options);
+        },
+      });
+      Object.defineProperty(Deno, "readDir", {
+        ...readDirDescriptor,
+        value: (path: string | URL) => {
+          if (String(path) === storageDirectory) storageDirectoryScans++;
+          return originalReadDir(path);
+        },
+      });
+
+      const store = ragStore({ model: "local/test-model", storagePath });
+      try {
+        try {
+          await assertRejects(
+            () => store.ingest("Must not persist", "replacement content"),
+            VeryfrontError,
+            "could not be completed safely",
+          );
+        } finally {
+          Object.defineProperty(Deno, "rename", renameDescriptor);
+          Object.defineProperty(Deno, "remove", removeDescriptor);
+        }
+
+        assert(orphanPath !== null);
+        assertEquals(failedCleanupOnce, true);
+        assertEquals(storageDirectoryScans, 1);
+        assertEquals(await store.listDocuments(), []);
+        assertEquals(storageDirectoryScans, 2);
+      } finally {
+        Object.defineProperty(Deno, "rename", renameDescriptor);
+        Object.defineProperty(Deno, "remove", removeDescriptor);
+        Object.defineProperty(Deno, "readDir", readDirDescriptor);
+      }
+    });
+  });
+
   it("cleans a partially written unique temp file without touching the live store", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");
@@ -196,6 +269,35 @@ describe("ragStore", () => {
       assertEquals(await store.listDocuments(), []);
       assertEquals(await readTextFile(storagePath), original);
       assertEquals(await exists(orphanPath), false);
+    });
+  });
+
+  it("scans for orphaned temps only once per store instance", async () => {
+    await withTempDir(async (tempDir) => {
+      const storageDirectory = join(tempDir, "data");
+      const storagePath = join(storageDirectory, "index.json");
+      await Deno.mkdir(storageDirectory, { recursive: true });
+      await Deno.writeTextFile(storagePath, JSON.stringify({ documents: [], chunks: [] }));
+      const readDirDescriptor = Object.getOwnPropertyDescriptor(Deno, "readDir");
+      assert(readDirDescriptor !== undefined);
+      const originalReadDir = Deno.readDir.bind(Deno);
+      let storageDirectoryScans = 0;
+      Object.defineProperty(Deno, "readDir", {
+        ...readDirDescriptor,
+        value: (path: string | URL) => {
+          if (String(path) === storageDirectory) storageDirectoryScans++;
+          return originalReadDir(path);
+        },
+      });
+
+      try {
+        const store = ragStore({ model: "local/test-model", storagePath });
+        assertEquals(await store.listDocuments(), []);
+        assertEquals(await store.listDocuments(), []);
+        assertEquals(storageDirectoryScans, 1);
+      } finally {
+        Object.defineProperty(Deno, "readDir", readDirDescriptor);
+      }
     });
   });
 

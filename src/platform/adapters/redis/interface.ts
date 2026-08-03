@@ -1,6 +1,5 @@
 /**
- * Standardized Redis Adapter Interface
- * Normalizes differences between Deno and Node Redis clients
+ * Adapter interface that normalizes differences between Deno and Node Redis clients.
  */
 export interface RedisAdapter {
   hset(key: string, fields: Record<string, string>): Promise<number | string>;

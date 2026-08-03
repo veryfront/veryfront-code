@@ -1,7 +1,7 @@
 import { isVisibleIntegration } from "../../integrations/feature-flags.ts";
 import type { OAuthServiceConfig } from "../types.ts";
 
-/** Configuration used by github. */
+/** Configuration used by GitHub. */
 export const githubConfig: OAuthServiceConfig = {
   providerId: "github",
   serviceId: "github",
@@ -67,7 +67,7 @@ export const notionConfig: OAuthServiceConfig = {
   },
 };
 
-/** Configuration used by figma. */
+/** Configuration used by Figma. */
 export const figmaConfig: OAuthServiceConfig = {
   providerId: "figma",
   serviceId: "figma",
@@ -102,7 +102,7 @@ export const linearConfig: OAuthServiceConfig = {
   pkceMode: "supported",
 };
 
-/** Configuration used by gitlab. */
+/** Configuration used by GitLab. */
 export const gitlabConfig: OAuthServiceConfig = {
   providerId: "gitlab",
   serviceId: "gitlab",
@@ -274,7 +274,7 @@ export const mailchimpConfig: OAuthServiceConfig = {
   runtimeSupport: "provider-adapter-required",
 };
 
-/** Configuration used by shopify. */
+/** Configuration used by Shopify. */
 export const shopifyConfig: OAuthServiceConfig = {
   providerId: "shopify",
   serviceId: "shopify",
@@ -339,7 +339,7 @@ export const boxConfig: OAuthServiceConfig = {
   runtimeSupport: "provider-adapter-required",
 };
 
-/** Configuration used by webex. */
+/** Configuration used by Webex. */
 export const webexConfig: OAuthServiceConfig = {
   providerId: "webex",
   serviceId: "webex",
@@ -375,7 +375,7 @@ export const trelloConfig: OAuthServiceConfig = {
   runtimeSupport: "provider-adapter-required",
 };
 
-/** Configuration used by clickup. */
+/** Configuration used by ClickUp. */
 export const clickupConfig: OAuthServiceConfig = {
   providerId: "clickup",
   serviceId: "clickup",

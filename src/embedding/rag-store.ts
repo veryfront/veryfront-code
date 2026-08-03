@@ -87,6 +87,10 @@ class InvalidStoreEncodingError extends Error {
   override readonly name = "InvalidStoreEncodingError";
 }
 
+class StoreFileSizeLimitError extends Error {
+  override readonly name = "StoreFileSizeLimitError";
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -310,6 +314,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
   const contentExtensions = new Set(config.contentExtensions ?? [".md", ".mdx", ".txt"]);
   const chunkOptions = config.chunkOptions;
   let storeDataCache: StoreDataCache | null = null;
+  let orphanedTempFilesCleaned = false;
 
   const MAX_TEXT_LENGTH = 5 * 1024 * 1024; // 5 MB text limit per document
 
@@ -348,6 +353,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
   }
 
   async function cleanupOrphanedTempFiles(): Promise<void> {
+    if (orphanedTempFilesCleaned) return;
     const storageDirectory = dirname(storagePath);
     const storageName = basename(storagePath);
     const uniqueTempPrefix = `${storageName}.tmp.`;
@@ -377,6 +383,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
         if (!isCanonicalNotFoundError(error)) throw unavailableStoreError(error);
       }
     }
+    orphanedTempFilesCleaned = true;
   }
 
   function createEmbedder() {
@@ -427,6 +434,11 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
       bytes = await readSnapshot(storagePath, dirname(storagePath), MAX_STORED_BYTES);
     } catch (error) {
       if (isCanonicalNotFoundError(error)) return null;
+      if (error instanceof RangeError) {
+        throw new StoreFileSizeLimitError("RAG store file exceeds its byte limit", {
+          cause: error,
+        });
+      }
       throw error;
     }
     try {
@@ -467,7 +479,9 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
 
   function classifyStoreSnapshotError(error: unknown): Error {
     if (isVeryfrontError(error)) return error;
-    if (error instanceof RangeError) return corruptStoreError("file exceeds size limit", error);
+    if (error instanceof StoreFileSizeLimitError) {
+      return corruptStoreError("file exceeds size limit", error);
+    }
     if (error instanceof InvalidStoreEncodingError) {
       return corruptStoreError("file is not valid UTF-8", error);
     }
@@ -534,8 +548,9 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
     expectedSourceBytes: Uint8Array | null,
     lease: LocalJsonStoreLease,
   ): Promise<void> {
+    assertStoreEntryCapacity(data.documents.length, data.chunks.length);
     if (!isRagStoreData(data)) {
-      throw RAG_STORE_UNAVAILABLE.create({
+      throw INVALID_ARGUMENT.create({
         detail: "The RAG store update violated persisted-data limits or relationships.",
         context: { storagePath },
       });
@@ -589,6 +604,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
         await remove(tmpPath);
       } catch (cleanupError) {
         if (!isCanonicalNotFoundError(cleanupError)) {
+          orphanedTempFilesCleaned = false;
           serverLogger.warn("[rag-store] Failed to clean up temporary store file", cleanupError);
         }
       }
@@ -596,6 +612,14 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
       throw unavailableStoreError(error);
     }
     updateStoreDataCache(data, payloadBytes);
+  }
+
+  function assertStoreEntryCapacity(documentCount: number, chunkCount: number): void {
+    if (documentCount > MAX_STORED_DOCUMENTS || chunkCount > MAX_STORED_CHUNKS) {
+      throw INVALID_ARGUMENT.create({
+        detail: "The RAG store update exceeds the document or chunk limit.",
+      });
+    }
   }
 
   async function ensureEmbeddings(data: RagStoreData): Promise<boolean> {
@@ -648,6 +672,10 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
         if (chunks.length === 0) {
           throw INVALID_ARGUMENT.create({ detail: "Upload contains no extractable text" });
         }
+        assertStoreEntryCapacity(
+          data.documents.length + 1,
+          data.chunks.length + chunks.length,
+        );
 
         const doc: RagDocumentMeta = {
           id: documentId,
@@ -696,11 +724,13 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
         if (chunks.length === 0) {
           throw INVALID_ARGUMENT.create({ detail: "Upload contains no extractable text" });
         }
+        const retainedChunks = data.chunks.filter((chunk) => chunk.documentId !== id);
+        assertStoreEntryCapacity(data.documents.length, retainedChunks.length + chunks.length);
 
         document.title = meta?.title ?? document.title;
         document.source = meta?.source ?? document.source;
         document.type = meta?.type ?? document.type;
-        data.chunks = data.chunks.filter((chunk) => chunk.documentId !== id);
+        data.chunks = retainedChunks;
         data.chunks.push(
           ...chunks.map((chunkText, index) => ({
             id: crypto.randomUUID(),
@@ -805,6 +835,10 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
 
           const chunks = await chunk(content, chunkOptions);
           if (chunks.length === 0) continue;
+          assertStoreEntryCapacity(
+            data.documents.length + 1,
+            data.chunks.length + chunks.length,
+          );
 
           data.documents.push({
             id: documentId,

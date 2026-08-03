@@ -1408,7 +1408,7 @@ function categorizeNodes(
         break;
       case "variable":
         pushNodeSummary(
-          isComponentLikeName(name) ? result.components : result.constants,
+          isComponentVariable(node) ? result.components : result.constants,
           name,
           desc,
           sourceHref,
@@ -1495,6 +1495,11 @@ function addSourceDocStats(target: SourceDocStats, next: SourceDocStats): void {
 
 function isComponentLikeName(name: string): boolean {
   return /^[A-Z]/.test(name);
+}
+
+function isComponentVariable(node: DocNode): boolean {
+  const filename = node.location?.filename ?? "";
+  return isComponentLikeName(node.name) && /\.[jt]sx$/.test(filename);
 }
 
 function pushNodeSummary(

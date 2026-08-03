@@ -65,6 +65,9 @@ export class LocalJsonStoreLockError extends Error {
   }
 }
 
+class TransientLockObservationError extends LocalJsonStoreLockError {
+}
+
 function sleep(durationMs: number): Promise<void> {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, durationMs));
 }
@@ -142,15 +145,25 @@ async function readObservation(
 
   const entryFileNames: string[] = [];
   const seenEntryNames = new Set<string>();
-  for await (const entry of fs.readDir(lockDirectory)) {
-    if (entryFileNames.length >= LOCK_MAX_ENTRIES) {
-      throw new LocalJsonStoreLockError("The RAG store lock contains too many entries");
+  try {
+    for await (const entry of fs.readDir(lockDirectory)) {
+      if (entryFileNames.length >= LOCK_MAX_ENTRIES) {
+        throw new LocalJsonStoreLockError("The RAG store lock contains too many entries");
+      }
+      if (seenEntryNames.has(entry.name)) {
+        throw new LocalJsonStoreLockError("The RAG store lock contains duplicate entries");
+      }
+      seenEntryNames.add(entry.name);
+      entryFileNames.push(entry.name);
     }
-    if (seenEntryNames.has(entry.name)) {
-      throw new LocalJsonStoreLockError("The RAG store lock contains duplicate entries");
+  } catch (error) {
+    if (isCanonicalNotFoundError(error)) {
+      throw new TransientLockObservationError(
+        "RAG store lock disappeared while its contents were being inspected",
+        { cause: error },
+      );
     }
-    seenEntryNames.add(entry.name);
-    entryFileNames.push(entry.name);
+    throw error;
   }
   entryFileNames.sort();
 
@@ -178,7 +191,7 @@ async function readObservation(
       entryInfo = await lstat(join(lockDirectory, entryName));
     } catch (error) {
       if (isCanonicalNotFoundError(error)) {
-        throw new LocalJsonStoreLockError(
+        throw new TransientLockObservationError(
           "RAG store lock contents changed while they were being inspected",
           { cause: error },
         );
@@ -203,7 +216,7 @@ async function readObservation(
   if (ownerFileName !== null) {
     ownerText = await readBoundedText(fs, join(lockDirectory, ownerFileName));
     if (ownerText === null) {
-      throw new LocalJsonStoreLockError(
+      throw new TransientLockObservationError(
         "RAG store lock ownership changed while it was being inspected",
       );
     }
@@ -391,6 +404,7 @@ async function restoreUnexpectedRecovery(
   fs: FileSystem,
   lockDirectory: string,
   recoveryDirectory: string,
+  expected: LockObservation,
 ): Promise<void> {
   if (await fs.exists(lockDirectory)) {
     throw new LocalJsonStoreLockError(
@@ -404,6 +418,23 @@ async function restoreUnexpectedRecovery(
     );
   }
   await rename(recoveryDirectory, lockDirectory);
+  let restored: LockObservation | null;
+  try {
+    restored = await readObservation(fs, lockDirectory);
+  } catch (error) {
+    if (error instanceof TransientLockObservationError) {
+      throw new LocalJsonStoreLockError(
+        "RAG store lock ownership changed while stale-lock recovery was restored",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+  if (restored === null || !sameGeneration(expected, restored)) {
+    throw new LocalJsonStoreLockError(
+      "RAG store lock ownership changed while stale-lock recovery was restored",
+    );
+  }
 }
 
 /**
@@ -445,7 +476,7 @@ async function tryRecoverStaleLock(
     !sameGeneration(current, moved) ||
     !isStale(moved, Date.now())
   ) {
-    await restoreUnexpectedRecovery(fs, lockDirectory, recoveryDirectory);
+    await restoreUnexpectedRecovery(fs, lockDirectory, recoveryDirectory, moved);
     return false;
   }
   await removeObservedLockGeneration(fs, recoveryDirectory, moved, "recovering");
@@ -505,37 +536,41 @@ async function acquireNativeLock(
 
   while (true) {
     const nowMs = Date.now();
-    if (await clearInterruptedTransition(fs, recoveryDirectory, nowMs)) {
-      try {
-        await fs.mkdir(lockDirectory);
+    try {
+      if (await clearInterruptedTransition(fs, recoveryDirectory, nowMs)) {
         try {
-          await fs.writeTextFile(ownerPath, ownerText);
-          await fs.writeTextFile(leasePath, `${nowMs}\n`);
-          break;
-        } catch (error) {
-          const incomplete = await readObservation(fs, lockDirectory).catch(() => null);
-          if (incomplete?.owner?.token === token && incomplete.ownerText === ownerText) {
-            await releaseOwnedLock(
-              fs,
-              lockDirectory,
-              ownerText,
-              token,
-              temporaryName,
-            ).catch(() => undefined);
+          await fs.mkdir(lockDirectory);
+          try {
+            await fs.writeTextFile(ownerPath, ownerText);
+            await fs.writeTextFile(leasePath, `${nowMs}\n`);
+            break;
+          } catch (error) {
+            const incomplete = await readObservation(fs, lockDirectory).catch(() => null);
+            if (incomplete?.owner?.token === token && incomplete.ownerText === ownerText) {
+              await releaseOwnedLock(
+                fs,
+                lockDirectory,
+                ownerText,
+                token,
+                temporaryName,
+              ).catch(() => undefined);
+            }
+            throw error;
           }
-          throw error;
-        }
-      } catch (error) {
-        if (!isAlreadyExistsError(error)) throw error;
-        const observation = await readObservation(fs, lockDirectory);
-        if (
-          observation !== null && isStale(observation, nowMs) &&
-          await tryRecoverStaleLock(fs, lockDirectory, recoveryDirectory, observation)
-        ) {
-          retryDelayMs = LOCK_RETRY_INITIAL_MS;
-          continue;
+        } catch (error) {
+          if (!isAlreadyExistsError(error)) throw error;
+          const observation = await readObservation(fs, lockDirectory);
+          if (
+            observation !== null && isStale(observation, nowMs) &&
+            await tryRecoverStaleLock(fs, lockDirectory, recoveryDirectory, observation)
+          ) {
+            retryDelayMs = LOCK_RETRY_INITIAL_MS;
+            continue;
+          }
         }
       }
+    } catch (error) {
+      if (!(error instanceof TransientLockObservationError)) throw error;
     }
 
     if (nowMs - startedAtMs >= LOCK_ACQUIRE_TIMEOUT_MS) {

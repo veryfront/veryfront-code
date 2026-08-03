@@ -116,6 +116,154 @@ describe("local JSON RAG store lock generations", () => {
     });
   }
 
+  it("fails closed when another owner appears during stale-lock restoration", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const seeded = await seedExpiredLock(storagePath);
+      const recoveryDirectory = `${seeded.lockDirectory}.recovering`;
+      const intruderToken = crypto.randomUUID();
+      const renameDescriptor = Object.getOwnPropertyDescriptor(Deno, "rename");
+      assert(renameDescriptor !== undefined);
+      const originalRename = Deno.rename.bind(Deno);
+      let changedBeforeMove = false;
+      Object.defineProperty(Deno, "rename", {
+        ...renameDescriptor,
+        value: async (from: string | URL, to: string | URL) => {
+          const fromPath = String(from);
+          const toPath = String(to);
+          if (fromPath === seeded.lockDirectory && toPath === recoveryDirectory) {
+            await Deno.remove(seeded.ownerLeasePath);
+            await Deno.writeTextFile(
+              join(seeded.lockDirectory, `${crypto.randomUUID()}.lease`),
+              "replacement generation\n",
+            );
+            changedBeforeMove = true;
+          }
+          if (fromPath === recoveryDirectory && toPath === seeded.lockDirectory) {
+            await Deno.mkdir(seeded.lockDirectory);
+            await originalRename(from, to);
+            await Deno.writeTextFile(
+              join(seeded.lockDirectory, "owner.json"),
+              `${JSON.stringify({ token: intruderToken, createdAtMs: Date.now() })}\n`,
+            );
+            await Deno.writeTextFile(
+              join(seeded.lockDirectory, `${intruderToken}.lease`),
+              "intruder\n",
+            );
+            return;
+          }
+          await originalRename(from, to);
+        },
+      });
+
+      try {
+        await assertRejects(
+          () => withLocalJsonStoreLock(storagePath, async () => undefined),
+          LocalJsonStoreLockError,
+          "ownership changed while stale-lock recovery was restored",
+        );
+        assertEquals(changedBeforeMove, true);
+      } finally {
+        Object.defineProperty(Deno, "rename", renameDescriptor);
+        await Deno.remove(seeded.lockDirectory, { recursive: true }).catch(() => undefined);
+        await Deno.remove(recoveryDirectory, { recursive: true }).catch(() => undefined);
+      }
+    });
+  });
+
+  it("retries when a contended lock entry disappears during observation", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const seeded = await seedExpiredLock(storagePath);
+      const lstatDescriptor = Object.getOwnPropertyDescriptor(Deno, "lstat");
+      assert(lstatDescriptor !== undefined);
+      const originalLstat = Deno.lstat.bind(Deno);
+      let injected = false;
+      Object.defineProperty(Deno, "lstat", {
+        ...lstatDescriptor,
+        value: (path: string | URL) => {
+          if (!injected && String(path) === seeded.ownerLeasePath) {
+            injected = true;
+            return Promise.reject(new Deno.errors.NotFound("entry disappeared"));
+          }
+          return originalLstat(path);
+        },
+      });
+
+      try {
+        await withLocalJsonStoreLock(storagePath, async () => undefined);
+        assertEquals(injected, true);
+        assertEquals(await exists(seeded.lockDirectory), false);
+      } finally {
+        Object.defineProperty(Deno, "lstat", lstatDescriptor);
+      }
+    });
+  });
+
+  it("retries when the contended lock directory disappears during listing", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const seeded = await seedExpiredLock(storagePath);
+      const readDirDescriptor = Object.getOwnPropertyDescriptor(Deno, "readDir");
+      assert(readDirDescriptor !== undefined);
+      const originalReadDir = Deno.readDir.bind(Deno);
+      let injected = false;
+      Object.defineProperty(Deno, "readDir", {
+        ...readDirDescriptor,
+        value: (path: string | URL) => {
+          if (!injected && String(path) === seeded.lockDirectory) {
+            injected = true;
+            return {
+              [Symbol.asyncIterator]: () => ({
+                next: async () => {
+                  await Deno.remove(seeded.lockDirectory, { recursive: true });
+                  throw new Deno.errors.NotFound("lock directory disappeared");
+                },
+              }),
+            };
+          }
+          return originalReadDir(path);
+        },
+      });
+
+      try {
+        await withLocalJsonStoreLock(storagePath, async () => undefined);
+        assertEquals(injected, true);
+        assertEquals(await exists(seeded.lockDirectory), false);
+      } finally {
+        Object.defineProperty(Deno, "readDir", readDirDescriptor);
+      }
+    });
+  });
+
+  it("retries when an entry disappears during the stale-lock recovery recheck", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const seeded = await seedExpiredLock(storagePath);
+      const lstatDescriptor = Object.getOwnPropertyDescriptor(Deno, "lstat");
+      assert(lstatDescriptor !== undefined);
+      const originalLstat = Deno.lstat.bind(Deno);
+      let leaseObservations = 0;
+      Object.defineProperty(Deno, "lstat", {
+        ...lstatDescriptor,
+        value: (path: string | URL) => {
+          if (String(path) === seeded.ownerLeasePath && ++leaseObservations === 2) {
+            return Promise.reject(new Deno.errors.NotFound("entry disappeared"));
+          }
+          return originalLstat(path);
+        },
+      });
+
+      try {
+        await withLocalJsonStoreLock(storagePath, async () => undefined);
+        assertEquals(leaseObservations >= 3, true);
+        assertEquals(await exists(seeded.lockDirectory), false);
+      } finally {
+        Object.defineProperty(Deno, "lstat", lstatDescriptor);
+      }
+    });
+  });
+
   it("fails closed when any observed lease has no modification time", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");

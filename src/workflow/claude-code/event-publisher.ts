@@ -47,8 +47,7 @@ function dispatchDeliveries<T>(
 // =============================================================================
 
 /**
- * In-memory event publisher using EventTarget
- * Useful for testing or single-process deployments
+ * In-memory EventTarget publisher for testing or single-process deployments.
  */
 export class MemoryEventPublisher implements ClaudeCodeEventPublisher, ClaudeCodeEventSubscriber {
   private handlers = new Map<string, Set<ClaudeCodeEventHandler>>();
@@ -151,8 +150,7 @@ export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCode
 // =============================================================================
 
 /**
- * Server-Sent Events publisher
- * Writes events directly to a ReadableStream controller
+ * Server-Sent Events publisher that writes events directly to a ReadableStream controller.
  */
 export class SSEEventPublisher implements ClaudeCodeEventPublisher {
   private encoder = new TextEncoder();
@@ -234,8 +232,7 @@ export class SSEEventPublisher implements ClaudeCodeEventPublisher {
 // =============================================================================
 
 /**
- * Simple callback-based publisher
- * Calls a function for each event
+ * Callback-based publisher that calls a function for each event.
  */
 export class CallbackEventPublisher implements ClaudeCodeEventPublisher {
   constructor(private callback: ClaudeCodeEventHandler) {}
