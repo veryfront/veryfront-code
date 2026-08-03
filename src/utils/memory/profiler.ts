@@ -432,6 +432,7 @@ export interface MemoryPressureThresholds {
   critical: number;
 }
 
+/** Pure threshold evaluation. Runtime env overrides are passed by `checkMemoryPressure`. */
 export function evaluateMemoryPressure(
   heapUsedPercent: number,
   thresholds: MemoryPressureThresholds = {

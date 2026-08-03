@@ -405,6 +405,11 @@ The runtime image APIs do not read the build manifest. If you customize
 image APIs. If you customize `assetPipeline.images.formats`, pass the same
 `formats` to `OptimizedImage` and `useOptimizedImage`, and select a build-emitted
 `format` for `SimpleOptimizedImage` and `OptimizedBackgroundImage`.
+This changes earlier runtime behavior: `width` is the intrinsic source width,
+not the rendered width. Missing or invalid intrinsic widths use the original
+asset instead of generating unverified variant URLs. Runtime `src` values must
+identify app asset paths. Query strings and fragments do not affect the emitted
+variant path, and spaces or commas are URL-encoded to match build output.
 Core does not probe for Sharp or infer an environment-variable fallback. If
 image optimization is enabled, explicitly compose an `ImageOptimizationEngine`
 such as `@veryfront/ext-image-sharp`; a missing or invalid provider fails the

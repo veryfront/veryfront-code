@@ -4,13 +4,14 @@ import { getOptimizedImageFallback, getOptimizedImageVariantWidths } from "./hel
 import type { OptimizedImageFormat } from "./OptimizedImage.tsx";
 
 export interface OptimizedBackgroundImageProps {
+  /** App asset path. URL suffixes are ignored when resolving build-emitted variants. */
   src: string;
   children?: React.ReactNode;
   format?: OptimizedImageFormat;
   quality?: number;
   /** Preferred rendered width. Uses the nearest emitted width at or above it, or the largest emitted width. */
   size?: number;
-  /** Intrinsic source width. The original asset is used when this is unknown. */
+  /** Intrinsic source width. The original asset is used when this is missing or invalid. */
   width?: number;
   /** Must match `assetPipeline.images.sizes` when custom build widths are configured. */
   targetWidths?: readonly number[];

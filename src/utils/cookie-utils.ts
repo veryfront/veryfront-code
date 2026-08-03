@@ -13,7 +13,7 @@ export function parseCookies(cookieHeader: string): Record<string, string> {
     const name = trimmed.slice(0, separatorIndex).trim();
     if (!name) continue;
 
-    let rawValue = trimmed.slice(separatorIndex + 1);
+    let rawValue = trimmed.slice(separatorIndex + 1).trim();
     // RFC 6265 permits a cookie value to be wrapped in double quotes.
     if (rawValue.length >= 2 && rawValue.startsWith('"') && rawValue.endsWith('"')) {
       rawValue = rawValue.slice(1, -1);

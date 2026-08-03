@@ -1,5 +1,25 @@
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
-import { resolveImageVariantWidths } from "#veryfront/utils/image-variant-widths.ts";
+import {
+  isValidImageVariantWidth,
+  resolveImageVariantWidths,
+} from "#veryfront/utils/image-variant-widths.ts";
+
+function sourcePath(src: string): string {
+  const queryIndex = src.indexOf("?");
+  const fragmentIndex = src.indexOf("#");
+  let suffixIndex = src.length;
+  if (queryIndex >= 0) suffixIndex = queryIndex;
+  if (fragmentIndex >= 0 && fragmentIndex < suffixIndex) suffixIndex = fragmentIndex;
+  return src.slice(0, suffixIndex).replaceAll("\\", "/");
+}
+
+function encodePathSegment(segment: string): string {
+  try {
+    return encodeURIComponent(decodeURIComponent(segment));
+  } catch {
+    return encodeURIComponent(segment);
+  }
+}
 
 export function getOptimizedPath(
   src: string,
@@ -7,8 +27,9 @@ export function getOptimizedPath(
   size: number,
   _quality: number = 80,
 ): string {
-  const basePath = src.replace(/\.[^.]+$/, "");
-  return `/.veryfront/optimized-images${basePath}-${size}w.${format}`;
+  const basePath = sourcePath(src).replace(/\.[^./]+$/, "");
+  const encodedPath = basePath.split("/").map(encodePathSegment).join("/");
+  return `/.veryfront/optimized-images${encodedPath}-${size}w.${format}`;
 }
 
 export function generateSrcSet(
@@ -27,7 +48,12 @@ export function getOptimizedImageVariantWidths(
   sourceWidth: number | undefined,
   targetWidths?: readonly number[],
 ): readonly number[] {
-  if (sourceWidth === undefined) return [];
+  if (!isValidImageVariantWidth(sourceWidth)) return [];
+  if (targetWidths !== undefined) {
+    for (let index = 0; index < targetWidths.length; index++) {
+      if (!isValidImageVariantWidth(targetWidths[index])) return [];
+    }
+  }
   return targetWidths === undefined
     ? resolveImageVariantWidths(sourceWidth)
     : resolveImageVariantWidths(sourceWidth, targetWidths);
@@ -78,6 +104,6 @@ export function getOptimizedImageFormatFallback(
  * ".jpg" source would otherwise produce a fallback URL that never exists.
  */
 export function getImageExtension(src: string): string {
-  const extension = getExtensionName(src) || "jpeg";
+  const extension = getExtensionName(sourcePath(src)) || "jpeg";
   return extension === "jpg" ? "jpeg" : extension;
 }

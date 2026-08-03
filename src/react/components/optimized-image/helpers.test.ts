@@ -25,6 +25,13 @@ describe("optimized-image helpers", () => {
         "/.veryfront/optimized-images/assets/blog/cover-320w.webp",
       );
     });
+
+    it("encodes path segments and ignores URL suffixes", () => {
+      assertEquals(
+        getOptimizedPath("/images/photo, hero.jpg?v=1#preview", "webp", 640),
+        "/.veryfront/optimized-images/images/photo%2C%20hero-640w.webp",
+      );
+    });
   });
 
   describe("generateSrcSet", () => {
@@ -52,6 +59,7 @@ describe("optimized-image helpers", () => {
     it("normalizes jpg to the jpeg variant the build emits", () => {
       assertEquals(getImageExtension("/photo.jpg"), "jpeg");
       assertEquals(getImageExtension("/photo.jpeg"), "jpeg");
+      assertEquals(getImageExtension("/photo.jpg?v=1#preview"), "jpeg");
     });
 
     it("returns jpeg for paths without extension", () => {

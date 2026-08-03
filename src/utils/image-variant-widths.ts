@@ -12,12 +12,15 @@ const setHas = Set.prototype.has;
 const SetConstructor = Set;
 const DEFAULT_IMAGE_WIDTHS = freeze([...IMAGE_OPTIMIZATION.DEFAULT_SIZES]);
 
+export function isValidImageVariantWidth(value: unknown): value is number {
+  return typeof value === "number" &&
+    isSafeInteger(value) &&
+    value > 0 &&
+    value <= MAX_IMAGE_DIMENSION;
+}
+
 function assertImageWidth(value: number, label: string): void {
-  if (
-    !isSafeInteger(value) ||
-    value <= 0 ||
-    value > MAX_IMAGE_DIMENSION
-  ) {
+  if (!isValidImageVariantWidth(value)) {
     throw new NativeTypeError(
       `${label} must be a positive integer no larger than ${MAX_IMAGE_DIMENSION}`,
     );

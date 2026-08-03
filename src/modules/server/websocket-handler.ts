@@ -73,7 +73,7 @@ export function setupWebSocketHandlers(
 
       if (!admission.accepted) {
         logger.warn("HMR message too large, closing connection", {
-          size: admission.sizeBytes,
+          sizeAtLeast: admission.sizeBytes,
           max: context.maxMessageSize,
         });
         closeAndCleanup(HMR_CLOSE_MESSAGE_TOO_LARGE, "Message too large");

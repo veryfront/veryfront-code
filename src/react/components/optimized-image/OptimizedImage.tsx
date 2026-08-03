@@ -9,9 +9,10 @@ import {
 export type OptimizedImageFormat = "avif" | "webp" | "jpeg" | "png";
 
 export interface OptimizedImageProps {
+  /** App asset path. URL suffixes are ignored when resolving build-emitted variants. */
   src: string;
   alt: string;
-  /** Intrinsic source width. Optimized variants are used only when this is known. */
+  /** Intrinsic source width. Missing or invalid values use the original asset. */
   width?: number;
   height?: number;
   sizes?: string;

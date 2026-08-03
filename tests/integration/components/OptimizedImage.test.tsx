@@ -247,6 +247,42 @@ describe("OptimizedImage", () => {
         "/.veryfront/optimized-images/images/photo-320w.png",
       );
     });
+
+    it("uses the original asset when runtime widths are invalid", () => {
+      const picture = renderToStaticMarkup(
+        React.createElement(OptimizedImage, {
+          src: "/images/fractional.jpg",
+          alt: "Fractional width",
+          width: 320.5,
+        }),
+      );
+      const simple = renderToStaticMarkup(
+        React.createElement(SimpleOptimizedImage, {
+          src: "/images/fractional.jpg",
+          alt: "Fractional width",
+          width: 320.5,
+        }),
+      );
+      const background = renderToStaticMarkup(
+        React.createElement(OptimizedBackgroundImage, {
+          src: "/images/fractional.jpg",
+          width: 320.5,
+        }),
+      );
+      const hooked = useOptimizedImage("/images/fractional.jpg", { width: 320.5 });
+      const invalidTargets = useOptimizedImage("/images/fractional.jpg", {
+        width: 1_000,
+        targetWidths: [320.5],
+      });
+
+      assertStringIncludes(picture, '<img src="/images/fractional.jpg"');
+      assertStringIncludes(simple, 'src="/images/fractional.jpg"');
+      assertStringIncludes(background, "background-image:url(/images/fractional.jpg)");
+      assertEquals(picture.includes("/.veryfront/optimized-images"), false);
+      assertEquals(simple.includes("/.veryfront/optimized-images"), false);
+      assertEquals(hooked, { sources: [], fallback: "/images/fractional.jpg" });
+      assertEquals(invalidTargets, { sources: [], fallback: "/images/fractional.jpg" });
+    });
   });
 
   describe("styling", () => {

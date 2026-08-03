@@ -22,9 +22,10 @@ describe("cookie-utils", () => {
 
     it("should handle whitespace", () => {
       assertEquals(parseCookies("  name = value ; other = data  "), {
-        name: " value",
-        other: " data",
+        name: "value",
+        other: "data",
       });
+      assertEquals(parseCookies('session = "abc" '), { session: "abc" });
     });
 
     it("should decode URL-encoded values", () => {
