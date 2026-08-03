@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FilesystemCacheStore } from "./filesystem-store.ts";
+import type { CachePayload } from "../types.ts";
 
 describe("rendering/cache/stores/filesystem-store", () => {
   describe("FilesystemCacheStore constructor", () => {
@@ -34,6 +35,33 @@ describe("rendering/cache/stores/filesystem-store", () => {
       await store.set("test-key", payload as any);
       const result = await store.get("test-key");
       assertEquals(result?.result?.html, "<p>test</p>");
+    });
+
+    it("preserves Dates through an actual file round-trip", async () => {
+      const dir = baseDir + "-dates";
+      const store = new FilesystemCacheStore({ baseDir: dir });
+      const publishedAt = new Date("2026-07-24T08:30:00.000Z");
+      const payload: CachePayload = {
+        result: {
+          html: "<p>dated</p>",
+          frontmatter: { publishedAt } as unknown as CachePayload["result"]["frontmatter"],
+          nodeMap: new Map([[1, { revisedAt: new Date("2026-07-25T09:45:00.000Z") }]]),
+          stream: null,
+        },
+        storedAt: Date.now(),
+      };
+
+      try {
+        await store.set("dated-key", payload);
+        const result = await store.get("dated-key");
+
+        assertEquals(result?.result.frontmatter as unknown, { publishedAt });
+        assertEquals(result?.result.nodeMap?.get(1), {
+          revisedAt: new Date("2026-07-25T09:45:00.000Z"),
+        });
+      } finally {
+        await store.destroy();
+      }
     });
 
     it("should delete a value", async () => {

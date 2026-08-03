@@ -2,6 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
+import {
+  isRuntimeGeneratedUserMessage,
+  markRuntimeGeneratedUserMessage,
+} from "./runtime-message-origin.ts";
 
 describe("input-utils", () => {
   describe("normalizeInput", () => {
@@ -36,6 +40,19 @@ describe("input-utils", () => {
       assertExists(message);
       assertEquals(message.id, "msg_1");
       assertEquals(message.timestamp, 1000);
+    });
+
+    it("preserves in-process runtime continuation origin while normalizing", () => {
+      const runtimeMessage = markRuntimeGeneratedUserMessage({
+        id: "runtime-note",
+        role: "user" as const,
+        parts: [{ type: "text" as const, text: "Continue with available tools." }],
+      });
+
+      const [normalized] = normalizeInput([runtimeMessage]);
+
+      assertEquals(isRuntimeGeneratedUserMessage(normalized!), true);
+      assertEquals(normalized === runtimeMessage, false);
     });
 
     it("assigns generated ids when message has no id", () => {
@@ -114,7 +131,7 @@ describe("input-utils", () => {
   });
 
   describe("getMaxSteps", () => {
-    it("returns configured max steps clamped to platform limit", () => {
+    it("returns configured max steps within an explicit execution-policy limit", () => {
       assertEquals(getMaxSteps(10, undefined, 50), 10);
     });
 
@@ -122,7 +139,7 @@ describe("input-utils", () => {
       assertEquals(getMaxSteps(undefined, undefined, 50), 20);
     });
 
-    it("clamps to platform limit when configured exceeds it", () => {
+    it("clamps to an explicit execution-policy limit", () => {
       assertEquals(getMaxSteps(100, undefined, 30), 30);
     });
 
@@ -130,12 +147,37 @@ describe("input-utils", () => {
       assertEquals(getMaxSteps(10, 5, 50), 5);
     });
 
-    it("edge max steps still clamped to platform limit", () => {
+    it("edge max steps remain subject to an explicit execution-policy limit", () => {
       assertEquals(getMaxSteps(10, 100, 30), 30);
     });
 
     it("uses custom default when provided", () => {
       assertEquals(getMaxSteps(undefined, undefined, 50, 15), 15);
+    });
+
+    it("does not infer a deployment limit when none was configured", () => {
+      assertEquals(getMaxSteps(100, undefined), 100);
+      assertEquals(getMaxSteps(undefined, undefined), 20);
+    });
+
+    it("rejects invalid authored and execution-policy limits", () => {
+      for (const invalid of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        assertThrows(
+          () => getMaxSteps(invalid, undefined),
+          Error,
+          "positive safe integer",
+        );
+        assertThrows(
+          () => getMaxSteps(undefined, invalid),
+          Error,
+          "positive safe integer",
+        );
+      }
+      assertThrows(
+        () => getMaxSteps(1, undefined, 0),
+        Error,
+        "positive safe integer",
+      );
     });
   });
 });

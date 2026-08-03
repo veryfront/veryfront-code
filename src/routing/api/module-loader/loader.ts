@@ -5,10 +5,10 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
 import { validateHTTPImports } from "./http-validator.ts";
 import { loadSecurityConfig } from "./security-config.ts";
-import type { APIRoute, LoadModuleOptions } from "./types.ts";
+import type { APIRoute, LoadHostModuleOptions, LoadModuleOptions } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
-import { createFileSystem, realPath } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { FILE_EXTENSIONS, getLoaderForFile, validateModulePath } from "./loader-helpers.ts";
@@ -23,6 +23,16 @@ import {
   readProjectDependencies,
   rewriteExternalImports,
 } from "./external-import-rewriter.ts";
+import {
+  MAX_WORKER_MODULE_SOURCE_BYTES,
+  type PreparedWorkerModule,
+} from "#veryfront/security/sandbox/worker-types.ts";
+import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
+import {
+  createProjectSourceSnapshot,
+  ProjectBoundaryViolationError,
+  type ProjectSourceSnapshot,
+} from "./project-source-snapshot.ts";
 export {
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
@@ -40,7 +50,12 @@ const logger = serverLogger.component("api");
 
 export { toCjsDestructureBindings } from "./loader-helpers.ts";
 
-export function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute | null> {
+export function loadHandlerModule(options: LoadHostModuleOptions): Promise<APIRoute | null> {
+  if (!isExplicitHostProjectCodeExecutionAllowed(options)) {
+    return Promise.reject(
+      new TypeError("Host API module loading requires explicit trusted-local execution"),
+    );
+  }
   return withSpan(
     "api.loadHandlerModule",
     async () => {
@@ -59,6 +74,60 @@ export function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute 
           createError({
             type: "api",
             message: `Failed to load API handler: ${errorMsg}`,
+          }),
+        );
+      }
+    },
+    { "api.modulePath": options.modulePath, "api.projectDir": options.projectDir },
+  );
+}
+
+/**
+ * Build an API route without importing or evaluating project code in the host
+ * realm. Shared runtimes pass this immutable source snapshot to the project
+ * worker, which rehashes and evaluates it under tenant-scoped permissions.
+ */
+export function prepareHandlerModule(options: LoadModuleOptions): Promise<PreparedWorkerModule> {
+  return withSpan(
+    "api.prepareHandlerModule",
+    async () => {
+      const { projectDir, modulePath, adapter, config } = options;
+      validateModulePath(modulePath, projectDir);
+
+      if (isCompiledBinary()) {
+        throw toError(
+          createError({
+            type: "api",
+            message: "Isolated API route preparation is unavailable in this compiled runtime",
+          }),
+        );
+      }
+
+      try {
+        const source = await buildTranspiledModuleSource(
+          modulePath,
+          projectDir,
+          adapter,
+          config,
+        );
+        const bytes = new TextEncoder().encode(source);
+        if (bytes.byteLength > MAX_WORKER_MODULE_SOURCE_BYTES) {
+          throw new TypeError(
+            `Prepared API route exceeds the ${MAX_WORKER_MODULE_SOURCE_BYTES}-byte worker limit`,
+          );
+        }
+        const digest = await crypto.subtle.digest("SHA-256", bytes);
+        return Object.freeze({
+          source,
+          sha256: new Uint8Array(digest).toHex(),
+        });
+      } catch (error: unknown) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        logger.error(`Failed to prepare isolated API handler ${modulePath}:`, error);
+        throw toError(
+          createError({
+            type: "api",
+            message: `Failed to prepare isolated API handler: ${errorMsg}`,
           }),
         );
       }
@@ -149,7 +218,7 @@ function loadJSModule(modulePath: string): Promise<APIRoute> {
 
 function createImportMapPlugin(
   projectDir: string,
-  adapter: RuntimeAdapter,
+  sourceSnapshot: ProjectSourceSnapshot,
   config?: VeryfrontConfig,
 ): Plugin {
   const importMap = config?.resolve?.importMap?.imports ?? {};
@@ -221,7 +290,7 @@ function createImportMapPlugin(
       build.onLoad(
         { filter: /.*/, namespace: "import-map" },
         createNamespaceOnLoadHandler({
-          adapter,
+          sourceSnapshot,
           projectDir,
           errorLabel: "file via import map",
         }),
@@ -231,16 +300,16 @@ function createImportMapPlugin(
 }
 
 function createNamespaceOnLoadHandler(options: {
-  adapter: RuntimeAdapter;
+  sourceSnapshot: ProjectSourceSnapshot;
   projectDir: string;
   errorLabel: string;
 }) {
-  const { adapter, projectDir, errorLabel } = options;
+  const { sourceSnapshot, projectDir, errorLabel } = options;
 
   return wrapWithCurrentContext(async (args: { path: string }) => {
     try {
       const { filePath, contents } = await readFileWithExtensions(
-        adapter,
+        sourceSnapshot,
         args.path,
         FILE_EXTENSIONS,
         projectDir,
@@ -261,7 +330,7 @@ function createNamespaceOnLoadHandler(options: {
 
 /** Resolves the framework's built-in @/ project alias through the runtime adapter. */
 function createProjectAliasPlugin(
-  adapter: RuntimeAdapter,
+  sourceSnapshot: ProjectSourceSnapshot,
   projectDir: string,
 ): Plugin {
   const projectRoot = pathHelper.resolve(projectDir);
@@ -284,7 +353,7 @@ function createProjectAliasPlugin(
       build.onLoad(
         { filter: /.*/, namespace: "vf-project-alias" },
         createNamespaceOnLoadHandler({
-          adapter,
+          sourceSnapshot,
           projectDir,
           errorLabel: "via project alias",
         }),
@@ -295,7 +364,7 @@ function createProjectAliasPlugin(
 
 /** Resolves relative imports through the adapter's virtual FS for remote projects. */
 function createAdapterResolvePlugin(
-  adapter: RuntimeAdapter,
+  sourceSnapshot: ProjectSourceSnapshot,
   projectDir: string,
 ): Plugin {
   return {
@@ -334,7 +403,7 @@ function createAdapterResolvePlugin(
       build.onLoad(
         { filter: /.*/, namespace: "vf-adapter" },
         createNamespaceOnLoadHandler({
-          adapter,
+          sourceSnapshot,
           projectDir,
           errorLabel: "via adapter",
         }),
@@ -352,65 +421,76 @@ function createAdapterResolvePlugin(
  * is resolved by esbuild straight to a path above the project root and loaded
  * in the default namespace, where none of those guards ever see it.
  *
- * This runs at load time instead, which is the one point every resolution
- * strategy converges on. Returning `undefined` defers to normal loading, so the
- * plugin only ever subtracts. Package code is exempt: `node_modules` is
- * resolved by esbuild's own node resolution rather than by a project alias, and
- * is legitimately hoisted above the project root in a monorepo.
- *
- * `roots` carries both the project path as configured and its symlink-resolved
- * form, because esbuild reports the real path of a file it loaded. A project
- * reached through a symlink (`/var` -> `/private/var` on macOS, and any deploy
- * layout that symlinks a release directory) would otherwise fail every import.
+ * The source snapshot canonicalizes both roots and resolved files. Dependencies
+ * are admitted only through the project's own canonical `node_modules` root;
+ * an unrelated path is never trusted merely because one segment has that name.
  */
-/**
- * The project path as configured, plus its symlink-resolved form when they
- * differ. `realPath` throws if the directory is missing, in which case the
- * configured path is all there is to compare against.
- */
-async function resolveProjectRoots(projectDir: string): Promise<string[]> {
-  const configured = pathHelper.resolve(projectDir);
-
-  try {
-    const real = await realPath(configured);
-    return real === configured ? [configured] : [configured, real];
-  } catch {
-    return [configured];
-  }
+function projectBoundaryError(path: string): { errors: Array<{ text: string }> } {
+  logger.error(`[API] Resolved import escapes project: ${path}`);
+  return {
+    errors: [{
+      text: `Import escapes the project directory: ${path}. ` +
+        `API routes may only import project files and project-owned dependencies.`,
+    }],
+  };
 }
 
-function createProjectBoundaryPlugin(roots: string[]): Plugin {
+function createProjectBoundaryPlugin(
+  sourceSnapshot: ProjectSourceSnapshot,
+): Plugin {
   return {
     name: "vf-project-boundary",
     setup(build) {
-      build.onLoad({ filter: /.*/ }, (args) => {
-        if (roots.some((root) => isWithinDirectory(root, args.path))) return undefined;
-        if (args.path.split(/[\\/]/).includes("node_modules")) return undefined;
-
-        logger.error(`[API] Resolved import escapes project: ${args.path}`);
-        return {
-          errors: [{
-            text: `Import escapes the project directory: ${args.path}. ` +
-              `API routes may only import files inside the project.`,
-          }],
-        };
+      build.onLoad({ filter: /.*/ }, async (args) => {
+        try {
+          const source = await sourceSnapshot.read(args.path);
+          return {
+            contents: source.contents,
+            loader: getLoaderForFile(source.logicalPath),
+            resolveDir: pathHelper.dirname(source.logicalPath),
+          };
+        } catch (error) {
+          if (error instanceof ProjectBoundaryViolationError) {
+            return projectBoundaryError(args.path);
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            errors: [{ text: `Failed to read authorized import: ${message}` }],
+          };
+        }
       });
     },
   };
 }
 
-function loadAndTranspileModule(
+async function loadAndTranspileModule(
   modulePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
   fs: FileSystem,
   config?: VeryfrontConfig,
 ): Promise<APIRoute> {
+  const source = await buildTranspiledModuleSource(
+    modulePath,
+    projectDir,
+    adapter,
+    config,
+  );
+  return await loadModuleFromCode(source, fs);
+}
+
+function buildTranspiledModuleSource(
+  modulePath: string,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+  config?: VeryfrontConfig,
+): Promise<string> {
   return withSpan(
-    "api.loadAndTranspileModule",
+    "api.buildTranspiledModuleSource",
     async () => {
+      const sourceSnapshot = await createProjectSourceSnapshot(projectDir, adapter);
       const { filePath: resolvedPath, contents: source } = await readFileWithExtensions(
-        adapter,
+        sourceSnapshot,
         modulePath,
         FILE_EXTENSIONS,
         projectDir,
@@ -427,13 +507,10 @@ function loadAndTranspileModule(
 
       const loader = getEsbuildLoader(resolvedPath);
 
-      const allowedHosts = await loadSecurityConfig(projectDir, adapter);
+      const allowedHosts = await loadSecurityConfig(projectDir, adapter, config);
       validateHTTPImports(source, allowedHosts);
 
-      const projectSourceReader = {
-        readTextFile: (filePath: string) => adapter.fs.readFile(filePath),
-      };
-      const allDeps = await readProjectDependencies(projectDir, projectSourceReader);
+      const allDeps = await readProjectDependencies(projectDir, sourceSnapshot);
 
       // Filter out framework-managed packages from user deps. These are already
       // handled by the framework's own external/rewrite logic and should not be
@@ -503,11 +580,11 @@ function loadAndTranspileModule(
           sourcefile: resolvedPath,
         },
         plugins: [
-          createImportMapPlugin(projectDir, adapter, config),
-          createProjectAliasPlugin(adapter, projectDir),
-          createAdapterResolvePlugin(adapter, projectDir),
+          createImportMapPlugin(projectDir, sourceSnapshot, config),
+          createProjectAliasPlugin(sourceSnapshot, projectDir),
+          createAdapterResolvePlugin(sourceSnapshot, projectDir),
           createHTTPPlugin({ allowedHosts, projectDir }),
-          createProjectBoundaryPlugin(await resolveProjectRoots(projectDir)),
+          createProjectBoundaryPlugin(sourceSnapshot),
         ],
       });
 
@@ -525,14 +602,14 @@ function loadAndTranspileModule(
       const js = result.outputFiles?.[0]?.text ?? "export {}";
       logger.debug(`transpiled size ${js.length} bytes`);
 
-      return loadModuleFromCode(js, projectDir, fs, userDeps);
+      return await rewriteExternalImports(js, projectDir, sourceSnapshot, userDeps);
     },
     { "api.modulePath": modulePath, "api.projectDir": projectDir },
   );
 }
 
 async function readFileWithExtensions(
-  adapter: RuntimeAdapter,
+  sourceSnapshot: ProjectSourceSnapshot,
   basePath: string,
   extensions: string[],
   projectDir?: string,
@@ -555,9 +632,10 @@ async function readFileWithExtensions(
     }
 
     try {
-      const contents = await adapter.fs.readFile(filePath);
+      const contents = await sourceSnapshot.readTextFile(filePath);
       return { filePath, contents };
-    } catch (_) {
+    } catch (error) {
+      if (error instanceof ProjectBoundaryViolationError) throw error;
       /* expected: trying next file extension candidate */
     }
   }
@@ -587,14 +665,12 @@ export function getUserDependencies(
 
 async function loadModuleFromCode(
   code: string,
-  projectDir: string,
   fs: FileSystem,
-  userDeps: Map<string, string> = new Map(),
 ): Promise<APIRoute> {
   const tempDir = await fs.makeTempDir({ prefix: "vf-api-" });
   const tempFile = pathHelper.join(tempDir, "handler.mjs");
 
-  const transformedCode = await rewriteExternalImports(code, projectDir, fs, userDeps);
+  const transformedCode = code;
 
   // In compiled Deno binaries, external modules loaded from temp files cannot
   // resolve "veryfront" since the source is embedded in the binary's virtual FS.

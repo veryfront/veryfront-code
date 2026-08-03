@@ -20,7 +20,7 @@ export const getAgentStatusSchema = defineSchema((v) =>
 
 export const getMemoryConfigSchema = defineSchema((v) =>
   v.object({
-    type: v.enum(["conversation", "buffer", "summary", "redis"] as const),
+    type: v.enum(["conversation", "buffer", "summary"] as const),
     maxTokens: v.number().int().positive().optional(),
     maxMessages: v.number().int().positive().optional(),
     // Persist history across calls on the agent instance. Defaults to true when
@@ -46,6 +46,7 @@ export const getToolCallPartWithArgsSchema = defineSchema((v) =>
     args: v.record(v.string(), v.unknown()),
     inputText: v.string().optional(),
     providerExecuted: v.boolean().optional(),
+    supportsDeferredResults: v.boolean().optional(),
   })
 );
 
@@ -57,6 +58,7 @@ export const getToolCallPartWithInputSchema = defineSchema((v) =>
     input: v.record(v.string(), v.unknown()),
     inputText: v.string().optional(),
     providerExecuted: v.boolean().optional(),
+    supportsDeferredResults: v.boolean().optional(),
   })
 );
 

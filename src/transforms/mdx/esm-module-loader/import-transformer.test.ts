@@ -171,16 +171,13 @@ describe("rewriteMdxRootDependencyImports", () => {
       baseOptions,
     );
 
-    assertEquals(result.includes(`from "fs"`), true);
-    assertEquals(result.includes(`from "path"`), true);
-    assertEquals(result.includes(`from "fs/promises"`), true);
-    assertEquals(result.includes(`from "assert/strict"`), true);
-    assertEquals(result.includes(`import("node:crypto")`), true);
-    assertEquals(result.includes(`import("node:path/posix")`), true);
-    assertEquals(result.includes("https://esm.sh/lodash@4.17.21"), true);
-    assertEquals(result.includes("https://esm.sh/fs"), false);
-    assertEquals(result.includes("https://esm.sh/path"), false);
-    assertEquals(result.includes(`'import("fs")'`), true);
+    assertEquals(
+      result,
+      code.replace(
+        `import lodash from "lodash";`,
+        `import lodash from "https://esm.sh/lodash@4.17.21?external=react,react-dom&target=es2022";`,
+      ),
+    );
   });
 
   it("keeps every supported bare Node builtin and its node: form unchanged", async () => {

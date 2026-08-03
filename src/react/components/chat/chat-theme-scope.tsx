@@ -16,7 +16,7 @@
  * @module react/components/chat/chat-theme-scope
  */
 import * as React from "react";
-import { getDocumentNonce } from "../ui/csp-nonce.ts";
+import { useDocumentNonce } from "../ui/csp-nonce.ts";
 import { cn, generateTokenCSS, UI_SCOPE_ATTRS } from "./theme.ts";
 
 /** Props accepted by {@link ChatThemeScope}. */
@@ -30,7 +30,7 @@ export interface ChatThemeScopeProps {
 export function ChatThemeScope(
   { children, className }: ChatThemeScopeProps,
 ): React.ReactElement {
-  const nonce = getDocumentNonce();
+  const nonce = useDocumentNonce();
   const tokenCSS = React.useMemo(() => generateTokenCSS(), []);
   return (
     <div

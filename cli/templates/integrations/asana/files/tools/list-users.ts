@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listUsers } from "../../lib/asana-client.ts";
+import { listUsers } from "../lib/asana-client.ts";
 
 export default tool({
-  id: "list-users",
+  id: "asana-list-users",
   description: "List users in an Asana workspace.",
   inputSchema: defineSchema((v) => v.object({
     workspaceGid: v.string().describe("Asana workspace GID"),

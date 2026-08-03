@@ -8,13 +8,9 @@ import {
   getDocumentImportMapImports,
   importMapOwnsSpecifier,
 } from "#veryfront/utils/import-map.ts";
-import {
-  FS_PATH_PREFIX,
-  HYDRATION_DATA_ID,
-  RSC_DEPENDENCY_PINNING_HEADER,
-  RSC_PATH_PREFIX,
-} from "./constants.ts";
+import { FS_PATH_PREFIX, RSC_DEPENDENCY_PINNING_HEADER, RSC_PATH_PREFIX } from "./constants.ts";
 import { rscLogger } from "../client/browser-logger.ts";
+import { findServerHydrationDataElement } from "#veryfront/html/hydration-data-element.ts";
 
 export type ClientModuleStrategy = "fs" | "rsc-module";
 
@@ -75,7 +71,7 @@ export function readHydrationData(
   doc: Document = document,
 ): ClientRuntimeHydrationData | null {
   try {
-    const el = doc.getElementById(HYDRATION_DATA_ID);
+    const el = findServerHydrationDataElement(doc);
     if (!el) return null;
     return JSON.parse(el.textContent || "{}") as ClientRuntimeHydrationData;
   } catch (e) {
@@ -96,7 +92,7 @@ export function seedHydrationDependencyPins(
   if (!dependencyPinningCacheKey?.startsWith("on:")) return false;
 
   try {
-    const el = doc.getElementById(HYDRATION_DATA_ID);
+    const el = findServerHydrationDataElement(doc);
     if (!el) return false;
     const hydrationData = JSON.parse(el.textContent || "{}") as ClientRuntimeHydrationData;
     hydrationData.dependencyPinningCacheKey = dependencyPinningCacheKey;

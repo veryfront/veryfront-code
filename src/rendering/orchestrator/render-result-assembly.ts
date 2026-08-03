@@ -1,7 +1,12 @@
 import type { PageBundle, RenderResult } from "#veryfront/types";
 
 interface RenderResultAssemblyCache {
-  persistResult(result: RenderResult, slug: string, cacheKey?: string): Promise<void>;
+  persistResult(
+    result: RenderResult,
+    slug: string,
+    cacheKey?: string,
+    nonce?: string,
+  ): Promise<void>;
 }
 
 interface RenderResultAssemblyLogger {
@@ -25,6 +30,7 @@ export interface AssembleRenderResultOptions {
   skipCachePersist?: boolean;
   cacheCoordinator?: RenderResultAssemblyCache;
   logger?: RenderResultAssemblyLogger;
+  nonce?: string;
 }
 
 export function assembleRenderResult(options: AssembleRenderResultOptions): RenderResult {
@@ -51,6 +57,7 @@ export function assembleRenderResult(options: AssembleRenderResultOptions): Rend
       result,
       options.slug,
       options.cacheKey ?? undefined,
+      options.nonce,
     ).catch(
       (error) => {
         options.logger?.error("Cache persist failed", {

@@ -1,7 +1,9 @@
 import React from "react";
 import { flushSync } from "react-dom";
 import { createRoot, hydrateRoot, type Root } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import {
   assert,
   assertEquals,
@@ -12,6 +14,8 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { applyHeadDirectives, executeScripts } from "#veryfront/routing/client/dom-utils.ts";
 import { escapeManagedHeadRawText } from "#veryfront/html/managed-head-protocol.ts";
 import { retireClientHeadOwnership } from "#veryfront/html/client-head-manager.ts";
+import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
+import { wrapWithServerRenderContext } from "#veryfront/react/server-render-context.ts";
 import { Head } from "./core.ts";
 
 const HEAD_PLACEHOLDER =
@@ -110,13 +114,42 @@ function rootElement(id = "root"): HTMLElement {
   return element;
 }
 
-async function unmount(root: Root | undefined): Promise<void> {
-  if (!root) return;
-  flushSync(() => root.unmount());
-  await nextTask();
-}
-
 describe("Head client management", () => {
+  it("suppresses the expected server-only commit-token difference during hydration", async () => {
+    const children = <title>Hydrated managed head</title>;
+    const { result: serverMarkup } = await runWithHeadCollector((renderContext) =>
+      renderToString(wrapWithServerRenderContext(<Head>{children}</Head>, renderContext))
+    );
+    assert(
+      serverMarkup.includes("data-vf-server-head-commit="),
+      "Expected SSR to emit a server-only managed-head commit token",
+    );
+
+    const { restore } = installDom({
+      body: `<div id="root">${serverMarkup}</div>`,
+    });
+    const recoverableErrors: unknown[] = [];
+    const consoleErrors: unknown[][] = [];
+    const previousConsoleError = console.error;
+    let root: Root | undefined;
+    console.error = (...args: unknown[]) => consoleErrors.push(args);
+
+    try {
+      root = hydrateRoot(rootElement(), <Head>{children}</Head>, {
+        onRecoverableError: (error) => recoverableErrors.push(error),
+      });
+      await waitFor(() => document.title === "Hydrated managed head");
+      await nextTask();
+
+      assertEquals(recoverableErrors, []);
+      assertEquals(consoleErrors, []);
+    } finally {
+      console.error = previousConsoleError;
+      await unmountReactRoot(root);
+      restore();
+    }
+  });
+
   it("adopts explicit shell singletons late and restores their baseline on unmount", async () => {
     const { restore } = installDom({
       head: `
@@ -161,7 +194,7 @@ describe("Head client management", () => {
       assertEquals(thirdParty.getAttribute("data-vf-react-head"), null);
       assertEquals(thirdParty.getAttribute("content"), "Third party");
 
-      await unmount(root);
+      await unmountReactRoot(root);
       root = undefined;
 
       assertStrictEquals(document.head.querySelector("title"), shellTitle);
@@ -180,7 +213,7 @@ describe("Head client management", () => {
         assertEquals(element.getAttribute("data-veryfront-managed"), null);
       }
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -214,7 +247,7 @@ describe("Head client management", () => {
       assertEquals(document.head.querySelector("title"), null);
       assertEquals(document.head.querySelector('meta[name="description"]'), null);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -270,7 +303,7 @@ describe("Head client management", () => {
       assertEquals(document.head.querySelectorAll('link[rel="canonical"]').length, 1);
       assertEquals(document.head.querySelectorAll("#route-state").length, 1);
 
-      await unmount(root);
+      await unmountReactRoot(root);
       root = undefined;
 
       for (const element of [routeTitle, routeDescription, routeCanonical, routeScript]) {
@@ -285,7 +318,7 @@ describe("Head client management", () => {
       assertEquals(routeCanonical.getAttribute("href"), "https://example.com/route");
       assertEquals(routeScript.textContent, scriptContent);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -324,7 +357,7 @@ describe("Head client management", () => {
       assertEquals(document.head.querySelectorAll("#route-exec").length, 1);
       assertStrictEquals(document.getElementById("route-exec"), routeScript);
 
-      await unmount(root);
+      await unmountReactRoot(root);
       root = undefined;
 
       assertEquals(scriptWindow.__routeExecRuns, executionsBeforeReactAdoption);
@@ -334,7 +367,7 @@ describe("Head client management", () => {
         "window.__routeExecRuns=(window.__routeExecRuns||0)+1;",
       );
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -389,7 +422,7 @@ describe("Head client management", () => {
       assertEquals(managedManifest.getAttribute("data-vf-react-head"), null);
       assertStrictEquals(document.getElementById("third-party"), thirdParty);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -454,7 +487,7 @@ describe("Head client management", () => {
         assertEquals(element.getAttribute("data-veryfront-managed"), "1");
       }
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -478,7 +511,7 @@ describe("Head client management", () => {
       assertStrictEquals(document.head.querySelector("style"), original);
       assertEquals(original?.getAttribute("nonce"), "response");
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -562,7 +595,7 @@ describe("Head client management", () => {
         ".two{}",
       );
 
-      await unmount(root);
+      await unmountReactRoot(root);
       root = undefined;
       assertEquals(
         frameDocument.head.querySelectorAll(
@@ -579,7 +612,7 @@ describe("Head client management", () => {
         primaryMeta,
       );
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -607,7 +640,7 @@ describe("Head client management", () => {
       assertEquals(original?.getAttribute("defer"), "");
       assertEquals(original?.getAttribute("data-enabled"), "false");
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -640,7 +673,7 @@ describe("Head client management", () => {
       assertEquals(originalMeta?.getAttribute("content"), "A\nB\nC");
       assertEquals(originalStyle?.textContent, ".a{\ncolor:red\n}");
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -666,7 +699,7 @@ describe("Head client management", () => {
       assertStrictEquals(document.head.querySelector("meta[charset]"), charset);
       assertEquals(charset?.hasAttribute("data-vf-react-head"), false);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -701,7 +734,7 @@ describe("Head client management", () => {
       assertEquals(scriptWindow.__payload, "</ScRiPt>");
       assertStrictEquals(document.head.querySelector("#once"), original);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -751,7 +784,7 @@ describe("Head client management", () => {
       assertNotStrictEquals(document.head.querySelector("#versioned"), original);
       assertEquals(document.head.querySelectorAll("#versioned").length, 1);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -827,7 +860,7 @@ describe("Head client management", () => {
       assertEquals(document.head.querySelector("style")?.textContent, ".two{color:blue}");
       assertEquals(scriptWindow.__updateRuns, 1);
 
-      await unmount(root);
+      await unmountReactRoot(root);
       root = undefined;
       assertEquals(document.head.querySelectorAll('[data-vf-react-head="true"]').length, 0);
       assertEquals(document.head.querySelector("title"), null);
@@ -836,7 +869,7 @@ describe("Head client management", () => {
       assertEquals(document.head.querySelector("style"), null);
       assertEquals(document.head.querySelector("#stable"), null);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -913,7 +946,7 @@ describe("Head client management", () => {
       assertEquals(imageOrder(), ["layout.jpg"]);
       assertEquals(document.head.querySelector("#shared")?.getAttribute("src"), "/layout.js");
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -941,7 +974,7 @@ describe("Head client management", () => {
       await nextTask();
       assertEquals(authors(), ["B", "A"]);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -983,7 +1016,7 @@ describe("Head client management", () => {
         1,
       );
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -1028,8 +1061,8 @@ describe("Head client management", () => {
         1,
       );
     } finally {
-      await unmount(rootA);
-      await unmount(rootB);
+      await unmountReactRoot(rootA);
+      await unmountReactRoot(rootB);
       restore();
     }
   });
@@ -1080,7 +1113,7 @@ describe("Head client management", () => {
         1,
       );
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -1111,7 +1144,7 @@ describe("Head client management", () => {
       assertEquals(scriptWindow.__strictRuns, 1);
       assertEquals(document.head.querySelectorAll("#strict-once").length, 1);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -1159,7 +1192,7 @@ describe("Head client management", () => {
         null,
       );
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -1227,7 +1260,7 @@ describe("Head client management", () => {
       assertEquals(meta.hasAttribute("onclick"), false);
       assertEquals(accessorCalls, 0);
 
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restore();
     }

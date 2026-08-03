@@ -33,6 +33,7 @@ import { ErrorPages } from "../../../utils/error-html.ts";
 import { isSSRBuildFailure } from "#veryfront/rendering/ssr-outcome.ts";
 import { buildSSRResponse } from "./ssr-response-builder.ts";
 import { type DependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
+import { createApplicationRequestHeaders } from "#veryfront/security/http/application-request.ts";
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
 import {
   applySnapshotResponseHeaders,
@@ -41,20 +42,17 @@ import {
   snapshotConflictResponse,
   stripSnapshotHeader,
 } from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
+import { isProductionMode, shouldHideRouteInProduction } from "../route-visibility-policy.ts";
+import {
+  createErrorResponseFromDefinition,
+  PROJECT_EXECUTION_UNAVAILABLE,
+} from "#veryfront/errors";
+import {
+  isHostProjectCodeExecutionAllowed,
+  isSharedProjectRuntime,
+} from "#veryfront/security/project-locality.ts";
 
 const logger = serverLogger.component("ssr");
-
-/**
- * Determine if request should serve production (released) content.
- * Uses resolvedEnvironment (from domain lookup) with fallback to requestContext.mode.
- * Config override (PRODUCTION_MODE) takes precedence.
- */
-export function isProductionMode(ctx: HandlerContext, _url?: URL): boolean {
-  if (ctx.config?.fs?.veryfront?.productionMode === true) return true;
-
-  const environment = ctx.resolvedEnvironment ?? ctx.requestContext?.mode;
-  return environment === "production";
-}
 
 /**
  * SSR Handler - Thin orchestration layer
@@ -101,10 +99,27 @@ export class SSRHandler extends BaseHandler {
     const requestId = `${slug || "index"}-${Date.now()}`;
     startRequest(requestId);
 
-    const hasDotSegment = slug.split("/").some((segment) => segment.startsWith("."));
-    if (hasDotSegment && isProductionMode(ctx, url)) {
+    if (shouldHideRouteInProduction(ctx, slug)) {
       this.logDebug("Dot path blocked in production", { slug }, ctx);
       return Promise.resolve(this.continue());
+    }
+
+    if (isSharedProjectRuntime(ctx) && !isHostProjectCodeExecutionAllowed(ctx)) {
+      const problem = createErrorResponseFromDefinition(
+        PROJECT_EXECUTION_UNAVAILABLE,
+        {
+          detail:
+            "Shared runtimes require a dedicated isolated project runtime for server rendering",
+          instance: pathname,
+        },
+      );
+      const body = req.method === "HEAD" ? null : problem.body;
+      const response = this.createResponseBuilder(ctx, generateNonce())
+        .withSecurity(ctx.securityConfig ?? undefined, req)
+        .withCache("no-store")
+        .withHeaders(problem.headers)
+        .build(body, problem.status);
+      return Promise.resolve(this.respond(response));
     }
 
     this.logDebug("SSR attempt", { pathname, slug }, ctx);
@@ -124,7 +139,7 @@ export class SSRHandler extends BaseHandler {
       const isExtended = isExtendedFSAdapter(fsAdapter);
 
       if (ctx.projectSlug && isExtended && fsAdapter.isMultiProjectMode()) {
-        const prodMode = isProductionMode(ctx, url);
+        const prodMode = isProductionMode(ctx);
         const branch = ctx.parsedDomain?.branch ?? null;
         // Framework-owned token: bypass project env overlay so proxy mode works
         // when a remote project overlay is active.
@@ -169,7 +184,7 @@ export class SSRHandler extends BaseHandler {
         // the failure at warn (rather than swallowing it) so a genuinely broken
         // production-mode setup is visible instead of silently serving draft content.
         try {
-          const prodMode = isProductionMode(ctx, url);
+          const prodMode = isProductionMode(ctx);
           fsAdapter.setProductionMode(prodMode, ctx.releaseId);
         } catch (e) {
           logger.warn("Adapter setProductionMode failed", {
@@ -220,7 +235,9 @@ export class SSRHandler extends BaseHandler {
         const dependencySnapshot = resolution.snapshot;
 
         const applicationUrl = new URL(url);
-        const applicationHeaders = stripSnapshotHeader(req.headers);
+        const applicationHeaders = createApplicationRequestHeaders(
+          stripSnapshotHeader(req.headers),
+        );
         const applicationRequest = new Request(applicationUrl, {
           method: req.method,
           headers: applicationHeaders,
@@ -365,6 +382,7 @@ export class SSRHandler extends BaseHandler {
     const result: SSRRenderResult = {
       status: 404,
       html: ErrorPages.notFound(slug || "/"),
+      htmlProvenance: "framework",
       isStreaming: false,
       cacheStrategy: "no-cache",
       failure: { kind: "not-found" },

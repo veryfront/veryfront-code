@@ -50,9 +50,19 @@ describe("generate-api-reference", () => {
       const uiReference = await Deno.readTextFile(
         `${outputDir}/veryfront/ui.md`,
       );
+      const chatReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/chat.md`,
+      );
+      const agentReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/agent.md`,
+      );
+      const mcpReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/mcp.md`,
+      );
       const providerReference = await Deno.readTextFile(
         `${outputDir}/veryfront/provider.md`,
       );
+      const providerTypes = await Deno.readTextFile("src/provider/types.ts");
       assertEquals(
         rootReference.includes(
           "\nConfiguration, server bootstrap, routing, data fetching, and input validation.\n\n## Import",
@@ -70,6 +80,42 @@ describe("generate-api-reference", () => {
         "| `AppShellProps` | Props accepted by `AppShell`. |",
       );
       assertStringIncludes(
+        uiReference,
+        'import type { DisclosureParts, DisclosureProps, MultipleToggleGroupRootProps } from "veryfront/ui/adapter";',
+        "type-only deep exports must use a copyable type import",
+      );
+      for (
+        const exportName of [
+          "ChatInputSend",
+          "ChatInputStop",
+          "ChatInputVoice",
+        ]
+      ) {
+        assertEquals(
+          chatReference.match(
+            new RegExp("^\\| `" + exportName + "` \\|", "gm"),
+          )?.length,
+          1,
+          `${exportName} must appear once in the exports table`,
+        );
+      }
+      assertEquals(
+        agentReference.match(/^\| `createAgUiHandler` \|/gm)?.length,
+        1,
+        "createAgUiHandler must appear once in the exports table",
+      );
+      assertEquals(
+        uiReference.match(
+          /^\| `ToggleGroupParts` \|[^\n]*data-state="on"\\\|"off"[^\n]*\|/gm,
+        )?.length,
+        2,
+        "ToggleGroupParts descriptions must escape table delimiters",
+      );
+      assertStringIncludes(
+        mcpReference,
+        "| `formatSSEPrimingEvent` | Format an SSE priming event. |",
+      );
+      assertStringIncludes(
         routerReference,
         "| Name | Description | Source |",
       );
@@ -78,9 +124,19 @@ describe("generate-api-reference", () => {
         "| `RuntimeMetadata` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L1) |",
         "first-line declarations must keep a source anchor",
       );
+      const generateResultIndex = providerTypes.split("\n").findIndex((line) =>
+        line.startsWith("export interface ModelRuntimeGenerateResult")
+      );
+      assertEquals(
+        generateResultIndex >= 0,
+        true,
+        "test declaration must exist",
+      );
       assertStringIncludes(
         providerReference,
-        "| `ModelRuntimeGenerateResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L8) |",
+        `| \`ModelRuntimeGenerateResult\` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L${
+          generateResultIndex + 1
+        }) |`,
         "Deno's one-based locations must stay one-based in GitHub anchors",
       );
       // Alias re-exports must resolve to their target's JSDoc description and a

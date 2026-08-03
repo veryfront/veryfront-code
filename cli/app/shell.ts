@@ -53,7 +53,7 @@ import { readToken } from "../auth/token-store.ts";
 import { openBrowser } from "../auth/browser.ts";
 import { fetchRemoteProjects } from "../sync/index.ts";
 import { pullCommand } from "../commands/pull/index.ts";
-import { pushCommand } from "../commands/push/index.ts";
+import { createStagedPushOptions, pushCommand } from "../commands/push/index.ts";
 
 // Import extracted modules
 import {
@@ -573,8 +573,9 @@ export function createApp(config: AppConfig): App {
       render();
 
       try {
-        await pushCommand({ projectSlug: slug, projectDir, force: true, quiet: true });
-        update(addLog("info", `Pushed ${slug} — merge in Studio`));
+        const pushOptions = createStagedPushOptions(slug, projectDir);
+        await pushCommand(pushOptions);
+        update(addLog("info", `Pushed ${slug} to ${pushOptions.branch} — merge in Studio`));
       } catch (err) {
         update(addLog("error", `Push failed: ${err instanceof Error ? err.message : String(err)}`));
       }

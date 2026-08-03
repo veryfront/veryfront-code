@@ -6126,6 +6126,8 @@
     "https://esm.sh/queue-microtask@1.2.3?target=denonext": "fc6002fc339a8edbab36e4e6df1d245a0c3a5dc507edf4e5fb7e857f8b117aa2",
     "https://esm.sh/quick-lru@5.1.1/node/quick-lru.mjs": "b660dae1ee768213d83452ad5d3802f79ca6609da3e084cfb9fa398f44a68fda",
     "https://esm.sh/quick-lru@^5.1.1?target=node": "4279c628e85ad28a8cebad4bb9c57daa976fd15eb131ced5a44d0faa9ca7d82b",
+    "https://esm.sh/react-dom@18.3.1/X-ZHJlYWN0QDE4LjMuMQ/es2022/server.mjs": "d9e76541fb4265b550c8263604eecc51fc911f2e451e80631f56c53a15dddb34",
+    "https://esm.sh/react-dom@18.3.1/server?target=es2022&deps=react@18.3.1": "09ebb2be235bb2fa524bb65581917a75f17706dcddfc58aba174b1d29ccb3490",
     "https://esm.sh/react-dom@19.2.4/X-ZGNzc3R5cGVAMy4yLjMKZXJlYWN0/es2022/cjs/react-dom-server-legacy.browser.production.mjs": "b3e903348265bf3af17dfb810d73f61bacc637c533ab3baebb0c3dd97cc3b48e",
     "https://esm.sh/react-dom@19.2.4/X-ZGNzc3R5cGVAMy4yLjMKZXJlYWN0/es2022/cjs/react-dom-server.browser.production.mjs": "1ad33f4ddadbb0efb43db1f9f743b52c27dd0844e51d6072def88e24173e0f07",
     "https://esm.sh/react-dom@19.2.4/X-ZGNzc3R5cGVAMy4yLjMKZXJlYWN0/es2022/client.mjs": "20933a5435a017412b69ff5902266d048f4faaef50cf935d8576a963188790d5",
@@ -6135,6 +6137,8 @@
     "https://esm.sh/react-dom@19.2.4/server?external=react&target=es2022&deps=csstype@3.2.3": "56bd772acd40748de241e6903c8e1577099f90400649500284a12d26b9e00526",
     "https://esm.sh/react-dom@19.2.4?external=react&target=es2022&deps=csstype@3.2.3": "2c0c9505e869d7830f3dd4745e938424394bdf7e1b0d967e72ceaeb59c36fccf",
     "https://esm.sh/react-markdown@9.0.3?target=es2022&pin=v135&deps=react@19.2.4": "85cbc863666d1c8c96f47d50cc8bf4c2936fdc8851cca6ff4f515ed4ee32367a",
+    "https://esm.sh/react@18.3.1/es2022/react.mjs": "fec8d5ab4ffa55c8b563abc31060c3dc0205699aff20beec4aba0311efdcc1a0",
+    "https://esm.sh/react@18.3.1?target=es2022": "fe14009a42dc84ce0d41fc48a09fcd216dd5b420ee812a3776fcdc1a2b7b83cd",
     "https://esm.sh/react@19.2.4/X-ZGNzc3R5cGVAMy4yLjM/es2022/react.mjs": "387b27232ebb1126bb803e2c4ac049332ce63a046354e188fc665dfd111c35fd",
     "https://esm.sh/react@19.2.4/X-ZGNzc3R5cGVAMy4yLjMKZXJlYWN0/es2022/jsx-dev-runtime.development.mjs": "577f010af135849a226db2daa504d90337b2e55753a484e53cd8b7c2d4c532b3",
     "https://esm.sh/react@19.2.4/X-ZGNzc3R5cGVAMy4yLjMKZXJlYWN0/es2022/jsx-runtime.mjs": "88dcba11d90f7078cc77ef36cc5523a00a6039f281879d3fe4e36da2ffc5e562",
@@ -6537,6 +6541,13 @@
           "npm:ajv-formats@3.0.1",
           "npm:ajv@8.18.0",
           "npm:zod@4.3.6"
+        ]
+      },
+      "extensions/ext-yaml": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17",
+          "jsr:@std/yaml@1.1.0"
         ]
       }
     }

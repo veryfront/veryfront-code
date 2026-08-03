@@ -1,4 +1,7 @@
-import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
+import {
+  getVeryfrontCloudBootstrap,
+  getVeryfrontCloudHostBootstrap,
+} from "#veryfront/platform/cloud/resolver.ts";
 import {
   requestWithRetry,
   type RetryConfig,
@@ -419,15 +422,29 @@ export class VeryfrontRunsClient {
     });
   }
 
-  private resolveApiUrl(): string {
-    return this.config.apiUrl ?? getVeryfrontCloudBootstrap().apiBaseUrl;
-  }
+  private resolveConnection(): { apiUrl: string; authToken: string } {
+    if (this.config.apiUrl && !this.config.authToken) {
+      throw API_CLIENT_ERROR.create({
+        detail:
+          "Runs apiUrl requires an explicit authToken. A caller-selected endpoint cannot use request- or host-owned credentials.",
+        status: 401,
+      });
+    }
+    if (this.config.apiUrl && this.config.authToken) {
+      return { apiUrl: this.config.apiUrl, authToken: this.config.authToken };
+    }
 
-  private resolveAuthToken(): string {
-    const token = this.requestToken ?? this.config.authToken ??
-      getVeryfrontCloudBootstrap().apiToken;
-    if (token) {
-      return token;
+    const host = getVeryfrontCloudHostBootstrap();
+    if (this.config.authToken) {
+      return { apiUrl: host.apiBaseUrl, authToken: this.config.authToken };
+    }
+    if (this.requestToken) {
+      return { apiUrl: host.apiBaseUrl, authToken: this.requestToken };
+    }
+
+    const bootstrap = getVeryfrontCloudBootstrap();
+    if (bootstrap.apiToken) {
+      return { apiUrl: bootstrap.apiBaseUrl, authToken: bootstrap.apiToken };
     }
     throw API_CLIENT_ERROR.create({
       detail:
@@ -458,13 +475,22 @@ export class VeryfrontRunsClient {
       body?: Record<string, unknown>;
     } = {},
   ): Promise<T> {
+    const { apiUrl, authToken } = this.resolveConnection();
+    const apiOrigin = new URL(apiUrl).origin;
     const raw = await requestWithRetry(
-      `${this.resolveApiUrl()}${path}`,
-      this.resolveAuthToken(),
+      `${apiUrl}${path}`,
+      authToken,
       this.retryConfig,
       {
         method: options.method,
         body: options.body == null ? undefined : JSON.stringify(options.body),
+      },
+      {
+        authorizeUrl: (target) => {
+          if (target.origin !== apiOrigin) {
+            throw new Error("Runs request blocked: destination origin is not authorized");
+          }
+        },
       },
     );
     return schema.parse(raw);

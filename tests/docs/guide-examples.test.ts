@@ -332,7 +332,7 @@ describe("Guide: runs.mdx", () => {
 
     await withMockedFetch(responses, async (calls) => {
       const runs = createRunsClient({
-        apiUrl: "https://api.test.com",
+        apiUrl: "https://93.184.216.34",
         authToken: "test-token",
         projectReference: "dreamy-haven",
       });

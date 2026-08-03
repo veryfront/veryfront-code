@@ -1,8 +1,8 @@
 import {
   jsonValuesEqual,
   readProviderOptions,
-  stringifyJsonValue,
   stringifyToolArguments,
+  stringifyToolResultValue,
   unwrapToolInputSchema,
 } from "veryfront/provider/shared";
 import type {
@@ -385,7 +385,7 @@ function toOpenAIResponsesInput(
           input.push({
             type: "function_call_output",
             call_id: part.toolCallId,
-            output: stringifyJsonValue(part.output.value),
+            output: stringifyToolResultValue(part.output.value),
           });
         }
         break;

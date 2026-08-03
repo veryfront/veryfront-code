@@ -1,6 +1,15 @@
-import { assertEquals, assertStringIncludes, assertThrows } from "#std/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
-import { createDntExtensionEntryPoints } from "./build-npm-extension-packages.ts";
+import {
+  assertPackageEntryPointsExist,
+  createDntExtensionEntryPoints,
+  extensionPackageEntryPointPaths,
+} from "./build-npm-extension-packages.ts";
 import {
   bareImportPackageNames,
   createExtensionPackageSpec,
@@ -622,6 +631,70 @@ describe("createDntExtensionEntryPoints", () => {
         { name: "./deno", path: "/repo/extensions/ext-alpha/src/deno.ts" },
       ],
     );
+  });
+});
+
+describe("generated extension package entry points", () => {
+  it("collects every file from nested and conditional package exports", () => {
+    assertEquals(
+      extensionPackageEntryPointPaths({
+        main: "./esm/index.js",
+        module: "./esm/index.js",
+        types: "./esm/index.d.ts",
+        exports: {
+          ".": {
+            import: {
+              types: "./esm/src/index.d.ts",
+              default: "./esm/src/index.js",
+            },
+          },
+          "./node": [null, { import: "./esm/node.js" }],
+        },
+      }),
+      [
+        "./esm/index.d.ts",
+        "./esm/index.js",
+        "./esm/node.js",
+        "./esm/src/index.d.ts",
+        "./esm/src/index.js",
+      ],
+    );
+  });
+
+  it("rejects a package whose declared public entry point was not emitted", async () => {
+    const outDir = await Deno.makeTempDir();
+    try {
+      await Deno.mkdir(`${outDir}/esm/src`, { recursive: true });
+      await Deno.writeTextFile(`${outDir}/esm/src/index.js`, "export {};\n");
+
+      await assertPackageEntryPointsExist({
+        outDir,
+        packageName: "@veryfront/ext-example",
+        packageJson: {
+          exports: { ".": { import: "./esm/src/index.js" } },
+        },
+      });
+
+      await assertRejects(
+        () =>
+          assertPackageEntryPointsExist({
+            outDir,
+            packageName: "@veryfront/ext-example",
+            packageJson: {
+              exports: {
+                ".": {
+                  import: "./esm/src/index.js",
+                  types: "./esm/src/index.d.ts",
+                },
+              },
+            },
+          }),
+        Error,
+        "@veryfront/ext-example package entry point ./esm/src/index.d.ts was not emitted",
+      );
+    } finally {
+      await Deno.remove(outDir, { recursive: true });
+    }
   });
 });
 

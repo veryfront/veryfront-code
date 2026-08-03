@@ -22,6 +22,10 @@ import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { clearCSSCache, getCSSByHash } from "#veryfront/html/styles-builder/index.ts";
 import { HTMLGenerator, type HTMLGeneratorConfig } from "./html.ts";
 import { buildHeadElements, mergeFrontmatter } from "./html-head.ts";
+import {
+  deserializeManagedHeadPayload,
+  managedHeadDescriptorToTransportEntry,
+} from "#veryfront/html/managed-head-protocol.ts";
 import { mergeImportedCSS } from "./html-imported-css.ts";
 import { StreamTimeoutError } from "../utils/stream-utils.ts";
 import {
@@ -657,7 +661,7 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes(`localStorage.setItem('theme','dark')`), true);
     });
 
-    it("adds nonce to inline style and script tags in rendered HTML", async () => {
+    it("does not grant the response nonce to rendered application markup", async () => {
       const mockAdapter = createMockAdapter(async () => "");
 
       const generator = createHTMLGenerator({
@@ -682,11 +686,11 @@ describe("HTMLGenerator helpers", () => {
         options: { nonce: "nonce-123" },
       });
 
-      assertEquals(html.includes('<style nonce="nonce-123">.chat{color:red}</style>'), true);
-      assertEquals(
-        html.includes('<script nonce="nonce-123">window.__vf=1</script>'),
-        true,
-      );
+      assertEquals(html.includes('<style nonce="nonce-123">.chat{color:red}</style>'), false);
+      assertEquals(html.includes('<script nonce="nonce-123">window.__vf=1</script>'), false);
+      assertEquals(html.includes("<style>.chat{color:red}</style>"), true);
+      assertEquals(html.includes("<script>window.__vf=1</script>"), true);
+      assertEquals(html.includes('<script type="importmap" nonce="nonce-123">'), true);
     });
 
     it("adds nonce to collected head style and script tags", async () => {
@@ -856,6 +860,78 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes("data-vf-shell-head"), false);
     });
 
+    it("publishes the complete committed React head through the server-owned payload", async () => {
+      const generator = createHTMLGenerator();
+      const html = await generator.generateFullHTML({
+        html: "<main>Complete head</main>",
+        pageInfo: {
+          entity: { path: "/project/app/page.tsx", frontmatter: {} },
+        } as any,
+        pageBundle: {} as any,
+        layoutBundle: undefined,
+        nestedLayouts: [],
+        collectedMetadata: {},
+        slug: "complete-head",
+        ssrHash: "head-hash",
+        collectedHead: {
+          title: "Committed title",
+          metas: [
+            { property: "og:image", content: "https://cdn.example/a.png" },
+            { property: "og:image", content: "https://cdn.example/b.png" },
+          ],
+          links: [
+            { rel: "preload", href: "/font-a.woff2", as: "font" },
+            { rel: "preload", href: "/font-b.woff2", as: "font" },
+          ],
+          styles: [{ id: "route-style", content: ".route{}" }],
+          scripts: [{ id: "route-script", src: "/route.js" }],
+        },
+      });
+
+      const hydrationMatch = html.match(
+        /<body\b[^>]*>\s*<!--[^]*?-->\s*<script id="veryfront-hydration-data" type="application\/json"[^>]*>([^]*?)<\/script>/i,
+      );
+      assertExists(hydrationMatch?.[1]);
+      const hydrationData = JSON.parse(hydrationMatch[1]) as {
+        managedHeadPayload: string;
+      };
+      const entries = deserializeManagedHeadPayload(hydrationData.managedHeadPayload)
+        .map(managedHeadDescriptorToTransportEntry);
+
+      assertEquals(
+        entries.some((entry) => entry.tagName === "title" && entry.content === "Committed title"),
+        true,
+      );
+      assertEquals(
+        entries.filter((entry) =>
+          entry.tagName === "meta" &&
+          entry.attributes.some(([name, value]) => name === "property" && value === "og:image")
+        ).map((entry) => entry.attributes.find(([name]) => name === "content")?.[1]),
+        ["https://cdn.example/a.png", "https://cdn.example/b.png"],
+      );
+      assertEquals(
+        entries.filter((entry) =>
+          entry.tagName === "link" &&
+          entry.attributes.some(([name, value]) => name === "rel" && value === "preload")
+        ).map((entry) => entry.attributes.find(([name]) => name === "href")?.[1]),
+        ["/font-a.woff2", "/font-b.woff2"],
+      );
+      assertEquals(
+        entries.some((entry) =>
+          entry.tagName === "style" && entry.content === ".route{}" &&
+          entry.attributes.some(([name, value]) => name === "id" && value === "route-style")
+        ),
+        true,
+      );
+      assertEquals(
+        entries.some((entry) =>
+          entry.tagName === "script" &&
+          entry.attributes.some(([name, value]) => name === "src" && value === "/route.js")
+        ),
+        true,
+      );
+    });
+
     it("preserves empty collected metadata and exact viewport attributes", async () => {
       const mockAdapter = createMockAdapter(async () => "");
       const generator = createHTMLGenerator({
@@ -928,7 +1004,7 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes("data-vf-shell-head"), false);
     });
 
-    it("replaces existing nonce attributes with the response nonce without duplication", async () => {
+    it("does not rewrite application-owned nonce attributes", async () => {
       const mockAdapter = createMockAdapter(async () => "");
 
       const generator = createHTMLGenerator({
@@ -953,19 +1029,16 @@ describe("HTMLGenerator helpers", () => {
         options: { nonce: "nonce-123" },
       });
 
+      assertEquals(html.includes('<style nonce="existing-nonce">.chat{color:red}</style>'), true);
       assertEquals(
-        html.includes('<style nonce="nonce-123">.chat{color:red}</style>'),
+        html.includes('<script nonce="existing-nonce">window.__vf=1</script>'),
         true,
       );
-      assertEquals(
-        html.includes('<script nonce="nonce-123">window.__vf=1</script>'),
-        true,
-      );
-      assertEquals(html.includes('nonce="existing-nonce"'), false);
+      assertEquals(html.includes('nonce="existing-nonce"'), true);
       assertEquals(html.includes('nonce="nonce-123" nonce="existing-nonce"'), false);
     });
 
-    it("escapes nonce values before injecting rendered tags", async () => {
+    it("escapes nonce values only on framework-generated tags", async () => {
       const mockAdapter = createMockAdapter(async () => "");
 
       const generator = createHTMLGenerator({
@@ -989,14 +1062,13 @@ describe("HTMLGenerator helpers", () => {
         options: { nonce: `nonce-"<&'` },
       });
 
-      assertEquals(
-        html.includes('<style nonce="nonce-&quot;&lt;&amp;&#39;">.chat{color:red}</style>'),
-        true,
-      );
+      assertEquals(html.includes('<style nonce="nonce-&quot;&lt;&amp;&#39;">'), false);
       assertEquals(
         html.includes('<script nonce="nonce-&quot;&lt;&amp;&#39;">window.__vf=1</script>'),
-        true,
+        false,
       );
+      assertEquals(html.includes("<style>.chat{color:red}</style>"), true);
+      assertEquals(html.includes("<script>window.__vf=1</script>"), true);
       assertEquals(
         html.includes('<script type="importmap" nonce="nonce-&quot;&lt;&amp;&#39;">'),
         true,
@@ -1004,7 +1076,7 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes('nonce="nonce-"<&\'"'), false);
     });
 
-    it("does not inject nonce markup into script or style literals inside inline scripts", async () => {
+    it("leaves application script and style markup byte-for-byte unprivileged", async () => {
       const mockAdapter = createMockAdapter(async () => "");
 
       const generator = createHTMLGenerator({
@@ -1031,11 +1103,11 @@ describe("HTMLGenerator helpers", () => {
 
       assertEquals(
         html.includes(
-          '<script nonce="nonce-123">window.tpl="<script>alert(1)";window.css="<style>.x{color:red}";</script>',
+          '<script>window.tpl="<script>alert(1)";window.css="<style>.x{color:red}";</script>',
         ),
         true,
       );
-      assertEquals(html.includes('<style nonce="nonce-123">.chat{color:red}</style>'), true);
+      assertEquals(html.includes("<style>.chat{color:red}</style>"), true);
       assertEquals(html.includes('<script nonce="nonce-123">alert(1)'), false);
       assertEquals(html.includes('<style nonce="nonce-123">.x{color:red}'), false);
     });

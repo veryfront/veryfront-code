@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getIssueTransitions } from "../../lib/jira-client.ts";
+import { getIssueTransitions } from "../lib/jira-client.ts";
 
 export default tool({
-  id: "get-transitions",
+  id: "jira-get-transitions",
   description: "List available workflow transitions for a Jira issue.",
   inputSchema: defineSchema((v) =>
     v.object({

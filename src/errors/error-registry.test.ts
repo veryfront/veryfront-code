@@ -16,6 +16,7 @@ import {
   INPUT_VALIDATION_FAILED,
   RESOURCE_NOT_FOUND,
   SECURITY_VIOLATION,
+  SSR_OUTPUT_LIMIT_EXCEEDED,
   TOKEN_STORAGE_ERROR,
 } from "./error-registry.ts";
 import type { ErrorCategory } from "./types.ts";
@@ -28,9 +29,9 @@ describe("error-registry", () => {
       assertEquals(slugs.length, uniqueSlugs.size, "Duplicate slugs detected");
     });
 
-    it("should have 98 registered errors", () => {
+    it("should have 100 registered errors", () => {
       const slugs = getAllSlugs();
-      assertEquals(slugs.length, 98);
+      assertEquals(slugs.length, 100);
     });
   });
 
@@ -318,8 +319,8 @@ describe("error-registry", () => {
       RUNTIME: 10,
       ROUTE: 6,
       MODULE: 6,
-      SERVER: 15,
-      BOUNDARY: 6,
+      SERVER: 16,
+      BOUNDARY: 7,
       DEV: 5,
       DEPLOY: 12,
       AGENT: 7,
@@ -382,6 +383,18 @@ describe("error-registry", () => {
       assertEquals(error.slug, "security-violation");
       assertEquals(error.status, 403);
       assertEquals((error.context as Record<string, unknown>).path, "../etc/passwd");
+    });
+  });
+
+  describe("SSR_OUTPUT_LIMIT_EXCEEDED", () => {
+    it("exposes a stable boundary error for bounded SSR rendering", () => {
+      const error = SSR_OUTPUT_LIMIT_EXCEEDED.create({
+        detail: "Rendered HTML exceeded the configured output ceiling",
+      });
+
+      assertEquals(error.slug, "ssr-output-limit-exceeded");
+      assertEquals(error.category, "BOUNDARY");
+      assertEquals(error.status, 500);
     });
   });
 

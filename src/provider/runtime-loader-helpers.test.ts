@@ -8,6 +8,7 @@ import {
   snapshotJsonValue,
   stringifyJsonValue,
   stringifyToolArguments,
+  stringifyToolResultValue,
   unwrapToolInputSchema,
 } from "./runtime-loader.ts";
 
@@ -49,10 +50,18 @@ describe("provider/runtime-loader helpers", () => {
     assertEquals(warnings.drain(), []);
   });
 
-  it("always returns JSON text for serializable provider tool values", () => {
+  it("always returns JSON text for serializable provider values", () => {
     assertEquals(stringifyJsonValue({ ok: true }), '{"ok":true}');
-    assertEquals(stringifyJsonValue("text"), '"text"');
     assertEquals(stringifyJsonValue(null), "null");
+    assertEquals(stringifyJsonValue(42), "42");
+    assertEquals(stringifyJsonValue("text"), '"text"');
+  });
+
+  it("preserves string tool results without weakening general JSON serialization", () => {
+    assertEquals(stringifyToolResultValue("text"), "text");
+    assertEquals(stringifyToolResultValue(""), "");
+    assertEquals(stringifyToolResultValue('{"ok":true}'), '{"ok":true}');
+    assertEquals(stringifyToolResultValue({ ok: true }), '{"ok":true}');
   });
 
   it("preserves provider-native tool argument text without weakening structured serialization", () => {

@@ -137,6 +137,7 @@ export function injectHTMLContent(
     html = html.replace(/<\/head>/i, `${getPreviewStylesheetLink()}\n</head>`);
   }
 
+  const hasBodyOpen = /<body\b[^>]*>/i.test(html);
   const hasBodyClose = /<\/body>/i.test(html);
 
   const clientPagePath = options.isClientPage === true ? options.pagePath : undefined;
@@ -147,7 +148,7 @@ export function injectHTMLContent(
   // Client pages need the full hydration payload. Other full documents still
   // need the immutable dependency token before client.js boots so any RSC
   // transport it starts remains on the document's snapshot.
-  if ((clientPagePath || dependencyPinningCacheKey) && hasBodyClose) {
+  if ((clientPagePath || dependencyPinningCacheKey) && hasBodyOpen && hasBodyClose) {
     // Serialize with jsonForInlineScript, not raw JSON.stringify: route params
     // (and slug) are URL-derived and decoded, so a segment like `%3C/script%3E`
     // would otherwise break out of the <script> tag (reflected XSS). This escapes
@@ -176,7 +177,10 @@ export function injectHTMLContent(
     const nonceAttr = buildNonceAttribute(options.nonce);
     const hydrationScript =
       `<script id="veryfront-hydration-data" type="application/json"${nonceAttr}>${hydrationData}</script>`;
-    html = html.replace(/<\/body>/i, `${hydrationScript}</body>`);
+    html = html.replace(
+      /<body\b[^>]*>/i,
+      (openingBody) => `${openingBody}${hydrationScript}`,
+    );
   }
 
   if (options.mode === "development") {

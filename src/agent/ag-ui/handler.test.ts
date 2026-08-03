@@ -433,23 +433,42 @@ describe("agent/ag-ui-handler", () => {
     const testAgent = createTestAgent();
     const handler = createAgUiHandler({
       agent: testAgent.agent,
-      context: { tenant: "acme" },
-      beforeStream: ({ lastUserText, context }) => ({
-        prepend: [{
-          role: "user",
-          parts: [{
-            type: "text",
-            text: `Retrieved context for: ${lastUserText}`,
+      context: (request) => {
+        assertEquals(request.headers.get("authorization"), "Bearer public-user");
+        assertEquals(request.headers.get("cookie"), "session=public");
+        assertEquals(request.headers.get("x-token"), null);
+        assertEquals(request.headers.get("x-project-id"), null);
+        return { tenant: "acme" };
+      },
+      beforeStream: ({ request, lastUserText, context }) => {
+        assertEquals(request.headers.get("authorization"), "Bearer public-user");
+        assertEquals(request.headers.get("x-forwarded-host"), null);
+        assertEquals(request.headers.get("x-veryfront-dispatch-jws"), null);
+        return {
+          prepend: [{
+            role: "user",
+            parts: [{
+              type: "text",
+              text: `Retrieved context for: ${lastUserText}`,
+            }],
           }],
-        }],
-        context: { ...context, retrieval: "complete" },
-      }),
+          context: { ...context, retrieval: "complete" },
+        };
+      },
     });
 
     const response = await handler(
       new Request("http://localhost/api/ag-ui", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer public-user",
+          Cookie: "session=public",
+          "x-token": "host-secret",
+          "x-project-id": "infrastructure-project",
+          "x-forwarded-host": "trusted-proxy.example",
+          "x-veryfront-dispatch-jws": "signed-infrastructure-token",
+        },
         body: JSON.stringify({
           messages: [{
             id: "msg-1",

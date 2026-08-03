@@ -7,12 +7,14 @@ Deno.test("blob ids accept only the framework's portable identifier alphabet", (
     assertSafeBlobId(id);
   }
 
-  for (const id of [undefined, null, 1, "", "a/b", "a b", "a?b", "\ud800"]) {
+  for (
+    const id of [undefined, null, 1, "", "a/b", "a b", "a?b", "\ud800", "a".repeat(257)]
+  ) {
     assertFalse(isSafeBlobId(id));
     assertThrows(
       () => assertSafeBlobId(id),
       Error,
-      "Blob IDs must contain only alphanumeric characters, hyphens, and underscores",
+      "Blob IDs must contain at most 256 alphanumeric characters, hyphens, and underscores",
     );
   }
 });

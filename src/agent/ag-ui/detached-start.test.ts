@@ -282,10 +282,20 @@ describe("agent/ag-ui-detached-start", () => {
     const response = await executeAgUiDetachedStart(
       {
         sessionManager,
-        context: { tenant: "acme" },
-        startDetachedExecution: async ({ request, context }) => {
+        context: (request) => {
+          assertEquals(request.headers.get("authorization"), "Bearer public-user");
+          assertEquals(request.headers.get("cookie"), "session=public");
+          assertEquals(request.headers.get("x-token"), null);
+          assertEquals(request.headers.get("x-project-id"), null);
+          return { tenant: "acme" };
+        },
+        startDetachedExecution: async ({ request, context, rawRequest, requestOrCtx }) => {
           assertEquals(request.runId, "run_1");
           assertEquals(context, { tenant: "acme" });
+          assertEquals(rawRequest.headers.get("authorization"), "Bearer public-user");
+          assertEquals(rawRequest.headers.get("x-forwarded-host"), null);
+          assertEquals(rawRequest.headers.get("x-veryfront-control-plane-jws"), null);
+          assertEquals(requestOrCtx, rawRequest);
         },
         onAccepted: ({ runId }) => {
           acceptedRunId = runId;
@@ -306,7 +316,15 @@ describe("agent/ag-ui-detached-start", () => {
         }),
         rawRequest: new Request("http://localhost/api/runs", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer public-user",
+            Cookie: "session=public",
+            "x-token": "host-secret",
+            "x-project-id": "infrastructure-project",
+            "x-forwarded-host": "trusted-proxy.example",
+            "x-veryfront-control-plane-jws": "signed-infrastructure-token",
+          },
         }),
       },
     );

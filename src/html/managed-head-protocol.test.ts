@@ -177,6 +177,22 @@ describe("managed head protocol", () => {
     assertEquals(descriptor?.attributes, [["nonce", "response"]]);
   });
 
+  it("does not grant the ambient nonce to external scripts", () => {
+    const descriptor = descriptorFromHeadProps(
+      "script",
+      { nonce: "authored", src: "https://cdn.example/app.js" },
+      "response",
+    );
+
+    assertEquals(descriptor?.attributes, [["src", "https://cdn.example/app.js"]]);
+  });
+
+  it("treats an empty src attribute as external for nonce purposes", () => {
+    const descriptor = descriptorFromHeadProps("script", { src: "" }, "response");
+
+    assertEquals(descriptor?.attributes, [["src", ""]]);
+  });
+
   it("normalizes font preload CORS semantics for both runtimes", () => {
     const descriptor = descriptorFromHeadProps("link", {
       rel: "preload",
@@ -228,6 +244,7 @@ describe("managed head protocol", () => {
       onload: "ignored",
       "data-vf-shell-head": "spoofed",
       "data-vf-route-head": "spoofed",
+      "data-vf-server-head-commit": "spoofed",
     });
 
     assertEquals(descriptor?.attributes, [
@@ -308,7 +325,7 @@ describe("managed head protocol", () => {
       { tagName: "script", attributes: [["src", "/route.js"]] },
     ]);
     assertEquals(restored[1]?.attributes, [["nonce", "response-b"]]);
-    assertEquals(restored[2]?.attributes, [["nonce", "response-b"], ["src", "/route.js"]]);
+    assertEquals(restored[2]?.attributes, [["src", "/route.js"]]);
   });
 
   it("rejects non-canonical transport entries and base64url encodings", () => {

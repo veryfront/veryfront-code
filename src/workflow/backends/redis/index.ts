@@ -21,6 +21,7 @@ import { agentLogger, safeJsonParse } from "#veryfront/utils";
 import { requeueRun } from "../shared/requeue-run.ts";
 import { INITIALIZATION_ERROR, INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 import { requireWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
+import { MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES } from "../../limits.ts";
 
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 import { getRedisModule, NodeRedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
@@ -132,6 +133,12 @@ for i = expectedCount + 6, #ARGV, 2 do
 end
 return 1`;
 
+/** Atomically append and retain only the newest bounded list entries. */
+const APPEND_RETAINED_LIST_SCRIPT = `-- retained-list-append
+redis.call('rpush', KEYS[1], ARGV[1])
+redis.call('ltrim', KEYS[1], -tonumber(ARGV[2]), -1)
+return redis.call('llen', KEYS[1])`;
+
 /** Atomically verify canonical run ownership before appending auxiliary run state. */
 const APPEND_IF_STATUS_AND_WORKER_SCRIPT = `-- conditional-owned-append
 local status = redis.call('hget', KEYS[1], 'status')
@@ -146,7 +153,10 @@ end
 if not allowed then return 0 end
 local expectedWorkerId = ARGV[expectedCount + 2]
 if redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then return 0 end
-redis.call('rpush', ARGV[expectedCount + 3], ARGV[expectedCount + 4])
+local storageKey = ARGV[expectedCount + 3]
+redis.call('rpush', storageKey, ARGV[expectedCount + 4])
+local maxEntries = tonumber(ARGV[expectedCount + 5])
+if maxEntries then redis.call('ltrim', storageKey, -maxEntries, -1) end
 return 1`;
 
 /**
@@ -349,6 +359,7 @@ export class RedisBackend implements WorkflowBackend {
     expectedWorkerId: string,
     storageKey: string,
     value: string,
+    maxEntries?: number,
   ): Promise<boolean> {
     const client = await this.ensureClient();
     const result = await client.eval(
@@ -360,6 +371,7 @@ export class RedisBackend implements WorkflowBackend {
         expectedWorkerId,
         storageKey,
         value,
+        maxEntries === undefined ? "" : String(maxEntries),
       ],
     );
     return Number(result) === 1;
@@ -713,9 +725,13 @@ export class RedisBackend implements WorkflowBackend {
 
     if (this.config.debug) logger.debug(`[RedisBackend] Saving checkpoint: ${checkpoint.id}`);
 
-    await client.rpush(
-      this.checkpointsKey(runId),
-      JSON.stringify({ ...checkpoint, timestamp: checkpoint.timestamp.toISOString() }),
+    await client.eval(
+      APPEND_RETAINED_LIST_SCRIPT,
+      [this.checkpointsKey(runId)],
+      [
+        JSON.stringify({ ...checkpoint, timestamp: checkpoint.timestamp.toISOString() }),
+        String(MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES),
+      ],
     );
   }
 
@@ -732,6 +748,7 @@ export class RedisBackend implements WorkflowBackend {
       expectedWorkerId,
       this.checkpointsKey(storageRunId),
       JSON.stringify({ ...checkpoint, timestamp: checkpoint.timestamp.toISOString() }),
+      MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES,
     );
   }
 

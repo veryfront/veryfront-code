@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { extractDescriptionText, getIssue } from "../../lib/jira-client.ts";
+import { extractDescriptionText, getIssue } from "../lib/jira-client.ts";
 
 export default tool({
-  id: "get-issue",
+  id: "jira-get-issue",
   description:
     "Get detailed information about a specific Jira issue by its key (e.g., PROJ-123) or ID. Returns all fields including description, comments, history, etc.",
   inputSchema: defineSchema((v) =>

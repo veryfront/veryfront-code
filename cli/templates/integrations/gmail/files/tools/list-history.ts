@@ -4,7 +4,7 @@ import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
-  id: "list-history",
+  id: "gmail-list-history",
   description: "List Gmail mailbox history changes after a start history ID.",
   inputSchema: defineSchema((v) => v.object({
     startHistoryId: v.string().min(1).describe("History ID to start after"),

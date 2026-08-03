@@ -1,3 +1,10 @@
+import {
+  isErroredToolExecutionResult,
+  readToolResultOwnDataProperty,
+  UNREADABLE_TOOL_RESULT_PROPERTY,
+} from "#veryfront/tool/result.ts";
+import { SKILL_READABLE_DIRS } from "#veryfront/skill/types.ts";
+
 /** Default value for project steering paths. */
 export const DEFAULT_PROJECT_STEERING_PATHS = {
   instructions: ["AGENTS.md"],
@@ -56,7 +63,20 @@ function isProjectSkillMutationPath(
     return true;
   }
 
-  return /^agents\/[^/]+\/(?:SKILL\.md|references\/|skills\/[^/]+\/)/.test(path);
+  const segments = path.split("/");
+  if (segments[0] !== "agents" || !segments[1] || !segments[2]) {
+    return false;
+  }
+
+  if (segments.length === 3) {
+    return segments[2] === "AGENT.md" || segments[2] === "SKILL.md";
+  }
+
+  if (SKILL_READABLE_DIRS.some((directory) => segments[2] === directory)) {
+    return true;
+  }
+
+  return segments[2] === "skills" && Boolean(segments[3]) && segments.length >= 5;
 }
 
 function mergeMutationFlags(
@@ -129,14 +149,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** Result returned from is successful project steering mutation. */
 export function isSuccessfulProjectSteeringMutationResult(result: unknown): boolean {
+  if (isErroredToolExecutionResult(result)) {
+    return false;
+  }
+
   if (!isRecord(result)) {
     return true;
   }
 
-  if (result.isError === true) {
+  const success = readToolResultOwnDataProperty(result, "success");
+  if (success === false || success === UNREADABLE_TOOL_RESULT_PROPERTY) {
     return false;
   }
 
-  const structuredContent = result.structuredContent;
-  return !(isRecord(structuredContent) && structuredContent.success === false);
+  const structuredContent = readToolResultOwnDataProperty(result, "structuredContent");
+  if (structuredContent === UNREADABLE_TOOL_RESULT_PROPERTY) {
+    return false;
+  }
+
+  const structuredSuccess = readToolResultOwnDataProperty(structuredContent, "success");
+  return !(
+    isErroredToolExecutionResult(structuredContent) ||
+    structuredSuccess === false ||
+    structuredSuccess === UNREADABLE_TOOL_RESULT_PROPERTY
+  );
 }

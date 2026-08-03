@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createField } from "../../lib/airtable-client.ts";
+import { createField } from "../lib/airtable-client.ts";
 
 export default tool({
-  id: "create-field",
+  id: "airtable-create-field",
   description:
     "Create a new field in an Airtable table. Requires schema write permissions.",
   inputSchema: defineSchema((v) =>

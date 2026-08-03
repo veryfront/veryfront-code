@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { addIssueComment } from "../../lib/gitlab-client.ts";
+import { addIssueComment } from "../lib/gitlab-client.ts";
 
 export default tool({
-  id: "add-issue-comment",
+  id: "gitlab-add-issue-comment",
   description: "Add a Markdown comment/note to a GitLab issue.",
   inputSchema: defineSchema((v) =>
     v.object({

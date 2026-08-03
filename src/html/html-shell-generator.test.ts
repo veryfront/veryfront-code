@@ -565,6 +565,10 @@ describe("html-generation/html-shell-generator", () => {
       assertStringIncludes(result, 'type="application/json"');
       assertStringIncludes(result, '"slug"');
       assertStringIncludes(result, '"test-slug"');
+      assertEquals(
+        result.indexOf('id="veryfront-hydration-data"') < result.indexOf('id="root"'),
+        true,
+      );
     });
 
     it("should include development scripts in dev mode", async () => {

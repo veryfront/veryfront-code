@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listEmails, summarizeContact, summarizeContacts } from "../../lib/outlook-client.ts";
+import { listEmails, summarizeContact, summarizeContacts } from "../lib/outlook-client.ts";
 
 export default tool({
-  id: "list-emails",
+  id: "outlook-list-emails",
   description:
     "List recent emails from inbox or a specific folder. Returns email metadata including subject, sender, date, and preview.",
   inputSchema: defineSchema((v) => v.object({

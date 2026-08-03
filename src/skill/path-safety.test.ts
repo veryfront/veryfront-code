@@ -13,6 +13,7 @@ import {
 import {
   listSkillSubdir,
   listStrictSkillSubdir,
+  listStrictSkillTree,
   validateSkillPath,
   validateStrictSkillPath,
 } from "./path-safety.ts";
@@ -97,11 +98,43 @@ describe("src/skill/path-safety", () => {
       );
     });
 
-    it("requires an absolute root while preserving the public allowed-directory contract", async () => {
+    it("requires local roots to be absolute and preserves adapter-relative namespaces", async () => {
       await assertRejects(
         () => validateSkillPath("relative/skill", "references/guide.md", ["references"]),
         TypeError,
         "absolute",
+      );
+      const relativeAdapter = createSkillTestAdapter({
+        "skills/relative/SKILL.md": "# Relative",
+        "skills/relative/references/guide.md": "Guide",
+      });
+      assertEquals(
+        await validateStrictSkillPath(
+          "skills/relative",
+          "SKILL.md",
+          [],
+          relativeAdapter,
+        ),
+        "skills/relative/SKILL.md",
+      );
+      assertEquals(
+        await listStrictSkillSubdir(
+          "skills/relative",
+          "references",
+          relativeAdapter,
+        ),
+        ["references/guide.md"],
+      );
+      await assertRejects(
+        () =>
+          validateStrictSkillPath(
+            "../skills/relative",
+            "SKILL.md",
+            [],
+            relativeAdapter,
+          ),
+        TypeError,
+        "canonical relative path",
       );
       const adapter = createSkillTestAdapter({
         "/project/skills/test/references/guide.md": "Guide",
@@ -539,16 +572,25 @@ describe("src/skill/path-safety", () => {
       ]);
     });
 
-    it("rejects traversal in the requested subdirectory before enumeration", async () => {
-      const adapter = createSkillTestAdapter({
-        "/project/skills/outside/secret.md": "secret",
-      });
+    it("rejects non-canonical subdirectory paths before adapter access", async () => {
+      let adapterCalls = 0;
+      const adapter = createSkillTestAdapter({});
 
-      await assertRejects(
-        () => listSkillSubdir("/project/skills/test", "../outside", adapter),
-        Error,
-        "subdirectory",
-      );
+      for (const subdir of ["", ".", "..", "../secrets", "references/nested", "bad\\path"]) {
+        await assertRejects(
+          () =>
+            listSkillSubdir("/project/skills/test", subdir, {
+              ...adapter,
+              exists() {
+                adapterCalls += 1;
+                return Promise.resolve(true);
+              },
+            }),
+          Error,
+          "subdirectory",
+        );
+      }
+      assertEquals(adapterCalls, 0);
     });
 
     it("rejects unsafe adapter entry names", async () => {
@@ -674,6 +716,79 @@ describe("src/skill/path-safety", () => {
       );
     });
 
+    it("recursively lists a bounded strict tree in deterministic path order", async () => {
+      const adapter = createSkillTestAdapter({
+        "/project/skills/test/scripts/z.ts": "export {};",
+        "/project/skills/test/scripts/lib/b.ts": "export {};",
+        "/project/skills/test/scripts/lib/a.ts": "export {};",
+        "/project/skills/test/scripts/jobs/run.ts": "export {};",
+      });
+
+      assertEquals(
+        await listStrictSkillTree(
+          "/project/skills/test",
+          "scripts",
+          adapter,
+        ),
+        [
+          "scripts/jobs/run.ts",
+          "scripts/lib/a.ts",
+          "scripts/lib/b.ts",
+          "scripts/z.ts",
+        ],
+      );
+    });
+
+    it("rejects a nested directory that becomes a symlink during traversal", async () => {
+      const root = "/project/skills/test";
+      const adapter = createSkillTestAdapter({
+        [`${root}/scripts/lib/helper.ts`]: "export {};",
+      });
+      const racingAdapter = {
+        ...adapter,
+        async lstat(path: string) {
+          return {
+            ...await adapter.stat(path),
+            isSymlink: path === `${root}/scripts/lib`,
+          };
+        },
+        realPath: (path: string) => Promise.resolve(path),
+      };
+
+      await assertRejects(
+        () => listStrictSkillTree(root, "scripts", racingAdapter),
+        Error,
+        "symlink",
+      );
+    });
+
+    it("caps entries across the whole strict tree", async () => {
+      const files: Record<string, string> = {};
+      for (let index = 0; index < 500; index += 1) {
+        files[`/project/skills/test/scripts/a/file-${index}.ts`] = "export {};";
+      }
+      for (let index = 0; index < 499; index += 1) {
+        files[`/project/skills/test/scripts/b/file-${index}.ts`] = "export {};";
+      }
+      const adapter = createSkillTestAdapter(files);
+      const identityAwareAdapter = {
+        ...adapter,
+        lstat: (path: string) => adapter.stat(path),
+        realPath: (path: string) => Promise.resolve(path),
+      };
+
+      await assertRejects(
+        () =>
+          listStrictSkillTree(
+            "/project/skills/test",
+            "scripts",
+            identityAwareAdapter,
+          ),
+        RangeError,
+        `at most ${SKILL_SUBDIR_MAX_ENTRIES}`,
+      );
+    });
+
     it("keeps the entry cap on strict listings only", async () => {
       const adapter = createSkillTestAdapter({
         "/project/skills/test/references/a.md": "A",
@@ -765,6 +880,69 @@ describe("src/skill/path-safety", () => {
       } finally {
         await remove(tempDir, { recursive: true });
       }
+    });
+
+    it("rejects unsafe adapter entry names and symlinks", async () => {
+      const adapter = createSkillTestAdapter({
+        "/project/skills/test/references/ok.md": "ok",
+      });
+      for (const name of ["", ".", "..", "../secret.md", "bad\\name.md", "bad\nname.md"]) {
+        await assertRejects(
+          () =>
+            listSkillSubdir("/project/skills/test", "references", {
+              ...adapter,
+              exists: () => Promise.resolve(true),
+              async *readDir() {
+                yield {
+                  name,
+                  isFile: true,
+                  isDirectory: false,
+                  isSymlink: false,
+                };
+              },
+            }),
+          Error,
+          "entry name",
+        );
+      }
+
+      await assertRejects(
+        () =>
+          listSkillSubdir("/project/skills/test", "references", {
+            ...adapter,
+            exists: () => Promise.resolve(true),
+            async *readDir() {
+              yield {
+                name: "linked.md",
+                isFile: true,
+                isDirectory: false,
+                isSymlink: true,
+              };
+            },
+          }),
+        Error,
+        "symlink",
+      );
+
+      await assertRejects(
+        () =>
+          listSkillSubdir("/project/skills/test", "references", {
+            ...adapter,
+            exists: () => Promise.resolve(true),
+            async *readDir() {
+              for (let index = 0; index < 2; index++) {
+                yield {
+                  name: "duplicate.md",
+                  isFile: true,
+                  isDirectory: false,
+                  isSymlink: false,
+                };
+              }
+            },
+          }),
+        TypeError,
+        "duplicate entry name",
+      );
     });
   });
 });

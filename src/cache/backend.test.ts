@@ -477,7 +477,8 @@ Deno.test("ApiCacheBackend enforces exact bounded decoded values", async () => {
 
   try {
     const cache = new ApiCacheBackend({
-      apiBaseUrl: "https://api.example.test",
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
       circuitBreakerName: "api-cache-bounded-value-test",
     });
     assertEquals(await cache.getWithinLimit("key", 2), "é");
@@ -510,7 +511,8 @@ Deno.test("ApiCacheBackend reserves JSON escape bytes outside its response polic
 
   try {
     const cache = new ApiCacheBackend({
-      apiBaseUrl: "https://api.example.test",
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
       // The compact string envelope is 12 bytes; the selected value receives
       // its own deterministic six-bytes-per-logical-byte wire allowance.
       maxResponseBytes: 12,
@@ -545,7 +547,8 @@ Deno.test("ApiCacheBackend keeps unused string headroom outside its response pol
 
   try {
     const cache = new ApiCacheBackend({
-      apiBaseUrl: "https://api.example.test",
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
       // The empty value uses none of its 12 bytes of wire headroom. The extra
       // metadata must still fail the independent 12-byte response policy.
       maxResponseBytes: 12,
@@ -579,7 +582,8 @@ Deno.test("ApiCacheBackend rejects unsafe combined response limits before fetchi
 
   try {
     const cache = new ApiCacheBackend({
-      apiBaseUrl: "https://api.example.test",
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
       maxResponseBytes: 1,
       circuitBreakerName: "api-cache-unsafe-combined-limit-test",
     });
@@ -620,7 +624,8 @@ Deno.test("ApiCacheBackend rejects oversized escaped values before JSON.parse", 
 
   try {
     const cache = new ApiCacheBackend({
-      apiBaseUrl: "https://api.example.test",
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
       circuitBreakerName: "api-cache-bounded-envelope-test",
     });
     await assertRejects(
@@ -656,7 +661,8 @@ Deno.test("ApiCacheBackend bounded overflows do not open the dependency circuit"
 
   try {
     const cache = new ApiCacheBackend({
-      apiBaseUrl: "https://api.example.test",
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
       circuitBreakerName: "api-cache-neutral-bounded-overflow-test",
     });
     for (let attempt = 0; attempt < 12; attempt++) {
@@ -712,7 +718,8 @@ Deno.test("ApiCacheBackend propagates attempted delete failures", async () => {
 
   try {
     const cache = new ApiCacheBackend({
-      apiBaseUrl: "https://api.example.test",
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
       circuitBreakerName: "api-cache-delete-failure-test",
     });
 
@@ -812,7 +819,8 @@ Deno.test("ApiCacheBackend safely maps query-aware keys without logging key-deri
 
   try {
     const cache = new ApiCacheBackend({
-      apiBaseUrl: "https://api.example.test",
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
       keyPrefix: "prefix",
       circuitBreakerName: "api-cache-malformed-key-test",
     });
@@ -903,7 +911,8 @@ Deno.test("ApiCacheBackend bounds long keys and refuses malformed delete pattern
 
   try {
     const cache = new ApiCacheBackend({
-      apiBaseUrl: "https://api.example.test",
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
       keyPrefix: "prefix",
       circuitBreakerName: "api-cache-long-key-test",
     });
@@ -964,7 +973,8 @@ Deno.test("ApiCacheBackend URL-encodes project refs and omits cache keys from sp
 
   try {
     const cache = new ApiCacheBackend({
-      apiBaseUrl: "https://api.example.test",
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
       keyPrefix: "prefix",
       circuitBreakerName: "api-cache-url-encoding-test",
     });
@@ -982,14 +992,14 @@ Deno.test("ApiCacheBackend URL-encodes project refs and omits cache keys from sp
     const encodedProjectRef = encodeURIComponent(projectRef);
     assertEquals(
       capturedUrl,
-      `https://api.example.test/projects/${encodedProjectRef}/cache/get?key=prefix%3Asecret-cache-key`,
+      `https://93.184.216.34/projects/${encodedProjectRef}/cache/get?key=prefix%3Asecret-cache-key`,
     );
 
     const span = records.find((record) => record.name === "http.client.fetch");
     assertExists(span);
     assertEquals(
       span.attributes["http.url"],
-      `https://api.example.test/projects/${encodedProjectRef}/cache/get`,
+      `https://93.184.216.34/projects/${encodedProjectRef}/cache/get`,
     );
     assertEquals(span.attributes["cache.operation"], "/get");
     assertEquals(String(span.attributes["http.url"]).includes("secret-cache-key"), false);
@@ -1005,7 +1015,7 @@ Deno.test("ApiCacheBackend URL-encodes project refs and omits cache keys from sp
   }
 });
 
-Deno.test("ApiCacheBackend only prefers verified control-plane request tokens", async () => {
+Deno.test("ApiCacheBackend uses the credential paired with an explicit endpoint", async () => {
   const { ApiCacheBackend } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
   const originalAdapter = globals.__vf_multi_project_adapter;
@@ -1036,7 +1046,8 @@ Deno.test("ApiCacheBackend only prefers verified control-plane request tokens", 
 
   try {
     const cache = new ApiCacheBackend({
-      apiBaseUrl: "https://api.example.test",
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
       circuitBreakerName: "api-cache-host-token-test",
     });
     const verifiedClaims = await createVerifiedCacheClaims({
@@ -1052,7 +1063,7 @@ Deno.test("ApiCacheBackend only prefers verified control-plane request tokens", 
     assertEquals(requestScopedDeleted, 3);
     assertEquals(
       capturedUrls[0],
-      "https://api.example.test/projects/project-123/cache/del-pattern",
+      "https://93.184.216.34/projects/project-123/cache/del-pattern",
     );
 
     const forgedTrustDeleted = await cache.delByPattern("agent:*");
@@ -1087,11 +1098,11 @@ Deno.test("ApiCacheBackend only prefers verified control-plane request tokens", 
 
     assertEquals(hostFallbackDeleted, 3);
     assertEquals(capturedAuthorizations, [
-      "Bearer run-scoped-request-token",
-      "Bearer host-framework-token",
-      "Bearer host-framework-token",
-      "Bearer unverified-proxy-token",
-      "Bearer host-framework-token",
+      "Bearer test-explicit-token",
+      "Bearer test-explicit-token",
+      "Bearer test-explicit-token",
+      "Bearer test-explicit-token",
+      "Bearer test-explicit-token",
     ]);
   } finally {
     if (originalAdapter === undefined) {
@@ -1597,7 +1608,7 @@ Deno.test({
     const originalProxyMode = Deno.env.get("PROXY_MODE");
     const originalNodeEnv = Deno.env.get("NODE_ENV");
 
-    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.example.test");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://93.184.216.34");
     Deno.env.delete("PROXY_MODE");
     Deno.env.delete("NODE_ENV");
     globals.__vfProjectEnvGetter = () => undefined;
@@ -1635,6 +1646,62 @@ Deno.test({
       } else {
         Deno.env.set("NODE_ENV", originalNodeEnv);
       }
+    }
+  },
+});
+
+Deno.test({
+  name: "ApiCacheBackend does not pair a tenant env endpoint with a host credential",
+  fn: async () => {
+    const { ApiCacheBackend } = await importBackend();
+    const globals = globalThis as Record<string, unknown>;
+    const originalAdapter = globals.__vf_multi_project_adapter;
+    const originalProjectEnvGetter = globals.__vfProjectEnvGetter;
+    const originalProjectEnvActiveChecker = globals.__vfProjectEnvActiveChecker;
+    const originalFetch = globalThis.fetch;
+    const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const capturedUrls: string[] = [];
+
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://93.184.216.34");
+    Deno.env.set("VERYFRONT_API_TOKEN", "host-token");
+    globals.__vfProjectEnvGetter = (key: string) =>
+      key === "VERYFRONT_API_BASE_URL" ? "https://93.184.216.35" : undefined;
+    globals.__vfProjectEnvActiveChecker = () => true;
+    globals.__vf_multi_project_adapter = {
+      getCurrentRequestContext: () => ({ projectId: "project-123" }),
+    };
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      capturedUrls.push(String(input));
+      return Promise.resolve(
+        Response.json({ deleted: 1 }),
+      );
+    }) as typeof fetch;
+
+    try {
+      const cache = new ApiCacheBackend({
+        circuitBreakerName: "api-cache-tenant-endpoint-isolation-test",
+      });
+      assertEquals(await cache.delByPattern("agent:*"), 1);
+      assertEquals(
+        capturedUrls,
+        ["https://93.184.216.34/projects/project-123/cache/del-pattern"],
+      );
+    } finally {
+      if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+      else globals.__vf_multi_project_adapter = originalAdapter;
+      if (originalProjectEnvGetter === undefined) delete globals.__vfProjectEnvGetter;
+      else globals.__vfProjectEnvGetter = originalProjectEnvGetter;
+      if (originalProjectEnvActiveChecker === undefined) {
+        delete globals.__vfProjectEnvActiveChecker;
+      } else {
+        globals.__vfProjectEnvActiveChecker = originalProjectEnvActiveChecker;
+      }
+      globalThis.fetch = originalFetch;
+      if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+      else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+      if (originalApiToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+      else Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
     }
   },
 });

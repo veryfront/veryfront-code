@@ -1,7 +1,8 @@
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { toolRegistry } from "#veryfront/tool";
-import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
+import { registerSkill } from "#veryfront/skill/registry.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "./agent-markdown-adapter.ts";
 import { getEffectiveAgentSystem } from "./effective-agent-system.ts";
 
@@ -19,7 +20,7 @@ Deno.test("createRuntimeAgentFromMarkdownDefinition preserves provider-native to
 });
 
 Deno.test("createRuntimeAgentFromMarkdownDefinition binds scoped delegate tools", () => {
-  toolRegistry.clearAll();
+  toolRegistryInternal.clearAll();
 
   const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
     id: "lead-delegation-test",
@@ -44,7 +45,7 @@ Deno.test("createRuntimeAgentFromMarkdownDefinition binds scoped delegate tools"
 });
 
 Deno.test("createRuntimeAgentFromMarkdownDefinition preserves delegates and MCP servers", () => {
-  toolRegistry.clearAll();
+  toolRegistryInternal.clearAll();
 
   const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
     id: "project-orchestrator",
@@ -71,7 +72,7 @@ Deno.test("createRuntimeAgentFromMarkdownDefinition preserves delegates and MCP 
 });
 
 Deno.test("createRuntimeAgentFromMarkdownDefinition preserves explicit empty skills and hides skill tools", async () => {
-  skillRegistry.clearAll();
+  skillRegistryInternal.clearAll();
   registerSkill("global-howto", {
     id: "global-howto",
     metadata: { name: "global-howto", description: "Follow the project guide" },
@@ -91,6 +92,6 @@ Deno.test("createRuntimeAgentFromMarkdownDefinition preserves explicit empty ski
     const prompt = typeof system === "function" ? await system() : system;
     assertEquals(prompt, "Work alone.");
   } finally {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   }
 });

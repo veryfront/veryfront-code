@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { appendBlocks } from "../../lib/notion-client.ts";
+import { appendBlocks } from "../lib/notion-client.ts";
 
 export default tool({
-  id: "append-blocks",
+  id: "notion-append-blocks",
   description: "Append child blocks to a Notion page or block.",
   inputSchema: defineSchema((v) => v.object({
     blockId: v.string().describe("The page or block ID to append children to"),

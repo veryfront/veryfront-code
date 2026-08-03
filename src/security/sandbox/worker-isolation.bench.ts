@@ -124,6 +124,7 @@ const TEST_PERMISSIONS: WorkerPermissions = {
   run: false,
   ffi: false,
   sys: false,
+  import: false,
 };
 
 Deno.bench({
@@ -135,6 +136,7 @@ Deno.bench({
       projectId: "bench-health",
       permissions: TEST_PERMISSIONS,
       requestTimeoutMs: 5_000,
+      allowInternalEgress: false,
     });
     worker.start();
     await worker.isHealthy(5_000);

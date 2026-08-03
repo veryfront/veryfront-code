@@ -7,8 +7,12 @@
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
-import { Slot } from "./slot.tsx";
-import { createAnchoredSurfaceParts } from "./anchored-surface.tsx";
+import { getPolymorphicButtonType, type PolymorphicButtonAttributes, Slot } from "./slot.tsx";
+import {
+  type AnchoredSlottedTriggerProps,
+  type AnchoredTriggerPublicProps,
+  createAnchoredSurfaceParts,
+} from "./anchored-surface.tsx";
 import { focusWithoutScroll, getFocusableElements } from "./focus-management.ts";
 
 const TYPEAHEAD_RESET_MS = 700;
@@ -35,10 +39,18 @@ export function DropdownMenu(props: DropdownMenuProps): React.ReactElement {
  * Trigger — toggles the menu; the positioning anchor. `asChild` merges onto
  * the child element, which must forward `ref` to its DOM node.
  */
-export function DropdownMenuTrigger(
-  props:
-    & React.ButtonHTMLAttributes<HTMLButtonElement>
-    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> },
+export interface DropdownMenuTriggerProps extends AnchoredTriggerPublicProps {}
+
+/** Literal slotted trigger contract with an element-specific ref. */
+export type DropdownMenuSlottedTriggerProps<T extends HTMLElement = HTMLElement> =
+  AnchoredSlottedTriggerProps<T>;
+
+export function DropdownMenuTrigger<T extends HTMLElement = HTMLElement>(
+  props: DropdownMenuSlottedTriggerProps<T>,
+): React.ReactElement;
+export function DropdownMenuTrigger(props: DropdownMenuTriggerProps): React.ReactElement;
+export function DropdownMenuTrigger<T extends HTMLElement = HTMLElement>(
+  props: DropdownMenuTriggerProps | DropdownMenuSlottedTriggerProps<T>,
 ): React.ReactElement {
   return <_Trigger {...props} haspopup="menu" />;
 }
@@ -47,6 +59,8 @@ export function DropdownMenuTrigger(
 export interface DropdownMenuContentProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Horizontal alignment relative to the trigger. */
   align?: "start" | "end";
+  /** Consumer ref for the rendered menu surface. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** Menu surface — rendered below the trigger while open. No border (Studio). */
@@ -174,57 +188,128 @@ export function DropdownMenuGroup(
   );
 }
 
-/** Props accepted by `<DropdownMenuItem>`. */
-export interface DropdownMenuItemProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+/**
+ * Backward-compatible props accepted by `<DropdownMenuItem>`.
+ *
+ * Keep this as an interface with a broad boolean `asChild` so existing wrapper
+ * interfaces, conditional `asChild` values, and prop spreads remain valid.
+ * The component overload below adds the element-specific contract for callers
+ * that opt into a literal `asChild` value.
+ */
+export interface DropdownMenuItemProps
+  extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "onSelect"> {
   /** Called when the item is chosen (also closes the menu). */
-  onSelect?: () => void;
-  /** `asChild` merges item styling onto your own element. */
+  onSelect?: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  /** `asChild` merges item styling and behavior onto one child element. */
   asChild?: boolean;
+  ref?: React.Ref<HTMLButtonElement>;
+}
+
+/** Slotted-element props accepted by `<DropdownMenuItem>`. */
+export type DropdownMenuSlottedItemProps<T extends HTMLElement = HTMLElement> =
+  & Omit<PolymorphicButtonAttributes<T>, "children" | "ref" | "type">
+  & {
+    /** Called when the item is chosen (also closes the menu). */
+    onSelect?: (event: React.MouseEvent<T>) => void;
+    /** Merge menu-item behavior and styling onto one custom child element. */
+    asChild: true;
+    children: React.ReactElement;
+    disabled?: boolean;
+    /** Applied only when `children` is an intrinsic `<button>`; opaque buttons own `type`. */
+    type?: T extends HTMLButtonElement ? React.ButtonHTMLAttributes<HTMLButtonElement>["type"]
+      : never;
+    ref?: React.Ref<T>;
+  };
+
+function ownsKeyboardActivation(element: HTMLElement, key: "Enter" | " "): boolean {
+  const tagName = element.tagName;
+  if (tagName === "BUTTON") return true;
+  return key === "Enter" && tagName === "A" && element.hasAttribute("href");
 }
 
 /** A selectable menu item. Icons render at `size-3.5` (14px). */
-export function DropdownMenuItem({
+export function DropdownMenuItem<T extends HTMLElement = HTMLElement>(
+  props: DropdownMenuSlottedItemProps<T>,
+): React.ReactElement;
+export function DropdownMenuItem(props: DropdownMenuItemProps): React.ReactElement;
+export function DropdownMenuItem<T extends HTMLElement = HTMLElement>({
   children,
   className,
   onSelect,
   onClick,
+  onKeyDown,
   disabled,
   asChild,
+  ref,
+  type,
   ...props
-}: DropdownMenuItemProps): React.ReactElement {
+}: DropdownMenuItemProps | DropdownMenuSlottedItemProps<T>): React.ReactElement {
   const ctx = React.useContext(_ctx);
   if (!ctx) {
     throw new Error("DropdownMenuItem must be used within <DropdownMenu>");
   }
-  const Comp = asChild ? Slot : "button";
+  const itemClassName = cn(
+    "relative flex w-full cursor-pointer select-none items-center gap-2.5 rounded-md px-3 h-[36px] text-base font-normal text-left text-[var(--foreground)] outline-none transition-colors",
+    "hover:bg-[var(--tertiary)] focus:bg-[var(--tertiary)] dark:hover:bg-[var(--accent)] dark:focus:bg-[var(--accent)]",
+    "disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-3.5 [&_svg]:shrink-0",
+    className,
+  );
+  const handleClick = (event: React.MouseEvent<HTMLElement>): void => {
+    if (disabled) return;
+    (onClick as React.MouseEventHandler<HTMLElement> | undefined)?.(event);
+    if (event.defaultPrevented) return;
+    (onSelect as ((event: React.MouseEvent<HTMLElement>) => void) | undefined)?.(event);
+    ctx.setOpen(false);
+    const trigger = ctx.triggerRef.current;
+    queueMicrotask(() => {
+      if (trigger?.isConnected) focusWithoutScroll(trigger);
+    });
+  };
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLElement>): void => {
+    if (disabled) return;
+    (onKeyDown as React.KeyboardEventHandler<HTMLElement> | undefined)?.(event);
+    if (
+      event.defaultPrevented ||
+      event.nativeEvent.isComposing ||
+      event.nativeEvent.keyCode === 229 ||
+      (event.key !== "Enter" && event.key !== " ") ||
+      ownsKeyboardActivation(event.currentTarget, event.key)
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.currentTarget.click();
+  };
+  const itemStateProps = {
+    role: "menuitem",
+    "aria-disabled": disabled || undefined,
+    disabled,
+    tabIndex: -1,
+    className: itemClassName,
+    onClick: handleClick,
+    onKeyDown: handleKeyDown,
+  } as const;
+  if (asChild) {
+    return (
+      <Slot
+        {...(props as React.HTMLAttributes<HTMLElement>)}
+        {...itemStateProps}
+        type={getPolymorphicButtonType(true, children, type)}
+        ref={ref as React.Ref<HTMLElement>}
+      >
+        {children}
+      </Slot>
+    );
+  }
   return (
-    <Comp
-      {...props}
-      {...(asChild ? {} : { type: "button" as const })}
-      role="menuitem"
-      aria-disabled={disabled || undefined}
-      disabled={disabled}
-      tabIndex={-1}
-      className={cn(
-        "relative flex w-full cursor-pointer select-none items-center gap-2.5 rounded-md px-3 h-[36px] text-base font-normal text-left text-[var(--foreground)] outline-none transition-colors",
-        "hover:bg-[var(--tertiary)] focus:bg-[var(--tertiary)] dark:hover:bg-[var(--accent)] dark:focus:bg-[var(--accent)]",
-        "disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-3.5 [&_svg]:shrink-0",
-        className,
-      )}
-      onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-        if (disabled) return;
-        onClick?.(e);
-        if (e.defaultPrevented) return;
-        onSelect?.();
-        ctx.setOpen(false);
-        const trigger = ctx.triggerRef.current;
-        queueMicrotask(() => {
-          if (trigger?.isConnected) focusWithoutScroll(trigger);
-        });
-      }}
+    <button
+      {...(props as React.ButtonHTMLAttributes<HTMLButtonElement>)}
+      {...itemStateProps}
+      type="button"
+      ref={ref as React.Ref<HTMLButtonElement>}
     >
       {children}
-    </Comp>
+    </button>
   );
 }
 

@@ -31,6 +31,7 @@ const originalEnvironment = Object.fromEntries(
 const projectId = "22222222-2222-4222-8222-222222222222";
 const scheduleId = "33333333-3333-4333-8333-333333333333";
 const runId = "run_11111111-1111-4111-8111-111111111111";
+const TEST_PUBLIC_API_ORIGIN = "https://93.184.216.34";
 
 class ExitSentinel extends Error {
   constructor(readonly code: number) {
@@ -165,7 +166,7 @@ describe("schedule command", () => {
       await Deno.writeTextFile(
         `${projectDir}/veryfront.json`,
         JSON.stringify({
-          apiUrl: "https://api.from-config.test",
+          apiUrl: TEST_PUBLIC_API_ORIGIN,
           apiToken: "config-token",
           projectSlug: "json-only-project",
         }) + "\n",
@@ -216,9 +217,9 @@ describe("schedule command", () => {
 
       assertEquals(exitCode, 0);
       assertEquals(requests.map((request) => request.url), [
-        "https://api.from-config.test/projects/json-only-project/schedules?status=active&source_trigger_id=process-job-submissions",
-        `https://api.from-config.test/projects/json-only-project/schedules/${scheduleId}/runs`,
-        `https://api.from-config.test/runs/${encodeURIComponent(runId)}`,
+        `${TEST_PUBLIC_API_ORIGIN}/projects/json-only-project/schedules?status=active&source_trigger_id=process-job-submissions`,
+        `${TEST_PUBLIC_API_ORIGIN}/projects/json-only-project/schedules/${scheduleId}/runs`,
+        `${TEST_PUBLIC_API_ORIGIN}/runs/${encodeURIComponent(runId)}`,
       ]);
       assertEquals(
         requests.map((request) => new Headers(request.init?.headers).get("Authorization")),

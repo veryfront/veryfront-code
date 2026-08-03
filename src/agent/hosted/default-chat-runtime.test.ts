@@ -1,3 +1,4 @@
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
@@ -10,6 +11,7 @@ import type {
 } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { runWithRequestContext as runWithProjectRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { defineSchema } from "../../schemas/define.ts";
 import {
   createDefaultHostedChatRuntime,
@@ -17,10 +19,20 @@ import {
 } from "./default-chat-runtime.ts";
 import { prepareHostedChatRuntimeCreationOptions } from "./chat-preparation.ts";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
+import {
+  createHostedRunEventWriterCapability,
+  getActiveHostedRunEventWriterCapability,
+  runWithHostedRunEventWriterCapability,
+} from "./child-run-event-writer-token.ts";
 
 const unrestrictedSourceIntegrationPolicy = {
   schemaVersion: 1,
   mode: "unrestricted",
+} as const;
+const denyAllSourceIntegrationPolicy = {
+  schemaVersion: 1,
+  mode: "allowlist",
+  integrations: {},
 } as const;
 
 function localTool(description: string) {
@@ -77,37 +89,48 @@ function restoreEnv(key: string, value: string | undefined): void {
 
 Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime", async () => {
   let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
-
-  const runtime = await createDefaultHostedChatRuntime({
-    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-    options: {
-      projectId: "project-1",
-      branchId: "branch-1",
-      authToken: "token-1",
-      instructions: "Base instructions",
-      model: "sonnet",
-      allowedTools: ["sleep"],
-      conversationId: "conversation-1",
-      userId: "user-1",
-      parentRunId: "run-1",
-      parentMessageId: "message-1",
-      submittedFormInputResult: {
-        values: { topic: "Support FAQ assistant" },
-        inputRequestId: "input-request-1",
-      },
-    },
-    config: {
-      apiUrl: "https://api.example.com",
-      apiMcpUrl: "https://api.example.com/mcp",
-      studioMcpUrl: "https://studio.example.com/mcp",
-    },
-    buildLocalTools: (taskContext) => {
-      capturedContext = taskContext;
-      return { sleep: localTool("Sleep") };
-    },
-    createRemoteToolSource: emptyRemoteSource,
-    preloadLatestConversationUserText: false,
+  let capturedCapability: unknown;
+  const runEventWriterCapability = createHostedRunEventWriterCapability({
+    apiUrl: "https://api.example.com",
+    runId: "run-1",
+    runEventAppendToken: "root-writer-token",
   });
+
+  const runtime = await runWithHostedRunEventWriterCapability(
+    runEventWriterCapability,
+    () =>
+      createDefaultHostedChatRuntime({
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        options: {
+          projectId: "project-1",
+          branchId: "branch-1",
+          authToken: "token-1",
+          instructions: "Base instructions",
+          model: "sonnet",
+          allowedTools: ["sleep"],
+          conversationId: "conversation-1",
+          userId: "user-1",
+          parentRunId: "run-1",
+          parentMessageId: "message-1",
+          submittedFormInputResult: {
+            values: { topic: "Support FAQ assistant" },
+            inputRequestId: "input-request-1",
+          },
+        },
+        config: {
+          apiUrl: "https://api.example.com",
+          apiMcpUrl: "https://api.example.com/mcp",
+          studioMcpUrl: "https://studio.example.com/mcp",
+        },
+        buildLocalTools: (taskContext) => {
+          capturedContext = taskContext;
+          capturedCapability = getActiveHostedRunEventWriterCapability();
+          return { sleep: localTool("Sleep") };
+        },
+        createRemoteToolSource: emptyRemoteSource,
+        preloadLatestConversationUserText: false,
+      }),
+  );
 
   assertEquals(runtime.runtimeKind, "framework");
   assertEquals(runtime.modelId, "anthropic/claude-sonnet-4-6");
@@ -115,6 +138,10 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
   assertEquals(capturedContext.projectId, "project-1");
   assertEquals(capturedContext.branchId, "branch-1");
   assertEquals(capturedContext.model, "anthropic/claude-sonnet-4-6");
+  assertEquals("runEventAppendToken" in capturedContext, false);
+  assertEquals("runEventWriterCapability" in capturedContext, false);
+  assertEquals(JSON.stringify(capturedContext).includes("root-writer-token"), false);
+  assertEquals(capturedCapability, runEventWriterCapability);
   assertEquals(capturedContext.userId, "user-1");
   assertEquals(capturedContext.submittedFormInputResult, {
     values: { topic: "Support FAQ assistant" },
@@ -123,8 +150,110 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
   assertEquals(capturedContext.availableToolNames, ["sleep"]);
 });
 
+Deno.test("createDefaultHostedChatRuntime forwards project identity to tool execution", async () => {
+  await runWithProjectRequestContext(
+    {
+      projectId: "project-1",
+      projectSlug: "project-slug-1",
+      token: "token-1",
+    },
+    async () => {
+      clearModelProviders();
+      let modelCallCount = 0;
+      let capturedExecutionContext: ToolExecutionContext | undefined;
+
+      registerModelProvider("test", () => ({
+        provider: "test",
+        modelId: "test/hosted-context",
+        doGenerate: () => Promise.reject(new Error("unused")),
+        doStream() {
+          modelCallCount += 1;
+          return Promise.resolve({
+            stream: new ReadableStream<unknown>({
+              start(controller) {
+                if (modelCallCount === 1) {
+                  controller.enqueue({
+                    type: "tool-call",
+                    toolCallId: "inspect-context-1",
+                    toolName: "inspect_context",
+                    input: {},
+                  });
+                  controller.enqueue({
+                    type: "finish",
+                    finishReason: "tool-calls",
+                    usage: { inputTokens: 1, outputTokens: 1 },
+                  });
+                } else {
+                  controller.enqueue({ type: "text-delta", text: "done" });
+                  controller.enqueue({
+                    type: "finish",
+                    finishReason: "stop",
+                    usage: { inputTokens: 1, outputTokens: 1 },
+                  });
+                }
+                controller.close();
+              },
+            }),
+          });
+        },
+      }));
+
+      try {
+        const runtime = await createDefaultHostedChatRuntime({
+          sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+          options: {
+            projectId: "project-1",
+            projectSlug: "project-slug-1",
+            authToken: "token-1",
+            instructions: "Inspect the runtime context.",
+            model: "test/hosted-context",
+            allowedTools: ["inspect_context"],
+          },
+          config: {
+            apiUrl: "https://api.example.com",
+            apiMcpUrl: "https://api.example.com/mcp",
+          },
+          buildLocalTools: () => ({
+            inspect_context: {
+              ...localTool("Inspect the runtime context"),
+              execute: (_input: unknown, context?: ToolExecutionContext) => {
+                capturedExecutionContext = context;
+                return { ok: true };
+              },
+            },
+          }),
+          createRemoteToolSource: emptyRemoteSource,
+          preloadLatestConversationUserText: false,
+        });
+
+        await withMockFetch(
+          () => Promise.resolve(Response.json({ tools: [] })),
+          async () => {
+            const result = await runtime.agent.stream({
+              messages: [],
+              abortSignal: new AbortController().signal,
+            });
+            for await (const _chunk of result.toUIMessageStream()) {
+              // Consume the complete tool-call round trip.
+            }
+          },
+        );
+
+        assertEquals(capturedExecutionContext?.projectId, "project-1");
+        assertEquals(capturedExecutionContext?.projectSlug, "project-slug-1");
+      } finally {
+        clearModelProviders();
+      }
+    },
+  );
+});
+
 Deno.test("hosted first provider call filters skill tools for every tool selector", async () => {
   try {
+    // Use the standards-reserved public documentation address so the outbound
+    // guard can validate the destination before handing the request to the
+    // deterministic test transport.
+    const testApiOrigin = "https://93.184.216.34";
     const providerCappedToolNames = Array.from(
       { length: 129 },
       (_, index) => `provider_cap_tool_${String(index).padStart(3, "0")}`,
@@ -246,8 +375,8 @@ Deno.test("hosted first provider call filters skill tools for every tool selecto
           : { hostToolPolicy: { allow: testCase.hostToolAllow } }),
         options: { ...prepared.creationOptions, userId: "user-1" },
         config: {
-          apiUrl: "https://api.example.com",
-          apiMcpUrl: "https://api.example.com/mcp",
+          apiUrl: testApiOrigin,
+          apiMcpUrl: `${testApiOrigin}/mcp`,
         },
         buildLocalTools: () => ({
           ...Object.fromEntries(
@@ -295,6 +424,7 @@ Deno.test("hosted first provider call filters skill tools for every tool selecto
         },
       );
 
+      assertExists(capturedProviderBody);
       const providerBody = JSON.stringify(capturedProviderBody);
       assertEquals(providerBody.includes("Deploy the project"), true);
       for (const toolName of testCase.expectedPresent) {
@@ -306,7 +436,7 @@ Deno.test("hosted first provider call filters skill tools for every tool selecto
       await runtime.cleanup();
     }
   } finally {
-    await toolRegistry.clearAll();
+    await toolRegistryInternal.clearAll();
   }
 });
 
@@ -379,7 +509,7 @@ Deno.test("createDefaultHostedChatRuntime forwards hosted project slug to integr
     assertEquals(authorizationHeader, "Bearer user-scoped-token");
     assertEquals(projectSlugHeader, "authorized-project");
   } finally {
-    await toolRegistry.clearAll();
+    await toolRegistryInternal.clearAll();
     clearModelProviders();
     restoreEnv("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
     restoreEnv("VERYFRONT_API_TOKEN", previousApiToken);
@@ -419,7 +549,7 @@ Deno.test("createDefaultHostedChatRuntime keeps per-run host tools out of the gl
 
     assertEquals(toolRegistry.getOwn("load_skill"), undefined);
   } finally {
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
   }
 });
 

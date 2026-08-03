@@ -52,6 +52,7 @@ describe("ChatMessageList", () => {
     );
 
     assertStringIncludes(html, "vf-transcript-column");
+    assertStringIncludes(html, 'data-message-id="message-1"');
     assertStringIncludes(html, "Compose the transcript.");
   });
 

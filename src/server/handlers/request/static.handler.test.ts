@@ -186,7 +186,7 @@ describe("server/handlers/request/static.handler", () => {
     assertEquals(result.response.headers.get("location"), "http://localhost/favicon.svg");
   });
 
-  it("adds matching nonces to static HTML responses before applying CSP", async () => {
+  it("adds matching nonces to source-authored static HTML before applying CSP", async () => {
     const handler = new StaticHandler();
     (handler as any).staticService = {
       resolveFile: async () => ({

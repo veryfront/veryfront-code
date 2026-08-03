@@ -163,13 +163,42 @@ describe("tool factory", () => {
       });
     });
 
-    it("should reject invalid unknown schemas when permissive fallback is disabled", () => {
+    it("should accept raw JSON schemas whose only keyword is a constraint", () => {
+      // Each of these is a valid schema carrying no structural keyword, so an
+      // allowlist limited to the structural vocabulary rejects them outright.
+      const constraintSchemas = [
+        { pattern: "^[a-z]+$" },
+        { minimum: 0 },
+        { maxItems: 10 },
+        { propertyNames: { pattern: "^x-" } },
+      ];
+
+      for (const inputSchema of constraintSchemas) {
+        const t = tool({
+          id: "constraint-schema",
+          description: "desc",
+          inputSchema,
+          execute: async () => null,
+        });
+
+        assertEquals(t.inputSchemaJson, inputSchema);
+      }
+    });
+
+    it("should reject schema-like raw objects by default", () => {
       assertThrows(
         () =>
           tool({
-            id: "invalid-schema",
+            id: "shape-test",
             description: "desc",
-            inputSchema: new Date() as unknown as Schema<unknown>,
+            inputSchema: {
+              _def: {
+                shape: {
+                  name: {},
+                  age: {},
+                },
+              },
+            } as unknown as Schema<unknown>,
             execute: async () => null,
           }),
         Error,
@@ -177,11 +206,31 @@ describe("tool factory", () => {
       );
     });
 
+    it("should reject invalid unknown schemas when permissive fallback is disabled", () => {
+      for (
+        const inputSchema of [{}, new Date(), { _def: { shape: {} } }] as unknown as Schema<
+          unknown
+        >[]
+      ) {
+        assertThrows(
+          () =>
+            tool({
+              id: "invalid-schema",
+              description: "desc",
+              inputSchema,
+              execute: async () => null,
+            }),
+          Error,
+          "input schema is not a valid Veryfront schema",
+        );
+      }
+    });
+
     it("should fall back to permissive schema with allowUnknownSchema", () => {
       const t = tool({
         id: "permissive-tool",
         description: "desc",
-        inputSchema: new Date() as unknown as Schema<unknown>,
+        inputSchema: {} as Schema<unknown>,
         execute: async () => null,
         allowUnknownSchema: true,
       });
@@ -213,6 +262,23 @@ describe("tool factory", () => {
         () =>
           tool({
             id: "hostile-mcp-config",
+            description: "desc",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: async () => null,
+            mcp,
+          }),
+        Error,
+        "MCP configuration must contain only data properties",
+      );
+    });
+
+    it("rejects transparent MCP config proxies before descriptor inspection", () => {
+      const mcp = new Proxy({ enabled: true }, {});
+
+      assertThrows(
+        () =>
+          tool({
+            id: "proxied-mcp-config",
             description: "desc",
             inputSchema: defineSchema((v) => v.object({}))(),
             execute: async () => null,

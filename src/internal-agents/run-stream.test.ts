@@ -1,3 +1,5 @@
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -16,8 +18,8 @@ import type {
   AgentServiceSandboxToolsResult,
   CreateSandboxBashTool,
 } from "#veryfront/sandbox";
-import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
-import { type RemoteToolSource, type Tool, toolRegistry } from "#veryfront/tool";
+import { registerSkill } from "#veryfront/skill/registry.ts";
+import type { RemoteToolSource, Tool } from "#veryfront/tool";
 import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
 import { buildMergedTools, createRuntimeAgentStreamResponse } from "./run-stream.ts";
@@ -164,11 +166,11 @@ async function withJsonDebugLogFormat<T>(fn: () => Promise<T>): Promise<T> {
 describe("internal-agents/run-stream", () => {
   afterEach(() => {
     _resetShimForTests();
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   });
 
   it("includes skill infrastructure for tools: true agents without a skills selector", () => {
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
     try {
       const runtimeAgent = createAgent({
         id: "universal-skill-agent",
@@ -193,11 +195,11 @@ describe("internal-agents/run-stream", () => {
         "load_skill_reference",
       ]);
     } finally {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
     }
   });
 
-  it("keeps visible registry tools authoritative over same-named injected tools", () => {
+  it("keeps injected studio waits authoritative over same-named registry tools", () => {
     const sessionManager = new AgentRunSessionManager();
     const projectTool = {
       id: "number-generator",
@@ -207,7 +209,7 @@ describe("internal-agents/run-stream", () => {
       execute: () => ({ randomNumber: 7 }),
     } as unknown as Tool;
 
-    toolRegistry.register("number-generator", projectTool);
+    toolRegistryInternal.register("number-generator", projectTool);
     try {
       const runtimeAgent = {
         id: "random",
@@ -232,9 +234,101 @@ describe("internal-agents/run-stream", () => {
         sessionManager,
       );
 
-      assertEquals(mergedTools?.["number-generator"], true);
+      const entry = mergedTools?.["number-generator"];
+      assertEquals(typeof entry, "object");
+      assertEquals((entry as Tool).description, "Caller-supplied shadow definition");
+      assertEquals(entry === projectTool, false);
     } finally {
-      toolRegistry.delete("number-generator");
+      toolRegistryInternal.delete("number-generator");
+    }
+  });
+
+  it("keeps injected studio waits authoritative for tools: true agents", () => {
+    const sessionManager = new AgentRunSessionManager();
+    const projectTool = {
+      id: "number-generator",
+      type: "function",
+      description: "Generate a number",
+      inputSchema: {} as never,
+      execute: () => ({ randomNumber: 7 }),
+    } as unknown as Tool;
+
+    toolRegistryInternal.register("number-generator", projectTool);
+    try {
+      const runtimeAgent = {
+        id: "random",
+        config: {
+          id: "random",
+          system: "test",
+          tools: true,
+        },
+      } as unknown as Agent;
+      const mergedTools = buildMergedTools(
+        runtimeAgent,
+        {
+          runId: "run_1",
+          threadId: crypto.randomUUID(),
+          messages: [],
+          tools: [{
+            name: "number-generator",
+            description: "Caller-supplied shadow definition",
+          }],
+          context: [],
+        } as Parameters<typeof buildMergedTools>[1],
+        sessionManager,
+      );
+
+      const entry = mergedTools?.["number-generator"];
+      assertEquals(typeof entry, "object");
+      assertEquals((entry as Tool).description, "Caller-supplied shadow definition");
+    } finally {
+      toolRegistryInternal.delete("number-generator");
+    }
+  });
+
+  it("keeps registry tools authoritative for server-resolved project tool names", () => {
+    const sessionManager = new AgentRunSessionManager();
+    const projectTool = {
+      id: "number-generator",
+      type: "function",
+      description: "Generate a number",
+      inputSchema: {} as never,
+      execute: () => ({ randomNumber: 7 }),
+    } as unknown as Tool;
+
+    toolRegistryInternal.register("number-generator", projectTool);
+    try {
+      const runtimeAgent = {
+        id: "random",
+        config: {
+          id: "random",
+          system: "test",
+          tools: { "number-generator": true },
+        },
+      } as unknown as Agent;
+      const mergedTools = buildMergedTools(
+        runtimeAgent,
+        {
+          runId: "run_1",
+          threadId: crypto.randomUUID(),
+          messages: [],
+          tools: [{
+            name: "number-generator",
+            description: "Caller-supplied shadow definition",
+          }],
+          context: [],
+          forwardedProps: {
+            runtimeOverrides: {
+              serverResolvedProjectTools: ["number-generator"],
+            },
+          },
+        } as Parameters<typeof buildMergedTools>[1],
+        sessionManager,
+      );
+
+      assertEquals(mergedTools?.["number-generator"], projectTool);
+    } finally {
+      toolRegistryInternal.delete("number-generator");
     }
   });
 
@@ -1279,7 +1373,7 @@ describe("internal-agents/run-stream", () => {
         id: "ops-agent",
         model: "openai/gpt-5.4-nano",
         system: "test",
-        providerTools: ["web_search"],
+        providerTools: ["web_search", "web_fetch"],
       },
     } as unknown as Agent;
 
@@ -1310,7 +1404,10 @@ describe("internal-agents/run-stream", () => {
 
     assertEquals(typeof runtimeSystem, "string");
     const prompt = runtimeSystem as string;
+    // OpenAI exposes a native web_search but no native web_fetch, so only the
+    // supported half may reach the inventory.
     assertEquals(prompt.includes("- web_search"), true);
+    assertEquals(prompt.includes("- web_fetch"), false);
   });
 
   it("keeps local tools required without protecting remote placeholders from provider caps", async () => {
@@ -1991,7 +2088,7 @@ describe("internal-agents/run-stream", () => {
     } as unknown as Tool;
     let capturedToolEntry: Tool | boolean | undefined;
 
-    toolRegistry.register("number-generator", projectTool);
+    toolRegistryInternal.register("number-generator", projectTool);
     try {
       const agent = {
         id: "random",
@@ -2046,7 +2143,7 @@ describe("internal-agents/run-stream", () => {
         },
       );
     } finally {
-      toolRegistry.delete("number-generator");
+      toolRegistryInternal.delete("number-generator");
     }
 
     assertEquals(capturedToolEntry, projectTool);

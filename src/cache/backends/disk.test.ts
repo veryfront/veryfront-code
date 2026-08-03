@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "@std/assert";
+import { assertEquals, assertMatch, assertRejects, assertThrows } from "@std/assert";
 import { join } from "#veryfront/compat/path/index.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { logger } from "#veryfront/utils";
 import { DiskCacheBackend } from "./disk.ts";
 import { CacheValueTooLargeError } from "../bounded-read.ts";
@@ -16,24 +17,42 @@ function makeBackend(): DiskCacheBackend {
   return new DiskCacheBackend(TEST_DIR);
 }
 
-function captureDebugLogs(): {
+function captureLogs(level: "debug" | "warn"): {
   entries: Array<{ message: string; args: unknown[] }>;
   restore: () => void;
 } {
   const entries: Array<{ message: string; args: unknown[] }> = [];
   const target = logger as unknown as {
-    debug: (message: string, ...args: unknown[]) => void;
+    [key in "debug" | "warn"]: (message: string, ...args: unknown[]) => void;
   };
-  const original = target.debug;
-  target.debug = (message: string, ...args: unknown[]) => {
+  const original = target[level];
+  target[level] = (message: string, ...args: unknown[]) => {
     entries.push({ message, args });
   };
   return {
     entries,
     restore: () => {
-      target.debug = original;
+      target[level] = original;
     },
   };
+}
+
+function captureDebugLogs() {
+  return captureLogs("debug");
+}
+
+async function cacheFileNames(cacheDir: string): Promise<string[]> {
+  const names: string[] = [];
+  for await (const entry of Deno.readDir(cacheDir)) {
+    if (entry.isFile && entry.name.endsWith(".vfcache")) names.push(entry.name);
+  }
+  return names;
+}
+
+async function onlyCacheFileName(cacheDir: string): Promise<string> {
+  const names = await cacheFileNames(cacheDir);
+  assertEquals(names.length, 1);
+  return names[0]!;
 }
 
 /** Adapter: wraps DiskCacheBackend for the MinimalCache invariant test interface */
@@ -123,14 +142,101 @@ Deno.test("DiskCacheBackend", async (t) => {
     const debugCapture = captureDebugLogs();
     try {
       assertEquals(await backend.get(key), null);
-      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 5));
 
       assertEquals(debugCapture.entries.length, 1);
       assertEquals(debugCapture.entries[0]?.message, "[DiskCache] Expired entry cleanup failed");
+      // Without something identifying the entry the log says only that some
+      // cleanup failed, which is not diagnosable against a cache holding
+      // thousands of entries. The digest identifies it without reproducing the
+      // key, which for a user KV entry can embed a token.
+      const context = debugCapture.entries[0]?.args[0] as Record<string, unknown> | undefined;
+      assertMatch(String(context?.keyDigest), /^[0-9a-f]{12}$/);
+      assertEquals(JSON.stringify(context).includes(key), false);
+    } finally {
+      debugCapture.restore();
+      (backend as unknown as { del: (entryKey: string) => Promise<void> }).del = originalDel;
+    }
+  });
+
+  await t.step("logs both keys when a filename digest collides", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "digest-collision");
+    const backend = new DiskCacheBackend(isolatedDir);
+    const cacheDir = join(isolatedDir, "veryfront-files");
+    const storedKey = "collision-stored-key";
+    const requestedKey = "collision-requested-key";
+
+    await backend.set(storedKey, "stored-value");
+    const storedFile = await onlyCacheFileName(cacheDir);
+    const storedBytes = await Deno.readFile(join(cacheDir, storedFile));
+
+    // Force the collision the digest makes astronomically unlikely: park the
+    // envelope written for one key under the other key's filename.
+    await backend.set(requestedKey, "requested-value");
+    const requestedFile = (await cacheFileNames(cacheDir)).find((name) => name !== storedFile);
+    assertEquals(typeof requestedFile, "string");
+    await Deno.writeFile(join(cacheDir, requestedFile!), storedBytes);
+
+    const warnCapture = captureLogs("warn");
+    try {
+      assertEquals(await backend.get(requestedKey), null);
+
+      assertEquals(warnCapture.entries.length, 1);
       assertEquals(
-        "key" in (debugCapture.entries[0]?.args[0] as Record<string, unknown>),
-        false,
+        warnCapture.entries[0]?.message,
+        "[DiskCache] Filename digest collision; stored key does not match",
       );
+      const context = warnCapture.entries[0]?.args[0] as Record<string, unknown> | undefined;
+      // Digests keep the two entries distinguishable — and equal digests would
+      // mean a genuine SHA-256 collision rather than an overwritten file —
+      // without reproducing key text that can embed a token.
+      assertMatch(String(context?.requestedKeyDigest), /^[0-9a-f]{12}$/);
+      assertMatch(String(context?.storedKeyDigest), /^[0-9a-f]{12}$/);
+      assertEquals(context?.requestedKeyDigest === context?.storedKeyDigest, false);
+      const payload = JSON.stringify(context);
+      assertEquals(payload.includes(requestedKey), false);
+      assertEquals(payload.includes(storedKey), false);
+    } finally {
+      warnCapture.restore();
+    }
+  });
+
+  await t.step("derives the logged key digest from the entry's own filename", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "digest-correlation");
+    const backend = new DiskCacheBackend(isolatedDir);
+    const cacheDir = join(isolatedDir, "veryfront-files");
+    const key = "digest-correlation-key";
+
+    await backend.set(key, "value", 0);
+    const fileName = await onlyCacheFileName(cacheDir);
+    await new Promise((r) => setTimeout(r, 5));
+
+    const originalDel = backend.del.bind(backend);
+    (backend as unknown as { del: (entryKey: string) => Promise<void> }).del = () =>
+      Promise.reject(new Error("delete rejected"));
+
+    const debugCapture = captureDebugLogs();
+    try {
+      assertEquals(await backend.get(key), null);
+      await waitFor(
+        () =>
+          debugCapture.entries.some((entry) =>
+            entry.message === "[DiskCache] Expired entry cleanup failed"
+          ),
+        {
+          interval: 1,
+          timeout: 1_000,
+          message: "expired-entry cleanup diagnostic was not emitted",
+        },
+      );
+
+      // The digest is the prefix of the SHA-256 that names the file, so an
+      // operator can still walk from a log line to the entry on disk.
+      const diagnostic = debugCapture.entries.find((entry) =>
+        entry.message === "[DiskCache] Expired entry cleanup failed"
+      );
+      const context = diagnostic?.args[0] as Record<string, unknown> | undefined;
+      assertEquals(fileName.startsWith(String(context?.keyDigest)), true);
     } finally {
       debugCapture.restore();
       (backend as unknown as { del: (entryKey: string) => Promise<void> }).del = originalDel;

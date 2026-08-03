@@ -81,6 +81,19 @@ const BROWSER_ESM_CSP = {
   "form-action": ["'self'"],
 } as const;
 
+function assertInlineScriptHasNonce(html: string, marker: string, message: string): void {
+  const markerIndex = html.indexOf(marker);
+  assert(markerIndex >= 0, `${message}: marker was not rendered`);
+  const openingTagStart = html.lastIndexOf("<script", markerIndex);
+  const openingTagEnd = html.indexOf(">", openingTagStart);
+  assert(openingTagStart >= 0 && openingTagEnd > openingTagStart, `${message}: tag is malformed`);
+  assertStringIncludes(
+    html.slice(openingTagStart, openingTagEnd + 1),
+    'nonce="',
+    `${message}: response nonce is missing`,
+  );
+}
+
 async function configureBrowserEsmProject(
   projectDir: string,
   additionalConfig: Record<string, unknown> = {},
@@ -117,16 +130,21 @@ describe("Compiled Binary E2E", COMPILED_BINARY_E2E_OPTIONS, () => {
     }
   });
 
-  it("should render page with veryfront/head import correctly", async () => {
+  it("should render Head and UI nonce consumers through compiled framework sources", async () => {
     const projectDir = await createTestProject(
       "head-test",
       `
 import { Head } from "veryfront/head";
+import { ColorModeScript } from "veryfront/ui";
 
 export default function Home() {
   return (
     <>
-      <Head><title>Head Component Test</title></Head>
+      <Head>
+        <title>Head Component Test</title>
+        <script id="head-nonce-probe">{"globalThis.__vfHeadNonceProbe=true"}</script>
+      </Head>
+      <ColorModeScript storageKey="vf-binary-color-mode" />
       <div id="content">Head import works</div>
     </>
   );
@@ -143,6 +161,16 @@ export default function Home() {
         "Should not have module errors",
       );
       assertStringIncludes(html, "Head import works", "Should render content");
+      assertInlineScriptHasNonce(
+        html,
+        'id="head-nonce-probe"',
+        "Managed Head inline script",
+      );
+      assertInlineScriptHasNonce(
+        html,
+        'localStorage.getItem("vf-binary-color-mode")',
+        "ColorModeScript",
+      );
 
       const errorLogs = server.logs.filter((l) =>
         l.includes("esm.sh/_vf_modules") || l.includes("dual React") ||
@@ -635,7 +663,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       const response = await fetch(`http://127.0.0.1:${server.port}/`);
       const html = await response.text();
 
-      assertEquals(response.status, 200, "Should return 200");
+      assertEquals(
+        response.status,
+        200,
+        `Should return 200\n${server.logs.join("").slice(-16000)}`,
+      );
       const normalizedHtml = stripReactSSRMarkers(html);
       // The layout rendered the page's getServerData value at SSR — proving
       // server data reaches a layout via usePageContext().data without drilling.
@@ -667,14 +699,19 @@ export function GET() {
 
     await withServer(projectDir, async (server) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/api/hello`);
-      const json = await response.json();
+      const body = await response.text();
 
-      assertEquals(response.status, 200, "Should return 200");
+      assertEquals(
+        response.status,
+        200,
+        `Should return 200\nResponse body: ${body}\n${server.logs.join("").slice(-16000)}`,
+      );
       assertEquals(
         response.headers.get("content-type")?.includes("application/json"),
         true,
         "Should be JSON",
       );
+      const json = JSON.parse(body);
       assertEquals(json.message, "Hello from API", "Should return correct message");
       assert(json.timestamp > 0, "Should have timestamp");
     });
@@ -711,7 +748,11 @@ export function GET() {
 
     await withServer(projectDir, async (server) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/api/events`);
-      assertEquals(response.status, 200, "Should start the SSE response");
+      assertEquals(
+        response.status,
+        200,
+        `Should start the SSE response\n${server.logs.join("").slice(-16000)}`,
+      );
 
       const reader = response.body?.getReader();
       assert(reader, "Should expose the SSE response body");
@@ -787,7 +828,11 @@ export function GET() {
 
     await withServer(projectDir, async (server) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/api/users/list`);
-      assertEquals(response.status, 200, "Should return 200");
+      assertEquals(
+        response.status,
+        200,
+        `Should return 200\n${server.logs.join("").slice(-16000)}`,
+      );
 
       const json = await response.json();
       assertEquals(json.count, 2, "Should return user count");
@@ -2247,7 +2292,11 @@ export function GET() {
 
     await withServer(projectDir, async (server) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/api/status`);
-      assertEquals(response.status, 201, "Should return custom status 201");
+      assertEquals(
+        response.status,
+        201,
+        `Should return custom status 201\n${server.logs.join("").slice(-16000)}`,
+      );
 
       const json = await response.json();
       assertEquals(json.status, "ok", "Should return ok status");

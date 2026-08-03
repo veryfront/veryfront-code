@@ -5,13 +5,14 @@ import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
 import "../../../_helpers/log-guard.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { installTestRscActionAuthorization } from "./action-authorization-fixture.ts";
 
 describe("RSC Actions Dev Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   afterAll(async () => {
     await cleanupBundler();
   });
 
-  it("Dev server: RSC action endpoint basic validations (zod or fallback)", async () => {
+  it("Dev server: RSC action endpoint enforces strict request validation", async () => {
     await withTestContext("rsc-dev-act", async (context) => {
       context.setEnv({ MODE: "development" });
 
@@ -45,6 +46,7 @@ describe("RSC Actions Dev Tests", { sanitizeOps: false, sanitizeResources: false
           security: { cors: true, csrf: false }
         };`,
       );
+      await installTestRscActionAuthorization(context.projectDir);
 
       await mkdir(join(context.projectDir, "app", "actions"), { recursive: true });
       await writeTextFile(
@@ -65,16 +67,14 @@ describe("RSC Actions Dev Tests", { sanitizeOps: false, sanitizeResources: false
       assertEquals(res.status, 400);
       await res.body?.cancel();
 
-      // Invalid args type -> converts to empty array (current behavior)
+      // Invalid args type -> rejected at the request boundary
       res = await fetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify({ id: "echo", args: { bad: true } }),
       });
-      assertEquals(res.status, 200);
-      const json2 = await res.json();
-      assertEquals(json2.ok, true);
-      assertEquals(json2.result, "ok:undefined");
+      assertEquals(res.status, 400);
+      await res.body?.cancel();
 
       // Invalid id traversal -> 400
       res = await fetch(url, {

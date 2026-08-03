@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getIssue } from "../../lib/linear-client.ts";
+import { getIssue } from "../lib/linear-client.ts";
 
 export default tool({
-  id: "get-issue",
+  id: "linear-get-issue",
   description:
     "Get detailed information about a specific Linear issue by its ID or identifier (e.g., ENG-123). Returns complete issue details including description, status, assignee, labels, and project.",
   inputSchema: defineSchema((v) => v.object({

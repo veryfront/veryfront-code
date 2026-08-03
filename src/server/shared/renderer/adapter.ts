@@ -242,7 +242,11 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
 
   if (ctx.enriched) {
     logger.debug("Using pre-built EnrichedContext", { projectSlug });
-    return createRenderContextFromEnriched(ctx.enriched);
+    return {
+      ...createRenderContextFromEnriched(ctx.enriched),
+      allowHostProjectCodeExecution: ctx.isLocalProject === true ||
+        ctx.allowHostProjectCodeExecution === true,
+    };
   }
 
   let config = ctx.config;
@@ -289,6 +293,7 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
     environment,
     branch,
     isLocalProject: isLocal,
+    allowHostProjectCodeExecution: ctx.allowHostProjectCodeExecution,
     contentSourceId,
     parsedDomain: ctx.parsedDomain ?? {
       slug: null,

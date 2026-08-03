@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertMatch } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { DevCommandOptions, DevCommandResult, DevOptions } from "./index.ts";
 import { createSelectedProjectPushOptions, preloadDevAuth } from "./command.ts";
@@ -164,20 +164,26 @@ describe("cli/commands/dev", () => {
   });
 
   describe("project sync shortcuts", () => {
+    const selectedProject = {
+      id: "project-1",
+      slug: "selected-project",
+      name: "Selected Project",
+    };
+
     it("targets the project selected in the dev session when pushing", () => {
-      assertEquals(
-        createSelectedProjectPushOptions("/tmp/project", {
-          id: "project-1",
-          slug: "selected-project",
-          name: "Selected Project",
-        }),
-        {
-          projectDir: "/tmp/project",
-          projectSlug: "selected-project",
-          force: true,
-          quiet: true,
-        },
-      );
+      const options = createSelectedProjectPushOptions("/tmp/project", selectedProject);
+
+      assertEquals(options.projectDir, "/tmp/project");
+      assertEquals(options.projectSlug, "selected-project");
+      assertEquals(options.force, true);
+      assertEquals(options.quiet, true);
+    });
+
+    it("stages the push on an isolation branch so main is not overwritten in place", () => {
+      const options = createSelectedProjectPushOptions("/tmp/project", selectedProject);
+
+      assertEquals(options.branch === "main", false);
+      assertMatch(options.branch ?? "", /^push-\d{8}t\d{6}-[0-9a-f]{6}$/);
     });
   });
 

@@ -133,7 +133,6 @@ export interface AgentHttpMcpServerConfig {
   transport: AgentMcpHttpTransport;
   auth?: AgentMcpServerAuth;
   toolPolicy?: AgentMcpToolPolicy;
-  fetch?: typeof fetch;
 }
 
 /** MCP server available to an agent. */

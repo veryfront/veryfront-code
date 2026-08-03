@@ -1,6 +1,6 @@
 import type * as React from "react";
 import { flushSync } from "react-dom";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
@@ -92,6 +92,13 @@ function createChangeEvent(value: string): React.ChangeEvent<HTMLInputElement> {
   return event as unknown as React.ChangeEvent<HTMLInputElement>;
 }
 
+// Unmounting leaves a scheduler callback queued; drain it so the leak
+// sanitizer does not attribute that timer to the test.
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("Command", () => {
   it("exposes a listbox contract and tracks pointer-active options", async () => {
     const dom = new JSDOM(
@@ -166,7 +173,7 @@ describe("Command", () => {
       flushSync(() => disabled.click());
       assertEquals(selected, ["beta"]);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });
@@ -219,7 +226,7 @@ describe("Command", () => {
       flushSync(() => cancelled.click());
       assertEquals(calls, ["click", "select", "cancel-click"]);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });
@@ -328,7 +335,7 @@ describe("Command", () => {
         return document.getElementById(active ?? "")?.textContent === "Beta";
       });
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });
@@ -410,7 +417,7 @@ describe("Command", () => {
       await waitFor(() => document.querySelector("[data-empty]") === null);
       assert(document.querySelector("[data-always]"));
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });
@@ -442,7 +449,7 @@ describe("Command", () => {
       assertEquals(empty.getAttribute("aria-disabled"), "true");
       assertEquals(empty.getAttribute("aria-live"), "polite");
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });

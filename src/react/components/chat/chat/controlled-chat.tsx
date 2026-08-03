@@ -4,7 +4,6 @@ import { defaultChatTheme, mergeThemes } from "../theme.ts";
 import { useUpload } from "./hooks/use-upload.ts";
 import { attachmentsToFileParts, hasPendingAttachments } from "./chat-attachments.ts";
 
-// Composition imports (used in the Chat preset)
 import { ChatRoot } from "./composition/chat-root.tsx";
 import { ChatInput } from "./composition/chat-composer.tsx";
 import { ChatMessageList } from "./composition/chat-message-list.tsx";
@@ -25,7 +24,7 @@ interface ControlledChatProps extends Omit<ChatProps, "chat"> {
   /** App mode can replace the session submit to fold in managed attachments. */
   submit?: (e?: React.FormEvent) => void | Promise<void>;
 }
-/** Render the controlled chat from one complete session object. */
+/** Render controlled chat from one complete session object. */
 export function ControlledChat(
   {
     chat,
@@ -214,6 +213,7 @@ export function ControlledChat(
       <ChatInput
         input={input}
         onChange={onChange}
+        setInput={setInput}
         onSubmit={handleSubmit}
         isLoading={isLoading}
         placeholder={placeholder}

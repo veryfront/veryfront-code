@@ -287,7 +287,8 @@ describe("createProject", () => {
         statusRoute,
         'import { requireUserIdFromRequest } from "../../../../lib/user-id.ts";',
       );
-      assertStringIncludes(statusRoute, "const userId = requireUserIdFromRequest(req);");
+      assertStringIncludes(statusRoute, "const userId = await requireUserIdFromRequest(req);");
+      assertStringIncludes(statusRoute, 'return Response.json({ error: "Unauthorized" }');
       assertEquals(statusRoute.includes('"current-user"'), false);
     } finally {
       await remove(parentDir, { recursive: true }).catch(() => {});

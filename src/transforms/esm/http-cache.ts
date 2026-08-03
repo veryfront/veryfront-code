@@ -31,10 +31,14 @@ import {
 import { looksLikeHtmlContent as looksLikeHtmlNotJs } from "./html-content.ts";
 import { HttpModuleBodyError, readHttpModuleText } from "../shared/http-module-response.ts";
 import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
+import {
+  guardedOutboundFetch,
+  OutboundRequestBlockedError,
+} from "#veryfront/security/http/outbound-fetch.ts";
 
 // Extracted modules
 import { embedSourceUrl, extractSourceUrl } from "./source-url-embed.ts";
-import { isDegradedArtifact, markDegradedArtifact } from "./degraded-artifact.ts";
+import { isDegradedArtifact } from "./degraded-artifact.ts";
 import {
   buildHttpCacheIdentity,
   buildHttpCacheIdentityMetadata,
@@ -55,7 +59,6 @@ import { extractBundleDeps, validateBundleDepsExist } from "./bundle-deps-valida
 import {
   bundleAccumulatorStorage,
   createBundleAccumulator,
-  markBundleAccumulatorIncomplete,
   trackCachedBundleGraph,
   trackWrittenBundle,
 } from "./bundle-accumulator.ts";
@@ -140,7 +143,7 @@ async function fetchHttpModuleAttempt(
 
   try {
     const startedAt = performance.now();
-    response = await fetch(url, {
+    response = await guardedOutboundFetch(url, {
       headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
       signal,
       redirect: "follow",
@@ -171,7 +174,10 @@ async function fetchHttpModuleAttempt(
       contentType: response.headers.get("content-type") ?? "",
     };
   } catch (error) {
-    if (error instanceof HttpModuleResponseError || error instanceof HttpModuleBodyError) {
+    if (
+      error instanceof HttpModuleResponseError || error instanceof HttpModuleBodyError ||
+      error instanceof OutboundRequestBlockedError
+    ) {
       throw error;
     }
     if (response) await discardResponseBody(response);
@@ -205,6 +211,8 @@ async function fetchHttpModule(url: string): Promise<HttpModuleFetchResult> {
         shouldRetry: (error) =>
           error instanceof HttpModuleBodyError
             ? false
+            : error instanceof OutboundRequestBlockedError
+            ? false
             : !(error instanceof HttpModuleResponseError) ||
               shouldRetryHttpModuleFetch(error.status),
         computeDelay: (attempt) => HTTP_MODULE_FETCH_RETRY_DELAY_MS * (attempt + 1),
@@ -233,6 +241,12 @@ async function fetchHttpModule(url: string): Promise<HttpModuleFetchResult> {
       throw BUILD_FAILED.create({
         detail: `Failed to fetch ${safeUrl}: ${error.message}`,
       });
+    }
+    if (error instanceof OutboundRequestBlockedError) {
+      // Preserve the policy-denial type so downstream specifier resolution can
+      // distinguish it from a transient fetch failure. Dynamic imports must
+      // never degrade into an unguarded runtime fetch after a policy denial.
+      throw error;
     }
     throw error;
   }
@@ -437,7 +451,6 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     }
 
     processingStack.add(cacheIdentity);
-    let degraded: readonly string[] = [];
     try {
       const rewritten = await rewriteModuleImports(
         code,
@@ -446,13 +459,11 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
         cacheHttpModule,
       );
       code = rewritten.code;
-      degraded = rewritten.degraded;
     } finally {
       processingStack.delete(cacheIdentity);
     }
 
     code = embedSourceUrl(code, normalizedUrl);
-    if (degraded.length > 0) code = markDegradedArtifact(code);
     if (!isHttpBundleCodeWithinLimit(code)) {
       throw BUNDLE_ERROR.create({
         detail: `Rewritten HTTP module exceeds ${MAX_CACHED_HTTP_BUNDLE_BYTES} bytes`,
@@ -467,21 +478,6 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
         detail:
           `[HTTP-CACHE] INVARIANT VIOLATION: File write succeeded but file does not exist: ${cachePath}`,
       });
-    }
-
-    if (degraded.length > 0) {
-      // The file on disk carries this render through, but the artifact is not
-      // the one this URL is supposed to produce. Keeping it out of the
-      // distributed cache and the in-memory path map means the next render
-      // retries the prefetch instead of inheriting one upstream blip for the
-      // lifetime of the distributed entry.
-      httpCacheLog.warn("Not caching a module with unresolved dynamic imports", {
-        url: safeUrl,
-        hash,
-        degraded: degraded.map(sanitizeUrlForSpan),
-      });
-      markBundleAccumulatorIncomplete();
-      return cachePath;
     }
 
     try {

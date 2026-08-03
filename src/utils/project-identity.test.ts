@@ -26,7 +26,10 @@ Deno.test("project identity validation", async (t) => {
         "project-",
         "project_slug",
         "project slug",
+        "project/slug",
+        "project\nslug",
         "project\u0000slug",
+        "å-project",
         "a".repeat(MAX_PROJECT_SLUG_CODE_UNITS + 1),
       ]
     ) {
@@ -35,15 +38,18 @@ Deno.test("project identity validation", async (t) => {
   });
 
   await t.step("keeps opaque identifiers exact, bounded, and control-free", () => {
-    for (const value of ["project:01J2XYZ", "opaque/id", "å-project"]) {
+    for (const value of ["project:01J2XYZ", "opaque/id", "å-project", "project😀"]) {
       assertEquals(isCanonicalOpaqueProjectIdentifier(value), true, value);
     }
     for (
       const value of [
+        undefined,
         "",
         " project-id",
         "project-id ",
         "project\u001fid",
+        "project\ud800",
+        "project\udc00",
         "a".repeat(MAX_OPAQUE_ID_CODE_UNITS + 1),
       ]
     ) {

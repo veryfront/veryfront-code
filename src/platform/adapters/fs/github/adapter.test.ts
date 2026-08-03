@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { FSAdapterWrapper } from "../wrapper.ts";
@@ -11,7 +12,7 @@ import { createGitHubConfig } from "./types.ts";
 const mockTreeResponse = {
   sha: "abc123",
   tree: [
-    { path: "README.md", type: "blob", sha: "sha1", size: 100 },
+    { path: "README.md", type: "blob", sha: "sha1", size: 11 },
     { path: "src/index.ts", type: "blob", sha: "sha2", size: 200 },
     { path: "src/utils/helper.ts", type: "blob", sha: "sha3", size: 150 },
     { path: "src", type: "tree", sha: "sha4" },
@@ -147,7 +148,7 @@ describe("GitHubFSAdapter", () => {
     let adapter: GitHubFSAdapter;
 
     beforeEach(async () => {
-      globalThis.fetch = (url) => {
+      globalThis.fetch = (url, init) => {
         const urlStr = String(url);
 
         if (urlStr.includes("/git/trees/")) {
@@ -157,6 +158,16 @@ describe("GitHubFSAdapter", () => {
         }
 
         if (urlStr.includes("/contents/README.md")) {
+          return Promise.resolve(
+            new Response(JSON.stringify(mockFileContent), { status: 200 }),
+          );
+        }
+
+        if (urlStr.includes("/git/blobs/sha1")) {
+          const accept = new Headers(observeFetchRequestInit(init).headers).get("Accept");
+          if (accept === "application/vnd.github.raw+json") {
+            return Promise.resolve(new Response("hello world", { status: 200 }));
+          }
           return Promise.resolve(
             new Response(JSON.stringify(mockFileContent), { status: 200 }),
           );
@@ -185,7 +196,7 @@ describe("GitHubFSAdapter", () => {
       const stat = await adapter.stat("README.md");
       assertEquals(stat.isFile, true);
       assertEquals(stat.isDirectory, false);
-      assertEquals(stat.size, 100);
+      assertEquals(stat.size, 11);
     });
 
     it("should stat directory", async () => {
@@ -197,6 +208,125 @@ describe("GitHubFSAdapter", () => {
     it("should read file content", async () => {
       const content = await adapter.readTextFile("README.md");
       assertEquals(content, "hello world");
+    });
+
+    it("admits indexed files before fetching their complete bytes", async () => {
+      const wrapped = new FSAdapterWrapper(adapter);
+      const exactReader = wrapped.readFileBytesWithinLimit;
+      assertEquals(typeof exactReader, "function");
+      const bytes = await exactReader!("README.md", 11);
+
+      assertEquals(new TextDecoder().decode(bytes), "hello world");
+    });
+
+    it("rejects an indexed oversized file without fetching its content", async () => {
+      let contentRequested = false;
+      globalThis.fetch = (url) => {
+        const urlString = String(url);
+        if (urlString.includes("/git/trees/")) {
+          return Promise.resolve(
+            new Response(JSON.stringify(mockTreeResponse), { status: 200 }),
+          );
+        }
+        if (urlString.includes("/contents/README.md")) contentRequested = true;
+        return Promise.resolve(
+          new Response(JSON.stringify(mockFileContent), { status: 200 }),
+        );
+      };
+      const boundedAdapter = createAdapter();
+
+      await assertRejects(
+        () => boundedAdapter.readFileBytesWithinLimit("README.md", 10),
+        RangeError,
+        "exceeds 10 bytes",
+      );
+      assertEquals(contentRequested, false);
+    });
+
+    it("fails closed before fetching when the tree omits authoritative size", async () => {
+      let blobRequested = false;
+      globalThis.fetch = (url) => {
+        const urlString = String(url);
+        if (urlString.includes("/git/trees/")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                sha: "tree",
+                tree: [{ path: "README.md", type: "blob", sha: "sha1" }],
+                truncated: false,
+              }),
+              { status: 200 },
+            ),
+          );
+        }
+        blobRequested = true;
+        return Promise.resolve(new Response(JSON.stringify(mockFileContent), { status: 200 }));
+      };
+      const boundedAdapter = createAdapter();
+
+      await assertRejects(
+        () => boundedAdapter.readFileBytesWithinLimit("README.md", 11),
+        TypeError,
+        "size is unavailable",
+      );
+      assertEquals(blobRequested, false);
+    });
+
+    it("rejects a raw blob that does not match its admitted immutable tree entry", async () => {
+      globalThis.fetch = (url, init) => {
+        const urlString = String(url);
+        if (urlString.includes("/git/trees/")) {
+          return Promise.resolve(
+            new Response(JSON.stringify(mockTreeResponse), { status: 200 }),
+          );
+        }
+        const accept = new Headers(observeFetchRequestInit(init).headers).get("Accept");
+        assertEquals(accept, "application/vnd.github.raw+json");
+        return Promise.resolve(new Response("hello worl", { status: 200 }));
+      };
+      const boundedAdapter = createAdapter();
+
+      await assertRejects(
+        () => boundedAdapter.readFileBytesWithinLimit("README.md", 11),
+        Error,
+        "does not match its admitted 11-byte tree entry",
+      );
+    });
+
+    it("cancels a raw blob stream at the first chunk beyond its admitted size", async () => {
+      let cancelled = false;
+      let blobRequests = 0;
+      globalThis.fetch = (url) => {
+        const urlString = String(url);
+        if (urlString.includes("/git/trees/")) {
+          return Promise.resolve(
+            new Response(JSON.stringify(mockTreeResponse), { status: 200 }),
+          );
+        }
+        blobRequests++;
+        return Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(new Uint8Array(12));
+              },
+              cancel() {
+                cancelled = true;
+              },
+            }),
+            { status: 200 },
+          ),
+        );
+      };
+      const boundedAdapter = createAdapter();
+
+      await assertRejects(
+        () => boundedAdapter.readFileBytesWithinLimit("README.md", 11),
+        Error,
+        "does not match its admitted 11-byte tree entry",
+      );
+      assertEquals(blobRequests, 1);
+      assertEquals(cancelled, true);
     });
 
     it("should throw a recognized not-found error for a nonexistent file", async () => {

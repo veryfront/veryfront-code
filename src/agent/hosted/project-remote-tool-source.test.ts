@@ -10,6 +10,7 @@ import {
   createHostedProjectRemoteToolSources,
 } from "./project-remote-tool-source.ts";
 import { VeryfrontError } from "#veryfront/errors";
+import { createUnconfirmedProjectContextSwitchResult } from "../project/context.ts";
 
 function projectFileTool(name: string): ToolDefinition {
   return {
@@ -340,7 +341,7 @@ Deno.test("createHostedProjectRemoteToolSource retries thrown errors and rethrow
 });
 
 Deno.test("createHostedProjectRemoteToolSource reports project navigation and steering mutations", async () => {
-  const switchedProjects: string[] = [];
+  const switchedProjectIds: string[] = [];
   const mutations: Array<{ instructionsChanged: boolean; skillsChanged: boolean }> = [];
   const source = createHostedProjectRemoteToolSource({
     source: createRemoteSource({
@@ -357,7 +358,7 @@ Deno.test("createHostedProjectRemoteToolSource reports project navigation and st
       projectNavigationToolNames: ["studio_open_project"],
     },
     onProjectSwitch: (projectId) => {
-      switchedProjects.push(projectId);
+      switchedProjectIds.push(projectId);
     },
     onSteeringMutation: (mutation) => {
       mutations.push({
@@ -369,9 +370,96 @@ Deno.test("createHostedProjectRemoteToolSource reports project navigation and st
 
   await source.executeTool("studio_open_project", { project_reference: "project-two" });
   await source.executeTool("update_file", { path: "AGENTS.md" });
+  await source.executeTool("update_file", {
+    path: "agents/researcher/resources/schema.json",
+  });
 
-  assertEquals(switchedProjects, ["project-2"]);
-  assertEquals(mutations, [{ instructionsChanged: true, skillsChanged: false }]);
+  assertEquals(switchedProjectIds, ["project-2"]);
+  assertEquals(mutations, [
+    { instructionsChanged: true, skillsChanged: false },
+    { instructionsChanged: false, skillsChanged: true },
+  ]);
+});
+
+Deno.test("createHostedProjectRemoteToolSource fails closed on claimed but unconfirmed navigation", async () => {
+  let switchCount = 0;
+  const source = createHostedProjectRemoteToolSource({
+    source: createRemoteSource({
+      tools: [navigationTool("studio_open_project")],
+      execute: () => ({
+        structuredContent: {
+          success: true,
+          project_id: "different-project",
+          slug: "different-project",
+        },
+      }),
+    }),
+    defaultProjectId: () => "project-1",
+    projectScopedRemoteToolOptions: {
+      projectNavigationToolNames: ["studio_open_project"],
+    },
+    onProjectSwitch: () => {
+      switchCount += 1;
+    },
+  });
+
+  assertEquals(
+    await source.executeTool("studio_open_project", { project_reference: "requested-project" }),
+    createUnconfirmedProjectContextSwitchResult(),
+  );
+  assertEquals(switchCount, 0);
+});
+
+Deno.test("createHostedProjectRemoteToolSource rejects unconfirmed claimed navigation success", async () => {
+  let switchCount = 0;
+  const source = createHostedProjectRemoteToolSource({
+    source: createRemoteSource({
+      tools: [navigationTool("studio_open_project")],
+      execute: () => ({
+        structuredContent: {
+          success: true,
+          project_id: "different-project",
+          slug: "different-project",
+        },
+      }),
+    }),
+    projectScopedRemoteToolOptions: {
+      projectNavigationToolNames: ["studio_open_project"],
+    },
+    onProjectSwitch: () => {
+      switchCount += 1;
+    },
+  });
+
+  const result = await source.executeTool("studio_open_project", {
+    project_reference: "requested-project",
+  });
+
+  assertEquals(result, createUnconfirmedProjectContextSwitchResult());
+  assertEquals(switchCount, 0);
+});
+
+Deno.test("createHostedProjectRemoteToolSource preserves upstream navigation failure", async () => {
+  const failure = { structuredContent: { success: false, message: "not found" } };
+  const source = createHostedProjectRemoteToolSource({
+    source: createRemoteSource({
+      tools: [navigationTool("studio_open_project")],
+      execute: () => failure,
+    }),
+    projectScopedRemoteToolOptions: {
+      projectNavigationToolNames: ["studio_open_project"],
+    },
+    onProjectSwitch: () => {
+      throw new Error("unexpected project switch");
+    },
+  });
+
+  assertEquals(
+    await source.executeTool("studio_open_project", {
+      project_reference: "missing-project",
+    }),
+    failure,
+  );
 });
 
 Deno.test("createHostedProjectRemoteToolSource skips mutation callbacks for failed results", async () => {
@@ -831,7 +919,8 @@ Deno.test("createHostedProjectRemoteToolSources applies custom MCP server tool p
 
 Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy to created sources", async () => {
   const executed: Array<{ toolName: string; args: unknown; context?: ToolExecutionContext }> = [];
-  const switchedProjects: string[] = [];
+  const switchedProjectIds: string[] = [];
+  const switchedProjects: Array<{ projectId: string; projectSlug?: string }> = [];
   const mutations: Array<{ instructionsChanged: boolean; skillsChanged: boolean }> = [];
   const sources = createHostedProjectRemoteToolSources({
     authToken: "token-1",
@@ -859,8 +948,11 @@ Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy t
         skillsChanged: mutation.skillsChanged,
       });
     },
-    onStudioProjectSwitch: (projectId) => {
-      switchedProjects.push(projectId);
+    onStudioProjectSwitch: (projectId, confirmedProject) => {
+      switchedProjectIds.push(projectId);
+      if (confirmedProject) {
+        switchedProjects.push(confirmedProject);
+      }
     },
     createRemoteToolSource: (config) =>
       createRemoteSource({
@@ -897,7 +989,8 @@ Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy t
     },
   ]);
   assertEquals(mutations, [{ instructionsChanged: true, skillsChanged: false }]);
-  assertEquals(switchedProjects, ["project-2"]);
+  assertEquals(switchedProjectIds, ["project-2"]);
+  assertEquals(switchedProjects, [{ projectId: "project-2", projectSlug: "project-two" }]);
 });
 
 Deno.test("createHostedProjectRemoteToolSources composes API input preparation for integration tools", async () => {

@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { updateRecord } from "../../lib/airtable-client.ts";
+import { updateRecord } from "../lib/airtable-client.ts";
 
 export default tool({
-  id: "update-record",
+  id: "airtable-update-record",
   description:
     "Update fields on an existing Airtable record. Returns the updated record with all visible fields.",
   inputSchema: defineSchema((v) =>

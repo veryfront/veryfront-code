@@ -3,9 +3,15 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
+import {
+  assert,
+  assertEquals,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { Slot } from "./slot.tsx";
+import { getPolymorphicButtonType, Slot } from "./slot.tsx";
 
 function installDom(dom: JSDOM): () => void {
   const window = dom.window;
@@ -62,7 +68,49 @@ describe("Slot", () => {
     );
   });
 
-  it("preserves React 19 callback-ref cleanup for both composed refs", () => {
+  it("defaults button type only when the slotted child is a native button", () => {
+    const OpaqueAnchor = React.forwardRef<
+      HTMLAnchorElement,
+      React.AnchorHTMLAttributes<HTMLAnchorElement>
+    >((props, ref) => <a {...props} ref={ref} />);
+    const OpaqueButton = React.forwardRef<
+      HTMLButtonElement,
+      React.ButtonHTMLAttributes<HTMLButtonElement>
+    >((props, ref) => <button {...props} ref={ref} />);
+
+    const nativeButtonChild = React.createElement("button", null, "Native button");
+    const opaqueAnchorChild = <OpaqueAnchor href="#opaque">Opaque anchor</OpaqueAnchor>;
+    const opaqueButtonChild = <OpaqueButton>Opaque button</OpaqueButton>;
+    const ownedOpaqueButtonChild = <OpaqueButton type="button">Owned button</OpaqueButton>;
+
+    const nativeButton = renderToString(
+      <Slot type={getPolymorphicButtonType(true, nativeButtonChild)}>
+        {nativeButtonChild}
+      </Slot>,
+    );
+    const opaqueAnchor = renderToString(
+      <Slot type={getPolymorphicButtonType(true, opaqueAnchorChild, "button")}>
+        {opaqueAnchorChild}
+      </Slot>,
+    );
+    const opaqueButton = renderToString(
+      <Slot type={getPolymorphicButtonType(true, opaqueButtonChild)}>
+        {opaqueButtonChild}
+      </Slot>,
+    );
+    const ownedOpaqueButton = renderToString(
+      <Slot type={getPolymorphicButtonType(true, ownedOpaqueButtonChild)}>
+        {ownedOpaqueButtonChild}
+      </Slot>,
+    );
+
+    assertStringIncludes(nativeButton, 'type="button"');
+    assert(!/<a\b[^>]*\btype=/.test(opaqueAnchor));
+    assert(!/<button\b[^>]*\btype=/.test(opaqueButton));
+    assertStringIncludes(ownedOpaqueButton, 'type="button"');
+  });
+
+  it("preserves React 19 callback-ref cleanup for both composed refs", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://example.com/" },
@@ -99,13 +147,13 @@ describe("Slot", () => {
       assertEquals(attached, ["outer", "child"]);
       assertEquals(cleaned, []);
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       assertEquals(cleaned, ["child", "outer"]);
       restore();
     }
   });
 
-  it("does not run slot behavior after a child handler cancels the event", () => {
+  it("does not run slot behavior after a child handler cancels the event", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://example.com/" },
@@ -136,12 +184,12 @@ describe("Slot", () => {
       );
       assertEquals(slotCalls, 0);
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       restore();
     }
   });
 
-  it("blocks disabled asChild activation before consumer handlers", () => {
+  it("blocks disabled activation, handlers, and propagation", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://example.com/start" },
@@ -150,21 +198,39 @@ describe("Slot", () => {
     const rootElement = document.getElementById("root");
     assert(rootElement);
     const root = createRoot(rootElement);
-    let consumerCalls = 0;
+    const calls: string[] = [];
 
     try {
       flushSync(() => {
         root.render(
-          <Slot disabled onClick={() => consumerCalls += 1}>
-            <a
-              href="/target"
-              tabIndex={0}
-              onClickCapture={() => consumerCalls += 1}
-              onClick={() => consumerCalls += 1}
+          <div
+            onClick={() => calls.push("ancestor-click")}
+            onAuxClick={() => calls.push("ancestor-aux")}
+            onKeyUp={() => calls.push("ancestor-keyup")}
+          >
+            <Slot
+              disabled
+              onClickCapture={() => calls.push("slot-capture")}
+              onClick={() => calls.push("slot")}
+              onAuxClickCapture={() => calls.push("slot-aux-capture")}
+              onAuxClick={() => calls.push("slot-aux")}
+              onKeyUpCapture={() => calls.push("slot-keyup-capture")}
+              onKeyUp={() => calls.push("slot-keyup")}
             >
-              Disabled link
-            </a>
-          </Slot>,
+              <a
+                href="/target"
+                tabIndex={0}
+                onClickCapture={() => calls.push("child-capture")}
+                onClick={() => calls.push("child")}
+                onAuxClickCapture={() => calls.push("child-aux-capture")}
+                onAuxClick={() => calls.push("child-aux")}
+                onKeyUpCapture={() => calls.push("child-keyup-capture")}
+                onKeyUp={() => calls.push("child-keyup")}
+              >
+                Disabled link
+              </a>
+            </Slot>
+          </div>,
         );
       });
       const link = document.querySelector("a");
@@ -178,8 +244,18 @@ describe("Slot", () => {
       });
       link.dispatchEvent(click);
       assertEquals(click.defaultPrevented, true);
-      assertEquals(consumerCalls, 0);
+      assertEquals(calls, []);
       assertEquals(dom.window.location.pathname, "/start");
+
+      const auxClick = new dom.window.MouseEvent("auxclick", {
+        bubbles: true,
+        button: 1,
+        cancelable: true,
+      });
+      link.dispatchEvent(auxClick);
+      assertEquals(auxClick.defaultPrevented, true);
+      assertEquals(calls, []);
+      assertEquals(link.getAttribute("href"), null);
 
       const enter = new dom.window.KeyboardEvent("keydown", {
         bubbles: true,
@@ -188,9 +264,20 @@ describe("Slot", () => {
       });
       link.dispatchEvent(enter);
       assertEquals(enter.defaultPrevented, true);
-      assertEquals(consumerCalls, 0);
+      assertEquals(calls, []);
+
+      for (const key of ["Enter", " "]) {
+        const keyUp = new dom.window.KeyboardEvent("keyup", {
+          bubbles: true,
+          cancelable: true,
+          key,
+        });
+        link.dispatchEvent(keyUp);
+        assertEquals(keyUp.defaultPrevented, true);
+        assertEquals(calls, []);
+      }
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       restore();
     }
   });

@@ -8,13 +8,14 @@
  * @module provider/local
  */
 
-import { generate, generateStream } from "./local-engine.ts";
+import { generate, generateStream, verifyLocalRuntime } from "./local-engine.ts";
 import type { ChatMessage, GenerateOptions } from "./local-engine.ts";
 import { DEFAULT_LOCAL_MODEL } from "./model-catalog.ts";
 import { serverLogger } from "#veryfront/utils";
 import { fromError } from "#veryfront/errors";
 import { throwIfLocalAIDisabled } from "./env.ts";
 import type { ModelRuntime } from "../types.ts";
+import { waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
 
 const logger = serverLogger.component("local-llm");
 
@@ -96,12 +97,15 @@ export function createLocalModel(modelId?: string): ModelRuntime {
   const resolvedId = modelId || DEFAULT_LOCAL_MODEL;
 
   return {
-    /** Marker so ensureModelReady() can distinguish real local-engine models
-     *  from mock/custom providers that happen to use provider:"local". */
-    _isVfLocalModel: true as const,
     specificationVersion: "v2" as const,
     provider: "local",
     modelId: `local/${resolvedId}`,
+    executionMode: "server-local",
+    runtimeCapabilities: { toolCalling: false },
+    prepare: async (abortSignal) => {
+      abortSignal?.throwIfAborted();
+      await waitForSharedPromise(verifyLocalRuntime(resolvedId), abortSignal);
+    },
 
     supportedUrls: {},
 

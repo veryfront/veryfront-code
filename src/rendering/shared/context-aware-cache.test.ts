@@ -132,6 +132,45 @@ describe("rendering/shared/context-aware-cache", () => {
       assertEquals(lookup.cachedResult?.ssrHash, "abc123");
     });
 
+    it("rebinds cached inline nonce slots without touching application tags", async () => {
+      const store = createInMemoryStore();
+      const cache = new ContextAwareCacheCoordinator({ store });
+      const ctx = makeMockCtx();
+      const renderResult = {
+        html: '<script nonce="nonce-a">framework()</script>' +
+          '<style nonce="nonce-a">.framework{}</style>' +
+          '<script nonce="application-owned">application()</script>',
+        frontmatter: {},
+        headings: [],
+        stream: null,
+      };
+
+      await cache.persistResult(
+        renderResult as any,
+        "nonce-page",
+        ctx,
+        undefined,
+        undefined,
+        "nonce-a",
+      );
+      const lookup = await cache.checkCache(
+        "nonce-page",
+        ctx,
+        undefined,
+        undefined,
+        "nonce-b",
+      );
+
+      assertEquals(lookup.cachedResult?.html.includes('nonce="nonce-b">framework()'), true);
+      assertEquals(lookup.cachedResult?.html.includes('nonce="nonce-b">.framework{}'), true);
+      assertEquals(
+        lookup.cachedResult?.html.includes('nonce="application-owned">application()'),
+        true,
+      );
+      assertEquals(lookup.cachedResult?.html.includes("nonce-a"), false);
+      assertEquals(lookup.cachedResult?.html.includes("veryfront-cache-nonce"), false);
+    });
+
     it("should not cache results with streams", async () => {
       const store = createInMemoryStore();
       const cache = new ContextAwareCacheCoordinator({ store });

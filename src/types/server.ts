@@ -68,6 +68,12 @@ export interface HandlerContext {
   requestContext?: RequestContext;
   /** Whether this request targets a local filesystem project (per-request, from adapter resolution). */
   isLocalProject?: boolean;
+  /**
+   * Host-owned capability for executing this runtime's project code in the
+   * server process. Dedicated single-project runtimes may grant it without
+   * enabling development-only local-project behavior.
+   */
+  allowHostProjectCodeExecution?: boolean;
   /** Environment ID for per-project env var resolution (from proxy x-environment-id header) */
   environmentId?: string;
   /**

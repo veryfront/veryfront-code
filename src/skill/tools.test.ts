@@ -1,13 +1,15 @@
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
+import "./_test-setup.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { registerSkill, skillRegistry } from "./registry.ts";
+import { registerSkill } from "./registry.ts";
 import {
   createExecuteSkillScriptTool,
   createLoadSkillReferenceTool,
   createLoadSkillTool,
 } from "./tools.ts";
-import type { Skill } from "./types.ts";
+import type { Skill, SkillScriptResult } from "./types.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSkillTestAdapter } from "./testing.ts";
 import { LocalScriptExecutor } from "./executor.ts";
@@ -38,7 +40,7 @@ function createNamedTestSkill(id: string, fsAdapter: FileSystemAdapter): Skill {
 
 describe("src/skill/tools", () => {
   beforeEach(() => {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   });
 
   it("uses snake case runtime ids for skill platform tools", () => {
@@ -57,6 +59,7 @@ allowed-tools: Read api:*
 # Instructions
 Do work.`,
       "/project/skills/my-skill/references/guide.md": "Guide",
+      "/project/skills/my-skill/scripts/lib/helper.ts": "export {};",
       "/project/skills/my-skill/scripts/run.sh": "echo run",
     });
     registerSkill("my-skill", {
@@ -74,7 +77,63 @@ Do work.`,
     assertEquals(result.skillId, "my-skill");
     assertEquals(result.allowedTools, ["Read", "api:*"]);
     assertEquals(result.references, ["references/guide.md"]);
-    assertEquals(result.scripts, ["scripts/run.sh"]);
+    assertEquals(result.scripts, ["scripts/lib/helper.ts", "scripts/run.sh"]);
+  });
+
+  it("framework tools use the immutable normalized registry snapshot", async () => {
+    const registeredAdapter = createSkillTestAdapter({
+      "/project/skills/registered/SKILL.md": `---
+name: registered
+description: Registered skill
+---
+# Instructions
+Use the registered snapshot.`,
+    });
+    const mutatedAdapter = createSkillTestAdapter({});
+    const source: Skill = {
+      id: "definition-id",
+      metadata: { name: "registered", description: "Registered skill" },
+      rootPath: "/project/skills/registered",
+      fsAdapter: registeredAdapter,
+    };
+    registerSkill("registry-id", source);
+
+    source.id = "mutated-id";
+    source.rootPath = "/project/skills/mutated";
+    source.fsAdapter = mutatedAdapter;
+
+    const result = await createLoadSkillTool().execute({ skillId: "registry-id" }, {
+      allowedSkillIds: ["registry-id"],
+    });
+
+    assertEquals(result.skillId, "registry-id");
+    assertEquals(result.instructions, "# Instructions\nUse the registered snapshot.");
+  });
+
+  it("load_skill preserves an adapter-relative skill root", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "skills/cloud-skill/SKILL.md": `---
+name: cloud-skill
+description: Cloud-backed skill
+---
+# Instructions
+Use the cloud-backed skill.`,
+      "skills/cloud-skill/references/guide.md": "Guide",
+    });
+    registerSkill("cloud-skill", {
+      id: "cloud-skill",
+      metadata: {
+        name: "cloud-skill",
+        description: "Cloud-backed skill",
+      },
+      rootPath: "skills/cloud-skill",
+      fsAdapter,
+    });
+
+    const result = await createLoadSkillTool().execute({ skillId: "cloud-skill" });
+
+    assertEquals(result.instructions, "# Instructions\nUse the cloud-backed skill.");
+    assertEquals(result.references, ["references/guide.md"]);
   });
 
   it("load_skill should list resources as loadable references via fsAdapter", async () => {
@@ -446,6 +505,143 @@ Do work.`,
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }
+  });
+
+  it("execute_skill_script runs adapter content without a host filesystem path", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/scripts/run.sh": "echo adapter-script",
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+
+    const result = await createExecuteSkillScriptTool({
+      executor: new LocalScriptExecutor(),
+    }).execute({
+      skillId: "my-skill",
+      script: "scripts/run.sh",
+    });
+
+    assertEquals(result.exitCode, 0);
+    assertEquals(result.stderr, "");
+    assertEquals(result.stdout.trim(), "adapter-script");
+  });
+
+  it("execute_skill_script snapshots adapter sibling modules", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/scripts/lib/helper.ts": 'export const message = "adapter-sibling";',
+      "/project/skills/my-skill/scripts/run.ts":
+        'import { message } from "./lib/helper.ts";\nconsole.log(message);',
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+
+    const result = await createExecuteSkillScriptTool({
+      executor: new LocalScriptExecutor(),
+    }).execute({
+      skillId: "my-skill",
+      script: "scripts/run.ts",
+    });
+
+    assertEquals(result.exitCode, 0);
+    assertEquals(result.stderr, "");
+    assertEquals(result.stdout.trim(), "adapter-sibling");
+  });
+
+  it("execute_skill_script snapshots native sibling modules", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "vf-skill-sibling-" });
+    try {
+      const skillRoot = `${tempDir}/my-skill`;
+      await Deno.mkdir(`${skillRoot}/scripts/jobs`, { recursive: true });
+      await Deno.writeTextFile(
+        `${skillRoot}/scripts/jobs/helper.ts`,
+        'export const message = "native-sibling";',
+      );
+      await Deno.writeTextFile(
+        `${skillRoot}/scripts/jobs/run.ts`,
+        'import { message } from "./helper.ts";\nconsole.log(message);',
+      );
+      registerSkill("my-skill", {
+        id: "my-skill",
+        metadata: { name: "my-skill", description: "Executes scripts" },
+        rootPath: skillRoot,
+      });
+
+      const result = await createExecuteSkillScriptTool({
+        executor: new LocalScriptExecutor(),
+      }).execute({
+        skillId: "my-skill",
+        script: "scripts/jobs/run.ts",
+      });
+
+      assertEquals(result.exitCode, 0);
+      assertEquals(result.stderr, "");
+      assertEquals(result.stdout.trim(), "native-sibling");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("execute_skill_script snapshots only validated executor result fields", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/scripts/run.sh": "echo run",
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+    let extraGetterCalls = 0;
+    const executorResult = {
+      stdout: "done",
+      stderr: "",
+      exitCode: 0,
+      get extra(): string {
+        extraGetterCalls += 1;
+        return "ignored";
+      },
+    };
+    const tool = createExecuteSkillScriptTool({
+      executor: {
+        execute: async () => executorResult,
+      },
+    });
+
+    const result = await tool.execute({
+      skillId: "my-skill",
+      script: "scripts/run.sh",
+    });
+    executorResult.stdout = "mutated";
+
+    assertEquals(result, { stdout: "done", stderr: "", exitCode: 0 });
+    assertEquals("extra" in result, false);
+    assertEquals(Object.isFrozen(result), true);
+    assertEquals(extraGetterCalls, 0);
+  });
+
+  it("execute_skill_script rejects accessor-backed required result fields", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/scripts/run.sh": "echo run",
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+    let getterCalls = 0;
+    const executorResult = {
+      get stdout(): string {
+        getterCalls += 1;
+        return "unsafe";
+      },
+      stderr: "",
+      exitCode: 0,
+    } as SkillScriptResult;
+    const tool = createExecuteSkillScriptTool({
+      executor: {
+        execute: async () => executorResult,
+      },
+    });
+
+    await assertRejects(
+      () =>
+        tool.execute({
+          skillId: "my-skill",
+          script: "scripts/run.sh",
+        }),
+      TypeError,
+      'own data property for "stdout"',
+    );
+    assertEquals(getterCalls, 0);
   });
 
   it("execute_skill_script should reject scripts not advertised by the active skill", async () => {

@@ -731,6 +731,7 @@ describe("resolveProjectRuntimeContext", () => {
 
     const standaloneProduction = await resolveProjectRuntimeContext(makeRuntimeContextInput({
       isProxyMode: false,
+      allowHostProjectCodeExecution: true,
       defaultEnvironment: "production",
       projectIdentity: {
         projectSlug: "remote-project",
@@ -747,6 +748,10 @@ describe("resolveProjectRuntimeContext", () => {
     assertEquals(standaloneProduction.environment.releaseId, "standalone-dev");
     assertExists(standaloneProduction.handlerContext);
     assertEquals(standaloneProduction.handlerContext.releaseId, "standalone-dev");
+    assertEquals(
+      standaloneProduction.handlerContext.allowHostProjectCodeExecution,
+      true,
+    );
   });
 
   it("returns production environment errors before reading source policy config", async () => {

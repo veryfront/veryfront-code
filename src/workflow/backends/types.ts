@@ -100,8 +100,11 @@ export interface WorkflowBackend {
     checkpoint: Checkpoint,
   ): Promise<boolean>;
   getLatestCheckpoint(runId: string): Promise<Checkpoint | null>;
+  /** Return checkpoint history in append order, oldest first. */
   getCheckpoints?(runId: string): Promise<Checkpoint[]>;
+  /** Delete the oldest append-ordered occurrence of a checkpoint ID. */
   deleteCheckpoint?(runId: string, checkpointId: string): Promise<void>;
+  /** Delete one oldest append-ordered occurrence for each supplied checkpoint ID. */
   deleteCheckpoints?(runId: string, checkpointIds: string[]): Promise<void>;
 
   savePendingApproval(runId: string, approval: PendingApproval): Promise<void>;

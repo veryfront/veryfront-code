@@ -1,4 +1,6 @@
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
+import "#veryfront/skill/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { resolve } from "node:path";
 import { getMCPRegistry, registerPrompt, registerResource } from "#veryfront/mcp";
@@ -10,7 +12,7 @@ import { agent } from "../factory.ts";
 import {
   createRuntimeAgentDefinitionFromAgent,
   describeProjectAgentRuntimeAgentIdCandidates,
-  discoverProjectAgentRuntime,
+  discoverProjectAgentRuntime as discoverProjectAgentRuntimeRaw,
   doesProjectAgentRuntimeAgentMatchSource,
   getProjectAgentRuntimeAgentIdCandidates,
   resolveSingleProjectAgentRuntimeAgentId,
@@ -23,10 +25,16 @@ import {
   normalizeSourceIntegrationPolicy,
 } from "#veryfront/integrations/source-policy.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
+import { registerSkill } from "#veryfront/skill/registry.ts";
 import { createLoadSkillTool } from "#veryfront/skill/tools.ts";
 import { getEffectiveAgentSystem } from "../runtime/effective-agent-system.ts";
 import { tool } from "#veryfront/tool";
+
+const discoverProjectAgentRuntime: typeof discoverProjectAgentRuntimeRaw = (input) =>
+  discoverProjectAgentRuntimeRaw({
+    ...input,
+    allowHostProjectCodeExecution: true,
+  });
 
 async function withTempDir(fn: (dir: string) => Promise<void> | void): Promise<void> {
   const dir = Deno.makeTempDirSync();
@@ -143,7 +151,7 @@ Deno.test("project agent runtime keeps factory skill catalogs out of hosted inst
       "Handle incidents carefully.",
     );
   } finally {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   }
 });
 

@@ -1,8 +1,9 @@
 import type * as React from "react";
 import { flushSync } from "react-dom";
-import { createRoot, hydrateRoot, type Root } from "react-dom/client";
+import { createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -109,18 +110,6 @@ function selectedText(trigger: HTMLElement): string | undefined {
   return activeId ? trigger.ownerDocument.getElementById(activeId)?.textContent?.trim() : undefined;
 }
 
-/**
- * Unmount and drain the scheduler task React leaves behind.
- *
- * React's scheduler holds a `setImmediate` until it next runs. It completes on
- * its own, but the test has to yield once more or Deno's leak sanitizer sees
- * the timer still pending.
- */
-async function unmount(root: Root): Promise<void> {
-  flushSync(() => root.unmount());
-  await new Promise((resolve) => setTimeout(resolve, 0));
-}
-
 describe("Select", () => {
   it("links the combobox and listbox and supports the complete keyboard lifecycle", async () => {
     const dom = createDom();
@@ -201,7 +190,7 @@ describe("Select", () => {
       assertEquals(trigger.hasAttribute("aria-activedescendant"), false);
       assertEquals(trigger.textContent?.includes("Gamma"), true);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -337,7 +326,7 @@ describe("Select", () => {
       assertEquals(calls, ["cancel-trigger", "cancel-key", "cancel-item"]);
       assertEquals(trigger.getAttribute("aria-expanded"), "true");
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -400,7 +389,7 @@ describe("Select", () => {
       assertEquals(values, ["beta"]);
       assertEquals(document.activeElement, trigger);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -467,7 +456,7 @@ describe("Select", () => {
       assertEquals(trigger.getAttribute("aria-expanded"), "false");
       assertEquals(openChanges, [true, false, true, false]);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -528,7 +517,7 @@ describe("Select", () => {
         "controlled owner re-enables its still-open value",
       );
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -576,7 +565,7 @@ describe("Select", () => {
       assertEquals(trigger.getAttribute("aria-expanded"), "false");
       assertEquals(document.getElementById("root-transition-list"), null);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -645,7 +634,7 @@ describe("Select", () => {
       );
       assertEquals(openChanges, [false, true]);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -702,7 +691,7 @@ describe("Select", () => {
       press(trigger, "Home");
       await waitFor(() => selectedText(trigger) === "Gamma", "reordered first option");
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -762,7 +751,7 @@ describe("Select", () => {
       );
     } finally {
       nodePrototype.compareDocumentPosition = compareDocumentPosition;
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -839,7 +828,7 @@ describe("Select", () => {
       assertEquals(document.activeElement, outside);
       outside.remove();
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -875,7 +864,7 @@ describe("Select", () => {
       await waitFor(() => trigger.getAttribute("aria-expanded") === "false", "blur close");
       assertEquals(document.activeElement, outside);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       outside.remove();
       restore();
     }
@@ -934,7 +923,7 @@ describe("Select", () => {
       assertEquals(listbox.getAttribute("aria-labelledby"), "hydrated-trigger");
       assertEquals(group.getAttribute("aria-labelledby"), "models-label");
     } finally {
-      if (root) await unmount(root);
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
@@ -1058,12 +1047,16 @@ describe("Select", () => {
         () => document.getElementById("dynamic-list") === null,
         "dynamic duplicate content suppression",
       );
+      await waitFor(
+        () => openChanges.length === 2 && openChanges[1] === false,
+        "dynamic duplicate close notification",
+      );
       assertEquals(rootElement.contains(trigger), true);
       assertEquals(trigger.disabled, true);
       assertEquals(trigger.getAttribute("aria-expanded"), "false");
       assertEquals(openChanges, [true, false]);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -1112,11 +1105,17 @@ describe("Select", () => {
         () => document.getElementById("dynamic-default-list") === null,
         "default-open duplicate content suppression",
       );
+      // Suppression is synchronous with the invalid render; the close request
+      // to the owner is an effect that lands afterwards.
+      await waitFor(
+        () => openChanges.length === 1,
+        "default-open close request",
+      );
       assertEquals(rootElement.contains(trigger), true);
       assertEquals(trigger.disabled, true);
       assertEquals(openChanges, [false]);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -1138,13 +1137,18 @@ describe("Select", () => {
   });
 
   it("uses explicit display contracts without duplicating arbitrary item nodes", () => {
+    const buildIdFixture = (...segments: string[]): string => segments.join(" ");
+    const spacedTriggerId = buildIdFixture("invalid", "trigger", "id");
+    const emptyContentId = buildIdFixture();
+    assertEquals(spacedTriggerId.includes(" "), true);
+    assertEquals(emptyContentId, "");
     const markup = renderToString(
       <>
         <Select value="opaque" onValueChange={() => {}}>
-          <SelectTrigger id="invalid trigger id">
+          <SelectTrigger id={spacedTriggerId}>
             <SelectValue className="custom-value">Friendly name</SelectValue>
           </SelectTrigger>
-          <SelectContent id="">
+          <SelectContent id={emptyContentId}>
             <SelectItem value="opaque">Opaque fallback</SelectItem>
           </SelectContent>
         </Select>
@@ -1248,7 +1252,7 @@ describe("Select", () => {
       );
       assertEquals(calls, ["trigger:attach", "item:attach"]);
 
-      await unmount(root);
+      await unmountReactRoot(root);
       assertEquals(calls, [
         "trigger:attach",
         "item:attach",

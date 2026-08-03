@@ -4,7 +4,7 @@ import { createDocsClient } from "../lib/docs-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "list-documents",
+  id: "docs-google-list-documents",
   description:
     "List recent Google Docs documents from Google Drive. Returns document names, IDs, and metadata.",
   inputSchema: defineSchema((v) =>

@@ -10,6 +10,7 @@ export const HEAD_CONTENT_HASH_ATTRIBUTE = "data-vf-hash";
 export const HEAD_REACT_MANAGED_ATTRIBUTE = "data-vf-react-head";
 export const HEAD_REACT_OWNER_ATTRIBUTE = "data-vf-react-head-owner";
 export const HEAD_ROUTE_MANAGED_ATTRIBUTE = "data-vf-route-head";
+export const HEAD_SERVER_COMMIT_ATTRIBUTE = "data-vf-server-head-commit";
 export const HEAD_SHELL_PROVENANCE_ATTRIBUTE = "data-vf-shell-head";
 export const HEAD_SSR_PAYLOAD_ATTRIBUTE = "data-vf-ssr-head";
 export const HEAD_MANAGER_RETIRE_SYMBOL = Symbol.for(
@@ -19,6 +20,7 @@ export const HEAD_MANAGER_RETIRE_SYMBOL = Symbol.for(
 /** Request-level limits shared by SSR collection and client route handoff. */
 export const MAX_MANAGED_HEAD_ENTRIES = 128;
 export const MAX_MANAGED_HEAD_BYTES = 2 * 1024 * 1024;
+export const MAX_MANAGED_HEAD_PAYLOAD_BYTES = MAX_MANAGED_HEAD_BYTES * 2;
 
 export type ManagedHeadContentMode = "text" | "html";
 export type ManagedHeadAttribute = readonly [name: string, value: string];
@@ -118,6 +120,7 @@ export function isHeadFrameworkAttribute(name: string): boolean {
     case HEAD_REACT_MANAGED_ATTRIBUTE:
     case HEAD_REACT_OWNER_ATTRIBUTE:
     case HEAD_ROUTE_MANAGED_ATTRIBUTE:
+    case HEAD_SERVER_COMMIT_ATTRIBUTE:
     case HEAD_SHELL_PROVENANCE_ATTRIBUTE:
     case HEAD_SSR_PAYLOAD_ATTRIBUTE:
       return true;
@@ -397,7 +400,15 @@ function normalizeManagedHeadAttributesFromProps(
     attributeMap.set(name, normalizedValue);
   }
 
-  if ((tagName === "script" || tagName === "style") && ambientNonce) {
+  if (tagName === "script" || tagName === "style") {
+    // A source-authored nonce is never a response credential. The framework
+    // binds its ambient nonce only to inline executable/style content. In
+    // particular, external scripts must satisfy CSP's source allowlist.
+    attributeMap.delete("nonce");
+  }
+  const acceptsAmbientNonce = tagName === "style" ||
+    (tagName === "script" && !attributeMap.has("src"));
+  if (acceptsAmbientNonce && ambientNonce) {
     const nonce = normalizeManagedHeadString(ambientNonce);
     if (headTextEncoder.encode(nonce).byteLength > MAX_HEAD_ATTRIBUTE_VALUE_BYTES) return null;
     attributeMap.set("nonce", nonce);
@@ -630,7 +641,7 @@ export function aggregateManagedHeadDescriptors(
   return aggregated;
 }
 
-function managedHeadDescriptorBytes(descriptor: ManagedHeadDescriptor): number {
+export function managedHeadDescriptorBytes(descriptor: ManagedHeadDescriptor): number {
   let bytes = headTextEncoder.encode(descriptor.tagName).byteLength;
   for (const [name, value] of descriptor.attributes) {
     bytes += headTextEncoder.encode(name).byteLength;
@@ -796,7 +807,7 @@ function decodeBase64Url(value: string): Uint8Array {
     throw new TypeError("Managed-head payload is not valid base64url");
   }
   const estimatedBytes = Math.floor(value.length * 3 / 4);
-  if (estimatedBytes > MAX_MANAGED_HEAD_BYTES * 2) {
+  if (estimatedBytes > MAX_MANAGED_HEAD_PAYLOAD_BYTES) {
     throw new TypeError("Managed-head payload exceeds its encoded size limit");
   }
 
@@ -824,17 +835,28 @@ function decodeBase64Url(value: string): Uint8Array {
 export function serializeManagedHeadPayload(
   descriptors: readonly ManagedHeadDescriptor[],
 ): string {
+  assertManagedHeadDescriptorBudget(descriptors);
   const aggregated = aggregateManagedHeadDescriptors(descriptors);
-  assertManagedHeadDescriptorBudget(aggregated);
   const entries = aggregated.map(managedHeadDescriptorToTransportEntry);
   return encodeBase64Url(headTextEncoder.encode(JSON.stringify(entries)));
 }
 
-export function deserializeManagedHeadPayload(
+export interface ManagedHeadPayloadInspection {
+  readonly descriptors: ManagedHeadDescriptor[];
+  readonly entryCount: number;
+  readonly descriptorBytes: number;
+  readonly payloadBytes: number;
+}
+
+export function inspectManagedHeadPayload(
   payload: string,
   ambientNonce?: string,
-): ManagedHeadDescriptor[] {
+): ManagedHeadPayloadInspection {
   if (typeof payload !== "string") throw new TypeError("Managed-head payload must be a string");
+  const payloadBytes = headTextEncoder.encode(payload).byteLength;
+  if (payloadBytes > MAX_MANAGED_HEAD_PAYLOAD_BYTES) {
+    throw new TypeError("Managed-head payload exceeds its encoded size limit");
+  }
   let decoded: string;
   try {
     decoded = new TextDecoder("utf-8", { fatal: true }).decode(decodeBase64Url(payload));
@@ -852,11 +874,26 @@ export function deserializeManagedHeadPayload(
   if (!Array.isArray(entries) || entries.length > MAX_MANAGED_HEAD_ENTRIES) {
     throw new TypeError("Managed-head payload exceeds the entry limit");
   }
-  const descriptors = aggregateManagedHeadDescriptors(
-    entries.map((entry) => descriptorFromManagedHeadTransportEntry(entry, ambientNonce)),
+  const rawDescriptors = entries.map((entry) =>
+    descriptorFromManagedHeadTransportEntry(entry, ambientNonce)
   );
-  assertManagedHeadDescriptorBudget(descriptors);
-  return descriptors;
+  assertManagedHeadDescriptorBudget(rawDescriptors);
+  return {
+    descriptors: aggregateManagedHeadDescriptors(rawDescriptors),
+    entryCount: rawDescriptors.length,
+    descriptorBytes: rawDescriptors.reduce(
+      (total, descriptor) => total + managedHeadDescriptorBytes(descriptor),
+      0,
+    ),
+    payloadBytes,
+  };
+}
+
+export function deserializeManagedHeadPayload(
+  payload: string,
+  ambientNonce?: string,
+): ManagedHeadDescriptor[] {
+  return inspectManagedHeadPayload(payload, ambientNonce).descriptors;
 }
 
 export function escapeManagedHeadRawText(content: string, tagName: string): string {

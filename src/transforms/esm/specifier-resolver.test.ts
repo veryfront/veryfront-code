@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { CacheHttpModuleFn } from "./specifier-resolver.ts";
 import { buildReplacements, rewriteModuleImports } from "./specifier-resolver.ts";
 import type { CacheOptions } from "./http-cache-helpers.ts";
+import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 
 describe("transforms/esm/specifier-resolver", () => {
   const defaultOptions: CacheOptions = {
@@ -163,21 +164,16 @@ describe("transforms/esm/specifier-resolver", () => {
       assertEquals(result.replacements.size, 0);
     });
 
-    it("skips a dynamic specifier whose cache lookup throws instead of aborting", async () => {
-      // The motivating case: a lazy `import(...)` that never runs at render
-      // time. Pre-fetching it is an optimisation, so the specifier is left in
-      // place for the runtime to resolve at call time, and one upstream 500
-      // does not abort the whole SSR transform.
+    it("fails closed when a dynamic absolute URL cannot be cached", async () => {
       const code = `export const load = () => import("https://esm.sh/foo");`;
-      const result = await buildReplacements(
-        code,
-        undefined,
-        defaultOptions,
-        async () => {
-          throw new Error("cache failed");
-        },
+      await assertRejects(
+        () =>
+          buildReplacements(code, undefined, defaultOptions, async () => {
+            throw new Error("cache failed");
+          }),
+        Error,
+        "cache failed",
       );
-      assertEquals(result.replacements.size, 0);
     });
 
     it("aborts when a static specifier's cache lookup throws", async () => {
@@ -208,20 +204,28 @@ describe("transforms/esm/specifier-resolver", () => {
       );
     });
 
-    it("reports a skipped dynamic absolute URL as degraded", async () => {
+    it("fails closed when an absolute URL cache returns no artifact", async () => {
       const code = `export const load = () => import("https://esm.sh/foo");`;
-      const result = await buildReplacements(
-        code,
-        undefined,
-        defaultOptions,
-        async () => {
-          throw new Error("cache failed");
-        },
+      await assertRejects(
+        () => buildReplacements(code, undefined, defaultOptions, async () => null),
+        Error,
+        "Failed to cache absolute HTTP module",
       );
-      assertEquals(result.degraded, ["https://esm.sh/foo"]);
     });
 
-    it("reports nothing as degraded when every specifier resolves", async () => {
+    it("never degrades an outbound-policy denial into a runtime import", async () => {
+      const code = `export const load = () => import("http://169.254.169.254/metadata");`;
+      await assertRejects(
+        () =>
+          buildReplacements(code, undefined, defaultOptions, async () => {
+            throw new OutboundRequestBlockedError("internal destination blocked");
+          }),
+        OutboundRequestBlockedError,
+        "internal destination blocked",
+      );
+    });
+
+    it("returns the complete replacement set when every specifier resolves", async () => {
       const code = `import ok from "https://esm.sh/ok";`;
       const result = await buildReplacements(
         code,
@@ -229,7 +233,7 @@ describe("transforms/esm/specifier-resolver", () => {
         defaultOptions,
         async () => "/tmp/cache/http-ok.mjs",
       );
-      assertEquals(result.degraded, []);
+      assertEquals(result.replacements.size, 1);
     });
 
     it("aborts when a dynamic relative specifier fails to resolve", async () => {
@@ -278,7 +282,6 @@ describe("transforms/esm/specifier-resolver", () => {
         );
         assertEquals(cacheCalls, 0, `${specifier} must not hit esm.sh`);
         assertEquals(result.replacements.size, 0, `${specifier} must be left in place`);
-        assertEquals(result.degraded, []);
       }
     });
 
@@ -294,16 +297,18 @@ describe("transforms/esm/specifier-resolver", () => {
       );
     });
 
-    it("still resolves other specifiers when a dynamic one throws", async () => {
+    it("rejects the entire artifact when any dynamic absolute URL fails", async () => {
       const code = `import ok from "https://esm.sh/ok";\n` +
         `export const load = () => import("https://esm.sh/broken");`;
       const cache: CacheHttpModuleFn = async (url) => {
         if (url === "https://esm.sh/broken") throw new Error("upstream 500");
         return "/tmp/cache/http-ok.mjs";
       };
-      const result = await buildReplacements(code, undefined, defaultOptions, cache);
-      assertEquals(result.replacements.get("https://esm.sh/ok"), "file:///tmp/cache/http-ok.mjs");
-      assertEquals(result.replacements.has("https://esm.sh/broken"), false);
+      await assertRejects(
+        () => buildReplacements(code, undefined, defaultOptions, cache),
+        Error,
+        "upstream 500",
+      );
     });
   });
 
@@ -322,32 +327,26 @@ describe("transforms/esm/specifier-resolver", () => {
       assertEquals(result.code.includes("https://esm.sh/react@18"), false);
     });
 
-    it("leaves a dynamic specifier untouched when its cache lookup throws", async () => {
-      // Same split contract as buildReplacements: a lazy import that fails to
-      // pre-fetch stays in the emitted code for the runtime to resolve.
+    it("does not emit a dynamic absolute URL when caching throws", async () => {
       const original = `export const load = () => import("https://esm.sh/foo");`;
-      const result = await rewriteModuleImports(
-        original,
-        "https://esm.sh/parent",
-        defaultOptions,
-        async () => {
-          throw new Error("cache failed");
-        },
+      await assertRejects(
+        () =>
+          rewriteModuleImports(original, "https://esm.sh/parent", defaultOptions, async () => {
+            throw new Error("cache failed");
+          }),
+        Error,
+        "cache failed",
       );
-      assertEquals(result.code, original);
     });
 
-    it("reports the specifiers left in place as degraded", async () => {
+    it("does not emit a dynamic absolute URL when caching returns null", async () => {
       const original = `export const load = () => import("https://esm.sh/foo");`;
-      const result = await rewriteModuleImports(
-        original,
-        "https://esm.sh/parent",
-        defaultOptions,
-        async () => {
-          throw new Error("cache failed");
-        },
+      await assertRejects(
+        () =>
+          rewriteModuleImports(original, "https://esm.sh/parent", defaultOptions, async () => null),
+        Error,
+        "Failed to cache absolute HTTP module",
       );
-      assertEquals(result.degraded, ["https://esm.sh/foo"]);
     });
 
     it("aborts when a static specifier's cache lookup throws", async () => {

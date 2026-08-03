@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createDraft, summarizeContacts } from "../../lib/outlook-client.ts";
+import { createDraft, summarizeContacts } from "../lib/outlook-client.ts";
 
 export default tool({
-  id: "create-draft",
+  id: "outlook-create-draft",
   description:
     "Create an Outlook email draft for human approval. This does not send the message.",
   inputSchema: defineSchema((v) => v.object({

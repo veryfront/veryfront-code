@@ -12,6 +12,7 @@ const CACHE_FILE_SUFFIX = ".vfcache";
 const CACHE_FILE_PATTERN = /^[0-9a-f]{64}\.vfcache$/;
 const MAX_GLOB_CACHE_SIZE = 100;
 const MAX_CACHE_KEY_CODE_UNITS = 64 * 1024;
+const KEY_DIGEST_LOG_CHARS = 12;
 const MAX_CACHE_NAMESPACE_BYTES = 240;
 const MAX_DIRECTORY_SCAN_ENTRIES = 100_000;
 const DEFAULT_MAX_VALUE_BYTES = 64 * 1024 * 1024;
@@ -92,6 +93,24 @@ async function digestKey(input: string): Promise<string> {
   let result = "";
   for (const byte of digest) result += byte.toString(16).padStart(2, "0");
   return result;
+}
+
+/**
+ * A non-reversible label for a cache key, safe to put in a log payload.
+ *
+ * This backend serves user KV entries whose keys can embed tokens or other
+ * credentials, so diagnostics carry the digest instead of key text. It is the
+ * prefix of the same SHA-256 that names the entry's file, which keeps a log
+ * line walkable to the entry on disk: the same key always yields the same
+ * digest, and two equal digests in a collision warning mean a genuine SHA-256
+ * collision rather than a file overwritten by an unrelated write.
+ */
+async function logKeyDigest(key: string): Promise<string> {
+  try {
+    return (await digestKey(key)).slice(0, KEY_DIGEST_LOG_CHARS);
+  } catch {
+    return "unavailable";
+  }
 }
 
 function setSafeUint64(view: DataView, offset: number, value: number): void {
@@ -435,12 +454,20 @@ export class DiskCacheBackend implements CacheBackend {
       const envelope = await this.readEnvelopeWithinValueLimit(key, this.maxValueBytes);
       if (!envelope) return null;
       if (envelope.key !== key) {
-        logger.warn("[DiskCache] Filename digest collision; stored key does not match");
+        // The filename digest collided: this file belongs to a different key, so
+        // a prior write for one of them silently overwrote the other's data.
+        // Carry both key digests so collisions stay diagnosable in production
+        // instead of reading as an ordinary miss.
+        logger.warn("[DiskCache] Filename digest collision; stored key does not match", {
+          requestedKeyDigest: await logKeyDigest(key),
+          storedKeyDigest: await logKeyDigest(envelope.key),
+        });
         return null;
       }
       if (envelope.expiresAt !== undefined && Date.now() >= envelope.expiresAt) {
-        this.del(key).catch((cleanupError) => {
+        this.del(key).catch(async (cleanupError) => {
           logger.debug("[DiskCache] Expired entry cleanup failed", {
+            keyDigest: await logKeyDigest(key),
             error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
           });
         });

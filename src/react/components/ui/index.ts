@@ -1,5 +1,5 @@
 /**
- * `veryfront/ui` — the public UI primitive library. Dependency-light forks of
+ * `veryfront/ui`: the public UI primitive library. Dependency-light forks of
  * Veryfront Studio's design system (cva/Slot inlined; colours remapped to
  * veryfront's `[var(--token)]` vocabulary; zero external packages). These are
  * the base layer the `veryfront/chat` components are built on: `chat` depends on
@@ -118,7 +118,10 @@ export {
   DropdownMenuLabel,
   type DropdownMenuProps,
   DropdownMenuSeparator,
+  type DropdownMenuSlottedItemProps,
+  type DropdownMenuSlottedTriggerProps,
   DropdownMenuTrigger,
+  type DropdownMenuTriggerProps,
 } from "./dropdown-menu.tsx";
 export {
   Checkbox,
@@ -204,6 +207,63 @@ export {
   PopoverFooter,
   PopoverHeader,
   type PopoverProps,
+  type PopoverSlottedTriggerProps,
   PopoverTitle,
   PopoverTrigger,
+  type PopoverTriggerProps,
 } from "./popover.tsx";
+export {
+  Accordion,
+  AccordionContent,
+  type AccordionContentProps,
+  AccordionItem,
+  type AccordionItemProps,
+  type AccordionProps,
+  AccordionTrigger,
+  type AccordionTriggerProps,
+} from "./accordion.tsx";
+export {
+  Toast,
+  type ToastAction,
+  ToastClose,
+  ToastDescription,
+  type ToastFn,
+  type ToastOptions,
+  type ToastProps,
+  ToastProvider,
+  type ToastProviderProps,
+  ToastTitle,
+  type ToastVariant,
+  ToastViewport,
+  ToastViewport as Toaster,
+  type ToastViewportProps,
+  useToast,
+} from "./toast.tsx";
+export {
+  ToggleGroup,
+  ToggleGroupItem,
+  type ToggleGroupItemProps,
+  type ToggleGroupProps,
+} from "./toggle-group.tsx";
+export {
+  Toolbar,
+  ToolbarButton,
+  type ToolbarButtonProps,
+  ToolbarLink,
+  type ToolbarLinkProps,
+  type ToolbarProps,
+  ToolbarSeparator,
+  type ToolbarSeparatorProps,
+  toolbarVariants,
+} from "./toolbar.tsx";
+export { UIAdapterProvider, useAdapter } from "./adapter/context.tsx";
+export type {
+  DisclosureParts,
+  DisclosureProps,
+  PartialUIAdapter,
+  ToastParts,
+  ToastState,
+  ToggleGroupParts,
+  ToolbarParts,
+  UIAdapter,
+} from "./adapter/contract.ts";

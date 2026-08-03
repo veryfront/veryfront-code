@@ -2,11 +2,12 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import type { ChatDynamicToolPart, ChatMessage } from "#veryfront/agent/react";
 import { Message } from "./message.tsx";
-import { useMessageParts } from "../contexts/message-context.tsx";
+import { useMessageBranches, useMessageParts } from "../contexts/message-context.tsx";
 import type { PartGroup } from "../utils/message-parts.ts";
 
 const completedTool: ChatDynamicToolPart = {
@@ -259,6 +260,115 @@ describe("useMessageParts — headless parts data", () => {
   });
 });
 
+describe("useMessageBranches — headless branch navigation", () => {
+  it("maps the 1-based branch contract to indexes and navigation callbacks", () => {
+    let result: ReturnType<typeof useMessageBranches> | undefined;
+    const switches: Array<{ messageId: string; index: number }> = [];
+    function BranchProbe(): null {
+      result = useMessageBranches();
+      return null;
+    }
+
+    renderToString(
+      <Message.Root
+        message={assistantMessage}
+        getBranches={() => ({ current: 2, total: 3 })}
+        switchBranch={(messageId, index) => switches.push({ messageId, index })}
+      >
+        <BranchProbe />
+      </Message.Root>,
+    );
+
+    assert(result, "hook result was captured");
+    assertEquals(result.index, 1);
+    assertEquals(result.count, 3);
+    assertEquals(result.hasPrevious, true);
+    assertEquals(result.hasNext, true);
+    result.previous();
+    result.next();
+    assertEquals(switches, [
+      { messageId: assistantMessage.id, index: 0 },
+      { messageId: assistantMessage.id, index: 2 },
+    ]);
+  });
+
+  it("returns safe disabled navigation for a message without variants", () => {
+    let result: ReturnType<typeof useMessageBranches> | undefined;
+    function BranchProbe(): null {
+      result = useMessageBranches();
+      return null;
+    }
+
+    renderToString(
+      <Message.Root message={assistantMessage}>
+        <BranchProbe />
+      </Message.Root>,
+    );
+
+    assert(result, "hook result was captured");
+    assertEquals(result.index, 0);
+    assertEquals(result.count, 1);
+    assertEquals(result.hasPrevious, false);
+    assertEquals(result.hasNext, false);
+    result.previous();
+    result.next();
+  });
+
+  it("reports navigation unavailable when no branch switch callback exists", () => {
+    let result: ReturnType<typeof useMessageBranches> | undefined;
+    function BranchProbe(): null {
+      result = useMessageBranches();
+      return null;
+    }
+
+    renderToString(
+      <Message.Root
+        message={assistantMessage}
+        getBranches={() => ({ current: 2, total: 3 })}
+      >
+        <BranchProbe />
+      </Message.Root>,
+    );
+
+    assert(result, "hook result was captured");
+    assertEquals(result.hasPrevious, false);
+    assertEquals(result.hasNext, false);
+    result.previous();
+    result.next();
+  });
+
+  it("does not navigate beyond the first or last branch", () => {
+    let result: ReturnType<typeof useMessageBranches> | undefined;
+    const switches: number[] = [];
+    function BranchProbe(): null {
+      result = useMessageBranches();
+      return null;
+    }
+    const renderBranch = (current: number) =>
+      renderToString(
+        <Message.Root
+          message={assistantMessage}
+          getBranches={() => ({ current, total: 2 })}
+          switchBranch={(_messageId, index) => switches.push(index)}
+        >
+          <BranchProbe />
+        </Message.Root>,
+      );
+
+    renderBranch(1);
+    assert(result, "first branch hook result was captured");
+    result.previous();
+    result.next();
+
+    renderBranch(2);
+    assert(result, "last branch hook result was captured");
+    result.previous();
+    result.next();
+
+    assertEquals(switches, [1, 0]);
+  });
+});
+
 describe("Message.Tokens", () => {
   it("uses the canonical renderItem collection callback", () => {
     const rows: Array<{ label: string; index: number }> = [];
@@ -348,7 +458,7 @@ describe("Message.CopyAction", () => {
       flushSync(() => {});
 
       assertEquals(writes, ["Answer body."]);
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
     } finally {
       Object.assign(globalThis, previous);
       dom.window.close();

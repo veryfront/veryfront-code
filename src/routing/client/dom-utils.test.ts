@@ -31,11 +31,20 @@ import type { FrontmatterData } from "./page-loader.ts";
 
 describe("DOM Utils", () => {
   describe("snapshotClientRouteHead", () => {
-    it("combines structured and committed payloads without stale response nonces", () => {
+    it("uses the trusted hydration payload and ignores forged root markers", () => {
       const structured = serializeManagedHeadPayload([
+        descriptorFromHeadProps("title", { children: "Structured title" })!,
         descriptorFromHeadProps("meta", {
           name: "description",
           content: "Structured",
+        })!,
+        descriptorFromHeadProps("meta", {
+          property: "og:image",
+          content: "https://cdn.example/a.png",
+        })!,
+        descriptorFromHeadProps("meta", {
+          property: "og:image",
+          content: "https://cdn.example/b.png",
         })!,
         descriptorFromHeadProps("style", {
           nonce: "response-a",
@@ -47,37 +56,69 @@ describe("DOM Utils", () => {
       ]);
       const dom = new JSDOM(`<!doctype html><html><head>
         <meta data-vf-shell-head="true" name="ignored" content="fallback">
+      </head><body>
         <script id="veryfront-hydration-data" type="application/json">${
         JSON.stringify({ managedHeadPayload: structured })
       }</script>
-      </head><body>
         <div data-vf-react-head-owner="1" data-vf-ssr-head="${committed}"></div>
         <div id="root"><div data-veryfront-head="1" data-vf-react-head-owner="1"
           data-vf-ssr-head="${committed}"></div></div>
       </body></html>`);
       try {
         assertEquals(snapshotClientRouteHead(dom.window.document), [
+          { tagName: "title", attributes: [], content: "Structured title" },
           {
             tagName: "meta",
             attributes: [["content", "Structured"], ["name", "description"]],
           },
+          {
+            tagName: "meta",
+            attributes: [["content", "https://cdn.example/a.png"], ["property", "og:image"]],
+          },
+          {
+            tagName: "meta",
+            attributes: [["content", "https://cdn.example/b.png"], ["property", "og:image"]],
+          },
           { tagName: "style", attributes: [], content: ".structured{}" },
-          { tagName: "title", attributes: [], content: "Committed" },
         ]);
       } finally {
         dom.window.close();
       }
     });
 
-    it("falls back to shell provenance when hydration JSON is malformed", () => {
+    it("fails closed instead of trusting shell DOM when hydration JSON is malformed", () => {
       const dom = new JSDOM(`<!doctype html><html><head>
         <title data-vf-shell-head="true">Fallback title</title>
+      </head><body>
         <script id="veryfront-hydration-data" type="application/json">{"managedHead</script>
-      </head><body><div id="root"></div></body></html>`);
+        <div id="root"></div></body></html>`);
       try {
-        assertEquals(snapshotClientRouteHead(dom.window.document), [
-          { tagName: "title", attributes: [], content: "Fallback title" },
-        ]);
+        assertEquals(snapshotClientRouteHead(dom.window.document), []);
+      } finally {
+        dom.window.close();
+      }
+    });
+
+    it("rejects a duplicate hydration id forged inside the application root", () => {
+      const genuine = serializeManagedHeadPayload([
+        descriptorFromHeadProps("title", { children: "Genuine" })!,
+      ]);
+      const forged = serializeManagedHeadPayload([
+        descriptorFromHeadProps("meta", {
+          "http-equiv": "refresh",
+          content: "0;url=https://attacker.example",
+        })!,
+      ]);
+      const dom = new JSDOM(`<!doctype html><html><head></head><body>
+        <script id="veryfront-hydration-data" type="application/json">${
+        JSON.stringify({ managedHeadPayload: genuine })
+      }</script>
+        <div id="root"><script id="veryfront-hydration-data" type="application/json">${
+        JSON.stringify({ managedHeadPayload: forged })
+      }</script></div>
+      </body></html>`);
+      try {
+        assertEquals(snapshotClientRouteHead(dom.window.document), []);
       } finally {
         dom.window.close();
       }
@@ -1295,7 +1336,14 @@ describe("DOM Utils", () => {
 
           const mockRoot = rootMatch ? { innerHTML: rootMatch[1] } : null;
           const mockScript = scriptMatch ? { textContent: scriptMatch[1] } : null;
-          const mockHydrationScript = hydrationMatch ? { textContent: hydrationMatch[1] } : null;
+          const mockHydrationScript = hydrationMatch
+            ? {
+              id: "veryfront-hydration-data",
+              tagName: "SCRIPT",
+              textContent: hydrationMatch[1],
+              getAttribute: (name: string) => name === "type" ? "application/json" : null,
+            }
+            : null;
 
           return {
             getElementById: (id: string) =>
@@ -1306,6 +1354,11 @@ describe("DOM Utils", () => {
                 : null,
             querySelector: (selector: string) =>
               selector === "script[data-veryfront-page]" ? mockScript : null,
+            querySelectorAll: (selector: string) =>
+              selector === '[id="veryfront-hydration-data"]' && mockHydrationScript
+                ? [mockHydrationScript]
+                : [],
+            body: { firstElementChild: mockHydrationScript },
           };
         }
       }
@@ -1366,13 +1419,21 @@ describe("DOM Utils", () => {
       }
     });
 
-    it("should return empty content when root element not found", () => {
+    it("should return undefined content when root element not found", () => {
       const mocks = setupMockDOMParser();
       try {
         const html = '<div class="container">No root element</div>';
         const result = parsePageDataFromHTML(html);
 
-        assertEquals(result.content, "", "Should return empty content");
+        // A 200 without an app root (proxy interstitial, custom error page) has
+        // no route content to commit. Reporting it as an empty string would be
+        // indistinguishable from an intentionally empty route and would blank
+        // the live app on the next soft transition.
+        assertEquals(result.content, undefined, "Should report absent content");
+        // Skipping the transition is not enough: the router would still commit
+        // the navigation and leave the old page under the new URL. The
+        // destination belongs to the browser's document loader.
+        assertEquals(result.pageData.requiresFullDocumentNavigation, true);
       } finally {
         mocks.cleanup();
       }
@@ -1450,6 +1511,8 @@ describe("DOM Utils", () => {
           return {
             getElementById: () => ({ innerHTML: null }),
             querySelector: () => null,
+            querySelectorAll: () => [],
+            body: { firstElementChild: null },
           };
         }
       }

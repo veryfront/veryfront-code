@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { formatFileSize, isFile, isFolder, listFiles } from "../../lib/onedrive-client.ts";
+import { formatFileSize, isFile, isFolder, listFiles } from "../lib/onedrive-client.ts";
 
 export default tool({
-  id: "list-files",
+  id: "onedrive-list-files",
   description:
     "List files and folders in a OneDrive folder. Returns file/folder names, types, sizes, and modification dates.",
   inputSchema: defineSchema((v) => v.object({

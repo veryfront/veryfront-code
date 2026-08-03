@@ -9,12 +9,11 @@
 
 import { basename } from "#veryfront/compat/path/index.ts";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
-import { rendererLogger } from "#veryfront/utils";
+import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
 import { isServerOnlyPackage } from "../shared/server-only-packages.ts";
-import { type ImportSpecifier, parseImports, replaceSpecifiers } from "./lexer.ts";
+import { parseImports, replaceSpecifiers } from "./lexer.ts";
 
-const logger = rendererLogger.component("specifier-resolver");
 import {
   type CacheOptions,
   isCanonicalReactEsmUrl,
@@ -91,7 +90,9 @@ async function resolveSpecifier(
     }
 
     const cached = await cacheHttpModule(specifier, options);
-    if (!cached) return null;
+    if (!cached) {
+      throw new Error(`Failed to cache absolute HTTP module ${specifier}`);
+    }
 
     if (isParentHttpModule(baseUrl)) {
       return `./${basename(cached)}`;
@@ -118,63 +119,22 @@ async function resolveSpecifier(
   return resolveSpecifier(mapped, baseUrl, options, cacheHttpModule);
 }
 
-/**
- * Specifiers the runtime can still resolve on its own if prefetching fails.
- *
- * Two conditions must hold together. The specifier must be reached only
- * through `import(...)`, because a static import is part of the emitted
- * module's own import graph: every static dependency resolves to a local path
- * before the module is handed to the runtime loader, and a failure to do that
- * is fatal, exactly as it was before graceful degradation existed. A dynamic
- * specifier is resolved by the runtime at call time and is routinely guarded by
- * the caller (`platform/adapters/redis/modules.js` only calls
- * `await import("redis")` when the redis adapter is actually used), so failing
- * to prefetch it leaves the specifier in place rather than taking down a render
- * that would never have imported it.
- *
- * The specifier must also be an absolute http(s) URL, because that is the only
- * form the runtime can resolve without the transform. A relative specifier left
- * in place resolves against the local bundle cache directory, where the chunk
- * was never written; `npm:` and bare specifiers need the import map the cached
- * module no longer carries. Those failures stay fatal.
- */
-function runtimeResolvableSpecifiers(imports: readonly ImportSpecifier[]): Set<string> {
-  const dynamic = new Set<string>();
-  const staticSpecifiers = new Set<string>();
-
-  for (const imp of imports) {
-    if (!imp.n) continue;
-    (imp.d > -1 ? dynamic : staticSpecifiers).add(imp.n);
-  }
-
-  for (const specifier of staticSpecifiers) dynamic.delete(specifier);
-  for (const specifier of [...dynamic]) {
-    if (!isHttpUrl(specifier)) dynamic.delete(specifier);
-  }
-  return dynamic;
-}
-
-/** Specifier replacements plus the specifiers that were left unresolved. */
+/** Complete specifier replacements for one module. */
 export interface SpecifierReplacements {
   readonly replacements: ReadonlyMap<string, string>;
-  /** Specifiers left in place because prefetching them failed. */
-  readonly degraded: readonly string[];
 }
 
-/** Rewritten module code plus the specifiers that were left unresolved. */
+/** Module code whose resolvable imports have been rewritten. */
 export interface RewrittenModule {
   readonly code: string;
-  /** Specifiers left in place because prefetching them failed. */
-  readonly degraded: readonly string[];
 }
 
 /**
  * Build a map of specifier replacements by resolving all imports in the code.
  *
- * Resolution failure is fatal unless the runtime can resolve the specifier on
- * its own. See {@link runtimeResolvableSpecifiers}. Every specifier left in
- * place is reported as degraded so callers can decide whether the resulting
- * code is fit to cache.
+ * Resolution failure is fatal. In particular, an absolute dynamic HTTP import
+ * may never be emitted unresolved: doing so would let the runtime loader bypass
+ * the guarded fetch and DNS-pinning policy used while populating the cache.
  */
 export async function buildReplacements(
   code: string,
@@ -184,7 +144,6 @@ export async function buildReplacements(
 ): Promise<SpecifierReplacements> {
   const imports = await parseImports(code);
   const uniqueSpecifiers = [...new Set(imports.map((imp) => imp.n).filter(Boolean))] as string[];
-  const runtimeResolvable = runtimeResolvableSpecifiers(imports);
 
   const settled = await Promise.allSettled(
     uniqueSpecifiers.map(async (specifier) => ({
@@ -194,7 +153,6 @@ export async function buildReplacements(
   );
 
   const replacements = new Map<string, string>();
-  const degraded: string[] = [];
   for (let i = 0; i < settled.length; i++) {
     const outcome = settled[i];
     const specifier = uniqueSpecifiers[i];
@@ -202,31 +160,30 @@ export async function buildReplacements(
 
     if (outcome.status === "fulfilled") {
       const { specifier: resolvedFor, resolved } = outcome.value;
+      if (!resolved && isHttpUrl(resolvedFor)) {
+        throw new Error(`Failed to resolve absolute HTTP module ${resolvedFor}`);
+      }
       if (resolved && resolved !== resolvedFor) replacements.set(resolvedFor, resolved);
       continue;
     }
 
-    // Anything the runtime cannot resolve on its own must resolve here.
-    // Leaving one unresolved would emit a module whose own import graph reaches
-    // outside the local cache, which is not what the runtime loader is handed
-    // anywhere else.
-    if (!runtimeResolvable.has(specifier)) throw outcome.reason;
+    // An egress-policy denial is an authorization decision, not a transient
+    // prefetch failure. Leaving the original absolute import in the emitted
+    // bundle would let the runtime resolve it with its unrestricted loader and
+    // bypass the guarded transport entirely.
+    if (outcome.reason instanceof OutboundRequestBlockedError) throw outcome.reason;
 
-    degraded.push(specifier);
-    logger.warn("Leaving an unresolvable dynamic specifier for runtime resolution", {
-      specifier,
-      error: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
-    });
+    throw outcome.reason;
   }
 
-  return { replacements, degraded };
+  return { replacements };
 }
 
 /**
  * Rewrite all HTTP/npm/bare import specifiers in module code to local cached paths.
  *
- * Reports any specifier left in place, so the caller can keep the resulting
- * code out of the caches that outlive this render.
+ * Resolution is atomic: a failed absolute HTTP import rejects instead of
+ * emitting a partially rewritten module.
  */
 export async function rewriteModuleImports(
   code: string,
@@ -234,16 +191,15 @@ export async function rewriteModuleImports(
   options: CacheOptions,
   cacheHttpModule: CacheHttpModuleFn,
 ): Promise<RewrittenModule> {
-  const { replacements, degraded } = await buildReplacements(
+  const { replacements } = await buildReplacements(
     code,
     moduleUrl,
     options,
     cacheHttpModule,
   );
-  if (replacements.size === 0) return { code, degraded };
+  if (replacements.size === 0) return { code };
 
   return {
     code: await replaceSpecifiers(code, (specifier) => replacements.get(specifier) ?? null),
-    degraded,
   };
 }

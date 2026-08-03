@@ -1,15 +1,15 @@
-import type { CollectedHead } from "#veryfront/react/head-collector.ts";
+import {
+  type CollectedHead,
+  resolveCommittedHeadRegistrations,
+} from "#veryfront/react/head-collector.ts";
 import type { MdxBundle } from "#veryfront/types";
 import type { MDXFrontmatter } from "#veryfront/transforms/mdx/types.ts";
 import {
-  aggregateManagedHeadDescriptors,
-  assertManagedHeadDescriptorBudget,
   BOOLEAN_HEAD_ATTRIBUTES,
   descriptorFromManagedHeadRecord,
-  deserializeManagedHeadPayload,
   HEAD_PROVENANCE_ATTRIBUTE,
   HEAD_REACT_OWNER_ATTRIBUTE,
-  HEAD_SSR_PAYLOAD_ATTRIBUTE,
+  HEAD_SERVER_COMMIT_ATTRIBUTE,
   headLinkSingletonKeyFromRecord,
   headMetaSingletonKeyFromRecord,
   headScriptKeysIntersect,
@@ -40,8 +40,13 @@ export interface MergedHeadShellState {
 
 type HeadRecord = Readonly<Record<string, string | undefined>>;
 
-export function extractCommittedHeadFromHTML(html: string): CollectedHead | undefined {
-  const descriptors: ManagedHeadDescriptor[] = [];
+export function resolveCommittedHeadFromHTML(
+  html: string,
+  requestHead: CollectedHead | undefined,
+): CollectedHead | undefined {
+  if (!requestHead) return undefined;
+
+  const commitTokens: string[] = [];
   for (const match of html.matchAll(/<div\b[^>]*>/gi)) {
     const openingTag = match[0];
     if (
@@ -50,45 +55,12 @@ export function extractCommittedHeadFromHTML(html: string): CollectedHead | unde
     ) {
       continue;
     }
-    const payloadMatch = openingTag.match(
-      new RegExp(`\\s${HEAD_SSR_PAYLOAD_ATTRIBUTE}=["']([A-Za-z0-9_-]+)["']`, "i"),
+    const tokenMatch = openingTag.match(
+      new RegExp(`\\s${HEAD_SERVER_COMMIT_ATTRIBUTE}=["']([a-f0-9]{48})["']`, "i"),
     );
-    if (!payloadMatch?.[1]) continue;
-    descriptors.push(...deserializeManagedHeadPayload(payloadMatch[1]));
+    if (tokenMatch?.[1]) commitTokens.push(tokenMatch[1].toLowerCase());
   }
-  if (descriptors.length === 0) return undefined;
-
-  const aggregated = aggregateManagedHeadDescriptors(descriptors);
-  assertManagedHeadDescriptorBudget(aggregated);
-  const head: CollectedHead = { metas: [], links: [], styles: [], scripts: [] };
-  for (const descriptor of aggregated) {
-    const attributes = Object.fromEntries(descriptor.attributes);
-    switch (descriptor.tagName) {
-      case "title":
-        head.title = descriptor.content ?? "";
-        break;
-      case "meta":
-        head.metas.push(attributes);
-        break;
-      case "link":
-        head.links.push(attributes);
-        break;
-      case "style":
-        head.styles.push(
-          descriptor.attributes.length === 0
-            ? descriptor.content ?? ""
-            : { ...attributes, content: descriptor.content ?? "" },
-        );
-        break;
-      case "script":
-        head.scripts.push({
-          ...attributes,
-          ...(descriptor.content !== undefined && { content: descriptor.content }),
-        });
-        break;
-    }
-  }
-  return head;
+  return resolveCommittedHeadRegistrations(requestHead, commitTokens);
 }
 
 function canonicalHeadRecordSignature(
@@ -313,7 +285,10 @@ export function mergeCollectedHeadWithShell(
   };
 }
 
-export function buildHeadElements(head?: CollectedHead): { scripts: string; other: string } {
+export function buildHeadElements(
+  head?: CollectedHead,
+  nonce?: string,
+): { scripts: string; other: string } {
   if (!head) return { scripts: "", other: "" };
 
   const scriptParts: string[] = [];
@@ -323,7 +298,7 @@ export function buildHeadElements(head?: CollectedHead): { scripts: string; othe
     const descriptor = descriptorFromManagedHeadRecord(
       "script",
       script,
-      { contentProperty: "content" },
+      { contentProperty: "content", ambientNonce: nonce },
     );
     if (!descriptor) continue;
     const attrPairs: ManagedHeadAttribute[] = [
@@ -374,7 +349,7 @@ export function buildHeadElements(head?: CollectedHead): { scripts: string; othe
     const descriptor = descriptorFromManagedHeadRecord(
       "style",
       typeof style === "string" ? { content: style } : style,
-      { contentProperty: "content" },
+      { contentProperty: "content", ambientNonce: nonce },
     );
     if (!descriptor) continue;
     const attrStr = buildAttributes(Object.fromEntries([
@@ -390,6 +365,59 @@ export function buildHeadElements(head?: CollectedHead): { scripts: string; othe
     scripts: scriptParts.join("\n  "),
     other: otherParts.join("\n  "),
   };
+}
+
+/**
+ * Build the nonce-free transport representation of the committed React head.
+ * The browser binds its active nonce when adopting these descriptors; a nonce
+ * from one cached response must never become part of the portable payload.
+ */
+export function buildCollectedHeadDescriptors(
+  head?: CollectedHead,
+): ManagedHeadDescriptor[] {
+  if (!head) return [];
+
+  const descriptors: ManagedHeadDescriptor[] = [];
+  const append = (descriptor: ManagedHeadDescriptor | null): void => {
+    if (descriptor) descriptors.push(descriptor);
+  };
+
+  if (head.title !== undefined) {
+    append(
+      descriptorFromManagedHeadRecord(
+        "title",
+        { content: head.title },
+        { contentProperty: "content" },
+      ),
+    );
+  }
+
+  const metas = (head.description !== undefined &&
+      !head.metas.some((meta) => headMetaSingletonKeyFromRecord(meta) === "meta:description")
+    ? [{ name: "description", content: head.description }, ...head.metas]
+    : head.metas).filter((meta) => !hasCharsetAttribute(meta));
+  for (const meta of metas) append(descriptorFromManagedHeadRecord("meta", meta));
+  for (const link of head.links) append(descriptorFromManagedHeadRecord("link", link));
+  for (const style of head.styles) {
+    append(
+      descriptorFromManagedHeadRecord(
+        "style",
+        typeof style === "string" ? { content: style } : style,
+        { contentProperty: "content" },
+      ),
+    );
+  }
+  for (const script of head.scripts) {
+    append(
+      descriptorFromManagedHeadRecord(
+        "script",
+        script,
+        { contentProperty: "content" },
+      ),
+    );
+  }
+
+  return descriptors;
 }
 
 export function mergeFrontmatter(context: FrontmatterContextLike): MDXFrontmatter {

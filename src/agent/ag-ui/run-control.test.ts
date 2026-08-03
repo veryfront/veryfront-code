@@ -67,6 +67,39 @@ describe("agent/ag-ui-run-control", () => {
     assertEquals(await response.json(), { accepted: true });
   });
 
+  it("withholds infrastructure headers from run-id resolvers", async () => {
+    const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    void sessionManager.waitForSignal("run_1", "tool_1").catch(() => undefined);
+
+    const handler = createAgUiCancelHandler({
+      sessionManager,
+      resolveRunId: ({ request, requestOrCtx }) => {
+        assertEquals(requestOrCtx, request);
+        assertEquals(request.headers.get("authorization"), "Bearer public-user");
+        assertEquals(request.headers.get("cookie"), "session=public");
+        assertEquals(request.headers.get("x-token"), null);
+        assertEquals(request.headers.get("x-project-id"), null);
+        assertEquals(request.headers.get("x-forwarded-host"), null);
+        return "run_1";
+      },
+    });
+    const response = await handler(
+      new Request("https://example.com/api/runs/ignored", {
+        method: "DELETE",
+        headers: {
+          Authorization: "Bearer public-user",
+          Cookie: "session=public",
+          "x-token": "host-secret",
+          "x-project-id": "infrastructure-project",
+          "x-forwarded-host": "trusted-proxy.example",
+        },
+      }),
+    );
+
+    assertEquals(response.status, 202);
+  });
+
   it("accepts a request wrapper and returns 410 for inactive runs", async () => {
     const handler = createAgUiResumeHandler({
       sessionManager: new RunResumeSessionManager<{ result: unknown; isError: boolean }>(),

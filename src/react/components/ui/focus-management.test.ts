@@ -25,7 +25,7 @@ describe("focus management", () => {
     }
   });
 
-  it("falls back to the container when a reported candidate cannot receive focus", () => {
+  it("falls back to the container when a reported candidate cannot receive focus", async () => {
     const dom = new JSDOM(
       '<!doctype html><body><button id="outside">Outside</button><div id="panel" tabindex="-1"><button id="broken">Broken</button></div></body>',
       { pretendToBeVisual: true },
@@ -41,6 +41,10 @@ describe("focus management", () => {
       focusFirst(panel);
 
       assertEquals(document.activeElement, panel);
+      // Moving focus collapses the selection, and jsdom fires the resulting
+      // `selectionchange` from a 0ms timer the way a browser does. Yield once so
+      // it completes before Deno's leak sanitizer inspects the test.
+      await new Promise((resolve) => setTimeout(resolve, 0));
     } finally {
       dom.window.close();
     }

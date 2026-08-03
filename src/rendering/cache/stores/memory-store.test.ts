@@ -31,6 +31,20 @@ describe("rendering/cache/stores/memory-store", () => {
       assertEquals(await store.get("key1"), undefined);
     });
 
+    it("should compare-delete without removing a replacement", async () => {
+      const store = new MemoryCacheStore();
+      const observed = makePayload("observed");
+      const replacement = makePayload("replacement");
+      await store.set("key1", observed);
+      const read = await store.get("key1");
+      await store.set("key1", replacement);
+
+      assertEquals(await store.deleteIfUnchanged("key1", read!), false);
+      assertEquals(await store.get("key1"), replacement);
+      assertEquals(await store.deleteIfUnchanged("key1", replacement), true);
+      assertEquals(await store.get("key1"), undefined);
+    });
+
     it("should delete by prefix", async () => {
       const store = new MemoryCacheStore();
       await store.set("proj:a:page1", makePayload("a1"));

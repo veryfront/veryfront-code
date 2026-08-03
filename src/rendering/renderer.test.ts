@@ -879,7 +879,13 @@ describe("Renderer release asset cache isolation", () => {
       pipeline: {
         renderPage: (slug, options) => {
           assertEquals(options?.releaseAssetManifest, null);
-          assertEquals(options?.nonce, slug === "/" ? "nonce-123" : undefined);
+          if (slug === "/") {
+            assertEquals(options?.nonce, "nonce-123");
+          } else {
+            assertEquals(typeof options?.nonce, "string");
+            assertEquals(options?.nonce?.length, 32);
+            assertEquals(options?.nonce === "nonce-123", false);
+          }
           renderedSlugs.push(slug);
           renderRequests.set(slug, {
             request: options?.request,

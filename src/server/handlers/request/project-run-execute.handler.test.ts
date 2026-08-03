@@ -1,3 +1,4 @@
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
@@ -12,8 +13,9 @@ import { runEval as runEvalDefinition } from "#veryfront/eval/runner.ts";
 import { datasets, evalAgent, type EvalReport, metrics } from "veryfront/eval";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { toolRegistry } from "#veryfront/tool";
 import {
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
@@ -1265,7 +1267,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   it("executes discovered project tool steps from control-plane workflow runs", async () => {
     await stopEsbuild();
     agentRegistry.clearAll();
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
 
     try {
       const adapter = createMockAdapter();
@@ -1335,23 +1337,28 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           mode: "preview" as const,
         },
         resolvedEnvironment: "preview",
+        allowHostProjectCodeExecution: true,
       } as HandlerContext;
 
-      const result = await runWithRequestContext(
-        {
-          projectSlug: "demo-project",
-          projectId: "proj-1",
-          token: "runtime-token",
-          productionMode: false,
-          branch: "main",
-        },
-        () => handler.handle(request, ctx),
+      const result = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy(undefined),
+        () =>
+          runWithRequestContext(
+            {
+              projectSlug: "demo-project",
+              projectId: "proj-1",
+              token: "runtime-token",
+              productionMode: false,
+              branch: "main",
+            },
+            () => handler.handle(request, ctx),
+          ),
       );
 
       assertExists(result.response);
       assertEquals(result.response.status, 200);
       const response = await result.response.json();
-      assertEquals(response.success, true);
+      assertEquals(response.success, true, response.error ?? undefined);
       assertEquals(response.result, {
         lookup: {
           message: "hello from control plane",
@@ -1365,7 +1372,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(response.artifacts, undefined);
     } finally {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
       await stopEsbuild();
     }
   });

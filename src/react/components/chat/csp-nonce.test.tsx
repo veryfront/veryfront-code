@@ -2,12 +2,16 @@ import * as React from "react";
 import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { Head } from "../Head.tsx";
 import { ChatStyleProvider } from "./chat-style-provider.tsx";
 import { ChatRoot } from "./chat/composition/chat-root.tsx";
 import { ColorModeScript } from "../ui/color-mode.tsx";
+import { DesignTokenStyle } from "../ui/tokens.tsx";
+import { runWithHeadCollector } from "../../head-collector.ts";
+import { setupSSRGlobals } from "#veryfront/rendering/ssr-globals.ts";
 
 const TEST_NONCE = "nonce-123";
 
@@ -99,7 +103,7 @@ async function hydrateAndReadStyleNonce(element: React.ReactElement): Promise<st
     assert(style, "Expected hydrated tree to contain an inline style tag");
 
     const nonce = style.getAttribute("nonce");
-    hydratedRoot.unmount();
+    await unmountReactRoot(hydratedRoot);
     await flushHydrationTimers();
     return nonce;
   } finally {
@@ -125,7 +129,7 @@ async function hydrateAndReadScriptNonce(element: React.ReactElement): Promise<s
     assert(script, "Expected hydrated tree to contain an inline script tag");
 
     const nonce = script.getAttribute("nonce");
-    hydratedRoot.unmount();
+    await unmountReactRoot(hydratedRoot);
     await flushHydrationTimers();
     return nonce;
   } finally {
@@ -156,7 +160,7 @@ async function hydrateAndReadManagedHeadStyleNonce(
     assert(style, "Expected Head to append a managed inline style tag");
 
     const nonce = style.getAttribute("nonce");
-    hydratedRoot.unmount();
+    await unmountReactRoot(hydratedRoot);
     await flushHydrationTimers();
     return nonce;
   } finally {
@@ -237,6 +241,34 @@ function HydratingColorModeScriptFixture(): React.ReactElement {
 }
 
 describe("getDocumentNonce hydration behavior", () => {
+  it("prefers the server render nonce when SSR globals install a document stub", async () => {
+    setupSSRGlobals();
+    const { result: html } = await runWithHeadCollector(
+      () => renderToString(<DesignTokenStyle />),
+      { nonce: TEST_NONCE },
+    );
+
+    assert(html.startsWith(`<style nonce="${TEST_NONCE}">`));
+  });
+
+  it("applies the isolated render nonce to framework-owned server styles", async () => {
+    const { result: html } = await runWithHeadCollector(
+      () => renderToString(<DesignTokenStyle />),
+      { nonce: TEST_NONCE },
+    );
+
+    assert(html.startsWith(`<style nonce="${TEST_NONCE}">`));
+  });
+
+  it("applies the isolated render nonce to ColorModeScript during SSR", async () => {
+    const { result: html } = await runWithHeadCollector(
+      () => renderToString(<ColorModeScript />),
+      { nonce: TEST_NONCE },
+    );
+
+    assert(html.startsWith(`<script nonce="${TEST_NONCE}">`));
+  });
+
   it("preserves nonces on ChatStyleProvider style tags after hydration re-renders", async () => {
     const nonce = await hydrateAndReadStyleNonce(<HydratingChatStyleProviderFixture />);
     assertEquals(nonce, TEST_NONCE);

@@ -5,10 +5,10 @@ import {
   getIssueTransitions,
   transitionIssue,
   updateIssue,
-} from "../../lib/jira-client.ts";
+} from "../lib/jira-client.ts";
 
 export default tool({
-  id: "update-issue",
+  id: "jira-update-issue",
   description:
     'Update an existing Jira issue. Can update fields like summary, description, priority, assignee, labels, or transition the status (e.g., move to "In Progress", "Done").',
   inputSchema: defineSchema((v) =>

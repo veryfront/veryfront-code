@@ -1,10 +1,10 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createBitbucketClient } from "../../lib/bitbucket-client.ts";
-import { requireUserIdFromContext } from "../../lib/user-id.ts";
+import { createBitbucketClient } from "../lib/bitbucket-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "create-pull-request",
+  id: "bitbucket-create-pull-request",
   description: "Create a new pull request in a Bitbucket repository",
   inputSchema: defineSchema((v) => v.object({
     workspace: v.string().describe("Workspace name or UUID"),

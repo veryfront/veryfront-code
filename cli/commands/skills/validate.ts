@@ -9,7 +9,11 @@ import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json
 import { exitProcess, logError, logSuccess, logWarning } from "#cli/utils";
 import { createFileSystem } from "veryfront/platform";
 import { basename, resolve } from "veryfront/platform/path";
-import { parseSkillFrontmatter, SKILL_NAME_REGEX, validateSkillMetadata } from "veryfront/skill";
+import {
+  isValidStrictSkillName,
+  parseSkillFrontmatter,
+  validateSkillFileMetadata,
+} from "veryfront/skill";
 
 interface ValidationIssue {
   severity: "error" | "warning";
@@ -38,7 +42,7 @@ export async function validateSkillDirectory(dir: string): Promise<ValidationIss
     const parsed = await parseSkillFrontmatter(content);
     const directoryName = basename(resolve(dir));
     validateCanonicalFrontmatterName(parsed.frontmatter, directoryName);
-    validateSkillMetadata(parsed.frontmatter, directoryName);
+    validateSkillFileMetadata(parsed.frontmatter, directoryName);
     if (!parsed.body.trim()) {
       issues.push({ severity: "warning", message: "SKILL.md body is empty" });
     }
@@ -57,7 +61,7 @@ function validateCanonicalFrontmatterName(
   if (typeof frontmatter.name !== "string") return;
 
   const name = frontmatter.name.trim();
-  if (!SKILL_NAME_REGEX.test(name)) {
+  if (!isValidStrictSkillName(name)) {
     return;
   }
 

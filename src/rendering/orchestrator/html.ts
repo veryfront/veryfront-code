@@ -15,11 +15,11 @@ import {
   HEAD_PROVENANCE_ATTRIBUTE,
   HEAD_SHELL_PROVENANCE_ATTRIBUTE,
   headMetaSingletonKeyFromRecord,
+  serializeManagedHeadPayload,
 } from "#veryfront/html/managed-head-protocol.ts";
 import type { MDXFrontmatter } from "#veryfront/transforms/mdx/types.ts";
 import type { RenderMetadata } from "#veryfront/types";
 import { DEFAULT_DASHBOARD_PORT, rendererLogger } from "#veryfront/utils";
-import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 import { injectElementSelectors } from "#veryfront/studio/element-selector-injector.ts";
 import { computeSourceHash } from "#veryfront/studio/hash-utils.ts";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
@@ -37,10 +37,11 @@ import {
   startProjectCSSPreparation,
 } from "./html-project-css.ts";
 import {
+  buildCollectedHeadDescriptors,
   buildHeadElements as buildCollectedHeadElements,
-  extractCommittedHeadFromHTML,
   mergeCollectedHeadWithShell,
   mergeFrontmatter as mergeCollectedFrontmatter,
+  resolveCommittedHeadFromHTML,
 } from "./html-head.ts";
 import { mergeImportedCSS as mergeImportedProjectCss } from "./html-imported-css.ts";
 import type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
@@ -236,7 +237,7 @@ export class HTMLGenerator {
   }
 
   async generateFullHTML(context: HTMLGenerationContext): Promise<string> {
-    const committedHead = extractCommittedHeadFromHTML(context.html);
+    const committedHead = resolveCommittedHeadFromHTML(context.html, context.collectedHead);
     const effectiveContext = committedHead ? { ...context, collectedHead: committedHead } : context;
     let html: string;
     if (isFullHTMLDocument(effectiveContext.html)) {
@@ -250,7 +251,7 @@ export class HTMLGenerator {
       logger.debug("Injected element selectors for Studio");
     }
 
-    return addNonceToHtmlTags(finalHtml, effectiveContext.options?.nonce);
+    return finalHtml;
   }
 
   async generateHTMLStream(
@@ -269,7 +270,7 @@ export class HTMLGenerator {
       throw error;
     }
 
-    const committedHead = extractCommittedHeadFromHTML(reactContent);
+    const committedHead = resolveCommittedHeadFromHTML(reactContent, context.collectedHead);
     const fullContext = {
       ...context,
       html: reactContent,
@@ -278,12 +279,9 @@ export class HTMLGenerator {
 
     if (isFullHTMLDocument(reactContent)) {
       const encoder = new TextEncoder();
-      const fullHtml = addNonceToHtmlTags(
-        await this.handleFullHTMLDocument({
-          ...fullContext,
-        }),
-        context.options?.nonce,
-      );
+      const fullHtml = await this.handleFullHTMLDocument({
+        ...fullContext,
+      });
 
       return new ReadableStream({
         start(controller) {
@@ -314,10 +312,7 @@ export class HTMLGenerator {
     );
 
     const encoder = new TextEncoder();
-    const fullHtml = addNonceToHtmlTags(
-      `${start}${reactContent}${end}`,
-      context.options?.nonce,
-    );
+    const fullHtml = `${start}${reactContent}${end}`;
 
     return new ReadableStream({
       start(controller) {
@@ -484,6 +479,14 @@ export class HTMLGenerator {
       head,
     );
 
+    const completeManagedHeadPayload = serializeManagedHeadPayload([
+      ...buildStructuredManagedHeadDescriptors(
+        extractHTMLMetadata(enrichedFrontmatter, layoutFrontmatter),
+        enrichedFrontmatter.title || "Veryfront App",
+      ),
+      ...buildCollectedHeadDescriptors(emissionHead),
+    ]);
+
     const { start, end } = await generateHTMLShellParts(
       {
         title: enrichedFrontmatter.title || "Veryfront App",
@@ -498,6 +501,7 @@ export class HTMLGenerator {
       context.options?.props,
       reactContent,
       projectCSSPromise,
+      { managedHeadPayload: completeManagedHeadPayload },
     );
 
     let modifiedStart = start;
@@ -542,7 +546,10 @@ export class HTMLGenerator {
       );
     }
 
-    const { scripts, other } = buildCollectedHeadElements(emissionHead);
+    const { scripts, other } = buildCollectedHeadElements(
+      emissionHead,
+      context.options?.nonce,
+    );
     if (!scripts && !other) return { start: modifiedStart, end };
 
     // The framework import map must precede every module script. Keep collected

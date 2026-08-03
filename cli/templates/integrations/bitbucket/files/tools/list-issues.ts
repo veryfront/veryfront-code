@@ -1,7 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createBitbucketClient } from "../../lib/bitbucket-client.ts";
-import { requireUserIdFromContext } from "../../lib/user-id.ts";
+import { createBitbucketClient } from "../lib/bitbucket-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 type BitbucketIssue = {
   id: number;
@@ -28,7 +28,7 @@ type BitbucketIssue = {
 };
 
 export default tool({
-  id: "list-issues",
+  id: "bitbucket-list-issues",
   description: "List issues for a Bitbucket repository",
   inputSchema: defineSchema((v) => v.object({
     workspace: v.string().describe("Workspace name or UUID"),

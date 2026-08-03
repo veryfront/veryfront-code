@@ -1,8 +1,9 @@
 import * as React from "react";
 import { flushSync } from "react-dom";
-import { createRoot, hydrateRoot, type Root } from "react-dom/client";
+import { createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "./dropdown-menu.tsx";
@@ -101,15 +102,16 @@ const surfaceCases: SurfaceCase[] = [
 ];
 
 /**
- * Unmount and drain the scheduler task React leaves behind.
+ * Wait for the Escape dismissal layer to be registered.
  *
- * React's scheduler holds a `setImmediate` until it next runs. It completes on
- * its own, but the test has to yield once more or Deno's leak sanitizer sees
- * the timer still pending.
+ * `Floating` registers its dismissable layer from a passive effect, so the
+ * surface is committed one tick before the document listener exists. A keydown
+ * is one-shot, so an Escape dispatched in that window is dropped for good and
+ * the surface never closes. Yield the macrotask React's scheduler queued at
+ * commit time first.
  */
-async function unmount(root: Root): Promise<void> {
-  flushSync(() => root.unmount());
-  await new Promise((resolve) => setTimeout(resolve, 0));
+function escapeLayerRegistered(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("Floating SSR and hydration", () => {
@@ -157,13 +159,13 @@ describe("Floating SSR and hydration", () => {
         );
         assertEquals(recoverableErrors, []);
 
-        await unmount(root);
+        await unmountReactRoot(root);
         root = undefined;
         await waitFor(() =>
           document.querySelector(`[data-floating-surface="${surfaceId}"]`) === null
         );
       } finally {
-        if (root) await unmount(root);
+        if (root) await unmountReactRoot(root);
         restore();
       }
     });
@@ -206,7 +208,7 @@ describe("Floating SSR and hydration", () => {
       assertEquals(rootElement.contains(surface), false);
       assertEquals(recoverableErrors, []);
     } finally {
-      if (root) await unmount(root);
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
@@ -280,6 +282,7 @@ describe("Floating SSR and hydration", () => {
 
       inside.focus();
       assertEquals(document.activeElement, inside);
+      await escapeLayerRegistered();
       document.dispatchEvent(
         new KeyboardEvent("keydown", {
           bubbles: true,
@@ -290,7 +293,7 @@ describe("Floating SSR and hydration", () => {
       await waitFor(() => document.querySelector('[data-floating-surface="geometry"]') === null);
       await waitFor(() => document.activeElement === trigger);
     } finally {
-      if (root) await unmount(root);
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
@@ -365,7 +368,7 @@ describe("Floating SSR and hydration", () => {
       );
       assert(document.querySelector("[data-reanchored-surface]"));
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -419,6 +422,7 @@ describe("Floating SSR and hydration", () => {
       assertEquals(surface.parentElement, scope);
       assertEquals(globalDom.window.document.querySelector("[data-owner-surface]"), null);
 
+      await escapeLayerRegistered();
       ownerDom.window.document.dispatchEvent(
         new ownerDom.window.KeyboardEvent("keydown", {
           bubbles: true,
@@ -429,7 +433,7 @@ describe("Floating SSR and hydration", () => {
       await waitFor(() => ownerDom.window.document.querySelector("[data-owner-surface]") === null);
       assertEquals(reasons, ["escape"]);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
       ownerDom.window.close();
     }

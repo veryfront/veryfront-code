@@ -1,12 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { ServerDataFetcher } from "./server-data-fetcher.ts";
+import { __resolveDataWorkerIdentityForTests, ServerDataFetcher } from "./server-data-fetcher.ts";
 import type { DataContext, DataResult, PageWithData } from "./types.ts";
 import { notFound, redirect } from "./helpers.ts";
 import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { join } from "node:path";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 
 describe("ServerDataFetcher", () => {
   function createContext(overrides: Partial<DataContext> = {}): DataContext {
@@ -30,6 +31,100 @@ describe("ServerDataFetcher", () => {
   });
 
   describe("fetch", () => {
+    it("rejects remote raw server-data execution before project code runs", async () => {
+      const fetcher = new ServerDataFetcher();
+      let executed = false;
+      const pageModule: PageWithData = {
+        default: () => null,
+        getServerData: () => {
+          executed = true;
+          return { props: {} };
+        },
+      };
+
+      await assertRejects(
+        () =>
+          fetcher.fetch(pageModule, createContext(), {
+            isLocalProject: false,
+            modulePath: "/tenant/page.ts",
+            projectDir: "/tenant",
+          }),
+        Error,
+        "Remote server-data execution requires",
+      );
+      assertEquals(executed, false);
+    });
+
+    it("allows server-data execution in an explicitly capable dedicated runtime", async () => {
+      const fetcher = new ServerDataFetcher();
+      let executed = false;
+      const pageModule: PageWithData = {
+        default: () => null,
+        getServerData: () => {
+          executed = true;
+          return { props: { source: "dedicated" } };
+        },
+      };
+
+      const result = await fetcher.fetch(pageModule, createContext(), {
+        isLocalProject: false,
+        allowHostProjectCodeExecution: true,
+      });
+
+      assertEquals(result.props, { source: "dedicated" });
+      assertEquals(executed, true);
+    });
+
+    it("binds reusable data workers to tenant, source, policy, and project env", async () => {
+      const identity = (
+        workerScope: string,
+        sourceGeneration: string,
+        policy: Parameters<typeof runWithExactSourceIntegrationPolicy>[0],
+        projectEnv: Record<string, string>,
+      ) =>
+        runWithProjectEnv(
+          projectEnv,
+          () =>
+            runWithExactSourceIntegrationPolicy(policy, () =>
+              __resolveDataWorkerIdentityForTests({
+                workerScope,
+                sourceGeneration,
+              })),
+        );
+
+      const unrestricted = { schemaVersion: 1, mode: "unrestricted" } as const;
+      const denyAll = {
+        schemaVersion: 1,
+        mode: "allowlist",
+        integrations: {},
+      } as const;
+      const baseline = await identity("tenant-a", "release-a", unrestricted, {
+        TENANT_SECRET: "one",
+      });
+      const same = await identity("tenant-a", "release-a", unrestricted, {
+        TENANT_SECRET: "one",
+      });
+      const changedTenant = await identity("tenant-b", "release-a", unrestricted, {
+        TENANT_SECRET: "one",
+      });
+      const changedSource = await identity("tenant-a", "release-b", unrestricted, {
+        TENANT_SECRET: "one",
+      });
+      const changedPolicy = await identity("tenant-a", "release-a", denyAll, {
+        TENANT_SECRET: "one",
+      });
+      const changedEnv = await identity("tenant-a", "release-a", unrestricted, {
+        TENANT_SECRET: "two",
+      });
+
+      assertEquals(baseline.reusable, true);
+      assertEquals(same.workerId, baseline.workerId);
+      assertEquals(changedTenant.workerId === baseline.workerId, false);
+      assertEquals(changedSource.workerId === baseline.workerId, false);
+      assertEquals(changedPolicy.workerId === baseline.workerId, false);
+      assertEquals(changedEnv.workerId === baseline.workerId, false);
+    });
+
     it("should return empty props when getServerData is not defined", async () => {
       const fetcher = new ServerDataFetcher();
       const pageModule: PageWithData = { default: () => null };
@@ -268,7 +363,7 @@ describe("ServerDataFetcher", () => {
             { modulePath: "/tmp/test/page.ts", projectDir: "/tmp/test" },
           ),
         Error,
-        "too large",
+        "exceeds size limit",
       );
     });
 
@@ -298,8 +393,45 @@ describe("ServerDataFetcher", () => {
             { modulePath: "/tmp/test/page.ts", projectDir: "/tmp/test" },
           ),
         Error,
-        "too large",
+        "exceeds size limit",
       );
+    });
+
+    it("should bound chunked bodies while streaming and cancel the source", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_DATA", "1");
+      __resetPoolForTests();
+
+      const fetcher = new ServerDataFetcher();
+      const pageModule: PageWithData = {
+        default: () => null,
+        getServerData: () => ({ props: {} }),
+      };
+      const chunk = new Uint8Array(6 * 1024 * 1024);
+      let cancelled = false;
+      const request = new Request("http://localhost/test", {
+        method: "POST",
+        body: new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.enqueue(chunk);
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+      });
+
+      await assertRejects(
+        () =>
+          fetcher.fetch(
+            pageModule,
+            createContext({ request }),
+            { modulePath: "/tmp/test/page.ts", projectDir: "/tmp/test" },
+          ),
+        Error,
+        "exceeds size limit",
+      );
+      assertEquals(cancelled, true);
     });
 
     it("should skip body size guard when request has no body", async () => {
@@ -532,6 +664,7 @@ describe("ServerDataFetcher", () => {
       function isolatedFetch(
         modulePath: string,
         dir: string,
+        context: DataContext = createContext(),
       ): Promise<DataResult> {
         const fetcher = new ServerDataFetcher();
         const pageModule: PageWithData = {
@@ -542,9 +675,10 @@ describe("ServerDataFetcher", () => {
         return runWithExactSourceIntegrationPolicy(
           { schemaVersion: 1, mode: "unrestricted" },
           () =>
-            fetcher.fetch(pageModule, createContext(), {
+            fetcher.fetch(pageModule, context, {
               modulePath,
               projectDir: dir,
+              isLocalProject: true,
             }),
         );
       }
@@ -595,6 +729,43 @@ describe("ServerDataFetcher", () => {
           Error,
           "intentional test error from isolated getServerData",
         );
+      });
+
+      it("does not expose infrastructure headers to isolated server-data hooks", async () => {
+        const { modulePath, projectDir: dir } = await writeIsolatedPage(
+          `export function getServerData(context) {
+             return {
+               props: {
+                 authorization: context.request.headers.get("authorization"),
+                 projectId: context.request.headers.get("x-project-id"),
+                 token: context.request.headers.get("x-token"),
+                 veryfront: context.request.headers.get("x-veryfront-release-id"),
+               },
+             };
+           }
+           export default function Page() { return null; }`,
+        );
+        const request = new Request("http://localhost/test", {
+          headers: {
+            authorization: "Bearer application-user",
+            "x-project-id": "tenant-42",
+            "x-token": "platform-secret",
+            "x-veryfront-release-id": "release-secret",
+          },
+        });
+
+        const result = await isolatedFetch(
+          modulePath,
+          dir,
+          createContext({ request }),
+        );
+
+        assertEquals(result.props, {
+          authorization: "Bearer application-user",
+          projectId: null,
+          token: null,
+          veryfront: null,
+        });
       });
     });
 

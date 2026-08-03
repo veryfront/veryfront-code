@@ -79,3 +79,44 @@ describe("SSR distributed cache keys", () => {
     }
   });
 });
+
+describe("SSR distributed cache availability", () => {
+  it("reports disabled until initialization selects a backend", async () => {
+    const redis = await import("./redis.ts?uninitialized-availability-test");
+    assertEquals(redis.isSSRDistributedCacheEnabled(), false);
+  });
+
+  it("reports disabled when initialization finds no distributed backend", async () => {
+    const originalSSRModuleBackend = CacheBackends.ssrModule;
+    CacheBackends.ssrModule =
+      (() => Promise.resolve(null)) as unknown as typeof CacheBackends.ssrModule;
+
+    try {
+      const redis = await import("./redis.ts?absent-backend-availability-test");
+      assertEquals(await redis.initializeSSRDistributedCache(), false);
+      assertEquals(redis.isSSRDistributedCacheEnabled(), false);
+    } finally {
+      CacheBackends.ssrModule = originalSSRModuleBackend;
+    }
+  });
+
+  it("reports enabled once initialization resolves a backend", async () => {
+    const backend: CacheBackend = {
+      type: "api",
+      get: () => Promise.resolve(null),
+      set: () => Promise.resolve(),
+      del: () => Promise.resolve(),
+    };
+    const originalSSRModuleBackend = CacheBackends.ssrModule;
+    CacheBackends.ssrModule = () => Promise.resolve(backend);
+
+    try {
+      const redis = await import("./redis.ts?present-backend-availability-test");
+      assertEquals(redis.isSSRDistributedCacheEnabled(), false);
+      assertEquals(await redis.initializeSSRDistributedCache(), true);
+      assertEquals(redis.isSSRDistributedCacheEnabled(), true);
+    } finally {
+      CacheBackends.ssrModule = originalSSRModuleBackend;
+    }
+  });
+});

@@ -1,10 +1,10 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createGitHubClient } from "../../lib/github-client.ts";
-import { requireUserIdFromContext } from "../../lib/user-id.ts";
+import { createGitHubClient } from "../lib/github-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "merge-pr",
+  id: "github-merge-pr",
   description: "Merge an open GitHub pull request",
   inputSchema: defineSchema((v) =>
     v.object({

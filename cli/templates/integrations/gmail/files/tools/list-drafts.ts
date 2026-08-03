@@ -4,7 +4,7 @@ import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
-  id: "list-drafts",
+  id: "gmail-list-drafts",
   description: "List Gmail draft messages.",
   inputSchema: defineSchema((v) => v.object({
     maxResults: v.number().min(1).max(500).default(10).describe("Maximum number of drafts"),

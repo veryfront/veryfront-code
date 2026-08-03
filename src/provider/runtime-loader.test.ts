@@ -103,6 +103,41 @@ function readRequestBody(init: RequestInit | undefined): string | null {
 }
 
 describe("provider/runtime-loader", () => {
+  it("serializes tool-call arguments as JSON objects without changing string tool results", () => {
+    assertEquals(
+      toOpenAICompatibleMessages([{
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: "tool-1",
+          toolName: "lookup",
+          input: { query: "Veryfront" },
+        }],
+      }, {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "tool-1",
+          toolName: "lookup",
+          output: { type: "json", value: "plain result" },
+        }],
+      }]),
+      [{
+        role: "assistant",
+        content: null,
+        tool_calls: [{
+          id: "tool-1",
+          type: "function",
+          function: { name: "lookup", arguments: '{"query":"Veryfront"}' },
+        }],
+      }, {
+        role: "tool",
+        tool_call_id: "tool-1",
+        content: "plain result",
+      }],
+    );
+  });
+
   it("classifies incompatible provider-executed replay as a configuration error", () => {
     for (
       const testCase of [
