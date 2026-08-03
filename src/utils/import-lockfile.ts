@@ -44,21 +44,45 @@ function cloneLockfileEntry(entry: LockfileEntry): LockfileEntry {
   };
 }
 
+function defineImportEntry(
+  imports: Record<string, LockfileEntry>,
+  url: string,
+  entry: LockfileEntry,
+): void {
+  Object.defineProperty(imports, url, {
+    value: entry,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
 function createImportDictionary(
   entries: Iterable<readonly [string, LockfileEntry]> = [],
+  prototype: "internal" | "public" = "internal",
 ): Record<string, LockfileEntry> {
-  const imports = Object.create(null) as Record<string, LockfileEntry>;
-  for (const [url, entry] of entries) imports[url] = entry;
+  const imports = prototype === "internal"
+    ? Object.create(null) as Record<string, LockfileEntry>
+    : {};
+  for (const [url, entry] of entries) defineImportEntry(imports, url, entry);
   return imports;
 }
 
-function cloneLockfileData(data: LockfileData): LockfileData {
+function cloneLockfileData(
+  data: LockfileData,
+  prototype: "internal" | "public" = "internal",
+): LockfileData {
   return {
     version: LOCKFILE_VERSION,
     imports: createImportDictionary(
       Object.entries(data.imports).map(([url, entry]) => [url, cloneLockfileEntry(entry)]),
+      prototype,
     ),
   };
+}
+
+function createInternalLockfile(): LockfileData {
+  return { version: LOCKFILE_VERSION, imports: createImportDictionary() };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -163,7 +187,7 @@ function parseLockfile(content: string, lockfilePath: string): LockfileData {
 }
 
 export function createEmptyLockfile(): LockfileData {
-  return { version: LOCKFILE_VERSION, imports: createImportDictionary() };
+  return { version: LOCKFILE_VERSION, imports: createImportDictionary([], "public") };
 }
 
 /** Compute integrity. */
@@ -356,7 +380,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   function read(): Promise<LockfileData | null> {
     return serializeManagerOperation(async () => {
       const data = await readCurrent();
-      return data === null ? null : cloneLockfileData(data);
+      return data === null ? null : cloneLockfileData(data, "public");
     });
   }
 
@@ -398,8 +422,8 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   function set(url: string, entry: LockfileEntry): Promise<void> {
     const snapshot = cloneLockfileEntry(entry);
     return serializeManagerOperation(async () => {
-      const data = (await readCurrent()) ?? createEmptyLockfile();
-      data.imports[url] = snapshot;
+      const data = (await readCurrent()) ?? createInternalLockfile();
+      defineImportEntry(data.imports, url, snapshot);
       cache = data;
       pendingEntries.set(url, snapshot);
     });
@@ -418,7 +442,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
         // Clear is an explicit destructive recovery path. Check access to the
         // path, but do not parse content that the user has chosen to discard.
         const existing = await lockfileExists();
-        const cleared = createEmptyLockfile();
+        const cleared = createInternalLockfile();
         if (existing) {
           if (fs.remove) await fs.remove(lockfilePath);
           else await writeToDisk(cleared);
@@ -442,9 +466,9 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
         // makes the whole read-merge-write sequence atomic relative to other
         // in-process managers, including managers using path aliases.
         const snapshot = new Map(pendingEntries);
-        const merged = (await readFromDisk()) ?? createEmptyLockfile();
+        const merged = (await readFromDisk()) ?? createInternalLockfile();
         for (const [url, entry] of snapshot) {
-          merged.imports[url] = cloneLockfileEntry(entry);
+          defineImportEntry(merged.imports, url, cloneLockfileEntry(entry));
         }
 
         await writeToDisk(merged);
@@ -452,7 +476,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
           if (pendingEntries.get(url) === entry) pendingEntries.delete(url);
         }
         for (const [url, entry] of pendingEntries) {
-          merged.imports[url] = cloneLockfileEntry(entry);
+          defineImportEntry(merged.imports, url, cloneLockfileEntry(entry));
         }
         cache = merged;
       });

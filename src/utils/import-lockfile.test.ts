@@ -104,6 +104,9 @@ describe("import-lockfile", () => {
       const lockfile = createEmptyLockfile();
       assertEquals(lockfile.version, 1);
       assertEquals(lockfile.imports, {});
+      assertEquals(Object.getPrototypeOf(lockfile.imports), Object.prototype);
+      // deno-lint-ignore no-prototype-builtins -- verifies public consumers can call this directly.
+      assertEquals(lockfile.imports.hasOwnProperty("package"), false);
     });
   });
 
@@ -329,7 +332,9 @@ describe("import-lockfile", () => {
 
       const inMemory = await mgr.read();
       assertExists(inMemory);
-      assertEquals(Object.getPrototypeOf(inMemory.imports), null);
+      assertEquals(Object.getPrototypeOf(inMemory.imports), Object.prototype);
+      // deno-lint-ignore no-prototype-builtins -- verifies public consumers can call this directly.
+      assertEquals(inMemory.imports.hasOwnProperty("__proto__"), true);
       assertEquals(inMemory.imports["__proto__"], entry);
       const onDisk = JSON.parse(await fs.readFile("/project/veryfront.lock")) as LockfileData;
       assertEquals(Object.keys(onDisk.imports), ["__proto__"]);
@@ -466,12 +471,17 @@ describe("import-lockfile", () => {
           }),
         });
         const validManager = createLockfileManager("/valid", validFs);
-        assertEquals(await validManager.read(), {
+        const validRead = await validManager.read();
+        assertEquals(validRead, {
           version: 1,
           imports: {
             package: { resolved: "https://example.com/mod.ts", integrity: "sha256-valid" },
           },
         });
+        assertExists(validRead);
+        assertEquals(Object.getPrototypeOf(validRead.imports), Object.prototype);
+        // deno-lint-ignore no-prototype-builtins -- verifies public consumers can call this directly.
+        assertEquals(validRead.imports.hasOwnProperty("package"), true);
       } finally {
         for (const field of fieldNames) {
           const descriptor = descriptors.get(field);
