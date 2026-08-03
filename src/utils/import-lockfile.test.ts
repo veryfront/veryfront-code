@@ -2791,6 +2791,48 @@ describe("import-lockfile", () => {
       assertEquals(warning.includes("/project/veryfront.lock"), false);
     });
 
+    it("should warn once after WeakSet prototype poisoning", async () => {
+      const originalWarn = console.warn;
+      const weakSetHas = Object.getOwnPropertyDescriptor(WeakSet.prototype, "has");
+      const weakSetAdd = Object.getOwnPropertyDescriptor(WeakSet.prototype, "add");
+      const warnings: string[] = [];
+      const truncated = '{"version":1,"imports":{';
+      const fs = createMockFS({ "/project/veryfront.lock": truncated });
+      const mgr = createLockfileManager("/project", fs);
+
+      try {
+        console.warn = ((...args: unknown[]) => {
+          warnings.push(args.map(String).join(" "));
+        }) as typeof console.warn;
+        Object.defineProperty(WeakSet.prototype, "has", {
+          configurable: true,
+          value: () => {
+            throw new Error("poisoned WeakSet.has");
+          },
+        });
+        Object.defineProperty(WeakSet.prototype, "add", {
+          configurable: true,
+          value: () => {
+            throw new Error("poisoned WeakSet.add");
+          },
+        });
+
+        assertEquals(await getLockfileEntryForBuild(mgr, "https://cdn.com/mod.ts"), null);
+        assertEquals(await getLockfileEntryForBuild(mgr, "https://cdn.com/other.ts"), null);
+      } finally {
+        console.warn = originalWarn;
+        if (weakSetHas === undefined) Reflect.deleteProperty(WeakSet.prototype, "has");
+        else Object.defineProperty(WeakSet.prototype, "has", weakSetHas);
+        if (weakSetAdd === undefined) Reflect.deleteProperty(WeakSet.prototype, "add");
+        else Object.defineProperty(WeakSet.prototype, "add", weakSetAdd);
+      }
+
+      assertEquals(warnings.length, 1);
+      const warning = warnings[0];
+      assertExists(warning);
+      assertStringIncludes(warning, "Lockfile veryfront.lock could not be read");
+    });
+
     it("should keep failing loudly for a newer-format lockfile", async () => {
       const newerContent = JSON.stringify({
         version: 99,

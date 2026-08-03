@@ -1422,7 +1422,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   return { read, write, get, set, has, clear, flush };
 }
 
-const lockfileReadWarningIssued = new WeakSet<LockfileManager>();
+const lockfileReadWarningIssued = new NativeWeakMap<LockfileManager, true>();
 
 /**
  * Degrade an unreadable-lockfile failure (`lockfile-read-error`) on a build
@@ -1439,8 +1439,8 @@ function absorbUnreadableLockfileError(
   const snapshot = snapshotVeryfrontError(error);
   if (snapshot?.slug !== LOCKFILE_READ_ERROR.slug) return false;
 
-  if (!lockfileReadWarningIssued.has(lockfile)) {
-    lockfileReadWarningIssued.add(lockfile);
+  if (getWeakMapValue(lockfileReadWarningIssued, lockfile) !== true) {
+    setWeakMapValue(lockfileReadWarningIssued, lockfile, true);
     logger.warn(
       `Lockfile ${LOCKFILE_NAME} could not be read (${snapshot.message}); ` +
         "continuing this build without lockfile entries. " +
