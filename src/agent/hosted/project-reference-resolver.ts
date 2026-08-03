@@ -7,7 +7,10 @@ import {
   UNCONFIRMED_AGENT_PROJECT_IDENTITY_MESSAGE,
 } from "../project/context.ts";
 import { readOwnDataProperty as readRuntimeOwnDataProperty } from "../runtime/data-property-descriptor.ts";
-import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import {
+  canIdentifyProxyWithoutHooks,
+  isProxyWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
 
 const ArrayIsArray = Array.isArray;
 
@@ -16,7 +19,12 @@ const ArrayIsArray = Array.isArray;
  * walking the prototype chain.
  */
 function readOwnDataProperty(source: unknown, key: string): unknown {
-  if (typeof source !== "object" || source === null || isProxyWithoutHooks(source)) {
+  if (
+    !canIdentifyProxyWithoutHooks ||
+    typeof source !== "object" ||
+    source === null ||
+    isProxyWithoutHooks(source)
+  ) {
     return undefined;
   }
 
