@@ -1,287 +1,182 @@
 # Build Module
 
-## Purpose
+This is the module overview and public API reference for `src/build/`.
+For the user-facing build and deployment procedure, see
+[Build and deploy](../../docs/guides/deploying.md). For the cross-module design,
+see [Build pipeline](../../docs/architecture/14-build-pipeline.md).
 
-The build module is Veryfront's comprehensive build system, responsible for transforming source code into optimized production bundles. It handles MDX compilation, asset optimization, code splitting, and SSG (Static Site Generation).
+## Responsibility
 
-## Scope
+The build module owns:
 
-### What this module does:
+- production static-page generation for Pages and App Router routes;
+- client runtime generation and route-based JavaScript code splitting;
+- public-asset copying, output manifests, redirects, service workers, and
+  optional compression;
+- MDX compilation and directory watching;
+- provider-neutral CSS and image orchestration;
+- embedded-runtime bundle generation.
 
-- MDX compilation to React components
-- JavaScript/TypeScript bundling and code splitting
-- CSS optimization through an explicitly composed provider
-- Image optimization through an explicitly composed provider
-- Tailwind CSS processing through an explicitly composed provider
-- Static site generation (SSG)
-- Asset pipeline orchestration
-- Production build optimization
+It does not own development serving, runtime request dispatch, deployment, or
+runtime adapter selection.
 
-### What this module does NOT do:
+CSS compilation, optimization, and purging implementations live outside this
+module. Build resolves the `CSSProcessor`, `CSSOptimizationEngine`, and
+`CSSPurgingEngine` contracts supplied by explicitly composed extensions. It does
+not import vendor engines or substitute a local fallback when a requested
+contract is unavailable.
 
-- Development server (see `server/dev-server/`)
-- Runtime code transformation (see `transforms/`)
-- Request handling (see `server/`)
+## Public package surface
 
-## Architecture
+Applications import the supported package API from `veryfront/build`:
 
-```
-build/
-├── asset-pipeline/          # Image/CSS optimization
-│   ├── image-optimizer/    # Provider-neutral image optimization
-│   ├── css-optimizer/      # Provider-neutral CSS optimization
-│   └── tailwind-processor/ # Provider-neutral Tailwind orchestration
-├── compiler/               # MDX → React compilation
-│   ├── mdx-compiler/      # MDX processor
-│   └── mdx-to-js.ts       # JavaScript output
-├── bundler/               # JavaScript bundling
-│   ├── code-splitter/     # Route-based splitting
-│   └── esbuild-wrapper.ts # esbuild integration
-├── renderer-bundler/      # Component bundling
-│   ├── services/          # MDX/Script bundlers
-│   └── types/             # Bundler types
-├── config/                # Build configuration
-└── embedded/              # Embedded resources
-```
+| Export                                  | Contract                                                   |
+| --------------------------------------- | ---------------------------------------------------------- |
+| `buildProduction(options)`              | Generate and atomically publish a production static build. |
+| `compileMDXToJS(path, source, options)` | Compile one MDX program to JavaScript.                     |
+| `compileAllMDX(options)`                | Compile an MDX source tree.                                |
+| `watchMDX(options)`                     | Watch and recompile an MDX source tree.                    |
+| `buildEmbeddedPreset(options)`          | Build a Deno, Node.js, or Bun embedded preset.             |
+| `LOCAL_RELEASE_ASSET_MANIFEST_PATH`     | Path of the optional local dependency manifest.            |
 
-## Key Exports
+`BuildOptions` and `BuildStats` are exported from `veryfront/server`. The MDX
+compiler types (`CompileOptions`, `CompileResult`, `MDXFrontmatter`) are
+exported from `./compiler/mdx-compiler/index.ts` and are not part of the
+`veryfront/build` surface.
 
-### Main Build Functions
+Files below `src/build/production-build/` and `src/build/bundler/` are
+maintainer internals; they are not additional package entry points.
 
-- `buildProduction(config)` - Full production build
-- `buildStatic(routes, config)` - Static site generation
-- `compileM
-
-DX(source, options)` - MDX compilation
-
-### Asset Pipeline
-
-- `runAssetPipeline(options)` - Execute optimization
-- `ImageOptimizer` - Image processing
-- `CSSOptimizer` - CSS minification
-
-### Types
-
-- `BuildConfig` - Build configuration
-- `BundleResult` - Build output
-- `AssetPipelineResult` - Optimization stats
-
-## Dependencies
-
-### Internal
-
-- `rendering/` - SSR for SSG
-- `transforms/` - Code transformations
-- `config/` - Configuration loading
-
-### External
-
-- `esbuild` - JavaScript bundling
-- `@veryfront/ext-image-sharp` (optional) - Explicit image optimization provider
-- `@veryfront/ext-css-lightning` (optional) - Explicit Lightning CSS provider
-- `@veryfront/ext-css-purgecss` (optional) - Explicit CSS purging provider
-- `@veryfront/ext-css-tailwind` (optional) - Explicit Tailwind CSS provider
-- `@mdx-js/mdx` - MDX compilation
-
-## Usage Examples
-
-### Production Build
+## Production build API
 
 ```typescript
-import { buildProduction } from "./build";
+import { buildProduction } from "veryfront/build";
+import type { BuildOptions, BuildStats } from "veryfront/server";
 
-const result = await buildProduction({
-  projectDir: "./my-app",
-  outputDir: ".veryfront/build",
-  minify: true,
-  sourcemap: true,
-});
-
-console.log(`Built ${result.pages.length} pages`);
-```
-
-### Static Site Generation
-
-```typescript
-import { buildStatic } from './build'
-
-const routes = ['/
-
-', '/about', '/blog/post-1']
-
-const result = await buildStatic(routes, {
-  projectDir: './my-app',
-  outputDir: './dist',
-})
-
-console.log(`Generated ${result.staticPages.length} static pages`)
-```
-
-### Asset Optimization
-
-Compose the provider extensions for every enabled stage during application
-setup. See
-[`@veryfront/ext-image-sharp`](../../extensions/ext-image-sharp/README.md),
-[`@veryfront/ext-css-lightning`](../../extensions/ext-css-lightning/README.md),
-and [`@veryfront/ext-css-tailwind`](../../extensions/ext-css-tailwind/README.md).
-Absent stages are skipped; a requested stage fails the build if its provider or
-processing fails.
-
-```typescript
-import { runAssetPipeline } from "./build/asset-pipeline";
-
-const result = await runAssetPipeline({
-  images: {
-    enabled: true,
-    formats: ["webp", "avif"],
-    sizes: [640, 1280, 1920],
-  },
-  css: {
-    enabled: true,
-    minify: true,
-  },
-  tailwind: {
-    enabled: true,
-    projectDir: "./my-app",
-  },
-});
-
-console.log(`Optimized ${result.images.optimized} images`);
-console.log(`CSS savings: ${result.css.savings}%`);
-```
-
-### MDX Compilation
-
-```typescript
-import { compileMDX } from "./build/compiler";
-
-const mdxSource = `
-# Hello World
-
-This is **MDX** with components!
-
-<CustomComponent prop="value" />
-`;
-
-const result = await compileMDX(mdxSource, {
-  remarkPlugins: [remarkGfm],
-  rehypePlugins: [rehypePrism],
-});
-
-console.log(result.code); // Compiled React component
-```
-
-## Build Configuration
-
-### veryfront.config.ts
-
-```typescript
-export default {
-  build: {
-    outDir: ".veryfront/build",
-    assets: {
-      images: {
-        formats: ["webp", "avif"],
-        quality: 80,
-      },
-      css: {
-        minify: true,
-      },
-    },
-    splitting: {
-      strategy: "route", // 'route' | 'manual'
-      chunkSize: 500_000, // 500KB
-    },
-    sourcemap: true,
-    minify: true,
-  },
+const options: BuildOptions = {
+  projectDir: "./site",
+  outputDir: "./dist",
+  enableSplitting: true,
+  enableCompression: true,
+  enablePrefetch: true,
 };
+
+const stats: BuildStats = await buildProduction(options);
+console.log(`${stats.pages} pages in ${stats.duration} ms`);
 ```
 
-Browser targets belong to the explicit Lightning CSS extension, not the core
-asset-pipeline configuration. Configure `browserQueries` when composing
-`@veryfront/ext-css-lightning`; requested optimization fails closed when no
-`CSSOptimizationEngine` provider is registered.
+The direct API defaults `outputDir` to `<projectDir>/.veryfront/output`. The
+`veryfront build` CLI deliberately defaults to `<projectDir>/dist`.
 
-### Provider status fields
+### Options
 
-`checkAssetPipelineDependencies()` returns provider-neutral capability status:
+| Option               | Behavior                                                       |
+| -------------------- | -------------------------------------------------------------- |
+| `projectDir`         | Required project directory. It must exist and be a directory.  |
+| `outputDir`          | Final output directory.                                        |
+| `enableSplitting`    | Enable code splitting; defaults to `true`.                     |
+| `enableCompression`  | Emit supported compressed sidecars; defaults to `true`.        |
+| `enablePrefetch`     | Enable generated prefetch behavior; defaults to `true`.        |
+| `ssg`                | Explicit value, then `build.ssg`, then `true`.                 |
+| `include`, `exclude` | Route collection filters.                                      |
+| `dryRun`             | Validate and execute build planning without publishing output. |
+
+`BuildOptions` also declares the shorthand fields `splitting`, `compress`, and
+`prefetch`. These are the CLI-facing spelling: `veryfront build` translates them
+into the corresponding `enable*` options. `buildProduction()` itself reads only
+the `enable*` options and ignores the shorthand, so direct API callers must use
+the verbose form.
+
+A non-dry production build that emits no pages and no chunks is rejected rather
+than publishing an empty artifact.
+
+### Result
+
+`buildProduction()` returns:
 
 ```typescript
-{
-  imageOptimization: boolean;
-  cssOptimization: boolean;
+interface BuildStats {
+  pages: number;
+  components: number;
+  chunks: number;
+  assets: number;
+  totalSize: number;
+  duration: number;
+  ssgPaths?: string[];
 }
 ```
 
-The former `sharp` and `lightningCSS` properties are removed. Consumers of the
-status helper must read `imageOptimization` and `cssOptimization`; the helper
-does not report package discovery because core validates registered contracts.
+`totalSize` is measured in bytes and `duration` in milliseconds.
 
-## Performance
+## Publication and failure contract
 
-### Build Times (Typical Project)
+A production build:
 
-- Small (10 pages): ~2-5 seconds
-- Medium (100 pages): ~10-20 seconds
-- Large (1000 pages): ~1-2 minutes
+1. validates the project and output boundaries;
+2. discovers routes and public assets;
+3. writes into a unique sibling staging directory while holding an
+   output-specific lock;
+4. promotes the completed staging directory with filesystem renames;
+5. restores the previous output if promotion fails; and
+6. removes staging, backup, and lock resources.
 
-### Optimization Strategies
+The previous output remains intact until a complete replacement is ready.
+Atomic publication requires filesystem rename support, and a custom publication
+filesystem must supply a matching lock provider. Cleanup failures are reported
+without masking the original error.
 
-1. **Incremental builds**: Only rebuild changed files
-2. **Parallel processing**: Build routes concurrently
-3. **Caching**: Cache compilation results
-4. **Code splitting**: Route-based chunks
+## Source structure
 
-## Testing
-
-```bash
-# Run build tests
-deno task test src/build/
-
-# Test asset pipeline
-deno task test src/build/asset-pipeline/
-
-# Test MDX compilation
-deno task test src/build/compiler/
+```text
+src/build/
+├── asset-pipeline/       Provider-neutral CSS and image orchestration
+├── bundler/              Project-module resolution and code splitting
+├── compiler/             MDX compilation and watching
+├── embedded/             Embedded-runtime preset generation
+├── production-build/     Static build orchestration and output generation
+├── renderer/             Build-time MDX and script bundling services
+├── utils/                Build-local utilities
+├── index.ts              Public `veryfront/build` package surface
+├── vendor-bundle.ts
+└── vendor-cache.ts
 ```
 
-## Maintainer
+The detailed production pipeline is documented in
+[production-build/README.md](./production-build/README.md).
 
-**Team:** Build & Infrastructure Team
-**Code Owners:** See CODEOWNERS file
+## Dependency boundaries
 
-## Related Modules
+- Rendering owns SSR behavior; Build invokes it to produce static output.
+- Config owns configuration loading and schema validation.
+- Platform adapters provide host capabilities; Build owns build semantics.
+- Transforms own reusable source transformations.
+- Release Assets owns dependency-manifest parsing and validation.
+- Extensions own CSS compiler, optimizer, purger, base stylesheet, and plugin
+  implementations; Build owns their validated orchestration.
+- Server owns `BuildOptions` and `BuildStats` because the CLI and server share
+  those contracts.
+
+Cross-module imports use package or declared internal aliases. Relative imports
+remain inside the Build module. Only exports from `src/build/index.ts` form the
+`veryfront/build` package API.
+
+## Related modules
 
 - [`server/`](../server/README.md) - Development server
 - [`rendering/`](../rendering/README.md) - SSR/RSC rendering
 - [`transforms/`](../transforms/README.md) - Code transforms
 - [`cli/`](../../cli/README.md) - CLI commands
 
-## Troubleshooting
+## Extension contracts
 
-### Out of Memory Errors
-
-```bash
-# Increase Node.js memory
-NODE_OPTIONS="--max-old-space-size=4096" deno task build
-```
-
-### Slow Builds
-
-- Enable incremental builds
-- Reduce concurrent routes
-- Disable sourcemaps in development
-
-### Asset Optimization Failures
-
-- Ensure `@veryfront/ext-image-sharp` is installed and explicitly composed
-- Ensure `@veryfront/ext-css-lightning` is installed and explicitly composed
-- Ensure `@veryfront/ext-css-tailwind` is installed and explicitly composed
-- Disable optional optimizers if needed
+The provider packages for the optional asset stages are
+[`@veryfront/ext-image-sharp`](../../extensions/ext-image-sharp/README.md),
+[`@veryfront/ext-css-lightning`](../../extensions/ext-css-lightning/README.md),
+and [`@veryfront/ext-css-tailwind`](../../extensions/ext-css-tailwind/README.md).
+An unconfigured stage is skipped. An enabled stage with a missing provider or a
+provider failure rejects the build.
 
 ## References
 
 - [esbuild Documentation](https://esbuild.github.io/)
 - [MDX Documentation](https://mdxjs.com/)
-- [Veryfront Build Guide](https://veryfront.com/docs/build)
