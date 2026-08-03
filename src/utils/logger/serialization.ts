@@ -36,7 +36,11 @@ function blockInheritedSerializationHooks(value: unknown): void {
 
 function stringifyFallback(fallbackValue: unknown): string {
   if (typeof fallbackValue === "string") return fallbackValue;
-  return jsonStringify(fallbackValue) ?? REDACTED;
+  try {
+    return jsonStringify(fallbackValue) ?? REDACTED;
+  } catch {
+    return REDACTED;
+  }
 }
 
 export function stringifyRedactedJson(
