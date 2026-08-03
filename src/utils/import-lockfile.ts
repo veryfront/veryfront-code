@@ -408,7 +408,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   function has(url: string): Promise<boolean> {
     return serializeManagerOperation(async () => {
       const data = await readCurrent();
-      return url in (data?.imports ?? {});
+      return data !== null && objectHasOwn(data.imports, url);
     });
   }
 

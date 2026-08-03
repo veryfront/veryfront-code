@@ -266,6 +266,33 @@ describe("import-lockfile", () => {
       assertEquals(await mgr.has(specifier), true);
     });
 
+    it("should report inherited names as absent when no lockfile exists", async () => {
+      const mgr = createLockfileManager("/project", createMockFS());
+
+      assertEquals(await mgr.has("constructor"), false);
+      assertEquals(await mgr.has("toString"), false);
+    });
+
+    it("should ignore names inherited from a polluted Object prototype", async () => {
+      const inheritedName = "veryfrontLockfileInheritedEntry";
+      const previous = Object.getOwnPropertyDescriptor(Object.prototype, inheritedName);
+      Object.defineProperty(Object.prototype, inheritedName, {
+        configurable: true,
+        value: { resolved: "inherited", integrity: "inherited" },
+      });
+
+      try {
+        const mgr = createLockfileManager("/project", createMockFS());
+        assertEquals(await mgr.has(inheritedName), false);
+      } finally {
+        if (previous === undefined) {
+          Reflect.deleteProperty(Object.prototype, inheritedName);
+        } else {
+          Object.defineProperty(Object.prototype, inheritedName, previous);
+        }
+      }
+    });
+
     it("should clear lockfile data", async () => {
       const mgr = createLockfileManager("/project", createMockFS());
       const specifier = "https://cdn.com/mod.ts";
