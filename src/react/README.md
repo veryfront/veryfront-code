@@ -193,7 +193,7 @@ export default function BlogPost({ post }) {
 ### OptimizedImage Component
 
 ```typescript
-import { OptimizedImage } from "veryfront";
+import { OptimizedBackgroundImage, OptimizedImage } from "veryfront";
 
 export default function Gallery() {
   return (
