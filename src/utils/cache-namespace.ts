@@ -16,7 +16,11 @@ function serializeCacheNamespaceValue(value: CacheNamespaceValue): string {
   }
 
   if (typeof value === "object") {
-    const entries = Object.entries(value).sort(([left], [right]) => left.localeCompare(right));
+    // Sort by UTF-16 code units so the namespace is identical in every locale;
+    // localeCompare would derive different cache keys per server locale.
+    const entries = Object.entries(value).sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0
+    );
     return `{${
       entries
         .map(([key, entry]) => `${JSON.stringify(key)}:${serializeCacheNamespaceValue(entry)}`)
