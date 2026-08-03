@@ -96,7 +96,7 @@ export class ProjectsHandler extends BaseHandler {
       return this.respond(
         omitHeadResponseBody(
           req,
-          this.createResponseBuilder(ctx).withCache("no-cache").withContentType(
+          this.createResponseBuilder(ctx).withCache("no-store").withContentType(
             "text/html; charset=utf-8",
             PROJECTS_SHELL_HTML,
             HTTP_OK,

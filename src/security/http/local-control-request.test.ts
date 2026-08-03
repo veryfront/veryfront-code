@@ -79,6 +79,9 @@ describe("local control request admission", () => {
         "http://[::1]:3000/_dev",
         "http://[::ffff:7f00:1]:3000/_dev",
         "http://project.localhost:3000/_dev",
+        "http://lvh.me:3000/_dev",
+        "http://project.lvh.me:3000/_dev",
+        "http://project.preview.lvh.me:3000/_dev",
         "http://veryfront.me:3000/_dev",
         "http://project.veryfront.me:3000/_dev",
         "http://project.preview.veryfront.me:3000/_dev",
@@ -96,8 +99,7 @@ describe("local control request admission", () => {
 
     for (
       const url of [
-        "http://lvh.me:3000/_dev",
-        "http://project.lvh.me:3000/_dev",
+        "http://lvh.me.attacker.example:3000/_dev",
         "http://veryfront.dev:3000/_dev",
         "http://project.veryfront.dev:3000/_dev",
         "http://production.veryfront.me:3000/_dev",

@@ -119,7 +119,7 @@ export class DevFileHandler extends BaseHandler {
       return this.respond(response);
     } catch (error) {
       const reason = this.getErrorMessage(error);
-      this.logDebug("esbuild failed for dev fs", { path: absPath, reason }, ctx);
+      this.logDebug("dev fs request failed", { path: absPath, reason }, ctx);
       return this.respond(
         this.createErrorModule(
           `Build error: ${reason}`,

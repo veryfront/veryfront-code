@@ -193,6 +193,10 @@ export interface HandlerDependencies {
  * Resolve the registered development UI asset provider, if an extension
  * provided one during bootstrap. Handlers degrade gracefully (fail closed)
  * when no provider is registered, e.g. in tests without extension setup.
+ *
+ * The snapshot is taken once at handler-registry construction and is not
+ * refreshed across bootstrap regenerations; a provider registered by a later
+ * extension generation is only picked up by a new registry.
  */
 function resolveDevUiAssetProvider(): Readonly<DevUiAssetProvider> | undefined {
   const provider = tryResolve<unknown>(DevUiAssetProviderName);

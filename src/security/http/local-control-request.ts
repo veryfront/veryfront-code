@@ -65,8 +65,12 @@ function isCanonicalDnsHostname(hostname: string): boolean {
  * Dedicated authority allowlist for privileged local controls.
  *
  * `veryfront.me` is product-controlled and is the hostname printed by the
- * local CLI. Third-party wildcard DNS and development test domains are not
- * control authorities even when normal application routing accepts them.
+ * local CLI. `lvh.me` is admitted because the documented local-development
+ * workflow reaches projects through it; the hostname alone never grants
+ * access because `isTrustedLocalControlRequest` still requires an
+ * authenticated loopback transport peer and no proxy hop. Other third-party
+ * wildcard DNS and development test domains are not control authorities even
+ * when normal application routing accepts them.
  */
 export function isTrustedLocalControlHostname(hostname: string): boolean {
   const address = hostname.startsWith("[") && hostname.endsWith("]")
@@ -75,6 +79,7 @@ export function isTrustedLocalControlHostname(hostname: string): boolean {
   if (hostname === "localhost" || isLoopbackAddress(address)) return true;
   if (!isCanonicalDnsHostname(hostname)) return false;
   if (hostname.endsWith(".localhost")) return true;
+  if (hostname === "lvh.me" || hostname.endsWith(".lvh.me")) return true;
   if (hostname === "veryfront.me") return true;
 
   const labels = hostname.split(".");

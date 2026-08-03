@@ -26,7 +26,10 @@ export function omitHeadResponseBody(req: Request, response: Response): Response
     : response;
 }
 
-/** Serve one generation-captured bundle at one exact same-origin endpoint. */
+/**
+ * Serve one generation-captured bundle at one exact endpoint path. Origin and
+ * host admission are enforced by the callers that gate the dev UI surfaces.
+ */
 export function serveDevUiBundle(
   req: Request,
   expectedPathname: string,

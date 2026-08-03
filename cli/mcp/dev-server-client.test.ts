@@ -11,6 +11,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import { DASHBOARD_SESSION_PATH } from "veryfront/extensions/dev-ui/protocol";
 import { DevDashboardHandler } from "#veryfront/server/handlers/dev/dashboard/index.ts";
 import type { HandlerContext } from "#veryfront/server/handlers/types.ts";
 import { DevServerClient, type DevServerClientOptions } from "./dev-server-client.ts";
@@ -136,7 +137,7 @@ describe("mcp/dev-server-client", () => {
           { hostname: "127.0.0.1", port: 0, signal: controller.signal, onListen: () => {} },
           async (request) => {
             const { pathname } = new URL(request.url);
-            sawSessionRequest ||= pathname === "/_dev/session";
+            sawSessionRequest ||= pathname === DASHBOARD_SESSION_PATH;
             sawMutationRequest ||= pathname === "/_dev/api/hmr-trigger";
             recordRequestPeerFromTransport(request, {
               runtime: "node",

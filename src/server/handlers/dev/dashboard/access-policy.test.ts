@@ -38,6 +38,9 @@ describe("dashboard access policy", () => {
         "http://my-project.veryfront.me:8000/_dev/api/stats",
         "http://my-project.preview.veryfront.me:8000/_dev/ui/index.js",
         "http://my-project.localhost:8000/_dev",
+        "http://lvh.me:8000/_dev",
+        "http://my-project.lvh.me:8000/_dev/api/stats",
+        "http://my-project.preview.lvh.me:8000/_dev/ui/index.js",
       ]
     ) {
       assertEquals(isTrustedDashboardRequest(dashboardRequest(url)), true, url);
@@ -54,8 +57,7 @@ describe("dashboard access policy", () => {
         "http://my-project.staging.veryfront.me:8000/_dev",
         "http://my-project.unknown.veryfront.me:8000/_dev",
         "http://veryfront.me.attacker.example:8000/_dev",
-        "http://lvh.me:8000/_dev",
-        "http://my-project.lvh.me:8000/_dev",
+        "http://lvh.me.attacker.example:8000/_dev",
         "http://veryfront.dev:8000/_dev",
         "http://my-project.veryfront.dev:8000/_dev",
       ]
