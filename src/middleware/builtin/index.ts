@@ -25,6 +25,7 @@ export {
   rateLimit,
   type RateLimitOptions,
 } from "./security/rate-limit.ts";
+export { type RedisRateLimitOptions, RedisRateLimitStore } from "./security/redis-rate-limit.ts";
 export type { RateLimitStore } from "./security/types.ts";
 
 export { devLogger, type LogFormat, logger, type LoggerOptions, prodLogger } from "./logger.ts";

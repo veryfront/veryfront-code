@@ -250,9 +250,9 @@ export function rateLimit(
 
   return async (ctx, next) => {
     const req = getRequest(ctx);
-    const key = requireRateLimitKey(keyGenerator(req));
     let entry: RateLimitEntry;
     try {
+      const key = requireRateLimitKey(keyGenerator(req));
       entry = requireRateLimitEntry(await store.increment(key, windowMs));
     } catch (error) {
       const now = performance.now();

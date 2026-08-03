@@ -10,7 +10,13 @@ import { delay } from "#std/async.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { MiddlewareContext } from "../../core/context.ts";
-import { authRateLimit, MemoryRateLimitStore, rateLimit } from "./rate-limit.ts";
+import {
+  authRateLimit,
+  MemoryRateLimitStore,
+  rateLimit,
+  type RedisRateLimitOptions,
+  RedisRateLimitStore,
+} from "#veryfront/middleware";
 
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
@@ -283,7 +289,19 @@ describe("rateLimit middleware", () => {
     assertEquals(response?.status, 503);
   });
 
-  it("should reject oversized custom keys before calling the store", async () => {
+  it("should keep the legacy Redis rate-limit store export constructible", () => {
+    const options: RedisRateLimitOptions = {
+      keyPrefix: "compat:",
+      connectTimeoutMs: 1_000,
+      operationTimeoutMs: 1_000,
+    };
+    const redisStore = new RedisRateLimitStore(options);
+
+    assertEquals(typeof redisStore.increment, "function");
+    assertEquals(typeof redisStore.reset, "function");
+  });
+
+  it("should fail closed when custom keys are invalid without calling the store", async () => {
     let incrementCalled = false;
     const middleware = rateLimit({
       keyGenerator: () => "x".repeat(1025),
@@ -296,16 +314,36 @@ describe("rateLimit middleware", () => {
       },
     });
 
-    await assertRejects(
-      async () => {
-        await middleware(
-          createContext(),
-          () => Promise.resolve(new Response("OK")),
-        );
-      },
-      RangeError,
-      "1024",
+    const response = await middleware(
+      createContext(),
+      () => Promise.resolve(new Response("OK")),
     );
+
+    assertEquals(response?.status, 503);
+    assertEquals(response?.headers.get("Retry-After"), "60");
+    assertEquals(incrementCalled, false);
+  });
+
+  it("should fail closed when trusted proxy headers generate invalid keys", async () => {
+    let incrementCalled = false;
+    const middleware = rateLimit({
+      trustProxy: true,
+      store: {
+        increment: () => {
+          incrementCalled = true;
+          return Promise.resolve({ count: 1, resetAt: Date.now() + 1000 });
+        },
+        reset: () => Promise.resolve(),
+      },
+    });
+
+    const response = await middleware(
+      createContext("x".repeat(1025)),
+      () => Promise.resolve(new Response("OK")),
+    );
+
+    assertEquals(response?.status, 503);
+    assertEquals(response?.headers.get("Retry-After"), "60");
     assertEquals(incrementCalled, false);
   });
 

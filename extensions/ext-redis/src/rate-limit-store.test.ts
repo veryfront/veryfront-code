@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { type RedisRateLimitOptions, RedisRateLimitStore } from "./rate-limit-store.ts";
+import { type RedisRateLimitOptions, RedisRateLimitStore } from "./index.ts";
 
 async function outcomeWithin(
   promise: Promise<unknown>,
