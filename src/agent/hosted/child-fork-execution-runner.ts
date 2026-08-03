@@ -105,6 +105,7 @@ export type HostedChildForkExecutionRunContextFactoryInput<
 > = {
   authToken: string;
   apiUrl: string;
+  /** Exact-child durable event-writer authority. */
   runEventWriterCapability?: HostedRunEventWriterCapability;
   durableChildRun?: HostedChildRunIdentifiers;
   conversationId?: string;
@@ -120,6 +121,7 @@ export type ExecuteHostedChildForkWithPreparedToolsInput<
 > = {
   authToken: string;
   apiUrl: string;
+  /** Exact-child authority required when `durableChildRun` is present. */
   runEventWriterCapability?: HostedRunEventWriterCapability;
   projectId?: string | null;
   description: string;

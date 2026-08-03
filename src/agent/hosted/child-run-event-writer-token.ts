@@ -30,8 +30,15 @@ export class HostedChildRunEventWriterTokenExchangeError extends Error {
   }
 }
 
-/** Non-serializable authority that can delegate only to a direct child run. */
+/**
+ * Opaque authority for appending events to one exact hosted run.
+ *
+ * The credential is retained in module-private state and is not exposed as a
+ * property of the capability. A capability can mint authority only for a
+ * persisted direct child run.
+ */
 export interface HostedRunEventWriterCapability {
+  /** Exchange this run's authority for an exact direct-child capability. */
   mintChildRunEventAppendToken(
     childRunId: string,
     abortSignal?: AbortSignal,
@@ -222,12 +229,21 @@ export async function runWithVerifiedHostedRunEventWriterRequest<T>(
   }
 }
 
-/** Create an exact-run capability while keeping its credential in module-private state. */
+/**
+ * Create an exact-run event-writer capability from a credential verified by
+ * trusted ingress. General user API tokens are not run-event credentials.
+ * The returned frozen object does not expose or serialize the credential.
+ */
 export function createHostedRunEventWriterCapability(input: {
+  /** Trusted Veryfront API origin used for child-capability exchange. */
   apiUrl: string;
+  /** Exact run authorized by `runEventAppendToken`. */
   runId: string;
+  /** Exact-run append credential obtained from trusted ingress. */
   runEventAppendToken: string;
+  /** Bounded child-capability exchange timeout. */
   timeoutMs?: number;
+  /** Test or host transport override. */
   fetch?: Fetch;
 }): HostedRunEventWriterCapability {
   if (!isValidRunEventWriterToken(input.runEventAppendToken)) {

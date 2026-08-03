@@ -95,8 +95,15 @@ export interface HostedChildForkRunContextInput {
   pendingToolLogWriter?: HostedChildPendingToolLifecycleLogWriter;
 }
 
-/** Input payload for hosted durable child fork run context. */
+/**
+ * Input for a hosted durable child fork context.
+ *
+ * Durable mirroring is enabled only by an exact-child writer capability.
+ * Omitting the capability leaves `durableRunMirror` unset; raw API tokens are
+ * not accepted as event-writer authority.
+ */
 export interface HostedDurableChildForkRunContextInput {
+  /** Exact-child writer authority, or an authority installed by the framework scope. */
   runEventWriterCapability?: HostedRunEventWriterCapability;
   durableChildRun?: HostedChildRunIdentifiers;
   instrumentation?: HostedConversationRunChunkMirrorInstrumentation;

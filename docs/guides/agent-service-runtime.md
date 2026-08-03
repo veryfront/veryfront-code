@@ -224,6 +224,59 @@ preparation, or custom infrastructure.
 | `prepareVeryfrontCloudAgentServiceChatExecution()` | Prepare Veryfront Cloud chat execution with model, steering, and durable-run wiring. |
 | `createAgentServiceProjectSteering()`              | Bind markdown agent definitions to project steering and skill refresh.               |
 
+## Migrate custom durable child event writers
+
+This migration applies to custom hosted runtimes that call the lower-level
+durable child helpers. Framework-managed `startAgentService()` runtimes create
+and scope writer capabilities internally.
+
+Raw `authToken`, `apiUrl`, and `runEventAppendToken` fields no longer grant
+durable child event-writer authority. The parsed hosted request also excludes
+the writer credential. Keep the credential inside trusted ingress and replace
+the removed fields with an opaque `HostedRunEventWriterCapability`:
+
+1. After trusted ingress verifies an exact root-run append credential, create
+   the root capability. Do not pass a general user API token.
+
+   ```ts
+   import {
+     createHostedRunEventWriterCapability,
+     executeHostedChildForkWithPreparedTools,
+   } from "veryfront/agent";
+
+   const rootWriter = createHostedRunEventWriterCapability({
+     apiUrl,
+     runId: durableRootRun.runId,
+     runEventAppendToken: verifiedRunEventAppendToken,
+   });
+   ```
+
+2. After the control plane persists the direct child run, mint an exact-child
+   capability:
+
+   ```ts
+   const childWriter = await rootWriter.mintChildRunEventAppendToken(
+     durableChildRun.childRunId,
+     abortSignal,
+   );
+   ```
+
+3. Pass the child capability to the durable child helper:
+
+   ```ts
+   const result = await executeHostedChildForkWithPreparedTools({
+     ...input,
+     durableChildRun,
+     runEventWriterCapability: childWriter,
+   });
+   ```
+
+`HostedDurableChildForkRunContextInput` accepts the same
+`runEventWriterCapability` field. A durable child execution without exact-child
+authority now fails before provider dispatch. Token exchange failures are
+bounded, sanitized, and fail closed; callers must not retry by falling back to
+a user API token.
+
 ## Verify it worked
 
 Start the service entrypoint and call the run route directly. The default

@@ -78,6 +78,24 @@ describe("guide content contracts", () => {
     );
   });
 
+  it("documents the exact-run writer capability migration", async () => {
+    const guide = await Deno.readTextFile(
+      "docs/guides/agent-service-runtime.md",
+    );
+    const reference = await Deno.readTextFile(
+      "docs/api-reference/veryfront/agent.md",
+    );
+
+    assertStringIncludes(guide, "## Migrate custom durable child event writers");
+    assertStringIncludes(guide, "createHostedRunEventWriterCapability");
+    assertStringIncludes(guide, "mintChildRunEventAppendToken");
+    assertStringIncludes(guide, "runEventWriterCapability: childWriter");
+    assertStringIncludes(guide, "fails before provider dispatch");
+    assertStringIncludes(guide, "must not retry by falling back to\na user API token");
+    assertStringIncludes(reference, "`HostedRunEventWriterCapability`");
+    assertStringIncludes(reference, "`createHostedRunEventWriterCapability`");
+  });
+
   it("documents deploy URL output for the first deploy path", async () => {
     const guide = await Deno.readTextFile("docs/guides/deploying.md");
 
