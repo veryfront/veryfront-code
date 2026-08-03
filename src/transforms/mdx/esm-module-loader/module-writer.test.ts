@@ -212,6 +212,7 @@ describe("verifyMdxCacheFile", () => {
 
     assertEquals(error.slug, "cache-error");
     assertEquals(error.cause, original);
+    assertEquals(error.message.includes("/cache/module.mjs"), false);
   });
 
   it("invalidates the stale module index entry on operational stat failures", async () => {

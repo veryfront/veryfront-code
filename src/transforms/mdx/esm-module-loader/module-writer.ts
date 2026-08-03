@@ -160,7 +160,7 @@ async function verifyMdxCacheFile(
       });
     }
     throw CACHE_ERROR.create({
-      detail: `MDX module cache file inspection failed: ${filePath}`,
+      detail: "MDX module cache file inspection failed",
       cause: error,
     });
   }
