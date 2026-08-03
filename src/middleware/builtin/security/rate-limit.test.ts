@@ -217,6 +217,28 @@ describe("rateLimit middleware", () => {
     assertEquals(response?.status, 200);
   });
 
+  it("should keep the documented default limits at 100 requests per 60s window", async () => {
+    const middleware = rateLimit();
+
+    for (let index = 0; index < 100; index++) {
+      const response = await middleware(
+        createContext(),
+        () => Promise.resolve(new Response("OK")),
+      );
+      assertEquals(response?.status, 200);
+    }
+
+    const blocked = await middleware(
+      createContext(),
+      () => Promise.resolve(new Response("OK")),
+    );
+
+    assertEquals(blocked?.status, 429);
+    const retryAfterSeconds = Number(blocked?.headers.get("Retry-After"));
+    assertEquals(Number.isSafeInteger(retryAfterSeconds), true);
+    assertEquals(retryAfterSeconds >= 1 && retryAfterSeconds <= 60, true);
+  });
+
   it("should validate numeric configuration before creating middleware", () => {
     for (
       const maxRequests of [
