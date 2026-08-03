@@ -2,8 +2,9 @@
  * Standalone proxy extension composition.
  *
  * This CLI/deployment boundary activates provider implementations before the
- * provider-neutral proxy runtime is imported. Core consumes only the
- * `TokenCacheStore` contract published by the extension loader.
+ * provider-neutral proxy runtime is imported. Core consumes the
+ * `TokenCacheStore` contract and the Redis runtime provider published by the
+ * extension loader.
  */
 
 import { cliLogger } from "veryfront/utils/logger";
