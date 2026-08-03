@@ -1444,7 +1444,7 @@ function absorbUnreadableLockfileError(
     logger.warn(
       `Lockfile ${LOCKFILE_NAME} could not be read (${snapshot.message}); ` +
         "continuing this build without lockfile entries. " +
-        "Run `veryfront lock --clear` to reset the corrupted lockfile.",
+        "Run `veryfront lock --clear` to reset the unreadable or invalid lockfile.",
     );
   }
   return true;
