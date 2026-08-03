@@ -24,6 +24,16 @@ import { FRAMEWORK_ROOT, HASH_SEED_FNV1A } from "../constants.ts";
 import { resolveVeryfrontModuleUrl } from "../../../veryfront-module-urls.ts";
 import { MDX_ESM_CACHE_NAMESPACE } from "../cache-format.ts";
 import { normalizePath } from "./module-cache.ts";
+import { hashString as hashCacheString } from "#veryfront/cache/hash.ts";
+
+function cacheKeyForDependencies(
+  dependencies: Readonly<Record<string, string>>,
+): string {
+  const sortedEntries = Object.entries(dependencies).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
+  return `on:${hashCacheString(JSON.stringify(sortedEntries))}`;
+}
 
 function getTransformCacheKey(
   projectId: string,
@@ -482,6 +492,93 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
         await remove(projectDir, { recursive: true });
       }
     });
+  });
+
+  describe("dependency pinning path transport", () => {
+    it("resolves a matching pinned path through a non-local project adapter", async () => {
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-pinned-cache-" });
+      const projectDir = await makeTempDir({ prefix: "vf-mdx-pinned-proj-" });
+      const dependencies = {};
+      const cacheKey = cacheKeyForDependencies(dependencies);
+      const resolvedPaths: string[] = [];
+      const adapter = {
+        env: { get: (_key: string) => undefined },
+        fs: {
+          resolveFile: (path: string) => {
+            resolvedPaths.push(path);
+            return Promise.resolve(
+              path === "components/Child" ? "/virtual/components/Child.ts" : null,
+            );
+          },
+          readFile: (path: string) => {
+            if (path !== "/virtual/components/Child.ts") {
+              throw new Error(`Unexpected file read: ${path}`);
+            }
+            return Promise.resolve("export const child = true;");
+          },
+        },
+      } as unknown as RuntimeAdapter;
+
+      try {
+        const ctx = createModuleFetcherContext(
+          esmCacheDir,
+          adapter,
+          projectDir,
+          "proj-pinned",
+          {
+            isLocalProject: false,
+            strictMissingModules: true,
+            dependencyPinningCacheKey: cacheKey,
+            dependencyPinningDependencies: dependencies,
+          },
+        );
+
+        const result = await fetchAndCacheModule(
+          `/_vf_modules/_pins/${encodeURIComponent(cacheKey)}/components/Child.js`,
+          ctx,
+        );
+
+        assertEquals(typeof result, "string");
+        assertEquals(resolvedPaths, ["components/Child"]);
+      } finally {
+        await remove(esmCacheDir, { recursive: true });
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    for (
+      const [name, path, message] of [
+        [
+          "a different request snapshot",
+          "/_vf_modules/_pins/on%3Asnapshot-b/components/Child.js",
+          "does not match the request snapshot",
+        ],
+        [
+          "a malformed path",
+          "/_vf_modules/_pins/on%3Asnapshot-a",
+          "Malformed dependency snapshot module path",
+        ],
+      ] as const
+    ) {
+      it(`rejects ${name} before adapter access`, async () => {
+        let resolveCount = 0;
+        const adapter = {
+          env: { get: (_key: string) => undefined },
+          fs: {
+            resolveFile: () => {
+              resolveCount++;
+              return Promise.resolve(null);
+            },
+          },
+        } as unknown as RuntimeAdapter;
+        const ctx = createModuleFetcherContext("/cache", adapter, "/project", "proj-pinned", {
+          dependencyPinningCacheKey: "on:snapshot-a",
+        });
+
+        await assertRejects(() => fetchAndCacheModule(path, ctx), TypeError, message);
+        assertEquals(resolveCount, 0);
+      });
+    }
   });
 
   describe("circular imports", () => {

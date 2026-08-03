@@ -108,8 +108,15 @@ describe("MDX root module cache identity", () => {
           if (pinnedPath.pathname !== modulePath) {
             return new Response("not found", { status: 404 });
           }
+          const queryPins = url.searchParams.getAll("pins");
+          const requestedPins = [
+            ...(pinnedPath.found && pinnedPath.cacheKey ? [pinnedPath.cacheKey] : []),
+            ...queryPins,
+          ];
           if (
-            pinnedPath.cacheKey !== snapshotPinKey ||
+            pinnedPath.malformed ||
+            requestedPins.length !== 1 ||
+            requestedPins[0] !== snapshotPinKey ||
             url.searchParams.get("ssr") !== "true"
           ) {
             rawRequests++;

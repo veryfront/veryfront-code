@@ -28,6 +28,7 @@ import { normalizePath } from "./module-cache.ts";
 import { readValidCachedModulePath } from "./path-cache-lookup.ts";
 import { persistResolvedModule } from "./persistence.ts";
 import { transformResolvedModuleSource } from "./source-transform.ts";
+import { extractDependencyPinningPathKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import {
   MAX_MDX_MODULE_CODE_BYTES,
   MAX_MDX_MODULE_GRAPH_ENTRIES,
@@ -98,6 +99,27 @@ function isFatalModuleFetchError(error: unknown): boolean {
     error instanceof ModuleSourceLimitError;
 }
 
+function unwrapDependencyPinningPath(
+  modulePath: string,
+  expectedCacheKey?: string,
+): string {
+  const separatorIndex = modulePath.search(/[?#]/);
+  const pathname = separatorIndex === -1 ? modulePath : modulePath.slice(0, separatorIndex);
+  const extracted = extractDependencyPinningPathKey(
+    pathname.startsWith("/") ? pathname : `/${pathname}`,
+  );
+
+  if (extracted.malformed) {
+    throw new TypeError("Malformed dependency snapshot module path");
+  }
+  if (!extracted.found) return modulePath;
+  if (extracted.cacheKey !== expectedCacheKey) {
+    throw new TypeError("Dependency snapshot module path does not match the request snapshot");
+  }
+
+  return extracted.pathname;
+}
+
 /**
  * Fetch and cache a module.
  * This is the main entry point for module fetching operations.
@@ -109,7 +131,11 @@ export async function fetchAndCacheModule(
   lineage: Set<string> = new Set(),
 ): Promise<string | null> {
   const log = getLog(context);
-  const normalizedPath = normalizePath(modulePath, parentModulePath);
+  const expectedCacheKey = context.dependencyPinningCacheKey;
+  const normalizedPath = normalizePath(
+    unwrapDependencyPinningPath(modulePath, expectedCacheKey),
+    parentModulePath ? unwrapDependencyPinningPath(parentModulePath, expectedCacheKey) : undefined,
+  );
   const projectSlug = context.projectSlug || "unknown";
   const moduleGraph = context.moduleGraph ??= new Set<string>();
   if (!moduleGraph.has(normalizedPath)) {
