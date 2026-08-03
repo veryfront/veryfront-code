@@ -191,12 +191,10 @@ export async function buildHttpCacheIdentity(
   const effective = getEffectiveHttpCacheRequest(url, options);
   const normalizedUrl = normalizeHttpUrl(effective.url);
   const importMapFingerprint = await getRequestImportMapFingerprint(url, effective.options);
-  const components = [
-    normalizedUrl,
-    effective.options.reactVersion ?? null,
-    importMapFingerprint,
-  ];
-  return `${HTTP_CACHE_IDENTITY_NAMESPACE}:${JSON.stringify(components)}`;
+  const reactVersion = effective.options.reactVersion;
+  return `${HTTP_CACHE_IDENTITY_NAMESPACE}:[${JSONStringify(normalizedUrl)},${
+    reactVersion === undefined ? "null" : JSONStringify(reactVersion)
+  },${JSONStringify(importMapFingerprint)}]`;
 }
 
 /** Build recoverable metadata while reusing the request graph's import-map fingerprint. */

@@ -95,6 +95,45 @@ describe("transforms/esm/http-cache-helpers", () => {
       );
     });
 
+    it("does not consult mutable JSON or array hooks for final identities", async () => {
+      const importMap = { imports: {}, scopes: {} };
+      const baseline = await buildHttpCacheIdentity(
+        "https://modules.example.com/root.js",
+        { importMap, reactVersion: "19.0.0" },
+      );
+      assertEquals(
+        baseline,
+        'veryfront:http-module:v2:["https://modules.example.com/root.js","19.0.0","318ae612f9deb78c22b7ccf3a2d45fe489d63ca499d03712e9df30c41f9c39e5"]',
+      );
+      const originalStringify = JSON.stringify;
+      const arrayToJson = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+      let hookCalls = 0;
+      let poisoned: string;
+
+      try {
+        Reflect.set(JSON, "stringify", () => "poisoned");
+        Object.defineProperty(Array.prototype, "toJSON", {
+          configurable: true,
+          value() {
+            hookCalls++;
+            return [];
+          },
+          writable: true,
+        });
+        poisoned = await buildHttpCacheIdentity(
+          "https://modules.example.com/root.js",
+          { importMap, reactVersion: "19.0.0" },
+        );
+      } finally {
+        Reflect.set(JSON, "stringify", originalStringify);
+        if (arrayToJson) Object.defineProperty(Array.prototype, "toJSON", arrayToJson);
+        else Reflect.deleteProperty(Array.prototype, "toJSON");
+      }
+
+      assertEquals(poisoned, baseline);
+      assertEquals(hookCalls, 0);
+    });
+
     it("does not consult inherited toJSON hooks while fingerprinting import maps", async () => {
       const importMap = {
         imports: { pkg: "https://modules.example.com/pkg-v1.js" },

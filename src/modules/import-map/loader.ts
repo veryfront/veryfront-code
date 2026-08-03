@@ -18,6 +18,7 @@ const JSONParse = JSON.parse;
 const ArrayIsArray = Array.isArray;
 const ObjectCreate = Object.create;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const ObjectPrototype = Object.prototype;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ReflectApply = Reflect.apply;
@@ -39,6 +40,10 @@ function stringSlice(value: string, start: number, end?: number): string {
     value,
     end === undefined ? [start] : [start, end],
   ) as string;
+}
+
+function hasOwn(object: object, key: PropertyKey): boolean {
+  return ReflectApply(ObjectPrototypeHasOwnProperty, object, [key]) as boolean;
 }
 
 function isFrameworkOwnedSpecifier(specifier: string): boolean {
@@ -65,7 +70,7 @@ function readOwnDataProperty(
 ): unknown {
   const descriptor = ObjectGetOwnPropertyDescriptor(value, key);
   if (!descriptor) return undefined;
-  if (!("value" in descriptor)) {
+  if (!hasOwn(descriptor, "value")) {
     throw IMPORT_MAP_INVALID.create({
       detail: `${label} cannot contain accessor properties`,
     });
@@ -107,7 +112,7 @@ function copyFilteredRecord(
     const key = keys[index];
     if (typeof key !== "string") continue;
     const descriptor = ObjectGetOwnPropertyDescriptor(record, key);
-    if (!descriptor?.enumerable || !("value" in descriptor)) continue;
+    if (!descriptor?.enumerable || !hasOwn(descriptor, "value")) continue;
     const value = descriptor.value as string;
     if (stringStartsWith(value, "./") || stringStartsWith(value, "../")) continue;
     result[key] = normalizeNpm ? normalizeImportValue(value) : value;
@@ -125,7 +130,7 @@ function filterRelativePaths(importMap: ImportMapConfig): ImportMapConfig {
     const scope = scopeKeys[index];
     if (typeof scope !== "string") continue;
     const descriptor = ObjectGetOwnPropertyDescriptor(exactScopes, scope);
-    if (!descriptor?.enumerable || !("value" in descriptor)) continue;
+    if (!descriptor?.enumerable || !hasOwn(descriptor, "value")) continue;
     scopes[scope] = copyFilteredRecord(
       descriptor.value as Readonly<Record<string, string>>,
       false,
@@ -154,7 +159,7 @@ function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConf
     const scope = scopeKeys[index];
     if (typeof scope !== "string") continue;
     const descriptor = ObjectGetOwnPropertyDescriptor(exactScopes, scope);
-    if (!descriptor?.enumerable || !("value" in descriptor)) continue;
+    if (!descriptor?.enumerable || !hasOwn(descriptor, "value")) continue;
     scopes[scope] = copyFilteredRecord(
       descriptor.value as Readonly<Record<string, string>>,
       true,
@@ -172,7 +177,7 @@ function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConf
     const key = defaultKeys[index];
     if (typeof key !== "string" || !stringStartsWith(key, "veryfront/")) continue;
     const descriptor = ObjectGetOwnPropertyDescriptor(defaultImports, key);
-    if (descriptor?.enumerable && "value" in descriptor) {
+    if (descriptor?.enumerable && hasOwn(descriptor, "value")) {
       imports[key] = descriptor.value as string;
     }
   }
@@ -181,7 +186,7 @@ function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConf
     const key = reactKeys[index];
     if (typeof key !== "string") continue;
     const descriptor = ObjectGetOwnPropertyDescriptor(REACT_IMPORTS, key);
-    if (descriptor?.enumerable && "value" in descriptor) {
+    if (descriptor?.enumerable && hasOwn(descriptor, "value")) {
       imports[key] = descriptor.value as string;
     }
   }

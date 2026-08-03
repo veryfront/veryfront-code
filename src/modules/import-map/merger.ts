@@ -6,19 +6,32 @@ import type { ImportMapConfig } from "./types.ts";
 // descriptor-snapshotted records.
 const ObjectCreate = Object.create;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const ReflectApply = Reflect.apply;
 const ReflectOwnKeys = Reflect.ownKeys;
 const IntrinsicTypeError = TypeError;
 
+function hasOwn(object: object, key: PropertyKey): boolean {
+  return ReflectApply(ObjectPrototypeHasOwnProperty, object, [key]) as boolean;
+}
+
+function copySnapshotField(
+  input: ImportMapConfig,
+  map: ImportMapConfig,
+  key: "imports" | "scopes",
+): void {
+  const descriptor = ObjectGetOwnPropertyDescriptor(map, key);
+  if (!descriptor) return;
+  if (!hasOwn(descriptor, "value")) {
+    throw new IntrinsicTypeError(`Import map ${key} cannot contain accessor properties`);
+  }
+  input[key] = descriptor.value;
+}
+
 function snapshotMergeInput(map: ImportMapConfig): ImportMapConfig {
   const input = ObjectCreate(null) as ImportMapConfig;
-  for (const key of ["imports", "scopes"] as const) {
-    const descriptor = ObjectGetOwnPropertyDescriptor(map, key);
-    if (!descriptor) continue;
-    if (!("value" in descriptor)) {
-      throw new IntrinsicTypeError(`Import map ${key} cannot contain accessor properties`);
-    }
-    input[key] = descriptor.value;
-  }
+  copySnapshotField(input, map, "imports");
+  copySnapshotField(input, map, "scopes");
   return snapshotImportMap(input);
 }
 
@@ -31,7 +44,7 @@ function copyStringRecord(
     const key = keys[index];
     if (typeof key !== "string") continue;
     const descriptor = ObjectGetOwnPropertyDescriptor(source, key);
-    if (descriptor?.enumerable && "value" in descriptor) {
+    if (descriptor?.enumerable && hasOwn(descriptor, "value")) {
       target[key] = descriptor.value as string;
     }
   }
@@ -51,7 +64,7 @@ export function mergeImportMaps(...maps: ImportMapConfig[]): ImportMapConfig {
       const scope = scopeKeys[scopeIndex];
       if (typeof scope !== "string") continue;
       const descriptor = ObjectGetOwnPropertyDescriptor(mapScopes, scope);
-      if (!descriptor?.enumerable || !("value" in descriptor)) continue;
+      if (!descriptor?.enumerable || !hasOwn(descriptor, "value")) continue;
       const target = scopes[scope] ??= ObjectCreate(null) as Record<string, string>;
       copyStringRecord(target, descriptor.value as Readonly<Record<string, string>>);
     }

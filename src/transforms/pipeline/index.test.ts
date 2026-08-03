@@ -284,6 +284,72 @@ export default function App() { return dep; }`;
       }
     });
 
+    it("uses captured array operations for custom plugin execution", async () => {
+      const projectDir = await makeTempDir({ prefix: "vf-pipeline-plugin-primordials-" });
+      const mainFile = join(projectDir, "main.ts");
+      const source = "export const value = 1;";
+      const originalArrayIterator = Array.prototype[Symbol.iterator];
+      const originalArraySort = Array.prototype.sort;
+      const isSentinelPipeline = (values: unknown[]): boolean => {
+        for (let index = 0; index < values.length; index++) {
+          const value = values[index] as { name?: unknown } | undefined;
+          if (value?.name === "sentinel-early" || value?.name === "sentinel-late") return true;
+        }
+        return false;
+      };
+
+      try {
+        destroyTransformCache();
+        await writeTextFile(mainFile, source);
+        Reflect.set(Array.prototype, Symbol.iterator, function (this: unknown[]) {
+          const values = this as unknown[];
+          if (isSentinelPipeline(values)) {
+            return { next: () => ({ done: true, value: undefined }) };
+          }
+          return Reflect.apply(originalArrayIterator, values, []);
+        });
+        Reflect.set(Array.prototype, "sort", function (
+          this: unknown[],
+          compare?: (left: unknown, right: unknown) => number,
+        ) {
+          if (isSentinelPipeline(this)) return this;
+          return Reflect.apply(originalArraySort, this, [compare]);
+        });
+
+        const result = await runPipeline(
+          source,
+          mainFile,
+          projectDir,
+          { projectId: "plugin-primordial-project", dev: false, ssr: false },
+          {
+            plugins: [{
+              name: "sentinel-late",
+              stage: TransformStage.FINALIZE + 2,
+              cacheIdentity: "sentinel-late@1",
+              transform: (ctx) => `${ctx.code}\n/* sentinel-late */`,
+            }, {
+              name: "sentinel-early",
+              stage: TransformStage.FINALIZE + 1,
+              cacheIdentity: "sentinel-early@1",
+              transform: (ctx) => `${ctx.code}\n/* sentinel-early */`,
+            }],
+          },
+        );
+
+        assertEquals(result.code.includes("sentinel-early"), true);
+        assertEquals(result.code.includes("sentinel-late"), true);
+        assertEquals(
+          result.code.indexOf("sentinel-early") < result.code.indexOf("sentinel-late"),
+          true,
+        );
+      } finally {
+        Reflect.set(Array.prototype, Symbol.iterator, originalArrayIterator);
+        Reflect.set(Array.prototype, "sort", originalArraySort);
+        destroyTransformCache();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
     it("replays cached unresolved dependencies through TTL and current-snapshot gates", async () => {
       const projectDir = await makeTempDir({ prefix: "vf-pipeline-retry-replay-" });
       const mainFile = join(projectDir, "main.ts");

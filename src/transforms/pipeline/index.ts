@@ -48,6 +48,10 @@ import {
   fingerprintPipelineImportMap,
   getCustomPluginCacheIdentity,
 } from "./cache-identity.ts";
+import {
+  primordialArrayPush,
+  primordialArraySort,
+} from "#veryfront/platform/compat/primordials/array.ts";
 
 const SSR_PIPELINE: TransformPlugin[] = [
   parsePlugin,
@@ -325,11 +329,23 @@ export function runPipeline(
       }
 
       const basePipeline = effectiveOptions.ssr ? SSR_PIPELINE : BROWSER_PIPELINE;
-      const pipeline = pluginCacheIdentity.plugins.length > 0
-        ? [...basePipeline, ...pluginCacheIdentity.plugins].sort((a, b) => a.stage - b.stage)
-        : basePipeline;
+      let pipeline: readonly TransformPlugin[] = basePipeline;
+      if (pluginCacheIdentity.plugins.length > 0) {
+        const sortedPipeline: TransformPlugin[] = [];
+        for (let index = 0; index < basePipeline.length; index++) {
+          primordialArrayPush(sortedPipeline, basePipeline[index]);
+        }
+        for (let index = 0; index < pluginCacheIdentity.plugins.length; index++) {
+          primordialArrayPush(sortedPipeline, pluginCacheIdentity.plugins[index]);
+        }
+        pipeline = primordialArraySort(
+          sortedPipeline,
+          (left, right) => left.stage - right.stage,
+        );
+      }
 
-      for (const plugin of pipeline) {
+      for (let index = 0; index < pipeline.length; index++) {
+        const plugin = pipeline[index]!;
         if (plugin.condition?.(ctx) === false) continue;
 
         const stageStart = performance.now();
