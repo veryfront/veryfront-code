@@ -456,6 +456,65 @@ describe("logger", () => {
         restore();
       }
     });
+
+    it("contains hostile request logger timing and child composition", async () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const originalError = console.error;
+      const hostileLogger = new Proxy({} as Logger, {
+        get() {
+          throw new Error("unreadable logger operation");
+        },
+      });
+      let executions = 0;
+
+      Deno.env.set("LOG_FORMAT", "json");
+      console.error = () => {};
+      __resetLoggerConfigForTests();
+      __registerRequestContextGetter(() => ({ logger: hostileLogger }));
+      try {
+        const directResult = await serverLogger.time("direct timer", () => {
+          executions++;
+          return Promise.resolve("direct result");
+        });
+        assertEquals(directResult, "direct result");
+        assertEquals(executions, 1);
+
+        serverLogger.child({ scope: "direct" }).info("direct child fallback");
+        assertEquals((JSON.parse(getOutput()) as LogEntry).message, "direct child fallback");
+
+        const componentLogger = serverLogger.component("request");
+        const componentResult = await componentLogger.time("component timer", () => {
+          executions++;
+          return Promise.resolve("component result");
+        });
+        assertEquals(componentResult, "component result");
+        assertEquals(executions, 2);
+
+        componentLogger.child({ scope: "component" }).info("component child fallback");
+        const componentEntry = JSON.parse(getOutput()) as LogEntry;
+        assertEquals(componentEntry.message, "component child fallback");
+        assertEquals(componentEntry.component, "request");
+
+        const applicationError = new Error("application failure");
+        let caught: unknown;
+        try {
+          await serverLogger.time("rejected timer", () => {
+            executions++;
+            return Promise.reject(applicationError);
+          });
+        } catch (error) {
+          caught = error;
+        }
+        assertEquals(caught, applicationError);
+        assertEquals(executions, 3);
+      } finally {
+        __registerRequestContextGetter(getRequestContext);
+        Deno.env.delete("LOG_FORMAT");
+        __resetLoggerConfigForTests();
+        console.error = originalError;
+        restore();
+      }
+    });
   });
 
   describe("JSON output format", () => {

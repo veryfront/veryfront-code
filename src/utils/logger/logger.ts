@@ -26,6 +26,9 @@ import { stringifyRedactedJson } from "./serialization.ts";
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
 const NativeConsole = console;
+const NativePerformance = performance;
+const performanceNow = Performance.prototype.now;
+const numberRound = Math.round;
 const objectCreate = Object.create;
 const objectGetPrototypeOf = Object.getPrototypeOf;
 const NativeSet = Set;
@@ -36,6 +39,14 @@ const setValues = Set.prototype.values;
 const setIteratorNext = objectGetPrototypeOf(new NativeSet().values()).next;
 const stringToLowerCase = String.prototype.toLowerCase;
 const stringToUpperCase = String.prototype.toUpperCase;
+
+function readPerformanceNow(): number {
+  try {
+    return apply(performanceNow, NativePerformance, []) as number;
+  } catch {
+    return 0;
+  }
+}
 
 export enum LogLevel {
   DEBUG = 0,
@@ -708,15 +719,15 @@ class ConsoleLogger implements Logger {
   }
 
   async time<T>(label: string, fn: () => Promise<T>): Promise<T> {
-    const start = performance.now();
+    const start = readPerformanceNow();
     try {
       const result = await fn();
-      const durationMs = performance.now() - start;
-      this.debug(`${label} completed`, { durationMs: Math.round(durationMs) });
+      const durationMs = readPerformanceNow() - start;
+      this.debug(`${label} completed`, { durationMs: numberRound(durationMs) });
       return result;
     } catch (error) {
-      const durationMs = performance.now() - start;
-      this.error(`${label} failed`, { durationMs: Math.round(durationMs) }, error);
+      const durationMs = readPerformanceNow() - start;
+      this.error(`${label} failed`, { durationMs: numberRound(durationMs) }, error);
       throw error;
     }
   }
@@ -800,6 +811,33 @@ function withRequestLogger(base: Logger): Logger {
 
 type ContextAwareLogMethod = "debug" | "info" | "warn" | "error";
 
+type LoggerSelection = {
+  selected: Logger;
+  fallback: Logger;
+};
+
+function selectContextLogger(base: Logger): LoggerSelection {
+  return { selected: withRequestLogger(base), fallback: base };
+}
+
+function selectComponentLoggers(base: Logger, componentName: string): LoggerSelection {
+  let fallback: Logger = base;
+  try {
+    fallback = base.component(componentName);
+  } catch {
+    // The base logger itself is still a safe final fallback.
+  }
+
+  const requestLogger = withRequestLogger(base);
+  if (requestLogger === base) return { selected: fallback, fallback };
+
+  try {
+    return { selected: requestLogger.component(componentName), fallback };
+  } catch {
+    return { selected: fallback, fallback };
+  }
+}
+
 function invokeLoggerMethod(
   logger: Logger,
   method: ContextAwareLogMethod,
@@ -824,9 +862,19 @@ function invokeContextAwareLog(
   message: string,
   args: unknown[],
 ): void {
-  const selected = withRequestLogger(base);
-  if (invokeLoggerMethod(selected, method, message, args)) return;
-  if (selected !== base) invokeLoggerMethod(base, method, message, args);
+  invokeSelectedLoggerMethod(selectContextLogger(base), method, message, args);
+}
+
+function invokeSelectedLoggerMethod(
+  selection: LoggerSelection,
+  method: ContextAwareLogMethod,
+  message: string,
+  args: unknown[],
+): void {
+  if (invokeLoggerMethod(selection.selected, method, message, args)) return;
+  if (selection.selected !== selection.fallback) {
+    invokeLoggerMethod(selection.fallback, method, message, args);
+  }
 }
 
 function invokeContextAwareComponentLog(
@@ -836,25 +884,60 @@ function invokeContextAwareComponentLog(
   message: string,
   args: unknown[],
 ): void {
-  let fallback: Logger = base;
+  invokeSelectedLoggerMethod(
+    selectComponentLoggers(base, componentName),
+    method,
+    message,
+    args,
+  );
+}
+
+function invokeLoggerChild(
+  logger: Logger,
+  context: Record<string, unknown>,
+): Logger | undefined {
   try {
-    fallback = base.component(componentName);
-  } catch {
-    // The base logger itself is still a safe final fallback.
-  }
-
-  const requestLogger = withRequestLogger(base);
-  let selected = fallback;
-  if (requestLogger !== base) {
-    try {
-      selected = requestLogger.component(componentName);
-    } catch {
-      selected = fallback;
+    const callback = logger.child;
+    if (typeof callback !== "function") return undefined;
+    const child = apply(callback, logger, [context]) as unknown;
+    if ((typeof child === "object" && child !== null) || typeof child === "function") {
+      return child as Logger;
     }
+  } catch {
+    // Request-scoped logger composition must not escape the logging boundary.
   }
+  return undefined;
+}
 
-  if (invokeLoggerMethod(selected, method, message, args)) return;
-  if (selected !== fallback) invokeLoggerMethod(fallback, method, message, args);
+function invokeSelectedLoggerChild(
+  selection: LoggerSelection,
+  context: Record<string, unknown>,
+): Logger {
+  const selectedChild = invokeLoggerChild(selection.selected, context);
+  if (selectedChild !== undefined) return selectedChild;
+  if (selection.selected !== selection.fallback) {
+    const fallbackChild = invokeLoggerChild(selection.fallback, context);
+    if (fallbackChild !== undefined) return fallbackChild;
+  }
+  return selection.fallback;
+}
+
+async function invokeSelectedLoggerTime<T>(
+  selection: LoggerSelection,
+  label: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const start = readPerformanceNow();
+  try {
+    const result = await fn();
+    const durationMs = numberRound(readPerformanceNow() - start);
+    invokeSelectedLoggerMethod(selection, "debug", `${label} completed`, [{ durationMs }]);
+    return result;
+  } catch (error) {
+    const durationMs = numberRound(readPerformanceNow() - start);
+    invokeSelectedLoggerMethod(selection, "error", `${label} failed`, [{ durationMs }, error]);
+    throw error;
+  }
 }
 
 /**
@@ -876,10 +959,10 @@ function createContextAwareLogger(base: ConsoleLogger): Logger {
       invokeContextAwareLog(base, "error", message, args);
     },
     time<T>(label: string, fn: () => Promise<T>): Promise<T> {
-      return withRequestLogger(base).time(label, fn);
+      return invokeSelectedLoggerTime(selectContextLogger(base), label, fn);
     },
     child(context: Record<string, unknown>): Logger {
-      return withRequestLogger(base).child(context);
+      return invokeSelectedLoggerChild(selectContextLogger(base), context);
     },
     component(name: string): Logger {
       return createComponentAwareLogger(base, name);
@@ -908,10 +991,13 @@ function createComponentAwareLogger(base: ConsoleLogger, componentName: string):
       invokeContextAwareComponentLog(base, componentName, "error", message, args);
     },
     time<T>(label: string, fn: () => Promise<T>): Promise<T> {
-      return withRequestLogger(base).component(componentName).time(label, fn);
+      return invokeSelectedLoggerTime(selectComponentLoggers(base, componentName), label, fn);
     },
     child(context: Record<string, unknown>): Logger {
-      return withRequestLogger(base).component(componentName).child(context);
+      return invokeSelectedLoggerChild(
+        selectComponentLoggers(base, componentName),
+        context,
+      );
     },
     component(name: string): Logger {
       return createComponentAwareLogger(base, name);
