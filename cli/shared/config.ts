@@ -461,7 +461,7 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
 
         const isRefused = isConnectionRefusedError(error);
 
-        // Idempotent: retry on transient HTTP status or any retryable connection error.
+        // Idempotent: retry on transient HTTP status or status-less retryable connection errors.
         // Non-idempotent: retry only on connection-refused (request never reached server).
         const shouldRetry = isIdempotent(method) ? isRetryableApiReadError(error) : isRefused;
 
