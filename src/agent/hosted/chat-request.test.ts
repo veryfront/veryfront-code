@@ -208,8 +208,7 @@ function createRuntimeInvocation(): ReturnType<typeof RuntimeAgentRunInvocationS
       project: {
         projectId,
         projectSlug: "demo-project",
-        runtimeTargetKind: "preview_branch",
-        runtimeTargetBranchId: branchId,
+        runtimeTargetKind: "main_branch",
       },
       parentConversationId: "10000000-1000-4000-8000-100000000007",
       parentRunId: "run_parent_1",
@@ -1417,7 +1416,20 @@ describe("agent/hosted-chat-request", () => {
   });
 
   it("builds a hosted chat request from a runtime agent invocation", () => {
-    const invocation = createRuntimeInvocation();
+    const baseInvocation = createRuntimeInvocation();
+    const invocation = RuntimeAgentRunInvocationSchema.parse({
+      ...baseInvocation,
+      run: {
+        ...baseInvocation.run,
+        project: {
+          projectId,
+          projectSlug: "demo-project",
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetBranchId: branchId,
+        },
+      },
+      agentSource: { type: "branch", branch: "feature/runtime-preview" },
+    });
     const forwardedProps = buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation(
       invocation,
     );
@@ -1542,6 +1554,11 @@ describe("agent/hosted-chat-request", () => {
           runtimeTargetKind: "environment",
           runtimeTargetEnvironmentId: environmentId,
         },
+      },
+      agentSource: {
+        type: "environment",
+        environmentName: "Production",
+        releaseId: "release-42",
       },
     });
 

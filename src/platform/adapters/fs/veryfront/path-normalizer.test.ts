@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertInstanceOf,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 
 describe("PathNormalizer", () => {
   describe("class", () => {
@@ -20,11 +26,13 @@ describe("PathNormalizer", () => {
 
     it("should reject traversal segments in projectDir", () => {
       for (const projectDir of ["/project/..", "../project", "/project//../root"]) {
-        assertThrows(
+        const error = assertThrows(
           () => new PathNormalizer(projectDir),
-          TypeError,
+          VeryfrontError,
           'project directory must not contain ".." segments',
         );
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(error.slug, "config-validation-failed");
       }
     });
   });

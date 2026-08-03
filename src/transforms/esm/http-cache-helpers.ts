@@ -45,6 +45,10 @@ export type CacheOptions = {
   importMap: ImportMapConfig;
   /** React version to use for esm.sh URLs (defaults to DEFAULT_REACT_VERSION) */
   reactVersion?: string;
+  /** Absolute request origin used to identify same-origin module-server URLs. */
+  moduleServerOrigin?: string;
+  /** Request-scoped dependency-pinning state used to isolate module-server URLs. */
+  dependencyPinningCacheKey?: string;
 };
 
 export type HttpCacheIdentityOptions = Pick<CacheOptions, "importMap" | "reactVersion">;

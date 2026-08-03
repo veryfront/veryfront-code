@@ -54,12 +54,33 @@ describe("platform/adapters/fs/github/path-utils", () => {
           "src/../secret.ts",
           "/project/../../secret.ts",
           "../../../../user/repos",
+          "%2e%2e/%2e%2e/user/repos",
+          "%2E%2E/%2E%2E/user/repos",
+          ".%2e/.%2e/user/repos",
         ]
       ) {
         assertThrows(
           () => normalizeGitHubPath(path, "/project"),
           TypeError,
           "traversal",
+        );
+      }
+    });
+
+    it("rejects backslashes, control characters, and unbounded paths", () => {
+      for (
+        const [path, message] of [
+          ["..\\..\\user/repos", "forward slashes"],
+          ["src/\u0000secret.ts", "control characters"],
+          ["src/\u0080secret.ts", "control characters"],
+          ["src/\u009fsecret.ts", "control characters"],
+          ["a".repeat(4_097), "4096-character limit"],
+        ] as const
+      ) {
+        assertThrows(
+          () => normalizeGitHubPath(path),
+          TypeError,
+          message,
         );
       }
     });

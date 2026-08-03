@@ -5,11 +5,12 @@
  * @module extensions/ext-bundler-esbuild/esbuild-bundler.test
  */
 
-import { assertEquals, assertExists, assertStringIncludes } from "@std/assert";
+import { assertEquals, assertExists, assertRejects, assertStringIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { createRequire } from "node:module";
 
 import { EsbuildBundler } from "./esbuild-bundler.ts";
+import { rebuildContextWithSignal } from "./context-build-lifecycle.ts";
 
 const childProcess = createRequire(import.meta.url)("node:child_process") as {
   spawn: typeof import("node:child_process").spawn;
@@ -86,6 +87,36 @@ describe("EsbuildBundler.transform", () => {
     } finally {
       await bundler.stop();
     }
+  });
+});
+
+describe("abortable esbuild context lifecycle", () => {
+  it("cancels active work and preserves the primary abort over cleanup failures", async () => {
+    const controller = new AbortController();
+    const rebuild = Promise.withResolvers<unknown>();
+    const cancelCalled = Promise.withResolvers<void>();
+    let disposed = false;
+    const abortReason = new DOMException("deadline exceeded", "AbortError");
+    const building = rebuildContextWithSignal({
+      rebuild: () => rebuild.promise,
+      cancel: () => {
+        cancelCalled.resolve();
+        rebuild.reject(new Error("esbuild rebuild cancelled"));
+        return Promise.reject(new Error("cancel cleanup failed"));
+      },
+      dispose: () => {
+        disposed = true;
+        return Promise.reject(new Error("dispose cleanup failed"));
+      },
+    }, controller.signal);
+    void building.catch(() => undefined);
+
+    controller.abort(abortReason);
+    await cancelCalled.promise;
+    const error = await assertRejects(() => building);
+
+    assertEquals(error, abortReason);
+    assertEquals(disposed, true);
   });
 });
 
@@ -718,6 +749,50 @@ describe("EsbuildBundler.bundle", () => {
       assertExists(out.text);
       assertEquals(out.text.includes("hello"), true);
     } finally {
+      await bundler.stop();
+    }
+  });
+
+  it("cancels an active context build through the contract signal", async () => {
+    const bundler = new EsbuildBundler();
+    const controller = new AbortController();
+    const loadStarted = Promise.withResolvers<void>();
+    const releaseLoad = Promise.withResolvers<void>();
+    const abortReason = new DOMException("cancel requested", "AbortError");
+    let bundling: Promise<Awaited<ReturnType<EsbuildBundler["bundle"]>>> | undefined;
+
+    try {
+      bundling = bundler.bundle({
+        entryPoints: ["cancel:entry"],
+        bundle: true,
+        format: "esm",
+        write: false,
+        signal: controller.signal,
+        plugins: [{
+          name: "cancel-active-build",
+          setup(build) {
+            build.onResolve({ filter: /^cancel:/ }, () => ({
+              path: "entry",
+              namespace: "cancel",
+            }));
+            build.onLoad({ filter: /.*/, namespace: "cancel" }, async () => {
+              loadStarted.resolve();
+              await releaseLoad.promise;
+              return { contents: "export default 1;", loader: "ts" };
+            });
+          },
+        }],
+      });
+      void bundling.catch(() => undefined);
+      await loadStarted.promise;
+      controller.abort(abortReason);
+      releaseLoad.resolve();
+
+      const error = await assertRejects(() => bundling!);
+      assertEquals(error, abortReason);
+    } finally {
+      releaseLoad.resolve();
+      await bundling?.catch(() => undefined);
       await bundler.stop();
     }
   });
