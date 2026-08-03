@@ -420,9 +420,9 @@ describe("cli/templates", () => {
       "token-store.ts should centralize default store selection",
     );
     assertEquals(
-      tokenStore.includes("OAuth token storage is not configured for production"),
+      tokenStore.includes("only when NODE_ENV is explicitly development or test"),
       true,
-      "token-store.ts should fail closed for production memory storage",
+      "token-store.ts should fail closed outside explicit development and test modes",
     );
     assertEquals(
       tokenStore.includes("getDefaultTokenStore"),
@@ -453,6 +453,35 @@ describe("cli/templates", () => {
       tokenStore.includes("export const tokenStore: TokenStore = {"),
       true,
       "token-store.ts should expose a lazy proxy that is safe to import in production",
+    );
+  });
+
+  it("generated OAuth refresh helpers use the shared lock and CAS protocol", async () => {
+    const integrationTemplates = new URL("./integrations/", import.meta.url);
+    const offenders: string[] = [];
+    let helperCount = 0;
+
+    for (const file of await collectTemplateTsFiles(integrationTemplates)) {
+      const source = await Deno.readTextFile(file);
+      if (!source.includes("export async function getValidToken(")) continue;
+
+      helperCount++;
+      if (
+        !source.includes("getRefreshableAccessToken(") ||
+        source.includes("tokenStore.setToken(") ||
+        source.includes("tokenStore.revokeToken(")
+      ) {
+        offenders.push(file.pathname.replace(integrationTemplates.pathname, ""));
+      }
+    }
+
+    assertEquals(helperCount, 3, "Expected every generated getValidToken implementation");
+    assertEquals(
+      offenders,
+      [],
+      `OAuth refresh helpers must use the shared lock/CAS protocol. Offenders: ${
+        offenders.join(", ")
+      }`,
     );
   });
 

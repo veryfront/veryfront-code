@@ -386,6 +386,11 @@ describe("generated encrypted OAuth token store", () => {
       TypeError,
       "scopes",
     );
+    await assertRejects(
+      () => store.setState("unsafe-user", oauthState("ali\u0000ce")),
+      TypeError,
+      "userId",
+    );
   });
 
   it("rejects OAuth state metadata that requires invoking getters", async () => {
@@ -523,5 +528,21 @@ describe("generated encrypted OAuth token store", () => {
       Error,
       "explicit development or test",
     );
+  });
+
+  it("uses Deno runtime mode when process exists without env", () => {
+    Deno.env.set("NODE_ENV", "development");
+    const processDescriptor = Object.getOwnPropertyDescriptor(globalThis, "process");
+    Object.defineProperty(globalThis, "process", {
+      configurable: true,
+      value: {},
+    });
+
+    try {
+      assertEquals(typeof createMemoryKvBackend(), "object");
+    } finally {
+      if (processDescriptor) Object.defineProperty(globalThis, "process", processDescriptor);
+      else Reflect.deleteProperty(globalThis, "process");
+    }
   });
 });

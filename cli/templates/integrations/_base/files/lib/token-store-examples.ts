@@ -5,35 +5,36 @@
  * The in-memory backend below is for local development and tests only: it is
  * process-local, so tokens vanish on restart and are not shared across
  * workers. For production, implement `EncryptedKvBackend` over a durable
- * service and wire it once during startup:
+ * service and pass it into startup through an explicit configuration
+ * boundary. This example is complete and does not rely on module globals:
  *
  * ```ts
  * import { configureTokenStore } from "./token-store.ts";
- * import { createEncryptedTokenStore } from "./encrypted-token-store.ts";
+ * import {
+ *   createEncryptedTokenStore,
+ *   type EncryptedKvBackend,
+ * } from "./encrypted-token-store.ts";
  *
- * configureTokenStore(createEncryptedTokenStore(myDurableBackend));
+ * export function configureOAuthStorage(backend: EncryptedKvBackend): void {
+ *   configureTokenStore(createEncryptedTokenStore(backend));
+ * }
  * ```
  *
- * A Redis-shaped backend maps naturally onto the contract:
+ * Redis adapter sketch (pseudocode, not a paste-ready client): replace every
+ * angle-bracketed operation with the equivalent atomic operation from your
+ * initialized Redis client.
  *
- * ```ts
+ * ```text
  * const redisBackend: EncryptedKvBackend = {
- *   get: (key) => redis.get(key),
+ *   get: (key) => <redis client get>(key),
  *   set: async (key, value, options) => {
- *     await (options?.expiresInMs
- *       ? redis.set(key, value, { px: options.expiresInMs })
- *       : redis.set(key, value));
+ *     await <redis client set>(key, value, options?.expiresInMs);
  *   },
- *   delete: async (key) => {
- *     await redis.del(key);
- *   },
- *   // Run WATCH/MULTI or a small Lua script so the comparison and the write
- *   // are one atomic step on the server.
+ *   delete: (key) => <redis client delete>(key),
  *   compareAndSwap: (key, expected, next, options) =>
- *     redisCompareAndSwapScript(key, expected, next, options?.expiresInMs),
- *   // Use a bounded lease (for example SET NX PX plus a fenced release) so
- *   // a crashed holder cannot block token refresh forever.
- *   withLock: (key, operation) => redisWithLease(key, operation),
+ *     <atomic WATCH/MULTI or Lua CAS>(key, expected, next, options?.expiresInMs),
+ *   withLock: (key, operation) =>
+ *     <bounded, renewable, fenced Redis lease>(key, operation),
  * };
  * ```
  */
@@ -41,7 +42,7 @@
 import type { EncryptedKvBackend } from "./encrypted-token-store.ts";
 
 function runtimeMode(): string | undefined {
-  if (typeof process !== "undefined") return process.env?.NODE_ENV;
+  if (typeof process !== "undefined" && process.env) return process.env.NODE_ENV;
   return (globalThis as { Deno?: { env?: { get?: (name: string) => string | undefined } } }).Deno
     ?.env?.get?.("NODE_ENV");
 }

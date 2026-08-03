@@ -371,7 +371,8 @@ function requireStateRow(value: unknown): StoredOAuthState {
   const metadata = requireMetadata(ownDataValue(value, "metadata"));
   if (
     typeof userId !== "string" || userId.length === 0 ||
-    userId.length > MAX_KEY_COMPONENT_LENGTH || userId.trim() !== userId
+    userId.length > MAX_KEY_COMPONENT_LENGTH || userId.trim() !== userId ||
+    hasAsciiControlCharacter(userId)
   ) {
     throw new TypeError("Stored OAuth state row must contain a userId");
   }
@@ -529,13 +530,18 @@ class EnvelopeCipher {
  * malformed, and when the backend does not provide the atomic operations
  * that safe multi-worker refresh requires.
  *
- * Wire it once during startup:
+ * Wire it once during startup through an explicit configuration boundary:
  *
  * ```ts
  * import { configureTokenStore } from "./token-store.ts";
- * import { createEncryptedTokenStore } from "./encrypted-token-store.ts";
+ * import {
+ *   createEncryptedTokenStore,
+ *   type EncryptedKvBackend,
+ * } from "./encrypted-token-store.ts";
  *
- * configureTokenStore(createEncryptedTokenStore(myKvBackend));
+ * export function configureOAuthStorage(backend: EncryptedKvBackend): void {
+ *   configureTokenStore(createEncryptedTokenStore(backend));
+ * }
  * ```
  */
 export function createEncryptedTokenStore(
