@@ -12,7 +12,7 @@ it("compiled CLI embeds the default Node WebSocket extension for HMR", () => {
   const args = createCompileArgs({
     entrypoint: "cli/main.ts",
     extraIncludes: [],
-    output: "/tmp/veryfront",
+    output: "veryfront",
   });
 
   assertEquals(
@@ -107,7 +107,7 @@ it("proxy binary embeds only the runtime-resolved proxy entrypoint", async () =>
   const args = createCompileArgs({
     entrypoint: "cli/proxy-main.ts",
     extraIncludes: [],
-    output: "/tmp/veryfront-proxy",
+    output: "veryfront-proxy",
     profile: "proxy",
   });
 
@@ -224,6 +224,16 @@ it("proxy release verifies lock freshness and publishes an exact SBOM", async ()
   }
 });
 
+it("proxy profile defaults to the dedicated proxy entrypoint", () => {
+  const args = createCompileArgs({
+    extraIncludes: [],
+    output: "veryfront-proxy",
+    profile: "proxy",
+  });
+
+  assertEquals(args.at(-1), "cli/proxy-main.ts");
+});
+
 it("compiled proxy smoke covers cache and observability providers", async () => {
   const smoke = await Deno.readTextFile("scripts/build/smoke-proxy-binary.sh");
 
@@ -237,6 +247,9 @@ it("compiled proxy smoke covers cache and observability providers", async () => 
       "[ext-redis] RedisRuntimeProvider registered",
       "OTEL_TRACES_EXPORTER=otlp",
       "[otel] Initialized",
+      "run_smoke otel",
+      "run_smoke sentry",
+      "VERYFRONT_ERROR_REPORTER=sentry",
       "SENTRY_DSN=https://public@example.com/1",
     ]
   ) {
@@ -329,7 +342,7 @@ it("full binary remains the default compile profile", () => {
   const args = createCompileArgs({
     entrypoint: "cli/main.ts",
     extraIncludes: [],
-    output: "/tmp/veryfront",
+    output: "veryfront",
   });
 
   assertEquals(args.includes("extensions/ext-image-sharp/src/index.ts"), true);

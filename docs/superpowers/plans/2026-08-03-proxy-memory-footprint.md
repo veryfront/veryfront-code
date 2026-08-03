@@ -107,17 +107,18 @@ git diff --check
 deno task build:prepare
 deno task build:proxy-lock
 git diff --exit-code -- scripts/build/proxy-deno.lock
-deno run -A scripts/build/compile-binary.ts --entrypoint cli/proxy-main.ts --profile proxy --target x86_64-unknown-linux-gnu --output /tmp/veryfront-proxy-linux-x64
-bash scripts/build/smoke-proxy-binary.sh /tmp/veryfront-proxy-linux-x64
-bash scripts/build/smoke-proxy-memory.sh /tmp/veryfront-proxy-linux-x64
-deno run -A scripts/build/compile-binary.ts --entrypoint cli/proxy-main.ts --profile proxy --target aarch64-unknown-linux-gnu --output /tmp/veryfront-proxy-linux-arm64
+proxy_artifact_dir="$(mktemp -d)"
+deno run -A scripts/build/compile-binary.ts --profile proxy --target x86_64-unknown-linux-gnu --output "${proxy_artifact_dir}/veryfront-proxy-linux-x64"
+bash scripts/build/smoke-proxy-binary.sh "${proxy_artifact_dir}/veryfront-proxy-linux-x64"
+bash scripts/build/smoke-proxy-memory.sh "${proxy_artifact_dir}/veryfront-proxy-linux-x64"
+deno run -A scripts/build/compile-binary.ts --profile proxy --target aarch64-unknown-linux-gnu --output "${proxy_artifact_dir}/veryfront-proxy-linux-arm64"
 ```
 
 - [ ] Commit the memory gate with binary sizes and smoke outcomes in `Tested:`.
 
 ## Task 4: Complete the veryfront-server runtime selector
 
-**Worktree:** `/private/tmp/veryfront-server-proxy-memory-footprint`, branch `fix/proxy-memory-footprint`, based on server `origin/main`.
+**Worktree:** isolated server branch `fix/proxy-memory-footprint`, based on server `origin/main`.
 
 **Files:** `scripts/test-container-entrypoint.sh`, `Dockerfile`
 

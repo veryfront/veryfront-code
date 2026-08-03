@@ -59,7 +59,7 @@ export const PROXY_INCLUDES = [
 export type CompileBinaryProfile = "full" | "proxy";
 
 interface CompileBinaryOptions {
-  entrypoint: string;
+  entrypoint?: string;
   extraIncludes: string[];
   output: string;
   profile?: CompileBinaryProfile;
@@ -71,6 +71,7 @@ function includesForProfile(profile: CompileBinaryProfile): string[] {
 }
 
 export function createCompileArgs(options: CompileBinaryOptions): string[] {
+  const profile = options.profile ?? "full";
   const args = [
     "compile",
     "--allow-all",
@@ -78,7 +79,7 @@ export function createCompileArgs(options: CompileBinaryOptions): string[] {
     "--unstable-worker-options",
   ];
 
-  if (options.profile === "proxy") {
+  if (profile === "proxy") {
     // The workspace lock contains every framework dependency, and Deno embeds
     // every locked npm package in a compiled binary. Use the graph-specific
     // frozen lock so the proxy carries only its statically anchored providers.
@@ -92,7 +93,7 @@ export function createCompileArgs(options: CompileBinaryOptions): string[] {
   }
 
   for (const include of [
-    ...includesForProfile(options.profile ?? "full"),
+    ...includesForProfile(profile),
     ...options.extraIncludes,
   ]) {
     args.push("--include", include);
@@ -102,7 +103,9 @@ export function createCompileArgs(options: CompileBinaryOptions): string[] {
     args.push("--target", options.target);
   }
 
-  args.push("--output", options.output, options.entrypoint);
+  const entrypoint = options.entrypoint ??
+    (profile === "proxy" ? "cli/proxy-main.ts" : "cli/main.ts");
+  args.push("--output", options.output, entrypoint);
   return args;
 }
 
@@ -127,7 +130,6 @@ if (import.meta.main) {
   const args = parseArgs(Deno.args, {
     string: ["entrypoint", "include", "output", "profile", "target"],
     collect: ["include"],
-    default: { entrypoint: "cli/main.ts" },
   });
 
   if (typeof args.output !== "string" || !args.output) {
@@ -142,7 +144,7 @@ if (import.meta.main) {
 
   try {
     await compileBinary({
-      entrypoint: String(args.entrypoint),
+      entrypoint: typeof args.entrypoint === "string" ? args.entrypoint : undefined,
       extraIncludes,
       output: normalizeOutputPath(args.output),
       profile,

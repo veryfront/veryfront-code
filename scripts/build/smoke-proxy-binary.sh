@@ -59,10 +59,13 @@ run_smoke redis "$((base_port + 1))" "TokenCacheStore registered" \
   CACHE_TYPE=redis REDIS_URL=redis://127.0.0.1:1
 run_smoke ambient-redis "$((base_port + 2))" "[ext-redis] RedisRuntimeProvider registered" \
   CACHE_TYPE=memory REDIS_URL=redis://127.0.0.1:1
-run_smoke observability "$((base_port + 3))" "[otel] Initialized" \
+run_smoke otel "$((base_port + 3))" "[otel] Initialized" \
   CACHE_TYPE=memory \
   OTEL_TRACES_ENABLED=true \
   OTEL_TRACES_EXPORTER=otlp \
-  OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
+  OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+run_smoke sentry "$((base_port + 4))" "" \
+  CACHE_TYPE=memory \
+  VERYFRONT_ERROR_REPORTER=sentry \
   SENTRY_ENABLED=true \
   SENTRY_DSN=https://public@example.com/1

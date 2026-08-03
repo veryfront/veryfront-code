@@ -1,8 +1,8 @@
+import { getEnv, setEnv } from "veryfront/platform/env";
+import { cliLogger } from "veryfront/utils/logger";
 import denoConfig from "../../../deno.json" with { type: "json" };
 import { isJsonMode } from "../../shared/json-output.ts";
 import { bold, brand, dim } from "../../ui/colors.ts";
-import { getEnv, setEnv } from "veryfront/platform/env";
-import { cliLogger } from "veryfront/utils/logger";
 import {
   activateStandaloneProxyExtensions,
   registerStandaloneProxyExtensionTeardown,
@@ -32,6 +32,8 @@ export function createStandaloneProxyKeepAlivePromise(): Promise<void> {
 function showProxyHeader(): void {
   if (isJsonMode()) return;
   const version = typeof denoConfig.version === "string" ? denoConfig.version : "0.0.0";
+  // Preserve the existing `veryfront serve --mode=proxy` output while the
+  // dedicated binary shares this runtime with the universal CLI.
   console.log(`${bold(brand("Veryfront"))} ${dim(`(v${version})`)}`);
   console.log();
 }

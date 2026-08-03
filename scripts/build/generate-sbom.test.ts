@@ -442,7 +442,7 @@ describe("componentsFromLock", () => {
   });
 });
 
-Deno.test("generate-sbom CLI rejects --lock without a value as a usage error", async () => {
+it("generate-sbom CLI rejects --lock without a value as a usage error", async () => {
   const command = new Deno.Command(Deno.execPath(), {
     args: [
       "run",

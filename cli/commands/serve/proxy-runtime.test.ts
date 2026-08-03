@@ -36,6 +36,24 @@ describe("standalone proxy runtime", () => {
     assertEquals(observed, ["127.0.0.2:4321"]);
   });
 
+  it("preserves the existing proxy CLI header format", async () => {
+    const originalLog = console.log;
+    const lines: string[] = [];
+    console.log = (...values: unknown[]) => lines.push(values.join(" "));
+    try {
+      await runStandaloneProxyRuntime({}, {
+        activateExtensions: async () => null,
+        registerTeardown: async () => async () => undefined,
+        loadProxy: async () => undefined,
+        keepAlive: async () => undefined,
+      });
+    } finally {
+      console.log = originalLog;
+    }
+
+    assertEquals(lines[0]?.startsWith("Veryfront "), true);
+  });
+
   it("tears down activated extensions when proxy startup fails", async () => {
     let teardownCount = 0;
 
