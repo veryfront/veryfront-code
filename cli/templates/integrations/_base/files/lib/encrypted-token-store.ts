@@ -337,7 +337,7 @@ function requireJsonDataValue(value: unknown, label: string): unknown {
   if (prototype !== Object.prototype && prototype !== null) {
     throw new TypeError(`${label} must contain only plain JSON data objects`);
   }
-  const snapshot: Record<string, unknown> = {};
+  const snapshot: Record<string, unknown> = Object.create(null);
   for (const key of Object.keys(value)) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor || !("value" in descriptor)) {
@@ -686,8 +686,19 @@ class EnvelopeCipher {
         { cause },
       );
     }
-    return JSON.parse(new TextDecoder().decode(plaintext));
+    try {
+      return JSON.parse(new TextDecoder().decode(plaintext));
+    } catch (cause) {
+      throw new Error("Encrypted OAuth value contains invalid JSON", { cause });
+    }
   }
+}
+
+function unreadableTokenRowReason(failure: unknown): string {
+  if (!(failure instanceof Error)) return "malformed encrypted row";
+  if (failure.message.includes("unknown encryption key")) return "unknown encryption key";
+  if (failure.message.includes("failed authentication")) return "failed authentication";
+  return "malformed encrypted row";
 }
 
 /**
@@ -734,8 +745,8 @@ export function createEncryptedTokenStore(
       return { key, raw, entry: requireTokenEntry(await cipher.open(key, raw)) };
     } catch (failure) {
       console.warn(
-        `[Encrypted Token Store] Ignoring unreadable OAuth token row for ${key}: ` +
-          `${failure instanceof Error ? failure.message : String(failure)} ` +
+        "[Encrypted Token Store] Ignoring unreadable OAuth token row " +
+          `(${unreadableTokenRowReason(failure)}). ` +
           "The integration is reported as disconnected; reconnecting overwrites the row.",
       );
       return null;

@@ -57,11 +57,11 @@ function captureWarnings(): { warnings: string[]; [Symbol.dispose](): void } {
   };
 }
 
-/** Seal a value in the legacy v1 envelope (no key id) for compatibility tests. */
-async function sealLegacyV1(
+/** Seal plaintext in the legacy v1 envelope (no key id) for compatibility tests. */
+async function sealLegacyV1Plaintext(
   keyHex: string,
   storageKey: string,
-  value: unknown,
+  plaintext: string,
 ): Promise<string> {
   const keyBytes = new Uint8Array(32);
   for (let index = 0; index < keyBytes.length; index++) {
@@ -73,7 +73,7 @@ async function sealLegacyV1(
     await crypto.subtle.encrypt(
       { name: "AES-GCM", iv, additionalData: new TextEncoder().encode(storageKey) },
       key,
-      new TextEncoder().encode(JSON.stringify(value)),
+      new TextEncoder().encode(plaintext),
     ),
   );
   const combined = new Uint8Array(iv.byteLength + ciphertext.byteLength);
@@ -82,6 +82,17 @@ async function sealLegacyV1(
   let binary = "";
   for (const byte of combined) binary += String.fromCharCode(byte);
   return LEGACY_ENVELOPE_PREFIX + btoa(binary);
+}
+
+/** Seal a JSON value in the legacy v1 envelope for compatibility tests. */
+async function sealLegacyV1(
+  keyHex: string,
+  storageKey: string,
+  value: unknown,
+): Promise<string> {
+  const plaintext = JSON.stringify(value);
+  if (plaintext === undefined) throw new TypeError("Legacy test value must be JSON serializable");
+  return await sealLegacyV1Plaintext(keyHex, storageKey, plaintext);
 }
 
 /** Expose the raw rows so tests can assert what actually hits storage. */
@@ -338,6 +349,28 @@ describe("generated encrypted OAuth token store", () => {
     assertEquals(captured.warnings[0]?.includes("unreadable OAuth token row"), true);
     // The warning must never surface token material.
     assertEquals(captured.warnings[0]?.includes("legacy-raw-secret"), false);
+    assertEquals(captured.warnings[0]?.includes("alice"), false);
+  });
+
+  it("does not log decrypted plaintext when authenticated payload JSON is malformed", async () => {
+    const backend = createMemoryKvBackend();
+    const keyHex = Deno.env.get("TOKEN_ENCRYPTION_KEY");
+    if (!keyHex) throw new Error("Expected a configured encryption key");
+    const storageKey = 'veryfront:oauth:v1:tokens:["github","alice"]';
+    const secret = "SENSITIVE_OAUTH_TOKEN_MUST_NOT_BE_LOGGED";
+    await backend.set(
+      storageKey,
+      await sealLegacyV1Plaintext(keyHex, storageKey, secret),
+    );
+    const store = createEncryptedTokenStore(backend);
+
+    using captured = captureWarnings();
+    assertEquals(await store.getTokens("github", "alice"), null);
+    assertEquals(captured.warnings.length, 1);
+    assertEquals(captured.warnings[0]?.includes("malformed encrypted row"), true);
+    assertEquals(captured.warnings[0]?.includes(secret), false);
+    assertEquals(captured.warnings[0]?.includes(secret.slice(0, 10)), false);
+    assertEquals(captured.warnings[0]?.includes("alice"), false);
   });
 
   it("treats tampered ciphertext as absent instead of failing the read", async () => {
@@ -568,6 +601,45 @@ describe("generated encrypted OAuth token store", () => {
       TypeError,
       "metadata",
     );
+  });
+
+  it("preserves own metadata keys named __proto__ across runtimes", async () => {
+    const store = createEncryptedTokenStore(createMemoryKvBackend());
+    const metadata = JSON.parse('{"__proto__":{"tenant":"north"},"ok":true}');
+    const legacyDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "__proto__");
+    let legacySetterCalls = 0;
+    Object.defineProperty(Object.prototype, "__proto__", {
+      configurable: true,
+      get() {
+        return undefined;
+      },
+      set() {
+        legacySetterCalls++;
+      },
+    });
+
+    try {
+      await store.setState("state-with-proto-metadata", {
+        ...oauthState("alice"),
+        metadata,
+      });
+    } finally {
+      if (legacyDescriptor) {
+        Object.defineProperty(Object.prototype, "__proto__", legacyDescriptor);
+      } else {
+        Reflect.deleteProperty(Object.prototype, "__proto__");
+      }
+    }
+
+    assertEquals(legacySetterCalls, 0);
+    const consumed = await store.consumeState("state-with-proto-metadata");
+    const storedMetadata = consumed?.metadata;
+    if (!storedMetadata) throw new Error("Expected stored OAuth state metadata");
+    assertEquals(Object.keys(storedMetadata), ["__proto__", "ok"]);
+    assertEquals(Object.getOwnPropertyDescriptor(storedMetadata, "__proto__")?.value, {
+      tenant: "north",
+    });
+    assertEquals(storedMetadata.ok, true);
   });
 
   it("stores OAuth state without invoking inherited JSON serializers", async () => {
