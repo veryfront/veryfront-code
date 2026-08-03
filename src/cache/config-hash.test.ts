@@ -99,19 +99,6 @@ describe("cache/config-hash", () => {
       assertNotEquals(h1, h2);
     });
 
-    it("isolates exact trusted filesystem import sets independent of insertion order", async () => {
-      const untrusted = await computeConfigHash({});
-      const trusted = await computeConfigHash({
-        allowedFilesystemImportSpecifiers: new Set(["file:///tmp/b.js", "file:///tmp/a.js"]),
-      });
-      const reordered = await computeConfigHash({
-        allowedFilesystemImportSpecifiers: new Set(["file:///tmp/a.js", "file:///tmp/b.js"]),
-      });
-
-      assertNotEquals(trusted, untrusted);
-      assertEquals(trusted, reordered);
-    });
-
     for (
       const [field, baseValue, changedValue] of [
         ["moduleServerUrl", "https://modules-a.example.test", "https://modules-b.example.test"],
@@ -204,19 +191,6 @@ describe("cache/config-hash", () => {
         dependencyPinningCacheKey: CHANGED_CANONICAL_PIN_KEY,
       });
       assertNotEquals(h1, h2);
-    });
-
-    it("isolates exact trusted filesystem import sets independent of insertion order", () => {
-      const untrusted = computeConfigHashSync({});
-      const trusted = computeConfigHashSync({
-        allowedFilesystemImportSpecifiers: new Set(["file:///tmp/b.js", "file:///tmp/a.js"]),
-      });
-      const reordered = computeConfigHashSync({
-        allowedFilesystemImportSpecifiers: new Set(["file:///tmp/a.js", "file:///tmp/b.js"]),
-      });
-
-      assertNotEquals(trusted, untrusted);
-      assertEquals(trusted, reordered);
     });
 
     for (

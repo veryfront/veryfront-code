@@ -189,9 +189,6 @@ export async function transformModuleWithDeps(
   markModuleLoadProgress(config, "module:dependencies-transformed", filePath);
 
   fileContent = rewriteResolvedDependencyImports(fileContent, transformedDeps);
-  const allowedFilesystemImportSpecifiers = transformedDeps.length === 0
-    ? undefined
-    : new Set(transformedDeps.map((dep) => toFileUrl(dep.depTempPath).href));
   for (const dep of transformedDeps) {
     logger.debug("Replaced import:", {
       path: dep.path,
@@ -221,7 +218,6 @@ export async function transformModuleWithDeps(
     dependencyPinningCacheKey: config.dependencyPinningCacheKey,
     dependencyPinningDependencies: config.dependencyPinningDependencies,
     dependencyPinningSource: config.dependencyPinningSource,
-    allowedFilesystemImportSpecifiers,
     onProgress: config.onProgress,
     signal: config.signal,
   });

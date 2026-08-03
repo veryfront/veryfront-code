@@ -311,21 +311,6 @@ describe("rewriteImports with the default strategies", () => {
     });
   }
 
-  it("preserves an exact filesystem import inserted by the trusted module loader", async () => {
-    const generatedModuleUrl = "file:///tmp/vf-module-loader-out/lib/component.1234abcd.js";
-    const source = `import { component } from ${JSON.stringify(generatedModuleUrl)};`;
-
-    const result = await rewriteImports(
-      source,
-      defaultCtx({
-        target: "ssr",
-        allowedFilesystemImportSpecifiers: new Set([generatedModuleUrl]),
-      }),
-    );
-
-    assertStringIncludes(result, generatedModuleUrl);
-  });
-
   it("preserves ordinary computed dynamic imports", async () => {
     const projectModule = await loadTransformedProjectModule(
       [
