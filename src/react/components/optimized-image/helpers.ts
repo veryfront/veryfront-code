@@ -67,7 +67,11 @@ function encodedAppAssetPath(src: string): string | null {
     ) {
       return null;
     }
-    encodedSegments.push(encodeURIComponent(decoded));
+    try {
+      encodedSegments.push(encodeURIComponent(decoded));
+    } catch {
+      return null;
+    }
   }
 
   return `/${encodedSegments.join("/")}`;
@@ -112,7 +116,6 @@ export function getOptimizedImageVariantWidths(
   targetWidths?: readonly number[],
   src?: string,
 ): readonly number[] {
-  if (src !== undefined && encodedAppAssetPath(src) === null) return [];
   if (sourceWidth === undefined) return [];
   try {
     if (!isValidImageVariantWidth(sourceWidth)) {
@@ -127,6 +130,7 @@ export function getOptimizedImageVariantWidths(
         }
       }
     }
+    if (src !== undefined && encodedAppAssetPath(src) === null) return [];
     return targetWidths === undefined
       ? resolveImageVariantWidths(sourceWidth)
       : resolveImageVariantWidths(sourceWidth, targetWidths);

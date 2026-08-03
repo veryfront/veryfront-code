@@ -21,8 +21,8 @@ const INVALID_IMAGE_DIMENSIONS_WARNING =
 function assertPublicImageApisUseOriginalAsset(
   width: number,
   targetWidths?: readonly number[],
+  src = "/images/invalid.jpg",
 ): void {
-  const src = "/images/invalid.jpg";
   const picture = renderToStaticMarkup(
     React.createElement(OptimizedImage, {
       src,
@@ -341,7 +341,12 @@ describe("OptimizedImage", () => {
         assertEquals(warnings, []);
 
         Deno.env.set("VERYFRONT_ENV", "development");
-        assertPublicImageApisUseOriginalAsset(Number.NaN);
+        assertPublicImageApisUseOriginalAsset(
+          Number.NaN,
+          undefined,
+          "https://cdn.example/invalid.jpg",
+        );
+        assertEquals(warnings, [[INVALID_IMAGE_DIMENSIONS_WARNING]]);
         assertPublicImageApisUseOriginalAsset(640, [Number.NaN]);
         assertEquals(warnings, [[INVALID_IMAGE_DIMENSIONS_WARNING]]);
       } finally {

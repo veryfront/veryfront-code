@@ -52,6 +52,9 @@ describe("optimized-image helpers", () => {
           "/images/nested%2fprivate.jpg",
           "/images/bad%2.jpg",
           "/images\\photo.jpg",
+          "/images/photo\0.jpg",
+          "/images/photo%00.jpg",
+          "/images/\uD800.jpg",
         ]
       ) {
         assertEquals(getOptimizedPath(src, "webp", 640), src);
@@ -136,7 +139,15 @@ describe("optimized-image helpers", () => {
         assertEquals(warnings, []);
 
         Object.defineProperty(globalThis, "__RSC_DEV__", { value: true });
-        assertEquals(getOptimizedImageVariantWidths(Number.NaN), []);
+        assertEquals(
+          getOptimizedImageVariantWidths(
+            Number.NaN,
+            undefined,
+            "https://cdn.example/photo.jpg",
+          ),
+          [],
+        );
+        assertEquals(warnings, [[INVALID_IMAGE_DIMENSIONS_WARNING]]);
         assertEquals(getOptimizedImageVariantWidths(640, hostileWidths), []);
         assertEquals(warnings, [[INVALID_IMAGE_DIMENSIONS_WARNING]]);
       } finally {
