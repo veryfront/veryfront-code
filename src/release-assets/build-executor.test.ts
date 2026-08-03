@@ -1634,6 +1634,80 @@ describe("release asset build executor", () => {
     assertExists(rec.uploads.find((u) => u.hash === helperMatch[1]));
   });
 
+  it("keeps same-named published runtime helpers from different roots distinct", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "pages/index.tsx",
+        content: 'import { useWorkflow } from "veryfront/workflow"; export default useWorkflow;',
+      },
+    ];
+    const client = makeClient(files, rec);
+    const frameworkUrl = "/_vf_modules/_veryfront/workflow/react/index.js";
+    const consumerAUrl = "/_vf_modules/_veryfront/published-helper-consumer.js";
+    const consumerBUrl = "/_vf_modules/_veryfront/nested/src/consumer.js";
+
+    // Two package roots (tempDir and tempDir/src/nested), each with its own
+    // deno.js helper carrying different contents.
+    const tempDir = await tmp();
+    await Deno.mkdir(join(tempDir, "src", "nested", "src"), { recursive: true });
+    await Deno.writeTextFile(
+      join(tempDir, "src", "published-helper-consumer.ts"),
+      'import "../deno.js";\nexport const consumerA = true;\n',
+    );
+    await Deno.writeTextFile(join(tempDir, "deno.js"), 'export const helperA = "a";\n');
+    await Deno.writeTextFile(
+      join(tempDir, "src", "nested", "src", "consumer.ts"),
+      'import "../deno.js";\nexport const consumerB = true;\n',
+    );
+    await Deno.writeTextFile(
+      join(tempDir, "src", "nested", "deno.js"),
+      'export const helperB = "b";\n',
+    );
+
+    const transform = (source: string, sourceFile: string) => {
+      if (sourceFile.endsWith("pages/index.tsx")) {
+        return Promise.resolve(
+          `import { useWorkflow } from "${frameworkUrl}"; export default useWorkflow;`,
+        );
+      }
+      if (sourceFile.endsWith("src/workflow/react/index.ts")) {
+        return Promise.resolve(
+          `import { consumerA } from "${consumerAUrl}"; import { consumerB } from "${consumerBUrl}"; export const useWorkflow = () => consumerA && consumerB;`,
+        );
+      }
+      if (
+        sourceFile.endsWith("published-helper-consumer.ts") ||
+        sourceFile.endsWith("nested/src/consumer.ts") ||
+        sourceFile.endsWith("deno.js")
+      ) {
+        return Promise.resolve(source);
+      }
+      return Promise.resolve("export const value = true;");
+    };
+
+    const result = await runReleaseAssetBuild(baseInput(client, transform), tempDir);
+
+    assertEquals(result.success, true);
+    const consumerAUpload = rec.uploads.find((u) => u.text.includes("consumerA = true"));
+    const consumerBUpload = rec.uploads.find((u) => u.text.includes("consumerB = true"));
+    assertExists(consumerAUpload);
+    assertExists(consumerBUpload);
+
+    const helperAHash = consumerAUpload.text.match(/"\/_vf\/assets\/([a-f0-9]{64})\.js"/)?.[1];
+    const helperBHash = consumerBUpload.text.match(/"\/_vf\/assets\/([a-f0-9]{64})\.js"/)?.[1];
+    assertExists(helperAHash);
+    assertExists(helperBHash);
+    assert(helperAHash !== helperBHash);
+
+    const helperAUpload = rec.uploads.find((u) => u.hash === helperAHash);
+    const helperBUpload = rec.uploads.find((u) => u.hash === helperBHash);
+    assertExists(helperAUpload);
+    assertExists(helperBUpload);
+    assert(helperAUpload.text.includes("helperA"));
+    assert(helperBUpload.text.includes("helperB"));
+  });
+
   it("fails closed on cyclic project imports", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
