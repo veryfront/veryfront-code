@@ -207,7 +207,7 @@ export class InMemoryDeployControlPlane implements DeployControlPlane {
     { path: "app/page.tsx", content: APP_ROUTE_CONTENT },
     { path: "veryfront.json", content: projectConfigText() },
   ];
-  manifestResponses: Array<ReleaseAssetManifestResponse | null> = [readyManifest()];
+  manifestResponses: Array<unknown | null> = [readyManifest()];
   deploymentRoutingConvergence:
     | DeployDeployment["routingConvergence"]
     | undefined = { status: "converged", acknowledged: 1, recipients: 1 };

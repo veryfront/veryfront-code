@@ -5,7 +5,6 @@ import {
   normalizeControlPlane,
   type ProjectTarget,
 } from "../deployment-provenance.ts";
-import type { ReleaseAssetManifestResponse } from "veryfront/release-assets";
 import { DEPLOYMENT_ERROR } from "veryfront/errors";
 
 export interface DeployProjectRecord {
@@ -65,7 +64,7 @@ export interface DeployControlPlane {
   getReleaseAssetManifest(
     projectSlug: string,
     releaseId: string,
-  ): Promise<ReleaseAssetManifestResponse | null>;
+  ): Promise<unknown | null>;
   createDeployment(
     reference: string,
     input: { releaseId: string; environmentId: string },
@@ -286,14 +285,19 @@ export function createHttpDeployControlPlane(
     },
 
     async getReleaseAssetManifest(projectSlug, releaseId) {
+      let response: unknown;
       try {
-        return await client.get<ReleaseAssetManifestResponse>(
+        response = await client.get<unknown>(
           `/projects/${projectSlug}/releases/${releaseId}/asset-manifest`,
         );
       } catch (error) {
         if (getErrorStatus(error) === 404) return null;
         throw error;
       }
+      if (response === null) {
+        throw new Error(`Release assets for ${releaseId} returned an invalid state response`);
+      }
+      return response;
     },
 
     async createDeployment(reference, input) {

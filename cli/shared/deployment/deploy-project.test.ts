@@ -426,6 +426,28 @@ describe("DeployProject", () => {
     });
   });
 
+  it("propagates non-not-found route directory inspection errors before deployment mutation", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      try {
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.config.ts`,
+          'export default { directories: { app: "app\\0" } };\n',
+        );
+
+        await assertRejects(
+          () => executeApply(projectDir, controlPlane),
+          TypeError,
+        );
+        assertEquals(controlPlane.createdReleases, []);
+        assertEquals(controlPlane.createdDeployments, []);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
   it("emits routing convergence warnings after deployment verification", async () => {
     await withDeployEnv(async () => {
       const { projectDir } = await createPushedProject();
@@ -1213,6 +1235,147 @@ describe("deployment verification", () => {
 });
 
 describe("release asset manifest", () => {
+  function manifestControlPlane(response: unknown): DeployControlPlane {
+    return helperControlPlane({
+      getReleaseAssetManifest: () => Promise.resolve(response),
+    });
+  }
+
+  const polling = {
+    expectedRoutes: ["/"],
+    pollIntervalMs: 100,
+    timeoutMs: 100,
+  };
+
+  it("parses a valid ready response for the requested release", async () => {
+    const result = await waitForReleaseAssetManifest(
+      manifestControlPlane(readyManifest()),
+      PROJECT_SLUG,
+      "release-1",
+      polling,
+    );
+
+    assertEquals(result.state, "ready");
+    assertEquals(result.manifest.releaseId, "release-1");
+  });
+
+  it("rejects legacy ready manifests", async () => {
+    const current = readyManifest();
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(
+          manifestControlPlane({
+            ...current,
+            manifest: { ...current.manifest!, schemaVersion: 1 },
+          }),
+          PROJECT_SLUG,
+          "release-1",
+          polling,
+        ),
+      Error,
+      "invalid or mismatched ready manifest",
+    );
+  });
+
+  it("rejects ready manifests for another release", async () => {
+    const current = readyManifest();
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(
+          manifestControlPlane({
+            ...current,
+            manifest: { ...current.manifest!, releaseId: "release-other" },
+          }),
+          PROJECT_SLUG,
+          "release-1",
+          polling,
+        ),
+      Error,
+      "invalid or mismatched ready manifest",
+    );
+  });
+
+  it("rejects accessor-backed states without executing accessors", async () => {
+    let accessorCalls = 0;
+    const hostileResponse: Record<string, unknown> = {};
+    Object.defineProperty(hostileResponse, "state", {
+      enumerable: true,
+      get() {
+        accessorCalls++;
+        return "ready";
+      },
+    });
+
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(
+          manifestControlPlane(hostileResponse),
+          PROJECT_SLUG,
+          "release-1",
+          polling,
+        ),
+      Error,
+      "invalid state response",
+    );
+    assertEquals(accessorCalls, 0);
+  });
+
+  it("rejects oversized manifest states", async () => {
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(
+          manifestControlPlane({ state: "q".repeat(65) }),
+          PROJECT_SLUG,
+          "release-1",
+          polling,
+        ),
+      Error,
+      "invalid state response",
+    );
+  });
+
+  it("fails closed for partial manifests", async () => {
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(
+          manifestControlPlane({ state: "partial" }),
+          PROJECT_SLUG,
+          "release-1",
+          polling,
+        ),
+      Error,
+      "unsupported partial manifest",
+    );
+  });
+
+  it("fails closed for superseded manifests", async () => {
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(
+          manifestControlPlane({ state: "superseded" }),
+          PROJECT_SLUG,
+          "release-1",
+          polling,
+        ),
+      Error,
+      "Release asset build failed",
+    );
+  });
+
+  it("fails closed for unsupported manifest states", async () => {
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(
+          manifestControlPlane({ state: "unexpected" }),
+          PROJECT_SLUG,
+          "release-1",
+          polling,
+        ),
+      Error,
+      "unsupported state response",
+    );
+  });
+
   it("rejects ready empty manifests before deployment", async () => {
     const controlPlane = helperControlPlane({
       getReleaseAssetManifest: () => Promise.resolve(readyManifest({})),

@@ -39,6 +39,43 @@ async function collectReleaseFiles(files: AsyncIterable<DeployReleaseFile>) {
 }
 
 describe("createHttpDeployControlPlane", () => {
+  it("treats only not-found release asset manifests as polling absence", async () => {
+    const notFound = { status: 404 };
+    const forbidden = { status: 403 };
+    let error: unknown = notFound;
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        get: () => Promise.reject(error),
+      }),
+    );
+
+    assertEquals(
+      await controlPlane.getReleaseAssetManifest("my-project", "release-1"),
+      null,
+    );
+
+    error = forbidden;
+    await assertRejects(
+      () => controlPlane.getReleaseAssetManifest("my-project", "release-1"),
+    );
+  });
+
+  it("does not treat a successful null manifest response as polling absence", async () => {
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        get: () => Promise.resolve(null),
+      }),
+    );
+
+    await assertRejects(
+      () => controlPlane.getReleaseAssetManifest("my-project", "release-1"),
+      Error,
+      "invalid state response",
+    );
+  });
+
   it("normalizes legacy deployment references before returning them", async () => {
     const controlPlane = createHttpDeployControlPlane(
       config,
