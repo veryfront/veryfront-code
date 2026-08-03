@@ -497,7 +497,7 @@ describe(
           }
         });
 
-        it("loads shared proxy middleware after trusted request context is resolved", async () => {
+        it("refuses shared proxy middleware after trusted request context is resolved", async () => {
           const projectSlug = "shared-middleware-project";
           const projectId = "shared-middleware-project-id";
           const releaseId = "shared-middleware-release";
@@ -507,8 +507,12 @@ describe(
               headers: { "x-shared-middleware": "applied" },
             });
           }`;
+          let middlewareSourceReads = 0;
           const readMiddlewareSource = (path: string) => {
-            if (path === "/app/middleware.ts") return middlewareSource;
+            if (path === "/app/middleware.ts") {
+              middlewareSourceReads++;
+              return middlewareSource;
+            }
             throw new Deno.errors.NotFound(path);
           };
           const projectFs = {
@@ -516,7 +520,9 @@ describe(
             readFile: (path: string) => Promise.resolve(readMiddlewareSource(path)),
             readTextFile: (path: string) => Promise.resolve(readMiddlewareSource(path)),
             readOptionalTextFile: (path: string) =>
-              Promise.resolve(path === "/app/middleware.ts" ? middlewareSource : undefined),
+              Promise.resolve(
+                path === "/app/middleware.ts" ? readMiddlewareSource(path) : undefined,
+              ),
           };
           const resolvedContexts: Array<{
             projectSlug: string;
@@ -606,9 +612,12 @@ describe(
               }),
             );
 
-            assertEquals(response.status, 418);
-            assertEquals(await response.text(), "shared middleware");
-            assertEquals(response.headers.get("x-shared-middleware"), "applied");
+            assertEquals(response.status, 503);
+            assertEquals(response.headers.get("cache-control"), "no-store");
+            assertEquals(response.headers.get("content-type"), "application/problem+json");
+            const problem = await response.json();
+            assertEquals(problem.title, "Project execution unavailable");
+            assertEquals(middlewareSourceReads, 0);
             assert(
               resolvedContexts.length >= 1 &&
                 resolvedContexts.every((context) =>

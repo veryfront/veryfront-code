@@ -20,6 +20,17 @@ interface MiddlewareLoadOptions {
   allowHostProjectCodeExecution?: boolean;
 }
 
+/**
+ * Internal control signal used when project middleware exists but the current
+ * runtime is not permitted to evaluate it in the host process.
+ */
+export class ProjectMiddlewareHostExecutionDeniedError extends TypeError {
+  constructor() {
+    super("Project middleware host loading requires explicit trusted-local execution");
+    this.name = "ProjectMiddlewareHostExecutionDeniedError";
+  }
+}
+
 const baseLogger = getBaseLogger("SERVER");
 
 const logger = baseLogger.component("middleware");
@@ -114,9 +125,7 @@ export async function loadMiddlewareFile(
     // middleware exists, but they must never read or evaluate a discovered
     // middleware module in the host process.
     if (!isExplicitHostProjectCodeExecutionAllowed(options)) {
-      throw new TypeError(
-        "Project middleware host loading requires explicit trusted-local execution",
-      );
+      throw new ProjectMiddlewareHostExecutionDeniedError();
     }
 
     try {

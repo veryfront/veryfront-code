@@ -8,7 +8,12 @@ import { getProjectEnvSnapshot } from "#veryfront/server/project-env";
 import {
   loadMiddlewareFile,
   type MiddlewareFunction,
+  ProjectMiddlewareHostExecutionDeniedError,
 } from "#veryfront/server/dev-server/middleware.ts";
+import {
+  createErrorResponseFromDefinition,
+  PROJECT_EXECUTION_UNAVAILABLE,
+} from "#veryfront/errors";
 import type { HandlerContext } from "#veryfront/types";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { serverLogger } from "#veryfront/utils";
@@ -112,12 +117,34 @@ export class ProjectMiddlewareRuntime {
     const branch = resolvedBranch(ctx);
     const allowHostProjectCodeExecution = !isSharedProxy || isExplicitlyLocalProject(ctx);
     const executeMiddleware = async (): Promise<Response | undefined> => {
-      const middleware = await this.#getMiddleware(
-        ctx,
-        environment,
-        branch,
-        allowHostProjectCodeExecution,
-      );
+      let middleware: readonly MiddlewareFunction[];
+      try {
+        middleware = await this.#getMiddleware(
+          ctx,
+          environment,
+          branch,
+          allowHostProjectCodeExecution,
+        );
+      } catch (error) {
+        if (!(error instanceof ProjectMiddlewareHostExecutionDeniedError)) throw error;
+
+        const unavailable = createErrorResponseFromDefinition(
+          PROJECT_EXECUTION_UNAVAILABLE,
+          {
+            detail:
+              "Shared runtimes require a dedicated isolated project runtime for project middleware",
+            instance: pathname,
+          },
+        );
+        unavailable.headers.set("cache-control", "no-store");
+        if (request.method !== "HEAD") return unavailable;
+
+        return new Response(null, {
+          status: unavailable.status,
+          statusText: unavailable.statusText,
+          headers: unavailable.headers,
+        });
+      }
       if (middleware.length === 0) return next();
 
       const pipeline = new MiddlewarePipeline();
@@ -215,13 +242,15 @@ export class ProjectMiddlewareRuntime {
       );
       return [...fileMiddleware, ...(ctx.config?.middleware?.custom ?? [])];
     } catch (error) {
-      logger.error("Failed to load project middleware", {
-        projectSlug: ctx.projectSlug,
-        projectId: ctx.projectId,
-        releaseId: ctx.releaseId,
-        branch: resolvedBranch(ctx),
-        error: error instanceof Error ? error.message : String(error),
-      });
+      if (!(error instanceof ProjectMiddlewareHostExecutionDeniedError)) {
+        logger.error("Failed to load project middleware", {
+          projectSlug: ctx.projectSlug,
+          projectId: ctx.projectId,
+          releaseId: ctx.releaseId,
+          branch: resolvedBranch(ctx),
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       throw error;
     }
   }

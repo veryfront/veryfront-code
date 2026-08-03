@@ -435,7 +435,7 @@ describe("ProjectMiddlewareRuntime", () => {
     assertEquals(await response?.text(), "recovered");
   });
 
-  it("rejects shared production middleware before reading or evaluating it", async () => {
+  it("returns an unavailable response before reading or evaluating shared middleware", async () => {
     const marker = `__vf_project_middleware_${crypto.randomUUID().replaceAll("-", "")}`;
     const host = globalThis as unknown as Record<string, unknown>;
     let sourceReads = 0;
@@ -448,16 +448,30 @@ describe("ProjectMiddlewareRuntime", () => {
     let routeCalls = 0;
 
     try {
-      await assertRejects(
-        () =>
-          execute(runtime, createContext(adapter), undefined, () => {
-            routeCalls++;
-            return Promise.resolve(new Response("route"));
-          }),
-        TypeError,
-        "requires explicit trusted-local execution",
+      const response = await execute(
+        runtime,
+        createContext(adapter),
+        undefined,
+        () => {
+          routeCalls++;
+          return Promise.resolve(new Response("route"));
+        },
       );
 
+      assertEquals(response?.status, 503);
+      assertEquals(response?.headers.get("cache-control"), "no-store");
+      assertEquals(response?.headers.get("content-type"), "application/problem+json");
+      const problem = await response?.json();
+      assertEquals(problem?.title, "Project execution unavailable");
+
+      const headResponse = await execute(
+        runtime,
+        createContext(adapter),
+        new Request("https://example.com/resource", { method: "HEAD" }),
+      );
+      assertEquals(headResponse?.status, 503);
+      assertEquals(headResponse?.headers.get("cache-control"), "no-store");
+      assertEquals(await headResponse?.text(), "");
       assertEquals(sourceReads, 0);
       assertEquals(host[marker], undefined);
       assertEquals(routeCalls, 0);
