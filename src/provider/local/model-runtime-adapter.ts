@@ -15,6 +15,7 @@ import { serverLogger } from "#veryfront/utils";
 import { fromError } from "#veryfront/errors";
 import { throwIfLocalAIDisabled } from "./env.ts";
 import type { ModelRuntime } from "../types.ts";
+import { waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
 
 const logger = serverLogger.component("local-llm");
 
@@ -101,7 +102,10 @@ export function createLocalModel(modelId?: string): ModelRuntime {
     modelId: `local/${resolvedId}`,
     executionMode: "server-local",
     runtimeCapabilities: { toolCalling: false },
-    prepare: () => verifyLocalRuntime(resolvedId),
+    prepare: async (abortSignal) => {
+      abortSignal?.throwIfAborted();
+      await waitForSharedPromise(verifyLocalRuntime(resolvedId), abortSignal);
+    },
 
     supportedUrls: {},
 

@@ -185,6 +185,23 @@ describe("ensureModelReady", () => {
     assertEquals(receivedSignal, abortController.signal);
   });
 
+  it("lets a cancelled caller detach from local runtime preparation", async () => {
+    const previous = Deno.env.get("VERYFRONT_DISABLE_LOCAL_AI");
+    Deno.env.set("VERYFRONT_DISABLE_LOCAL_AI", "1");
+    const cancellation = new DOMException("request cancelled", "AbortError");
+    const abortController = new AbortController();
+    abortController.abort(cancellation);
+
+    try {
+      const localModel = createLocalModel("qwen3.5-0.8b");
+      const error = await assertRejects(() => ensureModelReady(localModel, abortController.signal));
+      assertEquals(error, cancellation);
+    } finally {
+      if (previous === undefined) Deno.env.delete("VERYFRONT_DISABLE_LOCAL_AI");
+      else Deno.env.set("VERYFRONT_DISABLE_LOCAL_AI", previous);
+    }
+  });
+
   it("throws no_ai_available for local models when runtime unavailable", async () => {
     const prev = Deno.env.get("VERYFRONT_DISABLE_LOCAL_AI");
     Deno.env.set("VERYFRONT_DISABLE_LOCAL_AI", "1");

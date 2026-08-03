@@ -38,6 +38,7 @@ const TEST_MAX_TOTAL_PAGES = 200;
 const TEST_MAX_OPERATION_TIMEOUT_MS = 300_000;
 const TEST_MAX_PATH_CHARACTERS = 4_096;
 const TEST_MAX_ERROR_BODY_BYTES = 64 * 1_024;
+const TEST_MAX_ERROR_MESSAGE_CHARACTERS = 4_096;
 const TEST_PUBLIC_LISTING_MAX_PAGES = 50;
 
 function createUnboundedTestListingBudget() {
@@ -955,6 +956,30 @@ Deno.test("strict runtime project files client snapshots configuration and rejec
   assertEquals(overrideFetchCalls, 0);
 });
 
+Deno.test("strict runtime project files client preserves and validates per-call timeouts", async () => {
+  let fetchCalls = 0;
+  const client = createStrictRuntimeProjectFilesClient({
+    apiUrl: baseOptions.apiUrl,
+    timeoutMs: 1_000,
+    fetch: () => {
+      fetchCalls += 1;
+      return Promise.resolve(jsonResponse({ path: "src/index.ts", content: "unused" }));
+    },
+  });
+
+  await assertRejects(
+    () =>
+      client.getProjectFile({
+        ...baseOptions,
+        path: "src/index.ts",
+        timeoutMs: 0,
+      }),
+    RangeError,
+    "timeoutMs",
+  );
+  assertEquals(fetchCalls, 0);
+});
+
 Deno.test("getStrictRuntimeProjectFile reports upstream and network errors", async () => {
   const upstreamFetch = mockFetchResponses(textResponse("Internal Server Error", 500));
   const upstreamError = await assertRejects(() =>
@@ -1066,6 +1091,23 @@ Deno.test("getStrictRuntimeProjectFile bounds upstream error bodies", async () =
     `Project files API error response exceeds ${TEST_MAX_ERROR_BODY_BYTES} bytes`,
   );
   assertEquals(getErrorMessage(error).length < TEST_MAX_ERROR_BODY_BYTES, true);
+});
+
+Deno.test("getStrictRuntimeProjectFile bounds error messages from failed body reads", async () => {
+  const bodyReadError = new Error("x".repeat(TEST_MAX_ERROR_MESSAGE_CHARACTERS * 2));
+  const error = await assertRejects(() =>
+    getStrictRuntimeProjectFile({
+      ...baseOptions,
+      fetch: mockFetchResponses(erroringResponse(bodyReadError, 500)),
+      path: "src/index.ts",
+    })
+  );
+
+  assertStringIncludes(getErrorMessage(error), "...[truncated]");
+  assertEquals(
+    getErrorMessage(error).length < TEST_MAX_ERROR_MESSAGE_CHARACTERS + 256,
+    true,
+  );
 });
 
 Deno.test("getStrictRuntimeProjectFile passes project, path, branch, fields, and auth through REST", async () => {

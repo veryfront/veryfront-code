@@ -32,6 +32,9 @@ const MAX_PROJECT_FILES_CURSOR_CHARACTERS = 4_096;
 const MAX_PROJECT_FILES_PER_PAGE = MAX_PROJECT_FILES_PAGE_LIMIT;
 /** Maximum aggregate file records returned by one project listing. */
 export const MAX_RUNTIME_PROJECT_FILES_TOTAL_ITEMS = 10_000;
+// Defense-in-depth for internal callers that supply a shared/custom listing
+// budget. The public default budget intentionally imposes the tighter 50-page
+// aggregate cap across all related listings.
 const MAX_PROJECT_FILES_TOTAL_PAGES = 200;
 const MAX_PROJECT_FILES_API_URL_CHARACTERS = 8_192;
 const MAX_PROJECT_FILES_IDENTIFIER_CHARACTERS = 256;
@@ -366,8 +369,34 @@ export function createStrictRuntimeProjectFilesClient(
 ): StrictRuntimeProjectFilesClient {
   const clientOptions = normalizeRuntimeProjectFilesClientOptions(options);
   return {
-    getProjectFile: (input) => getStrictRuntimeProjectFile({ ...input, ...clientOptions }),
-    getProjectFiles: (input) => getStrictRuntimeProjectFiles({ ...input, ...clientOptions }),
+    getProjectFile: (input) =>
+      getStrictRuntimeProjectFile({
+        ...clientOptions,
+        projectId: input.projectId,
+        authToken: input.authToken,
+        branchId: input.branchId,
+        maximumEntries: input.maximumEntries,
+        pathPrefix: input.pathPrefix,
+        listingBudget: input.listingBudget,
+        abortSignal: input.abortSignal,
+        signal: input.signal,
+        timeoutMs: input.timeoutMs ?? clientOptions.timeoutMs,
+        path: input.path,
+        maximumContentCharacters: input.maximumContentCharacters,
+      }),
+    getProjectFiles: (input) =>
+      getStrictRuntimeProjectFiles({
+        ...clientOptions,
+        projectId: input.projectId,
+        authToken: input.authToken,
+        branchId: input.branchId,
+        maximumEntries: input.maximumEntries,
+        pathPrefix: input.pathPrefix,
+        listingBudget: input.listingBudget,
+        abortSignal: input.abortSignal,
+        signal: input.signal,
+        timeoutMs: input.timeoutMs ?? clientOptions.timeoutMs,
+      }),
   };
 }
 
@@ -1883,9 +1912,9 @@ async function readStrictApiErrorMessage(
     if (error instanceof RangeError) {
       throw error;
     }
-    return error instanceof Error
-      ? error.message
-      : response.statusText || `HTTP ${response.status}`;
+    return truncateApiErrorMessage(
+      error instanceof Error ? error.message : response.statusText || `HTTP ${response.status}`,
+    );
   }
   if (!body.trim()) {
     return response.statusText || `HTTP ${response.status}`;
