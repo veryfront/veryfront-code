@@ -85,7 +85,7 @@ export class MDXRenderer {
     legacyIsLocalProject?: boolean,
   ): Promise<MDXModule> {
     const options = arguments.length <= 2 && !isRuntimeAdapter(optionsOrAdapter)
-      ? optionsOrAdapter as MDXLoadModuleOptions
+      ? (optionsOrAdapter ?? {}) as MDXLoadModuleOptions
       : {
         adapter: optionsOrAdapter as RuntimeAdapter | undefined,
         projectId: legacyProjectId,

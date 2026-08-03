@@ -1,6 +1,6 @@
 import "../../../_helpers/contract-init.ts";
 import * as React from "react";
-import { assert, assertEquals } from "#veryfront/testing/assert";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { clearMDXRendererCache, mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
@@ -92,6 +92,21 @@ describe(
         );
 
         assertEquals(mod.default as unknown, "legacy-signature");
+      });
+    });
+
+    denoOnlyIt("treats an explicit undefined options argument as empty options", async () => {
+      await withIsolatedCache(async () => {
+        const compiled = `
+        export const marker = "undefined-options";
+        export default marker;
+      `;
+
+        await assertRejects(
+          () => mdxRenderer.loadModuleESM(compiled, undefined),
+          Error,
+          "Missing projectId for MDX ESM cache directory",
+        );
       });
     });
 
