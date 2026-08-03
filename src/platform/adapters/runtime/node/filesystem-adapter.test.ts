@@ -89,7 +89,7 @@ describe("NodeFileSystemAdapter", () => {
     }
   });
 
-  it("requires O_NOFOLLOW only for POSIX snapshot authority", () => {
+  it("requires O_NOFOLLOW on POSIX and actual Node provenance on Windows", () => {
     const TestableAdapter = NodeFileSystemAdapter as unknown as new (
       options: { noFollow?: number; platform?: "posix" | "windows" },
     ) => NodeFileSystemAdapter;
@@ -99,7 +99,9 @@ describe("NodeFileSystemAdapter", () => {
       assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
     }
     const windowsAdapter = new TestableAdapter({ noFollow: 0, platform: "windows" });
-    assertEquals(Object.hasOwn(windowsAdapter, "readFileSnapshotWithinLimit"), true);
+    // Tests run under Deno; changing path semantics must not forge Node runtime
+    // provenance for a Node-compatible filesystem implementation.
+    assertEquals(Object.hasOwn(windowsAdapter, "readFileSnapshotWithinLimit"), false);
   });
 
   it("does not log an expected missing path as an access failure", async () => {

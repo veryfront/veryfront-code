@@ -8,7 +8,11 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FileSnapshotChangedError } from "../../file-snapshot-error.ts";
 import { isNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
-import { NodeCompatibleFileSystemAdapter } from "./node-filesystem-adapter.ts";
+import {
+  hasLosslessWindowsSnapshotIdentity,
+  NodeCompatibleFileSystemAdapter,
+  readNodeFileSnapshotWithinLimit,
+} from "./node-filesystem-adapter.ts";
 import { setupNodeFsWatcher } from "./shared-watcher.ts";
 
 type AdapterOptions = {
@@ -100,21 +104,108 @@ describe("NodeCompatibleFileSystemAdapter", () => {
             buffer.set(source.subarray(position, position + length), offset);
             return Promise.resolve({ bytesRead: length });
           },
+          writeFile: () => Promise.resolve(),
           close: () => Promise.resolve(),
         });
       },
     };
-    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
-      noFollow: 0,
-      platform: "windows",
-      operations,
-    });
-
     assertEquals(
-      [...await requireSnapshotReader(adapter)("/root/file.bin", "/root", 3)],
+      [
+        ...await readNodeFileSnapshotWithinLimit(
+          operations,
+          "windows",
+          0,
+          "C:\\root\\file.bin",
+          "C:\\root",
+          3,
+        ),
+      ],
       [4, 5, 6],
     );
     assertEquals(openedWith, ["r"]);
+  });
+
+  it("rejects a Windows lexical containment escape before filesystem access", async () => {
+    let operationCalls = 0;
+    const operations = {
+      realpath: () => {
+        operationCalls++;
+        return Promise.resolve("C:/root");
+      },
+      lstat: () => {
+        operationCalls++;
+        throw new Error("outside paths must not be inspected");
+      },
+      open: () => {
+        operationCalls++;
+        throw new Error("outside paths must not be opened");
+      },
+    };
+
+    await assertRejects(
+      () =>
+        readNodeFileSnapshotWithinLimit(
+          operations,
+          "windows",
+          0,
+          "C:\\outside\\file.bin",
+          "C:\\root",
+          1,
+        ),
+      TypeError,
+      "Snapshot path must be contained",
+    );
+    assertEquals(operationCalls, 0);
+  });
+
+  it("rejects a Windows canonical target outside the containment root", async () => {
+    const source = new Uint8Array([7]);
+    const stat = {
+      dev: 1n,
+      ino: 2n,
+      size: 1n,
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    let realpathCalls = 0;
+    let closeCalls = 0;
+    const operations = {
+      realpath: () =>
+        Promise.resolve(
+          realpathCalls++ === 0 ? "C:/root" : "C:/outside/file.bin",
+        ),
+      lstat: () => Promise.resolve(stat),
+      open: () =>
+        Promise.resolve({
+          stat: () => Promise.resolve(stat),
+          read: (buffer: Uint8Array) => {
+            buffer.set(source);
+            return Promise.resolve({ bytesRead: source.byteLength });
+          },
+          writeFile: () => Promise.resolve(),
+          close: () => {
+            closeCalls++;
+            return Promise.resolve();
+          },
+        }),
+    };
+
+    await assertRejects(
+      () =>
+        readNodeFileSnapshotWithinLimit(
+          operations,
+          "windows",
+          0,
+          "C:\\root\\linked\\file.bin",
+          "C:\\root",
+          1,
+        ),
+      TypeError,
+      "Snapshot target must be contained",
+    );
+    assertEquals(closeCalls, 1);
   });
 
   it("fails closed when Windows cannot provide a stable native file identity", async () => {
@@ -128,25 +219,62 @@ describe("NodeCompatibleFileSystemAdapter", () => {
       isFile: () => true,
       isSymbolicLink: () => false,
     };
+    const operations = {
+      realpath: (path: string) => Promise.resolve(path),
+      lstat: () => Promise.resolve(stat),
+      open: () => {
+        opens++;
+        throw new Error("must not open without an identity");
+      },
+    };
+
+    await assertRejects(
+      () =>
+        readNodeFileSnapshotWithinLimit(
+          operations,
+          "windows",
+          0,
+          "C:\\root\\file.bin",
+          "C:\\root",
+          1,
+        ),
+      FileSnapshotChangedError,
+      "Stable native file identity is unavailable",
+    );
+    assertEquals(opens, 0);
+  });
+
+  it("publishes Windows snapshot authority only for Node's lossless contract", () => {
+    assertEquals(hasLosslessWindowsSnapshotIdentity("node"), true);
+    for (const runtime of ["bun", "deno", "unknown"] as const) {
+      assertEquals(hasLosslessWindowsSnapshotIdentity(runtime), false);
+    }
+
+    // This suite runs under Deno, so forcing Windows path semantics must not
+    // turn the shared adapter into a Node-provenance publisher.
     const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
       noFollow: 0,
       platform: "windows",
       operations: {
         realpath: (path: string) => Promise.resolve(path),
-        lstat: () => Promise.resolve(stat),
+        lstat: () =>
+          Promise.resolve({
+            dev: 1n,
+            ino: 2n,
+            size: 0n,
+            mtimeNs: 3n,
+            ctimeNs: 4n,
+            isFile: () => true,
+            isSymbolicLink: () => false,
+          }),
         open: () => {
-          opens++;
-          throw new Error("must not open without an identity");
+          throw new Error("unpublished capability must not open files");
         },
       },
     });
-
-    await assertRejects(
-      () => requireSnapshotReader(adapter)("/root/file.bin", "/root", 1),
-      FileSnapshotChangedError,
-      "Stable native file identity is unavailable",
-    );
-    assertEquals(opens, 0);
+    assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), false);
+    assertEquals(adapter.readFileSnapshotWithinLimit, undefined);
+    assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
   });
 
   it("omits exclusive create independently from available snapshot authority", () => {

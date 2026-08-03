@@ -17,13 +17,14 @@ import {
 } from "../../bounded-file-read.ts";
 import { markNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 import { constants as nodeFsConstants } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "../../../compat/path/index.ts";
+import { resolve } from "../../../compat/path/index.ts";
 import { runtimeUsesWindowsPaths } from "../../../compat/path/portable.ts";
 import { FileSnapshotChangedError } from "../../file-snapshot-error.ts";
 import {
   hasUsableNativeFileIdentity,
   type NativeSnapshotPlatform,
 } from "./native-snapshot-identity.ts";
+import { isPathContainedBy } from "../../path-containment.ts";
 
 export interface NodeFileSystemLogger {
   error(message: string, context?: Record<string, unknown>): void;
@@ -77,6 +78,9 @@ export interface NodeFileSystemCapabilityOptions {
   readonly operations?: Partial<NodeFileSystemOperations>;
 }
 
+/** Runtime whose Node-compatible filesystem implementation backs the adapter. */
+export type NodeCompatibleRuntimeProvenance = "node" | "bun" | "deno" | "unknown";
+
 function toSnapshotStat(stats: import("node:fs").BigIntStats): NodeFileSnapshotStat {
   return {
     dev: stats.dev,
@@ -122,10 +126,34 @@ function hasOwn(value: object, property: PropertyKey): boolean {
   return Object.prototype.hasOwnProperty.call(value, property);
 }
 
-function isContainedPath(path: string, root: string): boolean {
-  const relation = relative(root, path);
-  return relation === "" ||
-    (relation !== ".." && !relation.startsWith(`..${sep}`) && !isAbsolute(relation));
+function detectNodeCompatibleRuntime(): NodeCompatibleRuntimeProvenance {
+  const runtime = globalThis as typeof globalThis & {
+    Bun?: unknown;
+    Deno?: unknown;
+    process?: {
+      release?: { name?: string };
+      versions?: { bun?: string; deno?: string; node?: string };
+    };
+  };
+  const versions = runtime.process?.versions;
+  if (typeof versions?.deno === "string" || runtime.Deno !== undefined) return "deno";
+  if (typeof versions?.bun === "string" || runtime.Bun !== undefined) return "bun";
+  if (
+    runtime.process?.release?.name === "node" &&
+    typeof versions?.node === "string"
+  ) {
+    return "node";
+  }
+  return "unknown";
+}
+
+export function hasLosslessWindowsSnapshotIdentity(
+  runtime: NodeCompatibleRuntimeProvenance,
+): boolean {
+  // Node's BigIntStats preserve native file identity and nanosecond generation
+  // fields on Windows. Bun and Deno do not currently document an equivalent
+  // lossless contract, so their Windows adapters must fail closed.
+  return runtime === "node";
 }
 
 function requirePositiveSafeInteger(value: number): void {
@@ -187,7 +215,7 @@ function throwSnapshotChangeForPathRace(message: string, cause: unknown): never 
   throwSnapshotChangeForMissingPath(message, cause);
 }
 
-async function readNodeFileSnapshotWithinLimit(
+export async function readNodeFileSnapshotWithinLimit(
   operations: NodeFileSystemOperations,
   platform: NativeSnapshotPlatform,
   noFollow: number | undefined,
@@ -207,7 +235,7 @@ async function readNodeFileSnapshotWithinLimit(
   }
   const lexicalRoot = resolve(containmentRoot);
   const candidate = resolve(path);
-  if (!isContainedPath(candidate, lexicalRoot)) {
+  if (!isPathContainedBy(candidate, lexicalRoot)) {
     throw new TypeError("Snapshot path must be contained by the requested root");
   }
 
@@ -274,7 +302,7 @@ async function readNodeFileSnapshotWithinLimit(
         pathnameOpened,
         "Stable native file identity is unavailable while verifying the snapshot",
       );
-      if (!isContainedPath(canonicalTarget, canonicalRoot)) {
+      if (!isPathContainedBy(canonicalTarget, canonicalRoot)) {
         throw new TypeError("Snapshot target must be contained by the canonical root");
       }
 
@@ -337,7 +365,7 @@ async function readNodeFileSnapshotWithinLimit(
         !sameGeneration(handleBefore, handleAfter) ||
         !sameGeneration(handleBefore, pathnameAfter) ||
         canonicalTargetAfter !== canonicalTarget ||
-        !isContainedPath(canonicalTargetAfter, canonicalRoot)
+        !isPathContainedBy(canonicalTargetAfter, canonicalRoot)
       ) {
         throw changed("File snapshot changed during the read");
       }
@@ -374,8 +402,9 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
     } as NodeFileSystemOperations;
     const noFollow = hasOwn(options, "noFollow") ? options.noFollow : nodeFsConstants.O_NOFOLLOW;
     const platform = options.platform ?? (runtimeUsesWindowsPaths() ? "windows" : "posix");
-    const canOpenExactSnapshot = platform === "windows" ||
-      (typeof noFollow === "number" && noFollow !== 0);
+    const canOpenExactSnapshot = platform === "windows"
+      ? hasLosslessWindowsSnapshotIdentity(detectNodeCompatibleRuntime())
+      : typeof noFollow === "number" && noFollow !== 0;
     if (canOpenExactSnapshot) {
       Object.defineProperty(this, "readFileSnapshotWithinLimit", {
         value: (path: string, containmentRoot: string, byteLimit: number) =>

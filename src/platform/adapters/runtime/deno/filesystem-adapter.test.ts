@@ -30,30 +30,35 @@ if (isDeno) {
         await Deno.symlink(exact, link);
         const adapter = new DenoFileSystemAdapter();
 
-        assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), true);
         assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
-        assertExists(adapter.readFileSnapshotWithinLimit);
         assertExists(adapter.createFileBytesExclusive);
-        assertEquals([...await adapter.readFileSnapshotWithinLimit(empty, root, 1)], []);
-        assertEquals([...await adapter.readFileSnapshotWithinLimit(exact, root, 3)], [1, 2, 3]);
-        await assertRejects(
-          () => adapter.readFileSnapshotWithinLimit!(oversized, root, 3),
-          RangeError,
-        );
-        for (const limit of [0, Number.MAX_SAFE_INTEGER + 1]) {
+        if (Deno.build.os === "windows") {
+          assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), false);
+          assertEquals(adapter.readFileSnapshotWithinLimit, undefined);
+        } else {
+          assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), true);
+          assertExists(adapter.readFileSnapshotWithinLimit);
+          assertEquals([...await adapter.readFileSnapshotWithinLimit(empty, root, 1)], []);
+          assertEquals([...await adapter.readFileSnapshotWithinLimit(exact, root, 3)], [1, 2, 3]);
           await assertRejects(
-            () => adapter.readFileSnapshotWithinLimit!(exact, root, limit),
+            () => adapter.readFileSnapshotWithinLimit!(oversized, root, 3),
             RangeError,
           );
+          for (const limit of [0, Number.MAX_SAFE_INTEGER + 1]) {
+            await assertRejects(
+              () => adapter.readFileSnapshotWithinLimit!(exact, root, limit),
+              RangeError,
+            );
+          }
+          await assertRejects(
+            () => adapter.readFileSnapshotWithinLimit!(directory, root, 3),
+            TypeError,
+          );
+          await assertRejects(
+            () => adapter.readFileSnapshotWithinLimit!(link, root, 3),
+            TypeError,
+          );
         }
-        await assertRejects(
-          () => adapter.readFileSnapshotWithinLimit!(directory, root, 3),
-          TypeError,
-        );
-        await assertRejects(
-          () => adapter.readFileSnapshotWithinLimit!(link, root, 3),
-          TypeError,
-        );
         await adapter.createFileBytesExclusive(created, new Uint8Array([0, 255]));
         assertEquals([...await Deno.readFile(created)], [0, 255]);
         await assertRejects(
@@ -70,7 +75,7 @@ if (isDeno) {
       }
     });
 
-    it("requires O_NOFOLLOW only for POSIX snapshot authority", () => {
+    it("requires O_NOFOLLOW on POSIX and omits lossy Windows snapshot authority", () => {
       const TestableAdapter = DenoFileSystemAdapter as unknown as new (
         options: { noFollow?: number; platform?: "posix" | "windows" },
       ) => DenoFileSystemAdapter;
@@ -80,7 +85,7 @@ if (isDeno) {
         assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
       }
       const windowsAdapter = new TestableAdapter({ noFollow: 0, platform: "windows" });
-      assertEquals(Object.hasOwn(windowsAdapter, "readFileSnapshotWithinLimit"), true);
+      assertEquals(Object.hasOwn(windowsAdapter, "readFileSnapshotWithinLimit"), false);
     });
 
     it("omits createNew independently when that primitive is unavailable", () => {
