@@ -115,6 +115,11 @@ describe("path-utils", () => {
     it("should handle paths with directories", () => {
       assertEquals(getExtension("/path/to/file.tsx"), ".tsx");
     });
+
+    it("should ignore dots that occur only in directory names", () => {
+      assertEquals(getExtension("/path.with.dot/file"), "");
+      assertEquals(getExtension("C:\\path.with.dot\\file"), "");
+    });
   });
 
   describe("getExtensionName", () => {
@@ -128,6 +133,11 @@ describe("path-utils", () => {
 
     it("should return empty for trailing dot", () => {
       assertEquals(getExtensionName("file."), "");
+    });
+
+    it("should ignore dots that occur only in directory names", () => {
+      assertEquals(getExtensionName("/path.with.dot/file"), "");
+      assertEquals(getExtensionName("C:\\path.with.dot\\file"), "");
     });
   });
 
