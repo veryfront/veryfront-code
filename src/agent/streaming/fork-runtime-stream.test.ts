@@ -5,8 +5,8 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import { type ModelRuntime, registerModelProvider } from "#veryfront/provider";
 import { createToolsFromRemoteDefinitions, type RemoteToolSource } from "#veryfront/tool";
 import type { AgentResponse, Message as AgentMessage } from "../schemas/index.ts";
-import type { ModelCallContext } from "../../runtime/model-call-context.ts";
-import { runWithModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
+import type { AgentRunModelCallContextEvent } from "../../runtime/model-call-context.ts";
+import { runWithRunEventSink } from "../../runtime/run-event-sink-context.ts";
 import {
   applyPartToStreamedStepState,
   buildForkRuntimeStepFromResponse,
@@ -561,7 +561,7 @@ describe("agent/fork-runtime-stream", () => {
     const forkTools = { upload_attachment: uploadAttachment };
 
     const childParts: ForkPart[][] = [];
-    const childContexts: ModelCallContext[][] = [];
+    const childContexts: AgentRunModelCallContextEvent[][] = [];
     for (const childOrdinal of [1, 2]) {
       const { streamResult, forkToolNames } = startAgentRuntimeForkWithHostTools({
         apiUrl: "https://api.example.com",
@@ -580,10 +580,10 @@ describe("agent/fork-runtime-stream", () => {
       assertEquals(forkToolNames, ["upload_attachment"]);
 
       const parts: ForkPart[] = [];
-      const contexts: ModelCallContext[] = [];
-      await runWithModelCallRecorder(
-        (context) => {
-          contexts.push(context);
+      const contexts: AgentRunModelCallContextEvent[] = [];
+      await runWithRunEventSink(
+        (event) => {
+          contexts.push(event as unknown as AgentRunModelCallContextEvent);
         },
         async () => {
           for await (const part of streamResult.fullStream) {

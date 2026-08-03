@@ -1,9 +1,4 @@
-import type {
-  MetricsInstruments,
-  ModelCallContextBarrierOutcome,
-  ModelCallContextWriterOutcome,
-  RuntimeState,
-} from "./types.ts";
+import type { MetricsInstruments, RuntimeState } from "./types.ts";
 import { sanitizeTelemetryAttributes } from "../telemetry-error.ts";
 import { nonNegativeFiniteMeasure, nonNegativeSafeInteger, saturatingAdd } from "./numeric.ts";
 
@@ -324,27 +319,5 @@ export class MetricsRecorder {
         );
         return;
     }
-  }
-
-  recordModelCallContextWriterOutcome(outcome: ModelCallContextWriterOutcome): void {
-    this.instruments.modelCallContextWriterOutcomeCounter?.add(1, { outcome });
-  }
-
-  recordModelCallContextBarrierOutcome(outcome: ModelCallContextBarrierOutcome): void {
-    this.instruments.modelCallContextBarrierOutcomeCounter?.add(1, { outcome });
-  }
-
-  recordModelCallContextMeasurements(input: {
-    logicalByteLength: number;
-    partCount: number;
-    appendRequestCount: number;
-    durationMs: number;
-  }): void {
-    this.instruments.modelCallContextLogicalByteLength?.record(input.logicalByteLength);
-    this.instruments.modelCallContextPartCount?.record(input.partCount);
-    this.instruments.modelCallContextAppendRequestCount?.record(input.appendRequestCount);
-    this.instruments.modelCallContextRecorderBarrierDuration?.record(
-      Math.max(0, input.durationMs),
-    );
   }
 }
