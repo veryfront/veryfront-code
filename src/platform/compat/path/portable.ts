@@ -73,8 +73,13 @@ function appendRoot(root: RootInfo, tail: string): string {
 
 function normalizeTail(rest: string, absolute: boolean): string[] {
   const normalized: string[] = [];
+  const segments = rest.split("/");
 
-  for (const segment of rest.split("/")) {
+  // Path normalization is reached by shared-runtime coordination after tenant
+  // code has loaded. Avoid the live Array iterator so post-import prototype
+  // mutation cannot turn canonical lockfile lookup into a process-wide outage.
+  for (let index = 0; index < segments.length; index++) {
+    const segment = segments[index]!;
     if (segment === "" || segment === ".") continue;
 
     if (segment !== "..") {

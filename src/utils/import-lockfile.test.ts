@@ -352,6 +352,55 @@ describe("import-lockfile", () => {
       }
     });
 
+    it("should remain writable when descriptor fields are inherited", async () => {
+      const descriptorFields = [
+        "value",
+        "writable",
+        "get",
+        "set",
+        "enumerable",
+        "configurable",
+      ] as const;
+      const previous = new Map(
+        descriptorFields.map((field) => [
+          field,
+          Object.getOwnPropertyDescriptor(Object.prototype, field),
+        ]),
+      );
+      const definePoison = (field: string, value: unknown): void => {
+        const descriptor = Object.create(null) as PropertyDescriptor;
+        descriptor.value = value;
+        descriptor.configurable = true;
+        descriptor.writable = true;
+        Object.defineProperty(Object.prototype, field, descriptor);
+      };
+
+      try {
+        definePoison("value", "inherited-value");
+        definePoison("writable", true);
+        definePoison("get", () => "inherited-getter");
+        definePoison("set", () => undefined);
+        definePoison("enumerable", true);
+        definePoison("configurable", true);
+
+        const fs = createMockFS();
+        const manager = createLockfileManager("/project", fs);
+        const specifier = "https://cdn.com/descriptor-safe.ts";
+        await manager.set(specifier, {
+          resolved: specifier,
+          integrity: "sha256-descriptor-safe",
+        });
+        await manager.flush();
+        assertEquals(await manager.has(specifier), true);
+      } finally {
+        for (const field of descriptorFields) {
+          const descriptor = previous.get(field);
+          if (descriptor === undefined) Reflect.deleteProperty(Object.prototype, field);
+          else Object.defineProperty(Object.prototype, field, descriptor);
+        }
+      }
+    });
+
     it("should clear lockfile data", async () => {
       const mgr = createLockfileManager("/project", createMockFS());
       const specifier = "https://cdn.com/mod.ts";
@@ -527,6 +576,29 @@ describe("import-lockfile", () => {
       assertEquals(store.has(backingLockfilePath), false);
     });
 
+    it("should reuse a timed-out canonicalization while it remains pending", async () => {
+      const resolution = Promise.withResolvers<string>();
+      let canonicalizationCalls = 0;
+      const fs: FSAdapter = {
+        ...createMockFS(),
+        coordinationKey: "current-canonicalization-single-flight-test-store",
+        realPath: () => {
+          canonicalizationCalls++;
+          return resolution.promise;
+        },
+      };
+      const manager = createLockfileManager("/project", fs);
+
+      assertEquals(await manager.read(), null);
+      assertEquals(canonicalizationCalls, 1);
+      const retry = manager.read();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      assertEquals(canonicalizationCalls, 1);
+      resolution.resolve("/project");
+      assertEquals(await retry, null);
+      assertEquals(canonicalizationCalls, 1);
+    });
+
     it("should not retain or retry a read-only adapter after canonicalization fails", async () => {
       const coordinationKey = "read-only-canonical-failure-test-store";
       const backingFS = createMockFS();
@@ -621,57 +693,123 @@ describe("import-lockfile", () => {
       assertEquals(await warmedManager.has(originalUrl), false);
     });
 
-    it("should bound historical canonicalization and release the shared queue", async () => {
-      const coordinationKey = "bounded-historical-canonicalization-test-store";
+    it("should not let an unresolved project block healthy projects", async () => {
+      const coordinationKey = "isolated-historical-canonicalization-test-store";
       const backingFS = createMockFS();
       const unresolvedAdapter: FSAdapter = {
         ...backingFS,
         coordinationKey,
         realPath: () => Promise.reject(new Error("canonical path unavailable")),
       };
-      const unresolvedManager = createLockfileManager("/failed", unresolvedAdapter);
-      assertEquals(await unresolvedManager.read(), null);
+      const unresolvedManager = createLockfileManager("/project-a", unresolvedAdapter);
+      await unresolvedManager.clear();
 
       let historicalCalls = 0;
       const healthyAdapter: FSAdapter = {
         ...backingFS,
         coordinationKey,
         realPath: (path) => {
-          if (path !== "/failed") return Promise.resolve(path);
+          if (path !== "/project-a") return Promise.resolve(path);
           historicalCalls++;
-          return historicalCalls === 1 ? new Promise<string>(() => {}) : Promise.resolve(path);
+          return new Promise<string>(() => {});
         },
       };
-      const blockedManager = createLockfileManager("/first", healthyAdapter);
-      const queuedManager = createLockfileManager("/second", healthyAdapter);
-      const blockedRead = blockedManager.read();
-      const queuedRead = queuedManager.read();
+      const firstRead = createLockfileManager("/project-b", healthyAdapter).read();
+      const secondRead = createLockfileManager("/project-c", healthyAdapter).read();
 
-      const error = await assertRejects(() => blockedRead, VeryfrontError);
-      if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
-      const context = error.context as { reason?: string };
-      assertEquals(context.reason, "access-failed");
-      assertEquals(await queuedRead, null);
-      assertEquals(historicalCalls, 2);
+      assertEquals(await resolvesWithin(firstRead, 100), true);
+      assertEquals(await resolvesWithin(secondRead, 100), true);
+      assertEquals(await firstRead, null);
+      assertEquals(await secondRead, null);
+      assertEquals(historicalCalls, 1);
     });
 
-    it("should retain durable mutation history after a timed-out owner is collected", async () => {
+    it("should cap unresolved history without blocking a healthy project", async () => {
+      const coordinationKey = "bounded-unresolved-history-test-store";
+      const backingFS = createMockFS();
+      const unresolvedAdapter: FSAdapter = {
+        ...backingFS,
+        coordinationKey,
+        realPath: () => Promise.reject(new Error("canonical path unavailable")),
+      };
+      const managers = [];
+      let limitError: VeryfrontError | undefined;
+      for (let index = 0; index < 2_048; index++) {
+        const manager = createLockfileManager(`/unresolved-${index}`, unresolvedAdapter);
+        managers.push(manager);
+        try {
+          await manager.read();
+        } catch (error) {
+          if (!(error instanceof VeryfrontError)) throw error;
+          limitError = error;
+          break;
+        }
+      }
+
+      assertExists(limitError);
+      assertEquals(
+        (limitError.context as { reason?: string }).reason,
+        "access-failed",
+      );
+      const healthyAdapter: FSAdapter = {
+        ...backingFS,
+        coordinationKey,
+        realPath: (path) =>
+          path === "/healthy"
+            ? Promise.resolve(path)
+            : Promise.reject(new Error("historical path unavailable")),
+      };
+      assertEquals(
+        await createLockfileManager("/healthy", healthyAdapter).read(),
+        null,
+      );
+      assertEquals(managers.length < 2_048, true);
+    });
+
+    it("should retain durable mutation history after manager owner scope is released", async () => {
       const moduleUrl = new URL("./import-lockfile.ts", import.meta.url).href;
       const source = `
-        import { createLockfileManager } from ${JSON.stringify(moduleUrl)};
-
-        const forceGc = globalThis.gc;
-        if (typeof forceGc !== "function") throw new Error("gc is unavailable");
-
-        async function waitForCollection(isCollected) {
-          for (let index = 0; index < 300 && !isCollected(); index++) {
-            const pressure = new Array(100_000).fill(index);
-            forceGc();
-            await new Promise((resolve) => setTimeout(resolve, 2));
-            if (pressure.length === 0) throw new Error("unreachable");
+        class InstrumentedWeakRef {
+          static instances = [];
+          constructor(value) {
+            this.value = value;
+            InstrumentedWeakRef.instances.push(this);
           }
-          return isCollected();
+          deref() {
+            return this.value;
+          }
         }
+
+        class InstrumentedFinalizationRegistry {
+          static instances = [];
+          constructor(cleanup) {
+            this.cleanup = cleanup;
+            this.registrations = 0;
+            this.unregistrations = 0;
+            this.active = new Map();
+            InstrumentedFinalizationRegistry.instances.push(this);
+          }
+          register(target, heldValue, unregisterToken) {
+            if (!unregisterToken || typeof unregisterToken !== "object") {
+              throw new Error("missing deterministic unregister token");
+            }
+            this.registrations++;
+            this.active.set(unregisterToken, { target, heldValue });
+          }
+          unregister(unregisterToken) {
+            if (!this.active.delete(unregisterToken)) return false;
+            this.unregistrations++;
+            return true;
+          }
+        }
+
+        Object.defineProperty(globalThis, "WeakRef", { value: InstrumentedWeakRef });
+        Object.defineProperty(globalThis, "FinalizationRegistry", {
+          value: InstrumentedFinalizationRegistry,
+        });
+        const { createLockfileManager } = await import(
+          ${JSON.stringify(moduleUrl)} + "?lifecycle=" + crypto.randomUUID()
+        );
 
         function createBackingStore(coordinationKey, initialLockfile) {
           const canonicalDir = "/backing/project";
@@ -704,6 +842,55 @@ describe("import-lockfile", () => {
           };
         }
 
+        function snapshotFinalizers() {
+          return InstrumentedFinalizationRegistry.instances.map((registry) => ({
+            registrations: registry.registrations,
+            unregistrations: registry.unregistrations,
+            active: registry.active.size,
+          }));
+        }
+
+        async function runLifecycleScenario() {
+          const stable = createBackingStore("stable-" + crypto.randomUUID());
+          const stableManager = createLockfileManager("/project", {
+            ...stable.adapter,
+            realPath: () => Promise.resolve(stable.canonicalDir),
+          });
+          await stableManager.read();
+          const afterFirstRead = snapshotFinalizers();
+          const weakReferencesAfterFirstRead = InstrumentedWeakRef.instances.length;
+          for (let index = 0; index < 1_000; index++) await stableManager.read();
+          const afterRepeatedReads = snapshotFinalizers();
+          const weakReferencesAfterRepeatedReads = InstrumentedWeakRef.instances.length;
+
+          const aliases = createBackingStore("aliases-" + crypto.randomUUID());
+          const unresolved = () => ({
+            ...aliases.adapter,
+            realPath: () => Promise.reject(new Error("unresolved")),
+          });
+          await createLockfileManager("/alias-a", unresolved()).read();
+          await createLockfileManager("/alias-b", unresolved()).read();
+          const beforeRootMerge = snapshotFinalizers();
+          await createLockfileManager("/bridge", {
+            ...aliases.adapter,
+            realPath: () => Promise.resolve(aliases.canonicalDir),
+          }).read();
+          const afterRootMerge = snapshotFinalizers();
+
+          return {
+            stableRegistrations: JSON.stringify(afterFirstRead) ===
+              JSON.stringify(afterRepeatedReads),
+            stableWeakReferences: weakReferencesAfterFirstRead ===
+              weakReferencesAfterRepeatedReads,
+            rootReplacementUnregistered: afterRootMerge.some((entry, index) =>
+              entry.unregistrations > beforeRootMerge[index].unregistrations
+            ),
+            tokenLifecycleBalanced: afterRootMerge.every((entry) =>
+              entry.active === entry.registrations - entry.unregistrations
+            ),
+          };
+        }
+
         async function runClearScenario() {
           const pendingUrl = "https://cdn.test/pending.ts";
           const backing = createBackingStore("gc-clear-" + crypto.randomUUID());
@@ -716,35 +903,16 @@ describe("import-lockfile", () => {
             integrity: "sha256-pending",
           });
 
-          let ownerCollected = false;
-          const registry = new FinalizationRegistry(() => {
-            ownerCollected = true;
-          });
           async function clearThenLoseOwner() {
-            let recovered = false;
-            const never = new Promise(() => {});
             const fs = {
               ...backing.adapter,
-              realPath: (path) => {
-                if (!recovered) return Promise.reject(new Error("unresolved"));
-                if (path === "/project") return Promise.resolve(backing.canonicalDir);
-                if (path === "/alias") return never;
-                return Promise.resolve(backing.canonicalDir);
-              },
+              realPath: () => Promise.reject(new Error("unresolved")),
             };
-            registry.register(fs, undefined);
             const manager = createLockfileManager("/project", fs);
             await manager.clear();
-            recovered = true;
-            try {
-              await manager.read();
-            } catch (error) {
-              return error?.context?.reason;
-            }
           }
 
-          const failedReason = await clearThenLoseOwner();
-          await waitForCollection(() => ownerCollected);
+          await clearThenLoseOwner();
           const healthy = createLockfileManager("/bridge", {
             ...backing.adapter,
             realPath: () => Promise.resolve(backing.canonicalDir),
@@ -753,8 +921,7 @@ describe("import-lockfile", () => {
           await pending.flush();
 
           return {
-            failedReason,
-            ownerCollected,
+            ownerScopeReleased: true,
             diskExists: backing.store.has(backing.canonicalFile),
             pendingHas: await pending.has(pendingUrl),
           };
@@ -778,23 +945,11 @@ describe("import-lockfile", () => {
           });
           await stale.read();
 
-          let ownerCollected = false;
-          const registry = new FinalizationRegistry(() => {
-            ownerCollected = true;
-          });
           async function writeThenLoseOwner() {
-            let recovered = false;
-            const never = new Promise(() => {});
             const fs = {
               ...backing.adapter,
-              realPath: (path) => {
-                if (!recovered) return Promise.reject(new Error("unresolved"));
-                if (path === "/project") return Promise.resolve(backing.canonicalDir);
-                if (path === "/alias") return never;
-                return Promise.resolve(backing.canonicalDir);
-              },
+              realPath: () => Promise.reject(new Error("unresolved")),
             };
-            registry.register(fs, undefined);
             const manager = createLockfileManager("/project", fs);
             await manager.write({
               version: 1,
@@ -802,16 +957,9 @@ describe("import-lockfile", () => {
                 [freshUrl]: { resolved: freshUrl, integrity: "sha256-fresh" },
               },
             });
-            recovered = true;
-            try {
-              await manager.read();
-            } catch (error) {
-              return error?.context?.reason;
-            }
           }
 
-          const failedReason = await writeThenLoseOwner();
-          await waitForCollection(() => ownerCollected);
+          await writeThenLoseOwner();
           const healthy = createLockfileManager("/bridge", {
             ...backing.adapter,
             realPath: () => Promise.resolve(backing.canonicalDir),
@@ -820,8 +968,7 @@ describe("import-lockfile", () => {
           const disk = JSON.parse(backing.store.get(backing.canonicalFile));
 
           return {
-            failedReason,
-            ownerCollected,
+            ownerScopeReleased: true,
             diskHasOld: Object.hasOwn(disk.imports, oldUrl),
             diskHasFresh: Object.hasOwn(disk.imports, freshUrl),
             staleHasOld: await stale.has(oldUrl),
@@ -830,6 +977,7 @@ describe("import-lockfile", () => {
         }
 
         console.log(JSON.stringify({
+          lifecycle: await runLifecycleScenario(),
           clear: await runClearScenario(),
           write: await runWriteScenario(),
         }));
@@ -840,7 +988,6 @@ describe("import-lockfile", () => {
           "--no-check",
           "--frozen",
           "--config=deno.json",
-          "--v8-flags=--expose-gc",
           source,
         ],
         stdout: "piped",
@@ -851,20 +998,279 @@ describe("import-lockfile", () => {
       assertEquals(
         JSON.parse(new TextDecoder().decode(output.stdout)),
         {
+          lifecycle: {
+            stableRegistrations: true,
+            stableWeakReferences: true,
+            rootReplacementUnregistered: true,
+            tokenLifecycleBalanced: true,
+          },
           clear: {
-            failedReason: "access-failed",
-            ownerCollected: true,
+            ownerScopeReleased: true,
             diskExists: false,
             pendingHas: false,
           },
           write: {
-            failedReason: "access-failed",
-            ownerCollected: true,
+            ownerScopeReleased: true,
             diskHasOld: false,
             diskHasFresh: true,
             staleHasOld: false,
             staleHasFresh: true,
           },
+        },
+      );
+    });
+
+    it("should preserve shared coordination after post-import intrinsic poisoning", async () => {
+      const moduleUrl = new URL("./import-lockfile.ts", import.meta.url).href;
+      const source = `
+        const apply = Reflect.apply;
+        const defineProperty = Object.defineProperty;
+        const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+        const getPrototypeOf = Object.getPrototypeOf;
+        const hasOwn = Object.hasOwn;
+        const NativeFinalizationRegistry = FinalizationRegistry;
+        const NativeMap = Map;
+        const NativePromise = Promise;
+        const NativeWeakMap = WeakMap;
+        const NativeWeakRef = WeakRef;
+        const promiseReject = Promise.reject;
+        const promiseResolve = Promise.resolve;
+        const mapIteratorPrototype = getPrototypeOf(new NativeMap().entries());
+        const arrayIteratorDescriptor = getOwnPropertyDescriptor(
+          Array.prototype,
+          Symbol.iterator,
+        );
+
+        const resolved = (value) => apply(promiseResolve, NativePromise, [value]);
+        const rejected = (reason) => apply(promiseReject, NativePromise, [reason]);
+        const waitForTurn = () => new NativePromise((resolve) => setTimeout(resolve, 0));
+
+        const { createLockfileManager } = await import(
+          ${JSON.stringify(moduleUrl)} + "?primordials=" + crypto.randomUUID()
+        );
+
+        function throwing(label) {
+          return function () {
+            throw new Error("poisoned intrinsic invoked: " + label);
+          };
+        }
+        function poisonMethod(owner, key, label) {
+          defineProperty(owner, key, {
+            configurable: true,
+            writable: true,
+            value: throwing(label),
+          });
+        }
+
+        poisonMethod(NativeMap.prototype, "get", "Map.get");
+        poisonMethod(NativeMap.prototype, "set", "Map.set");
+        poisonMethod(NativeMap.prototype, "delete", "Map.delete");
+        poisonMethod(NativeMap.prototype, "clear", "Map.clear");
+        poisonMethod(NativeMap.prototype, "entries", "Map.entries");
+        poisonMethod(NativeMap.prototype, Symbol.iterator, "Map.iterator");
+        defineProperty(NativeMap.prototype, "size", {
+          configurable: true,
+          get: throwing("Map.size"),
+        });
+        poisonMethod(mapIteratorPrototype, "next", "MapIterator.next");
+        poisonMethod(NativeWeakMap.prototype, "get", "WeakMap.get");
+        poisonMethod(NativeWeakMap.prototype, "set", "WeakMap.set");
+        poisonMethod(NativeWeakRef.prototype, "deref", "WeakRef.deref");
+        poisonMethod(
+          NativeFinalizationRegistry.prototype,
+          "register",
+          "FinalizationRegistry.register",
+        );
+        poisonMethod(
+          NativeFinalizationRegistry.prototype,
+          "unregister",
+          "FinalizationRegistry.unregister",
+        );
+        poisonMethod(NativePromise, "all", "Promise.all");
+        poisonMethod(NativePromise, "race", "Promise.race");
+        poisonMethod(NativePromise, "reject", "Promise.reject");
+        poisonMethod(NativePromise, "resolve", "Promise.resolve");
+        poisonMethod(NativePromise.prototype, "then", "Promise.then");
+        poisonMethod(NativePromise.prototype, "finally", "Promise.finally");
+        poisonMethod(Array.prototype, "map", "Array.map");
+        poisonMethod(Array.prototype, Symbol.iterator, "Array.iterator");
+
+        const PoisonedConstructor = class {
+          constructor() {
+            throw new Error("poisoned intrinsic constructor invoked");
+          }
+        };
+        defineProperty(globalThis, "Map", { configurable: true, value: PoisonedConstructor });
+        defineProperty(globalThis, "WeakMap", { configurable: true, value: PoisonedConstructor });
+        defineProperty(globalThis, "WeakRef", { configurable: true, value: PoisonedConstructor });
+        defineProperty(globalThis, "FinalizationRegistry", {
+          configurable: true,
+          value: PoisonedConstructor,
+        });
+        defineProperty(globalThis, "Promise", { configurable: true, value: PoisonedConstructor });
+
+        function createBackingStore(coordinationKey, initialLockfile) {
+          const canonicalDir = "/backing/" + coordinationKey;
+          const canonicalFile = canonicalDir + "/veryfront.lock";
+          const files = Object.create(null);
+          if (initialLockfile !== undefined) files[canonicalFile] = initialLockfile;
+          const backingPath = (path) => path.endsWith("/veryfront.lock")
+            ? canonicalFile
+            : path;
+          const adapter = {
+            coordinationKey,
+            exists: (path) => resolved(hasOwn(files, backingPath(path))),
+            readFile: (path) => {
+              const key = backingPath(path);
+              return hasOwn(files, key)
+                ? resolved(files[key])
+                : rejected(new Error("ENOENT"));
+            },
+            writeFile: (path, value) => {
+              files[backingPath(path)] = value;
+              return resolved(undefined);
+            },
+            remove: (path) => {
+              delete files[backingPath(path)];
+              return resolved(undefined);
+            },
+          };
+          return { adapter, canonicalDir, canonicalFile, files };
+        }
+
+        async function runSteadyReads() {
+          const backing = createBackingStore("steady-" + crypto.randomUUID());
+          const manager = createLockfileManager("/project", {
+            ...backing.adapter,
+            realPath: () => resolved(backing.canonicalDir),
+          });
+          await manager.read();
+          for (let index = 0; index < 100; index++) await manager.read();
+          return true;
+        }
+
+        async function runTimeoutRetry() {
+          const backing = createBackingStore("timeout-" + crypto.randomUUID());
+          let canonicalizationCalls = 0;
+          let completeCanonicalization;
+          const manager = createLockfileManager("/project", {
+            ...backing.adapter,
+            realPath: () => {
+              canonicalizationCalls++;
+              return new NativePromise((resolve) => {
+                completeCanonicalization = resolve;
+              });
+            },
+          });
+          await manager.read();
+          completeCanonicalization(backing.canonicalDir);
+          await waitForTurn();
+          await manager.read();
+          return canonicalizationCalls === 1;
+        }
+
+        async function runHistoricalIsolation() {
+          const backing = createBackingStore("history-" + crypto.randomUUID());
+          const unresolved = createLockfileManager("/missing", {
+            ...backing.adapter,
+            realPath: () => rejected(new Error("missing project")),
+          });
+          await unresolved.clear();
+
+          let historicalCalls = 0;
+          const healthy = createLockfileManager("/healthy", {
+            ...backing.adapter,
+            realPath: (path) => {
+              if (path === "/healthy") return resolved(backing.canonicalDir);
+              historicalCalls++;
+              return new NativePromise(() => {});
+            },
+          });
+          const startedAt = Date.now();
+          const value = await healthy.read();
+          return value === null && historicalCalls === 1 && Date.now() - startedAt < 750;
+        }
+
+        async function runRootReplacement() {
+          const oldUrl = "https://cdn.test/old.ts";
+          const backing = createBackingStore(
+            "roots-" + crypto.randomUUID(),
+            JSON.stringify({
+              version: 1,
+              imports: {
+                [oldUrl]: { resolved: oldUrl, integrity: "sha256-old" },
+              },
+            }),
+          );
+          const unresolvedAdapter = () => ({
+            ...backing.adapter,
+            realPath: () => rejected(new Error("unresolved alias")),
+          });
+          const first = createLockfileManager("/alias-a", unresolvedAdapter());
+          const second = createLockfileManager("/alias-b", unresolvedAdapter());
+          await first.read();
+          await second.read();
+
+          const bridge = createLockfileManager("/bridge", {
+            ...backing.adapter,
+            realPath: () => resolved(backing.canonicalDir),
+          });
+          await bridge.read();
+          await bridge.clear();
+          return !(await first.has(oldUrl)) && !(await second.has(oldUrl));
+        }
+
+        async function runFailClosedInputs() {
+          const backing = createBackingStore("input-" + crypto.randomUUID());
+          const manager = createLockfileManager("/project", backing.adapter);
+          let rejectedInvalidEntry = false;
+          try {
+            await manager.set("https://cdn.test/invalid.ts", {
+              resolved: "https://cdn.test/invalid.ts",
+              integrity: "sha256-invalid",
+              dependencies: [42],
+            });
+          } catch {
+            rejectedInvalidEntry = true;
+          }
+          return rejectedInvalidEntry;
+        }
+
+        const result = {
+          steadyReads: await runSteadyReads(),
+          timeoutRetry: await runTimeoutRetry(),
+          historicalIsolation: await runHistoricalIsolation(),
+          rootReplacement: await runRootReplacement(),
+          failClosedInputs: await runFailClosedInputs(),
+        };
+        // Node's process-exit shim iterates an internal listener array after
+        // this regression completes. Restore only that runtime prerequisite;
+        // every asserted lockfile operation above ran with the iterator
+        // poisoned.
+        defineProperty(Array.prototype, Symbol.iterator, arrayIteratorDescriptor);
+        console.log(JSON.stringify(result));
+      `;
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "eval",
+          "--no-check",
+          "--frozen",
+          "--config=deno.json",
+          source,
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const stderr = new TextDecoder().decode(output.stderr);
+      assertEquals(output.success, true, stderr);
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(output.stdout)),
+        {
+          steadyReads: true,
+          timeoutRetry: true,
+          historicalIsolation: true,
+          rootReplacement: true,
+          failClosedInputs: true,
         },
       );
     });
@@ -1495,7 +1901,7 @@ describe("import-lockfile", () => {
       assertEquals(await fs.readFile("/project/veryfront.lock"), existingLockfile);
     });
 
-    it("should reject inherited public set entry fields before touching disk", async () => {
+    it("should reject malformed public set entry fields before touching disk", async () => {
       let existsCalls = 0;
       let writeCalls = 0;
       const fs: FSAdapter = {
@@ -1515,14 +1921,28 @@ describe("import-lockfile", () => {
       }) as LockfileEntry;
       const mgr = createLockfileManager("/project", fs);
 
-      const error = await assertRejects(
-        () => mgr.set("https://cdn.com/inherited.ts", inheritedEntry),
-        VeryfrontError,
-      );
-
-      if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
-      assertEquals(error.slug, "lockfile-read-error");
-      assertEquals((error.context as { reason?: string }).reason, "invalid-structure");
+      const malformedEntries = [
+        inheritedEntry,
+        {
+          resolved: "https://cdn.com/dependency.ts",
+          integrity: "sha256-dependency",
+          dependencies: [42],
+        },
+        {
+          resolved: "https://cdn.com/fetched.ts",
+          integrity: "sha256-fetched",
+          fetchedAt: 42,
+        },
+      ] as unknown as LockfileEntry[];
+      for (let index = 0; index < malformedEntries.length; index++) {
+        const error = await assertRejects(
+          () => mgr.set(`https://cdn.com/invalid-${index}.ts`, malformedEntries[index]!),
+          VeryfrontError,
+        );
+        if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
+        assertEquals(error.slug, "lockfile-read-error");
+        assertEquals((error.context as { reason?: string }).reason, "invalid-structure");
+      }
       assertEquals(existsCalls, 0);
       assertEquals(writeCalls, 0);
     });
