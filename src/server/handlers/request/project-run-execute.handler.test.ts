@@ -7,6 +7,7 @@ import type { Agent } from "#veryfront/agent";
 import type { Message } from "#veryfront/agent/types.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import type { DiscoveryResult } from "#veryfront/discovery";
+import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import type { HandlerContext } from "#veryfront/types";
 import { createAgentServiceEvalAdapter } from "#veryfront/eval/agent-service.ts";
 import { runEval as runEvalDefinition } from "#veryfront/eval/runner.ts";
@@ -182,22 +183,6 @@ function createDeps(
     sleep: async () => {},
     now: () => 0,
     ...overrides,
-  };
-}
-
-function createEmptyDiscoveryResult(): DiscoveryResult {
-  return {
-    tools: new Map(),
-    agents: new Map(),
-    skills: new Map(),
-    resources: new Map(),
-    prompts: new Map(),
-    workflows: new Map(),
-    tasks: new Map(),
-    schedules: new Map(),
-    webhooks: new Map(),
-    evals: new Map(),
-    errors: [],
   };
 }
 

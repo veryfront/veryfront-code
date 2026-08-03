@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import type { Agent, AgentMessage as Message, AgentResponse } from "#veryfront/agent";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
@@ -322,6 +323,7 @@ describe("channels/invoke", () => {
       const response = await listChannelAssistants(createHandlerContext(), {
         ensureProjectDiscovery: async () => {
           discoveryCalls += 1;
+          return createEmptyDiscoveryResult();
         },
         getAgent: (id) => {
           if (id === "assistant-b") {
@@ -506,6 +508,7 @@ describe("channels/invoke", () => {
       const deps: ChannelInvokeDeps = {
         ensureProjectDiscovery: async () => {
           discoveryCalls += 1;
+          return createEmptyDiscoveryResult();
         },
         getAgent: (id) => id === "agent-1" ? agent : undefined,
         getAllAgentIds: () => ["agent-1"],
@@ -541,7 +544,7 @@ describe("channels/invoke", () => {
         createPayload(),
         createHandlerContext(),
         {
-          ensureProjectDiscovery: async () => {},
+          ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
           getAgent: () => agent,
           getAllAgentIds: () => ["agent-1"],
         },
@@ -558,7 +561,7 @@ describe("channels/invoke", () => {
         createPayload({ assistantId: "assistant-missing" }),
         createHandlerContext(),
         {
-          ensureProjectDiscovery: async () => {},
+          ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
           getAgent: () => undefined,
           getAllAgentIds: () => ["agent-1"],
         },
