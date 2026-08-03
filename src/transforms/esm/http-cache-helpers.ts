@@ -4,7 +4,7 @@
  * @module transforms/esm/http-cache-helpers
  */
 
-import { isAbsolute, join } from "#veryfront/compat/path/index.ts";
+import { isAbsolute, join, normalize } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import {
   primordialArrayFilter as arrayFilter,
@@ -561,16 +561,18 @@ export function resolveBareSpecifier(
  */
 export function hasIncompatibleFilePaths(code: string, localCacheDir: string): boolean {
   const filePathPattern = /file:\/\/([^"'\s]+)/gi;
+  const expectedCacheRoot = normalize(localCacheDir);
+  const expectedCacheChildPrefix = `${expectedCacheRoot}/`;
 
   let match: RegExpExecArray | null;
   while ((match = execRegExp(filePathPattern, code)) !== null) {
     const path = match[1]!;
     if (!stringIncludes(path, "veryfront-http-bundle")) continue;
 
-    if (!stringStartsWith(path, localCacheDir)) {
+    if (path !== expectedCacheRoot && !stringStartsWith(path, expectedCacheChildPrefix)) {
       logger.debug("Bundle has incompatible file path from different environment", {
         path,
-        expectedDir: localCacheDir,
+        expectedDir: expectedCacheRoot,
       });
       return true;
     }

@@ -168,6 +168,50 @@ describe("transform pipeline cache identity", () => {
     assertEquals(getterCalls, 0);
   });
 
+  it("accepts class-style plugins with methods on the prototype", () => {
+    class ClassPlugin implements TransformPlugin {
+      name = "class-plugin";
+      stage = TransformStage.FINALIZE;
+      cacheIdentity = "class-plugin@1";
+
+      transform(ctx: { code: string }): string {
+        return ctx.code;
+      }
+    }
+
+    const result = getCustomPluginCacheIdentity([new ClassPlugin()]);
+    assertEquals(result.cacheable, true);
+    if (!result.cacheable) {
+      throw new Error("Expected a cacheable plugin identity");
+    }
+    assertEquals(result.identity, [[
+      0,
+      "class-plugin",
+      TransformStage.FINALIZE,
+      "class-plugin@1",
+    ]]);
+  });
+
+  it("rejects accessor-backed prototype plugin fields without invoking them", () => {
+    let getterCalls = 0;
+    const plugin = Object.create({
+      name: "custom",
+      stage: TransformStage.FINALIZE,
+      cacheIdentity: "custom@1",
+      get transform() {
+        getterCalls++;
+        return transform;
+      },
+    }) as TransformPlugin;
+
+    assertThrows(
+      () => getCustomPluginCacheIdentity([plugin]),
+      TypeError,
+      "accessor properties",
+    );
+    assertEquals(getterCalls, 0);
+  });
+
   it("rejects control characters in plugin names used for logs and spans", () => {
     const plugin: TransformPlugin = {
       name: "custom\nforged-stage",

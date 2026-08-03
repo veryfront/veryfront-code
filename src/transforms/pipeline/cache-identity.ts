@@ -80,6 +80,21 @@ function readOwnDataProperty(value: object, key: PropertyKey, label: string): un
   return descriptor.value;
 }
 
+function readPluginDataProperty(value: object, key: PropertyKey, label: string): unknown {
+  let current: object | null = value;
+  while (current !== null && current !== ObjectPrototype) {
+    const descriptor = ObjectGetOwnPropertyDescriptor(current, key);
+    if (descriptor) {
+      if (!hasOwn(descriptor, "value")) {
+        throw new IntrinsicTypeError(`${label} cannot contain accessor properties`);
+      }
+      return descriptor.value;
+    }
+    current = ObjectGetPrototypeOf(current);
+  }
+  return undefined;
+}
+
 function countIdentityString(
   value: string,
   budget: ImportMapBudget,
@@ -262,15 +277,15 @@ export function getCustomPluginCacheIdentity(
     if (plugin === null || typeof plugin !== "object") {
       throw new IntrinsicTypeError(`Transform plugin at index ${index} must be an object`);
     }
-    const name = readOwnDataProperty(plugin, "name", `Transform plugin ${index}`);
-    const stage = readOwnDataProperty(plugin, "stage", `Transform plugin ${index}`);
-    const cacheIdentity = readOwnDataProperty(
+    const name = readPluginDataProperty(plugin, "name", `Transform plugin ${index}`);
+    const stage = readPluginDataProperty(plugin, "stage", `Transform plugin ${index}`);
+    const cacheIdentity = readPluginDataProperty(
       plugin,
       "cacheIdentity",
       `Transform plugin ${index}`,
     );
-    const condition = readOwnDataProperty(plugin, "condition", `Transform plugin ${index}`);
-    const transform = readOwnDataProperty(plugin, "transform", `Transform plugin ${index}`);
+    const condition = readPluginDataProperty(plugin, "condition", `Transform plugin ${index}`);
+    const transform = readPluginDataProperty(plugin, "transform", `Transform plugin ${index}`);
     if (
       typeof name !== "string" || name.length === 0 || name.length > 256 ||
       (ReflectApply(StringPrototypeTrim, name, []) as string) !== name ||

@@ -613,6 +613,23 @@ describe("transforms/esm/http-cache-helpers", () => {
       assertEquals(hasIncompatibleFilePaths(code, "/cache"), false);
     });
 
+    it("requires bundle paths to stay inside the local cache directory boundary", () => {
+      assertEquals(
+        hasIncompatibleFilePaths(
+          'import "file:///cache/veryfront-http-bundle/http-123.mjs";',
+          "/cache",
+        ),
+        false,
+      );
+      assertEquals(
+        hasIncompatibleFilePaths(
+          'import "file:///cache-other/veryfront-http-bundle/http-123.mjs";',
+          "/cache",
+        ),
+        true,
+      );
+    });
+
     it("returns true when bundle paths are from different environment", () => {
       const code = 'import "file:///other/veryfront-http-bundle/http-123.mjs";';
       assertEquals(hasIncompatibleFilePaths(code, "/cache"), true);
