@@ -50,6 +50,7 @@ import {
   type DeployEnvironment,
   type DeploymentRoutingConvergence,
   type DeployRelease,
+  type DeployReleaseAssetManifestBody,
 } from "./control-plane.ts";
 import type { DeployResult } from "./result.ts";
 
@@ -620,6 +621,17 @@ function readReleaseAssetResponseDataProperty(value: unknown, key: PropertyKey):
   }
 }
 
+function getErrorStatus(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : undefined;
+}
+
+function isTransientReleaseAssetPollError(error: unknown): boolean {
+  const status = getErrorStatus(error);
+  return status === 502 || status === 503 || status === 504;
+}
+
 export async function waitForReleaseAssetManifest(
   controlPlane: DeployControlPlane,
   projectSlug: string,
@@ -637,7 +649,14 @@ export async function waitForReleaseAssetManifest(
   let lastState = "missing";
 
   for (;;) {
-    const raw = await controlPlane.getReleaseAssetManifest(projectSlug, releaseId);
+    let raw: DeployReleaseAssetManifestBody | null;
+    try {
+      raw = await controlPlane.getReleaseAssetManifest(projectSlug, releaseId);
+    } catch (error) {
+      if (!isTransientReleaseAssetPollError(error)) throw error;
+      lastState = `transient ${getErrorStatus(error)}`;
+      raw = null;
+    }
     if (raw !== null) {
       const state = readReleaseAssetResponseDataProperty(raw, "state");
       if (typeof state !== "string" || state.length === 0 || state.length > 64) {

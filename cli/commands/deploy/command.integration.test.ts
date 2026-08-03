@@ -1066,6 +1066,9 @@ it("uses canonical production read-back in human and JSON modes", async () => {
       await time.tickAsync(0);
       for (
         let tick = 0;
+        // The deploy flow now does more pre-mutation verification before this
+        // poll starts. Keep the read budget fixed at 20, but allow enough fake
+        // clock ticks for the async chain to issue all reads under load.
         releaseSourceReads < 20 && tick < 60;
         tick++
       ) {

@@ -1288,6 +1288,33 @@ describe("release asset manifest", () => {
     assertEquals(reads, 3);
   });
 
+  it("continues polling through transient control-plane failures", async () => {
+    using time = new FakeTime();
+    let reads = 0;
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () => {
+        reads++;
+        if (reads === 1) {
+          return Promise.reject(Object.assign(new Error("service unavailable"), { status: 503 }));
+        }
+        return Promise.resolve(readyManifest());
+      },
+    });
+
+    const pending = waitForReleaseAssetManifest(
+      controlPlane,
+      PROJECT_SLUG,
+      "release-1",
+      { ...polling, timeoutMs: 500 },
+    );
+    await time.tickAsync(0);
+    await time.tickAsync(100);
+
+    const result = await pending;
+    assertEquals(result.state, "ready");
+    assertEquals(reads, 2);
+  });
+
   it("reports the last state after the polling deadline", async () => {
     using time = new FakeTime();
     let reads = 0;
