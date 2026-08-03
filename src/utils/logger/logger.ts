@@ -790,8 +790,71 @@ export function __resetTraceContextGetterForTests(): void {
 }
 
 function withRequestLogger(base: Logger): Logger {
-  const ctx = requestContextGetter?.();
-  return ctx?.logger ?? base;
+  try {
+    const ctx = requestContextGetter?.();
+    return ctx?.logger ?? base;
+  } catch {
+    return base;
+  }
+}
+
+type ContextAwareLogMethod = "debug" | "info" | "warn" | "error";
+
+function invokeLoggerMethod(
+  logger: Logger,
+  method: ContextAwareLogMethod,
+  message: string,
+  args: unknown[],
+): boolean {
+  try {
+    const callback = logger[method];
+    if (typeof callback !== "function") return false;
+    const callArgs: unknown[] = [message];
+    for (let index = 0; index < args.length; index++) callArgs[index + 1] = args[index];
+    apply(callback, logger, callArgs);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function invokeContextAwareLog(
+  base: Logger,
+  method: ContextAwareLogMethod,
+  message: string,
+  args: unknown[],
+): void {
+  const selected = withRequestLogger(base);
+  if (invokeLoggerMethod(selected, method, message, args)) return;
+  if (selected !== base) invokeLoggerMethod(base, method, message, args);
+}
+
+function invokeContextAwareComponentLog(
+  base: Logger,
+  componentName: string,
+  method: ContextAwareLogMethod,
+  message: string,
+  args: unknown[],
+): void {
+  let fallback: Logger = base;
+  try {
+    fallback = base.component(componentName);
+  } catch {
+    // The base logger itself is still a safe final fallback.
+  }
+
+  const requestLogger = withRequestLogger(base);
+  let selected = fallback;
+  if (requestLogger !== base) {
+    try {
+      selected = requestLogger.component(componentName);
+    } catch {
+      selected = fallback;
+    }
+  }
+
+  if (invokeLoggerMethod(selected, method, message, args)) return;
+  if (selected !== fallback) invokeLoggerMethod(fallback, method, message, args);
 }
 
 /**
@@ -801,16 +864,16 @@ function withRequestLogger(base: Logger): Logger {
 function createContextAwareLogger(base: ConsoleLogger): Logger {
   return {
     debug(message: string, ...args: unknown[]): void {
-      withRequestLogger(base).debug(message, ...args);
+      invokeContextAwareLog(base, "debug", message, args);
     },
     info(message: string, ...args: unknown[]): void {
-      withRequestLogger(base).info(message, ...args);
+      invokeContextAwareLog(base, "info", message, args);
     },
     warn(message: string, ...args: unknown[]): void {
-      withRequestLogger(base).warn(message, ...args);
+      invokeContextAwareLog(base, "warn", message, args);
     },
     error(message: string, ...args: unknown[]): void {
-      withRequestLogger(base).error(message, ...args);
+      invokeContextAwareLog(base, "error", message, args);
     },
     time<T>(label: string, fn: () => Promise<T>): Promise<T> {
       return withRequestLogger(base).time(label, fn);
@@ -833,16 +896,16 @@ function createContextAwareLogger(base: ConsoleLogger): Logger {
 function createComponentAwareLogger(base: ConsoleLogger, componentName: string): Logger {
   return {
     debug(message: string, ...args: unknown[]): void {
-      withRequestLogger(base).component(componentName).debug(message, ...args);
+      invokeContextAwareComponentLog(base, componentName, "debug", message, args);
     },
     info(message: string, ...args: unknown[]): void {
-      withRequestLogger(base).component(componentName).info(message, ...args);
+      invokeContextAwareComponentLog(base, componentName, "info", message, args);
     },
     warn(message: string, ...args: unknown[]): void {
-      withRequestLogger(base).component(componentName).warn(message, ...args);
+      invokeContextAwareComponentLog(base, componentName, "warn", message, args);
     },
     error(message: string, ...args: unknown[]): void {
-      withRequestLogger(base).component(componentName).error(message, ...args);
+      invokeContextAwareComponentLog(base, componentName, "error", message, args);
     },
     time<T>(label: string, fn: () => Promise<T>): Promise<T> {
       return withRequestLogger(base).component(componentName).time(label, fn);

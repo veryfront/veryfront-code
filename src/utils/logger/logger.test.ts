@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __registerLogRecordEmitter,
+  __registerRequestContextGetter,
   __registerTraceContextGetter,
   __resetLoggerConfigForTests,
   __resetLogRecordEmitterForTests,
@@ -12,11 +13,17 @@ import {
   getBaseLogger,
   getDefaultLevel,
   type LogEntry,
+  type Logger,
   LogLevel,
   refreshLoggerConfig,
   serverLogger,
 } from "./logger.ts";
-import { type RequestContext, runWithRequestContextAsync } from "./request-context.ts";
+import {
+  getRequestContext,
+  type RequestContext,
+  requestContextStore,
+  runWithRequestContextAsync,
+} from "./request-context.ts";
 import { runWithProjectEnv } from "../../server/project-env/storage.ts";
 import { VERSION } from "../version.ts";
 
@@ -381,6 +388,71 @@ describe("logger", () => {
           assertEquals(entry.veryfrontVersion, VERSION);
         });
       } finally {
+        restore();
+      }
+    });
+
+    it("falls back when the request-context provider or logger accessor throws", () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const hostileContext = Object.create(null) as { logger: Logger };
+      Object.defineProperty(hostileContext, "logger", {
+        get() {
+          throw new Error("unreadable request logger");
+        },
+      });
+
+      try {
+        withJsonLogFormat(() => {
+          __registerRequestContextGetter(() => {
+            throw new Error("request context unavailable");
+          });
+          serverLogger.info("provider fallback");
+          assertEquals((JSON.parse(getOutput()) as LogEntry).message, "provider fallback");
+
+          __registerRequestContextGetter(() => hostileContext);
+          serverLogger.info("accessor fallback");
+          assertEquals((JSON.parse(getOutput()) as LogEntry).message, "accessor fallback");
+        });
+      } finally {
+        __registerRequestContextGetter(getRequestContext);
+        restore();
+      }
+    });
+
+    it("falls back when request logger dispatch or AsyncLocalStorage lookup throws", () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const hostileLogger = new Proxy({} as Logger, {
+        get(_target, property) {
+          if (property === "info") throw new Error("unreadable logger method");
+          return undefined;
+        },
+      });
+      const storagePrototype = Object.getPrototypeOf(requestContextStore);
+      const originalGetStore = Object.getOwnPropertyDescriptor(storagePrototype, "getStore")!;
+
+      try {
+        withJsonLogFormat(() => {
+          __registerRequestContextGetter(() => ({ logger: hostileLogger }));
+          serverLogger.info("dispatch fallback");
+          assertEquals((JSON.parse(getOutput()) as LogEntry).message, "dispatch fallback");
+
+          __registerRequestContextGetter(getRequestContext);
+          Object.defineProperty(storagePrototype, "getStore", {
+            configurable: true,
+            value() {
+              throw new Error("project code replaced AsyncLocalStorage.getStore");
+            },
+          });
+          try {
+            serverLogger.info("storage fallback");
+          } finally {
+            Object.defineProperty(storagePrototype, "getStore", originalGetStore);
+          }
+          assertEquals((JSON.parse(getOutput()) as LogEntry).message, "storage fallback");
+        });
+      } finally {
+        Object.defineProperty(storagePrototype, "getStore", originalGetStore);
+        __registerRequestContextGetter(getRequestContext);
         restore();
       }
     });
