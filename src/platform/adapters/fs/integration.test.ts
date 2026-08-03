@@ -140,6 +140,40 @@ describe("integration.ts", () => {
       assertEquals(error.slug, "config-validation-failed");
     });
 
+    it("should fail closed when GitHub repository identity is invalid", async () => {
+      const error = await assertRejects(
+        () =>
+          enhanceAdapterWithFS(denoAdapter, {
+            fs: {
+              type: "github",
+              github: { token: "test-token", owner: "team/other", repo: "repo" },
+            },
+          }),
+        VeryfrontError,
+        "GitHub owner",
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "config-validation-failed");
+    });
+
+    it("should fail closed when the GitHub adapter has no token", async () => {
+      // token: "" is explicit so the GITHUB_TOKEN environment variable cannot
+      // satisfy the requirement and mask the regression in CI.
+      const error = await assertRejects(
+        () =>
+          enhanceAdapterWithFS(denoAdapter, {
+            fs: {
+              type: "github",
+              github: { token: "", owner: "owner", repo: "repo" },
+            },
+          }),
+        VeryfrontError,
+        "token",
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "config-invalid");
+    });
+
     it("should fall back to original adapter for unsupported type", async () => {
       const adapter = await enhanceAdapterWithFS(denoAdapter, {
         fs: { type: "unsupported-type" as any },

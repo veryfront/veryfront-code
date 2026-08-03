@@ -7,6 +7,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { GitHubApiClient } from "./github-api-client.ts";
 
 const mockConfig = {
@@ -59,11 +60,14 @@ describe("GitHubApiClient", () => {
           ["repo", "r".repeat(257)],
         ] as const
       ) {
-        assertThrows(
+        // A CONFIG-category error keeps enhanceAdapterWithFS failing closed;
+        // a bare TypeError would silently fall back to the local filesystem.
+        const error = assertThrows(
           () => new GitHubApiClient({ ...mockConfig, [field]: value }),
-          TypeError,
+          VeryfrontError,
           "GitHub",
         );
+        assertEquals(error.slug, "config-validation-failed");
       }
     });
   });

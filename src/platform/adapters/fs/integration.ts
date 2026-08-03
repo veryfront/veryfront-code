@@ -64,7 +64,11 @@ export function enhanceAdapterWithFS(
 
         return enhancedAdapter;
       } catch (error) {
-        if (error instanceof VeryfrontError && error.slug === "config-validation-failed") {
+        // Any configuration-class failure must fail closed: silently falling
+        // back to the host-local filesystem on a misconfigured remote adapter
+        // would serve the wrong filesystem. Only non-config runtime failures
+        // (network, transient init) may degrade to the local adapter.
+        if (error instanceof VeryfrontError && error.category === "CONFIG") {
           throw error;
         }
         logger.error("Failed to initialize FSAdapter", {

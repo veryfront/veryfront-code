@@ -1,4 +1,5 @@
 import { createError, retryWithBackoff, toError } from "#veryfront/errors";
+import { CONFIG_VALIDATION_FAILED } from "#veryfront/errors/error-registry/config.ts";
 import { logger } from "#veryfront/utils";
 import type { ResolvedGitHubConfig } from "./types.ts";
 import {
@@ -105,9 +106,20 @@ export class GitHubApiClient {
   private rateLimitInfo: RateLimitInfo | null = null;
 
   constructor(private readonly config: ResolvedGitHubConfig) {
-    const owner = encodeRepositorySegment(config.owner, "owner");
-    const repo = encodeRepositorySegment(config.repo, "repository");
-    this.repositoryEndpoint = `/repos/${owner}/${repo}`;
+    // Invalid repository identity is a configuration error: it must fail
+    // closed (surface as a CONFIG-category VeryfrontError) instead of a bare
+    // TypeError that enhanceAdapterWithFS would swallow before silently
+    // falling back to the host-local filesystem adapter.
+    try {
+      const owner = encodeRepositorySegment(config.owner, "owner");
+      const repo = encodeRepositorySegment(config.repo, "repository");
+      this.repositoryEndpoint = `/repos/${owner}/${repo}`;
+    } catch (cause) {
+      throw CONFIG_VALIDATION_FAILED.create({
+        detail: cause instanceof Error ? cause.message : "GitHub repository identity is invalid",
+        cause,
+      });
+    }
   }
 
   get repoId(): string {

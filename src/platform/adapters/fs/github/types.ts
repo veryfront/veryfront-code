@@ -1,4 +1,4 @@
-import { createError, toError } from "#veryfront/errors";
+import { CONFIG_INVALID } from "#veryfront/errors";
 
 export type { DirectoryEntry } from "../shared-types.ts";
 
@@ -69,24 +69,20 @@ const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
 const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
 
 export function createGitHubConfig(config: GitHubConfig): ResolvedGitHubConfig {
+  // CONFIG-category registry errors fail closed in enhanceAdapterWithFS;
+  // legacy plain Errors would trigger its silent local-filesystem fallback.
   if (!config.token) {
-    throw toError(
-      createError({
-        type: "config",
-        message:
-          "GitHub adapter requires a token. Set GITHUB_TOKEN environment variable or provide token in config.",
-      }),
-    );
+    throw CONFIG_INVALID.create({
+      detail:
+        "GitHub adapter requires a token. Set GITHUB_TOKEN environment variable or provide token in config.",
+    });
   }
 
   if (!config.owner || !config.repo) {
-    throw toError(
-      createError({
-        type: "config",
-        message:
-          "GitHub adapter requires owner and repo. Provide them in config or via GITHUB_OWNER and GITHUB_REPO environment variables.",
-      }),
-    );
+    throw CONFIG_INVALID.create({
+      detail:
+        "GitHub adapter requires owner and repo. Provide them in config or via GITHUB_OWNER and GITHUB_REPO environment variables.",
+    });
   }
 
   return {
