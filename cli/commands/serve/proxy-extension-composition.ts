@@ -102,8 +102,8 @@ async function activateStandaloneProxyExtensionsInternal(): Promise<ExtensionLoa
     // extension-backed store is registered. The downstream cache validators
     // (src/proxy/cache/index.ts, src/proxy/cache/extension-store.ts) accept
     // only "memory" and "extension", so this translation must complete before
-    // the proxy runtime is imported. TODO(#3214): remove this rollout shim
-    // once the hosted charts stop passing CACHE_TYPE=redis.
+    // the proxy runtime is imported. TODO: remove this rollout shim once the
+    // hosted charts stop passing CACHE_TYPE=redis.
     if (cacheType === "redis") setEnv("CACHE_TYPE", "extension");
     return loader;
   } catch (error) {
