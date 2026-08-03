@@ -51,6 +51,12 @@ export const DEFAULT_FRAMEWORK_SOURCE_EXTENSIONS = [
   ".md",
 ] as const;
 
+const PUBLISHED_RUNTIME_HELPERS = [
+  "_dnt.shims.js",
+  "_dnt.polyfills.js",
+  "deno.js",
+] as const;
+
 export interface FrameworkSourceFileSystem {
   stat(path: string): Promise<FileInfo>;
 }
@@ -228,7 +234,10 @@ export async function resolveRelativeFrameworkSourceImport(
 
   const extensions = options.extensions ?? DEFAULT_FRAMEWORK_SOURCE_EXTENSIONS;
   const basePath = resolve(dirname(fromSourcePath), specifier);
-  if (!isWithinDirectory(containingTree, basePath)) return null;
+  const isPublishedRuntimeHelper = PUBLISHED_RUNTIME_HELPERS.some(
+    (helper) => basePath === join(candidateRoot, helper),
+  );
+  if (!isWithinDirectory(containingTree, basePath) && !isPublishedRuntimeHelper) return null;
 
   if (/\.(tsx?|jsx?|mjs)$/.test(specifier)) {
     const explicitCandidates = [basePath, `${basePath}.src`];

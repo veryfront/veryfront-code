@@ -112,6 +112,40 @@ describe("platform/compat/framework-source-resolver", () => {
     assertEquals(result, embeddedPath);
   });
 
+  for (const helper of ["_dnt.shims.js", "_dnt.polyfills.js", "deno.js"]) {
+    it(`resolves published runtime helper ${helper} outside the source tree`, async () => {
+      const packageRoot = "/package/esm";
+      const helperPath = `${packageRoot}/${helper}`;
+
+      const result = await resolveRelativeFrameworkSourceImport(
+        `../../${helper}`,
+        `${packageRoot}/src/html/client-head-manager.js`,
+        {
+          exists: (path) => Promise.resolve(path === helperPath),
+        },
+      );
+
+      assertEquals(result, helperPath);
+    });
+  }
+
+  it("rejects other files at the published package root", async () => {
+    let probed = false;
+    const result = await resolveRelativeFrameworkSourceImport(
+      "../../package.json",
+      "/package/esm/src/html/client-head-manager.js",
+      {
+        exists: () => {
+          probed = true;
+          return Promise.resolve(true);
+        },
+      },
+    );
+
+    assertEquals(result, null);
+    assertEquals(probed, false);
+  });
+
   it("rejects relative imports that escape the framework source tree", async () => {
     let probed = false;
     const result = await resolveRelativeFrameworkSourceImport(
