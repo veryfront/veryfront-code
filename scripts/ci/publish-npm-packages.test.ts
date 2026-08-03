@@ -223,11 +223,18 @@ describe("npm package publishing", () => {
           '  printf "%s\\n" "npm error auth Bearer fixture-token_~-/+=" >&2',
           '  printf "%s\\n" "npm error cache=/tmp/npm-private/cache.log" >&2',
           '  printf "%s\\n" "npm error quoted=\\"/tmp/npm-private/quoted.log\\"" >&2',
+          '  printf "%s\\n" "npm error single-posix=\'/tmp/npm-private/single.log\'" >&2',
+          '  printf "%s\\n" "npm error bracket-posix=[/tmp/npm-private/bracket.log]" >&2',
+          '  printf "%s\\n" "npm error spaced-posix=\\"/tmp/npm private/spaced.log\\"" >&2',
+          '  printf "%s\\n" "npm error file-posix=file:///tmp/npm-private/file.log" >&2',
+          '  printf "%s\\n" "npm error file-windows=file:///C:/Users/runner/file.log" >&2',
           '  printf "%s\\n" "npm error config C:\\\\Users\\\\runner\\\\.npmrc" >&2',
           '  printf "%s\\n" "npm error quoted-win=\\"C:\\\\Users\\\\runner\\\\quoted.log\\"" >&2',
+          '  printf "%s\\n" "npm error single-win=\'C:\\\\Users\\\\CI Runner\\\\single.log\'" >&2',
           '  printf "%s\\n" "npm error workspace D:/build/private/package" >&2',
           '  printf "%s\\n" "npm error share \\\\\\\\server\\\\private\\\\debug.log" >&2',
           '  printf "%s\\n" "npm error quoted-share=\\"\\\\\\\\server\\\\private\\\\quoted.log\\"" >&2',
+          '  printf "%s\\n" "npm error registry https://registry.npmjs.org/@veryfront%2fext-flaky" >&2',
           '  printf "%s\\n" "npm error A complete log of this run can be found in: /Users/runner/.npm/_logs/debug.log" >&2',
           "  return 42",
           "}",
@@ -250,9 +257,19 @@ describe("npm package publishing", () => {
       assertStringIncludes(stderr, "Bearer <REDACTED>");
       assertStringIncludes(stderr, "cache=<path>");
       assertStringIncludes(stderr, 'quoted="<path>"');
+      assertStringIncludes(stderr, "single-posix='<path>'");
+      assertStringIncludes(stderr, "bracket-posix=[<path>]");
+      assertStringIncludes(stderr, 'spaced-posix="<path>"');
+      assertStringIncludes(stderr, "file-posix=file://<path>");
+      assertStringIncludes(stderr, "file-windows=file://<path>");
       assertStringIncludes(stderr, "config <path>");
       assertStringIncludes(stderr, 'quoted-win="<path>"');
+      assertStringIncludes(stderr, "single-win='<path>'");
       assertStringIncludes(stderr, 'quoted-share="<path>"');
+      assertStringIncludes(
+        stderr,
+        "registry https://registry.npmjs.org/@veryfront%2fext-flaky",
+      );
       assertEquals(stderr.includes("fixture-token"), false);
       assertEquals(stderr.includes("/tmp/"), false);
       assertEquals(stderr.includes("C:\\"), false);
