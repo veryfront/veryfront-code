@@ -296,8 +296,8 @@ describe("rendering/cache/stores/api-store", () => {
       const globals = globalThis as Record<string, unknown>;
       const originalAdapter = globals.__vf_multi_project_adapter;
 
-      let releaseSet: () => void = () => {};
-      let setStarted = false;
+      const setStarted = Promise.withResolvers<void>();
+      const releaseSet = Promise.withResolvers<void>();
       let setCompleted = false;
       const server = Deno.serve(
         { hostname: "127.0.0.1", port: 0, onListen: () => {} },
@@ -310,10 +310,8 @@ describe("rendering/cache/stores/api-store", () => {
             return Response.json({ error: "not found" }, { status: 404 });
           }
 
-          setStarted = true;
-          await new Promise<void>((resolve) => {
-            releaseSet = resolve;
-          });
+          setStarted.resolve();
+          await releaseSet.promise;
           setCompleted = true;
           return Response.json({ success: true });
         },
@@ -340,20 +338,17 @@ describe("rendering/cache/stores/api-store", () => {
           setResolved = true;
         });
 
-        for (let attempts = 0; attempts < 50 && !setStarted; attempts++) {
-          await new Promise((resolve) => setTimeout(resolve, 0));
-        }
-        assertEquals(setStarted, true);
+        await setStarted.promise;
         assertEquals(setResolved, false);
         assertEquals(setCompleted, false);
 
-        releaseSet();
+        releaseSet.resolve();
         await setPromise;
 
         assertEquals(setCompleted, true);
         assertEquals(setResolved, true);
       } finally {
-        releaseSet();
+        releaseSet.resolve();
         await store.destroy();
         await server.shutdown();
         if (previousApiBaseUrl === undefined) {
