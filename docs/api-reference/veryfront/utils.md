@@ -74,7 +74,7 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `HTTP_STATUS_SUCCESS_MIN` | Shared HTTP status success min value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/http.ts#L60) |
 | `HTTP_UNAVAILABLE` | Shared HTTP unavailable value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/http.ts#L54) |
 | `IMAGE_OPTIMIZATION` | Shared image optimization value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/build.ts#L7) |
-| `MAX_BATCH_SIZE` | ****** Batch limits ******* | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/limits.ts#L33) |
+| `MAX_BATCH_SIZE` | ****** Batch limits ******* | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/limits.ts#L35) |
 | `MAX_CSS_PIPELINE_IDENTITY_CODE_UNITS` | Maximum UTF-16 code units accepted for one complete CSS pipeline identity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/css-artifact-identity.ts#L13) |
 | `MAX_CSS_PIPELINE_IDENTITY_UTF8_BYTES` | Maximum encoded UTF-8 bytes accepted for one complete CSS pipeline identity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/css-artifact-identity.ts#L16) |
 | `MAX_PATH_LENGTH` | Maximum value for path length. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/security.ts#L16) |

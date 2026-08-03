@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider";
 import {
   createVeryfrontCloudFetch,
@@ -9,12 +10,6 @@ import {
 } from "./shared.ts";
 
 describe("provider/veryfront-cloud/shared", () => {
-  const originalFetch = globalThis.fetch;
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
   it("normalizes provider aliases when parsing model IDs", () => {
     assertEquals(
       parseVeryfrontCloudModelId("google-ai-studio/gemini-2.0-flash", "embedding"),
@@ -148,26 +143,29 @@ describe("provider/veryfront-cloud/shared", () => {
 
   it("rewrites auth headers for the gateway fetch wrapper", async () => {
     let capturedRequest: Request | undefined;
-    globalThis.fetch = ((input: URL | Request | string, init?: RequestInit) => {
-      capturedRequest = new Request(input, init);
-      return Promise.resolve(new Response(null, { status: 204 }));
-    }) as typeof fetch;
 
     const wrappedFetch = createVeryfrontCloudFetch(
       "vf_test_provider",
       "https://93.184.216.34/ai/gateway/openai/v1",
     );
 
-    await wrappedFetch("https://93.184.216.34/ai/gateway/openai/v1/chat/completions", {
-      headers: {
-        Authorization: "Bearer upstream-token",
-        "x-api-key": "anthropic-key",
-        "x-goog-api-key": "google-key",
-        "x-veryfront-project-slug": "spoofed-project",
-        "x-veryfront-billing-group-id": "spoofed-billing-group",
-        "x-extra-header": "kept",
+    await withMockFetch(
+      async (input: URL | Request | string, init?: RequestInit) => {
+        capturedRequest = new Request(input, init);
+        return new Response(null, { status: 204 });
       },
-    });
+      () =>
+        wrappedFetch("https://93.184.216.34/ai/gateway/openai/v1/chat/completions", {
+          headers: {
+            Authorization: "Bearer upstream-token",
+            "x-api-key": "anthropic-key",
+            "x-goog-api-key": "google-key",
+            "x-veryfront-project-slug": "spoofed-project",
+            "x-veryfront-billing-group-id": "spoofed-billing-group",
+            "x-extra-header": "kept",
+          },
+        }),
+    );
 
     assertEquals(capturedRequest?.headers.get("Authorization"), "Bearer vf_test_provider");
     assertEquals(capturedRequest?.headers.get("x-api-key"), null);
@@ -179,10 +177,6 @@ describe("provider/veryfront-cloud/shared", () => {
 
   it("replaces caller identity headers with trusted project and billing context", async () => {
     let capturedRequest: Request | undefined;
-    globalThis.fetch = ((input: URL | Request | string, init?: RequestInit) => {
-      capturedRequest = new Request(input, init);
-      return Promise.resolve(new Response(null, { status: 204 }));
-    }) as typeof fetch;
 
     const wrappedFetch = createVeryfrontCloudFetch(
       "vf_test_provider",
@@ -190,15 +184,22 @@ describe("provider/veryfront-cloud/shared", () => {
       "trusted-project",
     );
 
-    await runWithVeryfrontCloudContext(
-      { billingGroupId: "evalrun_20260628_kimi" },
+    await withMockFetch(
+      async (input: URL | Request | string, init?: RequestInit) => {
+        capturedRequest = new Request(input, init);
+        return new Response(null, { status: 204 });
+      },
       () =>
-        wrappedFetch("https://93.184.216.34/ai/gateway/openai/v1/chat/completions", {
-          headers: {
-            "x-veryfront-project-slug": "spoofed-project",
-            "x-veryfront-billing-group-id": "spoofed-billing-group",
-          },
-        }),
+        runWithVeryfrontCloudContext(
+          { billingGroupId: "evalrun_20260628_kimi" },
+          () =>
+            wrappedFetch("https://93.184.216.34/ai/gateway/openai/v1/chat/completions", {
+              headers: {
+                "x-veryfront-project-slug": "spoofed-project",
+                "x-veryfront-billing-group-id": "spoofed-billing-group",
+              },
+            }),
+        ),
     );
 
     assertEquals(
@@ -213,24 +214,25 @@ describe("provider/veryfront-cloud/shared", () => {
 
   it("rejects redirects before the gateway credential reaches another origin", async () => {
     const seen: Request[] = [];
-    globalThis.fetch = ((input: URL | Request | string, init?: RequestInit) => {
-      seen.push(new Request(input, init));
-      return Promise.resolve(
-        new Response(null, {
-          status: 302,
-          headers: { location: "https://93.184.216.35/steal" },
-        }),
-      );
-    }) as typeof fetch;
     const wrappedFetch = createVeryfrontCloudFetch(
       "vf_test_provider",
       "https://93.184.216.34/ai/gateway/openai/v1",
     );
 
-    await assertRejects(
-      () => wrappedFetch("https://93.184.216.34/ai/gateway/openai/v1/chat/completions"),
-      Error,
-      "redirect",
+    await withMockFetch(
+      async (input: URL | Request | string, init?: RequestInit) => {
+        seen.push(new Request(input, init));
+        return new Response(null, {
+          status: 302,
+          headers: { location: "https://93.184.216.35/steal" },
+        });
+      },
+      () =>
+        assertRejects(
+          () => wrappedFetch("https://93.184.216.34/ai/gateway/openai/v1/chat/completions"),
+          Error,
+          "redirect",
+        ),
     );
     assertEquals(seen.length, 1);
     assertEquals(seen[0]?.headers.get("authorization"), "Bearer vf_test_provider");

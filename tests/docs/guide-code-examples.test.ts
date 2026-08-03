@@ -44,6 +44,11 @@ import { GoogleFonts } from "../../src/react/fonts/index.ts";
 import { Head } from "../../src/react/components/Head.tsx";
 import { PageContextProvider, usePageContext } from "../../src/react/context/index.tsx";
 import { Link, RouterProvider, useRouter } from "../../src/react/router/index.tsx";
+import {
+  createSearchKnowledgeTool,
+  normalizeKnowledgeQuery,
+  projectKnowledge,
+} from "../../src/knowledge/index.ts";
 import { Sandbox } from "../../src/sandbox/index.ts";
 import { schedule } from "../../src/schedule/index.ts";
 import { webhook } from "../../src/webhook/index.ts";
@@ -100,6 +105,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "integrations.md",
   "move-studio-changes-to-git.md",
   "pages-and-routing.md",
+  "project-knowledge.md",
   "project-structure.md",
   "project-metrics.md",
   "quickstart.md",
@@ -779,6 +785,31 @@ describe("Guide: project-structure.md", () => {
 
     assertEquals(hello.id, "hello");
     assertEquals(hello.config.system, "Say hi.");
+  });
+});
+
+describe("Guide: project-knowledge.md", () => {
+  it("uses the public manifest and RAG helper contracts", async () => {
+    const guide = await readGuide("project-knowledge.md");
+    const knowledge = projectKnowledge({ projectDir: "." });
+    const searchKnowledge = createSearchKnowledgeTool({
+      id: "search_knowledge",
+      description: "Search the project's reviewed support knowledge.",
+    });
+
+    assertEquals(typeof knowledge.lookup, "function");
+    assertEquals(typeof knowledge.index, "function");
+    assertEquals(typeof knowledge.retrieve, "function");
+    assertEquals(typeof knowledge.search, "function");
+    assertEquals(searchKnowledge.id, "search_knowledge");
+    assertEquals(normalizeKnowledgeQuery("  SSO   recovery  "), "SSO recovery");
+    assertStringIncludes(
+      guide,
+      'import { projectKnowledge } from "veryfront/knowledge"',
+    );
+    assertStringIncludes(guide, "page.mode");
+    assertStringIncludes(guide, "page_info.next");
+    assertStringIncludes(guide, "lookup_target");
   });
 });
 

@@ -51,10 +51,11 @@ export {
   parseAppendConversationRunEventsErrorBody,
 } from "./durable-append-errors.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
+import { MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES } from "./run-event-limits.ts";
 import {
-  isModelCallContextRunEvent,
-  ModelCallContextPersistenceError,
-} from "./model-call-context-run-event.ts";
+  DurableRunEventPersistenceError,
+  isPrivateConversationRunEvent,
+} from "./private-run-event.ts";
 export type {
   ActiveConversationRunStatus,
   AppendConversationRunEventsResponse,
@@ -108,6 +109,49 @@ function createTimedAbortSignal(timeoutMs: number, abortSignal?: AbortSignal) {
 }
 
 const DEFAULT_MAX_CONVERSATION_RUN_BATCH_BYTES = 512 * 1024;
+
+function backfillPurePrivateEventResponseCursor(
+  responseBody: unknown,
+  latestExternalEventSequence: number,
+): unknown {
+  if (
+    !responseBody || typeof responseBody !== "object" || Array.isArray(responseBody)
+  ) {
+    return responseBody;
+  }
+
+  const body = responseBody as Record<string, unknown>;
+  const needsBodyCursor = body.latestExternalEventSequence === undefined &&
+    body.latest_external_event_sequence === undefined;
+  const run = body.run;
+  const runBody = run && typeof run === "object" && !Array.isArray(run)
+    ? run as Record<string, unknown>
+    : undefined;
+  const needsRunCursor = runBody !== undefined &&
+    runBody.latestExternalEventSequence === undefined &&
+    runBody.latest_external_event_sequence === undefined;
+
+  if (!needsBodyCursor && !needsRunCursor) {
+    return responseBody;
+  }
+
+  const result = { ...body };
+  if (needsBodyCursor) {
+    const cursorKey = body.latestEventId !== undefined
+      ? "latestExternalEventSequence"
+      : "latest_external_event_sequence";
+    result[cursorKey] = latestExternalEventSequence;
+  }
+  if (needsRunCursor && runBody) {
+    const runResult = { ...runBody };
+    const cursorKey = runBody.latestEventId !== undefined
+      ? "latestExternalEventSequence"
+      : "latest_external_event_sequence";
+    runResult[cursorKey] = latestExternalEventSequence;
+    result.run = runResult;
+  }
+  return result;
+}
 
 /** Error shape for conversation run terminal state. */
 export class ConversationRunTerminalStateError extends Error {
@@ -575,7 +619,7 @@ export async function flushConversationRunEventBatches(input: {
     if (!batch) {
       continue;
     }
-    const cursorMode = batch.some(isModelCallContextRunEvent)
+    const cursorMode = batch.some(isPrivateConversationRunEvent)
       ? "durable_event_id" as const
       : "external_sequence" as const;
     try {
@@ -1113,23 +1157,42 @@ export async function appendConversationRunEvents(input: {
     throw new DOMException("This operation was aborted", "AbortError");
   }
 
-  const timedAbort = createTimedAbortSignal(AGENT_RUN_API_TIMEOUT_MS, input.abortSignal);
   const normalizedEvents = normalizeConversationRunEvents(
     input.events as Parameters<typeof normalizeConversationRunEvents>[0],
   );
-  const requiresDurableCursor = normalizedEvents.some(isModelCallContextRunEvent);
-  const isPureModelCallContextBatch = normalizedEvents.length > 0 &&
-    normalizedEvents.every(isModelCallContextRunEvent);
+  const requiresDurableCursor = normalizedEvents.some(isPrivateConversationRunEvent);
+  const isPurePrivateEventBatch = normalizedEvents.length > 0 &&
+    normalizedEvents.every(isPrivateConversationRunEvent);
   if (requiresDurableCursor && input.expectedPreviousEventId === undefined) {
-    timedAbort.cleanup();
-    throw new ModelCallContextPersistenceError(
-      "Model-call context append requires expected_previous_event_id",
+    throw new DurableRunEventPersistenceError(
+      "Private run event append requires expected_previous_event_id",
     );
   }
+
+  const timedAbort = createTimedAbortSignal(AGENT_RUN_API_TIMEOUT_MS, input.abortSignal);
 
   // The timed abort must stay armed while the body is read: a server that
   // stalls mid-body would otherwise hang past the timeout.
   try {
+    const requestBody = JSON.stringify({
+      ...(input.expectedPreviousEventId !== undefined
+        ? { expected_previous_event_id: input.expectedPreviousEventId }
+        : {}),
+      ...(!requiresDurableCursor && input.expectedPreviousExternalEventSequence !== undefined
+        ? {
+          expected_previous_external_event_sequence: input.expectedPreviousExternalEventSequence,
+        }
+        : {}),
+      events: normalizedEvents,
+    });
+    if (
+      new TextEncoder().encode(requestBody).byteLength >
+        MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES
+    ) {
+      throw new DurableRunEventPersistenceError(
+        "Run event append request exceeds the supported payload size",
+      );
+    }
     const response = await (input.fetch ?? globalThis.fetch)(
       `${input.apiUrl}/conversations/${input.conversationId}/runs/${input.runId}/events`,
       {
@@ -1138,23 +1201,7 @@ export async function appendConversationRunEvents(input: {
           Authorization: `Bearer ${input.authToken}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          ...(input.expectedPreviousEventId !== undefined
-            ? { expected_previous_event_id: input.expectedPreviousEventId }
-            : {}),
-          ...(!requiresDurableCursor && input.expectedPreviousExternalEventSequence !== undefined
-            ? {
-              expected_previous_external_event_sequence:
-                input.expectedPreviousExternalEventSequence,
-            }
-            : {}),
-          // Chokepoint guard: every append path funnels through here, so enforce the
-          // per-event size limit here too. Upstream mirrors already normalize, but
-          // direct callers (hosted lifecycle, child-run progress) do not — this makes
-          // it impossible to POST an event the API would reject for size. Idempotent
-          // on already-normalized events.
-          events: normalizedEvents,
-        }),
+        body: requestBody,
         signal: timedAbort.signal,
       },
     );
@@ -1168,39 +1215,15 @@ export async function appendConversationRunEvents(input: {
       });
     }
 
-    const responseBody = await response.json();
+    let responseBody = await response.json();
     // Pure private-event appends do not advance the external cursor and the API
     // intentionally omits it. Preserve the caller's known cursor so the shared
     // queue result remains total; mixed batches return the advanced API value.
-    if (
-      isPureModelCallContextBatch && input.expectedPreviousExternalEventSequence !== undefined &&
-      responseBody && typeof responseBody === "object" && !Array.isArray(responseBody)
-    ) {
-      const body = responseBody as Record<string, unknown>;
-      if (
-        body.latestExternalEventSequence === undefined &&
-        body.latest_external_event_sequence === undefined
-      ) {
-        if (body.latestEventId !== undefined) {
-          body.latestExternalEventSequence = input.expectedPreviousExternalEventSequence;
-        } else {
-          body.latest_external_event_sequence = input.expectedPreviousExternalEventSequence;
-        }
-      }
-      const run = body.run;
-      if (run && typeof run === "object" && !Array.isArray(run)) {
-        const runBody = run as Record<string, unknown>;
-        if (
-          runBody.latestExternalEventSequence === undefined &&
-          runBody.latest_external_event_sequence === undefined
-        ) {
-          if (runBody.latestEventId !== undefined) {
-            runBody.latestExternalEventSequence = input.expectedPreviousExternalEventSequence;
-          } else {
-            runBody.latest_external_event_sequence = input.expectedPreviousExternalEventSequence;
-          }
-        }
-      }
+    if (isPurePrivateEventBatch && input.expectedPreviousExternalEventSequence !== undefined) {
+      responseBody = backfillPurePrivateEventResponseCursor(
+        responseBody,
+        input.expectedPreviousExternalEventSequence,
+      );
     }
     return AppendConversationRunEventsResponseSchema.parse(responseBody);
   } catch (error) {
