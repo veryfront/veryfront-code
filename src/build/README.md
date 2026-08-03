@@ -30,14 +30,14 @@ contract is unavailable.
 
 Applications import the supported package API from `veryfront/build`:
 
-| Export                              | Contract                                                   |
-| ----------------------------------- | ---------------------------------------------------------- |
-| `buildProduction(options)`          | Generate and atomically publish a production static build. |
-| `compileMDXToJS(source, options)`   | Compile one MDX program to JavaScript.                     |
-| `compileAllMDX(options)`            | Compile an MDX source tree.                                |
-| `watchMDX(options)`                 | Watch and recompile an MDX source tree.                    |
-| `buildEmbeddedPreset(options)`      | Build a Deno, Node.js, or Bun embedded preset.             |
-| `LOCAL_RELEASE_ASSET_MANIFEST_PATH` | Path of the optional local dependency manifest.            |
+| Export                                  | Contract                                                   |
+| --------------------------------------- | ---------------------------------------------------------- |
+| `buildProduction(options)`              | Generate and atomically publish a production static build. |
+| `compileMDXToJS(path, source, options)` | Compile one MDX program to JavaScript.                     |
+| `compileAllMDX(options)`                | Compile an MDX source tree.                                |
+| `watchMDX(options)`                     | Watch and recompile an MDX source tree.                    |
+| `buildEmbeddedPreset(options)`          | Build a Deno, Node.js, or Bun embedded preset.             |
+| `LOCAL_RELEASE_ASSET_MANIFEST_PATH`     | Path of the optional local dependency manifest.            |
 
 `BuildOptions` and `BuildStats` are exported from `veryfront/server`. The MDX
 compiler types (`CompileOptions`, `CompileResult`, `MDXFrontmatter`) are
