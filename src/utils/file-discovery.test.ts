@@ -69,6 +69,33 @@ describe("file-discovery", () => {
     assertEquals(files.every((f) => !f.name.includes("test")), true);
   });
 
+  it("ignores glob patterns", async () => {
+    const files = await collectFiles({
+      baseDir: TEST_DIR,
+      extensions: [".ts"],
+      ignorePatterns: ["*.test.*"],
+      recursive: true,
+    });
+
+    assertExists(files);
+    assertEquals(files.length > 0, true);
+    assertEquals(files.some((f) => f.name === "file-discovery.ts"), true);
+    assertEquals(files.every((f) => !f.name.includes(".test.")), true);
+  });
+
+  it("ignores single-character glob patterns", async () => {
+    const files = await collectFiles({
+      baseDir: TEST_DIR,
+      extensions: [".ts"],
+      ignorePatterns: ["file-discover?.ts"],
+      recursive: false,
+    });
+
+    assertExists(files);
+    assertEquals(files.some((f) => f.name === "file-discovery.ts"), false);
+    assertEquals(files.some((f) => f.name === "file-discovery.test.ts"), true);
+  });
+
   it("includes directories when requested", async () => {
     const results = await collectFiles({
       baseDir: TEST_DIR,

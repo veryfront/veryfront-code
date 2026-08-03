@@ -5,7 +5,7 @@
  * to ensure consistent, robust file handling across all cache code paths.
  */
 
-import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { type FileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 
 /**
@@ -73,19 +73,26 @@ export async function writeCacheFile(
 
 /**
  * Verify a cache file exists before attempting dynamic import.
- * Returns true if file exists and is a regular file, false otherwise.
+ * Returns true if the file exists and is a regular file, false when the path
+ * is genuinely absent. Non-absence stat failures (EACCES, EIO, ...) are
+ * rethrown so callers do not misreport an unreadable cache as a cache miss
+ * and loop forever re-transforming the same module.
  */
 export async function verifyCacheFileExists(
   fs: FileSystem,
   path: string,
-  _label = "cache",
+  label = "cache",
 ): Promise<boolean> {
   try {
     const stat = await fs.stat(path);
     return !!stat?.isFile;
-  } catch (_) {
-    /* expected: file may not exist */
-    return false;
+  } catch (error) {
+    if (isNotFoundError(error)) return false;
+    logger.debug(`[${label}] Cache file existence check failed`, {
+      path: path.slice(-80),
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   }
 }
 

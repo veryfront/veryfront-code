@@ -71,6 +71,19 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
 
   async setBundleMetadata(key: string, metadata: BundleMetadata, ttlMs?: number): Promise<void> {
     const expiry = ttlMs != null ? Date.now() + ttlMs : undefined;
+
+    // Replacing a key can change its source; drop the key from the previous
+    // source's index so invalidateSource(oldSource) cannot delete the
+    // replacement bundle through a stale index entry.
+    const previous = this.metadata.get(key)?.value;
+    if (previous && previous.source !== metadata.source) {
+      const previousKeys = this.sourceIndex.get(previous.source);
+      if (previousKeys) {
+        previousKeys.delete(key);
+        if (previousKeys.size === 0) this.sourceIndex.delete(previous.source);
+      }
+    }
+
     this.metadata.set(key, { value: metadata, expiry });
 
     const keys = this.sourceIndex.get(metadata.source) ?? new Set<string>();
@@ -93,7 +106,16 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
     this.metadata.delete(key);
     if (!metadata) return;
 
-    this.code.delete(metadata.codeHash);
+    // Code entries are content-addressed and can be shared by several
+    // bundles; only remove the code once no remaining bundle references it.
+    let codeStillReferenced = false;
+    for (const { value } of this.metadata.values()) {
+      if (value.codeHash === metadata.codeHash) {
+        codeStillReferenced = true;
+        break;
+      }
+    }
+    if (!codeStillReferenced) this.code.delete(metadata.codeHash);
 
     const sourceKeys = this.sourceIndex.get(metadata.source);
     if (!sourceKeys) return;

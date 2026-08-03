@@ -95,6 +95,56 @@ describe("InMemoryBundleManifestStore", () => {
     assertEquals(await store.getBundleMetadata("key-2"), undefined);
   });
 
+  it("removes a replaced key from its previous source index", async () => {
+    const store = new InMemoryBundleManifestStore();
+    const original: BundleMetadata = {
+      hash: "hash-original",
+      codeHash: "code-original",
+      size: 10,
+      compiledAt: Date.now(),
+      source: "original.mdx",
+      mode: "development",
+    };
+    const replacement: BundleMetadata = {
+      ...original,
+      hash: "hash-replacement",
+      codeHash: "code-replacement",
+      source: "replacement.mdx",
+    };
+
+    await store.setBundleMetadata("shared-key", original);
+    await store.setBundleMetadata("shared-key", replacement);
+
+    assertEquals(await store.invalidateSource("original.mdx"), 0);
+    assertEquals(await store.getBundleMetadata("shared-key"), replacement);
+  });
+
+  it("does not delete code that is still referenced by another bundle", async () => {
+    const store = new InMemoryBundleManifestStore();
+    const sharedCode: BundleCode = { code: "export default 1" };
+    const first: BundleMetadata = {
+      hash: "hash-first",
+      codeHash: "shared-code",
+      size: 10,
+      compiledAt: Date.now(),
+      source: "first.mdx",
+      mode: "development",
+    };
+    const second: BundleMetadata = {
+      ...first,
+      hash: "hash-second",
+      source: "second.mdx",
+    };
+
+    await store.setBundleMetadata("first", first);
+    await store.setBundleMetadata("second", second);
+    await store.setBundleCode("shared-code", sharedCode);
+    await store.deleteBundle("first");
+
+    assertEquals(await store.getBundleMetadata("second"), second);
+    assertEquals(await store.getBundleCode("shared-code"), sharedCode);
+  });
+
   it("delete bundle", async () => {
     const store = new InMemoryBundleManifestStore();
 

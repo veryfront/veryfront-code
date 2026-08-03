@@ -21,6 +21,10 @@ const DIR_STAT: FileInfo = {
   mtime: null,
 };
 
+function filesystemError(message: string, code: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code });
+}
+
 function createMockFs(overrides: Partial<FileSystem> = {}): FileSystem {
   return {
     readTextFile: () => Promise.resolve(""),
@@ -132,11 +136,35 @@ describe("cache-file-ops", () => {
 
     it("returns false when file does not exist", async () => {
       const fs = createMockFs({
-        stat: () => Promise.reject(new Error("not found")),
+        stat: () => Promise.reject(filesystemError("not found", "ENOENT")),
       });
 
       const result = await verifyCacheFileExists(fs, "/cache/file.js", "TEST");
       assertEquals(result, false);
+    });
+
+    it("propagates operational existence-check failures", async () => {
+      const fs = createMockFs({
+        stat: () => Promise.reject(filesystemError("permission denied", "EACCES")),
+      });
+
+      await assertRejects(
+        () => verifyCacheFileExists(fs, "/cache/file.js", "TEST"),
+        Error,
+        "permission denied",
+      );
+    });
+
+    it("propagates I/O failures instead of reporting a cache miss", async () => {
+      const fs = createMockFs({
+        stat: () => Promise.reject(filesystemError("input/output error", "EIO")),
+      });
+
+      await assertRejects(
+        () => verifyCacheFileExists(fs, "/cache/file.js", "TEST"),
+        Error,
+        "input/output error",
+      );
     });
 
     it("returns false when path is a directory", async () => {

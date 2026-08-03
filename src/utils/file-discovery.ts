@@ -55,9 +55,49 @@ function matchesPatterns(fileName: string, patterns: string[] | undefined): bool
   return patterns.some((pattern) => fileName.includes(pattern));
 }
 
+/**
+ * Match a glob against one directory-entry name without compiling caller input
+ * as a regular expression. `*` matches zero or more characters and `?`
+ * matches exactly one character; every other character is literal.
+ */
+function matchesEntryGlob(name: string, pattern: string): boolean {
+  const nameTokens = [...name];
+  const patternTokens = [...pattern];
+  let nameIndex = 0;
+  let patternIndex = 0;
+  let lastStarIndex = -1;
+  let lastStarMatchIndex = -1;
+
+  while (nameIndex < nameTokens.length) {
+    const token = patternTokens[patternIndex];
+    if (token === "?" || token === nameTokens[nameIndex]) {
+      nameIndex++;
+      patternIndex++;
+      continue;
+    }
+
+    if (token === "*") {
+      lastStarIndex = patternIndex++;
+      lastStarMatchIndex = nameIndex;
+      continue;
+    }
+
+    if (lastStarIndex === -1) return false;
+    patternIndex = lastStarIndex + 1;
+    nameIndex = ++lastStarMatchIndex;
+  }
+
+  while (patternTokens[patternIndex] === "*") patternIndex++;
+  return patternIndex === patternTokens.length;
+}
+
 function shouldIgnore(name: string, ignorePatterns: string[] | undefined): boolean {
   if (!ignorePatterns?.length) return false;
-  return ignorePatterns.some((pattern) => name.includes(pattern));
+  return ignorePatterns.some((pattern) =>
+    pattern.includes("*") || pattern.includes("?")
+      ? matchesEntryGlob(name, pattern)
+      : name.includes(pattern)
+  );
 }
 
 function matchesFile(

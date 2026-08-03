@@ -4,7 +4,7 @@ import { cwd, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isNode } from "#veryfront/platform/compat/runtime.ts";
 
 const cacheStorage = new AsyncLocalStorage<string>();
-let nodeModulesLinked = false;
+const nodeModulesLinkOperations = new Map<string, Promise<void>>();
 
 export function runWithCacheDir<T>(cacheDir: string, fn: () => T): T {
   return cacheStorage.run(cacheDir, fn);
@@ -58,14 +58,29 @@ export function getHttpBundleCacheDir(): string {
  * guaranteeing a single React instance (no "Invalid hook call" errors).
  */
 export async function ensureCacheNodeModules(): Promise<void> {
-  if (!isNode || nodeModulesLinked) return;
-  nodeModulesLinked = true;
+  if (!isNode) return;
 
+  // Key the memoized link operation by the resolved cache base dir:
+  // getCacheBaseDir() is AsyncLocalStorage-scoped, so different requests can
+  // resolve different cache dirs. A single global done-flag would let the
+  // first cache dir claim the link forever and leave every other cache dir
+  // without a node_modules symlink (second React copy → "Invalid hook call").
+  // Storing the in-flight promise also makes concurrent callers wait for the
+  // link to actually exist instead of returning before the async work is done.
+  const cacheBase = getCacheBaseDir();
+  let operation = nodeModulesLinkOperations.get(cacheBase);
+  if (!operation) {
+    operation = linkCacheNodeModules(cacheBase);
+    nodeModulesLinkOperations.set(cacheBase, operation);
+  }
+  await operation;
+}
+
+async function linkCacheNodeModules(cacheBase: string): Promise<void> {
   try {
     const { createRequire } = await import("node:module");
     const { lstatSync, symlinkSync, mkdirSync } = await import("node:fs");
 
-    const cacheBase = getCacheBaseDir();
     const targetLink = join(cacheBase, "node_modules");
 
     try {
