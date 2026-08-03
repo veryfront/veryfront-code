@@ -8,6 +8,7 @@
  */
 
 import { studioTargetOriginHelperSource } from "#veryfront/security/http/studio-origin-policy.ts";
+import { PROJECT_STYLESHEET_IDS } from "#veryfront/html";
 
 interface HMRScriptOptions {
   /** Log prefix for console messages */
@@ -25,8 +26,9 @@ interface HMRScriptOptions {
  * 5. Browser fetches fresh versions of all modules in the dependency tree
  */
 function getUpdateJSFunction(logPrefix: string): string {
+  const stylesheetIds = JSON.stringify(PROJECT_STYLESHEET_IDS);
   return `
-  const PROJECT_STYLESHEET_IDS = ['vf-project-css', 'vf-tailwind-css'];
+  const PROJECT_STYLESHEET_IDS = ${stylesheetIds};
   let stylesheetUpdateQueue = Promise.resolve();
 
   function getProjectStylesheet() {

@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { PROJECT_STYLESHEET_IDS } from "#veryfront/html";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getHMRScript } from "./hmr-scripts.ts";
@@ -96,7 +97,7 @@ describe("server/handlers/dev/scripts/hmr-scripts", () => {
     const script = getHMRScript(3000);
     assertStringIncludes(
       script,
-      "const PROJECT_STYLESHEET_IDS = ['vf-project-css', 'vf-tailwind-css'];",
+      `const PROJECT_STYLESHEET_IDS = ${JSON.stringify(PROJECT_STYLESHEET_IDS)};`,
     );
     assertStringIncludes(script, "getProjectStylesheet()");
     assertStringIncludes(script, "document.getElementById(id)");

@@ -19,6 +19,7 @@ import {
   getProdScripts,
   getStudioScripts,
 } from "./dev-scripts.ts";
+import { PROJECT_STYLESHEET_IDS } from "./project-stylesheet-ids.ts";
 import { buildReleaseAssetModules } from "#veryfront/release-assets/client-module-map.ts";
 import {
   type ConfiguredRouteDirectories,
@@ -80,8 +81,7 @@ function toProjectRelativePath(absolutePath: string, projectDir?: string): strin
 }
 
 function hasProjectStylesheet(html: string): boolean {
-  return /id=["']vf-project-css["']/i.test(html) ||
-    /id=["']vf-tailwind-css["']/i.test(html) ||
+  return PROJECT_STYLESHEET_IDS.some((id) => new RegExp(`id=["']${id}["']`, "i").test(html)) ||
     /href=["'][^"']*\/_vf_styles\/styles\.css(?:\?[^"']*)?["']/i.test(html) ||
     /href=["'][^"']*\/_vf\/css\/[^"']+\.css["']/i.test(html);
 }
