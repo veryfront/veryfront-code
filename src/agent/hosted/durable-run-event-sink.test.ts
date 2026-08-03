@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
 import type { ConversationRunMirrorSnapshot } from "../conversation/run-mirror.ts";
@@ -182,5 +182,40 @@ describe("agent/hosted/durable-run-event-sink", () => {
     );
     assertEquals(oversized.appended, []);
     assertEquals(dispatches, 0);
+  });
+
+  it("rejects caller aborts without a reason as AbortError", async () => {
+    const controller = new AbortController();
+    const target = mirror({
+      append: () =>
+        new Promise(() => {
+          controller.abort();
+        }),
+    });
+
+    const error = await assertRejects(
+      async () =>
+        await createDurableRunEventSink({
+          mirror: target.result,
+          abortSignal: controller.signal,
+        })({
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [],
+        }),
+      DOMException,
+    );
+
+    assertInstanceOf(error, DOMException);
+    assertEquals(error.name, "AbortError");
+    assertEquals(target.isDisposed(), true);
+  });
+
+  it("uses a registered VeryfrontError for durable persistence failures", () => {
+    const error = new DurableRunEventPersistenceError("persistence unavailable");
+
+    assertInstanceOf(error, DurableRunEventPersistenceError);
+    assertEquals(error.slug, "durable-run-event-persistence-failed");
+    assertEquals(error.category, "AGENT");
+    assertEquals(error.detail, "persistence unavailable");
   });
 });

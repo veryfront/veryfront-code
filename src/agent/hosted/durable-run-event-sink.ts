@@ -58,18 +58,22 @@ function assertSupportedEventSize(event: unknown): void {
   }
 }
 
+function getAbortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException("This operation was aborted", "AbortError");
+}
+
 async function withPersistenceDeadline<T>(input: {
   operation: (abortSignal: AbortSignal) => Promise<T>;
   abortSignal?: AbortSignal;
   timeoutMs: number;
 }): Promise<T> {
-  input.abortSignal?.throwIfAborted();
+  if (input.abortSignal?.aborted) throw getAbortReason(input.abortSignal);
   const controller = new AbortController();
   const timeoutError = new DurableRunEventPersistenceError(
     "Durable run event persistence timed out",
   );
   const timeout = setTimeout(() => controller.abort(timeoutError), input.timeoutMs);
-  const onCallerAbort = () => controller.abort(input.abortSignal?.reason);
+  const onCallerAbort = () => controller.abort(getAbortReason(input.abortSignal!));
   input.abortSignal?.addEventListener("abort", onCallerAbort, { once: true });
   const aborted = new Promise<never>((_resolve, reject) => {
     controller.signal.addEventListener("abort", () => reject(controller.signal.reason), {

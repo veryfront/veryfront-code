@@ -29,9 +29,9 @@ describe("error-registry", () => {
       assertEquals(slugs.length, uniqueSlugs.size, "Duplicate slugs detected");
     });
 
-    it("should have 102 registered errors", () => {
+    it("should have 103 registered errors", () => {
       const slugs = getAllSlugs();
-      assertEquals(slugs.length, 102);
+      assertEquals(slugs.length, 103);
     });
   });
 
@@ -323,7 +323,7 @@ describe("error-registry", () => {
       BOUNDARY: 7,
       DEV: 5,
       DEPLOY: 12,
-      AGENT: 7,
+      AGENT: 8,
       GENERAL: 12,
     };
 
