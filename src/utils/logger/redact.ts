@@ -23,6 +23,7 @@ export const REDACTED = "[REDACTED]";
 const apply = Reflect.apply;
 const NativeUint32Array = Uint32Array;
 const arrayIsArray = Array.isArray;
+const arrayPrototype = Array.prototype;
 const mapDelete = Map.prototype.delete;
 const mapGet = Map.prototype.get;
 const mapKeys = Map.prototype.keys;
@@ -31,6 +32,7 @@ const objectDefineProperty = Object.defineProperty;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectGetPrototypeOf = Object.getPrototypeOf;
 const objectHasOwn = Object.hasOwn;
+const objectPrototype = Object.prototype;
 const regExpExec = RegExp.prototype.exec;
 const regExpReplace = RegExp.prototype[Symbol.replace];
 const stringCharCodeAt = String.prototype.charCodeAt;
@@ -288,7 +290,7 @@ function classifyArray(value: object): boolean | null {
 function readSerializationHook(value: object): unknown {
   let owner: object | null = value;
   while (owner !== null) {
-    if (owner === Object.prototype || owner === Array.prototype) return undefined;
+    if (owner === objectPrototype || owner === arrayPrototype) return undefined;
     const descriptor = objectGetOwnPropertyDescriptor(owner, "toJSON");
     if (descriptor !== undefined) {
       if (!objectHasOwn(descriptor, "value")) {

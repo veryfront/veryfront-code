@@ -221,6 +221,52 @@ describe("logger/redact", () => {
       assertEquals(serialized.includes("t-1"), false);
       assertEquals(serialized.includes("2"), true);
     });
+
+    it("ignores intrinsic serialization hooks after global constructors are replaced", () => {
+      const originalObjectConstructor = globalThis.Object;
+      const originalArrayConstructor = globalThis.Array;
+      const originalObjectToJSON = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+      const originalArrayToJSON = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+      let hookCalls = 0;
+      let redacted: unknown;
+
+      try {
+        Object.defineProperty(Object.prototype, "toJSON", {
+          configurable: true,
+          value() {
+            hookCalls++;
+            return { leaked: "synthetic-intrinsic-secret" };
+          },
+        });
+        Object.defineProperty(Array.prototype, "toJSON", {
+          configurable: true,
+          value() {
+            hookCalls++;
+            return ["synthetic-intrinsic-secret"];
+          },
+        });
+        globalThis.Object = function ReplacementObject() {} as unknown as ObjectConstructor;
+        globalThis.Array = function ReplacementArray() {} as unknown as ArrayConstructor;
+
+        redacted = redactForSerialization({ apiKey: "synthetic-opaque-credential" });
+      } finally {
+        globalThis.Object = originalObjectConstructor;
+        globalThis.Array = originalArrayConstructor;
+        if (originalObjectToJSON) {
+          Object.defineProperty(Object.prototype, "toJSON", originalObjectToJSON);
+        } else {
+          delete (Object.prototype as { toJSON?: unknown }).toJSON;
+        }
+        if (originalArrayToJSON) {
+          Object.defineProperty(Array.prototype, "toJSON", originalArrayToJSON);
+        } else {
+          delete (Array.prototype as { toJSON?: unknown }).toJSON;
+        }
+      }
+
+      assertEquals(hookCalls, 0);
+      assertEquals(redacted, { apiKey: REDACTED });
+    });
   });
 
   describe("sanitizeUrlCredentials", () => {
