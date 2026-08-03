@@ -75,7 +75,7 @@ describe("tool/remote-mcp", () => {
       args: [
         "run",
         "--quiet",
-        new URL("./remote-mcp-captured-host-fetch.fixture.ts", import.meta.url).pathname,
+        new URL("./remote-mcp-captured-host-fetch.fixture.ts", import.meta.url).href,
       ],
       cwd: Deno.cwd(),
       env: { DENO_TESTING: "1" },
@@ -188,7 +188,7 @@ describe("tool/remote-mcp", () => {
       args: [
         "run",
         "--quiet",
-        new URL("./remote-mcp-inherited-kind.fixture.ts", import.meta.url).pathname,
+        new URL("./remote-mcp-inherited-kind.fixture.ts", import.meta.url).href,
       ],
       cwd: Deno.cwd(),
       stdout: "piped",
@@ -257,7 +257,7 @@ describe("tool/remote-mcp", () => {
         args: [
           "run",
           "--quiet",
-          new URL("./remote-mcp-hostile-primordial.fixture.ts", import.meta.url).pathname,
+          new URL("./remote-mcp-hostile-primordial.fixture.ts", import.meta.url).href,
           hostilePrimordial,
         ],
         cwd: Deno.cwd(),

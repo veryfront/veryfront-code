@@ -119,7 +119,7 @@ Deno.test("MCP server provenance ignores inherited descriptor values", async () 
     args: [
       "run",
       "--quiet",
-      new URL("./mcp-server-config-hostile-prototype.fixture.ts", import.meta.url).pathname,
+      new URL("./mcp-server-config-hostile-prototype.fixture.ts", import.meta.url).href,
     ],
     cwd: Deno.cwd(),
     stdout: "piped",

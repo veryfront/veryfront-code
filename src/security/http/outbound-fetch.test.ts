@@ -323,7 +323,7 @@ describe("guardedOutboundFetch", () => {
         args: [
           "run",
           "--quiet",
-          new URL("./outbound-fetch-hostile-primordial.fixture.ts", import.meta.url).pathname,
+          new URL("./outbound-fetch-hostile-primordial.fixture.ts", import.meta.url).href,
           hostilePrimordial,
         ],
         cwd: Deno.cwd(),
