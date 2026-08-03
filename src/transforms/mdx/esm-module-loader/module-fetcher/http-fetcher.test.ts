@@ -96,6 +96,41 @@ describe("module-fetcher/http-fetcher", () => {
     );
   });
 
+  it("uses an explicit module server origin without validating fallback host inputs", async () => {
+    const logger = { debug: () => {}, warn: () => {} } as unknown as Logger;
+    const adapter = {
+      env: {
+        get(key: string) {
+          return key === "PORT" ? "not-a-port" : undefined;
+        },
+      },
+    } as RuntimeAdapter;
+    let requestedUrl = "";
+
+    const result = await fetchModuleViaHTTP(
+      "_vf_modules/shared/Explicit.js",
+      adapter,
+      () => Promise.resolve(null),
+      logger,
+      "docs.example",
+      true,
+      undefined,
+      {
+        moduleServerOrigin: "https://preview.example.test:8443",
+        fetchFn: ((input) => {
+          requestedUrl = String(input);
+          return Promise.resolve(new Response(`export const value = "explicit";`));
+        }) as typeof fetch,
+      },
+    );
+
+    assertEquals(result, `export const value = "explicit";`);
+    assertEquals(
+      requestedUrl,
+      "https://preview.example.test:8443/_vf_modules/shared/Explicit.js?ssr=true",
+    );
+  });
+
   it("strips credentials, path, query, and fragment from the module server origin", async () => {
     const warnings: string[] = [];
     const logger = {

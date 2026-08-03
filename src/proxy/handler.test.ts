@@ -3146,6 +3146,78 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("forwards signed unicode preview branch names through proxy and runtime parsing", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+      try {
+        const branchName = "功能/新";
+        const body = createSignedPreviewTargetBody(
+          "10000000-1000-4000-8000-100000000006",
+          branchName,
+        );
+        const { jws, publicKeyPem } = await mintControlPlaneJws({ body });
+        Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
+        const handler = createHandler(port);
+
+        const req = new Request(
+          "http://protected-project.preview.veryfront.com/api/control-plane/runs/run_1/stream",
+          {
+            method: "POST",
+            headers: {
+              host: "protected-project.preview.veryfront.com",
+              "x-token": "project-agent-token",
+              "x-veryfront-control-plane-jws": jws,
+            },
+            body,
+          },
+        );
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.branchName, branchName);
+        const forwarded = injectContextHeaders(req, ctx);
+        const runtimeHeaders = extractRequestHeaders(
+          forwarded,
+          new URL(forwarded.url),
+          true,
+          true,
+        );
+        assertEquals(runtimeHeaders.branchName, branchName);
+        assertEquals(runtimeHeaders.defaultBranchName, undefined);
+
+        await handler.close();
+      } finally {
+        if (previousKey === undefined) {
+          Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+        } else {
+          Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
+        }
+        await server.shutdown();
+      }
+    });
+
     it("fails closed when an authentic control-plane signature names another project id", async () => {
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);

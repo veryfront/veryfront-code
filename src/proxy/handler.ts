@@ -19,6 +19,7 @@ import {
   isVerifiedInternalControlPlaneRequest,
   resolveVerifiedControlPlaneBranchBinding,
 } from "./control-plane-signature.ts";
+import { encodeIdentityHeaderValue } from "#veryfront/utils/header-identity.ts";
 import {
   createProjectMetadataClient,
   type DomainLookupResult,
@@ -1344,8 +1345,10 @@ export function createProxyContextHeaders(
   if (ctx.environmentName) headers.set("x-environment-name", ctx.environmentName);
 
   if (ctx.branchId) headers.set("x-branch-id", ctx.branchId);
-  if (ctx.branchName) headers.set("x-branch-name", ctx.branchName);
-  if (ctx.defaultBranchName) headers.set("x-default-branch-name", ctx.defaultBranchName);
+  if (ctx.branchName) headers.set("x-branch-name", encodeIdentityHeaderValue(ctx.branchName));
+  if (ctx.defaultBranchName) {
+    headers.set("x-default-branch-name", encodeIdentityHeaderValue(ctx.defaultBranchName));
+  }
 
   headers.delete("host");
   return headers;

@@ -19,6 +19,7 @@ import { SpanNames, withSpan } from "./tracing.ts";
 import { isInternalHost } from "./request-utils.ts";
 import { getEffectiveRequestHost } from "../utils/request-host.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { decodeIdentityHeaderValue } from "#veryfront/utils/header-identity.ts";
 
 const baseLogger = getBaseLogger("SERVER");
 
@@ -117,9 +118,11 @@ export function extractRequestHeaders(
     projectId: identityHeadersTrusted ? req.headers.get("x-project-id") ?? undefined : undefined,
     releaseId: req.headers.get("x-release-id") ?? undefined,
     branchId: identityHeadersTrusted ? req.headers.get("x-branch-id") ?? undefined : undefined,
-    branchName: identityHeadersTrusted ? req.headers.get("x-branch-name") ?? undefined : undefined,
+    branchName: identityHeadersTrusted
+      ? decodeIdentityHeaderValue(req.headers.get("x-branch-name"))
+      : undefined,
     defaultBranchName: identityHeadersTrusted
-      ? req.headers.get("x-default-branch-name")?.trim() || undefined
+      ? decodeIdentityHeaderValue(req.headers.get("x-default-branch-name"))?.trim() || undefined
       : undefined,
     environment,
     environmentId: identityHeadersTrusted

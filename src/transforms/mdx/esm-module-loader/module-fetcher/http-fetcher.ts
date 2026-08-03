@@ -98,14 +98,16 @@ export async function fetchModuleViaHTTP(
 
   log.debug(`${LOG_PREFIX_MDX_LOADER} Direct read failed, falling back to HTTP: ${normalizedPath}`);
 
-  const fallbackPort = requireLocalDevPort(
-    adapter.env.get("VERYFRONT_DEV_PORT") || adapter.env.get("PORT") || "3001",
-  );
-  const fallbackHost = requireProjectSlug(projectSlug);
   const timeoutMs = requireFetchTimeout(options.timeoutMs ?? HTTP_FETCH_TIMEOUT_MS);
   const fetchFn = options.fetchFn ?? fetch;
+  const moduleServerOrigin = options.moduleServerOrigin ??
+    `http://${requireProjectSlug(projectSlug)}:${
+      requireLocalDevPort(
+        adapter.env.get("VERYFRONT_DEV_PORT") || adapter.env.get("PORT") || "3001",
+      )
+    }`;
   const moduleServerUrl = new URL(
-    options.moduleServerOrigin ?? `http://${fallbackHost}:${fallbackPort}`,
+    moduleServerOrigin,
   );
   if (moduleServerUrl.protocol !== "http:" && moduleServerUrl.protocol !== "https:") {
     throw new TypeError("Module server origin must use http or https");

@@ -30,6 +30,7 @@ import {
 } from "#veryfront/channels/control-plane.ts";
 import { isRequestBodyTooLargeError, readBodyWithLimit } from "#veryfront/security/index.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
+import { isWellFormedString } from "#veryfront/utils/is-well-formed-string.ts";
 import { isCanonicalOpaqueProjectIdentifier } from "#veryfront/utils/project-identity.ts";
 
 const CONTROL_PLANE_JWS_HEADER = "x-veryfront-control-plane-jws";
@@ -115,6 +116,7 @@ function requireBranchName(value: unknown): string {
     typeof value !== "string" ||
     value.length === 0 ||
     value.length > MAX_BRANCH_NAME_CODE_UNITS ||
+    !isWellFormedString(value) ||
     value !== value.trim()
   ) {
     throw new ControlPlaneBranchBindingError(400, "Invalid control-plane branch target");
