@@ -80,6 +80,16 @@ describe("agent/runtime/error-utils", () => {
       );
     });
 
+    it("bounds serialized structured values after JSON escaping", () => {
+      const value = { message: "\u0000".repeat(MAX_TOOL_ERROR_TEXT_BYTES) };
+      const result = stringifyToolError(value);
+
+      assertEquals(
+        new TextEncoder().encode(result).byteLength <= MAX_TOOL_ERROR_TEXT_BYTES,
+        true,
+      );
+    });
+
     it("uses a stable fallback when safe JSON serialization fails", () => {
       const circular: Record<string, unknown> = {};
       circular.self = circular;

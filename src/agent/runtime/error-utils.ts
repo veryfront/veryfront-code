@@ -153,7 +153,7 @@ export function stringifyToolError(error: unknown): string {
     });
     const serialized = jsonStringify(snapshot);
     return typeof serialized === "string" && serialized.length > 0
-      ? serialized
+      ? boundToolErrorText(serialized)
       : UNKNOWN_TOOL_ERROR_TEXT;
   } catch {
     if (error === undefined) return "undefined";

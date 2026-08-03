@@ -149,6 +149,76 @@ describe("provider/runtime-loader helpers", () => {
     );
   });
 
+  it("fails closed for object snapshots without Proxy detection", async () => {
+    const script = `
+      Object.defineProperty(globalThis, "caches", {
+        configurable: true,
+        value: {},
+      });
+      Object.defineProperty(globalThis, "WebSocketPair", {
+        configurable: true,
+        value: function WebSocketPair() {},
+      });
+
+      const {
+        canIdentifyProxyWithoutHooks,
+      } = await import("./src/platform/compat/error-introspection.ts");
+      const { snapshotJsonValue } = await import("./src/provider/runtime-loader.ts");
+
+      let calls = 0;
+      const proxy = new Proxy({ safe: true }, {
+        getPrototypeOf(target) {
+          calls += 1;
+          return Reflect.getPrototypeOf(target);
+        },
+        getOwnPropertyDescriptor(target, property) {
+          calls += 1;
+          return Reflect.getOwnPropertyDescriptor(target, property);
+        },
+        ownKeys(target) {
+          calls += 1;
+          return Reflect.ownKeys(target);
+        },
+      });
+
+      const result = {
+        canIdentifyProxyWithoutHooks,
+        primitive: snapshotJsonValue("safe"),
+        calls,
+        plainObject: "",
+        proxy: "",
+      };
+      try {
+        snapshotJsonValue({ safe: true });
+      } catch (error) {
+        result.plainObject = error instanceof Error ? error.message : String(error);
+      }
+      try {
+        snapshotJsonValue(proxy);
+      } catch (error) {
+        result.proxy = error instanceof Error ? error.message : String(error);
+      }
+      console.log(JSON.stringify(result));
+    `;
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["eval", "--config=deno.json", script],
+      cwd: new URL("../../", import.meta.url),
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const stderr = new TextDecoder().decode(output.stderr);
+    assertEquals(output.code, 0, stderr);
+
+    const result = JSON.parse(new TextDecoder().decode(output.stdout));
+    assertEquals(result, {
+      canIdentifyProxyWithoutHooks: false,
+      primitive: "safe",
+      calls: 0,
+      plainObject: "Provider JSON snapshot cannot inspect object values without Proxy detection",
+      proxy: "Provider JSON snapshot cannot inspect object values without Proxy detection",
+    });
+  });
+
   it("serializes only owned snapshots without invoking getters or toJSON", () => {
     let getterCalls = 0;
     let toJsonCalls = 0;

@@ -1,4 +1,7 @@
-import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import {
+  canIdentifyProxyWithoutHooks,
+  isProxyWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
 
 /**
  * Security-sensitive primordials are captured during trusted framework
@@ -504,6 +507,9 @@ function snapshotValue(
       return value;
     case "object": {
       const objectValue = value as object;
+      if (!canIdentifyProxyWithoutHooks) {
+        invalidValue("cannot inspect object values without Proxy detection");
+      }
       if (isProxyWithoutHooks(objectValue)) {
         invalidValue("must not contain Proxy values");
       }
