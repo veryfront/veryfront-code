@@ -100,6 +100,23 @@ function escape(window: JSDOM["window"], target: EventTarget): KeyboardEvent {
   return event;
 }
 
+/**
+ * Wait for the Escape dismissal layer to be registered.
+ *
+ * `tooltip.tsx` picks its effect hook at module load, and `document` only
+ * exists once a test installs a JSDOM, so under Deno every one of its "layout"
+ * effects is really a passive effect. The tooltip node therefore lands one
+ * commit before `registerDismissableLayer` runs. A keydown is one-shot -- an
+ * Escape dispatched in that window is dropped for good -- so yield the
+ * macrotask React's scheduler queued at commit time before pressing it.
+ *
+ * Browsers define `document` at module load, bind `useLayoutEffect`, and
+ * register within the commit, so this gap is a test-environment artifact.
+ */
+function escapeLayerRegistered(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 // Unmounting leaves a scheduler callback queued; drain it so the leak
 // sanitizer does not attribute that timer to the test.
 async function unmount(root: Root | undefined): Promise<void> {
@@ -301,6 +318,7 @@ describe("Tooltip", () => {
       assert(trigger);
       flushSync(() => hover(dom.window, trigger));
       await waitFor(() => document.querySelector('[role="tooltip"]') !== null);
+      await escapeLayerRegistered();
 
       const cancelledEscape = escape(dom.window, trigger);
       assertEquals(cancelledEscape.defaultPrevented, true);
