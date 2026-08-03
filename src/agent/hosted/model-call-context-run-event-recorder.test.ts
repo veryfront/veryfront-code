@@ -25,6 +25,26 @@ import { FakeTime } from "#std/testing/time";
 
 const encoder = new TextEncoder();
 const originalFetch = globalThis.fetch;
+const wallClockSetTimeout = globalThis.setTimeout.bind(globalThis);
+const wallClockClearTimeout = globalThis.clearTimeout.bind(globalThis);
+
+async function withWallClockTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = wallClockSetTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId !== undefined) {
+      wallClockClearTimeout(timeoutId);
+    }
+  }
+}
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -559,7 +579,19 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
     const recording = Promise.resolve(
       recorder({ messages: [{ role: "system", content: "deadline" }] }),
     );
-    await requestStarted.promise;
+    const recordingSettledBeforeRequest = recording.then(
+      () => {
+        throw new Error("model-call recording completed before its append request started");
+      },
+      (error) => {
+        throw error;
+      },
+    );
+    await withWallClockTimeout(
+      Promise.race([requestStarted.promise, recordingSettledBeforeRequest]),
+      10_000,
+      "model-call append request did not start",
+    );
     const assertion = assertRejects(
       () => recording,
       ModelCallContextPersistenceError,
