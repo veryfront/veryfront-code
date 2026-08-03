@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { defineError, VeryfrontError } from "./types.ts";
+import { defineError, isVeryfrontErrorInstance, VeryfrontError } from "./types.ts";
 import type { ErrorSlug } from "./error-registry.ts";
 import { ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS } from "./safe-diagnostics.ts";
 
@@ -106,6 +106,32 @@ describe("errors/types", () => {
       });
       assertEquals(err instanceof Error, true);
       assertEquals(err instanceof VeryfrontError, true);
+    });
+
+    it("should use captured WeakSet methods for construction and recognition", () => {
+      const originalAdd = WeakSet.prototype.add;
+      const originalHas = WeakSet.prototype.has;
+
+      try {
+        WeakSet.prototype.add = function () {
+          throw new Error("mutated add");
+        };
+        WeakSet.prototype.has = function () {
+          throw new Error("mutated has");
+        };
+
+        const err = new VeryfrontError("test", {
+          slug: "network-error",
+          category: "SERVER",
+          status: 503,
+          title: "Network error",
+        });
+
+        assertEquals(isVeryfrontErrorInstance(err), true);
+      } finally {
+        WeakSet.prototype.add = originalAdd;
+        WeakSet.prototype.has = originalHas;
+      }
     });
 
     it("should generate RFC 9457 response", () => {

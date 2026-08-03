@@ -1,4 +1,8 @@
-import { type OAuthToken, tokenStore } from "./token-store.ts";
+import {
+  getRefreshableAccessToken,
+  type OAuthToken,
+  tokenStore,
+} from "./token-store.ts";
 
 export interface OAuthProvider {
   name: string;
@@ -105,21 +109,10 @@ export async function getValidToken(
   userId: string,
   service: string,
 ): Promise<string | null> {
-  const token = await tokenStore.getToken(userId, service);
-  if (!token) return null;
-
-  const isExpired = token.expiresAt
-    ? token.expiresAt < Date.now() + 5 * 60 * 1000
-    : false;
-
-  if (!isExpired || !token.refreshToken) return token.accessToken;
-
-  try {
-    const newToken = await refreshAccessToken(provider, token.refreshToken);
-    await tokenStore.setToken(userId, service, newToken);
-    return newToken.accessToken;
-  } catch {
-    await tokenStore.revokeToken(userId, service);
-    return null;
-  }
+  return await getRefreshableAccessToken(
+    tokenStore,
+    service,
+    userId,
+    (refreshToken) => refreshAccessToken(provider, refreshToken),
+  );
 }

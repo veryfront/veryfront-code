@@ -142,12 +142,14 @@ module before importing it.
 
 ```typescript
 import { loadImportMap, mergeImportMaps, resolveImport } from "#veryfront/modules";
+import type { VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 export async function resolveReact(
   adapter: RuntimeAdapter,
+  validatedConfig?: VeryfrontConfig,
 ) {
-  const projectMap = await loadImportMap("/workspace/site", adapter);
+  const projectMap = await loadImportMap("/workspace/site", adapter, validatedConfig);
   const overrides = {
     imports: {
       "@app/": "/_vf_modules/app/",
@@ -162,7 +164,9 @@ export async function resolveReact(
 `mergeImportMaps` accepts maps as separate arguments. Later maps win for exact
 keys, while scoped maps are merged per scope. `loadImportMap` applies framework
 defaults, project `deno.json`, and Veryfront configuration in that order and
-then enforces the framework React mappings.
+then enforces the framework React mappings. Its optional third argument accepts
+an already validated request configuration; without it, the loader discovers
+the project configuration from the project path.
 
 ## Operational contracts
 

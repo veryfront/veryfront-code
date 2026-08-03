@@ -27,6 +27,7 @@ import {
   buildMdxEsmPathCacheKey,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { ModuleCacheEntry } from "./types.ts";
 import {
   clearModulePathCache,
@@ -374,6 +375,130 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
         "Expected stale verification marker to be cleared",
       );
     } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("invalidates stale cache indexes when cached output cannot be inspected", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-unreadable-output-" });
+    const filePath = join(projectDir, "UnreadableCachedOutput.tsx");
+    const projectId = "project-unreadable-cached-output-test";
+    const contentSourceId = "preview-main";
+    const source = "export default function UnreadableCachedOutput() { return null; }";
+    const contentHash = hashAsLoader(source, filePath, projectDir);
+    const configHash = computeConfigHashSync({ dev: true });
+    const reactVersion = "default";
+    const filePathCacheKey = buildSSRModuleCacheKey(
+      RUNTIME_VERSION,
+      projectId,
+      `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+    );
+    const contentCacheKey = buildSSRModuleCacheKey(
+      RUNTIME_VERSION,
+      projectId,
+      `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+    );
+    const staleEntry = {
+      tempPath: join(projectDir, "unreadable-cache-output.mjs"),
+      contentHash,
+    };
+    globalModuleCache.set(contentCacheKey, staleEntry);
+    globalModuleCache.set(filePathCacheKey, staleEntry);
+    verifiedHttpBundlePaths.set(`${staleEntry.tempPath}:${contentHash}`, true);
+
+    const loader = new SSRModuleLoader({
+      projectDir,
+      projectId,
+      contentSourceId,
+      adapter: denoAdapter,
+      dev: true,
+    });
+    const cacheManager = (loader as unknown as {
+      cache: { fs: FileSystem; getFs(): FileSystem };
+    }).cache;
+    const originalFs = cacheManager.getFs();
+    cacheManager.fs = {
+      stat: () => Promise.reject(Object.assign(new Error("permission denied"), { code: "EACCES" })),
+    } as unknown as FileSystem;
+
+    try {
+      await assertRejects(
+        () => loader.loadModule(filePath, source),
+        Error,
+        "permission denied",
+      );
+      assertEquals(globalModuleCache.get(contentCacheKey), undefined);
+      assertEquals(globalModuleCache.get(filePathCacheKey), undefined);
+      assertEquals(verifiedHttpBundlePaths.get(`${staleEntry.tempPath}:${contentHash}`), undefined);
+    } finally {
+      cacheManager.fs = originalFs;
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("preserves an operational cache error when MDX invalidation also fails", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-invalidation-failure-" });
+    const filePath = join(projectDir, "InvalidationFailure.tsx");
+    const projectId = "project-invalidation-failure-test";
+    const contentSourceId = "preview-main";
+    const source = "export default function InvalidationFailure() { return null; }";
+    const contentHash = hashAsLoader(source, filePath, projectDir);
+    const configHash = computeConfigHashSync({ dev: true });
+    const reactVersion = "default";
+    const filePathCacheKey = buildSSRModuleCacheKey(
+      RUNTIME_VERSION,
+      projectId,
+      `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+    );
+    const contentCacheKey = buildSSRModuleCacheKey(
+      RUNTIME_VERSION,
+      projectId,
+      `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+    );
+    const staleEntry = {
+      tempPath: join(projectDir, "unreadable-cache-output.mjs"),
+      contentHash,
+    };
+    globalModuleCache.set(contentCacheKey, staleEntry);
+    globalModuleCache.set(filePathCacheKey, staleEntry);
+    verifiedHttpBundlePaths.set(`${staleEntry.tempPath}:${contentHash}`, true);
+
+    const loader = new SSRModuleLoader({
+      projectDir,
+      projectId,
+      contentSourceId,
+      adapter: denoAdapter,
+      dev: true,
+    });
+    const mutableLoader = loader as unknown as {
+      cache: { fs: FileSystem; getFs(): FileSystem };
+      invalidateMdxEsmCacheEntry(
+        filePath: string,
+        cacheEntry: ModuleCacheEntry,
+      ): Promise<void>;
+    };
+    const originalFs = mutableLoader.cache.getFs();
+    mutableLoader.cache.fs = {
+      stat: () => Promise.reject(Object.assign(new Error("permission denied"), { code: "EACCES" })),
+    } as unknown as FileSystem;
+    mutableLoader.invalidateMdxEsmCacheEntry = () =>
+      Promise.reject(new Error("invalidation failed"));
+
+    try {
+      await assertRejects(
+        () => loader.loadModule(filePath, source),
+        Error,
+        "permission denied",
+      );
+      assertEquals(globalModuleCache.get(filePathCacheKey), undefined);
+      assertEquals(globalModuleCache.get(contentCacheKey), undefined);
+      assertEquals(verifiedHttpBundlePaths.get(`${staleEntry.tempPath}:${contentHash}`), undefined);
+    } finally {
+      mutableLoader.cache.fs = originalFs;
       await remove(projectDir, { recursive: true });
     }
   });

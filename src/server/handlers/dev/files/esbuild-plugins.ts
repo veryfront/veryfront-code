@@ -14,7 +14,9 @@ import {
 import {
   computeIntegrity,
   createLockfileManager,
+  getLockfileEntryForBuild,
   type LockfileManager,
+  setLockfileEntryForBuild,
 } from "#veryfront/utils/import-lockfile.ts";
 import {
   importMapOwnsSpecifier,
@@ -415,7 +417,9 @@ async function loadFromLockfile(
 ): Promise<
   { contents: string; loader: "js" } | { errors: { text: string; location: null }[] } | null
 > {
-  const cached = await lockfile.get(url);
+  // A newer-format lockfile keeps failing the build loudly; an unreadable or
+  // malformed lockfile degrades to a cache miss with a logged remedy.
+  const cached = await getLockfileEntryForBuild(lockfile, url);
   if (!cached) return null;
 
   logger.debug(`lockfile hit: ${url}`);
@@ -446,6 +450,23 @@ async function loadFromLockfile(
     logger.warn(`cached URL failed, refetching: ${url}`);
     return null;
   }
+}
+
+function describePersistenceError(error: unknown): string {
+  if (!(error instanceof Error)) return typeof error;
+
+  const code = (error as { code?: unknown }).code;
+  const name = error.name || "Error";
+  return typeof code === "string" && code ? `${name}(${code})` : name;
+}
+
+function isReadOnlyFileSystemError(error: unknown): boolean {
+  if (error == null) return false;
+
+  const message = error instanceof Error ? error.message : String(error);
+  if (/read-only file ?system|os error 30|erofs/i.test(message)) return true;
+
+  return error instanceof Error && isReadOnlyFileSystemError(error.cause);
 }
 
 /** Create bare module external plugin that rewrites npm imports to esm.sh URLs */
@@ -527,6 +548,37 @@ export function createBareExternalPlugin(
 
       if (!bundle) return;
 
+      let lockfileFlushDisabled = false;
+
+      async function persistLockfileEntry(
+        url: string,
+        entry: {
+          resolved: string;
+          integrity: string;
+          fetchedAt: string;
+        },
+      ): Promise<void> {
+        if (!lockfile) return;
+
+        // An unreadable lockfile skips persistence instead of failing the
+        // refetched load; the file stays intact for `veryfront lock --clear`.
+        const staged = await setLockfileEntryForBuild(lockfile, url, entry);
+        if (!staged || lockfileFlushDisabled) return;
+
+        try {
+          await lockfile.flush();
+          logger.debug(`lockfile updated: ${url} -> ${entry.resolved}`);
+        } catch (error) {
+          if (!isReadOnlyFileSystemError(error)) throw error;
+          lockfileFlushDisabled = true;
+          logger.debug(
+            `lockfile flush disabled on read-only filesystem for ${url}: ${
+              describePersistenceError(error)
+            }`,
+          );
+        }
+      }
+
       build.onLoad({ filter: /.*/, namespace: "https" }, async (args: OnLoadArgs) => {
         if (lockfile) {
           const cachedResult = await loadFromLockfile(lockfile, args.path, strict);
@@ -546,13 +598,11 @@ export function createBareExternalPlugin(
 
           if (lockfile) {
             const integrity = await computeIntegrity(contents);
-            await lockfile.set(args.path, {
+            await persistLockfileEntry(args.path, {
               resolved: resolvedUrl,
               integrity,
               fetchedAt: new Date().toISOString(),
             });
-            await lockfile.flush();
-            logger.debug(`lockfile updated: ${args.path} -> ${resolvedUrl}`);
           }
 
           return { contents, loader: "js" };

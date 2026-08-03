@@ -187,6 +187,9 @@ Notes:
 - `paths` are relative to your project root.
 - Defaults are `tools`, `agents`, `skills`, `prompts`, `resources`, `workflows`, and `tasks`.
 - Set `enabled: false` to disable discovery for that primitive.
+- Eval, task, trigger, and workflow definitions with filenames containing
+  `.test.` or `.spec.` are ignored during discovery. Rename production
+  definitions that use those filename segments before upgrading.
 
 ### AI providers and MCP
 

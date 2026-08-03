@@ -2,10 +2,12 @@ import {
   computeHash,
   computeIntegrity,
   createLockfileManager,
+  getLockfileEntryForBuild,
   HTTP_MODULE_FETCH_TIMEOUT_MS,
   HTTP_NETWORK_CONNECT_TIMEOUT,
   type LockfileManager,
   serverLogger,
+  setLockfileEntryForBuild,
   sleep,
 } from "#veryfront/utils";
 import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -264,7 +266,10 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
       ): Promise<void> {
         if (!lockfile) return;
 
-        await lockfile.set(url, entry);
+        // An unreadable lockfile skips persistence instead of failing the
+        // refetched load; the file stays intact for `veryfront lock --clear`.
+        const staged = await setLockfileEntryForBuild(lockfile, url, entry);
+        if (!staged) return;
 
         if (lockfileFlushDisabled) return;
 
@@ -376,7 +381,9 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
           return await moduleCache.read(url, expectedIntegrity);
         };
 
-        const lockfileEntry = lockfile ? await lockfile.get(args.path) : null;
+        // A newer-format lockfile keeps failing the load loudly; an unreadable
+        // or malformed lockfile degrades to a cache miss with a logged remedy.
+        const lockfileEntry = lockfile ? await getLockfileEntryForBuild(lockfile, args.path) : null;
 
         if (lockfileEntry) {
           let canUseLockfileCacheFallback = true;
