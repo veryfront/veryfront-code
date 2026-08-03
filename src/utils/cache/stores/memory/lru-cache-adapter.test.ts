@@ -104,6 +104,24 @@ describe("LRUCacheAdapter", () => {
       expect(smallCache.get("c")).toBe("3");
       expect(smallCache.get("d")).toBe("4");
     });
+
+    it("uses the injected clock for access timestamps", () => {
+      let now = 100;
+      const cacheWithClock = new LRUCacheAdapter({ now: () => now });
+      const inspectHead = () =>
+        (cacheWithClock as unknown as {
+          listManager: {
+            getHead(): { entry: { lastAccessed: number } } | null;
+          };
+        }).listManager.getHead();
+
+      cacheWithClock.set("key", "value");
+      expect(inspectHead()?.entry.lastAccessed).toBe(100);
+
+      now = 250;
+      cacheWithClock.get("key");
+      expect(inspectHead()?.entry.lastAccessed).toBe(250);
+    });
   });
 
   describe("TTL expiration", () => {

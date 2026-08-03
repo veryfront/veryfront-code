@@ -56,7 +56,7 @@ function defaultSizeEstimator(value: unknown): number {
 export class LRUCacheAdapter implements CacheAdapter {
   private readonly store = new Map<string, LRUNode<unknown>>();
   private readonly tagIndex = new Map<string, Set<string>>();
-  private readonly listManager = new LRUListManager<unknown>();
+  private readonly listManager: LRUListManager<unknown>;
   private readonly evictionManager: EvictionManager<LRUEntry<unknown>>;
   private readonly entryManager: EntryManager;
   private currentSize = 0;
@@ -72,6 +72,7 @@ export class LRUCacheAdapter implements CacheAdapter {
     this.defaultTtlMs = options.ttlMs;
     this.onEvict = options.onEvict;
     this.now = options.now ?? Date.now;
+    this.listManager = new LRUListManager(this.now);
 
     const estimateSizeOf = options.estimateSizeOf ?? defaultSizeEstimator;
 
