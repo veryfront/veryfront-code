@@ -17,10 +17,18 @@
  * Key rotation: set `TOKEN_ENCRYPTION_KEY` to the new key and move the old
  * key to `TOKEN_ENCRYPTION_KEY_PREVIOUS`. New writes are sealed with the new
  * key (the v2 envelope records a key id derived from the key), while rows
- * sealed with the previous key stay readable and are re-sealed with the new
- * key the next time they are written. Legacy v1 envelopes (no key id) are
- * decrypted by trying every configured key. Remove
- * `TOKEN_ENCRYPTION_KEY_PREVIOUS` once no rows still use it.
+ * sealed with the previous key stay readable. Every token row decrypted with
+ * a non-current key is transparently re-sealed with the current key: always
+ * on the next write, and best-effort on every read, so rotation converges
+ * even for rows that are read but never rewritten. Use
+ * `checkEncryptedTokenStoreRotation` to confirm no rows still need the
+ * previous key, then remove `TOKEN_ENCRYPTION_KEY_PREVIOUS`; stragglers
+ * degrade to "disconnected" and recover on reconnect.
+ *
+ * Legacy v1 envelopes (no key id) were written only by earlier revisions of
+ * this template; they are decrypted by trying every configured key and are
+ * upgraded to v2 by the same re-seal-on-read path, so the compatibility
+ * branch retires itself as rows are read.
  *
  * Undecryptable token rows (unknown key, tampering, legacy plaintext) never
  * fail a whole request: the token read paths log a warning and report the
@@ -651,6 +659,16 @@ async function importEnvelopeKey(keyBytes: Uint8Array<ArrayBuffer>): Promise<Env
   return { keyId, key };
 }
 
+interface OpenedEnvelope {
+  value: unknown;
+  /**
+   * False when the row was decrypted with a retiring key or arrived in a
+   * legacy v1 envelope, i.e. re-sealing it with the current key lets
+   * `TOKEN_ENCRYPTION_KEY_PREVIOUS` be dropped sooner.
+   */
+  sealedWithCurrentKey: boolean;
+}
+
 class EnvelopeCipher {
   /** The first entry is the current key; every entry may decrypt. */
   readonly #keys: Promise<EnvelopeKey[]>;
@@ -682,7 +700,7 @@ class EnvelopeCipher {
     return ENVELOPE_PREFIX + current.keyId + ":" + bytesToBase64(combined);
   }
 
-  async open(storageKey: string, stored: string): Promise<unknown> {
+  async open(storageKey: string, stored: string): Promise<OpenedEnvelope> {
     if (typeof stored !== "string" || stored.length > MAX_ENCODED_LENGTH) {
       throw new TypeError("Stored OAuth value must be a bounded string");
     }
@@ -701,19 +719,26 @@ class EnvelopeCipher {
             "or re-authenticate affected users.",
         );
       }
-      return await this.#decrypt(
-        storageKey,
-        base64ToBytes(body.slice(KEY_ID_HEX_LENGTH + 1)),
-        match.key,
-      );
+      return {
+        value: await this.#decrypt(
+          storageKey,
+          base64ToBytes(body.slice(KEY_ID_HEX_LENGTH + 1)),
+          match.key,
+        ),
+        sealedWithCurrentKey: match === keys[0],
+      };
     }
     if (stored.startsWith(LEGACY_ENVELOPE_PREFIX)) {
-      // v1 envelopes carry no key id, so try every configured key.
+      // v1 envelopes carry no key id, so try every configured key. They are
+      // never reported as current: re-sealing upgrades them to v2.
       const combined = base64ToBytes(stored.slice(LEGACY_ENVELOPE_PREFIX.length));
       let lastFailure: unknown;
       for (const entry of keys) {
         try {
-          return await this.#decrypt(storageKey, combined, entry.key);
+          return {
+            value: await this.#decrypt(storageKey, combined, entry.key),
+            sealedWithCurrentKey: false,
+          };
         } catch (failure) {
           lastFailure = failure;
         }
@@ -904,13 +929,35 @@ export function createEncryptedTokenStore(
     const raw = await backend.get(key);
     if (raw === null) return null;
     try {
-      return { key, raw, entry: requireTokenEntry(await cipher.open(key, raw)) };
+      const opened = await cipher.open(key, raw);
+      const entry = requireTokenEntry(opened.value);
+      if (opened.sealedWithCurrentKey) return { key, raw, entry };
+      return { key, raw: (await resealTokenRow(key, raw, entry)) ?? raw, entry };
     } catch (failure) {
       console.warn(
         "[Encrypted Token Store] Ignoring unreadable OAuth token row " +
           `(${unreadableTokenRowReason(failure)}). ` +
           "The integration is reported as disconnected; reconnecting overwrites the row.",
       );
+      return null;
+    }
+  }
+
+  // Best-effort transparent re-seal so rotation also converges for rows that
+  // are read but never rewritten. The revision is preserved (this is a
+  // re-encryption, not a logical write), the swap is ABA-safe because every
+  // seal uses a fresh IV, and any failure is ignored: the next read simply
+  // tries again, and losing the swap to a concurrent writer is fine because
+  // that writer already sealed with the current key.
+  async function resealTokenRow(
+    key: string,
+    raw: string,
+    entry: StoredTokenEntry,
+  ): Promise<string | null> {
+    try {
+      const resealed = await cipher.seal(key, entry);
+      return (await backend.compareAndSwap(key, raw, resealed)) ? resealed : null;
+    } catch {
       return null;
     }
   }
@@ -994,7 +1041,7 @@ export function createEncryptedTokenStore(
       const consumed = await backend.compareAndSwap(key, raw, null);
       if (!consumed) return null;
       try {
-        const row = requireStateRow(await cipher.open(key, raw));
+        const row = requireStateRow((await cipher.open(key, raw)).value);
         return isFreshState(row.createdAt, Date.now()) ? row : null;
       } catch (failure) {
         console.warn(

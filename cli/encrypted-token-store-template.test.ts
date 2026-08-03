@@ -490,9 +490,8 @@ describe("generated encrypted OAuth token store", () => {
     Deno.env.set("TOKEN_ENCRYPTION_KEY_PREVIOUS", retiringKey);
     const rotated = createEncryptedTokenStore(backend);
 
-    assertEquals(await rotated.getTokens("github", "alice"), {
-      accessToken: "sealed-with-old-key",
-    });
+    // The row has not been read or written under the new keyring yet, which
+    // is exactly what the scan is for.
     assertEquals(await checkEncryptedTokenStoreRotation(backend), {
       scannedRows: 1,
       currentKeyRows: 0,
@@ -501,7 +500,11 @@ describe("generated encrypted OAuth token store", () => {
       complete: false,
     });
 
-    await rotated.setTokens("github", "alice", { accessToken: "resealed" });
+    // A single read re-seals the row with the current key, so the report
+    // converges without an explicit write.
+    assertEquals(await rotated.getTokens("github", "alice"), {
+      accessToken: "sealed-with-old-key",
+    });
     assertEquals(await checkEncryptedTokenStoreRotation(backend), {
       scannedRows: 1,
       currentKeyRows: 1,
@@ -533,6 +536,160 @@ describe("generated encrypted OAuth token store", () => {
     Deno.env.set("TOKEN_ENCRYPTION_KEY_PREVIOUS", legacyKey);
     const rotated = createEncryptedTokenStore(backend);
     assertEquals(await rotated.getTokens("github", "alice"), { accessToken: "legacy-token" });
+  });
+
+  it("re-seals rows decrypted with the previous key on read", async () => {
+    const backend = inspectableBackend();
+    const retiringKey = Deno.env.get("TOKEN_ENCRYPTION_KEY");
+    if (!retiringKey) throw new Error("Expected a configured encryption key");
+    const store = createEncryptedTokenStore(backend);
+    await store.setTokens("github", "alice", { accessToken: "sealed-with-old-key" });
+    const snapshot = await store.getTokenSnapshot("github", "alice");
+    if (!snapshot) throw new Error("Expected a revisioned token snapshot");
+    const sealedWithRetiringKey = [...backend.rows.values()][0];
+
+    Deno.env.set("TOKEN_ENCRYPTION_KEY", generateEncryptionKey());
+    Deno.env.set("TOKEN_ENCRYPTION_KEY_PREVIOUS", retiringKey);
+    const rotated = createEncryptedTokenStore(backend);
+    assertEquals(await rotated.getTokens("github", "alice"), {
+      accessToken: "sealed-with-old-key",
+    });
+
+    // The read itself re-sealed the row with the current key...
+    const resealed = [...backend.rows.values()][0];
+    assertNotEquals(resealed, sealedWithRetiringKey);
+    assertEquals(resealed?.startsWith(ENVELOPE_PREFIX), true);
+    // ...preserving the logical revision: a re-seal is not a token update.
+    assertEquals(
+      (await rotated.getTokenSnapshot("github", "alice"))?.revision,
+      snapshot.revision,
+    );
+
+    // The previous key can now be dropped without any explicit write.
+    Deno.env.delete("TOKEN_ENCRYPTION_KEY_PREVIOUS");
+    const afterRotation = createEncryptedTokenStore(backend);
+    assertEquals(await afterRotation.getTokens("github", "alice"), {
+      accessToken: "sealed-with-old-key",
+    });
+  });
+
+  it("upgrades legacy v1 envelopes to v2 on read", async () => {
+    const backend = inspectableBackend();
+    const keyHex = Deno.env.get("TOKEN_ENCRYPTION_KEY");
+    if (!keyHex) throw new Error("Expected a configured encryption key");
+    const storageKey = 'veryfront:oauth:v1:tokens:["github","alice"]';
+    await backend.set(
+      storageKey,
+      await sealLegacyV1(keyHex, storageKey, {
+        revision: "legacy-revision",
+        tokens: { accessToken: "legacy-token" },
+      }),
+    );
+    const store = createEncryptedTokenStore(backend);
+
+    assertEquals(await store.getTokens("github", "alice"), { accessToken: "legacy-token" });
+
+    const upgraded = backend.rows.get(storageKey);
+    assertEquals(upgraded?.startsWith(ENVELOPE_PREFIX), true);
+    assertEquals(
+      (await store.getTokenSnapshot("github", "alice"))?.revision,
+      "legacy-revision",
+    );
+  });
+
+  it("keeps reads working when the best-effort re-seal cannot be persisted", async () => {
+    const inner = createMemoryKvBackend();
+    const retiringKey = Deno.env.get("TOKEN_ENCRYPTION_KEY");
+    if (!retiringKey) throw new Error("Expected a configured encryption key");
+    const backend: EncryptedKvBackend = {
+      get: (key) => inner.get(key),
+      set: (key, value, options) => inner.set(key, value, options),
+      delete: (key) => inner.delete(key),
+      compareAndSwap: () => Promise.reject(new Error("backend rejects swaps")),
+      withLock: (key, operation) => inner.withLock(key, operation),
+    };
+    const store = createEncryptedTokenStore(backend);
+    await store.setTokens("github", "alice", { accessToken: "still-readable" });
+
+    Deno.env.set("TOKEN_ENCRYPTION_KEY", generateEncryptionKey());
+    Deno.env.set("TOKEN_ENCRYPTION_KEY_PREVIOUS", retiringKey);
+    const rotated = createEncryptedTokenStore(backend);
+
+    using captured = captureWarnings();
+    assertEquals(await rotated.getTokens("github", "alice"), { accessToken: "still-readable" });
+    assertEquals(captured.warnings.length, 0);
+    // The row is unchanged; the next read simply tries the re-seal again.
+    assertEquals(await rotated.getTokens("github", "alice"), { accessToken: "still-readable" });
+  });
+
+  it("supports compare-and-set through a row re-sealed during its own pre-read", async () => {
+    const backend = createMemoryKvBackend();
+    const retiringKey = Deno.env.get("TOKEN_ENCRYPTION_KEY");
+    if (!retiringKey) throw new Error("Expected a configured encryption key");
+    const store = createEncryptedTokenStore(backend);
+    await store.setTokens("github", "alice", { accessToken: "access-1" });
+    const snapshot = await store.getTokenSnapshot("github", "alice");
+    if (!snapshot) throw new Error("Expected a revisioned token snapshot");
+
+    Deno.env.set("TOKEN_ENCRYPTION_KEY", generateEncryptionKey());
+    Deno.env.set("TOKEN_ENCRYPTION_KEY_PREVIOUS", retiringKey);
+    const rotated = createEncryptedTokenStore(backend);
+
+    // The pre-read re-seals the row, so the swap must target the re-sealed
+    // ciphertext rather than the one fetched at the start of the call.
+    assertEquals(
+      await rotated.compareAndSetTokens("github", "alice", snapshot.revision, {
+        accessToken: "access-2",
+      }),
+      true,
+    );
+    assertEquals((await rotated.getTokens("github", "alice"))?.accessToken, "access-2");
+  });
+
+  it("treats rows with a malformed v2 key id segment as absent", async () => {
+    const backend = inspectableBackend();
+    const store = createEncryptedTokenStore(backend);
+    await store.setTokens("github", "alice", { accessToken: "secret-token" });
+    const entry = [...backend.rows.entries()][0];
+    if (!entry) throw new Error("Expected a stored row");
+    const [key, stored] = entry;
+    const body = stored.slice(ENVELOPE_PREFIX.length);
+
+    const malformedRows = [
+      // Key ids are lowercase hex by construction, so uppercase is rejected.
+      ENVELOPE_PREFIX + "A" + body.slice(1),
+      // Missing ":" separator after the key id.
+      ENVELOPE_PREFIX + body.slice(0, 16) + "." + body.slice(17),
+    ];
+    for (const malformed of malformedRows) {
+      await backend.set(key, malformed);
+      using captured = captureWarnings();
+      assertEquals(await store.getTokens("github", "alice"), null);
+      assertEquals(captured.warnings.length, 1);
+      assertEquals(captured.warnings[0]?.includes("malformed encrypted row"), true);
+      assertEquals(captured.warnings[0]?.includes("secret-token"), false);
+    }
+  });
+
+  it("degrades legacy v1 envelopes that no configured key can decrypt", async () => {
+    const backend = createMemoryKvBackend();
+    Deno.env.set("TOKEN_ENCRYPTION_KEY_PREVIOUS", generateEncryptionKey());
+    const storageKey = 'veryfront:oauth:v1:tokens:["github","alice"]';
+    await backend.set(
+      storageKey,
+      // Sealed with a key that is in neither ring slot.
+      await sealLegacyV1(generateEncryptionKey(), storageKey, {
+        revision: "r1",
+        tokens: { accessToken: "unreachable-secret" },
+      }),
+    );
+    const store = createEncryptedTokenStore(backend);
+
+    using captured = captureWarnings();
+    assertEquals(await store.getTokens("github", "alice"), null);
+    assertEquals(captured.warnings.length, 1);
+    assertEquals(captured.warnings[0]?.includes("failed authentication"), true);
+    assertEquals(captured.warnings[0]?.includes("unreachable-secret"), false);
   });
 
   it("supports revisioned compare-and-set for token refresh", async () => {
