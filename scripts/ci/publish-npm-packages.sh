@@ -164,7 +164,7 @@ ensure_package_names_registered() {
   MISSING_PACKAGE_NAMES=0
 
   for PACKAGE_NAME in $(package_names_from_workspace); do
-    if ! npm view "${PACKAGE_NAME}" name >/dev/null 2>&1; then
+    if ! npm view "${PACKAGE_NAME}@*" name >/dev/null 2>&1; then
       echo "::error::${PACKAGE_NAME} is not registered on npm." >&2
       MISSING_PACKAGE_NAMES=1
     fi

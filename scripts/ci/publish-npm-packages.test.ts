@@ -157,7 +157,7 @@ Deno.test("npm release preflight rejects an unbootstrapped package name", async 
         "}",
         "npm() {",
         '  printf "%s\\n" "$*" >> "$NPM_LOG"',
-        '  if [ "$1" = "view" ] && [ "$2" = "@veryfront/ext-existing" ] && [ "$3" = "name" ]; then',
+        '  if [ "$1" = "view" ] && [ "$2" = "@veryfront/ext-existing@*" ] && [ "$3" = "name" ]; then',
         '    printf "%s\\n" "@veryfront/ext-existing"',
         "    return 0",
         "  fi",
@@ -183,8 +183,8 @@ Deno.test("npm release preflight rejects an unbootstrapped package name", async 
     );
     const calls = (await Deno.readTextFile(npmLog)).trim().split("\n");
     assertEquals(calls, [
-      "view @veryfront/ext-existing name",
-      "view @veryfront/ext-new name",
+      "view @veryfront/ext-existing@* name",
+      "view @veryfront/ext-new@* name",
     ]);
   } finally {
     await Deno.remove(stateDir, { recursive: true });
