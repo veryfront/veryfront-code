@@ -52,9 +52,43 @@ describe("id", () => {
 
       assertEquals(ids.size, 100);
     });
+
+    it("should draw alphabet characters without modulo bias", () => {
+      // With `byte % 62`, the first 8 alphabet characters ("0"-"7") are drawn
+      // at 5/256 each (8 * 5/256 ~= 0.1563 combined) instead of the uniform
+      // 8/62 ~= 0.1290. The 0.145 midpoint threshold sits ~17 standard
+      // deviations from both distributions at this sample size.
+      let firstEightCount = 0;
+      let totalCount = 0;
+
+      for (let i = 0; i < 20_000; i++) {
+        for (const char of generateId()) {
+          totalCount++;
+          if (char >= "0" && char <= "7") firstEightCount++;
+        }
+      }
+
+      assertEquals(firstEightCount / totalCount < 0.145, true);
+    });
   });
 
   describe("createIdGenerator", () => {
+    it("should reject invalid sizes", () => {
+      for (
+        const size of [
+          0,
+          -1,
+          1.5,
+          Number.NaN,
+          Number.POSITIVE_INFINITY,
+          Number.MAX_SAFE_INTEGER + 1,
+          1_025,
+        ]
+      ) {
+        assertThrows(() => createIdGenerator({ size }), RangeError);
+      }
+    });
+
     it("should create generator with prefix", () => {
       const generate = createIdGenerator({ prefix: "test" });
       assertMatch(generate(), /^test-[0-9a-zA-Z]{16}$/);

@@ -137,6 +137,11 @@ describe("memoize", () => {
       assertNotEquals(simpleHash("a", "b"), simpleHash("b", "a"));
     });
 
+    it("distinguishes argument boundaries and primitive types", () => {
+      assertNotEquals(simpleHash("ab", "c"), simpleHash("a", "bc"));
+      assertNotEquals(simpleHash("1"), simpleHash(1));
+    });
+
     it("should handle non-string values", () => {
       assertEquals(simpleHash(123, true, null), simpleHash(123, true, null));
     });
