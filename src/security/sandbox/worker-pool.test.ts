@@ -438,11 +438,14 @@ testSuite("WorkerPool", () => {
     const controlled = createControlledPool();
     await pool.shutdown();
     pool = controlled.pool;
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-worker-pool-ssr-permissions-" });
 
     const stream = pool.executeStream(
       "ssr-permissions",
-      ["/tmp"],
-      makeSSRRequest("ssr-permissions-request"),
+      [projectDir],
+      makeSSRRequest("ssr-permissions-request", {
+        pageModulePath: `${projectDir}/page.tsx`,
+      }),
     );
     const worker = latestWorker(controlled.workers, "ssr-permissions");
     const readPermissions = worker.permissions.read;
