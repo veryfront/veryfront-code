@@ -149,7 +149,15 @@ export async function prepareAgentRuntimeStep(
       input.activeSkillToolAvailability,
     );
   }
-  tools = filterToolsAfterSubmittedFormInput(tools, input.messages, runtimeState.context);
+  tools = filterToolsAfterSubmittedFormInput(
+    tools,
+    input.messages,
+    runtimeState.context,
+    {
+      id: input.activeSkillId,
+      toolAvailability: input.activeSkillToolAvailability,
+    },
+  );
   const excludedToolNames = input.excludedToolNames;
   if (excludedToolNames !== undefined) {
     tools = tools.filter((tool) => !excludedToolNames.has(tool.name));

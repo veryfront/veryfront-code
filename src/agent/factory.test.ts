@@ -116,7 +116,7 @@ describe("agent factory", () => {
       : effectiveSystem ?? "";
     assertStringIncludes(
       prompt,
-      "- support-triage: Triage incoming support requests",
+      '- {"skillId":"support-triage","description":"Triage incoming support requests"}',
     );
     assertEquals(prompt.includes("researcher--cite"), false);
 
@@ -174,8 +174,8 @@ describe("agent factory", () => {
       ? await allowlistedSystem()
       : allowlistedSystem ?? "";
 
-    assertStringIncludes(prompt, "- writer--draft: Draft copy");
-    assertStringIncludes(prompt, "- global-plan: Plan the work");
+    assertStringIncludes(prompt, '- {"skillId":"writer--draft","description":"Draft copy"}');
+    assertStringIncludes(prompt, '- {"skillId":"global-plan","description":"Plan the work"}');
     assertEquals(prompt.includes("global-review"), false);
 
     if (!allowlisted.config.tools || allowlisted.config.tools === true) {

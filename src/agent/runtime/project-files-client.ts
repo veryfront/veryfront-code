@@ -1,6 +1,15 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { NETWORK_ERROR } from "#veryfront/errors";
+import {
+  SKILL_PATH_SEGMENT_MAX_LENGTH,
+  SKILL_TEXT_FILE_MAX_BYTES,
+} from "#veryfront/skill/limits.ts";
+import {
+  hasControlCharacters,
+  isUtf8WithinByteLimit,
+  isWellFormedUtf16,
+} from "#veryfront/skill/string-safety.ts";
 
 const DEFAULT_PROJECT_FILES_TIMEOUT_MS = 15_000;
 const DEFAULT_PROJECT_FILES_PAGE_LIMIT = 100;
@@ -17,6 +26,41 @@ const PROJECT_FILE_RESPONSE_YIELD_CHUNKS = 256;
 const PROJECT_FILE_RESPONSE_MAX_CONSECUTIVE_EMPTY_CHUNKS = 4_096;
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const utf8Encoder = new TextEncoder();
+const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:\//;
+
+/** Maximum aggregate file records retained by one project listing. */
+export const MAX_RUNTIME_PROJECT_FILES_TOTAL_ITEMS = PROJECT_FILE_LIST_MAX_PAGES *
+  DEFAULT_PROJECT_FILES_PAGE_LIMIT;
+
+/** Whether a value is a canonical, bounded project-relative file path. */
+export function isRuntimeProjectFilePath(path: unknown): path is string {
+  if (
+    typeof path !== "string" ||
+    path.length === 0 ||
+    path.length > PROJECT_FILE_PATH_MAX_CHARACTERS ||
+    !isWellFormedUtf16(path) ||
+    hasControlCharacters(path) ||
+    path.startsWith("/") ||
+    path.includes("\\") ||
+    WINDOWS_DRIVE_PATH_REGEX.test(path)
+  ) {
+    return false;
+  }
+  return path.split("/").every((segment) =>
+    segment.length > 0 &&
+    segment.length <= SKILL_PATH_SEGMENT_MAX_LENGTH &&
+    segment !== "." &&
+    segment !== ".."
+  );
+}
+
+/** Whether a value fits the shared runtime Skill text-file budget. */
+export function isRuntimeProjectFileContent(content: unknown): content is string {
+  return typeof content === "string" &&
+    content.length <= SKILL_TEXT_FILE_MAX_BYTES &&
+    isWellFormedUtf16(content) &&
+    isUtf8WithinByteLimit(content, SKILL_TEXT_FILE_MAX_BYTES);
+}
 
 export const getRuntimeProjectFileSchema = defineSchema((v) =>
   v.object({

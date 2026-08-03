@@ -130,7 +130,8 @@ function createSandboxToolsResult(input: {
 
 Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and global tools", async () => {
   const fixtures = createRemoteSourceFixtures();
-  const switchedProjects: string[] = [];
+  const switchedProjectIds: string[] = [];
+  const switchedProjects: Array<{ projectId: string; projectSlug?: string }> = [];
 
   const result = await prepareDefaultHostedChildForkToolSources({
     authToken: "token-1",
@@ -146,8 +147,11 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
         execute: () => ({ ok: true }),
       },
     },
-    onConfirmedStudioProjectSwitch: (projectId) => {
-      switchedProjects.push(projectId);
+    onConfirmedStudioProjectSwitch: (projectId, confirmedProject) => {
+      switchedProjectIds.push(projectId);
+      if (confirmedProject) {
+        switchedProjects.push(confirmedProject);
+      }
     },
     createRemoteToolSource: fixtures.createRemoteToolSource,
   });
@@ -168,7 +172,8 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
 
   await result.forkTools.studio_open_project?.execute?.({ project_reference: "project-two" });
 
-  assertEquals(switchedProjects, ["project-2"]);
+  assertEquals(switchedProjectIds, ["project-2"]);
+  assertEquals(switchedProjects, [{ projectId: "project-2", projectSlug: "project-two" }]);
   assertEquals(fixtures.executeCalls, [
     {
       sourceId: "veryfront-mcp-fork",

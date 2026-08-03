@@ -44,14 +44,21 @@ function readProviderFactory(extensionModule: unknown): () => unknown {
   return factory as () => unknown;
 }
 
-async function activateDefaultSkillDocumentParser(): Promise<void> {
+/** Load and capture the product distribution's extension-owned default parser. */
+export async function loadDefaultSkillDocumentParserProvider(): Promise<
+  Readonly<SkillDocumentParserProvider>
+> {
   const extensionModule = await importFirstPartyExtensionModule<unknown>(
     DEFAULT_SKILL_PARSER_SOURCE_DIRECTORY,
     DEFAULT_SKILL_PARSER_EXTENSION_PACKAGE,
   );
-  const provider = snapshotSkillDocumentParserProvider(
+  return snapshotSkillDocumentParserProvider(
     readProviderFactory(extensionModule)(),
   );
+}
+
+async function activateDefaultSkillDocumentParser(): Promise<void> {
+  const provider = await loadDefaultSkillDocumentParserProvider();
 
   // Extension orchestration may have completed while the dynamic import was
   // pending. Preserve its generation-owned binding when present.
@@ -72,4 +79,16 @@ export async function ensureDefaultSkillDocumentParserContract(): Promise<void> 
     activation = undefined;
   });
   await activation;
+}
+
+/** Activate and capture the product distribution's immutable default parser generation. */
+export async function getDefaultSkillDocumentParserProvider(): Promise<
+  Readonly<SkillDocumentParserProvider>
+> {
+  await ensureDefaultSkillDocumentParserContract();
+  const provider = tryResolve<SkillDocumentParserProvider>(SkillDocumentParserProviderName);
+  if (provider === undefined) {
+    throw new TypeError("Default Skill document parser activation did not provide its contract");
+  }
+  return snapshotSkillDocumentParserProvider(provider);
 }

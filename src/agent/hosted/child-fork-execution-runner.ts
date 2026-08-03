@@ -57,6 +57,7 @@ import {
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import {
   type HostedProjectReferenceResolver,
+  requireConfirmedHostedProjectReference,
   resolveHostedProjectReference,
 } from "./project-reference-resolver.ts";
 import { runWithModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
@@ -227,7 +228,7 @@ export type ExecuteHostedChildForkToolInputOptions<
     defaultModel: string;
     defaultMaxSteps: number;
     contextModel?: string;
-    onRequestedProjectId?: (projectId: string) => void | Promise<void>;
+    onRequestedProjectId?: (projectId: string, projectSlug?: string) => void | Promise<void>;
     resolveProjectReference?: HostedProjectReferenceResolver;
     prepareToolAssembly: (input: {
       runtimeConfig: HostedChildForkRuntimeConfig;
@@ -260,13 +261,20 @@ export async function executeHostedChildForkToolInput<
   const requestedProjectReference = input.forkInput.project_reference;
   if (requestedProjectReference) {
     const resolver = input.resolveProjectReference ?? resolveHostedProjectReference;
-    const resolvedProject = await resolver({
+    const resolution = await resolver({
       projectReference: requestedProjectReference,
       authToken: input.authToken,
       apiUrl: input.apiUrl,
       abortSignal: input.abortSignal,
     });
-    await input.onRequestedProjectId?.(resolvedProject.projectId);
+    const resolvedProject = requireConfirmedHostedProjectReference(
+      resolution,
+      requestedProjectReference,
+    );
+    await input.onRequestedProjectId?.(
+      resolvedProject.projectId,
+      resolvedProject.projectSlug,
+    );
   }
 
   const forkInput = input.inputAlreadyHasInvocationContext

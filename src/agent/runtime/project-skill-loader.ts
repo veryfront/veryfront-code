@@ -8,7 +8,16 @@ import type {
   RuntimeProjectFileListItem,
   RuntimeProjectFilesApiOptions,
 } from "./project-files-client.ts";
-import { normalizeRuntimeSkillReferencePath } from "./skill-metadata.ts";
+import {
+  isRuntimeProjectFileContent,
+  isRuntimeProjectFilePath,
+  MAX_RUNTIME_PROJECT_FILES_TOTAL_ITEMS,
+} from "./project-files-client.ts";
+import {
+  buildLegacyRuntimeFlatSkillDefinition,
+  isValidStrictRuntimeSkillFileDocument,
+  normalizeStrictRuntimeSkillReferencePath,
+} from "./skill-metadata.ts";
 import {
   createSkillOperationBudget,
   type SkillOperationBudget,
@@ -16,9 +25,31 @@ import {
 import {
   SKILL_DOCUMENT_MAX_CHARACTERS,
   SKILL_FILE_OPERATION_TIMEOUT_MS,
+  SKILL_ID_MAX_LENGTH,
+  SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
   SKILL_STEERING_PATH_MAX_ENTRIES,
   SKILL_SUBDIR_MAX_ENTRIES,
 } from "#veryfront/skill/limits.ts";
+import type { SkillDocumentParserProvider } from "#veryfront/extensions/parser/skill-document-parser.ts";
+import { hasControlCharacters, isWellFormedUtf16 } from "#veryfront/skill/string-safety.ts";
+import { SKILL_READABLE_DIRS } from "#veryfront/skill/types.ts";
+import { isOwnDataPropertyDescriptor } from "./data-property-descriptor.ts";
+
+const RUNTIME_SKILL_READABLE_DIR_SET = new Set<string>(SKILL_READABLE_DIRS);
+const ArrayIsArray = Array.isArray;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const ReflectApply = Reflect.apply;
+
+function hasOwnProperty(value: object, key: PropertyKey): boolean {
+  return ReflectApply(ObjectPrototypeHasOwnProperty, value, [key]) as boolean;
+}
+
+function isRuntimeSkillReadableFilePath(path: string): boolean {
+  const separatorIndex = path.indexOf("/");
+  return separatorIndex > 0 &&
+    RUNTIME_SKILL_READABLE_DIR_SET.has(path.slice(0, separatorIndex));
+}
 
 /** Context for runtime project skill. */
 export type RuntimeProjectSkillContext = {
@@ -61,6 +92,7 @@ export type RuntimeProjectSkillLoaderOptions = {
   steeringPaths?: Pick<ProjectSteeringPaths, "skills">;
   isAccessDeniedError?: (error: unknown) => boolean;
   logger?: RuntimeProjectSkillLoaderLogger;
+  skillDocumentParserProvider?: SkillDocumentParserProvider;
 };
 
 /** Public API contract for runtime project skill loader. */
@@ -85,12 +117,66 @@ export type RuntimeProjectSkillLoader = {
 
 function getSkillPaths(options: RuntimeProjectSkillLoaderOptions): readonly string[] {
   const paths = options.steeringPaths?.skills ?? DEFAULT_PROJECT_STEERING_PATHS.skills;
+  if (!ArrayIsArray(paths)) {
+    throw new TypeError("Project skills paths must be an array");
+  }
   if (paths.length > SKILL_STEERING_PATH_MAX_ENTRIES) {
     throw new RangeError(
-      `Skill steering paths may contain at most ${SKILL_STEERING_PATH_MAX_ENTRIES} entries`,
+      `Project skills accept at most ${SKILL_STEERING_PATH_MAX_ENTRIES} paths`,
     );
   }
-  return paths;
+
+  const snapshot: string[] = [];
+  for (let index = 0; index < paths.length; index += 1) {
+    const descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      paths,
+      index,
+    ]) as PropertyDescriptor | undefined;
+    if (
+      !isOwnDataPropertyDescriptor(descriptor) ||
+      typeof descriptor.value !== "string" ||
+      normalizeStrictRuntimeSkillReferencePath(descriptor.value) !== descriptor.value
+    ) {
+      throw new TypeError(`Invalid project skills path at index ${index}`);
+    }
+    snapshot.push(descriptor.value);
+  }
+  return Object.freeze(snapshot);
+}
+
+function snapshotProjectFileList(value: unknown): readonly RuntimeProjectFileListItem[] {
+  if (!ArrayIsArray(value)) {
+    throw new TypeError("Project file listing must be an array");
+  }
+  if (value.length > MAX_RUNTIME_PROJECT_FILES_TOTAL_ITEMS) {
+    throw new RangeError(
+      `Project file listing exceeds ${MAX_RUNTIME_PROJECT_FILES_TOTAL_ITEMS} files`,
+    );
+  }
+
+  const snapshot: RuntimeProjectFileListItem[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const itemDescriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      value,
+      index,
+    ]) as PropertyDescriptor | undefined;
+    const item = isOwnDataPropertyDescriptor(itemDescriptor) ? itemDescriptor.value : undefined;
+    if (!item || typeof item !== "object" || ArrayIsArray(item)) {
+      throw new TypeError(`Project file listing item ${index} must be an object`);
+    }
+
+    const pathDescriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      item,
+      "path",
+    ]) as PropertyDescriptor | undefined;
+    const path = isOwnDataPropertyDescriptor(pathDescriptor) ? pathDescriptor.value : undefined;
+    if (!isRuntimeProjectFilePath(path)) {
+      throw new TypeError(`Project file listing item ${index} has an invalid path`);
+    }
+    snapshot.push(Object.freeze({ path }));
+  }
+
+  return Object.freeze(snapshot);
 }
 
 function assertRuntimeSkillContent(content: string, label: string): void {
@@ -111,7 +197,50 @@ function isAccessDeniedError(
 type ProjectSkillSource =
   | { kind: "directory"; skillsPath: string }
   | { kind: "flat"; skillsPath: string }
-  | { kind: "explicit"; skillDir: string };
+  | { kind: "explicit"; skillDir: string }
+  | { kind: "explicit-flat"; skillPath: string };
+
+function isProviderSafeCatalogSkillSource(source: ProjectSkillSource): boolean {
+  return source.kind === "explicit" &&
+    /^agents\/[^/]+(?:\/skills\/[^/]+)?$/.test(source.skillDir);
+}
+
+function isSafeRuntimeSkillId(skillId: unknown): skillId is string {
+  if (
+    typeof skillId !== "string" ||
+    skillId.length === 0 ||
+    skillId.length > SKILL_ID_MAX_LENGTH ||
+    skillId === "." ||
+    skillId === ".." ||
+    skillId.includes("/") ||
+    skillId.includes("\\")
+  ) {
+    return false;
+  }
+  return isWellFormedUtf16(skillId) && !hasControlCharacters(skillId);
+}
+
+async function getExpectedProjectFile(
+  options: RuntimeProjectSkillLoaderOptions,
+  request: RuntimeGetProjectFileOptions,
+): Promise<RuntimeProjectFile | null> {
+  const file = await options.getProjectFile(request);
+  if (
+    file !== null &&
+    (
+      !isRuntimeProjectFilePath(file.path) ||
+      file.path !== request.path
+    )
+  ) {
+    throw new TypeError(
+      `Project file response path "${file.path}" did not match requested path "${request.path}"`,
+    );
+  }
+  if (file !== null && !isRuntimeProjectFileContent(file.content)) {
+    throw new RangeError(`Project file "${request.path}" exceeded its content budget`);
+  }
+  return file;
+}
 
 /** Directory containing the skill's files, per source kind. */
 function getSkillDir(source: ProjectSkillSource, skillId: string): string | null {
@@ -124,16 +253,43 @@ function getSkillDir(source: ProjectSkillSource, skillId: string): string | null
   return null;
 }
 
-/** Resolves a skill's directory from the per-run catalog source path, if any. */
-function resolveCatalogSkillDir(
+/** Resolves a skill's exact source from the per-run catalog snapshot, if any. */
+function resolveCatalogSkillSource(
   context: RuntimeProjectSkillContext,
   skillId: string,
-): string | null {
-  const sourcePath = context.skillSourcePaths?.[skillId];
-  if (!sourcePath || !sourcePath.endsWith("/SKILL.md")) {
+): ProjectSkillSource | null {
+  const sourcePaths = context.skillSourcePaths;
+  if (!sourcePaths) {
     return null;
   }
-  return sourcePath.slice(0, -"/SKILL.md".length);
+
+  const descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+    sourcePaths,
+    skillId,
+  ]) as PropertyDescriptor | undefined;
+  if (!descriptor) {
+    return null;
+  }
+  if (!isOwnDataPropertyDescriptor(descriptor) || typeof descriptor.value !== "string") {
+    throw new TypeError(
+      `Catalog source path for skill "${skillId}" must be a string data property`,
+    );
+  }
+
+  const sourcePath = descriptor.value;
+  if (normalizeStrictRuntimeSkillReferencePath(sourcePath) !== sourcePath) {
+    throw new TypeError(`Catalog source path for skill "${skillId}" is invalid`);
+  }
+  if (sourcePath.endsWith("/SKILL.md")) {
+    return {
+      kind: "explicit",
+      skillDir: sourcePath.slice(0, -"/SKILL.md".length),
+    };
+  }
+  if (sourcePath.endsWith(".md")) {
+    return { kind: "explicit-flat", skillPath: sourcePath };
+  }
+  throw new TypeError(`Catalog source path for skill "${skillId}" is not a Skill definition`);
 }
 
 function getRemainingSkillOperationMs(budget: SkillOperationBudget): number | undefined {
@@ -158,17 +314,17 @@ async function findProjectSkillSource(input: {
   budget: SkillOperationBudget;
 }): Promise<ProjectSkillSource | null> {
   const projectId = input.context.projectId;
-  if (!projectId) {
+  if (!projectId || !isSafeRuntimeSkillId(input.skillId)) {
     return null;
   }
 
-  const catalogSkillDir = resolveCatalogSkillDir(input.context, input.skillId);
-  if (catalogSkillDir) {
-    return { kind: "explicit", skillDir: catalogSkillDir };
+  const catalogSkillSource = resolveCatalogSkillSource(input.context, input.skillId);
+  if (catalogSkillSource) {
+    return catalogSkillSource;
   }
 
   for (const skillsPath of getSkillPaths(input.options)) {
-    const directorySkill = await input.options.getProjectFile({
+    const directorySkill = await getExpectedProjectFile(input.options, {
       projectId,
       authToken: input.context.authToken,
       branchId: input.context.branchId,
@@ -179,7 +335,7 @@ async function findProjectSkillSource(input: {
       return { kind: "directory", skillsPath };
     }
 
-    const flatSkill = await input.options.getProjectFile({
+    const flatSkill = await getExpectedProjectFile(input.options, {
       projectId,
       authToken: input.context.authToken,
       branchId: input.context.branchId,
@@ -204,27 +360,42 @@ function collectProjectSkillReferences(input: {
     );
   }
   const skillPrefix = `${input.skillDir}/`;
-  const refsPrefix = `${skillPrefix}references/`;
   const references = new Set<string>();
+  const entryCountsByDirectory = new Map<string, number>();
 
   for (const file of input.allFiles) {
-    if (!file.path.startsWith(refsPrefix)) {
+    if (!file.path.startsWith(skillPrefix)) {
       continue;
     }
 
     const relativePath = file.path.slice(skillPrefix.length);
-    if (!relativePath.includes("/")) {
+    const separatorIndex = relativePath.indexOf("/");
+    if (separatorIndex <= 0) {
+      continue;
+    }
+    const directory = relativePath.slice(0, separatorIndex);
+    if (!RUNTIME_SKILL_READABLE_DIR_SET.has(directory)) {
       continue;
     }
 
-    const normalizedReference = normalizeRuntimeSkillReferencePath(relativePath);
-    if (normalizedReference) {
-      references.add(normalizedReference);
-      if (references.size > SKILL_SUBDIR_MAX_ENTRIES) {
-        throw new RangeError(
-          `Skill references may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
-        );
-      }
+    const normalizedReference = normalizeStrictRuntimeSkillReferencePath(relativePath);
+    if (!normalizedReference || references.has(normalizedReference)) {
+      continue;
+    }
+
+    const directoryEntryCount = (entryCountsByDirectory.get(directory) ?? 0) + 1;
+    if (directoryEntryCount > SKILL_SUBDIR_MAX_ENTRIES) {
+      throw new RangeError(
+        `Project skill ${directory}/ may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
+      );
+    }
+    entryCountsByDirectory.set(directory, directoryEntryCount);
+
+    references.add(normalizedReference);
+    if (references.size > SKILL_LOADABLE_REFERENCE_MAX_ENTRIES) {
+      throw new RangeError(
+        `Project skill may advertise at most ${SKILL_LOADABLE_REFERENCE_MAX_ENTRIES} readable files`,
+      );
     }
   }
 
@@ -251,20 +422,62 @@ async function listProjectSkillReferences(input: {
     return [];
   }
 
-  const allFiles = await input.options.getProjectFiles({
-    projectId,
-    authToken: input.context.authToken,
-    branchId: input.context.branchId,
-    maximumEntries: SKILL_SUBDIR_MAX_ENTRIES,
-    pathPrefix: `${skillDir}/references`,
-    abortSignal: input.budget.abortSignal,
-    timeoutMs: getRemainingSkillOperationMs(input.budget),
-  });
+  const allFiles = snapshotProjectFileList(
+    await input.options.getProjectFiles({
+      projectId,
+      authToken: input.context.authToken,
+      branchId: input.context.branchId,
+      maximumEntries: SKILL_SUBDIR_MAX_ENTRIES,
+      pathPrefix: skillDir,
+      abortSignal: input.budget.abortSignal,
+      timeoutMs: getRemainingSkillOperationMs(input.budget),
+    }),
+  );
 
   return collectProjectSkillReferences({
     allFiles,
     skillDir,
   });
+}
+
+function isValidLoadedProjectSkill(input: {
+  options: RuntimeProjectSkillLoaderOptions;
+  source: ProjectSkillSource;
+  skillId: string;
+  content: string;
+}): boolean {
+  if (input.source.kind === "flat" || input.source.kind === "explicit-flat") {
+    const valid = buildLegacyRuntimeFlatSkillDefinition({
+      id: input.skillId,
+      content: input.content,
+      skillDocumentParserProvider: input.options.skillDocumentParserProvider,
+    }) !== null;
+    if (!valid) {
+      input.options.logger?.warn?.(
+        "Project flat skill changed to invalid metadata; refusing to load it",
+        { skillId: input.skillId },
+      );
+    }
+    return valid;
+  }
+
+  const skillDir = getSkillDir(input.source, input.skillId);
+  const directoryName = skillDir?.split("/").at(-1);
+  if (
+    !directoryName ||
+    !isValidStrictRuntimeSkillFileDocument(input.content, directoryName, {
+      skillDocumentParserProvider: input.options.skillDocumentParserProvider,
+      providerSafeName: isProviderSafeCatalogSkillSource(input.source),
+    })
+  ) {
+    input.options.logger?.warn?.(
+      "Project skill changed to invalid runtime metadata; refusing to load it",
+      { skillId: input.skillId },
+    );
+    return false;
+  }
+
+  return true;
 }
 
 async function loadProjectSkill(input: {
@@ -274,31 +487,63 @@ async function loadProjectSkill(input: {
   budget: SkillOperationBudget;
 }): Promise<RuntimeLoadedProjectSkill | null> {
   const projectId = input.context.projectId;
-  if (!projectId) {
+  if (!projectId || !isSafeRuntimeSkillId(input.skillId)) {
     return null;
   }
 
   try {
-    const catalogSkillDir = resolveCatalogSkillDir(input.context, input.skillId);
-    if (catalogSkillDir) {
-      const catalogSkill = await input.options.getProjectFile({
+    const catalogSkillSource = resolveCatalogSkillSource(input.context, input.skillId);
+    if (catalogSkillSource?.kind === "explicit-flat") {
+      const catalogSkill = await getExpectedProjectFile(input.options, {
         projectId,
         authToken: input.context.authToken,
         branchId: input.context.branchId,
-        path: `${catalogSkillDir}/SKILL.md`,
+        path: catalogSkillSource.skillPath,
         ...getBoundedProjectSkillReadOptions(input.budget),
       });
-      if (catalogSkill?.content) {
+      if (
+        catalogSkill?.content &&
+        isValidLoadedProjectSkill({
+          options: input.options,
+          source: catalogSkillSource,
+          skillId: input.skillId,
+          content: catalogSkill.content,
+        })
+      ) {
+        assertRuntimeSkillContent(catalogSkill.content, "Skill document");
+        return { instructions: catalogSkill.content, references: [] };
+      }
+      return null;
+    }
+    if (catalogSkillSource?.kind === "explicit") {
+      const catalogSkill = await getExpectedProjectFile(input.options, {
+        projectId,
+        authToken: input.context.authToken,
+        branchId: input.context.branchId,
+        path: `${catalogSkillSource.skillDir}/SKILL.md`,
+        ...getBoundedProjectSkillReadOptions(input.budget),
+      });
+      if (
+        catalogSkill?.content &&
+        isValidLoadedProjectSkill({
+          options: input.options,
+          source: catalogSkillSource,
+          skillId: input.skillId,
+          content: catalogSkill.content,
+        })
+      ) {
         assertRuntimeSkillContent(catalogSkill.content, "Skill document");
         return {
           instructions: catalogSkill.content,
           references: await listProjectSkillReferences(input),
         };
       }
+      return null;
     }
 
     for (const skillsPath of getSkillPaths(input.options)) {
-      const directorySkill = await input.options.getProjectFile({
+      const directorySource: ProjectSkillSource = { kind: "directory", skillsPath };
+      const directorySkill = await getExpectedProjectFile(input.options, {
         projectId,
         authToken: input.context.authToken,
         branchId: input.context.branchId,
@@ -307,6 +552,16 @@ async function loadProjectSkill(input: {
       });
 
       if (directorySkill?.content) {
+        if (
+          !isValidLoadedProjectSkill({
+            options: input.options,
+            source: directorySource,
+            skillId: input.skillId,
+            content: directorySkill.content,
+          })
+        ) {
+          return null;
+        }
         assertRuntimeSkillContent(directorySkill.content, "Skill document");
         return {
           instructions: directorySkill.content,
@@ -314,7 +569,8 @@ async function loadProjectSkill(input: {
         };
       }
 
-      const flatSkill = await input.options.getProjectFile({
+      const flatSource: ProjectSkillSource = { kind: "flat", skillsPath };
+      const flatSkill = await getExpectedProjectFile(input.options, {
         projectId,
         authToken: input.context.authToken,
         branchId: input.context.branchId,
@@ -323,6 +579,16 @@ async function loadProjectSkill(input: {
       });
 
       if (flatSkill?.content) {
+        if (
+          !isValidLoadedProjectSkill({
+            options: input.options,
+            source: flatSource,
+            skillId: input.skillId,
+            content: flatSkill.content,
+          })
+        ) {
+          return null;
+        }
         assertRuntimeSkillContent(flatSkill.content, "Skill document");
         return {
           instructions: flatSkill.content,
@@ -331,7 +597,13 @@ async function loadProjectSkill(input: {
       }
     }
   } catch (error) {
+    input.budget.throwIfTerminated();
     if (isAccessDeniedError(error, input.options)) {
+      if (
+        hasOwnProperty(input.context.skillSourcePaths ?? {}, input.skillId)
+      ) {
+        throw error;
+      }
       input.options.logger?.warn?.(
         "Falling back to builtin skill after project skill lookup was denied",
         {
@@ -357,7 +629,12 @@ async function loadProjectSkillReference(input: {
   budget: SkillOperationBudget;
 }): Promise<string | null> {
   const projectId = input.context.projectId;
-  if (!projectId) {
+  if (
+    !projectId ||
+    !isSafeRuntimeSkillId(input.skillId) ||
+    normalizeStrictRuntimeSkillReferencePath(input.normalizedFile) !== input.normalizedFile ||
+    !isRuntimeSkillReadableFilePath(input.normalizedFile)
+  ) {
     return null;
   }
 
@@ -368,19 +645,23 @@ async function loadProjectSkillReference(input: {
       return null;
     }
 
-    const projectFile = await input.options.getProjectFile({
+    const projectFile = await getExpectedProjectFile(input.options, {
       projectId,
       authToken: input.context.authToken,
       branchId: input.context.branchId,
       path: `${skillDir}/${input.normalizedFile}`,
       ...getBoundedProjectSkillReadOptions(input.budget),
     });
-    if (projectFile?.content) {
+    if (projectFile !== null) {
       assertRuntimeSkillContent(projectFile.content, "Skill reference");
       return projectFile.content;
     }
   } catch (error) {
+    input.budget.throwIfTerminated();
     if (!isAccessDeniedError(error, input.options)) {
+      throw error;
+    }
+    if (hasOwnProperty(input.context.skillSourcePaths ?? {}, input.skillId)) {
       throw error;
     }
 

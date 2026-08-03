@@ -1,4 +1,4 @@
-import { basename } from "node:path";
+import { basename } from "#veryfront/compat/path";
 import {
   DEFAULT_PROJECT_STEERING_PATHS,
   type ProjectSteeringPaths,
@@ -11,13 +11,20 @@ import type {
 } from "./project-files-client.ts";
 import { createRuntimeProjectFileListingBudget } from "./project-files-client.ts";
 import {
+  isRuntimeProjectFileContent,
+  isRuntimeProjectFilePath,
+  MAX_RUNTIME_PROJECT_FILES_TOTAL_ITEMS,
+} from "./project-files-client.ts";
+import {
   listRuntimeBuiltinSkillReferences,
   readRuntimeBuiltinDirectorySkill,
   readRuntimeBuiltinFlatSkill,
   readRuntimeBuiltinSkillEntries,
 } from "./builtin-skill-files.ts";
 import {
-  buildRuntimeSkillDefinition,
+  buildLegacyRuntimeFlatSkillDefinition,
+  buildRuntimeDirectorySkillDefinition,
+  normalizeStrictRuntimeSkillReferencePath,
   type RuntimeSkillDefinition,
   type RuntimeSkillMetadataLogger,
 } from "./skill-metadata.ts";
@@ -33,12 +40,16 @@ import {
   SKILL_CATALOG_MAX_SKILLS,
   SKILL_DOCUMENT_MAX_CHARACTERS,
   SKILL_FILE_OPERATION_TIMEOUT_MS,
-  SKILL_ROOT_PATH_MAX_LENGTH,
+  SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
   SKILL_STEERING_PATH_MAX_ENTRIES,
   SKILL_SUBDIR_MAX_ENTRIES,
 } from "#veryfront/skill/limits.ts";
+import { isOwnDataPropertyDescriptor } from "./data-property-descriptor.ts";
 
 const utf8Encoder = new TextEncoder();
+const ArrayIsArray = Array.isArray;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ReflectApply = Reflect.apply;
 
 class RuntimeSkillCatalogBudget {
   private documentCharacters = 0;
@@ -117,6 +128,11 @@ function retainExistingDefinition(
   for (const _reference of definition.references ?? []) budget.retainPath();
   budget.retainDefinition(definition);
 }
+import { SKILL_READABLE_DIRS } from "#veryfront/skill/types.ts";
+import { SkillIdAdmission } from "#veryfront/skill/id-admission.ts";
+import type { SkillDocumentParserProvider } from "#veryfront/extensions/parser/skill-document-parser.ts";
+
+const PROJECT_SKILL_FETCH_CONCURRENCY = 16;
 
 /** Public API contract for runtime project steering lookup. */
 export type RuntimeProjectSteeringLookup = {
@@ -135,6 +151,7 @@ export type RuntimeProjectSkillCatalogOptions = {
   steeringPaths?: Pick<ProjectSteeringPaths, "skills">;
   logger?: RuntimeSkillMetadataLogger;
   operationBudget?: SkillOperationBudget;
+  skillDocumentParserProvider?: SkillDocumentParserProvider;
 };
 
 /** Options accepted by runtime project instructions. */
@@ -148,36 +165,159 @@ function sortSkillsById(skills: Iterable<RuntimeSkillDefinition>): RuntimeSkillD
   return [...skills].sort((a, b) => a.id.localeCompare(b.id));
 }
 
-function getSkillPaths(options: Pick<RuntimeProjectSkillCatalogOptions, "steeringPaths">) {
-  const paths = options.steeringPaths?.skills ?? DEFAULT_PROJECT_STEERING_PATHS.skills;
-  assertSteeringPathCount(paths);
-  for (const path of paths) assertCatalogPrefix(path);
-  return paths;
-}
-
-function assertCatalogPrefix(path: string): void {
-  const segments = path.split("/");
-  if (
-    path.length === 0 || path.length > SKILL_ROOT_PATH_MAX_LENGTH || path.startsWith("/") ||
-    path.endsWith("/") || path.includes("\\") || path.includes("\0") ||
-    segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")
-  ) {
-    throw new RangeError("Project skill catalog prefixes must be bounded relative paths");
+function requireBuiltinSkills(
+  value: readonly RuntimeSkillDefinition[],
+): readonly RuntimeSkillDefinition[] {
+  if (!ArrayIsArray(value)) {
+    throw new TypeError("builtinSkills must be an array");
   }
-}
-
-function getInstructionPaths(options: RuntimeProjectInstructionsOptions) {
-  const paths = options.steeringPaths?.instructions ?? DEFAULT_PROJECT_STEERING_PATHS.instructions;
-  assertSteeringPathCount(paths);
-  return paths;
-}
-
-function assertSteeringPathCount(paths: readonly string[]): void {
-  if (paths.length > SKILL_STEERING_PATH_MAX_ENTRIES) {
+  if (value.length > SKILL_SUBDIR_MAX_ENTRIES) {
     throw new RangeError(
-      `Project steering paths may contain at most ${SKILL_STEERING_PATH_MAX_ENTRIES} entries`,
+      `builtinSkills accepts at most ${SKILL_SUBDIR_MAX_ENTRIES} definitions`,
     );
   }
+  return value;
+}
+
+function snapshotProjectFileList(
+  value: readonly RuntimeProjectFileListItem[] | null,
+): readonly RuntimeProjectFileListItem[] | null {
+  if (value === null) return null;
+  if (!ArrayIsArray(value)) {
+    throw new TypeError("Project file listing must be an array or null");
+  }
+  if (value.length > MAX_RUNTIME_PROJECT_FILES_TOTAL_ITEMS) {
+    throw new RangeError(
+      `Project file listing exceeds ${MAX_RUNTIME_PROJECT_FILES_TOTAL_ITEMS} files`,
+    );
+  }
+
+  const snapshot: RuntimeProjectFileListItem[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const itemDescriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      value,
+      index,
+    ]) as PropertyDescriptor | undefined;
+    const item = isOwnDataPropertyDescriptor(itemDescriptor) ? itemDescriptor.value : undefined;
+    if (!item || typeof item !== "object" || ArrayIsArray(item)) {
+      throw new TypeError(`Project file listing item ${index} must be an object`);
+    }
+    const pathDescriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      item,
+      "path",
+    ]) as PropertyDescriptor | undefined;
+    const path = isOwnDataPropertyDescriptor(pathDescriptor) ? pathDescriptor.value : undefined;
+    if (!isRuntimeProjectFilePath(path)) {
+      throw new TypeError(`Project file listing item ${index} has an invalid path`);
+    }
+    snapshot.push(Object.freeze({ path }));
+  }
+  return Object.freeze(snapshot);
+}
+
+function normalizeSteeringPaths(
+  value: readonly string[],
+  label: string,
+): readonly string[] {
+  if (!ArrayIsArray(value)) {
+    throw new TypeError(`${label} paths must be an array`);
+  }
+  if (value.length > SKILL_STEERING_PATH_MAX_ENTRIES) {
+    throw new RangeError(
+      `${label} accepts at most ${SKILL_STEERING_PATH_MAX_ENTRIES} paths`,
+    );
+  }
+
+  const paths: string[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      value,
+      index,
+    ]) as PropertyDescriptor | undefined;
+    if (
+      !isOwnDataPropertyDescriptor(descriptor) ||
+      typeof descriptor.value !== "string" ||
+      normalizeStrictRuntimeSkillReferencePath(descriptor.value) !== descriptor.value
+    ) {
+      throw new TypeError(`Invalid ${label} path at index ${index}`);
+    }
+    paths.push(descriptor.value);
+  }
+  return Object.freeze(paths);
+}
+
+function getSkillPaths(
+  options: Pick<RuntimeProjectSkillCatalogOptions, "steeringPaths">,
+): readonly string[] {
+  return normalizeSteeringPaths(
+    options.steeringPaths?.skills ?? DEFAULT_PROJECT_STEERING_PATHS.skills,
+    "project skill steering",
+  );
+}
+
+function getInstructionPaths(options: RuntimeProjectInstructionsOptions): readonly string[] {
+  return normalizeSteeringPaths(
+    options.steeringPaths?.instructions ?? DEFAULT_PROJECT_STEERING_PATHS.instructions,
+    "project instruction steering",
+  );
+}
+
+function claimProjectSkillId(claimedIds: Set<string>, id: string): boolean {
+  if (claimedIds.has(id)) return false;
+  if (claimedIds.size >= SKILL_SUBDIR_MAX_ENTRIES) {
+    throw new RangeError(
+      `Project may declare at most ${SKILL_SUBDIR_MAX_ENTRIES} skills`,
+    );
+  }
+  claimedIds.add(id);
+  return true;
+}
+
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  fn: (value: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  let stopped = false;
+  let didFail = false;
+  let firstFailure: unknown;
+  const workers = Array.from(
+    { length: Math.min(concurrency, values.length) },
+    async () => {
+      while (!stopped) {
+        const index = nextIndex;
+        if (index >= values.length) {
+          return;
+        }
+        nextIndex += 1;
+        try {
+          results[index] = await fn(values[index]!, index);
+        } catch (error) {
+          if (!didFail) {
+            didFail = true;
+            firstFailure = error;
+          }
+          stopped = true;
+        }
+      }
+    },
+  );
+  await Promise.all(workers);
+  if (didFail) {
+    throw firstFailure;
+  }
+  return results;
+}
+
+function isImmediateDirectorySkillPath(path: string, prefixWithSlash: string): boolean {
+  if (!path.startsWith(prefixWithSlash)) {
+    return false;
+  }
+
+  const segments = path.slice(prefixWithSlash.length).split("/");
+  return segments.length === 2 && segments[0]!.length > 0 && segments[1] === "SKILL.md";
 }
 
 function assertCatalogContent(content: string, label: string): void {
@@ -196,63 +336,60 @@ function createCatalogBudget(existing?: SkillOperationBudget): SkillOperationBud
 export function loadRuntimeBuiltinSkillCatalog(input: {
   skillsDir: string;
   logger?: RuntimeSkillMetadataLogger;
+  skillDocumentParserProvider?: SkillDocumentParserProvider;
 }): RuntimeSkillDefinition[] {
   const catalogBudget = new RuntimeSkillCatalogBudget();
   const entriesResult = readRuntimeBuiltinSkillEntries(input.skillsDir);
   if (!entriesResult.ok) {
     input.logger?.error?.("Failed to load built-in skills", {
       error: entriesResult.errorMessage,
-      skillsDir: input.skillsDir,
     });
     return [];
   }
 
-  const definitions = entriesResult.entries.flatMap((entry) => {
-    if (entry.isFile() && entry.name.endsWith(".md")) {
-      const id = basename(entry.name, ".md");
-      const content = readRuntimeBuiltinFlatSkill(input.skillsDir, id);
-      if (content === null) {
-        return [];
-      }
-      catalogBudget.retainDocument(content);
-
-      const definition = buildRuntimeSkillDefinition({
-        id,
-        content,
-        logger: input.logger,
-      });
-
-      if (!definition) return [];
+  const definitionsById = new Map<string, RuntimeSkillDefinition>();
+  for (const entry of entriesResult.entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+    const id = basename(entry.name, ".md");
+    const content = readRuntimeBuiltinFlatSkill(input.skillsDir, id);
+    if (content === null) continue;
+    catalogBudget.retainDocument(content);
+    const definition = buildLegacyRuntimeFlatSkillDefinition({
+      id,
+      content,
+      logger: input.logger,
+      skillDocumentParserProvider: input.skillDocumentParserProvider,
+    });
+    if (definition) {
       catalogBudget.retainPath();
       catalogBudget.retainDefinition(definition);
-      return [definition];
+      definitionsById.set(id, definition);
     }
+  }
 
-    if (entry.isDirectory()) {
-      const content = readRuntimeBuiltinDirectorySkill(input.skillsDir, entry.name);
-      if (content === null) {
-        return [];
-      }
-      catalogBudget.retainDocument(content);
-      const references = listRuntimeBuiltinSkillReferences(input.skillsDir, entry.name);
-      for (const _reference of references) catalogBudget.retainPath();
-
-      const definition = buildRuntimeSkillDefinition({
-        id: entry.name,
-        content,
-        references,
-        logger: input.logger,
-      });
-
-      if (!definition) return [];
+  for (const entry of entriesResult.entries) {
+    if (!entry.isDirectory()) continue;
+    const content = readRuntimeBuiltinDirectorySkill(input.skillsDir, entry.name);
+    if (content === null) continue;
+    catalogBudget.retainDocument(content);
+    definitionsById.delete(entry.name);
+    const references = listRuntimeBuiltinSkillReferences(input.skillsDir, entry.name);
+    for (const _reference of references) catalogBudget.retainPath();
+    const definition = buildRuntimeDirectorySkillDefinition({
+      id: entry.name,
+      content,
+      references,
+      logger: input.logger,
+      skillDocumentParserProvider: input.skillDocumentParserProvider,
+    });
+    if (definition) {
       catalogBudget.retainPath();
       catalogBudget.retainDefinition(definition);
-      return [definition];
+      definitionsById.set(entry.name, definition);
     }
+  }
 
-    return [];
-  });
-  return sortSkillsById(definitions);
+  return sortSkillsById(definitionsById.values());
 }
 
 /** Return runtime project instructions. */
@@ -273,6 +410,14 @@ export async function getRuntimeProjectInstructions(
       })
     );
 
+    if (file !== null && file.path !== filePath) {
+      throw new TypeError(
+        `Project instruction response path "${file.path}" did not match requested path "${filePath}"`,
+      );
+    }
+    if (file !== null && !isRuntimeProjectFileContent(file.content)) {
+      throw new RangeError("Project instruction content exceeds the shared Skill file budget");
+    }
     if (file?.content) {
       assertCatalogContent(file.content, "Project instructions");
       return file.content;
@@ -288,24 +433,27 @@ export async function getRuntimeProjectSkillCatalog(
 ): Promise<RuntimeSkillDefinition[]> {
   const budget = createCatalogBudget(input.operationBudget);
   const catalogBudget = new RuntimeSkillCatalogBudget();
+  const builtinSkills = requireBuiltinSkills(input.builtinSkills);
   const skillPrefixes = getSkillPaths(input);
-  for (const definition of input.builtinSkills) retainExistingDefinition(catalogBudget, definition);
+  for (const definition of builtinSkills) retainExistingDefinition(catalogBudget, definition);
   const filesByPath = new Map<string, RuntimeProjectFileListItem>();
   const listingBudget = createRuntimeProjectFileListingBudget();
   let hasAvailableListing = false;
   for (const prefix of new Set([...skillPrefixes, "agents"])) {
     const prefixWithSlash = `${prefix}/`;
-    const files = await budget.run((abortSignal) =>
-      input.getProjectFiles({
-        projectId: input.projectId,
-        authToken: input.authToken,
-        branchId: input.branchId,
-        pathPrefix: prefix,
-        maximumEntries: SKILL_SUBDIR_MAX_ENTRIES,
-        listingBudget,
-        abortSignal,
-        timeoutMs: budget.remainingMs(),
-      })
+    const files = snapshotProjectFileList(
+      await budget.run((abortSignal) =>
+        input.getProjectFiles({
+          projectId: input.projectId,
+          authToken: input.authToken,
+          branchId: input.branchId,
+          pathPrefix: prefix,
+          maximumEntries: SKILL_SUBDIR_MAX_ENTRIES,
+          listingBudget,
+          abortSignal,
+          timeoutMs: budget.remainingMs(),
+        })
+      ),
     );
     if (!files) {
       continue;
@@ -318,22 +466,23 @@ export async function getRuntimeProjectSkillCatalog(
       }
       if (!filesByPath.has(file.path)) catalogBudget.retainPath();
       filesByPath.set(file.path, file);
-      if (filesByPath.size > SKILL_SUBDIR_MAX_ENTRIES) {
-        throw new RangeError(
-          `Project skill file listing may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
-        );
-      }
     }
   }
   if (!hasAvailableListing) {
-    return [...input.builtinSkills];
+    return [...builtinSkills];
   }
-  const allFiles = [...filesByPath.values()];
+  const allFiles = Object.freeze([...filesByPath.values()]);
   if (allFiles.length === 0) {
-    return [...input.builtinSkills];
+    return [...builtinSkills];
   }
 
   const projectSkillsById = new Map<string, RuntimeSkillDefinition>();
+  // A declared project skill shadows lower-precedence flat files and built-ins
+  // even when its content is missing or invalid. Falling through on a broken
+  // higher-precedence policy would re-enable capabilities unexpectedly.
+  const claimedProjectSkillIds = new Set<string>();
+  const agentIds = getProjectAgentIds(allFiles);
+  assertUniqueCapabilityNamespaces(agentIds);
 
   for (const prefix of skillPrefixes) {
     const prefixWithSlash = `${prefix}/`;
@@ -350,107 +499,199 @@ export async function getRuntimeProjectSkillCatalog(
       .map((file) => file.path);
 
     const dirPaths = allFiles
-      .filter((file) => file.path.startsWith(prefixWithSlash) && file.path.endsWith("/SKILL.md"))
+      .filter((file) => isImmediateDirectorySkillPath(file.path, prefixWithSlash))
       .map((file) => file.path);
 
-    const skillPaths = [...dirPaths.sort(), ...flatPaths.sort()];
-    if (skillPaths.length === 0) {
+    const candidates = [...dirPaths.sort(), ...flatPaths.sort()].flatMap((path) => {
+      const isFlat = path.endsWith(".md") && !path.endsWith("/SKILL.md");
+      const id = getProjectSkillId(path, isFlat);
+      if (!id || !claimProjectSkillId(claimedProjectSkillIds, id)) return [];
+      return [{ id, isFlat, path }];
+    });
+    if (candidates.length === 0) {
       continue;
     }
 
-    for (const path of skillPaths) {
-      const file = await budget.run((abortSignal) =>
-        input.getProjectFile({
-          projectId: input.projectId,
-          authToken: input.authToken,
-          branchId: input.branchId,
-          path,
-          maximumContentCharacters: SKILL_DOCUMENT_MAX_CHARACTERS,
-          abortSignal,
-          timeoutMs: budget.remainingMs(),
-        })
-      );
+    const skillFiles = await mapWithConcurrency(
+      candidates,
+      PROJECT_SKILL_FETCH_CONCURRENCY,
+      ({ path }) =>
+        budget.run((abortSignal) =>
+          input.getProjectFile({
+            projectId: input.projectId,
+            authToken: input.authToken,
+            branchId: input.branchId,
+            path,
+            maximumContentCharacters: SKILL_DOCUMENT_MAX_CHARACTERS,
+            abortSignal,
+            timeoutMs: budget.remainingMs(),
+          })
+        ),
+    );
+
+    for (let index = 0; index < skillFiles.length; index += 1) {
+      const candidate = candidates[index]!;
+      const file = skillFiles[index];
       if (!file?.content) {
+        continue;
+      }
+      if (file.path !== candidate.path) {
+        input.logger?.error?.(
+          "Project skill response path did not match its request; skipping skill",
+          {
+            expectedPath: candidate.path,
+            responsePath: file.path,
+          },
+        );
+        continue;
+      }
+      if (!isRuntimeProjectFileContent(file.content)) {
+        input.logger?.error?.("Project skill content exceeded its budget; skipping skill", {
+          path: candidate.path,
+        });
         continue;
       }
       assertCatalogContent(file.content, "Skill document");
       catalogBudget.retainDocument(file.content);
 
-      const isFlat = file.path.endsWith(".md") && !file.path.endsWith("/SKILL.md");
-      const id = getProjectSkillId(file.path, isFlat);
-      if (!id) {
-        continue;
-      }
+      const definition = candidate.isFlat
+        ? buildLegacyRuntimeFlatSkillDefinition({
+          id: candidate.id,
+          content: file.content,
+          sourcePath: candidate.path,
+          logger: input.logger,
+          skillDocumentParserProvider: input.skillDocumentParserProvider,
+        })
+        : buildRuntimeDirectorySkillDefinition({
+          id: candidate.id,
+          content: file.content,
+          references: getProjectSkillReferences({
+            allFiles,
+            file: { ...file, path: candidate.path },
+            isFlat: false,
+          }),
+          sourcePath: candidate.path,
+          logger: input.logger,
+          skillDocumentParserProvider: input.skillDocumentParserProvider,
+        });
 
-      const definition = buildRuntimeSkillDefinition({
-        id,
-        content: file.content,
-        references: getProjectSkillReferences({ allFiles, file, isFlat }),
-        sourcePath: file.path,
-        logger: input.logger,
-      });
-
-      if (definition && !projectSkillsById.has(definition.id)) {
+      if (definition) {
         catalogBudget.retainDefinition(definition);
         projectSkillsById.set(definition.id, definition);
       }
     }
+  }
+
+  const skillIdAdmission = new SkillIdAdmission();
+  for (const id of claimedProjectSkillIds) {
+    skillIdAdmission.claim({ id, source: "project-global skill" });
   }
 
   // Colocated (agent-owned) skills: agents/{id}/SKILL.md (the agent's own
   // skill) and agents/{id}/skills/{sub}/SKILL.md. Registered with owner
   // metadata so per-run filtering and the source-path loader can apply the
   // one owner-aware rule; ids match framework/control-plane discovery.
-  const colocatedPaths = allFiles
-    .map((file) => file.path)
-    .filter((path) => getColocatedSkillIdentity(path) !== null)
-    .sort();
+  const colocatedCandidates = allFiles
+    .map((file) => ({
+      identity: getColocatedSkillIdentity(file.path),
+      path: file.path,
+    }))
+    .filter(
+      (
+        candidate,
+      ): candidate is { identity: ColocatedSkillIdentity; path: string } =>
+        candidate.identity !== null && agentIds.has(candidate.identity.ownerAgentId),
+    )
+    .sort((left, right) => left.path.localeCompare(right.path))
+    .filter((candidate) => {
+      const admission = skillIdAdmission.claim({
+        id: candidate.identity.id,
+        source: `agent-owned skill for agent "${candidate.identity.ownerAgentId}"`,
+        ownerAgentId: candidate.identity.ownerAgentId,
+      });
+      if (!admission.accepted) {
+        projectSkillsById.delete(candidate.identity.id);
+        input.logger?.error?.(admission.error.message, {
+          skillId: candidate.identity.id,
+          existingOwnerAgentId: admission.error.existing.ownerAgentId,
+          incomingOwnerAgentId: admission.error.incoming.ownerAgentId,
+        });
+        return false;
+      }
+      return claimProjectSkillId(claimedProjectSkillIds, candidate.identity.id);
+    })
+    .filter((candidate) => !skillIdAdmission.isRejected(candidate.identity.id));
 
-  if (colocatedPaths.length > 0) {
-    for (const path of colocatedPaths) {
-      const file = await budget.run((abortSignal) =>
-        input.getProjectFile({
-          projectId: input.projectId,
-          authToken: input.authToken,
-          branchId: input.branchId,
-          path,
-          maximumContentCharacters: SKILL_DOCUMENT_MAX_CHARACTERS,
-          abortSignal,
-          timeoutMs: budget.remainingMs(),
-        })
-      );
+  if (colocatedCandidates.length > 0) {
+    const colocatedFiles = await mapWithConcurrency(
+      colocatedCandidates,
+      PROJECT_SKILL_FETCH_CONCURRENCY,
+      ({ path }) =>
+        budget.run((abortSignal) =>
+          input.getProjectFile({
+            projectId: input.projectId,
+            authToken: input.authToken,
+            branchId: input.branchId,
+            path,
+            maximumContentCharacters: SKILL_DOCUMENT_MAX_CHARACTERS,
+            abortSignal,
+            timeoutMs: budget.remainingMs(),
+          })
+        ),
+    );
+
+    for (let index = 0; index < colocatedFiles.length; index += 1) {
+      const candidate = colocatedCandidates[index]!;
+      const file = colocatedFiles[index];
       if (!file?.content) {
+        continue;
+      }
+      if (file.path !== candidate.path) {
+        input.logger?.error?.(
+          "Project skill response path did not match its request; skipping skill",
+          {
+            expectedPath: candidate.path,
+            responsePath: file.path,
+          },
+        );
+        continue;
+      }
+      if (!isRuntimeProjectFileContent(file.content)) {
+        input.logger?.error?.("Project skill content exceeded its budget; skipping skill", {
+          path: candidate.path,
+        });
         continue;
       }
       assertCatalogContent(file.content, "Colocated skill document");
       catalogBudget.retainDocument(file.content);
-      const identity = getColocatedSkillIdentity(file.path);
-      if (!identity) {
-        continue;
-      }
 
-      const definition = buildRuntimeSkillDefinition({
-        id: identity.id,
+      const definition = buildRuntimeDirectorySkillDefinition({
+        id: candidate.identity.id,
         content: file.content,
-        references: getProjectSkillReferences({ allFiles, file, isFlat: false }),
-        ownerAgentId: identity.ownerAgentId,
-        shortName: identity.shortName,
-        sourcePath: file.path,
+        references: getProjectSkillReferences({
+          allFiles,
+          file: { ...file, path: candidate.path },
+          isFlat: false,
+        }),
+        ownerAgentId: candidate.identity.ownerAgentId,
+        shortName: candidate.identity.shortName,
+        sourcePath: candidate.path,
         logger: input.logger,
+        skillDocumentParserProvider: input.skillDocumentParserProvider,
       });
 
-      if (definition && !projectSkillsById.has(definition.id)) {
+      if (definition) {
         catalogBudget.retainDefinition(definition);
         projectSkillsById.set(definition.id, definition);
       }
     }
   }
 
-  if (projectSkillsById.size === 0) {
-    return [...input.builtinSkills];
-  }
-
-  const mergedSkillsById = new Map(input.builtinSkills.map((skill) => [skill.id, skill]));
+  const mergedSkillsById = new Map(
+    builtinSkills
+      .filter((skill) => !claimedProjectSkillIds.has(skill.id))
+      .map((skill) => [skill.id, skill]),
+  );
   for (const skill of projectSkillsById.values()) {
     mergedSkillsById.set(skill.id, skill);
   }
@@ -472,12 +713,40 @@ function sanitizeCapabilityNamespace(agentId: string): string {
 
 const COLOCATED_OWN_SKILL_REGEX = /^agents\/([^/]+)\/SKILL\.md$/;
 const COLOCATED_NESTED_SKILL_REGEX = /^agents\/([^/]+)\/skills\/([^/]+)\/SKILL\.md$/;
+const COLOCATED_AGENT_DEFINITION_REGEX = /^agents\/([^/]+)\/AGENT\.md$/;
 
 type ColocatedSkillIdentity = {
   id: string;
   ownerAgentId: string;
   shortName: string;
 };
+
+function getProjectAgentIds(
+  allFiles: readonly RuntimeProjectFileListItem[],
+): ReadonlySet<string> {
+  const agentIds = new Set<string>();
+  for (const file of allFiles) {
+    const agentId = file.path.match(COLOCATED_AGENT_DEFINITION_REGEX)?.[1];
+    if (agentId) {
+      agentIds.add(agentId);
+    }
+  }
+  return agentIds;
+}
+
+function assertUniqueCapabilityNamespaces(agentIds: ReadonlySet<string>): void {
+  const ownersByNamespace = new Map<string, string>();
+  for (const agentId of [...agentIds].sort()) {
+    const namespace = sanitizeCapabilityNamespace(agentId);
+    const existingAgentId = ownersByNamespace.get(namespace);
+    if (existingAgentId && existingAgentId !== agentId) {
+      throw new TypeError(
+        `Agent ids "${existingAgentId}" and "${agentId}" collide after sanitized capability namespace "${namespace}"`,
+      );
+    }
+    ownersByNamespace.set(namespace, agentId);
+  }
+}
 
 function getColocatedSkillIdentity(path: string): ColocatedSkillIdentity | null {
   const nested = path.match(COLOCATED_NESTED_SKILL_REGEX);
@@ -521,16 +790,35 @@ function getProjectSkillReferences(input: {
   }
 
   const skillRootPrefix = input.file.path.replace(/SKILL\.md$/, "");
-  const refsPrefix = `${skillRootPrefix}references/`;
+  const references = new Set<string>();
 
-  const references = input.allFiles
-    .filter((file) => file.path.startsWith(refsPrefix))
-    .map((file) => file.path.slice(skillRootPrefix.length))
-    .sort();
-  if (references.length > SKILL_SUBDIR_MAX_ENTRIES) {
-    throw new RangeError(
-      `Skill references may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
-    );
+  for (const directory of SKILL_READABLE_DIRS) {
+    const directoryPrefix = `${skillRootPrefix}${directory}/`;
+    let directoryEntryCount = 0;
+    for (const file of input.allFiles) {
+      if (!file.path.startsWith(directoryPrefix)) {
+        continue;
+      }
+
+      const relativePath = file.path.slice(skillRootPrefix.length);
+      if (references.has(relativePath)) {
+        continue;
+      }
+      directoryEntryCount += 1;
+      if (directoryEntryCount > SKILL_SUBDIR_MAX_ENTRIES) {
+        throw new RangeError(
+          `Project skill ${directory}/ may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
+        );
+      }
+
+      references.add(relativePath);
+      if (references.size > SKILL_LOADABLE_REFERENCE_MAX_ENTRIES) {
+        throw new RangeError(
+          `Project skill may advertise at most ${SKILL_LOADABLE_REFERENCE_MAX_ENTRIES} readable files`,
+        );
+      }
+    }
   }
-  return references;
+
+  return [...references].sort();
 }

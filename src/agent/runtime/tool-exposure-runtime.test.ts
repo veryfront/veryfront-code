@@ -59,6 +59,7 @@ function restrictedSkillMessages(input: string): Message[] {
         toolName: "load_skill",
         result: {
           skillId: "restricted-runtime-test",
+          instructions: "# Restricted runtime test",
           allowedTools: ["form_input"],
           references: [],
           scripts: [],
@@ -72,6 +73,167 @@ function restrictedSkillMessages(input: string): Message[] {
     },
   ];
 }
+
+async function assertReferenceLoadPreservesActivePolicy(
+  mode: "generate" | "stream",
+): Promise<void> {
+  const observedTools: string[][] = [];
+  const loadInputs: unknown[] = [];
+  let dangerousExecutionCount = 0;
+  let step = 0;
+
+  function nextModelOutput(options: unknown): {
+    content: unknown[];
+    finishReason: "tool-calls" | "stop";
+  } {
+    observedTools.push(toolNames(options));
+    step += 1;
+    if (step === 1) {
+      return {
+        content: [{
+          type: "tool-call",
+          toolCallId: `${mode}-load-body`,
+          toolName: "load_skill",
+          input: { skillId: "restricted" },
+        }],
+        finishReason: "tool-calls",
+      };
+    }
+    if (step === 2) {
+      return {
+        content: [{
+          type: "tool-call",
+          toolCallId: `${mode}-load-reference`,
+          toolName: "load_skill",
+          input: { skillId: "restricted", file: "references/guide.md" },
+        }],
+        finishReason: "tool-calls",
+      };
+    }
+    if (step === 3) {
+      return {
+        content: [{
+          type: "tool-call",
+          toolCallId: `${mode}-dangerous-write`,
+          toolName: "dangerous_write",
+          input: {},
+        }],
+        finishReason: "tool-calls",
+      };
+    }
+    return {
+      content: [{ type: "text", text: "done" }],
+      finishReason: "stop",
+    };
+  }
+
+  const model: ModelRuntime = {
+    provider: "hosted",
+    modelId: `hosted/reference-policy-${mode}`,
+    async doGenerate(options: unknown) {
+      const output = nextModelOutput(options);
+      return {
+        ...output,
+        content: output.content.map((part) => {
+          if (
+            typeof part === "object" && part !== null &&
+            (part as { type?: unknown }).type === "tool-call"
+          ) {
+            return {
+              ...part,
+              input: JSON.stringify((part as { input: unknown }).input),
+            };
+          }
+          return part;
+        }),
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      };
+    },
+    async doStream(options: unknown) {
+      const output = nextModelOutput(options);
+      const parts = output.content.map((part) =>
+        typeof part === "object" && part !== null &&
+          (part as { type?: unknown }).type === "text"
+          ? { type: "text-delta", text: (part as { text: string }).text }
+          : part
+      );
+      return {
+        stream: createRuntimeStream([
+          ...parts,
+          { type: "finish", finishReason: output.finishReason },
+        ]),
+      };
+    },
+  };
+  try {
+    const assistant = agent(
+      {
+        id: `reference-policy-${mode}`,
+        model: `hosted/reference-policy-${mode}`,
+        system: "Use tools when needed.",
+        skills: true,
+        tools: {
+          load_skill: tool({
+            id: "load_skill",
+            description: "Load a skill body or one advertised reference",
+            inputSchema: defineSchema((v) =>
+              v.object({
+                skillId: v.string(),
+                file: v.string().optional(),
+              })
+            )(),
+            execute: (input) => {
+              loadInputs.push(input);
+              const file = (input as { file?: string }).file;
+              return file ? { skillId: "restricted", file, content: "reference contents" } : {
+                skillId: "restricted",
+                instructions: "# Restricted",
+                allowedTools: ["load_skill"],
+                references: ["references/guide.md"],
+                scripts: [],
+              };
+            },
+          }),
+          dangerous_write: tool({
+            id: "dangerous_write",
+            description: "Must remain unavailable under the active skill policy",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => {
+              dangerousExecutionCount += 1;
+              return { success: true };
+            },
+          }),
+        },
+        maxSteps: 4,
+        resolveModelTransport: () => ({ model }),
+        __vfToolLoadingMode: "eager",
+      } as AgentConfig & RuntimeToolFilterConfig,
+    );
+
+    if (mode === "generate") {
+      const response = await assistant.generate({ input: "Load the guide, then write" });
+      assertEquals(response.toolCalls[2]?.status, "error");
+    } else {
+      await (await assistant.stream({ input: "Load the guide, then write" }))
+        .toDataStreamResponse().text();
+    }
+
+    assertEquals(loadInputs, [
+      { skillId: "restricted" },
+      { skillId: "restricted", file: "references/guide.md" },
+    ]);
+    assertEquals(observedTools[2]?.includes("dangerous_write"), false);
+    assertEquals(dangerousExecutionCount, 0);
+  } finally {
+    toolRegistry.delete("load_skill");
+    toolRegistry.delete("dangerous_write");
+  }
+}
+
+it("reference loads preserve active skill policy in generate and stream execution", async () => {
+  await assertReferenceLoadPreservesActivePolicy("generate");
+  await assertReferenceLoadPreservesActivePolicy("stream");
+});
 
 it("deferred generate searches, exposes on the next step, and executes once", async () => {
   const observedTools: string[][] = [];

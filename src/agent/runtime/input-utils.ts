@@ -1,5 +1,9 @@
 import type { Message } from "../types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+import {
+  isRuntimeGeneratedUserMessage,
+  markRuntimeGeneratedUserMessage,
+} from "./runtime-message-origin.ts";
 
 export function normalizeInput(input: string | Message[]): Message[] {
   const now = Date.now();
@@ -20,11 +24,14 @@ export function normalizeInput(input: string | Message[]): Message[] {
       throw INVALID_ARGUMENT.create({ detail: "Message id cannot be empty." });
     }
 
-    return {
+    const normalized = {
       ...msg,
       id: msg.id ?? `msg_${now}_${index}`,
       timestamp: msg.timestamp ?? now,
     };
+    return isRuntimeGeneratedUserMessage(msg)
+      ? markRuntimeGeneratedUserMessage(normalized)
+      : normalized;
   });
 }
 

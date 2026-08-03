@@ -72,6 +72,7 @@ import { getRuntimeSourceIntegrationPolicyFromContext } from "../runtime/runtime
 import { buildHostedChildForkInstructions } from "./child-fork-instructions.ts";
 import {
   type HostedProjectReferenceResolver,
+  requireConfirmedHostedProjectReference,
   resolveHostedProjectReference,
 } from "./project-reference-resolver.ts";
 
@@ -271,8 +272,9 @@ async function applyRequestedProjectId<TContext extends DefaultHostedInvokeAgent
     "context" | "refreshProjectSkillIds"
   >,
   projectId: string,
+  projectSlug?: string,
 ): Promise<void> {
-  if (!applyAgentProjectContextChange(options.context, projectId)) {
+  if (!applyAgentProjectContextChange(options.context, projectId, projectSlug)) {
     return;
   }
 
@@ -319,7 +321,8 @@ async function prepareForkToolSources<TContext extends DefaultHostedInvokeAgentC
     createRemoteToolSource: options.createRemoteToolSource ?? createRemoteMCPToolSource,
     createToolsFromRemoteDefinitions: options.createToolsFromRemoteDefinitions ??
       createToolsFromRemoteDefinitions,
-    onConfirmedStudioProjectSwitch: (projectId) => applyRequestedProjectId(options, projectId),
+    onConfirmedStudioProjectSwitch: (projectId, confirmedProject) =>
+      applyRequestedProjectId(options, projectId, confirmedProject?.projectSlug),
   });
 }
 
@@ -460,7 +463,8 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
     resolveModelId: options.resolveModelId,
     resolveProvider: options.resolveProvider,
     resolveModelThinking: options.resolveModelThinking,
-    onRequestedProjectId: (projectId) => applyRequestedProjectId(scopedOptions, projectId),
+    onRequestedProjectId: (projectId, projectSlug) =>
+      applyRequestedProjectId(scopedOptions, projectId, projectSlug),
     onRuntimeConfig: (runtimeConfig) => {
       options.logger.info("Starting child fork", {
         conversationId: scopedOptions.context.conversationId,
@@ -580,14 +584,18 @@ export async function executeDefaultHostedInvokeAgentTool<
   let resolvedInput = input;
   if (requestedProjectReference) {
     const resolver = options.resolveProjectReference ?? resolveHostedProjectReference;
-    const resolvedProject = await resolver({
+    const resolution = await resolver({
       projectReference: requestedProjectReference,
       authToken: options.context.authToken,
       apiUrl: config.apiUrl,
       abortSignal,
     });
+    const resolvedProject = requireConfirmedHostedProjectReference(
+      resolution,
+      requestedProjectReference,
+    );
     targetProjectId = resolvedProject.projectId;
-    await applyRequestedProjectId(options, targetProjectId);
+    await applyRequestedProjectId(options, targetProjectId, resolvedProject.projectSlug);
     resolvedInput = {
       ...input,
       project_reference: undefined,
@@ -672,7 +680,8 @@ export async function executeDefaultHostedInvokeAgentTool<
       defaultModel: options.defaultModel ?? DEFAULT_USER_AGENT_MODEL,
       resolveModelId: options.resolveModelId,
       resolveProvider: options.resolveProvider,
-      onRequestedProjectId: (projectId) => applyRequestedProjectId(options, projectId),
+      onRequestedProjectId: (projectId, projectSlug) =>
+        applyRequestedProjectId(options, projectId, projectSlug),
       publishParentRunEvents: options.context.publishParentRunEvents,
       contextUnavailableMessage:
         "invoke_agent requires durable conversation context when durable child runs are enabled.",

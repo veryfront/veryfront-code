@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
 import { buildChildRunResultSummary } from "../child-run/result-summary.ts";
+import { UNCONFIRMED_AGENT_PROJECT_IDENTITY_MESSAGE } from "../project/context.ts";
 import {
   createDefaultHostedInvokeAgentTool,
   type DefaultHostedInvokeAgentConfig,
@@ -257,6 +258,63 @@ Deno.test("default hosted invoke resolves and runs configured child against the 
   assertEquals(captured.system?.includes("Follow the extraction policy."), true);
   assertEquals(captured.system?.includes("Available Skills"), true);
   assertEquals(captured.prompt?.includes("Extract the application."), true);
+});
+
+Deno.test("default hosted invoke rejects unconfirmed project identities before child setup", async () => {
+  const context: DefaultHostedInvokeAgentContext = {
+    authToken: "token-123",
+    projectId: "project-123",
+    projectSlug: "current-project",
+    branchId: "branch-123",
+    model: "sonnet",
+  };
+  const downstreamCalls: string[] = [];
+
+  await assertRejects(
+    () =>
+      executeDefaultHostedInvokeAgentTool(
+        createTestOptions({
+          context,
+          enableDurableInvokeAgent: false,
+          options: {
+            resolveProjectReference: () =>
+              Promise.resolve({ projectId: " noncanonical-project-id " }),
+            resolveChildAgentExecutionConfig: () => {
+              downstreamCalls.push("resolve-child-config");
+              return Promise.resolve(undefined);
+            },
+            buildGlobalTools: () => {
+              downstreamCalls.push("build-tools");
+              return {};
+            },
+            startRuntime: () => {
+              downstreamCalls.push("start-runtime");
+              throw new Error("unexpected runtime start");
+            },
+          },
+        }),
+        {
+          description: "inspect target",
+          prompt: "Inspect the target project.",
+          context: {},
+          agent_id: "security-reviewer",
+          project_reference: "target-project",
+        },
+        "security-reviewer",
+        { toolCallId: "tool-call-invalid-target" },
+      ),
+    TypeError,
+    UNCONFIRMED_AGENT_PROJECT_IDENTITY_MESSAGE,
+  );
+
+  assertEquals(downstreamCalls, []);
+  assertEquals(context, {
+    authToken: "token-123",
+    projectId: "project-123",
+    projectSlug: "current-project",
+    branchId: "branch-123",
+    model: "sonnet",
+  });
 });
 
 Deno.test("executeDefaultHostedInvokeAgentTool returns durable context failure before local execution", async () => {
