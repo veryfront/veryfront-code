@@ -2,6 +2,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import type * as React from "react";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleInputBoxKeyDown, InputBox, SubmitButton } from "./input-box.tsx";
@@ -119,11 +120,11 @@ describe("InputBox", () => {
       await waitFor(() => textarea.style.height === "120px");
       assert(refValues.includes(textarea));
 
-      flushSync(() => root?.unmount());
+      if (root) await unmountReactRoot(root);
       root = undefined;
       assertEquals(refCleanupCalls, 1);
     } finally {
-      if (root) flushSync(() => root?.unmount());
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
@@ -173,7 +174,7 @@ describe("InputBox", () => {
 });
 
 describe("SubmitButton", () => {
-  it("chains stop callbacks while protecting button type and stop availability", () => {
+  it("chains stop callbacks while protecting button type and stop availability", async () => {
     const dom = createDom();
     const restore = installDom(dom);
     let root: ReturnType<typeof createRoot> | undefined;
@@ -223,12 +224,12 @@ describe("SubmitButton", () => {
       assertEquals(stopCalls, 1);
       assertEquals(submitCalls, 0);
     } finally {
-      root?.unmount();
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
 
-  it("chains voice callbacks without allowing a submit type override", () => {
+  it("chains voice callbacks without allowing a submit type override", async () => {
     const dom = createDom();
     const restore = installDom(dom);
     let root: ReturnType<typeof createRoot> | undefined;
@@ -263,12 +264,12 @@ describe("SubmitButton", () => {
       assertEquals(clickCalls, 1);
       assertEquals(voiceCalls, 1);
     } finally {
-      root?.unmount();
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
 
-  it("allows the caller click handler to cancel a stop action deliberately", () => {
+  it("allows the caller click handler to cancel a stop action deliberately", async () => {
     const dom = createDom();
     const restore = installDom(dom);
     let root: ReturnType<typeof createRoot> | undefined;
@@ -302,12 +303,12 @@ describe("SubmitButton", () => {
       assertEquals(clickCalls, 1);
       assertEquals(stopCalls, 0);
     } finally {
-      root?.unmount();
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
 
-  it("keeps a disabled submit state inert", () => {
+  it("keeps a disabled submit state inert", async () => {
     const dom = createDom();
     const restore = installDom(dom);
     let root: ReturnType<typeof createRoot> | undefined;
@@ -336,7 +337,7 @@ describe("SubmitButton", () => {
       flushSync(() => button.dispatchEvent(new MouseEvent("click", { bubbles: true })));
       assertEquals(clickCalls, 0);
     } finally {
-      root?.unmount();
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });

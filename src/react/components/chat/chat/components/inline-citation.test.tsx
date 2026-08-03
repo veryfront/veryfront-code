@@ -1,6 +1,7 @@
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
@@ -84,7 +85,7 @@ describe("InlineCitation", () => {
       assert(card, "Expected citation card to render after hover");
       assertEquals(card.textContent, "Custom citation card");
 
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restore();
     }

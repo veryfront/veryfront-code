@@ -1,8 +1,9 @@
 import * as React from "react";
 import { flushSync } from "react-dom";
-import { createRoot, hydrateRoot } from "react-dom/client";
+import { createRoot, hydrateRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { AppShell } from "./app-shell.tsx";
@@ -109,20 +110,19 @@ describe("AppShell", () => {
     dom.window.localStorage.setItem("shell-left", "false");
     const restore = installDom(dom);
     const recoverableErrors: unknown[] = [];
+    let root: Root | undefined;
 
     try {
       const rootElement = document.getElementById("root");
       assert(rootElement);
-      const root = hydrateRoot(rootElement, <Shell />, {
+      root = hydrateRoot(rootElement, <Shell />, {
         onRecoverableError: (error) => recoverableErrors.push(error),
       });
 
       await waitFor(() => document.querySelector("[data-sidebar='left']") === null);
       assertEquals(recoverableErrors, []);
-
-      root.unmount();
-      await new Promise((resolve) => setTimeout(resolve, 0));
     } finally {
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
@@ -162,7 +162,7 @@ describe("AppShell", () => {
       await waitFor(() => document.querySelectorAll('[role="dialog"]').length === 2);
       assertEquals(document.body.style.overflow, "hidden");
 
-      flushSync(() => rootA?.unmount());
+      await unmountReactRoot(rootA);
       rootA = undefined;
       assertEquals(document.querySelectorAll('[role="dialog"]').length, 1);
       assertEquals(
@@ -171,7 +171,7 @@ describe("AppShell", () => {
         "the remaining overlay still owns the document lock",
       );
 
-      flushSync(() => rootB?.unmount());
+      await unmountReactRoot(rootB);
       rootB = undefined;
       assertEquals(
         document.body.style.overflow,
@@ -179,8 +179,8 @@ describe("AppShell", () => {
         "the final release restores the exact pre-lock value",
       );
     } finally {
-      if (rootA) flushSync(() => rootA?.unmount());
-      if (rootB) flushSync(() => rootB?.unmount());
+      if (rootA) await unmountReactRoot(rootA);
+      if (rootB) await unmountReactRoot(rootB);
       restore();
     }
   });
@@ -235,7 +235,7 @@ describe("AppShell", () => {
       assertEquals(documentShortcut.defaultPrevented, true);
       assertEquals(document.querySelector('[data-sidebar="left"]'), null);
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -304,7 +304,7 @@ describe("AppShell", () => {
       assertEquals(shell.getAttribute("data-vf-ui"), "");
       assertEquals(shell.getAttribute("data-vf-chat"), "");
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       restore();
     }
   });

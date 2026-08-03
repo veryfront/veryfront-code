@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import type { AgentOption } from "./agent-picker.tsx";
@@ -111,7 +112,7 @@ describe("AgentPicker — preset (back-compat)", () => {
       assertEquals(loading.getAttribute("aria-selected"), "false");
       assertEquals(loading.querySelectorAll('[aria-hidden="true"]').length, 3);
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
     } finally {
       dom.restore();
@@ -228,7 +229,7 @@ describe("AgentPicker — composability contract", () => {
       assertEquals(created, 1);
       assertEquals(managed, 0);
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
     } finally {
       dom.restore();
