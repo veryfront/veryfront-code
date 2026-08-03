@@ -157,8 +157,8 @@ export interface AuthRateLimitOptions {
 
 function isRateLimitStore(value: unknown): value is RateLimitStore {
   return (
+    value != null &&
     typeof value === "object" &&
-    value !== null &&
     "increment" in value &&
     typeof value.increment === "function"
   );
