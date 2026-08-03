@@ -31,8 +31,8 @@ run_smoke() {
       | grep -Fq '"status":"ok"'; then
       if [ -n "$expected_log" ]; then
         if ! grep -Fq "$expected_log" "$log_file"; then
-          cat "$log_file"
-          return 1
+          sleep 1
+          continue
         fi
       fi
       kill "$proxy_pid" 2>/dev/null || true

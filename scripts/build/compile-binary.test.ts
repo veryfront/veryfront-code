@@ -164,6 +164,9 @@ Deno.test("proxy binary embeds only the runtime-resolved proxy entrypoint", asyn
 
 Deno.test("proxy release verifies lock freshness and publishes an exact SBOM", async () => {
   const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
+  const denoConfig = JSON.parse(await Deno.readTextFile("deno.json")) as {
+    tasks?: Record<string, string>;
+  };
 
   assertEquals(workflow.includes("deno task build:proxy-lock"), true);
   assertEquals(
@@ -173,6 +176,11 @@ Deno.test("proxy release verifies lock freshness and publishes an exact SBOM", a
   assertEquals(
     workflow.includes("deno task sbom --lock scripts/build/proxy-deno.lock"),
     true,
+  );
+  assertEquals(
+    denoConfig.tasks?.["build:proxy-lock"]?.includes("--frozen=false"),
+    false,
+    "proxy lock refresh must use Deno's default mutable lock mode",
   );
 });
 
@@ -200,6 +208,12 @@ Deno.test("compiled proxy smoke covers cache and observability providers", async
     smoke.includes('if ! grep -Fq "$expected_log" "$log_file"; then'),
     true,
     "missing proxy log markers must print diagnostics before failing",
+  );
+  assertEquals(
+    /if ! grep -Fq "\$expected_log" "\$log_file"; then\s+sleep 1\s+continue/
+      .test(smoke),
+    true,
+    "healthy proxies must retry briefly while asynchronous provider logs flush",
   );
 });
 

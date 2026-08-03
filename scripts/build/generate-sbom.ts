@@ -1,5 +1,5 @@
 /**
- * Generate a CycloneDX 1.5 SBOM from deno.lock.
+ * Generate a CycloneDX 1.5 SBOM from a Deno lockfile.
  *
  * Usage: deno run --allow-read --allow-write scripts/build/generate-sbom.ts [--lock path] [--output path]
  *        deno run --allow-read --allow-write scripts/build/generate-sbom.ts \
@@ -8,8 +8,8 @@
  *          --manifest extensions/ext-sandbox-shell-tools/deno.json \
  *          --output dist/sbom-ext-sandbox-shell-tools.json
  *
- * Walks deno.lock so the SBOM lists the transitive npm graph that ships in
- * the binary, not just the top-level import map.
+ * Walks the selected lockfile so the SBOM lists the transitive npm graph that
+ * ships in the binary, not just the top-level import map.
  */
 
 import { parseArgs } from "#std/flags";
