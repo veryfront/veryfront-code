@@ -93,7 +93,7 @@ export const FIRST_PARTY_EXTENSION_POLICIES = Object.freeze(([
     name: "ext-dev-ui-react",
     sourceDirectory: "ext-dev-ui-react",
     selection: "builtin-deferred",
-    rootNpm: false,
+    rootNpm: true,
   },
   {
     name: "ext-document-kreuzberg",

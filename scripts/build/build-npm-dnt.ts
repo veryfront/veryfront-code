@@ -421,6 +421,7 @@ const logger = {
 
 for (const [extensionName, contractName] of [
   ["ext-css-tailwind", "CSSProcessor"],
+  ["ext-dev-ui-react", "DevUiAssetProvider"],
   ["ext-node-websocket-ws", "NodeWebSocketServerProvider"],
 ]) {
   const candidate = createBuiltinExtensions().find(
