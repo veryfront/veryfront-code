@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { deleteRow, deleteRows } from "../../lib/supabase-client.ts";
+import { deleteRow, deleteRows } from "../lib/supabase-client.ts";
 
 export default tool({
-  id: "delete-row",
+  id: "supabase-delete-row",
   description:
     "Delete rows from a Supabase table. Can delete by ID or by custom filter conditions. Returns the deleted rows.",
   inputSchema: defineSchema((v) => v.object({

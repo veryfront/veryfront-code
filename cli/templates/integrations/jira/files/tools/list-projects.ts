@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listProjects } from "../../lib/jira-client.ts";
+import { listProjects } from "../lib/jira-client.ts";
 
 export default tool({
-  id: "list-projects",
+  id: "jira-list-projects",
   description:
     "List all accessible Jira projects in the connected site. Returns project keys, names, and basic information.",
   inputSchema: defineSchema((v) => v.object({}))(),

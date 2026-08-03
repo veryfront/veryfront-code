@@ -20,6 +20,10 @@ import {
   readResponseJsonStringBytesWithinLimit,
   readResponseTextPrefix,
 } from "#veryfront/utils/response-body.ts";
+import {
+  createVeryfrontApiRequestUrlResolver,
+  type VeryfrontApiRequestUrlResolver,
+} from "./veryfront-api-url.ts";
 
 const log = serverLogger.component("veryfront-api-transport");
 const apiClientLog = serverLogger.component("veryfront-api-client");
@@ -28,11 +32,6 @@ const MAX_VERYFRONT_API_ERROR_BODY_BYTES = 8 * 1024;
 export const DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES = 64 * 1024 * 1024;
 export const MAX_VERYFRONT_API_SUCCESS_BODY_BYTES = 128 * 1024 * 1024;
 const NON_RETRYABLE_RESPONSE_PROTOCOL_ERRORS = new WeakSet<object>();
-
-interface ValidatedBaseUrl {
-  origin: string;
-  prefix: string;
-}
 
 export type TransportRetryConfig = BoundedRetryConfig;
 
@@ -96,13 +95,17 @@ export function createVeryfrontApiTransport<T>(
   config: VeryfrontApiTransportConfig<T>,
 ): VeryfrontApiTransport<T> {
   const retry = requireVeryfrontApiRetryConfig(config.retry);
-  return createValidatedVeryfrontApiTransport(config, retry, validateBaseUrl(config.baseUrl));
+  return createValidatedVeryfrontApiTransport(
+    config,
+    retry,
+    createVeryfrontApiRequestUrlResolver(config.baseUrl),
+  );
 }
 
 function createValidatedVeryfrontApiTransport<T>(
   config: VeryfrontApiTransportConfig<T>,
   retry: TransportRetryConfig,
-  validatedBaseUrl: ValidatedBaseUrl,
+  resolveRequestUrl: VeryfrontApiRequestUrlResolver,
 ): VeryfrontApiTransport<T> {
   const {
     getToken,
@@ -139,7 +142,7 @@ function createValidatedVeryfrontApiTransport<T>(
         init.jsonStringFieldWithinLimit,
         maxResponseBytes,
       );
-      const url = resolveRequestUrl(validatedBaseUrl, pathOrUrl);
+      const url = resolveRequestUrl(pathOrUrl);
       const method = init.method ?? "GET";
       const timeoutMs = init.timeoutMs ?? cfgTimeout;
       const requestHeaders = new Headers(init.headers);
@@ -268,7 +271,7 @@ export function createCanonicalVeryfrontApiTransport(
       },
     },
     normalizedRetry,
-    validateBaseUrl(baseUrl),
+    createVeryfrontApiRequestUrlResolver(baseUrl),
   );
 }
 
@@ -571,71 +574,4 @@ function defaultShouldRetry(error: unknown): boolean {
   if (!(error instanceof VeryfrontError) || error.slug !== "api-client-error") return true;
   const { status } = error as VeryfrontError;
   return !status || status < 400 || status >= 500 || status === 429;
-}
-
-function validateBaseUrl(value: string): ValidatedBaseUrl {
-  if (typeof value !== "string" || value.length === 0 || value.trim() !== value) {
-    throw new TypeError("Veryfront API base URL must be a non-empty absolute URL");
-  }
-
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch (cause) {
-    throw new TypeError("Veryfront API base URL must be a valid absolute URL", {
-      cause,
-    });
-  }
-
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new TypeError("Veryfront API base URL must use http or https");
-  }
-  if (url.username || url.password) {
-    throw new TypeError("Veryfront API base URL must not contain credentials");
-  }
-  if (url.search || url.hash) {
-    throw new TypeError("Veryfront API base URL must not contain a query or fragment");
-  }
-
-  const pathname = url.pathname.replace(/\/+$/, "");
-  return {
-    origin: url.origin,
-    prefix: `${url.origin}${pathname}`,
-  };
-}
-
-function resolveRequestUrl(baseUrl: ValidatedBaseUrl, pathOrUrl: string): string {
-  if (typeof pathOrUrl !== "string") {
-    throw new TypeError("Veryfront API request URL must be a string");
-  }
-  if (pathOrUrl.startsWith("//")) {
-    throw new TypeError("Veryfront API request URL must not use a protocol-relative origin");
-  }
-
-  let absolute: URL | undefined;
-  try {
-    absolute = new URL(pathOrUrl);
-  } catch {
-    // Relative API paths are resolved below.
-  }
-
-  if (absolute) {
-    if (absolute.protocol !== "http:" && absolute.protocol !== "https:") {
-      throw new TypeError("Veryfront API request URL must use http or https");
-    }
-    if (absolute.username || absolute.password) {
-      throw new TypeError("Veryfront API request URL must not contain credentials");
-    }
-    if (absolute.origin !== baseUrl.origin) {
-      throw new TypeError("Veryfront API request origin must match the configured API origin");
-    }
-    return absolute.href;
-  }
-
-  const separator = pathOrUrl.startsWith("/") || pathOrUrl.startsWith("?") ? "" : "/";
-  const resolved = new URL(`${baseUrl.prefix}${separator}${pathOrUrl}`);
-  if (resolved.origin !== baseUrl.origin) {
-    throw new TypeError("Veryfront API request origin must match the configured API origin");
-  }
-  return resolved.href;
 }

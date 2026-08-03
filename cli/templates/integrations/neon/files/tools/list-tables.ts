@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getTableRowCount, listTables } from "../../lib/neon-client.ts";
+import { getTableRowCount, listTables } from "../lib/neon-client.ts";
 
 export default tool({
-  id: "list-tables",
+  id: "neon-list-tables",
   description:
     "List all tables in the connected database. Returns table names, schemas, and row counts to help understand the database structure.",
   inputSchema: defineSchema((v) => v.object({

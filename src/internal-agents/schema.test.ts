@@ -107,6 +107,27 @@ describe("internal-agents/schema", () => {
     assertEquals(parsed.forwardedProps, forwardedProps);
   });
 
+  it("preserves environment targets on control-plane stream requests", () => {
+    const runtimeTargetEnvironmentId = "10000000-1000-4000-8000-100000000005";
+    const parsed = getInternalAgentStreamRequestSchema().parse({
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      runtimeTargetKind: "environment",
+      agentSource: {
+        type: "environment",
+        environmentName: "staging",
+        releaseId: "release_1",
+      },
+      messages: [],
+      runtimeTargetEnvironmentId,
+      runtimeTargetBranchId: null,
+    });
+
+    assertEquals(parsed.runtimeTargetEnvironmentId, runtimeTargetEnvironmentId);
+    assertEquals(parsed.runtimeTargetBranchId, null);
+  });
+
   it("rejects forwarded props above the 192 KB runtime budget", () => {
     assertThrows(
       () =>

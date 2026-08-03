@@ -1,8 +1,8 @@
 import { tool } from "veryfront/tool";
-import { listWorkspaces } from "../../lib/asana-client.ts";
+import { listWorkspaces } from "../lib/asana-client.ts";
 
 export default tool({
-  id: "list-workspaces",
+  id: "asana-list-workspaces",
   description: "List Asana workspaces accessible to the authenticated user.",
   async execute() {
     const workspaces = await listWorkspaces();

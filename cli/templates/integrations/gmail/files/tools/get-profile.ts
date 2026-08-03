@@ -4,7 +4,7 @@ import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
-  id: "get-profile",
+  id: "gmail-get-profile",
   description: "Get the Gmail profile for the connected account.",
   inputSchema: defineSchema((v) => v.object({}))(),
   execute: async (_input, context) => {

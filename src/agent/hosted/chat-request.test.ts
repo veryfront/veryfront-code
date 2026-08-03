@@ -1667,7 +1667,8 @@ describe("agent/hosted-chat-request", () => {
 
     assertEquals(parsed.userId, userId);
     assertEquals(parsed.authToken, "token_1");
-    assertEquals(parsed.runEventAppendToken, "untrusted-public-header-token");
+    assertEquals("runEventAppendToken" in parsed, false);
+    assertEquals(JSON.stringify(parsed).includes("untrusted-public-header-token"), false);
     assertEquals(parsed.serverEnvelopeVerified, undefined);
     assertEquals(verifiedRunEventTokens, [{
       token: "untrusted-public-header-token",
@@ -1752,7 +1753,9 @@ describe("agent/hosted-chat-request", () => {
     }
 
     assertEquals(parsed.authToken, "user-api-token");
-    assertEquals(parsed.runEventAppendToken, "run-event-service-token");
+    assertEquals("runEventAppendToken" in parsed, false);
+    assertEquals(Object.keys(parsed).includes("runEventAppendToken"), false);
+    assertEquals(JSON.stringify(parsed).includes("run-event-service-token"), false);
     assertEquals(parsed.serverEnvelopeVerified, true);
     assertEquals(verifiedRunEventTokens, [{
       token: "run-event-service-token",
@@ -1794,7 +1797,8 @@ describe("agent/hosted-chat-request", () => {
     );
 
     if (parsed instanceof Response) throw new Error("Expected parsed request");
-    assertEquals(parsed.runEventAppendToken, "run-event-service-token");
+    assertEquals("runEventAppendToken" in parsed, false);
+    assertEquals(JSON.stringify(parsed).includes("run-event-service-token"), false);
     assertEquals(parsed.serverEnvelopeVerified, undefined);
     assertEquals(parsed.forwardedProps, { harmless: "preserved" });
   });

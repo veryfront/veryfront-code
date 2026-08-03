@@ -15,6 +15,8 @@ export async function rebuildContextWithSignal<T>(
 ): Promise<T> {
   let cancellation: Promise<void> | undefined;
   let primaryError: unknown;
+  let cleanupError: unknown;
+  let result: T | undefined;
   const cancel = (): void => {
     if (cancellation) return;
     cancellation = Promise.resolve().then(() => context.cancel());
@@ -27,9 +29,8 @@ export async function rebuildContextWithSignal<T>(
   try {
     signal.throwIfAborted();
     try {
-      const result = await context.rebuild();
+      result = await context.rebuild();
       signal.throwIfAborted();
-      return result;
     } catch (error) {
       signal.throwIfAborted();
       throw error;
@@ -39,7 +40,6 @@ export async function rebuildContextWithSignal<T>(
     throw error;
   } finally {
     signal.removeEventListener("abort", cancel);
-    let cleanupError: unknown;
     try {
       await cancellation;
     } catch (error) {
@@ -50,6 +50,8 @@ export async function rebuildContextWithSignal<T>(
     } catch (error) {
       cleanupError ??= error;
     }
-    if (primaryError === undefined && cleanupError !== undefined) throw cleanupError;
   }
+
+  if (primaryError === undefined && cleanupError !== undefined) throw cleanupError;
+  return result as T;
 }

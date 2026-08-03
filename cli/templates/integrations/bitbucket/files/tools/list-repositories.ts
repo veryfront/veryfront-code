@@ -1,7 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createBitbucketClient } from "../../lib/bitbucket-client.ts";
-import { requireUserIdFromContext } from "../../lib/user-id.ts";
+import { createBitbucketClient } from "../lib/bitbucket-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 type BitbucketRepo = {
   name: string;
@@ -17,7 +17,7 @@ type BitbucketRepo = {
 };
 
 export default tool({
-  id: "list-repositories",
+  id: "bitbucket-list-repositories",
   description: "List Bitbucket repositories for the authenticated user",
   inputSchema: defineSchema((v) => v.object({
     role: v

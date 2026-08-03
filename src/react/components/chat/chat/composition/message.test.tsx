@@ -2,6 +2,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import type { ChatDynamicToolPart, ChatMessage } from "#veryfront/agent/react";
@@ -457,7 +458,7 @@ describe("Message.CopyAction", () => {
       flushSync(() => {});
 
       assertEquals(writes, ["Answer body."]);
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
     } finally {
       Object.assign(globalThis, previous);
       dom.window.close();

@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { formatFileSize, isFile, isFolder, searchFiles } from "../../lib/onedrive-client.ts";
+import { formatFileSize, isFile, isFolder, searchFiles } from "../lib/onedrive-client.ts";
 
 export default tool({
-  id: "search-files",
+  id: "onedrive-search-files",
   description:
     "Search for files and folders in OneDrive by name or content. Returns matching items with their paths and metadata.",
   inputSchema: defineSchema((v) => v.object({

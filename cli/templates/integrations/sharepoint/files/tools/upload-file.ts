@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createFolder, uploadFile } from "../../lib/sharepoint-client.ts";
+import { createFolder, uploadFile } from "../lib/sharepoint-client.ts";
 
 export default tool({
-  id: "upload-file",
+  id: "sharepoint-upload-file",
   description:
     "Upload a file to a SharePoint document library. Can upload to root or a specific folder.",
   inputSchema: defineSchema((v) => v.object({

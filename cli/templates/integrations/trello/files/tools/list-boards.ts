@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listBoards } from "../../lib/trello-client.ts";
+import { listBoards } from "../lib/trello-client.ts";
 
 export default tool({
-  id: "list-boards",
+  id: "trello-list-boards",
   description: "List all Trello boards accessible to the current user.",
   inputSchema: defineSchema((v) => v.object({
     includeArchived: v

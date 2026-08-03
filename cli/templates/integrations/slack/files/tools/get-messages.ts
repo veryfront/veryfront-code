@@ -1,7 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createSlackClient } from "../../lib/slack-client.ts";
-import { requireUserIdFromContext } from "../../lib/user-id.ts";
+import { createSlackClient } from "../lib/slack-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 type SlackMessage = {
   text?: string;
@@ -13,7 +13,7 @@ type SlackMessage = {
 };
 
 export default tool({
-  id: "get-messages",
+  id: "slack-get-messages",
   description: "Get recent messages from a Slack channel",
   inputSchema: defineSchema((v) => v.object({
     channel: v.string().describe("Channel ID (e.g., 'C1234567890')"),

@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getPageTitle, queryDatabase } from "../../lib/notion-client.ts";
+import { getPageTitle, queryDatabase } from "../lib/notion-client.ts";
 
 export default tool({
-  id: "query-database",
+  id: "notion-query-database",
   description: "Query a Notion database to retrieve entries. Supports filtering and sorting.",
   inputSchema: defineSchema((v) => v.object({
     databaseId: v.string().describe("The ID of the Notion database to query"),

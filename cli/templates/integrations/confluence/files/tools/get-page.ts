@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { extractPlainText, getPageContent } from "../../lib/confluence-client.ts";
+import { extractPlainText, getPageContent } from "../lib/confluence-client.ts";
 
 export default tool({
-  id: "get-page",
+  id: "confluence-get-page",
   description:
     "Get the content of a specific Confluence page. Returns the page title, content, and metadata.",
   inputSchema: defineSchema((v) => v.object({

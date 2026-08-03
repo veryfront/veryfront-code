@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listCards } from "../../lib/trello-client.ts";
+import { listCards } from "../lib/trello-client.ts";
 
 export default tool({
-  id: "list-cards",
+  id: "trello-list-cards",
   description:
     "List cards from Trello. Can filter by board or list. Provide either boardId or listId.",
   inputSchema: defineSchema((v) => v.object({

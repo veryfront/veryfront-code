@@ -427,8 +427,8 @@ export type RuntimeAgentControlPlaneStreamRequest = {
   tools: RuntimeAgentRunInvocation["tools"];
   context: RuntimeAgentRunInvocation["context"];
   runtimeTargetKind: NonNullable<RuntimeAgentProjectContext["runtimeTargetKind"]>;
-  runtimeTargetEnvironmentId: RuntimeAgentProjectContext["runtimeTargetEnvironmentId"];
-  runtimeTargetBranchId: RuntimeAgentProjectContext["runtimeTargetBranchId"];
+  runtimeTargetEnvironmentId?: RuntimeAgentProjectContext["runtimeTargetEnvironmentId"];
+  runtimeTargetBranchId?: RuntimeAgentProjectContext["runtimeTargetBranchId"];
   credentials?: RuntimeAgentRunInvocation["credentials"];
   agentSource: RuntimeAgentRunInvocation["agentSource"];
   agentConfig?: RuntimeAgentRunInvocation["agentConfig"];

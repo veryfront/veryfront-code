@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getChatMessages, getPlainTextContent } from "../../lib/teams-client.ts";
+import { getChatMessages, getPlainTextContent } from "../lib/teams-client.ts";
 
 export default tool({
-  id: "get-messages",
+  id: "teams-get-messages",
   description:
     "Get messages from a specific Microsoft Teams chat. Returns message content, sender information, and timestamps. Use list-chats first to get chat IDs.",
   inputSchema: defineSchema((v) => v.object({

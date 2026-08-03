@@ -310,6 +310,36 @@ describe("agent/runtime-agent-invocation-contract", () => {
     });
   });
 
+  it("preserves the verified target environment on control-plane stream requests", () => {
+    const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      run: {
+        agentServiceId: "veryfront-platform-agent",
+        agentId: "builder",
+        conversationId,
+        runId: "run_root_1",
+        messageId,
+        inputAnchorMessageId,
+        requestedByUserId: userId,
+        project: {
+          projectId,
+          projectSlug: "demo-project",
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: environmentId,
+        },
+      },
+      agentSource: {
+        type: "environment",
+        environmentName: "Production",
+        releaseId: "release-1",
+      },
+    }));
+
+    const request = buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed);
+
+    assertEquals(request.runtimeTargetEnvironmentId, environmentId);
+    assertEquals(request.runtimeTargetBranchId, null);
+  });
+
   it("preserves the selected project agent config on control-plane stream requests", () => {
     const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
       agentConfig: {

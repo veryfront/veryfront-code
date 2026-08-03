@@ -10,6 +10,7 @@ import { flushSync } from "react-dom";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./accordion.tsx";
@@ -37,9 +38,9 @@ function render(el: React.ReactElement) {
   flushSync(() => root.render(el));
   return {
     host: host as unknown as HTMLElement,
-    unmount: () => {
+    unmount: async () => {
       try {
-        root.unmount();
+        await unmountReactRoot(root);
       } finally {
         restore();
       }
@@ -84,7 +85,7 @@ describe("Accordion: disclosure-slot behaviour (builtin)", () => {
     }
   });
 
-  it("single mode: opening one section closes the other", () => {
+  it("single mode: opening one section closes the other", async () => {
     const { host, unmount } = render(
       <Accordion type="single" collapsible>
         <AccordionItem value="a">
@@ -120,11 +121,11 @@ describe("Accordion: disclosure-slot behaviour (builtin)", () => {
       click(triggerB!);
       assert(bodyB.closest<HTMLElement>("[data-state]")?.hidden, "collapsible closes B");
     } finally {
-      unmount();
+      await unmount();
     }
   });
 
-  it("wraps triggers in headings and wires custom ids bidirectionally", () => {
+  it("wraps triggers in headings and wires custom ids bidirectionally", async () => {
     const { host, unmount } = render(
       <Accordion>
         <AccordionItem
@@ -146,7 +147,7 @@ describe("Accordion: disclosure-slot behaviour (builtin)", () => {
       assert(trigger.getAttribute("aria-controls") === content.id, "trigger controls region");
       assert(content.getAttribute("aria-labelledby") === trigger.id, "region names trigger");
     } finally {
-      unmount();
+      await unmount();
     }
   });
 
@@ -219,7 +220,7 @@ describe("Accordion: disclosure-slot behaviour (builtin)", () => {
     assert(label?.contains(trigger), "the SSR label contains the composed trigger text");
   });
 
-  it("does not notify controlled or uncontrolled consumers for a non-collapsible no-op", () => {
+  it("does not notify controlled or uncontrolled consumers for a non-collapsible no-op", async () => {
     for (const controlled of [false, true]) {
       const values: string[] = [];
       const item = (
@@ -248,7 +249,7 @@ describe("Accordion: disclosure-slot behaviour (builtin)", () => {
           "the open item stays open",
         );
       } finally {
-        unmount();
+        await unmount();
       }
     }
   });
@@ -297,13 +298,13 @@ describe("Accordion: disclosure-slot behaviour (builtin)", () => {
         "hydrated content names trigger",
       );
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await new Promise((resolve) => setTimeout(resolve, 0));
       restore();
     }
   });
 
-  it("normalizes retained uncontrolled values when mode changes", () => {
+  it("normalizes retained uncontrolled values when mode changes", async () => {
     function Probe(): React.ReactElement {
       const [multiple, setMultiple] = React.useState(true);
       const items = (
@@ -334,7 +335,7 @@ describe("Accordion: disclosure-slot behaviour (builtin)", () => {
       assert(triggers[0]?.getAttribute("aria-expanded") === "true", "first value remains open");
       assert(triggers[1]?.getAttribute("aria-expanded") === "false", "extra value closes");
     } finally {
-      unmount();
+      await unmount();
     }
   });
 });

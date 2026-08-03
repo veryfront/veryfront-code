@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getIssue } from "../../lib/gitlab-client.ts";
+import { getIssue } from "../lib/gitlab-client.ts";
 
 export default tool({
-  id: "get-issue",
+  id: "gitlab-get-issue",
   description:
     "Get detailed information about a specific GitLab issue including full description, comments, time tracking, and metadata.",
   inputSchema: defineSchema((v) =>

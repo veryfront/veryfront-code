@@ -1,10 +1,10 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createCalendarClient } from "../../lib/calendar-client.ts";
-import { requireUserIdFromContext } from "../../lib/user-id.ts";
+import { createCalendarClient } from "../lib/calendar-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "create-event",
+  id: "calendar-create-event",
   description: "Create a new event in Google Calendar",
   inputSchema: defineSchema((v) => v.object({
     title: v.string().min(1).describe("Event title"),

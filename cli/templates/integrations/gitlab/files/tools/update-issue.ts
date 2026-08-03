@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { updateIssue } from "../../lib/gitlab-client.ts";
+import { updateIssue } from "../lib/gitlab-client.ts";
 
 export default tool({
-  id: "update-issue",
+  id: "gitlab-update-issue",
   description: "Update, close, or reopen a GitLab issue.",
   inputSchema: defineSchema((v) =>
     v.object({

@@ -29,6 +29,10 @@ import type {
   HostedChatRuntimeCreationResult,
 } from "./chat-runtime-contract.ts";
 import {
+  getActiveHostedRunEventWriterCapability,
+  runWithHostedRunEventWriterCapability,
+} from "./child-run-event-writer-token.ts";
+import {
   type HostedChatRuntimeToolAssemblyResult,
   type HostedHostToolPolicy,
   prepareHostedChatRuntimeToolAssembly,
@@ -373,6 +377,7 @@ function runWithDefaultHostedRequestContext<TResult>(
 export async function createDefaultHostedChatRuntime(
   input: CreateDefaultHostedChatRuntimeOptions,
 ): Promise<HostedChatRuntimeCreationResult> {
+  const effectiveRunEventWriterCapability = getActiveHostedRunEventWriterCapability();
   return await runWithEffectiveSourceIntegrationPolicy(
     input.sourceIntegrationPolicy,
     async () => {
@@ -387,10 +392,10 @@ export async function createDefaultHostedChatRuntime(
       const cleanup = input.cleanup ?? (() => Promise.resolve());
 
       try {
-        const toolAssembly = await buildToolAssembly({
-          ...input,
-          taskContext,
-        });
+        const toolAssembly = await runWithHostedRunEventWriterCapability(
+          effectiveRunEventWriterCapability,
+          () => buildToolAssembly({ ...input, taskContext }),
+        );
         const runtimeAgentConfig = createRuntimeAgentConfig({
           options: input.options,
           taskContext,
@@ -414,6 +419,8 @@ export async function createDefaultHostedChatRuntime(
             runId: taskContext.runId,
             agentId: taskContext.agentId,
             conversationId: taskContext.conversationId,
+            projectId: taskContext.projectId,
+            projectSlug: taskContext.projectSlug,
             authToken: taskContext.authToken,
             maxOutputTokens: input.options.maxOutputTokens,
             resolveProjectContext: () => ({

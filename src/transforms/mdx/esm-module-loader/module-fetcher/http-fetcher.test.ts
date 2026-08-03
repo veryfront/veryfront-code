@@ -60,6 +60,42 @@ describe("module-fetcher/http-fetcher", () => {
     }
   });
 
+  it("uses the request origin for pinned local module fetches", async () => {
+    const logger = { debug: () => {}, warn: () => {} } as unknown as Logger;
+    const adapter = {
+      env: {
+        get(key: string) {
+          if (key === "VERYFRONT_DEV_PORT") return "3001";
+          return undefined;
+        },
+      },
+    } as RuntimeAdapter;
+    let requestedUrl = "";
+
+    const result = await fetchModuleViaHTTP(
+      "_vf_modules/shared/Absolute.js",
+      adapter,
+      (path) => Promise.resolve(`/cache/${path.replaceAll("/", "__")}.mjs`),
+      logger,
+      "docs",
+      true,
+      "on:pins-a",
+      {
+        moduleServerOrigin: "http://93.184.216.34:3000",
+        fetchFn: ((input) => {
+          requestedUrl = String(input);
+          return Promise.resolve(new Response(`export const value = "abs";`));
+        }) as typeof fetch,
+      },
+    );
+
+    assertEquals(result, `export const value = "abs";`);
+    assertEquals(
+      requestedUrl,
+      "http://93.184.216.34:3000/_vf_modules/shared/Absolute.js?ssr=true&pins=on%3Apins-a",
+    );
+  });
+
   it("resolves nested HTTP imports with bounded concurrency", async () => {
     const importCount = MAX_MDX_MODULE_TRANSFORM_CONCURRENCY + 4;
     const moduleCode = Array.from(

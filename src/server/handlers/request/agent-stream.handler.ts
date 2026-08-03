@@ -356,6 +356,8 @@ function buildAgentSourceEnvironmentName(sourceContext: RuntimeAgentSourceContex
  * identity, so they receive no project environment variables. Named sources
  * must carry an exact signed environment target, which is revalidated against
  * project metadata before any secrets are fetched.
+ * Main-branch runs may omit a target environment pin and use the request-scoped
+ * production fallback path.
  */
 async function resolveAgentSourceEnvironment(
   ctx: HandlerContext,
@@ -764,6 +766,9 @@ export class AgentStreamHandler extends BaseHandler {
       const requestScopedContext: HandlerContext = {
         ...ctx,
         proxyToken: apiAuthToken || undefined,
+        // The signed invocation is authoritative. Never promote an unrelated
+        // request header into the environment used for hosted evaluation.
+        environmentId: payload.runtimeTargetEnvironmentId ?? undefined,
         requestContext: ctx.requestContext
           ? { ...ctx.requestContext, token: apiAuthToken }
           : ctx.requestContext,

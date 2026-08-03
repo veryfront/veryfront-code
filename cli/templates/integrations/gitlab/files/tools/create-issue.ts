@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createIssue } from "../../lib/gitlab-client.ts";
+import { createIssue } from "../lib/gitlab-client.ts";
 
 export default tool({
-  id: "create-issue",
+  id: "gitlab-create-issue",
   description:
     "Create a new issue in a GitLab project. Can set title, description, labels, assignees, milestone, and due date.",
   inputSchema: defineSchema((v) =>

@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getPageTitle, updatePage } from "../../lib/notion-client.ts";
+import { getPageTitle, updatePage } from "../lib/notion-client.ts";
 
 export default tool({
-  id: "update-page",
+  id: "notion-update-page",
   description: "Update Notion page properties or archive/unarchive a page.",
   inputSchema: defineSchema((v) => v.object({
     pageId: v.string().describe("The ID of the Notion page to update"),
