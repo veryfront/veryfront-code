@@ -386,12 +386,7 @@ function extractImportSpecifiers(content: string): string[] {
   return result;
 }
 
-export function analyzePageImports(
-  content: string,
-  filePath: string,
-): ImportGroups {
-  if (filePath.endsWith(".md")) return { local: [], remote: [], shared: [] };
-
+export function analyzePageImports(content: string): ImportGroups {
   const local: string[] = [];
   const remote: string[] = [];
   const shared: string[] = [];

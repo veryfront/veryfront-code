@@ -9,6 +9,7 @@ import {
   MAX_TOTAL_MANIFEST_DEPENDENCY_CHARS,
   MAX_TOTAL_MANIFEST_DEPENDENCY_ENTRIES,
   MAX_TOTAL_MANIFEST_KEY_CHARS,
+  MAX_TOTAL_MANIFEST_PAGE_CHUNK_REFERENCES,
 } from "./limits.ts";
 
 function assertManifestKey(value: string, label: string): void {
@@ -28,6 +29,7 @@ interface ManifestBudget {
   dependencyEntries: number;
   dependencyChars: number;
   keyChars: number;
+  pageChunkReferences: number;
 }
 
 function consumeKeyBudget(
@@ -207,25 +209,45 @@ function snapshotPageImports(
       `Page ${pagePath} must expose matching path and dependency data properties`,
     );
   }
+  const localLength = readDenseArrayLength(
+    local.value,
+    `Page ${pagePath} local dependencies`,
+    MAX_IMPORTS_PER_PAGE,
+  );
+  const remoteLength = readDenseArrayLength(
+    remote.value,
+    `Page ${pagePath} remote dependencies`,
+    MAX_IMPORTS_PER_PAGE,
+  );
+  const sharedLength = readDenseArrayLength(
+    shared.value,
+    `Page ${pagePath} shared dependencies`,
+    MAX_IMPORTS_PER_PAGE,
+  );
+  if (localLength + remoteLength + sharedLength > MAX_IMPORTS_PER_PAGE) {
+    throw new RangeError(
+      `Page ${pagePath} dependency arrays may contain at most ${MAX_IMPORTS_PER_PAGE} total entries`,
+    );
+  }
   return {
     path: pagePath,
     local: copyStringArray(
       local.value,
       `Page ${pagePath} local dependencies`,
       budget,
-      MAX_IMPORTS_PER_PAGE,
+      localLength,
     ),
     remote: copyStringArray(
       remote.value,
       `Page ${pagePath} remote dependencies`,
       budget,
-      MAX_IMPORTS_PER_PAGE,
+      remoteLength,
     ),
     shared: copyStringArray(
       shared.value,
       `Page ${pagePath} shared dependencies`,
       budget,
-      MAX_IMPORTS_PER_PAGE,
+      sharedLength,
     ),
   };
 }
@@ -268,6 +290,7 @@ export function generateChunkManifest(
     dependencyEntries: 0,
     dependencyChars: 0,
     keyChars: 0,
+    pageChunkReferences: 0,
   };
 
   const manifest: ChunkManifest = {
@@ -324,6 +347,15 @@ export function generateChunkManifest(
     const pageChunks = [...chunkOrdinals]
       .sort((left, right) => left - right)
       .map((ordinal) => chunkNames[ordinal]!);
+    if (
+      pageChunks.length >
+        MAX_TOTAL_MANIFEST_PAGE_CHUNK_REFERENCES - budget.pageChunkReferences
+    ) {
+      throw new RangeError(
+        `Chunk manifest page-chunk reference limit of ${MAX_TOTAL_MANIFEST_PAGE_CHUNK_REFERENCES} was exceeded`,
+      );
+    }
+    budget.pageChunkReferences += pageChunks.length;
 
     defineRecordValue(manifest.pages, pagePath, {
       chunks: pageChunks,

@@ -11,7 +11,11 @@ import {
   type ChunkAnalysis,
   generateChunkManifest,
 } from "./chunk-optimizer.ts";
-import { MAX_IMPORTS_PER_PAGE } from "./chunk-optimizer/limits.ts";
+import {
+  MAX_IMPORTS_PER_PAGE,
+  MAX_MANIFEST_CHUNKS,
+  MAX_TOTAL_MANIFEST_PAGE_CHUNK_REFERENCES,
+} from "./chunk-optimizer/limits.ts";
 import { DEFAULT_MAX_FILE_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
 
 describe("rendering/chunk-optimizer", () => {
@@ -231,6 +235,73 @@ describe("rendering/chunk-optimizer", () => {
       assertExists(page);
       assertEquals(chunk.deps.length, MAX_IMPORTS_PER_PAGE + 1);
       assertEquals(page.chunks, ["common"]);
+    });
+
+    it("enforces the page dependency cap across local remote and shared entries", () => {
+      const local = Array.from({ length: 4_000 }, (_, index) => `./local-${index}.ts`);
+      const remote = Array.from(
+        { length: 3_000 },
+        (_, index) => `https://example.test/${index}.js`,
+      );
+      const shared = Array.from({ length: 3_001 }, (_, index) => `pkg-${index}`);
+      const analysis: ChunkAnalysis = {
+        pages: new Map([
+          [
+            "/pages/index.mdx",
+            {
+              path: "/pages/index.mdx",
+              local,
+              remote,
+              shared,
+            },
+          ],
+        ]),
+        sharedDeps: new Map(),
+        suggestedChunks: [],
+      };
+
+      assertThrows(
+        () => generateChunkManifest(analysis),
+        RangeError,
+        `at most ${MAX_IMPORTS_PER_PAGE} total entries`,
+      );
+    });
+
+    it("rejects manifests that exceed the aggregate page-chunk reference budget", () => {
+      const chunkCount = MAX_MANIFEST_CHUNKS;
+      const pageCount = Math.floor(
+        MAX_TOTAL_MANIFEST_PAGE_CHUNK_REFERENCES / chunkCount,
+      ) + 1;
+      const suggestedChunks = Array.from(
+        { length: chunkCount },
+        (_, index) => ({
+          name: `chunk-${index}`,
+          deps: ["shared"],
+          pages: [],
+          benefit: 1,
+        }),
+      );
+      const pages: ChunkAnalysis["pages"] = new Map();
+      for (let index = 0; index < pageCount; index++) {
+        const path = `/pages/page-${index}.mdx`;
+        pages.set(path, {
+          path,
+          local: [],
+          remote: [],
+          shared: ["shared"],
+        });
+      }
+      const analysis: ChunkAnalysis = {
+        pages,
+        sharedDeps: new Map([["shared", pageCount]]),
+        suggestedChunks,
+      };
+
+      assertThrows(
+        () => generateChunkManifest(analysis),
+        RangeError,
+        "page-chunk reference limit",
+      );
     });
 
     it("rejects non-finite chunk sizes", () => {
@@ -910,10 +981,10 @@ describe("rendering/chunk-optimizer", () => {
       );
     });
 
-    it("also scans .md files", async () => {
+    it("analyzes imports from .md files with the same dependency rules as .mdx", async () => {
       const fs = createMockFS(
         {
-          "/project/pages/readme.md": 'import x from "marked";\n',
+          "/project/pages/readme.md": 'import x from "marked";\nimport local from "./local.ts";\n',
         },
         {
           "/project/pages": [{ name: "readme.md", isFile: true }],
@@ -921,6 +992,11 @@ describe("rendering/chunk-optimizer", () => {
       );
       const analysis = await analyzeProjectChunks("/project", fs);
       assertEquals(analysis.pages.size, 1);
+      const page = analysis.pages.get("/project/pages/readme.md");
+      assertExists(page);
+      assertEquals(page.shared, ["marked"]);
+      assertEquals(page.local, ["./local.ts"]);
+      assertEquals(analysis.sharedDeps.get("marked"), 1);
     });
   });
 });

@@ -58,7 +58,7 @@ export async function analyzeProjectChunks(
     }
     totalSourceBytes += sourceBytes;
 
-    const imports = analyzePageImports(content, path);
+    const imports = analyzePageImports(content);
     const pageImports: PageImports = {
       path,
       local: imports.local,
