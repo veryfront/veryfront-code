@@ -173,6 +173,80 @@ describe("OptimizedImage", () => {
         "/.veryfront/optimized-images/images/narrow-320w.jpeg",
       );
     });
+
+    it("uses explicit custom build target widths across each runtime API", () => {
+      const targetWidths = [320];
+      const picture = renderToStaticMarkup(
+        React.createElement(OptimizedImage, {
+          src: "/images/custom.jpg",
+          alt: "Custom",
+          width: 1_000,
+          height: 500,
+          formats: ["webp"],
+          targetWidths,
+        }),
+      );
+      const simple = renderToStaticMarkup(
+        React.createElement(SimpleOptimizedImage, {
+          src: "/images/custom.jpg",
+          alt: "Custom",
+          width: 1_000,
+          height: 500,
+          format: "webp",
+          targetWidths,
+        }),
+      );
+      const hooked = useOptimizedImage("/images/custom.jpg", {
+        formats: ["webp"],
+        width: 1_000,
+        targetWidths,
+      });
+
+      for (const output of [picture, simple, hooked.sources[0]?.srcSet ?? ""]) {
+        assertStringIncludes(output, "/images/custom-320w.webp 320w");
+        assertStringIncludes(output, "/images/custom-1000w.webp 1000w");
+        assertEquals(output.includes("-640w."), false);
+      }
+    });
+
+    it("keeps a default-build png fallback on the original asset", () => {
+      const picture = renderToStaticMarkup(
+        React.createElement(OptimizedImage, {
+          src: "/images/photo.png",
+          alt: "PNG",
+          width: 320,
+          height: 180,
+        }),
+      );
+      const hooked = useOptimizedImage("/images/photo.png", { width: 320 });
+
+      assertStringIncludes(picture, '<img src="/images/photo.png"');
+      assertEquals(picture.includes("photo-320w.png"), false);
+      assertEquals(hooked.fallback, "/images/photo.png");
+    });
+
+    it("uses only the explicitly emitted custom format matrix", () => {
+      const webpOnly = renderToStaticMarkup(
+        React.createElement(OptimizedImage, {
+          src: "/images/photo.jpg",
+          alt: "WebP only",
+          width: 320,
+          formats: ["webp"],
+        }),
+      );
+      const pngEmitted = useOptimizedImage("/images/photo.png", {
+        width: 320,
+        formats: ["png"],
+      });
+
+      assertStringIncludes(webpOnly, "/images/photo-320w.webp 320w");
+      assertStringIncludes(webpOnly, '<img src="/images/photo.jpg"');
+      assertEquals(webpOnly.includes("photo-320w.jpeg"), false);
+      assertEquals(
+        pngEmitted.fallback,
+        "/.veryfront/optimized-images/images/photo-320w.png",
+      );
+    });
   });
 
   describe("styling", () => {
@@ -228,6 +302,39 @@ describe("OptimizedBackgroundImage", () => {
     assertExists(element);
     assertEquals(element.props.src, "/images/background.jpg");
     assertEquals(element.props.format, "webp");
+  });
+
+  it("uses the original asset when intrinsic width is unknown", () => {
+    const markup = renderToStaticMarkup(
+      React.createElement(OptimizedBackgroundImage, {
+        src: "/images/background.jpg",
+      }),
+    );
+
+    assertStringIncludes(markup, "background-image:url(/images/background.jpg)");
+    assertEquals(markup.includes("-1920w."), false);
+  });
+
+  it("selects an emitted background width for narrow and custom target plans", () => {
+    const narrow = renderToStaticMarkup(
+      React.createElement(OptimizedBackgroundImage, {
+        src: "/images/narrow.jpg",
+        width: 320,
+      }),
+    );
+    const custom = renderToStaticMarkup(
+      React.createElement(OptimizedBackgroundImage, {
+        src: "/images/custom.jpg",
+        width: 1_000,
+        size: 640,
+        targetWidths: [320],
+      }),
+    );
+
+    assertStringIncludes(narrow, "/images/narrow-320w.webp");
+    assertEquals(narrow.includes("-1920w."), false);
+    assertStringIncludes(custom, "/images/custom-1000w.webp");
+    assertEquals(custom.includes("-640w."), false);
   });
 });
 

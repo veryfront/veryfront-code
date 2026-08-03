@@ -25,8 +25,12 @@ export function generateSrcSet(
 /** Resolve build-emitted widths when the source's intrinsic width is known. */
 export function getOptimizedImageVariantWidths(
   sourceWidth: number | undefined,
+  targetWidths?: readonly number[],
 ): readonly number[] {
-  return sourceWidth === undefined ? [] : resolveImageVariantWidths(sourceWidth);
+  if (sourceWidth === undefined) return [];
+  return targetWidths === undefined
+    ? resolveImageVariantWidths(sourceWidth)
+    : resolveImageVariantWidths(sourceWidth, targetWidths);
 }
 
 /** Use the original asset unless a corresponding optimized variant is known. */
@@ -35,9 +39,35 @@ export function getOptimizedImageFallback(
   format: string,
   widths: readonly number[],
   quality: number,
+  preferredWidth?: number,
 ): string {
-  const width = widths[widths.length - 1];
+  let width = widths[widths.length - 1];
+  if (preferredWidth !== undefined) {
+    for (let index = 0; index < widths.length; index++) {
+      if (widths[index]! >= preferredWidth) {
+        width = widths[index];
+        break;
+      }
+    }
+  }
   return width === undefined ? src : getOptimizedPath(src, format, width, quality);
+}
+
+/** Use an optimized fallback only when the build emitted the source format. */
+export function getOptimizedImageFormatFallback(
+  src: string,
+  format: string,
+  emittedFormats: readonly string[] | undefined,
+  widths: readonly number[],
+  quality: number,
+): string {
+  if (emittedFormats === undefined) return src;
+  for (let index = 0; index < emittedFormats.length; index++) {
+    if (emittedFormats[index] === format) {
+      return getOptimizedImageFallback(src, format, widths, quality);
+    }
+  }
+  return src;
 }
 
 /**

@@ -16,9 +16,12 @@ export {
   generateBlurDataURL,
   getAspectRatioPadding,
   OptimizedBackgroundImage,
+  type OptimizedBackgroundImageProps,
   OptimizedImage,
+  type OptimizedImageFormat,
   type OptimizedImageProps,
   ResponsiveImageContainer,
   SimpleOptimizedImage,
   useOptimizedImage,
+  type UseOptimizedImageOptions,
 } from "./optimized-image/index.ts";

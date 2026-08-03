@@ -9,6 +9,7 @@ describe("resolveImageVariantWidths", () => {
   });
 
   it("filters, deduplicates, and sorts configured widths before the intrinsic width", () => {
+    assertEquals(resolveImageVariantWidths(1_000, [320]), [320, 1_000]);
     assertEquals(resolveImageVariantWidths(1_000, [800, 400, 800, 1_200]), [
       400,
       800,

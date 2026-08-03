@@ -1,5 +1,5 @@
 import type React from "react";
-import type { OptimizedImageProps } from "./OptimizedImage.tsx";
+import type { OptimizedImageFormat, OptimizedImageProps } from "./OptimizedImage.tsx";
 import {
   generateSrcSet,
   getOptimizedImageFallback,
@@ -11,6 +11,7 @@ export function SimpleOptimizedImage({
   alt,
   width,
   height,
+  targetWidths,
   format = "webp",
   quality = 80,
   loading = "lazy",
@@ -20,9 +21,9 @@ export function SimpleOptimizedImage({
   onLoad,
   onError,
 }: Omit<OptimizedImageProps, "formats" | "sizes" | "priority" | "placeholder" | "blurDataURL"> & {
-  format?: "webp" | "avif" | "jpeg" | "png";
+  format?: OptimizedImageFormat;
 }): React.JSX.Element {
-  const variantWidths = getOptimizedImageVariantWidths(width);
+  const variantWidths = getOptimizedImageVariantWidths(width, targetWidths);
   const srcSet = variantWidths.length > 0
     ? generateSrcSet(src, format, variantWidths, quality)
     : undefined;

@@ -2,9 +2,11 @@ import React from "react";
 import {
   generateSrcSet,
   getImageExtension,
-  getOptimizedImageFallback,
+  getOptimizedImageFormatFallback,
   getOptimizedImageVariantWidths,
 } from "./helpers.ts";
+
+export type OptimizedImageFormat = "avif" | "webp" | "jpeg" | "png";
 
 export interface OptimizedImageProps {
   src: string;
@@ -13,7 +15,10 @@ export interface OptimizedImageProps {
   width?: number;
   height?: number;
   sizes?: string;
-  formats?: ("avif" | "webp" | "jpeg" | "png")[];
+  /** Must match `assetPipeline.images.sizes` when custom build widths are configured. */
+  targetWidths?: readonly number[];
+  /** Must match `assetPipeline.images.formats` when custom build formats are configured. */
+  formats?: readonly OptimizedImageFormat[];
   quality?: number;
   loading?: "lazy" | "eager";
   priority?: boolean;
@@ -26,7 +31,7 @@ export interface OptimizedImageProps {
   onError?: (event: React.SyntheticEvent<HTMLImageElement>) => void;
 }
 
-const DEFAULT_FORMATS: ("avif" | "webp" | "jpeg")[] = ["avif", "webp", "jpeg"];
+const DEFAULT_FORMATS: readonly OptimizedImageFormat[] = ["avif", "webp", "jpeg"];
 
 export function OptimizedImage({
   src,
@@ -34,6 +39,7 @@ export function OptimizedImage({
   width,
   height,
   sizes = "100vw",
+  targetWidths,
   formats = DEFAULT_FORMATS,
   quality = 80,
   loading,
@@ -48,7 +54,7 @@ export function OptimizedImage({
 }: OptimizedImageProps): React.JSX.Element {
   const loadingStrategy = priority ? "eager" : (loading ?? "lazy");
   const originalFormat = getImageExtension(src);
-  const variantWidths = getOptimizedImageVariantWidths(width);
+  const variantWidths = getOptimizedImageVariantWidths(width, targetWidths);
 
   const imgStyle: React.CSSProperties = {
     ...style,
@@ -69,7 +75,13 @@ export function OptimizedImage({
       ))}
 
       <img
-        src={getOptimizedImageFallback(src, originalFormat, variantWidths, quality)}
+        src={getOptimizedImageFormatFallback(
+          src,
+          originalFormat,
+          formats,
+          variantWidths,
+          quality,
+        )}
         alt={alt}
         width={width}
         height={height}

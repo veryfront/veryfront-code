@@ -1,23 +1,32 @@
 import {
   generateSrcSet,
   getImageExtension,
-  getOptimizedImageFallback,
+  getOptimizedImageFormatFallback,
   getOptimizedImageVariantWidths,
 } from "./helpers.ts";
+import type { OptimizedImageFormat } from "./OptimizedImage.tsx";
 
-const DEFAULT_FORMATS: Array<"avif" | "webp" | "jpeg"> = ["avif", "webp", "jpeg"];
+const DEFAULT_FORMATS: readonly OptimizedImageFormat[] = ["avif", "webp", "jpeg"];
 
-type ImageFormat = "avif" | "webp" | "jpeg" | "png";
+export interface UseOptimizedImageOptions {
+  /** Must match `assetPipeline.images.formats` when custom build formats are configured. */
+  formats?: readonly OptimizedImageFormat[];
+  quality?: number;
+  /** Intrinsic source width. Optimized variants are used only when this is known. */
+  width?: number;
+  /** Must match `assetPipeline.images.sizes` when custom build widths are configured. */
+  targetWidths?: readonly number[];
+}
 
 export function useOptimizedImage(
   src: string,
-  options: { formats?: ImageFormat[]; quality?: number; width?: number } = {},
+  options: UseOptimizedImageOptions = {},
 ): {
-  sources: Array<{ format: ImageFormat; srcSet: string; type: string }>;
+  sources: Array<{ format: OptimizedImageFormat; srcSet: string; type: string }>;
   fallback: string;
 } {
-  const { formats = DEFAULT_FORMATS, quality = 80, width } = options;
-  const variantWidths = getOptimizedImageVariantWidths(width);
+  const { formats = DEFAULT_FORMATS, quality = 80, targetWidths, width } = options;
+  const variantWidths = getOptimizedImageVariantWidths(width, targetWidths);
 
   const sources = variantWidths.length === 0 ? [] : formats.map((format) => ({
     format,
@@ -25,9 +34,10 @@ export function useOptimizedImage(
     type: `image/${format}`,
   }));
 
-  const fallback = getOptimizedImageFallback(
+  const fallback = getOptimizedImageFormatFallback(
     src,
     getImageExtension(src),
+    formats,
     variantWidths,
     quality,
   );
