@@ -121,20 +121,19 @@ describe("AppShell", () => {
     dom.window.localStorage.setItem("shell-left", "false");
     const restore = installDom(dom);
     const recoverableErrors: unknown[] = [];
+    let root: Root | undefined;
 
     try {
       const rootElement = document.getElementById("root");
       assert(rootElement);
-      const root = hydrateRoot(rootElement, <Shell />, {
+      root = hydrateRoot(rootElement, <Shell />, {
         onRecoverableError: (error) => recoverableErrors.push(error),
       });
 
       await waitFor(() => document.querySelector("[data-sidebar='left']") === null);
       assertEquals(recoverableErrors, []);
-
-      await unmount(root);
-      await new Promise((resolve) => setTimeout(resolve, 0));
     } finally {
+      if (root) await unmount(root);
       restore();
     }
   });
@@ -174,7 +173,7 @@ describe("AppShell", () => {
       await waitFor(() => document.querySelectorAll('[role="dialog"]').length === 2);
       assertEquals(document.body.style.overflow, "hidden");
 
-      flushSync(() => rootA?.unmount());
+      await unmount(rootA);
       rootA = undefined;
       assertEquals(document.querySelectorAll('[role="dialog"]').length, 1);
       assertEquals(
@@ -183,7 +182,7 @@ describe("AppShell", () => {
         "the remaining overlay still owns the document lock",
       );
 
-      flushSync(() => rootB?.unmount());
+      await unmount(rootB);
       rootB = undefined;
       assertEquals(
         document.body.style.overflow,
@@ -191,8 +190,8 @@ describe("AppShell", () => {
         "the final release restores the exact pre-lock value",
       );
     } finally {
-      if (rootA) flushSync(() => rootA?.unmount());
-      if (rootB) flushSync(() => rootB?.unmount());
+      if (rootA) await unmount(rootA);
+      if (rootB) await unmount(rootB);
       restore();
     }
   });

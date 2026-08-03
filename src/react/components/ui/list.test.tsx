@@ -413,7 +413,7 @@ describe("ListItem", () => {
     }
   });
 
-  it("preserves React 19 callback-ref cleanup for the primary action", () => {
+  it("preserves React 19 callback-ref cleanup for the primary action", async () => {
     const dom = createDom();
     const restore = installDom(dom);
     let root: ReturnType<typeof createRoot> | undefined;
@@ -445,13 +445,13 @@ describe("ListItem", () => {
       assert(renderedPrimaryAction);
       assertEquals(primaryAction, renderedPrimaryAction);
 
-      flushSync(() => root?.unmount());
+      await unmount(root);
       root = undefined;
       assertEquals(primaryAction, null);
       assertEquals(cleanupCalls, 1);
       assertEquals(nullCalls, 0);
     } finally {
-      if (root) flushSync(() => root?.unmount());
+      if (root) await unmount(root);
       restore();
     }
   });
