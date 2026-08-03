@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { clearProjectAgentRuntimeRegistries } from "../../../src/agent/project/agent-runtime.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
@@ -689,6 +694,7 @@ describe("local schedule execution boundaries", () => {
         VeryfrontError,
         "--input JSON file must contain a JSON object.",
       );
+      assertInstanceOf(error, VeryfrontError);
       assertEquals(error.slug, "invalid-argument");
     }
   });

@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { clearProjectAgentRuntimeRegistries } from "#veryfront/agent/project/agent-runtime.ts";
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
@@ -231,6 +236,7 @@ describe("webhook command", () => {
       VeryfrontError,
       "Local agent webhook runs cannot attach to an existing cloud conversation.",
     );
+    assertInstanceOf(existingConversationError, VeryfrontError);
     assertEquals(existingConversationError.slug, "invalid-argument");
 
     const missingPromptError = assertThrows(
@@ -249,6 +255,7 @@ describe("webhook command", () => {
       VeryfrontError,
       "Local agent webhook runs require a rendered prompt.",
     );
+    assertInstanceOf(missingPromptError, VeryfrontError);
     assertEquals(missingPromptError.slug, "invalid-argument");
   });
 });
