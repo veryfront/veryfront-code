@@ -197,15 +197,56 @@ function requireKeyComponent(value: string, label: string): string {
   return value;
 }
 
+function quoteJsonString(value: string): string {
+  let quoted = '"';
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    switch (code) {
+      case 0x08:
+        quoted += "\\b";
+        break;
+      case 0x09:
+        quoted += "\\t";
+        break;
+      case 0x0a:
+        quoted += "\\n";
+        break;
+      case 0x0c:
+        quoted += "\\f";
+        break;
+      case 0x0d:
+        quoted += "\\r";
+        break;
+      case 0x22:
+        quoted += '\\"';
+        break;
+      case 0x5c:
+        quoted += "\\\\";
+        break;
+      default:
+        if (code <= 0x1f) {
+          quoted += "\\u" + code.toString(16).padStart(4, "0");
+        } else {
+          quoted += value[index];
+        }
+    }
+  }
+  return quoted + '"';
+}
+
+function jsonArrayFrame(values: readonly string[]): string {
+  return "[" + values.map(quoteJsonString).join(",") + "]";
+}
+
 function tokensStorageKey(serviceId: string, userId: string): string {
-  return TOKENS_KEY_PREFIX + JSON.stringify([
+  return TOKENS_KEY_PREFIX + jsonArrayFrame([
     requireKeyComponent(serviceId, "serviceId"),
     requireKeyComponent(userId, "userId"),
   ]);
 }
 
 function refreshLockKey(serviceId: string, userId: string): string {
-  return REFRESH_LOCK_KEY_PREFIX + JSON.stringify([
+  return REFRESH_LOCK_KEY_PREFIX + jsonArrayFrame([
     requireKeyComponent(serviceId, "serviceId"),
     requireKeyComponent(userId, "userId"),
   ]);
@@ -223,7 +264,7 @@ function stateStorageKey(state: string): string {
   if (state.trim() !== state || hasAsciiControlCharacter(state)) {
     throw new TypeError("state must not contain surrounding whitespace or control characters");
   }
-  return STATE_KEY_PREFIX + JSON.stringify([state]);
+  return STATE_KEY_PREFIX + jsonArrayFrame([state]);
 }
 
 interface StoredTokenEntry {
@@ -279,6 +320,49 @@ function requireJsonDataValue(value: unknown, label: string): unknown {
     snapshot[key] = requireJsonDataValue(descriptor.value, label);
   }
   return snapshot;
+}
+
+function snapshotForJsonStringify(value: unknown, label: string): unknown {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new TypeError(`${label} must contain only finite JSON numbers`);
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    const snapshot = Array.from({ length: value.length }, (_, index) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (!descriptor || !("value" in descriptor)) {
+        throw new TypeError(`${label} must contain only own data values`);
+      }
+      return snapshotForJsonStringify(descriptor.value, label);
+    });
+    Object.defineProperty(snapshot, "toJSON", {
+      configurable: true,
+      enumerable: false,
+      value: undefined,
+    });
+    return snapshot;
+  }
+  if (!value || typeof value !== "object") {
+    throw new TypeError(`${label} must contain only JSON data values`);
+  }
+  const snapshot: Record<string, unknown> = Object.create(null);
+  for (const key of Object.keys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !("value" in descriptor)) {
+      throw new TypeError(`${label} must contain only own data values`);
+    }
+    snapshot[key] = snapshotForJsonStringify(descriptor.value, label);
+  }
+  return snapshot;
+}
+
+function stringifyJsonData(value: unknown): string {
+  return JSON.stringify(snapshotForJsonStringify(value, "Stored OAuth value"));
 }
 
 function requireMetadata(value: unknown): Record<string, unknown> | undefined {
@@ -472,7 +556,7 @@ class EnvelopeCipher {
   }
 
   async seal(storageKey: string, value: unknown): Promise<string> {
-    const plaintext = new TextEncoder().encode(JSON.stringify(value));
+    const plaintext = new TextEncoder().encode(stringifyJsonData(value));
     if (plaintext.byteLength > MAX_PLAINTEXT_BYTES) {
       throw new RangeError(`Stored OAuth value exceeds ${MAX_PLAINTEXT_BYTES} bytes`);
     }

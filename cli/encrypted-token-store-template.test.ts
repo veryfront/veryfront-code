@@ -195,6 +195,35 @@ describe("generated encrypted OAuth token store", () => {
     );
   });
 
+  it("stores tokens without invoking inherited JSON serializers", async () => {
+    const store = createEncryptedTokenStore(createMemoryKvBackend());
+    let inheritedSerializerCalls = 0;
+    Object.defineProperty(Object.prototype, "toJSON", {
+      configurable: true,
+      value() {
+        inheritedSerializerCalls++;
+        throw new Error("Object.prototype.toJSON must not run");
+      },
+    });
+    Object.defineProperty(Array.prototype, "toJSON", {
+      configurable: true,
+      value() {
+        inheritedSerializerCalls++;
+        throw new Error("Array.prototype.toJSON must not run");
+      },
+    });
+
+    try {
+      await store.setTokens("github", "alice", { accessToken: "access-token" });
+    } finally {
+      delete (Object.prototype as { toJSON?: unknown }).toJSON;
+      delete (Array.prototype as { toJSON?: unknown }).toJSON;
+    }
+
+    assertEquals(inheritedSerializerCalls, 0);
+    assertEquals((await store.getTokens("github", "alice"))?.accessToken, "access-token");
+  });
+
   it("stores detached token snapshots", async () => {
     const store = createEncryptedTokenStore(createMemoryKvBackend());
     const tokens = { accessToken: "original", refreshToken: "refresh" };
@@ -408,6 +437,36 @@ describe("generated encrypted OAuth token store", () => {
       TypeError,
       "metadata",
     );
+  });
+
+  it("stores OAuth state without invoking inherited JSON serializers", async () => {
+    const store = createEncryptedTokenStore(createMemoryKvBackend());
+    const state = oauthState("alice");
+    let inheritedSerializerCalls = 0;
+    Object.defineProperty(Object.prototype, "toJSON", {
+      configurable: true,
+      value() {
+        inheritedSerializerCalls++;
+        throw new Error("Object.prototype.toJSON must not run");
+      },
+    });
+    Object.defineProperty(Array.prototype, "toJSON", {
+      configurable: true,
+      value() {
+        inheritedSerializerCalls++;
+        throw new Error("Array.prototype.toJSON must not run");
+      },
+    });
+
+    try {
+      await store.setState("state-without-hooks", state);
+    } finally {
+      delete (Object.prototype as { toJSON?: unknown }).toJSON;
+      delete (Array.prototype as { toJSON?: unknown }).toJSON;
+    }
+
+    assertEquals(inheritedSerializerCalls, 0);
+    assertEquals(await store.consumeState("state-without-hooks"), state);
   });
 
   it("treats corrupted one-shot OAuth state as invalid", async () => {
