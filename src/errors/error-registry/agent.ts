@@ -56,6 +56,15 @@ export const TOOL_ID_CONFLICT = defineError({
   suggestion: "Use a unique tool ID or rename one of the conflicting tools",
 });
 
+export const DURABLE_RUN_EVENT_PERSISTENCE_FAILED = defineError({
+  slug: "durable-run-event-persistence-failed",
+  category: "AGENT",
+  status: 500,
+  title: "Durable run event persistence failed",
+  suggestion:
+    "Correct invalid or oversized event data, or retry after durable event storage recovers",
+});
+
 /** Registry fragment for AGENT errors (slug → definition). */
 export const AGENT_REGISTRY = {
   "agent-error": AGENT_ERROR,
@@ -65,4 +74,5 @@ export const AGENT_REGISTRY = {
   "orchestration-error": ORCHESTRATION_ERROR,
   "cost-limit-exceeded": COST_LIMIT_EXCEEDED,
   "tool-id-conflict": TOOL_ID_CONFLICT,
+  "durable-run-event-persistence-failed": DURABLE_RUN_EVENT_PERSISTENCE_FAILED,
 } as const;
