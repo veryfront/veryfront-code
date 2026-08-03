@@ -291,6 +291,7 @@ export type ReleaseAssetManifestState =
   | "queued"
   | "building"
   | "ready"
+  | "partial"
   | "failed"
   | "superseded";
 
