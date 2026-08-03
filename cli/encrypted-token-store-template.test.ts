@@ -433,6 +433,26 @@ describe("generated encrypted OAuth token store", () => {
     await assertRejects(() => store.setState("late", expired), RangeError, "acceptance window");
   });
 
+  it("rejects OAuth state older than the TTL without adding clock skew", async () => {
+    const store = createEncryptedTokenStore(createMemoryKvBackend());
+    const expired = { ...oauthState("alice"), createdAt: Date.now() - 10.5 * 60_000 };
+
+    await assertRejects(
+      () => store.setState("past-skew", expired),
+      RangeError,
+      "acceptance window",
+    );
+  });
+
+  it("accepts OAuth state created within the allowed future clock skew", async () => {
+    const store = createEncryptedTokenStore(createMemoryKvBackend());
+    const future = { ...oauthState("alice"), createdAt: Date.now() + 30_000 };
+
+    await store.setState("future-skew", future);
+
+    assertEquals(await store.consumeState("future-skew"), future);
+  });
+
   it("drops expired state rows even when the backend ignores TTL hints", async () => {
     // A backend that never expires rows, so only the store's own freshness
     // check stands between an old state and a replayed callback.

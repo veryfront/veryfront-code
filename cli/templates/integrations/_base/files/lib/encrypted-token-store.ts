@@ -442,8 +442,10 @@ function requireStateRow(value: unknown): StoredOAuthState {
 }
 
 function isFreshState(createdAt: number, now: number): boolean {
-  return createdAt <= now + STATE_CLOCK_SKEW_MS &&
-    now - createdAt <= STATE_TTL_MS + STATE_CLOCK_SKEW_MS;
+  if (createdAt > now) {
+    return createdAt - now <= STATE_CLOCK_SKEW_MS;
+  }
+  return now - createdAt <= STATE_TTL_MS;
 }
 
 function assertBackend(backend: EncryptedKvBackend): void {
