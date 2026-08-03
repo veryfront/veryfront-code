@@ -172,14 +172,14 @@ Deno.test("npm release preflight rejects an unbootstrapped package name", async 
       },
     );
 
-    assertEquals(output.code, 1);
+    assertEquals(output.code, 1, decoder.decode(output.stderr));
     assertStringIncludes(
       decoder.decode(output.stderr),
       "@veryfront/ext-new is not registered on npm",
     );
     assertStringIncludes(
       decoder.decode(output.stderr),
-      "bootstrap the package and configure trusted publishing",
+      "Publish each package once with a prerelease version and a non-latest dist-tag",
     );
     const calls = (await Deno.readTextFile(npmLog)).trim().split("\n");
     assertEquals(calls, [
