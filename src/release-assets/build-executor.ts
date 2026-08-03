@@ -40,6 +40,7 @@ import {
   resolveRelativeFrameworkSourceImport,
 } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { PUBLISHED_RUNTIME_HELPERS } from "#veryfront/platform/compat/published-runtime-helpers.ts";
+import { getFrameworkRoot } from "#veryfront/platform/compat/vfs-paths.ts";
 import { normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 import { extractSourceUrl } from "#veryfront/transforms/esm/source-url-embed.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
@@ -460,35 +461,21 @@ function frameworkSourcePathToSourceKey(sourcePath: string, lookupDirs: string[]
   return null;
 }
 
-function frameworkRootsForLookupDirs(lookupDirs: string[]): string[] {
-  const roots = new Set<string>();
-  for (const lookupDir of lookupDirs) {
-    if (lookupDir.endsWith("/dist/framework-src")) {
-      roots.add(lookupDir.slice(0, -"/dist/framework-src".length));
-    } else if (lookupDir.endsWith("/src")) {
-      roots.add(lookupDir.slice(0, -"/src".length));
-    }
-  }
-  return [...roots];
-}
-
 /**
  * Published npm packages emit DNT runtime helpers (`_dnt.shims.js`,
- * `_dnt.polyfills.js`, `deno.js`) at the package ESM root — outside every
- * framework source lookup dir. Map those exact files to a reserved source key
- * so the release dependency walk can publish them instead of leaving the
- * relative import unresolved.
+ * `_dnt.polyfills.js`, `deno.js`) at the package ESM root, outside every
+ * framework source lookup dir. Detect those exact files (relative to the
+ * importing module's package root) so the release dependency walk can publish
+ * them instead of leaving the relative import unresolved.
  */
-function publishedRuntimeHelperSourceKey(
-  sourcePath: string,
-  lookupDirs: string[],
+function matchPublishedRuntimeHelper(
+  resolvedPath: string,
+  fromSourcePath: string,
 ): string | null {
-  for (const root of frameworkRootsForLookupDirs(lookupDirs)) {
-    for (const helper of PUBLISHED_RUNTIME_HELPERS) {
-      if (sourcePath === join(root, helper)) {
-        return `_published-runtime/${helper.replace(/\.js$/, "")}`;
-      }
-    }
+  const packageRoot = getFrameworkRoot(fromSourcePath);
+  if (!packageRoot) return null;
+  for (const helper of PUBLISHED_RUNTIME_HELPERS) {
+    if (resolvedPath === join(packageRoot, helper)) return helper;
   }
   return null;
 }
@@ -1927,6 +1914,7 @@ async function buildFrameworkDependencies(
   const moduleAssets = new Map<string, PreparedAsset>();
   const visiting = new Set<string>();
   const publishedHelperPaths = new Map<string, string>();
+  const publishedHelperKeysByPath = new Map<string, string>();
 
   async function resolveFrameworkImport(
     specifier: string,
@@ -1935,9 +1923,17 @@ async function buildFrameworkDependencies(
     if (specifier.startsWith("./") || specifier.startsWith("../")) {
       const resolvedPath = await resolveRelativeFrameworkSourceImport(specifier, fromSourcePath);
       if (!resolvedPath) return null;
-      const helperSourceKey = publishedRuntimeHelperSourceKey(resolvedPath, lookupDirs);
-      if (helperSourceKey) {
-        publishedHelperPaths.set(helperSourceKey, resolvedPath);
+      const helperName = matchPublishedRuntimeHelper(resolvedPath, fromSourcePath);
+      if (helperName) {
+        // Key helpers by resolved path: distinct package roots can each emit
+        // a helper with the same filename but different contents.
+        let helperSourceKey = publishedHelperKeysByPath.get(resolvedPath);
+        if (!helperSourceKey) {
+          const stem = helperName.replace(/\.js$/, "");
+          helperSourceKey = `_published-runtime/${publishedHelperKeysByPath.size}/${stem}`;
+          publishedHelperKeysByPath.set(resolvedPath, helperSourceKey);
+          publishedHelperPaths.set(helperSourceKey, resolvedPath);
+        }
         return helperSourceKey;
       }
       return frameworkSourcePathToSourceKey(resolvedPath, lookupDirs);
