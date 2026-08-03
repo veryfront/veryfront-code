@@ -190,6 +190,16 @@ describe("generate-api-reference", () => {
         middlewareReference,
         "Drain and discard all registered teardown callbacks. Unlike the per-request cleanup run by `execute()` / `handle()`, this clears callbacks so they never run again.",
       );
+      assertStringIncludes(
+        middlewareReference,
+        "### `MemoryRateLimitStoreOptions`",
+        "generated middleware reference must retain the public memory-store options table",
+      );
+      assertMatch(
+        middlewareReference,
+        /\| `maxEntries\?` \| `number` \| [^|\n]+ \| \[source\]\([^\n)]*src\/middleware\/builtin\/security\/rate-limit\.ts#L\d+\) \|/,
+        "generated memory-store capacity documentation must retain its source link",
+      );
       assertEquals(
         middlewareReference.includes("after the response is sent"),
         false,

@@ -1704,6 +1704,7 @@ const API_DOCS: Record<string, APIDocs> = {
     expandTypes: [
       "CorsOptions",
       "RateLimitOptions",
+      "MemoryRateLimitStoreOptions",
       "LoggerOptions",
       "TimeoutOptions",
     ],
