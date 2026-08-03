@@ -175,12 +175,19 @@ function cloneNodeMapEntries(
       }
       if (seen.has(key)) fail("nodeMap contains duplicate keys");
       seen.add(key);
+      return [key, rawValue];
+    });
+  };
 
-      const value = cloneJsonValue(rawValue, state, 1);
+  const cloneEntries = (
+    entries: Array<[number, unknown]>,
+    cloneState: CloneState,
+  ): Array<[number, unknown]> =>
+    entries.map(([key, rawValue]) => {
+      const value = cloneJsonValue(rawValue, cloneState, 1);
       if (value === undefined) fail("nodeMap values cannot be undefined");
       return [key, value];
     });
-  };
 
   const readEntries = (
     rawNodeMapEntries: unknown,
@@ -188,12 +195,23 @@ function cloneNodeMapEntries(
   ): Array<[number, unknown]> | undefined => {
     if (rawNodeMapEntries === undefined) return undefined;
     if (!Array.isArray(rawNodeMapEntries)) fail(`${label} must be an array`);
+    const length = ownDataValue(rawNodeMapEntries, "length");
+    if (
+      typeof length !== "number" || !Number.isSafeInteger(length) ||
+      length < 0
+    ) {
+      fail(`${label} has an invalid length`);
+    }
+    if (length > MAX_NODE_MAP_ENTRIES) {
+      fail("nodeMap contains too many entries");
+    }
     const entries: Array<[unknown, unknown]> = [];
-    for (let index = 0; index < rawNodeMapEntries.length; index++) {
+    for (let index = 0; index < length; index++) {
       if (!Object.hasOwn(rawNodeMapEntries, index)) fail(`${label} is sparse`);
       const entry = ownDataValue(rawNodeMapEntries, index);
       if (
-        !Array.isArray(entry) || entry.length !== 2 || !Object.hasOwn(entry, 0) ||
+        !Array.isArray(entry) || ownDataValue(entry, "length") !== 2 ||
+        !Object.hasOwn(entry, 0) ||
         !Object.hasOwn(entry, 1)
       ) {
         fail(`${label} must contain complete [number, value] pairs`);
@@ -211,39 +229,74 @@ function cloneNodeMapEntries(
     ownDataValue(result, "nodeMapEntries"),
     "result.nodeMapEntries",
   );
-  if (
-    topLevelEntries !== undefined &&
-    nestedEntries !== undefined &&
-    !nodeMapEntriesEqual(topLevelEntries, nestedEntries)
-  ) {
-    fail("nodeMapEntries conflicts with result.nodeMapEntries");
-  }
-  const serialized = topLevelEntries ?? nestedEntries;
+  const serializedEntries = topLevelEntries ?? nestedEntries;
 
   let resultEntries: Array<[number, unknown]> | undefined;
   const rawResultNodeMap = ownDataValue(result, "nodeMap");
   if (rawResultNodeMap instanceof Map) {
-    resultEntries = normalize([...Map.prototype.entries.call(rawResultNodeMap)]);
+    const entries: Array<[unknown, unknown]> = [];
+    Map.prototype.forEach.call(
+      rawResultNodeMap,
+      (rawValue: unknown, rawKey: unknown) => {
+        if (entries.length >= MAX_NODE_MAP_ENTRIES) {
+          fail("nodeMap contains too many entries");
+        }
+        entries.push([rawKey, rawValue]);
+      },
+    );
+    resultEntries = normalize(entries);
   } else if (rawResultNodeMap !== undefined) {
     if (!isPlainRecord(rawResultNodeMap)) fail("result.nodeMap must be a Map or record");
     const keys = Object.keys(rawResultNodeMap);
+    if (keys.length > MAX_NODE_MAP_ENTRIES) {
+      fail("nodeMap contains too many entries");
+    }
     // JSON.stringify(Map) produced this exact empty record in origin/main.
     // Prefer the explicit entries array when it is present.
-    if (keys.length > 0 || serialized === undefined) {
+    if (keys.length > 0 || serializedEntries === undefined) {
       resultEntries = normalize(
         keys.map((key) => [key, ownDataValue(rawResultNodeMap, key)]),
       );
     }
   }
 
-  if (
-    serialized !== undefined && resultEntries !== undefined &&
-    !nodeMapEntriesEqual(serialized, resultEntries)
-  ) {
-    fail("nodeMapEntries conflicts with result.nodeMap");
-  }
+  const canonicalRaw = serializedEntries ?? resultEntries;
+  if (canonicalRaw === undefined) return undefined;
 
-  return serialized ?? resultEntries;
+  // Compatibility payloads can contain the same logical node map in three
+  // representations. Charge the canonical data to the payload budget once,
+  // then validate each duplicate independently before comparing it. This
+  // preserves the limit without rejecting valid data merely because an older
+  // reader requires an additional projection on the wire.
+  const canonical = cloneEntries(canonicalRaw, state);
+  const assertCompatible = (
+    candidate: Array<[number, unknown]> | undefined,
+    message: string,
+  ): void => {
+    if (candidate === undefined || candidate === canonicalRaw) return;
+    const validationState: CloneState = {
+      nodes: 0,
+      stringBytes: 0,
+      ancestors: new WeakSet<object>(),
+    };
+    const validated = cloneEntries(candidate, validationState);
+    if (!nodeMapEntriesEqual(canonical, validated)) fail(message);
+  };
+
+  assertCompatible(
+    topLevelEntries,
+    "nodeMapEntries conflicts with the canonical node map",
+  );
+  assertCompatible(
+    nestedEntries,
+    "result.nodeMapEntries conflicts with the canonical node map",
+  );
+  assertCompatible(
+    resultEntries,
+    "result.nodeMap conflicts with the canonical node map",
+  );
+
+  return canonical;
 }
 
 function nodeMapEntriesEqual(
@@ -714,10 +767,13 @@ function applyCacheDatePaths(
       fail("cache codec nodeMap Date path does not resolve");
     }
     const valuePath = path.slice(2);
-    entry[1] = replaceDateAtPath(entry[1], valuePath);
+    const serializedValue = entry[1];
+    const mapValue = payload.result.nodeMap.get(nodeId);
+    const hydratedValue = replaceDateAtPath(serializedValue, valuePath);
+    entry[1] = hydratedValue;
     payload.result.nodeMap.set(
       nodeId,
-      replaceDateAtPath(payload.result.nodeMap.get(nodeId), valuePath),
+      mapValue === serializedValue ? hydratedValue : replaceDateAtPath(mapValue, valuePath),
     );
   }
   return payload;
@@ -855,13 +911,9 @@ function buildCachePayload(value: unknown): CachePayload {
     fail("staleUntil cannot precede expiry");
   }
 
-  const resultNodeMap = nodeMapEntries === undefined ? undefined : new Map<number, unknown>(
-    nodeMapEntries.map(([key, entry]) => {
-      const cloned = cloneJsonValue(entry, state, 1);
-      if (cloned === undefined) fail("nodeMap values cannot be undefined");
-      return [key, cloned];
-    }),
-  );
+  const resultNodeMap = nodeMapEntries === undefined
+    ? undefined
+    : new Map<number, unknown>(nodeMapEntries);
 
   return {
     result: {
@@ -878,9 +930,7 @@ function buildCachePayload(value: unknown): CachePayload {
     storedAt,
     ...(expiresAt === undefined ? {} : { expiresAt }),
     ...(staleUntil === undefined ? {} : { staleUntil }),
-    ...(nodeMapEntries === undefined
-      ? {}
-      : { nodeMapEntries: nodeMapEntries.map(([key, entry]) => [key, entry]) }),
+    ...(nodeMapEntries === undefined ? {} : { nodeMapEntries }),
   };
 }
 

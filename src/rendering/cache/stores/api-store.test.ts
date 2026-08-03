@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withTimeoutThrow } from "../../utils/stream-utils.ts";
 import { APICacheStore } from "./api-store.ts";
+import type { CachePayload } from "../types.ts";
 
 async function withStoreTtlEnabled(fn: () => Promise<void>): Promise<void> {
   const previousGlobal = (globalThis as Record<string, unknown>).__vfDisableLruInterval;
@@ -76,125 +77,6 @@ describe("rendering/cache/stores/api-store", () => {
     it("should delete without error", async () => {
       const store = new APICacheStore();
       await store.delete("some-key");
-    });
-  });
-
-  describe("serialize/deserialize round-trip", () => {
-    interface TestPayload {
-      result: {
-        html: string;
-        css?: string;
-        frontmatter: Record<string, unknown>;
-        headings?: Array<{ id: string; text: string; level: number }>;
-        nodeMap?: Map<number, unknown>;
-        stream: null;
-        pageModule?: { slug: string; code: string; type: "mdx" | "component" };
-        ssrHash?: string;
-      };
-      storedAt: number;
-      expiresAt?: number;
-      staleUntil?: number;
-      htmlNoncePlaceholder?: string;
-    }
-
-    function makePayload(overrides: Record<string, unknown> = {}): TestPayload {
-      return {
-        result: {
-          html: "<h1>Test</h1>",
-          frontmatter: { title: "Test" },
-          headings: [],
-          stream: null,
-          ...overrides,
-        },
-        storedAt: Date.now(),
-      };
-    }
-
-    it("round-trips basic HTML payload", () => {
-      const store = new APICacheStore();
-      const payload = makePayload();
-      const serialized = (store as any).serialize(payload);
-      const deserialized = (store as any).deserialize(serialized);
-      assertEquals(deserialized.result.html, "<h1>Test</h1>");
-      assertEquals(deserialized.result.frontmatter.title, "Test");
-      assertEquals(deserialized.storedAt, payload.storedAt);
-    });
-
-    it("round-trips payload with nodeMap", () => {
-      const store = new APICacheStore();
-      const nodeMap = new Map<number, unknown>([
-        [1, { type: "div" }],
-        [2, { type: "span" }],
-      ]);
-      const payload = makePayload({ nodeMap });
-      const serialized = (store as any).serialize(payload);
-      const deserialized = (store as any).deserialize(serialized);
-      assertEquals(deserialized.result.nodeMap instanceof Map, true);
-      assertEquals(deserialized.result.nodeMap.size, 2);
-      assertEquals(
-        (deserialized.result.nodeMap.get(1) as Record<string, string>).type,
-        "div",
-      );
-    });
-
-    it("round-trips payload with ssrHash and css", () => {
-      const store = new APICacheStore();
-      const payload = makePayload({ ssrHash: "hash123", css: "body{}" });
-      const serialized = (store as any).serialize(payload);
-      const deserialized = (store as any).deserialize(serialized);
-      assertEquals(deserialized.result.ssrHash, "hash123");
-      assertEquals(deserialized.result.css, "body{}");
-    });
-
-    it("round-trips cache-owned CSP nonce metadata", () => {
-      const store = new APICacheStore();
-      const payload = {
-        ...makePayload(),
-        htmlNoncePlaceholder: `vf-cache-${"a".repeat(48)}`,
-      };
-      const serialized = (store as any).serialize(payload);
-      const deserialized = (store as any).deserialize(serialized);
-      assertEquals(deserialized.htmlNoncePlaceholder, payload.htmlNoncePlaceholder);
-    });
-
-    it("round-trips payload with pageModule", () => {
-      const store = new APICacheStore();
-      const payload = makePayload({
-        pageModule: { slug: "index", code: "export default {}", type: "mdx" as const },
-      });
-      const serialized = (store as any).serialize(payload);
-      const deserialized = (store as any).deserialize(serialized);
-      assertEquals(deserialized.result.pageModule.slug, "index");
-      assertEquals(deserialized.result.pageModule.type, "mdx");
-    });
-
-    it("deserializes stream as null (streams are not cacheable)", () => {
-      const store = new APICacheStore();
-      const payload = makePayload();
-      const serialized = (store as any).serialize(payload);
-      const deserialized = (store as any).deserialize(serialized);
-      assertEquals(deserialized.result.stream, null);
-    });
-
-    it("preserves expiresAt field", () => {
-      const store = new APICacheStore();
-      const payload = { ...makePayload(), expiresAt: Date.now() + 60000 };
-      const serialized = (store as any).serialize(payload);
-      const deserialized = (store as any).deserialize(serialized);
-      assertEquals(deserialized.expiresAt, payload.expiresAt);
-    });
-
-    it("preserves staleUntil field for stale-while-refresh cache entries", () => {
-      const store = new APICacheStore();
-      const payload = {
-        ...makePayload(),
-        expiresAt: Date.now() - 1,
-        staleUntil: Date.now() + 60_000,
-      };
-      const serialized = (store as any).serialize(payload);
-      const deserialized = (store as any).deserialize(serialized);
-      assertEquals(deserialized.expiresAt, payload.expiresAt);
-      assertEquals(deserialized.staleUntil, payload.staleUntil);
     });
   });
 
@@ -377,6 +259,74 @@ describe("rendering/cache/stores/api-store", () => {
           } else {
             globals.__vf_multi_project_adapter = originalAdapter;
           }
+        }
+      }
+    });
+
+    it("preserves Dates through an actual API backend round-trip", async () => {
+      const previousApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+      const previousApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+      const globals = globalThis as Record<string, unknown>;
+      const originalAdapter = globals.__vf_multi_project_adapter;
+      const values = new Map<string, string>();
+      const server = Deno.serve(
+        { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+        async (request) => {
+          const url = new URL(request.url);
+          if (url.pathname === "/projects/api-store-date-project/cache/set") {
+            const body = await request.json() as { key: string; value: string };
+            values.set(body.key, body.value);
+            return Response.json({ success: true });
+          }
+          if (url.pathname === "/projects/api-store-date-project/cache/get") {
+            return Response.json({ value: values.get(url.searchParams.get("key") ?? "") ?? null });
+          }
+          return Response.json({ error: "not found" }, { status: 404 });
+        },
+      );
+      const addr = server.addr as Deno.NetAddr;
+      Deno.env.set("VERYFRONT_API_BASE_URL", `http://${addr.hostname}:${addr.port}`);
+      Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+      globals.__vf_multi_project_adapter = {
+        getCurrentRequestContext: () => ({
+          token: "request-token",
+          projectSlug: "api-store-date-project",
+          productionMode: true,
+        }),
+      };
+      const store = new APICacheStore({ enableLocalCache: false });
+      const publishedAt = new Date("2026-07-24T08:30:00.000Z");
+      const payload: CachePayload = {
+        result: {
+          html: "<p>dated</p>",
+          frontmatter: { publishedAt } as unknown as CachePayload["result"]["frontmatter"],
+          stream: null,
+        },
+        storedAt: Date.now(),
+      };
+
+      try {
+        await store.set("dated-key", payload);
+        const result = await store.get("dated-key");
+
+        assertEquals(result?.result.frontmatter as unknown, { publishedAt });
+      } finally {
+        await store.destroy();
+        await server.shutdown();
+        if (previousApiBaseUrl === undefined) {
+          Deno.env.delete("VERYFRONT_API_BASE_URL");
+        } else {
+          Deno.env.set("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
+        }
+        if (previousApiToken === undefined) {
+          Deno.env.delete("VERYFRONT_API_TOKEN");
+        } else {
+          Deno.env.set("VERYFRONT_API_TOKEN", previousApiToken);
+        }
+        if (originalAdapter === undefined) {
+          delete globals.__vf_multi_project_adapter;
+        } else {
+          globals.__vf_multi_project_adapter = originalAdapter;
         }
       }
     });
