@@ -75,29 +75,30 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
       return undefined;
     }
 
-    return entry.value;
+    return structuredClone(entry.value);
   }
 
   async setBundleMetadata(key: string, metadata: BundleMetadata, ttlMs?: number): Promise<void> {
     const expiry = ttlMs != null ? Date.now() + ttlMs : undefined;
+    const snapshot = structuredClone(metadata);
     const previous = this.metadata.get(key)?.value;
 
     if (!previous) {
-      this.incrementCodeReference(metadata.codeHash);
-    } else if (previous.codeHash !== metadata.codeHash) {
+      this.incrementCodeReference(snapshot.codeHash);
+    } else if (previous.codeHash !== snapshot.codeHash) {
       this.decrementCodeReference(previous.codeHash);
-      this.incrementCodeReference(metadata.codeHash);
+      this.incrementCodeReference(snapshot.codeHash);
     }
 
-    if (previous && previous.source !== metadata.source) {
+    if (previous && previous.source !== snapshot.source) {
       this.removeSourceReference(key, previous.source);
     }
 
-    this.metadata.set(key, { value: metadata, expiry });
+    this.metadata.set(key, { value: snapshot, expiry });
 
-    const keys = this.sourceIndex.get(metadata.source) ?? new Set<string>();
+    const keys = this.sourceIndex.get(snapshot.source) ?? new Set<string>();
     keys.add(key);
-    this.sourceIndex.set(metadata.source, keys);
+    this.sourceIndex.set(snapshot.source, keys);
   }
 
   async getBundleCode(hash: string): Promise<BundleCode | undefined> {

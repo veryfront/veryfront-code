@@ -232,6 +232,87 @@ describe("InMemoryBundleManifestStore", () => {
     assertEquals(await store.getBundleCode(metadata.codeHash), undefined);
   });
 
+  it("snapshots metadata supplied by callers", async () => {
+    const store = new InMemoryBundleManifestStore();
+    const code: BundleCode = { code: "export default true" };
+    const metadata: BundleMetadata = {
+      hash: "original-hash",
+      codeHash: "original-code",
+      size: 10,
+      compiledAt: Date.now(),
+      source: "original.mdx",
+      mode: "development",
+      meta: {
+        type: "mdx",
+        headings: [{ id: "original", text: "Original", level: 1 }],
+      },
+    };
+
+    await store.setBundleCode(metadata.codeHash, code);
+    await store.setBundleMetadata("key", metadata);
+
+    metadata.codeHash = "mutated-code";
+    metadata.source = "mutated.mdx";
+    const suppliedHeading = metadata.meta?.headings?.[0];
+    assertExists(suppliedHeading);
+    suppliedHeading.text = "Mutated";
+
+    const stored = await store.getBundleMetadata("key");
+    assertEquals(stored?.codeHash, "original-code");
+    assertEquals(stored?.source, "original.mdx");
+    assertEquals(stored?.meta?.headings?.[0]?.text, "Original");
+
+    await store.deleteBundle("key");
+    assertEquals(await store.getBundleCode("original-code"), undefined);
+    assertEquals(await store.invalidateSource("original.mdx"), 0);
+  });
+
+  it("does not expose indexed metadata records to callers", async () => {
+    const store = new InMemoryBundleManifestStore();
+    const first: BundleMetadata = {
+      hash: "first-hash",
+      codeHash: "first-code",
+      size: 10,
+      compiledAt: Date.now(),
+      source: "first.mdx",
+      mode: "development",
+      meta: {
+        type: "mdx",
+        headings: [{ id: "first", text: "First", level: 1 }],
+      },
+    };
+    const second: BundleMetadata = {
+      ...first,
+      hash: "second-hash",
+      codeHash: "second-code",
+      source: "second.mdx",
+    };
+
+    await store.setBundleCode(first.codeHash, { code: "export default 1" });
+    await store.setBundleCode(second.codeHash, { code: "export default 2" });
+    await store.setBundleMetadata("first", first);
+    await store.setBundleMetadata("second", second);
+
+    const exposed = await store.getBundleMetadata("first");
+    assertExists(exposed);
+    exposed.codeHash = second.codeHash;
+    exposed.source = second.source;
+    const exposedHeading = exposed.meta?.headings?.[0];
+    assertExists(exposedHeading);
+    exposedHeading.text = "Mutated";
+
+    const stored = await store.getBundleMetadata("first");
+    assertEquals(stored?.codeHash, first.codeHash);
+    assertEquals(stored?.source, first.source);
+    assertEquals(stored?.meta?.headings?.[0]?.text, "First");
+
+    await store.deleteBundle("first");
+    assertEquals(await store.getBundleCode(first.codeHash), undefined);
+    assertEquals(await store.getBundleCode(second.codeHash), { code: "export default 2" });
+    assertEquals(await store.invalidateSource(first.source), 0);
+    assertEquals(await store.getBundleMetadata("second"), second);
+  });
+
   it("releases code and source references when metadata expires", async () => {
     using time = new FakeTime();
     const store = new InMemoryBundleManifestStore();
