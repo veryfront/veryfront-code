@@ -12,6 +12,7 @@ import {
 /** Default value for hosted child agent ID. */
 export const DEFAULT_HOSTED_CHILD_AGENT_ID = "invoke-agent-child";
 export const MAX_HOSTED_CHILD_DELEGATION_DEPTH = 8;
+export const MAX_HOSTED_CHILD_PROJECT_REFERENCE_INPUT_CODE_UNITS = 8_192;
 const HOSTED_CHILD_FORK_RESULT_MODES = ["summary", "full", "structured"] as const;
 
 /** Hosted child fork result return mode. */
@@ -27,7 +28,7 @@ export const getHostedChildForkToolInputSchema = defineSchema((v) =>
     project_reference: v
       .string()
       .min(1, INVALID_AGENT_PROJECT_REFERENCE_MESSAGE)
-      .max(MAX_OPAQUE_ID_CODE_UNITS)
+      .max(MAX_HOSTED_CHILD_PROJECT_REFERENCE_INPUT_CODE_UNITS)
       .transform((value) => value.trim())
       .pipe(
         v.string()

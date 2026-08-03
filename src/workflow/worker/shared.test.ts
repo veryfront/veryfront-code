@@ -58,6 +58,20 @@ function createLogger() {
   };
 }
 
+function createCapturingLogger() {
+  const warnings: string[] = [];
+  return {
+    logger: {
+      error: () => undefined,
+      info: () => undefined,
+      warn: (message: string) => {
+        warnings.push(message);
+      },
+    },
+    warnings,
+  };
+}
+
 function createRun(id: string, status: WorkflowRun["status"], workerId?: string): WorkflowRun {
   return {
     id,
@@ -169,6 +183,37 @@ describe("workflow worker shared helpers", () => {
       getFinalRunExitCode(logger, exitCodes, "run-1", { status: "running" } as never, false),
       1,
     );
+  });
+
+  it("logs sanitized run ids for runs that never reached a durable final state", () => {
+    const { logger, warnings } = createCapturingLogger();
+    const exitCodes = { SUCCESS: 0, WORKFLOW_FAILED: 1 };
+
+    assertEquals(
+      getFinalRunExitCode(
+        logger,
+        exitCodes,
+        "run-\x1b[2Jtoken=secret",
+        { status: "pending" } as never,
+        false,
+      ),
+      1,
+    );
+    assertEquals(
+      getFinalRunExitCode(
+        logger,
+        exitCodes,
+        "run-\x1b[2Jtoken=secret",
+        { status: "running" } as never,
+        false,
+      ),
+      1,
+    );
+
+    assertEquals(warnings, [
+      "Workflow did not reach a durable final state: pending (runId: run-token=secret)",
+      "Workflow did not reach a durable final state: running (runId: run-token=secret)",
+    ]);
   });
 
   it("persists approvals before an isolated executor returns a waiting run", async () => {

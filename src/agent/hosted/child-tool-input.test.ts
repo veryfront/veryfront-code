@@ -5,6 +5,7 @@ import {
   getHostedChildForkToolInputSchema,
   hostedChildForkToolInputSchema,
   MAX_HOSTED_CHILD_DELEGATION_DEPTH,
+  MAX_HOSTED_CHILD_PROJECT_REFERENCE_INPUT_CODE_UNITS,
   resolveHostedChildForkRuntimeConfig,
   resolveHostedChildForkThinkingOverride,
   withHostedChildInvocationContext,
@@ -186,7 +187,30 @@ Deno.test("hostedChildForkToolInputSchema trims project references", () => {
   assertEquals(result.project_reference, "project-123");
 });
 
-Deno.test("hosted child fork JSON Schema exposes project-reference bounds", () => {
+Deno.test("hostedChildForkToolInputSchema trims project references before enforcing canonical length", () => {
+  const canonicalReference = "p".repeat(MAX_OPAQUE_ID_CODE_UNITS);
+  const result = hostedChildForkToolInputSchema.parse({
+    description: "switch project",
+    prompt: "Open the requested project.",
+    project_reference: ` ${canonicalReference} `,
+  });
+
+  assertEquals(result.project_reference, canonicalReference);
+});
+
+Deno.test("hostedChildForkToolInputSchema rejects raw project-reference payloads beyond the DoS bound", () => {
+  const result = hostedChildForkToolInputSchema.safeParse({
+    description: "switch project",
+    prompt: "Open the requested project.",
+    project_reference: `${
+      " ".repeat(MAX_HOSTED_CHILD_PROJECT_REFERENCE_INPUT_CODE_UNITS)
+    }project-123`,
+  });
+
+  assertEquals(result.success, false);
+});
+
+Deno.test("hosted child fork JSON Schema exposes project-reference input bounds", () => {
   const schema = schemaToJsonSchema(getHostedChildForkToolInputSchema());
   const projectReference = schema.properties?.project_reference as
     | Record<string, unknown>
@@ -194,7 +218,7 @@ Deno.test("hosted child fork JSON Schema exposes project-reference bounds", () =
 
   assertEquals(projectReference?.type, "string");
   assertEquals(projectReference?.minLength, 1);
-  assertEquals(projectReference?.maxLength, MAX_OPAQUE_ID_CODE_UNITS);
+  assertEquals(projectReference?.maxLength, MAX_HOSTED_CHILD_PROJECT_REFERENCE_INPUT_CODE_UNITS);
 });
 
 Deno.test("DEFAULT_HOSTED_CHILD_AGENT_ID names the hosted child runtime agent", () => {

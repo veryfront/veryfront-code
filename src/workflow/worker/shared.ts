@@ -1,4 +1,5 @@
 import { env as getProcessEnv } from "#veryfront/compat/process.ts";
+import { sanitizeTerminalDiagnosticText } from "#veryfront/errors/safe-diagnostics.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
@@ -122,7 +123,11 @@ export function getFinalRunExitCode(
 
     case "pending":
     case "running":
-      logger.warn(`Workflow did not reach a durable final state: ${finalRun.status}`);
+      logger.warn(
+        `Workflow did not reach a durable final state: ${finalRun.status} (runId: ${
+          sanitizeTerminalDiagnosticText(runId)
+        })`,
+      );
       return exitCodes.WORKFLOW_FAILED;
 
     default:
