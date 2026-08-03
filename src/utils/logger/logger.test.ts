@@ -507,12 +507,87 @@ describe("logger", () => {
         }
         assertEquals(caught, applicationError);
         assertEquals(executions, 3);
+
+        const returnedHostileLogger = new Proxy({} as Logger, {
+          get() {
+            throw new Error("unreadable returned child logger");
+          },
+        });
+        const hostileChildFactory = {
+          child() {
+            return returnedHostileLogger;
+          },
+          component() {
+            return hostileChildFactory;
+          },
+        } as unknown as Logger;
+        __registerRequestContextGetter(() => ({ logger: hostileChildFactory }));
+
+        const guardedChild = serverLogger.child({ scope: "returned" });
+        guardedChild.info("returned child fallback");
+        assertEquals((JSON.parse(getOutput()) as LogEntry).message, "returned child fallback");
+        assertEquals(
+          await guardedChild.time("returned child timer", () => Promise.resolve("timed")),
+          "timed",
+        );
+        guardedChild.child({ nested: true }).info("nested child fallback");
+        assertEquals((JSON.parse(getOutput()) as LogEntry).message, "nested child fallback");
+        guardedChild.component("nested").info("nested component fallback");
+        assertEquals((JSON.parse(getOutput()) as LogEntry).message, "nested component fallback");
+
+        serverLogger.component("request").child({ scope: "component" }).info(
+          "returned component child fallback",
+        );
+        const returnedComponentEntry = JSON.parse(getOutput()) as LogEntry;
+        assertEquals(returnedComponentEntry.message, "returned component child fallback");
+        assertEquals(returnedComponentEntry.component, "request");
       } finally {
         __registerRequestContextGetter(getRequestContext);
         Deno.env.delete("LOG_FORMAT");
         __resetLoggerConfigForTests();
         console.error = originalError;
         restore();
+      }
+    });
+
+    it("preserves timer outcomes when label coercion throws", async () => {
+      const originalError = console.error;
+      const hostileLabel = {
+        [Symbol.toPrimitive]() {
+          throw new Error("unreadable timer label");
+        },
+      } as unknown as string;
+      const loggers: Logger[] = [
+        getBaseLogger("timer"),
+        serverLogger,
+        serverLogger.component("timer"),
+      ];
+      let executions = 0;
+
+      console.error = () => {};
+      try {
+        for (const timerLogger of loggers) {
+          const result = await timerLogger.time(hostileLabel, () => {
+            executions++;
+            return Promise.resolve("application result");
+          });
+          assertEquals(result, "application result");
+
+          const applicationError = new Error("application rejection");
+          let caught: unknown;
+          try {
+            await timerLogger.time(hostileLabel, () => {
+              executions++;
+              return Promise.reject(applicationError);
+            });
+          } catch (error) {
+            caught = error;
+          }
+          assertEquals(caught, applicationError);
+        }
+        assertEquals(executions, 6);
+      } finally {
+        console.error = originalError;
       }
     });
   });

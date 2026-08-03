@@ -719,15 +719,16 @@ class ConsoleLogger implements Logger {
   }
 
   async time<T>(label: string, fn: () => Promise<T>): Promise<T> {
+    const safeLabel = sanitizeLogString(label, REDACTED);
     const start = readPerformanceNow();
     try {
       const result = await fn();
       const durationMs = readPerformanceNow() - start;
-      this.debug(`${label} completed`, { durationMs: numberRound(durationMs) });
+      this.debug(`${safeLabel} completed`, { durationMs: numberRound(durationMs) });
       return result;
     } catch (error) {
       const durationMs = readPerformanceNow() - start;
-      this.error(`${label} failed`, { durationMs: numberRound(durationMs) }, error);
+      this.error(`${safeLabel} failed`, { durationMs: numberRound(durationMs) }, error);
       throw error;
     }
   }
@@ -913,13 +914,36 @@ function invokeSelectedLoggerChild(
   selection: LoggerSelection,
   context: Record<string, unknown>,
 ): Logger {
-  const selectedChild = invokeLoggerChild(selection.selected, context);
-  if (selectedChild !== undefined) return selectedChild;
-  if (selection.selected !== selection.fallback) {
-    const fallbackChild = invokeLoggerChild(selection.fallback, context);
-    if (fallbackChild !== undefined) return fallbackChild;
+  const fallback = invokeLoggerChild(selection.fallback, context) ?? selection.fallback;
+  const selected = selection.selected === selection.fallback
+    ? fallback
+    : invokeLoggerChild(selection.selected, context) ?? fallback;
+  return createGuardedLogger({ selected, fallback });
+}
+
+function invokeLoggerComponent(logger: Logger, name: string): Logger | undefined {
+  try {
+    const callback = logger.component;
+    if (typeof callback !== "function") return undefined;
+    const component = apply(callback, logger, [name]) as unknown;
+    if (
+      (typeof component === "object" && component !== null) ||
+      typeof component === "function"
+    ) {
+      return component as Logger;
+    }
+  } catch {
+    // Component composition must remain inside the guarded facade.
   }
-  return selection.fallback;
+  return undefined;
+}
+
+function selectLoggerComponents(selection: LoggerSelection, name: string): LoggerSelection {
+  const fallback = invokeLoggerComponent(selection.fallback, name) ?? selection.fallback;
+  const selected = selection.selected === selection.fallback
+    ? fallback
+    : invokeLoggerComponent(selection.selected, name) ?? fallback;
+  return { selected, fallback };
 }
 
 async function invokeSelectedLoggerTime<T>(
@@ -927,17 +951,44 @@ async function invokeSelectedLoggerTime<T>(
   label: string,
   fn: () => Promise<T>,
 ): Promise<T> {
+  const safeLabel = sanitizeLogString(label, REDACTED);
   const start = readPerformanceNow();
   try {
     const result = await fn();
     const durationMs = numberRound(readPerformanceNow() - start);
-    invokeSelectedLoggerMethod(selection, "debug", `${label} completed`, [{ durationMs }]);
+    invokeSelectedLoggerMethod(selection, "debug", `${safeLabel} completed`, [{ durationMs }]);
     return result;
   } catch (error) {
     const durationMs = numberRound(readPerformanceNow() - start);
-    invokeSelectedLoggerMethod(selection, "error", `${label} failed`, [{ durationMs }, error]);
+    invokeSelectedLoggerMethod(selection, "error", `${safeLabel} failed`, [{ durationMs }, error]);
     throw error;
   }
+}
+
+function createGuardedLogger(selection: LoggerSelection): Logger {
+  return {
+    debug(message: string, ...args: unknown[]): void {
+      invokeSelectedLoggerMethod(selection, "debug", message, args);
+    },
+    info(message: string, ...args: unknown[]): void {
+      invokeSelectedLoggerMethod(selection, "info", message, args);
+    },
+    warn(message: string, ...args: unknown[]): void {
+      invokeSelectedLoggerMethod(selection, "warn", message, args);
+    },
+    error(message: string, ...args: unknown[]): void {
+      invokeSelectedLoggerMethod(selection, "error", message, args);
+    },
+    time<T>(label: string, fn: () => Promise<T>): Promise<T> {
+      return invokeSelectedLoggerTime(selection, label, fn);
+    },
+    child(context: Record<string, unknown>): Logger {
+      return invokeSelectedLoggerChild(selection, context);
+    },
+    component(name: string): Logger {
+      return createGuardedLogger(selectLoggerComponents(selection, name));
+    },
+  };
 }
 
 /**
