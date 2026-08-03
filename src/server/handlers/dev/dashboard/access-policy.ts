@@ -46,7 +46,7 @@ function getRequestDashboardCookieName(req: Request): string | null {
 }
 
 /**
- * Admit only one canonical local-development URL/Host pair.
+ * Admit only canonical local-development URL/Host pairs.
  *
  * Binding the dev server to a non-loopback interface does not implicitly make
  * its privileged dashboard remotely accessible. Besides literal loopback, the

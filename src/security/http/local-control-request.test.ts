@@ -2,6 +2,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import {
+  createLocalControlAccessDeniedResponse,
   hasProxyForwardingHeaders,
   hasTrustedLocalControlAuthority,
   isTrustedLocalControlRequest,
@@ -22,6 +23,13 @@ function requestFromPeer(hostname?: string, headers: HeadersInit = {}): Request 
 }
 
 describe("local control request admission", () => {
+  it("prevents content sniffing on access-denied responses", () => {
+    const response = createLocalControlAccessDeniedResponse(requestFromPeer("127.0.0.1"));
+
+    assertEquals(response.status, 403);
+    assertEquals(response.headers.get("X-Content-Type-Options"), "nosniff");
+  });
+
   it("requires transport-authenticated loopback provenance", () => {
     assertEquals(
       isTrustedLocalControlRequest(requestFromPeer("127.0.0.2"), {
