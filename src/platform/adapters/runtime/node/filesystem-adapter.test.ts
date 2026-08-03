@@ -98,7 +98,7 @@ describe("NodeFileSystemAdapter", () => {
       assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), false);
       assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
     }
-    const windowsAdapter = new TestableAdapter({ noFollow: 0, platform: "windows" });
+    const windowsAdapter = new TestableAdapter({ noFollow: 1, platform: "windows" });
     // Tests run under Deno; changing path semantics must not forge Node runtime
     // provenance for a Node-compatible filesystem implementation.
     assertEquals(Object.hasOwn(windowsAdapter, "readFileSnapshotWithinLimit"), false);

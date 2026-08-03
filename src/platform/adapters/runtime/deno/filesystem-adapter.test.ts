@@ -84,7 +84,7 @@ if (isDeno) {
         assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), false);
         assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
       }
-      const windowsAdapter = new TestableAdapter({ noFollow: 0, platform: "windows" });
+      const windowsAdapter = new TestableAdapter({ noFollow: 1, platform: "windows" });
       assertEquals(Object.hasOwn(windowsAdapter, "readFileSnapshotWithinLimit"), false);
     });
 

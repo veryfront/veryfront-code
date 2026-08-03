@@ -303,7 +303,6 @@ describe("resolveAppRouteFile", () => {
 
   it("does not classify invalid parameter directories as routes", async () => {
     const invalidDirectories = [
-      "[slug-name]",
       "[bad name]",
       "[.slug]",
       "[slug..part]",
@@ -326,6 +325,29 @@ describe("resolveAppRouteFile", () => {
     const ctx = createMockCtx({ statMap, dirMap });
 
     assertEquals(await resolveAppRouteFile("/api/value", ctx), null);
+  });
+
+  it("resolves hyphenated parameter directories", async () => {
+    const ctx = createMockCtx({
+      statMap: {
+        "/project/app": { isFile: false, isDirectory: true },
+        "/project/app/api/posts/[post-id]/route.ts": {
+          isFile: true,
+          isDirectory: false,
+        },
+      },
+      dirMap: {
+        "/project/app": [dir("api")],
+        "/project/app/api": [dir("posts")],
+        "/project/app/api/posts": [dir("[post-id]")],
+        "/project/app/api/posts/[post-id]": [],
+      },
+    });
+
+    assertEquals(await resolveAppRouteFile("/api/posts/123", ctx), {
+      file: "/project/app/api/posts/[post-id]/route.ts",
+      params: { "post-id": "123" },
+    });
   });
 
   it("falls back to catch-all when a dynamic route cannot consume the full path", async () => {

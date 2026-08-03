@@ -1127,13 +1127,18 @@ describe("getEntityBySlug", () => {
   it("rejects overlong canonical paths returned by an adapter", async () => {
     const adapter = createMockAdapter();
     let statCalls = 0;
-    adapter.fs.realPath = () => Promise.resolve(`/${"x".repeat(4_097)}`);
+    adapter.fs.resolveFile = () => Promise.resolve(`/${"x".repeat(4_097)}`);
     adapter.fs.stat = () => {
       statCalls++;
       return Promise.reject(new Error("filesystem must not be reached"));
     };
 
-    assertEquals(await getEntityBySlug("/project", "page", adapter), null);
+    const error = await assertRejects(
+      () => getEntityBySlug("/project", "page", adapter),
+      VeryfrontError,
+      "invalid resolved path",
+    );
+    assertEquals(error.slug, "dynamic-route-error");
     assertEquals(statCalls, 0);
   });
 

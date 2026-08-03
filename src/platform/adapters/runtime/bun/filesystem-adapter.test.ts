@@ -90,7 +90,7 @@ describe("BunFileSystemAdapter", () => {
       assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
     }
     const windowsAdapter = new TestableAdapter(fake.runtime, {
-      noFollow: 0,
+      noFollow: 1,
       platform: "windows",
     });
     assertEquals(Object.hasOwn(windowsAdapter, "readFileSnapshotWithinLimit"), false);

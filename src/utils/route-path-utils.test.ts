@@ -18,7 +18,7 @@ import {
 describe("route-path-utils", () => {
   describe("isDynamicSegment", () => {
     it("should detect standard dynamic segments", () => {
-      const segments = ["[id]", "[slug]", "[userId]", "[version.number]"] as const;
+      const segments = ["[id]", "[slug]", "[userId]", "[version.number]", "[post-id]"] as const;
 
       for (const segment of segments) {
         assertEquals(isDynamicSegment(segment), true);
@@ -98,7 +98,6 @@ describe("route-path-utils", () => {
         "[a/b].tsx",
         "[a\\b].tsx",
         "[my param].tsx",
-        "[slug-name].tsx",
         "[slug!].tsx",
         "[.slug].tsx",
         "[slug.].tsx",
@@ -112,6 +111,19 @@ describe("route-path-utils", () => {
       for (const segment of invalid) {
         assertEquals(parseRouteParameterSegment(segment), null);
       }
+    });
+
+    it("parses hyphenated parameter names", () => {
+      assertEquals(parseRouteParameterSegment("[post-id]"), {
+        name: "post-id",
+        kind: "dynamic",
+        suffix: "",
+      });
+      assertEquals(parseRouteParameterSegment("[post-id].tsx"), {
+        name: "post-id",
+        kind: "dynamic",
+        suffix: ".tsx",
+      });
     });
   });
 
@@ -269,6 +281,21 @@ describe("route-path-utils", () => {
       assertEquals(result.params["slug"], ["getting-started", "intro"]);
     });
 
+    it("preserves __proto__ route params without changing the params prototype", () => {
+      const dynamic = extractRouteParams("/app/users/[__proto__]/page.tsx", "users/123");
+      assertEquals(dynamic.matched, true);
+      assertEquals(dynamic.params["__proto__"], "123");
+      assertEquals(Object.getPrototypeOf(dynamic.params), null);
+
+      const catchAll = extractRouteParams(
+        "/app/docs/[...__proto__]/page.tsx",
+        "docs/a/b",
+      );
+      assertEquals(catchAll.matched, true);
+      assertEquals(catchAll.params["__proto__"], ["a", "b"]);
+      assertEquals(Object.getPrototypeOf(catchAll.params), null);
+    });
+
     it("extracts params from configured router roots", () => {
       const result = extractRouteParams(
         "/project/src/legacy-pages/users/[id].tsx",
@@ -308,6 +335,16 @@ describe("route-path-utils", () => {
   describe("extractParamsFromPattern", () => {
     it("should extract single param", () => {
       assertEquals(extractParamsFromPattern("[id]", "123"), { id: "123" });
+    });
+
+    it("preserves __proto__ pattern params without changing the params prototype", () => {
+      const dynamic = extractParamsFromPattern("[__proto__]", "123");
+      assertEquals(dynamic?.["__proto__"], "123");
+      assertEquals(Object.getPrototypeOf(dynamic), null);
+
+      const catchAll = extractParamsFromPattern("[...__proto__]", "a/b");
+      assertEquals(catchAll?.["__proto__"], ["a", "b"]);
+      assertEquals(Object.getPrototypeOf(catchAll), null);
     });
 
     it("should extract multiple params", () => {

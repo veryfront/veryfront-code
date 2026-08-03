@@ -37,7 +37,7 @@ export interface ParsedRouteParameter {
 }
 
 function isValidParameterName(name: string): boolean {
-  return /^\w+(?:\.\w+)*$/.test(name);
+  return /^[\w-]+(?:\.[\w-]+)*$/.test(name);
 }
 
 /** Parse a complete dynamic route segment using the public route grammar. */
@@ -182,7 +182,7 @@ export function extractRouteParams(
   slug: string,
   directories: RouterDirectories = {},
 ): ExtractedRouteParams {
-  const params: Record<string, string | string[]> = {};
+  const params: Record<string, string | string[]> = Object.create(null);
 
   const { relativePath } = extractRouterBasePath(pageEntityId, directories);
   if (!relativePath) return { params, matched: false };
@@ -241,7 +241,7 @@ export function extractParamsFromPattern(
   const patternParts = pattern.split("/").filter(Boolean);
   const slugParts = slug.split("/").filter(Boolean);
 
-  const params: Record<string, string | string[]> = {};
+  const params: Record<string, string | string[]> = Object.create(null);
 
   const hasCatchAll = patternParts.some(isCatchAllSegment);
   if (!hasCatchAll && patternParts.length !== slugParts.length) return null;

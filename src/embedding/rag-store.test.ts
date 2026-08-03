@@ -553,7 +553,7 @@ describe("ragStore", () => {
             recursiveLockCleanupAttempted = true;
           }
           const generationMarkerWindow = candidate.startsWith(
-            `${lockDirectory}/.owner.releasing.`,
+            join(lockDirectory, ".owner.releasing."),
           );
           if (!replacementInjected && generationMarkerWindow) {
             await originalRemove(lockDirectory, { recursive: true });
