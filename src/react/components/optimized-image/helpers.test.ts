@@ -5,6 +5,8 @@ import {
   cssUrl,
   generateSrcSet,
   getImageExtension,
+  getOptimizedImageFallback,
+  getOptimizedImageFormatFallback,
   getOptimizedImageVariantWidths,
   getOptimizedPath,
 } from "./helpers.ts";
@@ -192,6 +194,67 @@ describe("optimized-image helpers", () => {
         restore("__VERYFRONT_DEV__", originalVeryfrontDev);
         restore("__RSC_DEV__", originalRscDev);
       }
+    });
+  });
+
+  describe("getOptimizedImageFallback", () => {
+    it("uses the original source when no optimized widths are available", () => {
+      assertEquals(
+        getOptimizedImageFallback("/images/photo.jpg", "webp", [], 80),
+        "/images/photo.jpg",
+      );
+    });
+
+    it("uses the single optimized width when one width is available", () => {
+      assertEquals(
+        getOptimizedImageFallback("/images/photo.jpg", "webp", [640], 80),
+        "/.veryfront/optimized-images/images/photo-640w.webp",
+      );
+    });
+
+    it("selects the smallest sorted width at or above the preferred width", () => {
+      const widths = [320, 640, 1024];
+      assertEquals(
+        getOptimizedImageFallback("/images/photo.jpg", "webp", widths, 80, 200),
+        "/.veryfront/optimized-images/images/photo-320w.webp",
+      );
+      assertEquals(
+        getOptimizedImageFallback("/images/photo.jpg", "webp", widths, 80, 640),
+        "/.veryfront/optimized-images/images/photo-640w.webp",
+      );
+      assertEquals(
+        getOptimizedImageFallback("/images/photo.jpg", "webp", widths, 80, 1200),
+        "/.veryfront/optimized-images/images/photo-1024w.webp",
+      );
+    });
+  });
+
+  describe("getOptimizedImageFormatFallback", () => {
+    it("uses the original source when requested formats are unspecified", () => {
+      assertEquals(
+        getOptimizedImageFormatFallback("/images/photo.jpg", "webp", undefined, [640], 80),
+        "/images/photo.jpg",
+      );
+    });
+
+    it("uses the original source when the format was not requested", () => {
+      assertEquals(
+        getOptimizedImageFormatFallback("/images/photo.jpg", "avif", ["webp"], [640], 80),
+        "/images/photo.jpg",
+      );
+    });
+
+    it("uses an optimized fallback when the format was requested", () => {
+      assertEquals(
+        getOptimizedImageFormatFallback(
+          "/images/photo.jpg",
+          "webp",
+          ["avif", "webp"],
+          [320, 640],
+          80,
+        ),
+        "/.veryfront/optimized-images/images/photo-640w.webp",
+      );
     });
   });
 });
