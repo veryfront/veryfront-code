@@ -78,7 +78,9 @@ describe("agent/hosted-durable-chat-run-start", () => {
       },
       startDetachedExecution: async ({ execution, rawRequest: detachedRawRequest }) => {
         assertEquals(execution, preparedExecution);
-        assertEquals(detachedRawRequest, rawRequest);
+        assertEquals(detachedRawRequest === rawRequest, false);
+        assertEquals(detachedRawRequest.url, rawRequest.url);
+        assertEquals(detachedRawRequest.method, rawRequest.method);
         started = true;
       },
     });

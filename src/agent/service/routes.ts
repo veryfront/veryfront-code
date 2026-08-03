@@ -28,7 +28,6 @@ import {
 } from "../hosted/runtime-source-binding.ts";
 import { runWithHostedRequestPreparationSignal } from "./request-preparation-context.ts";
 import {
-  getSanitizedHostedRunEventWriterRequest,
   runWithVerifiedHostedRunEventWriterRequest,
 } from "../hosted/child-run-event-writer-token.ts";
 
@@ -295,11 +294,10 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     request: Request;
     requestOrCtx?: unknown;
   }): Promise<Response> {
-    const rawRequest = getSanitizedHostedRunEventWriterRequest(input.req, input.request);
-    const requestOrCtx = input.requestOrCtx instanceof Request ? rawRequest : input.requestOrCtx;
+    const requestOrCtx = input.requestOrCtx instanceof Request ? input.request : input.requestOrCtx;
     return executeHostedDurableChatRun({
       req: input.req,
-      rawRequest,
+      rawRequest: input.request,
       requestOrCtx,
       tracker: options.tracker,
       prepareExecution: (request) =>

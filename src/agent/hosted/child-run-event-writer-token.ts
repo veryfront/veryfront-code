@@ -54,7 +54,6 @@ type CapabilityScope = {
 
 type VerifiedRequestWriterState = {
   token: string;
-  sanitizedRequest: Request;
   projectId: string;
   runId: string;
 };
@@ -180,14 +179,6 @@ export function registerHostedRunEventWriterToken(
   input: VerifiedRequestWriterState,
 ): void {
   requestRunEventWriterState.set(request, input);
-}
-
-/** Return the credential-free request associated with a verified parsed request. */
-export function getSanitizedHostedRunEventWriterRequest(
-  request: object,
-  fallback: Request,
-): Request {
-  return requestRunEventWriterState.get(request)?.sanitizedRequest ?? fallback;
 }
 
 /** Create the opaque exact-run capability associated with a verified parsed request. */

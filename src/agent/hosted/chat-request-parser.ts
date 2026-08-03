@@ -171,37 +171,11 @@ async function withVerifiedRunEventAppendToken(
     verifiedRequest,
     {
       token,
-      sanitizedRequest: removeRunEventAppendTokenHeader(request),
       projectId,
       runId,
     },
   );
   return verifiedRequest;
-}
-
-function removeRunEventAppendTokenHeader(request: Request): Request {
-  try {
-    request.headers.delete(RUN_EVENT_APPEND_TOKEN_HEADER);
-    if (!request.headers.has(RUN_EVENT_APPEND_TOKEN_HEADER)) return request;
-  } catch {
-    // Some host Request implementations use immutable header guards.
-  }
-
-  const headers = new Headers(request.headers);
-  headers.delete(RUN_EVENT_APPEND_TOKEN_HEADER);
-  return new Request(request.url, {
-    method: request.method,
-    headers,
-    cache: request.cache,
-    credentials: request.credentials,
-    integrity: request.integrity,
-    keepalive: request.keepalive,
-    mode: request.mode,
-    redirect: request.redirect,
-    referrer: request.referrer,
-    referrerPolicy: request.referrerPolicy,
-    signal: request.signal,
-  });
 }
 
 function stripUnverifiedServerResolvedForwardedProps(
