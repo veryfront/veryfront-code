@@ -678,7 +678,7 @@ describe("generated encrypted OAuth token store", () => {
     Object.defineProperty(Object.prototype, "__proto__", {
       configurable: true,
       get() {
-        return undefined;
+        return null;
       },
       set() {
         legacySetterCalls++;
