@@ -29,6 +29,7 @@ Deno.test("split proxy forwarding uses the shared end-to-end header policy", () 
     projectSlug: "project",
     projectId: "project-id",
     environmentId: "environment-id",
+    environmentName: "preview",
     environment: "preview",
     contentSourceId: "preview-main",
     host: "project.preview.veryfront.test",
@@ -63,4 +64,5 @@ Deno.test("split proxy forwarding uses the shared end-to-end header policy", () 
   assertEquals(headers.get("x-content-source-id"), "preview-main");
   assertEquals(headers.get("x-project-id"), "project-id");
   assertEquals(headers.get("x-environment-id"), "environment-id");
+  assertEquals(headers.get("x-environment-name"), "preview");
 });

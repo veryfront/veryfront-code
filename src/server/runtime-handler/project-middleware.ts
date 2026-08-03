@@ -123,6 +123,7 @@ export class ProjectMiddlewareRuntime {
           ctx,
           environment,
           branch,
+          isSharedProxy,
           allowHostProjectCodeExecution,
         );
       } catch (error) {
@@ -184,12 +185,14 @@ export class ProjectMiddlewareRuntime {
     ctx: HandlerContext,
     environment: "production" | "preview",
     branch: string | null,
+    isSharedProxy: boolean,
     allowHostProjectCodeExecution: boolean,
   ): Promise<readonly MiddlewareFunction[]> {
     const key = this.#buildCacheKey(
       ctx,
       environment,
       branch,
+      isSharedProxy,
       allowHostProjectCodeExecution,
     );
     if (!key) return this.#load(ctx, allowHostProjectCodeExecution);
@@ -211,21 +214,29 @@ export class ProjectMiddlewareRuntime {
   #buildCacheKey(
     ctx: HandlerContext,
     environment: "production" | "preview",
-    branch: string | null,
+    _branch: string | null,
+    isSharedProxy: boolean,
     allowHostProjectCodeExecution: boolean,
   ): string | null {
+    // A branch name identifies a mutable pointer, not a source generation. Do
+    // not retain preview middleware across requests until the adapter exposes a
+    // verified content digest. Production release IDs are immutable snapshots.
+    if (environment !== "production" || !ctx.releaseId) return null;
+
+    // Shared caches require the canonical ID resolved at an authenticated
+    // boundary. A tenant-selected slug alone must never be cache authority.
+    if (isSharedProxy && (!ctx.projectId || !ctx.projectSlug)) return null;
+
     const projectIdentity = ctx.projectId ?? ctx.projectSlug;
     if (!projectIdentity) return null;
-
-    const sourceIdentity = environment === "production" ? ctx.releaseId : branch ?? "default";
-    if (!sourceIdentity) return null;
 
     const environmentIdentity = ctx.environmentId ?? ctx.environmentName ?? "default";
     return [
       cacheSegment(projectIdentity),
+      cacheSegment(ctx.projectSlug ?? ""),
       allowHostProjectCodeExecution ? "host" : "isolated",
       environment,
-      cacheSegment(sourceIdentity),
+      cacheSegment(ctx.releaseId),
       cacheSegment(environmentIdentity),
     ].join(":");
   }

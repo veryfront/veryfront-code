@@ -169,6 +169,7 @@ describe("adapter-factory", () => {
   afterEach(() => {
     localProjectCache.clear();
     localAdapterCache.clear();
+    Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
   });
 
   it("ignores x-project-path override outside proxy mode", async () => {
@@ -206,6 +207,7 @@ describe("adapter-factory", () => {
   });
 
   it("accepts validated x-project-path override in proxy mode when proxy trusted", async () => {
+    Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
     const adapter = createMockAdapter({
       "/trusted/project": { isDirectory: true },
       "/trusted/project/app": { isDirectory: true },
@@ -325,7 +327,7 @@ describe("adapter-factory", () => {
     },
   );
 
-  it("honours x-project-path in proxy mode when dispatch-JWS header is present", async () => {
+  it("does not let a valid dispatch JWS authorize x-project-path", async () => {
     const adapter = createMockAdapter({
       "/trusted/project": { isDirectory: true },
       "/trusted/project/app": { isDirectory: true },
@@ -356,8 +358,8 @@ describe("adapter-factory", () => {
       prepareHostedConfigContext: preparePreviewHostedConfigContext,
     });
 
-    assertEquals(result.isLocalProject, true);
-    assertEquals(result.projectDir, "/trusted/project");
+    assertEquals(result.isLocalProject, false);
+    assertEquals(result.projectDir, "/base/project");
   });
 
   it("returns original adapter when no local project found and not proxy mode", async () => {
@@ -520,6 +522,7 @@ describe("adapter-factory", () => {
   });
 
   it("uses injected cache instead of default singleton", async () => {
+    Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
     const cache = new ProjectDiscoveryCache();
     const adapter = createMockAdapter({
       "/trusted/project": { isDirectory: true },

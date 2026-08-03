@@ -242,7 +242,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(result.response, undefined);
     });
 
-    it("treats preview.veryfront.me as local preview host", async () => {
+    it("does not infer preview mode from the raw Host header", async () => {
       const handler = new HMRHandler();
 
       const req = new Request("http://localhost:3000/_ws", {
@@ -258,8 +258,8 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const result = await handler.handle(req, ctx);
 
-      assertExists(result.response);
-      assertEquals(result.response.status, 200);
+      assertEquals(result.continue, true);
+      assertEquals(result.response, undefined);
     });
 
     it("IGNORES x-forwarded-host when the request is NOT proxy-trusted (VULN-SRV-4)", async () => {
@@ -289,11 +289,9 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(result.response, undefined);
     });
 
-    it("HONOURS x-forwarded-host when the request IS proxy-trusted (valid dispatch JWS)", async () => {
-      // With a cryptographically-verified dispatch-JWS signal, the request
-      // demonstrably came through the Veryfront fronting proxy, so the forwarded
-      // host is safe to consult. The preview.veryfront.me host is a recognised
-      // local preview surface and the handler must enter the HMR path.
+    it("does not let a valid dispatch JWS unlock HMR through forwarded host", async () => {
+      // A dispatch signature authorizes one channel operation. It does not bind
+      // this HMR method/path or promote request headers to generic proxy trust.
       const handler = new HMRHandler();
       const jws = await mintTrustedDispatchJws();
 
@@ -314,8 +312,8 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const result = await handler.handle(req, ctx);
 
-      assertExists(result.response);
-      assertEquals(result.response.status, 200);
+      assertEquals(result.continue, true);
+      assertEquals(result.response, undefined);
     });
 
     it("IGNORES x-forwarded-host when dispatch JWS is present but unverifiable (Codex P1 regression)", async () => {
@@ -374,7 +372,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(result.response, undefined);
     });
 
-    it("handle accepts preview via query param (for proxy WebSocket)", async () => {
+    it("does not let a query parameter unlock preview HMR", async () => {
       const handler = new HMRHandler();
 
       const req = new Request("http://localhost:3000/_ws?x-environment=preview");
@@ -388,8 +386,8 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const result = await handler.handle(req, ctx);
 
-      assertExists(result.response);
-      assertEquals(result.response.status, 200);
+      assertEquals(result.continue, true);
+      assertEquals(result.response, undefined);
     });
   });
 

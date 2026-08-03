@@ -3,11 +3,18 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertExists,
+  assertNotStrictEquals,
   assertRejects,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { API_CLIENT_ERROR } from "#veryfront/errors";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+  refreshLoggerConfig,
+} from "#veryfront/utils/logger/index.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 
@@ -220,6 +227,16 @@ describe("ProxyFSAdapterManager", () => {
       manager.dispose();
     });
 
+    it("rejects non-positive or non-integral adapter limits", () => {
+      for (const maxAdapters of [0, -1, 1.5, Number.POSITIVE_INFINITY]) {
+        assertThrows(
+          () => createManager({ maxAdapters }),
+          RangeError,
+          "maxAdapters must be a positive safe integer",
+        );
+      }
+    });
+
     it("should accept maxIdleMs option", () => {
       const manager = createManager({ maxIdleMs: 60000 });
       assertExists(manager);
@@ -331,6 +348,62 @@ describe("ProxyFSAdapterManager", () => {
       assertEquals(Object.keys(stats.stats).length, 0);
       manager.dispose();
     });
+
+    it("does not expose credential principals in public adapter keys", async () => {
+      const credentialPrincipal =
+        "478bc71887c1235cd3040630d0f3e8eb1cabd4797951e480e90c006428962952";
+      const manager = createManager({
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = () => Promise.resolve();
+          return adapter;
+        },
+      });
+
+      try {
+        await manager.getAdapter(
+          "diagnostic-project",
+          "vf_test_diagnostic_credential",
+          "project-one",
+          false,
+          null,
+          null,
+          "feature-branch",
+        );
+        await manager.getAdapter(
+          "diagnostic-project",
+          "different-diagnostic-credential",
+          "project-one",
+          false,
+          null,
+          null,
+          "feature-branch",
+        );
+        await manager.getAdapter(
+          "diagnostic-project",
+          "vf_test_diagnostic_credential",
+          "project-one",
+          true,
+          "release-one",
+          "Production",
+          null,
+        );
+
+        const statsKeys = Object.keys(manager.getStats().stats);
+        const serializedKeys = JSON.stringify(statsKeys);
+        assertEquals(statsKeys.length, 3);
+        assertEquals(serializedKeys.includes(credentialPrincipal), false);
+        assertEquals(/[a-f0-9]{64}/.test(serializedKeys), false);
+        assertEquals(serializedKeys.includes("diagnostic-project"), true);
+        assertEquals(serializedKeys.includes("project-one"), true);
+        assertEquals(serializedKeys.includes("feature-branch"), true);
+        assertEquals(serializedKeys.includes("release-one"), true);
+        assertEquals(serializedKeys.includes("Production"), true);
+        assertEquals(statsKeys.some((key) => key.endsWith(":instance:2")), true);
+      } finally {
+        manager.dispose();
+      }
+    });
   });
 
   describe("dispose", () => {
@@ -404,6 +477,350 @@ describe("ProxyFSAdapterManager", () => {
       assertEquals(manager.getStats().adapters, 0);
       manager.dispose();
       assertEquals(manager.getStats().adapters, 0);
+    });
+  });
+
+  describe("hosted tenant and credential isolation", () => {
+    it("fails closed when shared proxy mode has no canonical project ID", async () => {
+      const manager = createManager({
+        baseConfig: {
+          ...baseConfig,
+          veryfront: { ...baseConfig.veryfront, proxyMode: true },
+        },
+      });
+      try {
+        await assertGetAdapterRejects(
+          manager,
+          ["reusable-slug", "tenant-token", undefined, false, null, null, "main"],
+          "require a canonical project ID",
+        );
+      } finally {
+        manager.dispose();
+      }
+    });
+
+    it("does not reuse source adapters after a project slug is reassigned", async () => {
+      const observedProjectIds: Array<string | undefined> = [];
+      const manager = createManager({
+        baseConfig: {
+          ...baseConfig,
+          veryfront: { ...baseConfig.veryfront, proxyMode: true },
+        },
+        adapterFactory: (config) => {
+          observedProjectIds.push(config.veryfront?.projectId);
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = () => Promise.resolve();
+          return adapter;
+        },
+      });
+      try {
+        const first = await manager.getAdapter(
+          "reusable-slug",
+          "same-token",
+          "project-one",
+          false,
+          null,
+          null,
+          "main",
+        );
+        const reassigned = await manager.getAdapter(
+          "reusable-slug",
+          "same-token",
+          "project-two",
+          false,
+          null,
+          null,
+          "main",
+        );
+
+        assertNotStrictEquals(first, reassigned);
+        assertEquals(observedProjectIds, ["project-one", "project-two"]);
+        assertEquals(manager.getStats().adapters, 2);
+      } finally {
+        manager.dispose();
+      }
+    });
+
+    it("partitions concurrent adapters by immutable credential principal", async () => {
+      const observedTokens: Array<string | undefined> = [];
+      const manager = createManager({
+        baseConfig: {
+          ...baseConfig,
+          veryfront: { ...baseConfig.veryfront, proxyMode: true },
+        },
+        adapterFactory: (config) => {
+          observedTokens.push(config.veryfront?.apiToken);
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = async () => await Promise.resolve();
+          adapter.setRequestToken = () => {
+            throw new Error("cached adapter token must remain immutable");
+          };
+          return adapter;
+        },
+      });
+      try {
+        const [first, second] = await Promise.all([
+          manager.getAdapter(
+            "tenant",
+            "credential-one",
+            "project-one",
+            false,
+            null,
+            null,
+            "main",
+          ),
+          manager.getAdapter(
+            "tenant",
+            "credential-two",
+            "project-one",
+            false,
+            null,
+            null,
+            "main",
+          ),
+        ]);
+
+        assertNotStrictEquals(first, second);
+        assertEquals(observedTokens.toSorted(), ["credential-one", "credential-two"]);
+      } finally {
+        manager.dispose();
+      }
+    });
+
+    it("does not expose credential principals in logs or cache invariant errors", async () => {
+      const token = "vf_test_diagnostic_credential";
+      const credentialPrincipal =
+        "478bc71887c1235cd3040630d0f3e8eb1cabd4797951e480e90c006428962952";
+      const entries: LogEntry[] = [];
+      const previousLogLevel = Deno.env.get("LOG_LEVEL");
+      const originalConsoleDebug = console.debug;
+      const originalConsoleError = console.error;
+      const manager = createManager({
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = () => Promise.resolve();
+          return adapter;
+        },
+      });
+
+      try {
+        Deno.env.set("LOG_LEVEL", "DEBUG");
+        refreshLoggerConfig();
+        __registerLogRecordEmitter((entry) => entries.push(entry));
+        console.debug = () => {};
+        console.error = () => {};
+
+        const adapter = await manager.getAdapter(
+          "diagnostic-project",
+          token,
+          "project-one",
+          false,
+          null,
+          null,
+          "feature-branch",
+        );
+        adapter.setContentContext({
+          sourceType: "branch",
+          projectSlug: "diagnostic-project",
+          branch: "different-branch",
+        });
+
+        const error = await assertRejects(() =>
+          manager.getAdapter(
+            "diagnostic-project",
+            token,
+            "project-one",
+            false,
+            null,
+            null,
+            "feature-branch",
+          )
+        );
+        const diagnostics = JSON.stringify({
+          entries,
+          error: {
+            message: error instanceof Error ? error.message : String(error),
+            detail: (error as { detail?: unknown }).detail,
+            context: (error as { context?: unknown }).context,
+          },
+        });
+
+        assertEquals(diagnostics.includes(token), false);
+        assertEquals(diagnostics.includes(credentialPrincipal), false);
+        assertEquals(diagnostics.includes("diagnostic-project"), true);
+        assertEquals(diagnostics.includes("project-one"), true);
+        assertEquals(diagnostics.includes("feature-branch"), true);
+      } finally {
+        manager.dispose();
+        console.debug = originalConsoleDebug;
+        console.error = originalConsoleError;
+        __resetLogRecordEmitterForTests();
+        if (previousLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+        else Deno.env.set("LOG_LEVEL", previousLogLevel);
+        refreshLoggerConfig();
+      }
+    });
+
+    it("reserves capacity for pending adapter initialization", async () => {
+      const initializationGate = Promise.withResolvers<void>();
+      const firstInitializationStarted = Promise.withResolvers<void>();
+      let factoryCalls = 0;
+      let firstRequest: Promise<VeryfrontFSAdapter> | undefined;
+      const manager = createManager({
+        maxAdapters: 1,
+        adapterFactory: (config) => {
+          factoryCalls += 1;
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = factoryCalls === 1
+            ? () => {
+              firstInitializationStarted.resolve();
+              return initializationGate.promise;
+            }
+            : () => Promise.resolve();
+          return adapter;
+        },
+      });
+
+      try {
+        firstRequest = manager.getAdapter(
+          "tenant-one",
+          "credential-one",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+        );
+        await firstInitializationStarted.promise;
+
+        const overload = await assertRejects(() =>
+          manager.getAdapter(
+            "tenant-two",
+            "credential-two",
+            undefined,
+            false,
+            null,
+            null,
+            "main",
+          )
+        );
+        assertEquals((overload as { slug?: string }).slug, "service-overloaded");
+        assertEquals(factoryCalls, 1);
+
+        initializationGate.resolve();
+        const first = await firstRequest;
+        assertEquals(manager.getStats().adapters, 1);
+
+        const second = await manager.getAdapter(
+          "tenant-two",
+          "credential-two",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+        );
+        assertNotStrictEquals(first, second);
+        assertEquals(factoryCalls, 2);
+        assertEquals(manager.getStats().adapters, 1);
+      } finally {
+        initializationGate.resolve();
+        await firstRequest?.catch(() => {});
+        manager.dispose();
+      }
+    });
+
+    it("releases a reserved slot after synchronous initialization failure", async () => {
+      let factoryCalls = 0;
+      const manager = createManager({
+        maxAdapters: 1,
+        adapterFactory: (config) => {
+          factoryCalls += 1;
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = factoryCalls === 1
+            ? () => {
+              throw new Error("synchronous initialization failure");
+            }
+            : () => Promise.resolve();
+          return adapter;
+        },
+      });
+
+      try {
+        await assertRejects(
+          () =>
+            manager.getAdapter(
+              "tenant-one",
+              "credential-one",
+              undefined,
+              false,
+              null,
+              null,
+              "main",
+            ),
+          Error,
+          "synchronous initialization failure",
+        );
+
+        const recovered = await manager.getAdapter(
+          "tenant-two",
+          "credential-two",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+        );
+        assertExists(recovered);
+        assertEquals(factoryCalls, 2);
+        assertEquals(manager.getStats().adapters, 1);
+      } finally {
+        manager.dispose();
+      }
+    });
+
+    it("evicts a cached adapter whose resolved source context is corrupted", async () => {
+      const manager = createManager({
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = () => Promise.resolve();
+          return adapter;
+        },
+      });
+      try {
+        const adapter = await manager.getAdapter(
+          "tenant",
+          "credential",
+          "project-one",
+          false,
+          null,
+          null,
+          "main",
+        );
+        adapter.setContentContext({
+          sourceType: "branch",
+          projectSlug: "tenant",
+          branch: "other",
+        });
+
+        await assertRejects(
+          () =>
+            manager.getAdapter(
+              "tenant",
+              "credential",
+              "project-one",
+              false,
+              null,
+              null,
+              "main",
+            ),
+          Error,
+          "Context mismatch",
+        );
+        assertEquals(manager.hasAdapter("tenant", false, null, "main", null, "project-one"), false);
+      } finally {
+        manager.dispose();
+      }
     });
   });
 });

@@ -5,7 +5,7 @@ export const getGetAdapterParamsSchema = defineSchema((v) =>
   v.object({
     projectSlug: v.string().min(1, "projectSlug must be non-empty"),
     token: v.string().min(1, "token must be non-empty"),
-    projectId: v.string().optional(),
+    projectId: v.string().min(1, "projectId must be non-empty").optional(),
     productionMode: v.boolean(),
     releaseId: v.string().nullable().optional(),
     environmentName: v.string().nullable().optional(),
