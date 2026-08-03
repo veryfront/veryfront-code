@@ -4,7 +4,7 @@ import { createGmailClient, parseEmailHeaders } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
-  id: "get-email",
+  id: "gmail-get-email",
   description: "Get a Gmail message by ID, including headers, labels, snippet, and payload data.",
   inputSchema: defineSchema((v) => v.object({
     messageId: v.string().min(1).describe("Gmail message ID"),

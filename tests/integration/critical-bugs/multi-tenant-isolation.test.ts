@@ -9,15 +9,35 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { join } from "#veryfront/compat/path";
 import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
 import { type TestContext, withTestContext } from "../../_helpers/context.ts";
-import {
-  collectHead,
-  flushHeadCollector,
-  resetHeadCollector,
-  runWithHeadCollector,
-} from "../../../src/react/head-collector.ts";
+import { collectHead, runWithHeadCollector } from "../../../src/react/head-collector.ts";
 
 function delayRandom(maxMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, Math.random() * maxMs));
+}
+
+/**
+ * A rendezvous that releases only once `parties` callers have arrived.
+ *
+ * The head-collector isolation tests need every concurrent request to be
+ * mid-flight — each having written some head state, none having finished —
+ * before any of them proceeds. Randomised sleeps only make that overlap
+ * probable, so a run where the timers happened not to align would pass even
+ * with the collector's state fully shared. Blocking each participant until all
+ * have arrived forces the interleaving on every run, which is what makes a
+ * cross-request leak fail deterministically rather than flakily.
+ */
+function createBarrier(parties: number): () => Promise<void> {
+  let arrived = 0;
+  let release!: () => void;
+  const opened = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  return () => {
+    arrived += 1;
+    if (arrived >= parties) release();
+    return opened;
+  };
 }
 
 async function clearRendererState(renderer: unknown): Promise<void> {
@@ -53,107 +73,107 @@ describe(
     });
 
     describe("Head Collector Isolation", () => {
-      it.ignore("isolates head collection between concurrent requests", async () => {
-        const request1 = async () => {
-          resetHeadCollector();
-          collectHead({ title: "Project A - Homepage" });
-          collectHead({ metas: [{ name: "description", content: "Project A description" }] });
-          await delayRandom(10);
-          collectHead({ metas: [{ property: "og:title", content: "Project A OG Title" }] });
-          return flushHeadCollector();
+      it("isolates head collection between concurrent requests", async () => {
+        const midRequest = createBarrier(2);
+
+        const request = async (project: string, page: string) => {
+          const { head } = await runWithHeadCollector(async () => {
+            collectHead({ title: `${project} - ${page}` });
+            collectHead({ metas: [{ name: "description", content: `${project} description` }] });
+            // Both requests are now mid-flight holding their own head state. A
+            // collector that was process-global instead of request-scoped
+            // would let the write below land in the other request's head.
+            await midRequest();
+            collectHead({ metas: [{ property: "og:title", content: `${project} OG Title` }] });
+          });
+          return head;
         };
 
-        const request2 = async () => {
-          resetHeadCollector();
-          collectHead({ title: "Project B - Dashboard" });
-          collectHead({ metas: [{ name: "description", content: "Project B description" }] });
-          await delayRandom(10);
-          collectHead({ metas: [{ property: "og:title", content: "Project B OG Title" }] });
-          return flushHeadCollector();
-        };
+        const [headA, headB] = await Promise.all([
+          request("Project A", "Homepage"),
+          request("Project B", "Dashboard"),
+        ]);
 
-        const [result1, result2] = await Promise.all([request1(), request2()]);
+        assertEquals(headA.title, "Project A - Homepage");
+        assertEquals(headB.title, "Project B - Dashboard");
+
+        assertEquals(headA.description, "Project A description");
+        assertEquals(headB.description, "Project B description");
+
+        assertEquals(headA.metas, [
+          { name: "description", content: "Project A description" },
+          { property: "og:title", content: "Project A OG Title" },
+        ]);
+        assertEquals(headB.metas, [
+          { name: "description", content: "Project B description" },
+          { property: "og:title", content: "Project B OG Title" },
+        ]);
 
         assert(
-          !result1.title?.includes("Project B") || result1.title === "Project A - Homepage",
-          `Project A result should not contain Project B data. Got title: ${result1.title}`,
+          !JSON.stringify(headA).includes("Project B"),
+          `Project A head should not reference Project B: ${JSON.stringify(headA)}`,
         );
-
         assert(
-          !result2.title?.includes("Project A") || result2.title === "Project B - Dashboard",
-          `Project B result should not contain Project A data. Got title: ${result2.title}`,
+          !JSON.stringify(headB).includes("Project A"),
+          `Project B head should not reference Project A: ${JSON.stringify(headB)}`,
         );
-
-        const result1Desc = result1.metas.find((m) => m.name === "description");
-        const result2Desc = result2.metas.find((m) => m.name === "description");
-
-        if (result1Desc) {
-          assert(
-            !result1Desc.content.includes("Project B"),
-            `Project A description should not reference Project B: ${result1Desc.content}`,
-          );
-        }
-
-        if (result2Desc) {
-          assert(
-            !result2Desc.content.includes("Project A"),
-            `Project B description should not reference Project A: ${result2Desc.content}`,
-          );
-        }
       });
 
-      it.ignore("maintains isolation under high concurrency stress", async () => {
+      it("maintains isolation under high concurrency stress", async () => {
         const projectCount = 10;
-        const results = new Map<
-          string,
-          { title?: string; metas: any[]; links: any[]; styles: string[] }
-        >();
-        const errors: string[] = [];
+        const projectIds = Array.from({ length: projectCount }, (_, i) => `proj-${i}`);
+        // Two rendezvous points, so all ten requests are interleaved twice
+        // rather than merely started at the same time.
+        const afterTitle = createBarrier(projectCount);
+        const afterDescription = createBarrier(projectCount);
 
-        const createProjectRequest = (projectId: string) => async () => {
-          resetHeadCollector();
-          const uniqueTitle = `Project-${projectId}-Title-${crypto.randomUUID().slice(0, 8)}`;
-          const uniqueDesc = `Description-for-${projectId}`;
-
-          collectHead({ title: uniqueTitle });
-          await delayRandom(20);
-          collectHead({ metas: [{ name: "description", content: uniqueDesc }] });
-          await delayRandom(20);
-          collectHead({ metas: [{ name: `custom-${projectId}`, content: `value-${projectId}` }] });
-
-          const result = flushHeadCollector();
-          results.set(projectId, result);
-
-          if (result.title && !result.title.includes(projectId)) {
-            errors.push(`Project ${projectId} has wrong title: ${result.title}`);
-          }
-
-          const desc = result.metas.find((m) => m.name === "description");
-          if (desc && !desc.content.includes(projectId)) {
-            errors.push(`Project ${projectId} has wrong description: ${desc.content}`);
-          }
-
-          return result;
+        const runProject = async (projectId: string) => {
+          const { head } = await runWithHeadCollector(async () => {
+            collectHead({ title: `Project-${projectId}-Title` });
+            await afterTitle();
+            collectHead({
+              metas: [{ name: "description", content: `Description-for-${projectId}` }],
+            });
+            await afterDescription();
+            collectHead({
+              metas: [{ name: `custom-${projectId}`, content: `value-${projectId}` }],
+            });
+          });
+          return [projectId, head] as const;
         };
 
-        await Promise.all(
-          Array.from({ length: projectCount }, (_, i) => createProjectRequest(`proj-${i}`)()),
-        );
+        const results = await Promise.all(projectIds.map(runProject));
 
-        assertEquals(
-          errors.length,
-          0,
-          `Found ${errors.length} isolation violations:\n${errors.join("\n")}`,
-        );
+        assertEquals(results.length, projectCount);
 
-        for (const [projectId, result] of results.entries()) {
-          const customMeta = result.metas.find((m) => m.name === `custom-${projectId}`);
-          assert(customMeta, `Project ${projectId} should have its custom meta tag`);
+        for (const [projectId, head] of results) {
           assertEquals(
-            customMeta.content,
-            `value-${projectId}`,
-            `Project ${projectId} custom meta should have correct value`,
+            head.title,
+            `Project-${projectId}-Title`,
+            `Project ${projectId} should keep its own title`,
           );
+          assertEquals(
+            head.description,
+            `Description-for-${projectId}`,
+            `Project ${projectId} should keep its own description`,
+          );
+          assertEquals(
+            head.metas,
+            [
+              { name: "description", content: `Description-for-${projectId}` },
+              { name: `custom-${projectId}`, content: `value-${projectId}` },
+            ],
+            `Project ${projectId} should collect exactly its own metas`,
+          );
+
+          const serialized = JSON.stringify(head);
+          for (const otherId of projectIds) {
+            if (otherId === projectId) continue;
+            assert(
+              !serialized.includes(otherId),
+              `Project ${projectId} head leaked ${otherId}: ${serialized}`,
+            );
+          }
         }
       });
 

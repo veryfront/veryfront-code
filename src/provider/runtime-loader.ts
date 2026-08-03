@@ -164,6 +164,13 @@ export function stringifyToolArguments(value: unknown): string {
   return typeof value === "string" ? value : stringifyJsonValue(value);
 }
 
+/** Preserve text tool results while serializing structured tool results. */
+export function stringifyToolResultValue(value: unknown): string {
+  // Same serialization contract as tool arguments — delegate so the two
+  // cannot drift.
+  return stringifyToolArguments(value);
+}
+
 /** Read text content parts from provider messages. */
 export function readTextParts(
   parts: readonly { type: string; text?: string }[],
@@ -271,7 +278,7 @@ export function toOpenAICompatibleMessages(
           messages.push({
             role: "tool",
             tool_call_id: part.toolCallId,
-            content: stringifyJsonValue(part.output.value),
+            content: stringifyToolResultValue(part.output.value),
           });
         }
         break;

@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listChannels } from "../../lib/teams-client.ts";
+import { listChannels } from "../lib/teams-client.ts";
 
 export default tool({
-  id: "list-channels",
+  id: "teams-list-channels",
   description:
     "List all channels in a specific Microsoft Team. Use list-teams first to get team IDs. Returns channel IDs, names, descriptions, and types.",
   inputSchema: defineSchema((v) => v.object({

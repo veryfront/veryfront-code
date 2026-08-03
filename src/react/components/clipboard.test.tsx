@@ -1,6 +1,7 @@
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type ClipboardFeedback, copyTextToClipboard, useClipboardFeedback } from "./clipboard.ts";
@@ -260,7 +261,7 @@ describe("useClipboardFeedback", () => {
       assertEquals(rootElement.textContent, "copied:second");
       assertEquals(fallbackCalls, 0);
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -291,7 +292,7 @@ describe("useClipboardFeedback", () => {
       assert(feedback, "hook result is available");
 
       const pendingCopy = feedback.copy("late", document);
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       release();
       assertStrictEquals(await pendingCopy, false);
       await settle();

@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createRecord } from "../../lib/airtable-client.ts";
+import { createRecord } from "../lib/airtable-client.ts";
 
 export default tool({
-  id: "create-record",
+  id: "airtable-create-record",
   description:
     "Create a new record in an Airtable table. Provide field names and values as an object. Returns the created record with its ID.",
   inputSchema: defineSchema((v) => v.object({

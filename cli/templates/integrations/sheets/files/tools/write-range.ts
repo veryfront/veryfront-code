@@ -4,7 +4,7 @@ import { createSheetsClient } from "../lib/sheets-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "write-range",
+  id: "sheets-write-range",
   description:
     "Write data to a Google Sheets range. Overwrites existing content in the specified range. Provide data as a 2D array where each inner array is a row.",
   inputSchema: defineSchema((v) =>

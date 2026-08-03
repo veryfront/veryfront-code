@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createPage, getPageTitle } from "../../lib/notion-client.ts";
+import { createPage, getPageTitle } from "../lib/notion-client.ts";
 
 export default tool({
-  id: "create-page",
+  id: "notion-create-page",
   description:
     "Create a new page in Notion. Can create as a subpage of an existing page or as a new entry in a database.",
   inputSchema: defineSchema((v) => v.object({

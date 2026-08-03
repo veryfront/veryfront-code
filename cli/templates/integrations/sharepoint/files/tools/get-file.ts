@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { downloadFileAsText, getFile } from "../../lib/sharepoint-client.ts";
+import { downloadFileAsText, getFile } from "../lib/sharepoint-client.ts";
 
 export default tool({
-  id: "get-file",
+  id: "sharepoint-get-file",
   description:
     "Get detailed metadata and optionally download content of a file from SharePoint. Can retrieve text content for text-based files.",
   inputSchema: defineSchema((v) => v.object({

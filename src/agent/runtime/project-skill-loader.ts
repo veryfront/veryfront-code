@@ -84,11 +84,17 @@ export type RuntimeProjectSkillLoaderLogger = {
   warn?: (message: string, metadata?: Record<string, unknown>) => void;
 };
 
+type RuntimeProjectSkillReadContext = {
+  budget: SkillOperationBudget;
+};
+
 /** Options accepted by runtime project skill loader. */
 export type RuntimeProjectSkillLoaderOptions = {
-  getProjectFile: (options: RuntimeGetProjectFileOptions) => Promise<RuntimeProjectFile | null>;
+  getProjectFile: (
+    options: RuntimeGetProjectFileOptions & { signal?: AbortSignal },
+  ) => Promise<RuntimeProjectFile | null>;
   getProjectFiles: (
-    options: RuntimeProjectFilesApiOptions,
+    options: RuntimeProjectFilesApiOptions & { signal?: AbortSignal },
   ) => Promise<RuntimeProjectFileListItem[]>;
   steeringPaths?: Pick<ProjectSteeringPaths, "skills">;
   isAccessDeniedError?: (error: unknown) => boolean;
@@ -163,19 +169,40 @@ function snapshotProjectFileList(value: unknown): readonly RuntimeProjectFileLis
   });
 }
 
-function assertRuntimeSkillContent(content: string, label: string): void {
-  if (content.length > SKILL_DOCUMENT_MAX_CHARACTERS) {
-    throw new RangeError(
-      `${label} may contain at most ${SKILL_DOCUMENT_MAX_CHARACTERS} characters`,
-    );
-  }
-}
-
 function isAccessDeniedError(
   error: unknown,
   options: RuntimeProjectSkillLoaderOptions,
 ): boolean {
   return options.isAccessDeniedError?.(error) ?? false;
+}
+
+function getProjectSkillCancellationOptions(
+  budget: SkillOperationBudget,
+): Pick<RuntimeProjectFilesApiOptions, "abortSignal" | "timeoutMs"> & {
+  signal?: AbortSignal;
+} {
+  budget.throwIfTerminated();
+  const timeoutMs = budget.remainingMs();
+  if (timeoutMs === 0) {
+    budget.throwIfTerminated();
+  }
+  return {
+    ...(budget.abortSignal === undefined
+      ? {}
+      : { abortSignal: budget.abortSignal, signal: budget.abortSignal }),
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+  };
+}
+
+function getBoundedProjectSkillFileOptions(
+  budget: SkillOperationBudget,
+): Pick<RuntimeGetProjectFileOptions, "abortSignal" | "maximumContentCharacters" | "timeoutMs"> & {
+  signal?: AbortSignal;
+} {
+  return {
+    ...getProjectSkillCancellationOptions(budget),
+    maximumContentCharacters: SKILL_DOCUMENT_MAX_CHARACTERS,
+  };
 }
 
 type ProjectSkillSource =
@@ -206,22 +233,28 @@ function isSafeRuntimeSkillId(skillId: unknown): skillId is string {
 
 async function getExpectedProjectFile(
   options: RuntimeProjectSkillLoaderOptions,
-  request: RuntimeGetProjectFileOptions,
+  request: RuntimeGetProjectFileOptions & RuntimeProjectSkillReadContext,
 ): Promise<RuntimeProjectFile | null> {
-  const file = await options.getProjectFile(request);
+  const { budget, ...fileRequest } = request;
+  const file = await budget.run(() =>
+    options.getProjectFile({
+      ...fileRequest,
+      ...getBoundedProjectSkillFileOptions(budget),
+    })
+  );
   if (
     file !== null &&
     (
       !isRuntimeProjectFilePath(file.path) ||
-      file.path !== request.path
+      file.path !== fileRequest.path
     )
   ) {
     throw new TypeError(
-      `Project file response path "${file.path}" did not match requested path "${request.path}"`,
+      `Project file response path "${file.path}" did not match requested path "${fileRequest.path}"`,
     );
   }
   if (file !== null && !isRuntimeProjectFileContent(file.content)) {
-    throw new RangeError(`Project file "${request.path}" exceeded its content budget`);
+    throw new RangeError(`Project file "${fileRequest.path}" exceeded its content budget`);
   }
   return file;
 }
@@ -276,27 +309,13 @@ function resolveCatalogSkillSource(
   throw new TypeError(`Catalog source path for skill "${skillId}" is not a Skill definition`);
 }
 
-function getRemainingSkillOperationMs(budget: SkillOperationBudget): number | undefined {
-  budget.throwIfTerminated();
-  return budget.remainingMs();
-}
-
-function getBoundedProjectSkillReadOptions(
-  budget: SkillOperationBudget,
-): Pick<RuntimeGetProjectFileOptions, "abortSignal" | "maximumContentCharacters" | "timeoutMs"> {
-  return {
-    abortSignal: budget.abortSignal,
-    maximumContentCharacters: SKILL_DOCUMENT_MAX_CHARACTERS,
-    timeoutMs: getRemainingSkillOperationMs(budget),
-  };
-}
-
-async function findProjectSkillSource(input: {
-  options: RuntimeProjectSkillLoaderOptions;
-  context: RuntimeProjectSkillContext;
-  skillId: string;
-  budget: SkillOperationBudget;
-}): Promise<ProjectSkillSource | null> {
+async function findProjectSkillSource(
+  input: {
+    options: RuntimeProjectSkillLoaderOptions;
+    context: RuntimeProjectSkillContext;
+    skillId: string;
+  } & RuntimeProjectSkillReadContext,
+): Promise<ProjectSkillSource | null> {
   const projectId = input.context.projectId;
   if (!projectId || !isSafeRuntimeSkillId(input.skillId)) {
     return null;
@@ -313,7 +332,7 @@ async function findProjectSkillSource(input: {
       authToken: input.context.authToken,
       branchId: input.context.branchId,
       path: `${skillsPath}/${input.skillId}/SKILL.md`,
-      ...getBoundedProjectSkillReadOptions(input.budget),
+      budget: input.budget,
     });
     if (directorySkill?.content) {
       return { kind: "directory", skillsPath };
@@ -324,7 +343,7 @@ async function findProjectSkillSource(input: {
       authToken: input.context.authToken,
       branchId: input.context.branchId,
       path: `${skillsPath}/${input.skillId}.md`,
-      ...getBoundedProjectSkillReadOptions(input.budget),
+      budget: input.budget,
     });
     if (flatSkill?.content) {
       return { kind: "flat", skillsPath };
@@ -386,13 +405,14 @@ function collectProjectSkillReferences(input: {
   return [...references].sort();
 }
 
-async function listProjectSkillReferences(input: {
-  options: RuntimeProjectSkillLoaderOptions;
-  context: RuntimeProjectSkillContext;
-  skillId: string;
-  budget: SkillOperationBudget;
-  skillsPath?: string;
-}): Promise<string[]> {
+async function listProjectSkillReferences(
+  input: {
+    options: RuntimeProjectSkillLoaderOptions;
+    context: RuntimeProjectSkillContext;
+    skillId: string;
+    skillsPath?: string;
+  } & RuntimeProjectSkillReadContext,
+): Promise<string[]> {
   const projectId = input.context.projectId;
   if (!projectId) {
     return [];
@@ -407,15 +427,16 @@ async function listProjectSkillReferences(input: {
   }
 
   const allFiles = snapshotProjectFileList(
-    await input.options.getProjectFiles({
-      projectId,
-      authToken: input.context.authToken,
-      branchId: input.context.branchId,
-      maximumEntries: SKILL_LOADABLE_REFERENCE_LISTING_MAX_ENTRIES,
-      pathPrefix: skillDir,
-      abortSignal: input.budget.abortSignal,
-      timeoutMs: getRemainingSkillOperationMs(input.budget),
-    }),
+    await input.budget.run(() =>
+      input.options.getProjectFiles({
+        projectId,
+        authToken: input.context.authToken,
+        branchId: input.context.branchId,
+        pathPrefix: skillDir,
+        maximumEntries: SKILL_LOADABLE_REFERENCE_LISTING_MAX_ENTRIES,
+        ...getProjectSkillCancellationOptions(input.budget),
+      })
+    ),
   );
 
   return collectProjectSkillReferences({
@@ -464,12 +485,13 @@ function isValidLoadedProjectSkill(input: {
   return true;
 }
 
-async function loadProjectSkill(input: {
-  options: RuntimeProjectSkillLoaderOptions;
-  context: RuntimeProjectSkillContext;
-  skillId: string;
-  budget: SkillOperationBudget;
-}): Promise<RuntimeLoadedProjectSkill | null> {
+async function loadProjectSkill(
+  input: {
+    options: RuntimeProjectSkillLoaderOptions;
+    context: RuntimeProjectSkillContext;
+    skillId: string;
+  } & RuntimeProjectSkillReadContext,
+): Promise<RuntimeLoadedProjectSkill | null> {
   const projectId = input.context.projectId;
   if (!projectId || !isSafeRuntimeSkillId(input.skillId)) {
     return null;
@@ -483,7 +505,7 @@ async function loadProjectSkill(input: {
         authToken: input.context.authToken,
         branchId: input.context.branchId,
         path: catalogSkillSource.skillPath,
-        ...getBoundedProjectSkillReadOptions(input.budget),
+        budget: input.budget,
       });
       if (
         catalogSkill?.content &&
@@ -494,7 +516,6 @@ async function loadProjectSkill(input: {
           content: catalogSkill.content,
         })
       ) {
-        assertRuntimeSkillContent(catalogSkill.content, "Skill document");
         return { instructions: catalogSkill.content, references: [] };
       }
       return null;
@@ -505,7 +526,7 @@ async function loadProjectSkill(input: {
         authToken: input.context.authToken,
         branchId: input.context.branchId,
         path: `${catalogSkillSource.skillDir}/SKILL.md`,
-        ...getBoundedProjectSkillReadOptions(input.budget),
+        budget: input.budget,
       });
       if (
         catalogSkill?.content &&
@@ -516,7 +537,6 @@ async function loadProjectSkill(input: {
           content: catalogSkill.content,
         })
       ) {
-        assertRuntimeSkillContent(catalogSkill.content, "Skill document");
         return {
           instructions: catalogSkill.content,
           references: await listProjectSkillReferences(input),
@@ -532,7 +552,7 @@ async function loadProjectSkill(input: {
         authToken: input.context.authToken,
         branchId: input.context.branchId,
         path: `${skillsPath}/${input.skillId}/SKILL.md`,
-        ...getBoundedProjectSkillReadOptions(input.budget),
+        budget: input.budget,
       });
 
       if (directorySkill?.content) {
@@ -546,7 +566,6 @@ async function loadProjectSkill(input: {
         ) {
           return null;
         }
-        assertRuntimeSkillContent(directorySkill.content, "Skill document");
         return {
           instructions: directorySkill.content,
           references: await listProjectSkillReferences({ ...input, skillsPath }),
@@ -559,7 +578,7 @@ async function loadProjectSkill(input: {
         authToken: input.context.authToken,
         branchId: input.context.branchId,
         path: `${skillsPath}/${input.skillId}.md`,
-        ...getBoundedProjectSkillReadOptions(input.budget),
+        budget: input.budget,
       });
 
       if (flatSkill?.content) {
@@ -573,7 +592,6 @@ async function loadProjectSkill(input: {
         ) {
           return null;
         }
-        assertRuntimeSkillContent(flatSkill.content, "Skill document");
         return {
           instructions: flatSkill.content,
           references: [],
@@ -605,13 +623,14 @@ async function loadProjectSkill(input: {
   return null;
 }
 
-async function loadProjectSkillReference(input: {
-  options: RuntimeProjectSkillLoaderOptions;
-  context: RuntimeProjectSkillContext;
-  skillId: string;
-  normalizedFile: string;
-  budget: SkillOperationBudget;
-}): Promise<string | null> {
+async function loadProjectSkillReference(
+  input: {
+    options: RuntimeProjectSkillLoaderOptions;
+    context: RuntimeProjectSkillContext;
+    skillId: string;
+    normalizedFile: string;
+  } & RuntimeProjectSkillReadContext,
+): Promise<string | null> {
   const projectId = input.context.projectId;
   if (
     !projectId ||
@@ -634,10 +653,9 @@ async function loadProjectSkillReference(input: {
       authToken: input.context.authToken,
       branchId: input.context.branchId,
       path: `${skillDir}/${input.normalizedFile}`,
-      ...getBoundedProjectSkillReadOptions(input.budget),
+      budget: input.budget,
     });
     if (projectFile !== null) {
-      assertRuntimeSkillContent(projectFile.content, "Skill reference");
       return projectFile.content;
     }
   } catch (error) {

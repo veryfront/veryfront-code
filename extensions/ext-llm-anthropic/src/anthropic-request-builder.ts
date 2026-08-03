@@ -2,7 +2,7 @@ import {
   jsonValuesEqual,
   readProviderOptions,
   readRecord,
-  stringifyJsonValue,
+  stringifyToolResultValue,
   unwrapToolInputSchema,
 } from "veryfront/provider/shared";
 import type {
@@ -969,7 +969,7 @@ function toAnthropicMessages(
           matchingToolResults.map((part) => ({
             type: "tool_result",
             tool_use_id: part.toolCallId,
-            content: stringifyJsonValue(part.output.value),
+            content: stringifyToolResultValue(part.output.value),
           })),
         );
         for (const part of matchingToolResults) {

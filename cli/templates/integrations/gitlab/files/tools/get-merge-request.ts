@@ -3,10 +3,10 @@ import { defineSchema } from "veryfront/schemas";
 import {
   formatMergeRequestForDisplay,
   getMergeRequest,
-} from "../../lib/gitlab-client.ts";
+} from "../lib/gitlab-client.ts";
 
 export default tool({
-  id: "get-merge-request",
+  id: "gitlab-get-merge-request",
   description:
     "Get detailed information about a specific GitLab merge request.",
   inputSchema: defineSchema((v) =>

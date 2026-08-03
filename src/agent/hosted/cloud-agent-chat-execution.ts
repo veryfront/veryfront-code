@@ -64,6 +64,7 @@ import {
   setFilteredTraceAttributes,
 } from "./cloud-agent-child-tools.ts";
 import { getServerResolvedToolExposureCheckpoint } from "./runtime-request-config.ts";
+import { resolveHostedRequestPreparationSignal } from "../service/request-preparation-context.ts";
 
 const DEFAULT_FORWARDED_CONFIG_NAMESPACE = "veryfront";
 const DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES = ["studio_open_project"];
@@ -312,7 +313,7 @@ export async function prepareChatExecutionWithinProjectRuntime(
   const requestedAgentId = req.agentId ?? getDefaultAgentId(context);
   // veryfront-api is the trusted caller for request-scoped project-agent config.
   const agentConfig = req.agentConfig ?? await resolveAgentConfig(context, requestedAgentId);
-  const abortController = new AbortController();
+  const preparationSignal = resolveHostedRequestPreparationSignal();
   const {
     effectiveMessages,
     rootRunContext,
@@ -327,7 +328,7 @@ export async function prepareChatExecutionWithinProjectRuntime(
     ),
     agentConfig,
     apiUrl: config.VERYFRONT_API_URL,
-    abortSignal: abortController.signal,
+    abortSignal: preparationSignal,
     logger: context.infrastructure.logger,
     rootRun: {
       instrumentation: {
@@ -344,14 +345,15 @@ export async function prepareChatExecutionWithinProjectRuntime(
       context,
       req,
       agentConfig,
-      abortController.signal,
+      preparationSignal,
     ),
     createRuntime: (creationOptions) =>
-      context.trace("chat.createRuntime", () =>
-        createAgentRuntime(context, {
+      context.trace("chat.createRuntime", () => {
+        return createAgentRuntime(context, {
           ...creationOptions,
           userId: req.userId,
-        })),
+        });
+      }),
   });
 
   setPrepareChatExecutionResultAttributes(context, {

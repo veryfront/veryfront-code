@@ -1,4 +1,4 @@
-import { getValidToken } from "./oauth.ts";
+import { getValidToken } from "./drive-oauth.ts";
 
 function getEnv(key: string): string | undefined {
   // @ts-ignore - Deno global

@@ -1,10 +1,10 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createSlackClient } from "../../lib/slack-client.ts";
-import { requireUserIdFromContext } from "../../lib/user-id.ts";
+import { createSlackClient } from "../lib/slack-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "send-message",
+  id: "slack-send-message",
   description: "Send a message to a Slack channel",
   inputSchema: defineSchema((v) => v.object({
     channel: v

@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { query } from "../../lib/neon-client.ts";
+import { query } from "../lib/neon-client.ts";
 
 export default tool({
-  id: "query-database",
+  id: "neon-query-database",
   description:
     "Execute SQL queries against the connected Neon database. Supports parameterized queries for safety. Use this to retrieve, analyze, or search data.",
   inputSchema: defineSchema((v) => v.object({

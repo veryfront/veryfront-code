@@ -8,6 +8,7 @@ import { flushSync } from "react-dom";
 import { renderToString } from "react-dom/server";
 import * as React from "react";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ChatSidebar, useChatSidebarItem } from "./sidebar.tsx";
@@ -100,7 +101,7 @@ describe("ChatSidebar — conversation-native", () => {
       assert(html.includes("First chat"), "lists the first conversation from context");
       assert(html.includes("Second chat"), "lists the second conversation from context");
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
     } finally {
       restoreDom();
@@ -136,7 +137,7 @@ describe("ChatSidebar — conversation-native", () => {
         "the primary action carries the conversation label",
       );
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
     } finally {
       restoreDom();
@@ -249,7 +250,7 @@ describe("ChatSidebar.Item — menu compound (E4 acid test)", () => {
       );
       assert(itemRef.current.querySelector("input"), "the ref targets the active rename row");
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
     } finally {
       restoreDom();
@@ -284,7 +285,7 @@ describe("ChatSidebarRenameEditor", () => {
         input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
       });
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
       return [commits, cancels];
     } finally {
@@ -318,7 +319,7 @@ describe("ChatSidebarRenameEditor", () => {
 
       flushSync(() => root.render(renderEditor("Edited title")));
       assertEquals(input.getAttribute("aria-label"), "Rename Original title");
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
     } finally {
       restoreDom();

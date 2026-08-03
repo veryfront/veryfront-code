@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { searchEmails, summarizeContact, summarizeContacts } from "../../lib/outlook-client.ts";
+import { searchEmails, summarizeContact, summarizeContacts } from "../lib/outlook-client.ts";
 
 export default tool({
-  id: "search-emails",
+  id: "outlook-search-emails",
   description:
     "Search emails by query string. Searches across subject, body, sender, and recipients. Supports advanced search syntax.",
   inputSchema: defineSchema((v) => v.object({

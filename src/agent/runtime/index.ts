@@ -55,7 +55,10 @@ import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
-import { isLocalModelRuntime } from "#veryfront/provider/runtime-inspection.ts";
+import {
+  isLocalModelRuntime,
+  supportsModelRuntimeToolCalling,
+} from "#veryfront/provider/runtime-inspection.ts";
 import { generateText, streamText } from "#veryfront/runtime/runtime-bridge.ts";
 import {
   captureStreamedToolCallInput,
@@ -656,12 +659,10 @@ function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-function warnLocalToolSkipping(agentId: string, modelId: string): void {
+function warnUnsupportedToolCalling(agentId: string, modelId: string): void {
   logger.warn(
-    `Agent "${agentId}" has tools configured but is using local model "${modelId}". ` +
-      "Local models don't support tool calling. Tools will be skipped. " +
-      "Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG, or configure " +
-      "OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
+    `Agent "${agentId}" has tools configured, but model "${modelId}" does not support ` +
+      "tool calling. Tools will be skipped.",
   );
 }
 
@@ -799,6 +800,7 @@ export class AgentRuntime {
     const transport = await this.resolveModelTransport(context, modelOverride, "generate");
     const requestedModel = transport.requestedModel;
     const resolvedModelString = transport.resolvedModelString;
+    const supportsToolCalling = supportsModelRuntimeToolCalling(transport.languageModel);
     debugRuntimeModelRemap(requestedModel, resolvedModelString);
 
     return withSpan("agent.generate", async (span) => {
@@ -832,6 +834,7 @@ export class AgentRuntime {
               projectId: tryGetCacheKeyContext()?.projectId,
             },
             context,
+            supportsToolCalling,
             resolvedModelString,
             transport.languageModel,
             transport.headers,
@@ -904,6 +907,7 @@ export class AgentRuntime {
 
     // Determine inference mode from the resolved model object, not the string.
     const isLocal = isLocalModelRuntime(languageModel);
+    const supportsToolCalling = supportsModelRuntimeToolCalling(languageModel);
 
     // Eagerly verify the model runtime is available. For local models this
     // checks that @huggingface/transformers can be imported. Must happen
@@ -958,6 +962,7 @@ export class AgentRuntime {
                 textPartId,
                 toolContext,
                 context,
+                supportsToolCalling,
                 resolvedModelString,
                 languageModel,
                 transport.headers,
@@ -1021,8 +1026,9 @@ export class AgentRuntime {
   private async executeAgentLoop(
     systemPrompt: string,
     messages: Message[],
-    toolContextBase?: ToolExecutionContext,
-    runtimeContext?: Record<string, unknown>,
+    toolContextBase: ToolExecutionContext | undefined,
+    runtimeContext: Record<string, unknown> | undefined,
+    supportsToolCalling: boolean,
     modelString?: string,
     resolvedModel?: ModelRuntime,
     headers?: HeadersInit,
@@ -1043,10 +1049,8 @@ export class AgentRuntime {
       const currentMessages = [...messages];
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-      // Local models can't reliably do function calling, so skip tools gracefully.
-      const isLocal = isLocalModelRuntime(languageModel);
-      if (isLocal && this.config.tools) {
-        warnLocalToolSkipping(this.id, effectiveModel);
+      if (!supportsToolCalling && this.config.tools) {
+        warnUnsupportedToolCalling(this.id, effectiveModel);
       }
 
       // Request-scoped skill policy (not class-level mutable state)
@@ -1141,10 +1145,12 @@ export class AgentRuntime {
             : undefined,
           forwardedRemoteToolDefinitions,
           getAvailableTools,
-          isLocalModel: isLocal,
+          supportsToolCalling,
           messages: currentMessages,
           mode: "generate",
-          providerToolNames: agentWriteFinalResponseToolGuardEnabled ? [] : providerTools,
+          providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
+            ? providerTools
+            : [],
           remoteToolSources,
           sourceIntegrationPolicy,
           resolveRuntimeState: this.resolveRuntimeState.bind(this),
@@ -1172,7 +1178,9 @@ export class AgentRuntime {
           "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
           "tool.loading.path": "framework-fallback",
         });
-        const stepProviderTools = agentWriteFinalResponseToolGuardEnabled ? [] : providerTools;
+        const stepProviderTools = supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
+          ? providerTools
+          : [];
 
         const temperature = this.resolveTemperature(
           temperatureModelString ?? effectiveModel,
@@ -1653,14 +1661,15 @@ export class AgentRuntime {
     messages: Message[],
     controller: ReadableStreamDefaultController,
     encoder: TextEncoder,
-    callbacks?: {
+    callbacks: {
       onToolCall?: (toolCall: ToolCall) => void;
       onChunk?: (chunk: string) => void;
       onFinish?: (response: AgentResponse) => void;
-    },
-    textPartId?: string,
-    toolContextBase?: Record<string, unknown>,
-    runtimeContext?: Record<string, unknown>,
+    } | undefined,
+    textPartId: string | undefined,
+    toolContextBase: Record<string, unknown> | undefined,
+    runtimeContext: Record<string, unknown> | undefined,
+    supportsToolCalling: boolean,
     modelString?: string,
     resolvedModel?: ModelRuntime,
     headers?: HeadersInit,
@@ -1679,10 +1688,8 @@ export class AgentRuntime {
     const currentMessages = [...messages];
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-    // Local models can't reliably do function calling, so skip tools gracefully.
-    const isLocalStreaming = isLocalModelRuntime(languageModel);
-    if (isLocalStreaming && this.config.tools) {
-      warnLocalToolSkipping(this.id, effectiveModel);
+    if (!supportsToolCalling && this.config.tools) {
+      warnUnsupportedToolCalling(this.id, effectiveModel);
     }
 
     // Request-scoped skill policy (not class-level mutable state)
@@ -1750,10 +1757,12 @@ export class AgentRuntime {
           : undefined,
         forwardedRemoteToolDefinitions,
         getAvailableTools,
-        isLocalModel: isLocalStreaming,
+        supportsToolCalling,
         messages: currentMessages,
         mode: "stream",
-        providerToolNames: agentWriteFinalResponseToolGuardEnabled ? [] : providerTools,
+        providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
+          ? providerTools
+          : [],
         remoteToolSources,
         sourceIntegrationPolicy,
         resolveRuntimeState: this.resolveRuntimeState.bind(this),
@@ -1779,7 +1788,9 @@ export class AgentRuntime {
         "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
         "tool.loading.path": "framework-fallback",
       });
-      const stepProviderTools = agentWriteFinalResponseToolGuardEnabled ? [] : providerTools;
+      const stepProviderTools = supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
+        ? providerTools
+        : [];
 
       const runtimeTools = convertToolsToRuntimeTools(tools, {
         model: effectiveModel,
@@ -2259,17 +2270,19 @@ export class AgentRuntime {
         const unavailableNames = [
           ...new Set(state.suppressedToolCalls.map((toolCall) => toolCall.name)),
         ];
-        currentMessages.push(markRuntimeGeneratedUserMessage({
-          id: `runtime_note_${Date.now()}_${step}`,
-          role: "user",
-          parts: [{
-            type: "text",
-            text: `Runtime recovery: ignored unavailable tool call(s): ${
-              unavailableNames.join(", ")
-            }. Continue using only currently available tools: ${runtimeToolNames.join(", ")}.`,
-          }],
-          timestamp: Date.now(),
-        }));
+        currentMessages.push(
+          markRuntimeGeneratedUserMessage({
+            id: `runtime_note_${Date.now()}_${step}`,
+            role: "user",
+            parts: [{
+              type: "text",
+              text: `Runtime recovery: ignored unavailable tool call(s): ${
+                unavailableNames.join(", ")
+              }. Continue using only currently available tools: ${runtimeToolNames.join(", ")}.`,
+            }],
+            timestamp: Date.now(),
+          }),
+        );
       }
 
       throwIfAborted(abortSignal);

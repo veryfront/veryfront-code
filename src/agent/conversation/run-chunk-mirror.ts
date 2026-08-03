@@ -95,6 +95,8 @@ export interface ConversationRunChunkMirrorApiOptions
   latestExternalEventSequence?: number;
   maxEventsPerBatch?: number;
   maxCursorResyncsPerFlush?: number;
+  /** Explicit host-owned transport for trusted runtime composition and tests. */
+  fetch?: typeof globalThis.fetch;
 }
 
 /** Options accepted by conversation run chunk mirror. */
@@ -128,6 +130,8 @@ export interface HostedConversationRunChunkMirrorOptions {
   batchSize?: number;
   highBacklogEventCount?: number;
   instrumentation?: HostedConversationRunChunkMirrorInstrumentation;
+  /** Explicit host-owned transport for trusted runtime composition and tests. */
+  fetch?: typeof globalThis.fetch;
 }
 
 function resolveQueueController(
@@ -148,6 +152,7 @@ function resolveQueueController(
     maxEventsPerBatch,
     maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush ??
       DEFAULT_MAX_CURSOR_RESYNCS_PER_FLUSH,
+    fetch: input.fetch,
   });
 }
 
@@ -367,6 +372,7 @@ export function createHostedConversationRunChunkMirror(
     maxCursorResyncsPerFlush: DEFAULT_MAX_CURSOR_RESYNCS_PER_FLUSH,
     immediateFlushEventCount: batchSize,
     highBacklogEventCount,
+    fetch: input.fetch,
     prepareChunkEvents: ({ chunk, defaultPrepare }) =>
       runHostedChunkMirrorTrace(input.instrumentation, "durable.mirrorChunk", async () => {
         const events = defaultPrepare();

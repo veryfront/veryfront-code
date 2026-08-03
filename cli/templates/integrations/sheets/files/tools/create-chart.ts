@@ -4,7 +4,7 @@ import { createSheetsClient } from "../lib/sheets-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "create-chart",
+  id: "sheets-create-chart",
   description:
     "Create an embedded chart. Provide a Google Sheets API EmbeddedChart spec without chartId.",
   inputSchema: defineSchema((v) =>

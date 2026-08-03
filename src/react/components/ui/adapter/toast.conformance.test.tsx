@@ -16,6 +16,7 @@ import { createPortal, flushSync } from "react-dom";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ToastProvider, ToastViewport, useToast } from "../toast.tsx";
@@ -95,10 +96,12 @@ export function runToastConformance(
       dom,
       text: () => document.body.textContent ?? "",
       cleanup: async () => {
-        flushSync(() => root.unmount());
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        restore();
-        api = null;
+        try {
+          await unmountReactRoot(root);
+        } finally {
+          restore();
+          api = null;
+        }
       },
     };
   }
@@ -304,8 +307,7 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
       assert(body.children[0]!.textContent === "0", "renders a numeric zero title");
       assert(body.children[1]!.textContent === "", "renders an empty-string description");
     } finally {
-      flushSync(() => root.unmount());
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -336,15 +338,14 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
         document.body.querySelectorAll('[aria-label="Notifications"]').length === 1
       );
       assert(recoverableErrors.length === 0, "hydration reports no recoverable errors");
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       unmounted = true;
       assert(
         document.body.querySelectorAll('[aria-label="Notifications"]').length === 0,
         "portal viewport is removed on unmount",
       );
     } finally {
-      if (!unmounted) flushSync(() => root.unmount());
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (!unmounted) await unmountReactRoot(root);
       restore();
     }
   });
@@ -378,7 +379,7 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
         "shell document is untouched",
       );
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       restore();
       foreignDom.window.close();
     }
@@ -398,7 +399,7 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
       );
       assert(document.querySelectorAll('[aria-label="Notifications"]').length === 1, "one owner");
       assert(document.querySelector("[data-manual]"), "manual viewport is realized");
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -455,7 +456,7 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
       document.dispatchEvent(new dom.window.Event("visibilitychange"));
       await waitFor(() => !document.body.textContent?.includes("Paused"));
     } finally {
-      root.unmount();
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -493,7 +494,7 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
       action.blur();
       await waitFor(() => !document.body.textContent?.includes("Focused"));
     } finally {
-      root.unmount();
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -553,7 +554,7 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
       flushSync(() => item.dispatchEvent(new dom.window.MouseEvent("mouseout", { bubbles: true })));
       await waitFor(() => !document.body.contains(item));
     } finally {
-      root.unmount();
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -782,8 +783,7 @@ describe("Toast adapter switching", () => {
       flushSync(() => button.click());
       assert(api, "replacement adapter state is available");
     } finally {
-      flushSync(() => root.unmount());
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await unmountReactRoot(root);
       restore();
     }
   });

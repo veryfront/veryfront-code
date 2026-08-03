@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listProjects } from "../../lib/gitlab-client.ts";
+import { listProjects } from "../lib/gitlab-client.ts";
 
 export default tool({
-  id: "list-projects",
+  id: "gitlab-list-projects",
   description:
     "List GitLab projects accessible to the authenticated user. Can search, filter by membership, and sort results.",
   inputSchema: defineSchema((v) =>

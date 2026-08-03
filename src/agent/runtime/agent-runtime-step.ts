@@ -64,7 +64,7 @@ export interface PrepareAgentRuntimeStepInput {
   excludedToolNames?: ReadonlySet<string>;
   forwardedRemoteToolDefinitions: ToolDefinition[] | undefined;
   getAvailableTools: RuntimeStepToolLoader;
-  isLocalModel: boolean;
+  supportsToolCalling: boolean;
   messages: Message[];
   mode: AgentRuntimeStepMode;
   providerToolNames?: readonly string[];
@@ -131,16 +131,18 @@ export async function prepareAgentRuntimeStep(
     toolContext.activeSkillToolAvailability = input.activeSkillToolAvailability;
   }
 
-  let tools = input.isLocalModel ? [] : await input.getAvailableTools(input.config.tools, {
-    callerAgentId: input.agentId,
-    includeSkillTools: shouldIncludeSkillTools(input.config),
-    allowedRemoteToolNames: input.allowedRemoteToolNames,
-    forwardedRemoteToolDefinitions: input.forwardedRemoteToolDefinitions,
-    remoteToolSources: input.remoteToolSources,
-    remoteToolContext: toolContext,
-    sourceIntegrationPolicy: input.sourceIntegrationPolicy,
-    strictConfiguredToolsOnly: input.strictConfiguredToolsOnly,
-  });
+  let tools = input.supportsToolCalling
+    ? await input.getAvailableTools(input.config.tools, {
+      callerAgentId: input.agentId,
+      includeSkillTools: shouldIncludeSkillTools(input.config),
+      allowedRemoteToolNames: input.allowedRemoteToolNames,
+      forwardedRemoteToolDefinitions: input.forwardedRemoteToolDefinitions,
+      remoteToolSources: input.remoteToolSources,
+      remoteToolContext: toolContext,
+      sourceIntegrationPolicy: input.sourceIntegrationPolicy,
+      strictConfiguredToolsOnly: input.strictConfiguredToolsOnly,
+    })
+    : [];
 
   if (input.activeSkillPolicy || input.activeSkillToolAvailability) {
     tools = filterToolsForSkill(
