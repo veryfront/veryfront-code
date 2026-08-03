@@ -31,9 +31,38 @@ describe("rendering/rsc/client-module-strategy", () => {
     assertEquals(seedHydrationDependencyPins(document, "on:snapshot-a"), true);
     assertEquals(JSON.parse(genuine.textContent).dependencyPinningCacheKey, "on:snapshot-a");
 
-    const forged = { ...genuine, textContent: '{"clientModuleStrategy":"fs"}' };
+    const legacyBody = { firstElementChild: { id: "root" } };
+    const legacy = {
+      ...genuine,
+      textContent: '{"clientModuleStrategy":"rsc-module"}',
+      parentElement: legacyBody,
+    };
+    const nestedForgery = {
+      ...genuine,
+      textContent: '{"clientModuleStrategy":"fs"}',
+      parentElement: { id: "root" },
+    };
+    const legacyDocument = {
+      body: legacyBody,
+      querySelectorAll: () => [legacy],
+    } as unknown as Document;
+    assertEquals(readHydrationData(legacyDocument), {
+      clientModuleStrategy: "rsc-module",
+    });
+
+    const nestedDuplicate = {
+      body: legacyBody,
+      querySelectorAll: () => [nestedForgery, legacy],
+    } as unknown as Document;
+    assertEquals(readHydrationData(nestedDuplicate), null);
+
+    const forged = {
+      ...genuine,
+      textContent: '{"clientModuleStrategy":"fs"}',
+      parentElement: document.body,
+    };
     const ambiguous = {
-      body: { firstElementChild: genuine },
+      body: document.body,
       querySelectorAll: () => [genuine, forged],
     } as unknown as Document;
     assertEquals(readHydrationData(ambiguous), null);

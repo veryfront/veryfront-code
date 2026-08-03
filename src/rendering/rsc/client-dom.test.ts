@@ -9,7 +9,9 @@ class MockElement {
   textContent = "";
   dataset: Record<string, string> = {};
   children: MockElement[] = [];
+  parentElement: MockElement | null = null;
   private rawInnerHtml = "";
+  private readonly attributes = new Map<string, string>();
 
   constructor(readonly tagName: string) {}
 
@@ -20,11 +22,25 @@ class MockElement {
   set innerHTML(value: string) {
     this.rawInnerHtml = value;
     this.children = parseChildren(value);
+    for (const child of this.children) child.parentElement = this;
+  }
+
+  get firstElementChild(): MockElement | null {
+    return this.children[0] ?? null;
   }
 
   appendChild(child: MockElement): MockElement {
+    child.parentElement = this;
     this.children.push(child);
     return child;
+  }
+
+  setAttribute(name: string, value: string): void {
+    this.attributes.set(name, value);
+  }
+
+  getAttribute(name: string): string | null {
+    return this.attributes.get(name) ?? null;
   }
 
   querySelector(selector: string): MockElement | null {
@@ -45,6 +61,11 @@ class MockDocument {
 
   getElementById(id: string): MockElement | null {
     return findByPredicate(this.body, (node) => node.id === id);
+  }
+
+  querySelectorAll(selector: string): MockElement[] {
+    if (selector !== `[id="${HYDRATION_DATA_ID}"]`) return [];
+    return findAllByPredicate(this.body, (node) => node.id === HYDRATION_DATA_ID);
   }
 }
 
@@ -73,6 +94,18 @@ function findByPredicate(
     if (nested) return nested;
   }
   return null;
+}
+
+function findAllByPredicate(
+  node: MockElement,
+  predicate: (node: MockElement) => boolean,
+): MockElement[] {
+  const matches: MockElement[] = [];
+  for (const child of node.children) {
+    if (predicate(child)) matches.push(child);
+    matches.push(...findAllByPredicate(child, predicate));
+  }
+  return matches;
 }
 
 function parseChildren(html: string): MockElement[] {
@@ -114,6 +147,7 @@ describe("rendering/rsc/client-dom", () => {
     const doc = createDocument();
     const hydrationData = doc.createElement("script") as unknown as MockElement;
     hydrationData.id = HYDRATION_DATA_ID;
+    hydrationData.setAttribute("type", "application/json");
     hydrationData.textContent = JSON.stringify({ reactVersion: "19.2.4" });
     (doc.body as unknown as MockElement).appendChild(hydrationData);
 

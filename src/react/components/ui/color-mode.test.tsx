@@ -118,10 +118,11 @@ async function unmount(root: Root): Promise<void> {
 describe("react/components/ui/color-mode", () => {
   it("escapes storage keys before embedding them in the inline color-mode script", () => {
     const storageKey = `vf";</script><script>alert(1)</script>//`;
-    const element = ColorModeScript({ defaultMode: "dark", storageKey }) as React.ReactElement<{
-      dangerouslySetInnerHTML: { __html: string };
-    }>;
-    const script = element.props.dangerouslySetInnerHTML.__html;
+    const markup = renderToString(
+      <ColorModeScript defaultMode="dark" storageKey={storageKey} />,
+    );
+    const script = markup.match(/<script[^>]*>([\s\S]*)<\/script>/)?.[1];
+    assert(script, "Expected ColorModeScript to render an inline script");
 
     assertEquals(script.includes(`</script><script>alert(1)</script>`), false);
     assertStringIncludes(script, `\\u003c/script\\u003e`);

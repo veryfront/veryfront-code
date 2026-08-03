@@ -604,7 +604,7 @@ export class Renderer {
       // Background HTML still needs nonce slots so a later request can bind
       // them to its own CSP. This value is never sent in a response and is
       // sealed into the cache representation immediately after rendering.
-      nonce: options?.nonce ?? createCacheRenderNonce(),
+      nonce: createCacheRenderNonce(),
       url: canonicalUrl,
     };
   }
