@@ -51,7 +51,7 @@ export interface TransportRequestInit {
   timeoutMs?: number;
   /** Caller-owned cancellation signal, composed with the per-attempt timeout. */
   signal?: AbortSignal;
-  /** Redirect policy for requests carrying platform credentials. */
+  /** Redirect policy for requests carrying platform credentials. Defaults to `"error"`. */
   redirect?: RequestRedirect;
   /** Allow bounded upstream error bodies in logs/error context. Defaults to true. */
   includeErrorBodyInDiagnostics?: boolean;
@@ -386,7 +386,7 @@ function requireSuccessResponseByteLimit(value: number | undefined): number {
 }
 
 function requireRedirectPolicy(value: RequestRedirect | undefined): RequestRedirect {
-  const redirect = value ?? "follow";
+  const redirect = value ?? "error";
   if (redirect !== "error" && redirect !== "follow" && redirect !== "manual") {
     throw new TypeError("redirect must be 'error', 'follow', or 'manual'");
   }
