@@ -425,6 +425,11 @@ describe("cli/templates", () => {
       "token-store.ts should fail closed outside explicit development and test modes",
     );
     assertEquals(
+      tokenStore.includes("The built-in memory store is for development and test."),
+      true,
+      "token-store.ts header should match the development/test memory-store guard",
+    );
+    assertEquals(
       tokenStore.includes("getDefaultTokenStore"),
       true,
       "token-store.ts should resolve the default store lazily",
