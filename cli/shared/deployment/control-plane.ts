@@ -48,6 +48,8 @@ export interface DeployReleaseFile {
   content: string;
 }
 
+export type DeployReleaseAssetManifestBody = object | string | number | boolean;
+
 export interface DeployControlPlane {
   readonly controlPlane: string;
   getProject(reference: string): Promise<DeployProjectRecord>;
@@ -65,7 +67,7 @@ export interface DeployControlPlane {
   getReleaseAssetManifest(
     projectSlug: string,
     releaseId: string,
-  ): Promise<unknown>;
+  ): Promise<DeployReleaseAssetManifestBody | null>;
   createDeployment(
     reference: string,
     input: { releaseId: string; environmentId: string },
@@ -295,10 +297,10 @@ export function createHttpDeployControlPlane(
         if (getErrorStatus(error) === 404) return null;
         throw error;
       }
-      if (response === null) {
+      if (response == null) {
         throw new Error(`Release assets for ${releaseId} returned an invalid state response`);
       }
-      return response;
+      return response as DeployReleaseAssetManifestBody;
     },
 
     async createDeployment(reference, input) {

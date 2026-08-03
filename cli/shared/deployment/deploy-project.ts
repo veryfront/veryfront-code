@@ -660,11 +660,18 @@ export async function waitForReleaseAssetManifest(
           `Release asset build produced an unsupported partial manifest for release ${releaseId}. Rebuild the release assets and run deploy again.`,
         );
       }
-      if (state === "failed" || state === "superseded") {
+      if (state === "failed") {
         throw new Error(`Release asset build failed for release ${releaseId}`);
       }
+      if (state === "superseded") {
+        throw new Error(
+          `Release assets for ${releaseId} were superseded by a newer build. Run deploy again.`,
+        );
+      }
       if (state !== "queued" && state !== "building") {
-        throw new Error(`Release assets for ${releaseId} returned an unsupported state response`);
+        throw new Error(
+          `Release assets for ${releaseId} returned an unsupported state response: ${state}`,
+        );
       }
     }
 

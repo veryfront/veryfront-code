@@ -17,7 +17,7 @@ import {
 } from "veryfront/errors";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { computeSourceDigest, writePushReceipt } from "../deployment-provenance.ts";
-import type { DeployControlPlane } from "./control-plane.ts";
+import type { DeployControlPlane, DeployReleaseAssetManifestBody } from "./control-plane.ts";
 import {
   assertProjectOwnership,
   createDeployProject,
@@ -1237,7 +1237,7 @@ describe("deployment verification", () => {
 });
 
 describe("release asset manifest", () => {
-  function manifestControlPlane(response: unknown): DeployControlPlane {
+  function manifestControlPlane(response: DeployReleaseAssetManifestBody): DeployControlPlane {
     return helperControlPlane({
       getReleaseAssetManifest: () => Promise.resolve(response),
     });
@@ -1415,7 +1415,7 @@ describe("release asset manifest", () => {
           polling,
         ),
       Error,
-      "Release asset build failed",
+      "Release assets for release-1 were superseded",
     );
   });
 
@@ -1429,7 +1429,7 @@ describe("release asset manifest", () => {
           polling,
         ),
       Error,
-      "unsupported state response",
+      "unsupported state response: unexpected",
     );
   });
 

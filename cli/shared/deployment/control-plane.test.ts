@@ -76,6 +76,21 @@ describe("createHttpDeployControlPlane", () => {
     );
   });
 
+  it("does not treat an empty successful manifest response as polling absence", async () => {
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        get: () => Promise.resolve(undefined),
+      }),
+    );
+
+    await assertRejects(
+      () => controlPlane.getReleaseAssetManifest("my-project", "release-1"),
+      Error,
+      "invalid state response",
+    );
+  });
+
   it("normalizes legacy deployment references before returning them", async () => {
     const controlPlane = createHttpDeployControlPlane(
       config,
