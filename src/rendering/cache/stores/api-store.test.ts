@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withTimeoutThrow } from "../../utils/stream-utils.ts";
 import { APICacheStore } from "./api-store.ts";
 
 async function withStoreTtlEnabled(fn: () => Promise<void>): Promise<void> {
@@ -299,6 +300,7 @@ describe("rendering/cache/stores/api-store", () => {
       const setStarted = Promise.withResolvers<void>();
       const releaseSet = Promise.withResolvers<void>();
       let setCompleted = false;
+      let setPromise: Promise<void> | undefined;
       const server = Deno.serve(
         { hostname: "127.0.0.1", port: 0, onListen: () => {} },
         async (request) => {
@@ -334,11 +336,11 @@ describe("rendering/cache/stores/api-store", () => {
 
       try {
         let setResolved = false;
-        const setPromise = store.set("distributed-key", payload).then(() => {
+        setPromise = store.set("distributed-key", payload).then(() => {
           setResolved = true;
         });
 
-        await setStarted.promise;
+        await withTimeoutThrow(setStarted.promise, 10_000, "distributed cache write to start");
         assertEquals(setResolved, false);
         assertEquals(setCompleted, false);
 
@@ -351,6 +353,7 @@ describe("rendering/cache/stores/api-store", () => {
         releaseSet.resolve();
         await store.destroy();
         await server.shutdown();
+        await setPromise;
         if (previousApiBaseUrl === undefined) {
           Deno.env.delete("VERYFRONT_API_BASE_URL");
         } else {
