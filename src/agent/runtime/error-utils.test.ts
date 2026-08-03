@@ -319,6 +319,69 @@ describe("agent/runtime/error-utils", () => {
       assertEquals(hookCalls, 0);
     });
 
+    it("does not consult mutable primordials while snapshotting structured errors", () => {
+      const defineProperty = Object.defineProperty;
+      const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+      const targets: ReadonlyArray<readonly [object, PropertyKey]> = [
+        [Array, "isArray"],
+        [Array.prototype, "push"],
+        [Array.prototype, "sort"],
+        [JSON, "stringify"],
+        [Number, "isFinite"],
+        [Number, "isInteger"],
+        [Number, "isSafeInteger"],
+        [Object, "create"],
+        [Object, "defineProperty"],
+        [Object, "freeze"],
+        [Object, "getOwnPropertyDescriptor"],
+        [Object, "getPrototypeOf"],
+        [Object, "is"],
+        [Object, "keys"],
+        [Object.prototype, "hasOwnProperty"],
+        [Reflect, "apply"],
+        [Reflect, "ownKeys"],
+        [String.prototype, "charCodeAt"],
+        [WeakSet.prototype, "add"],
+        [WeakSet.prototype, "delete"],
+        [WeakSet.prototype, "has"],
+        [globalThis, "Array"],
+        [globalThis, "Number"],
+        [globalThis, "String"],
+        [globalThis, "TypeError"],
+        [globalThis, "WeakSet"],
+      ];
+      const originals = targets.map(([owner, key]) => ({
+        key,
+        owner,
+        descriptor: getOwnPropertyDescriptor(owner, key)!,
+      }));
+      const structuredError = { retryable: true, code: "E_TOOL" };
+      let hookCalls = 0;
+      let result: string | undefined;
+      const hostile = () => {
+        hookCalls += 1;
+        throw new Error("mutable primordial must not run");
+      };
+
+      try {
+        for (const { owner, key } of originals) {
+          defineProperty(owner, key, {
+            configurable: true,
+            value: hostile,
+            writable: true,
+          });
+        }
+        result = stringifyToolError(structuredError);
+      } finally {
+        for (const { owner, key, descriptor } of originals) {
+          defineProperty(owner, key, descriptor);
+        }
+      }
+
+      assertEquals(result, '{"code":"E_TOOL","retryable":true}');
+      assertEquals(hookCalls, 0);
+    });
+
     it("bounds direct and Error diagnostic text by UTF-8 byte length", () => {
       const oversized = "é".repeat(MAX_TOOL_ERROR_TEXT_BYTES);
       const direct = stringifyToolError(oversized);

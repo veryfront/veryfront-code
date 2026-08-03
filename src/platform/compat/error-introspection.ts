@@ -24,6 +24,12 @@ function hasOwn(object: object, key: PropertyKey): boolean {
 
 type ErrorBrandCheck = (value: unknown) => boolean;
 
+/**
+ * Capture the portable Error brand primitive during trusted framework
+ * bootstrap, before tenant code can replace mutable globals. Edge runtimes do
+ * not expose an immutable host-module equivalent, so this capture boundary is
+ * the authority for later no-hook Error checks.
+ */
 function captureErrorIsError(): ErrorBrandCheck | undefined {
   const descriptor = getOwnPropertyDescriptor(NativeError, "isError");
   return descriptor && hasOwn(descriptor, "value") &&
