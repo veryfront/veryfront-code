@@ -5,31 +5,31 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { InputPurpose } from "./state.ts";
 import {
   addLog,
   type AppState,
-  clearLogs,
   createInitialState,
   endInput,
   getActiveSelection,
   goBack,
   navigateTo,
-  resetWizard,
+  remoteProjectPath,
   scrollLogs,
-  selectProject,
   setActiveList,
-  setExamples,
   setProjects,
+  setRemoteProjects,
+  setRemoteUser,
   setTemplates,
   startInput,
   toggleHelp,
   toggleLogsExpanded,
   updateInputValue,
   updateMCP,
-  updateRemote,
   updateServer,
-  updateWizard,
 } from "./state.ts";
+
+const CREATE_MINIMAL: InputPurpose = { kind: "create-project", template: "minimal" };
 
 describe("app/state", () => {
   describe("createInitialState", () => {
@@ -65,13 +65,6 @@ describe("app/state", () => {
       assertEquals(state.logs.length, 0);
       assertEquals(state.maxLogs, 100);
     });
-
-    it("initializes wizard with default values", () => {
-      const state = createInitialState();
-      assertEquals(state.wizard.step, 0);
-      assertEquals(state.wizard.startType, null);
-      assertEquals(state.wizard.integrations.length, 0);
-    });
   });
 
   describe("State updaters", () => {
@@ -86,16 +79,6 @@ describe("app/state", () => {
         const newState = updater(state);
         assertEquals(newState.projects.items.length, 1);
         assertEquals(newState.projects.items[0]?.data.slug, "test");
-      });
-    });
-
-    describe("setExamples", () => {
-      it("updates examples list", () => {
-        state = freshState();
-        const updater = setExamples([{ slug: "example", path: "/example" }]);
-        const newState = updater(state);
-        assertEquals(newState.examples.items.length, 1);
-        assertEquals(newState.examples.items[0]?.data.slug, "example");
       });
     });
 
@@ -130,12 +113,82 @@ describe("app/state", () => {
       });
     });
 
-    describe("updateRemote", () => {
-      it("partially updates remote state", () => {
+    describe("setRemoteUser", () => {
+      it("sets the signed-in user", () => {
         state = freshState();
-        const updater = updateRemote({ user: { email: "test@example.com" } });
+        const updater = setRemoteUser({ email: "test@example.com" });
         const newState = updater(state);
         assertEquals(newState.remote.user?.email, "test@example.com");
+      });
+    });
+
+    describe("keeping activeList selectable", () => {
+      const signedInWithRemote = (): AppState =>
+        setActiveList("remoteProjects")(
+          setRemoteProjects([{ slug: "alpha" }])(
+            setRemoteUser({ email: "dev@example.com" })(freshState()),
+          ),
+        );
+
+      it("moves off the remote section when the last remote project goes away", () => {
+        // Still signed in, but the dashboard stops rendering an empty section.
+        const newState = setRemoteProjects([])(signedInWithRemote());
+
+        assertEquals(newState.activeList, "projects");
+      });
+
+      it("keeps the remote section active while it still has projects", () => {
+        const newState = setRemoteProjects([{ slug: "beta" }])(signedInWithRemote());
+
+        assertEquals(newState.activeList, "remoteProjects");
+      });
+    });
+
+    describe("setRemoteUser(null)", () => {
+      it("moves the active list off the remote section on sign-out", () => {
+        state = setRemoteProjects([{ slug: "alpha" }])(
+          setRemoteUser({ email: "dev@example.com" })(freshState()),
+        );
+        state = setActiveList("remoteProjects")(state);
+
+        const newState = setRemoteUser(null)(state);
+
+        assertEquals(newState.activeList, "projects");
+      });
+
+      it("keeps the remote section active when signing in with projects", () => {
+        state = setActiveList("remoteProjects")(
+          setRemoteProjects([{ slug: "alpha" }])(freshState()),
+        );
+        assertEquals(
+          setRemoteUser({ email: "dev@example.com" })(state).activeList,
+          "remoteProjects",
+        );
+      });
+
+      it("does not activate an empty remote section on sign-in", () => {
+        state = setActiveList("remoteProjects")(freshState());
+        assertEquals(
+          setRemoteUser({ email: "dev@example.com" })(state).activeList,
+          "projects",
+        );
+      });
+    });
+
+    describe("setRemoteProjects", () => {
+      it("stores remote projects as a selectable list", () => {
+        state = freshState();
+        const newState = setRemoteProjects([{ slug: "alpha" }, { slug: "beta" }])(state);
+        assertEquals(newState.remoteProjects.items.length, 2);
+        assertEquals(newState.remoteProjects.items[0]?.label, "alpha");
+        assertEquals(newState.remoteProjects.selectedIndex, 0);
+      });
+
+      it("gives each remote project the path a pull would use", () => {
+        state = freshState();
+        const newState = setRemoteProjects([{ slug: "alpha" }])(state);
+        assertEquals(newState.remoteProjects.items[0]?.data?.path, remoteProjectPath("alpha"));
+        assertEquals(newState.remoteProjects.items[0]?.data?.type, "remote");
       });
     });
 
@@ -170,66 +223,25 @@ describe("app/state", () => {
     describe("setActiveList", () => {
       it("sets the active list", () => {
         state = freshState();
-        const updater = setActiveList("templates");
+        const updater = setActiveList("remoteProjects");
         const newState = updater(state);
-        assertEquals(newState.activeList, "templates");
-      });
-    });
-
-    describe("selectProject", () => {
-      it("selects a project and navigates to detail view", () => {
-        state = freshState();
-        const project = { slug: "test", path: "/test", type: "local" as const };
-        const updater = selectProject(project);
-        const newState = updater(state);
-        assertEquals(newState.selectedProject?.slug, "test");
-        assertEquals(newState.view, "project-detail");
-      });
-
-      it("clears selected project when null", () => {
-        state = freshState();
-        state = selectProject({ slug: "test", path: "/test", type: "local" })(state);
-        const updater = selectProject(null);
-        const newState = updater(state);
-        assertEquals(newState.selectedProject, null);
-      });
-    });
-
-    describe("updateWizard", () => {
-      it("partially updates wizard state", () => {
-        state = freshState();
-        const updater = updateWizard({ step: 2, startType: "template" });
-        const newState = updater(state);
-        assertEquals(newState.wizard.step, 2);
-        assertEquals(newState.wizard.startType, "template");
-      });
-    });
-
-    describe("resetWizard", () => {
-      it("resets wizard to initial state", () => {
-        state = freshState();
-        state = updateWizard({ step: 3, startType: "scratch", projectName: "test" })(state);
-        const updater = resetWizard();
-        const newState = updater(state);
-        assertEquals(newState.wizard.step, 0);
-        assertEquals(newState.wizard.startType, null);
-        assertEquals(newState.wizard.projectName, "");
+        assertEquals(newState.activeList, "remoteProjects");
       });
     });
 
     describe("startInput", () => {
-      it("activates input mode", () => {
+      it("activates input mode and records why", () => {
         state = freshState();
-        const onSubmit = (_: string) => {};
-        const updater = startInput("Enter name:", onSubmit);
+        const updater = startInput("Enter name:", CREATE_MINIMAL);
         const newState = updater(state);
         assertEquals(newState.input.active, true);
         assertEquals(newState.input.prompt, "Enter name:");
+        assertEquals(newState.input.purpose, CREATE_MINIMAL);
       });
 
       it("sets initial value if provided", () => {
         state = freshState();
-        const updater = startInput("Enter name:", () => {}, undefined, "default");
+        const updater = startInput("Enter name:", CREATE_MINIMAL, "default");
         const newState = updater(state);
         assertEquals(newState.input.value, "default");
         assertEquals(newState.input.cursorPos, 7);
@@ -239,7 +251,7 @@ describe("app/state", () => {
     describe("updateInputValue", () => {
       it("updates input value and cursor", () => {
         state = freshState();
-        state = startInput("Prompt:", () => {})(state);
+        state = startInput("Prompt:", CREATE_MINIMAL)(state);
         const updater = updateInputValue("hello", 5);
         const newState = updater(state);
         assertEquals(newState.input.value, "hello");
@@ -250,7 +262,7 @@ describe("app/state", () => {
     describe("endInput", () => {
       it("resets input state", () => {
         state = freshState();
-        state = startInput("Prompt:", () => {})(state);
+        state = startInput("Prompt:", CREATE_MINIMAL)(state);
         const updater = endInput();
         const newState = updater(state);
         assertEquals(newState.input.active, false);
@@ -276,17 +288,6 @@ describe("app/state", () => {
         state = addLog("info", "Log 3")(state);
         assertEquals(state.logs.length, 2);
         assertEquals(state.logs[0]?.message, "Log 2");
-      });
-    });
-
-    describe("clearLogs", () => {
-      it("clears all logs", () => {
-        state = freshState();
-        state = addLog("info", "Test")(state);
-        const updater = clearLogs();
-        const newState = updater(state);
-        assertEquals(newState.logs.length, 0);
-        assertEquals(newState.logScroll, 0);
       });
     });
 
@@ -332,11 +333,18 @@ describe("app/state", () => {
   });
 
   describe("getActiveSelection", () => {
-    it("returns undefined for remoteProjects", () => {
+    it("returns undefined when the active list is empty", () => {
       const state = createInitialState();
       state.activeList = "remoteProjects";
       const selection = getActiveSelection(state);
       assertEquals(selection, undefined);
+    });
+
+    it("reads through to remote projects when they are active", () => {
+      let state = createInitialState();
+      state = setRemoteProjects([{ slug: "alpha" }])(state);
+      state = setActiveList("remoteProjects")(state);
+      assertEquals(getActiveSelection(state)?.data?.slug, "alpha");
     });
 
     it("returns selected item from active list", () => {

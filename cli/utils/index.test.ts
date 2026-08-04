@@ -86,8 +86,13 @@ async function withMockPrompt<T>(
 
 function withDebugEnv(value: string, fn: () => void): void {
   const originalDebug = getEnv("VERYFRONT_DEBUG");
+  // LOG_LEVEL wins over the debug flag in getDefaultLevel(), so an ambient
+  // level left behind by another test would filter the record out and make
+  // these assertions about VERYFRONT_DEBUG fail for an unrelated reason.
+  const originalLevel = getEnv("LOG_LEVEL");
   const originalVerbose = isVerbose();
   setVerboseMode(false);
+  deleteEnv("LOG_LEVEL");
   setEnv("VERYFRONT_DEBUG", value);
   refreshLoggerConfig();
 
@@ -99,7 +104,14 @@ function withDebugEnv(value: string, fn: () => void): void {
     } else {
       setEnv("VERYFRONT_DEBUG", originalDebug);
     }
+    // setVerboseMode re-syncs the canonical log level, so restore LOG_LEVEL
+    // after it or the restored value gets overwritten.
     setVerboseMode(originalVerbose);
+    if (originalLevel === undefined) {
+      deleteEnv("LOG_LEVEL");
+    } else {
+      setEnv("LOG_LEVEL", originalLevel);
+    }
     refreshLoggerConfig();
   }
 }

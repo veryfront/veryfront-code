@@ -8,7 +8,7 @@
 import { cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import type { AppState } from "../state.ts";
-import { addLog, setProjects, updateRemote } from "../state.ts";
+import { addLog, setProjects, setRemoteProjects } from "../state.ts";
 import { readToken } from "../../auth/token-store.ts";
 import { fetchRemoteProjects } from "../../sync/index.ts";
 import { getLocalProjectsFromState } from "../utils.ts";
@@ -89,13 +89,7 @@ export async function createProject(
     state = setProjects(currentProjects)(state);
 
     const result = await fetchRemoteProjects();
-    state = updateRemote({
-      projects: result.projects.map((p) => ({
-        id: p.id,
-        name: p.name,
-        slug: p.slug,
-      })),
-    })(state);
+    state = setRemoteProjects(result.projects)(state);
 
     return addLog("info", `Created ${slug}`)(state);
   } catch (error) {
