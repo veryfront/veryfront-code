@@ -2,12 +2,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
-import {
-  type ApplicationErrorContext,
-  setApplicationErrorReporter,
-} from "#veryfront/observability/application-errors.ts";
 import { AgentRunCancelHandler } from "./agent-run-cancel.handler.ts";
-import { createControlPlaneSignature, createCtx } from "./internal-agent-run.test-helpers.ts";
+import {
+  createControlPlaneSignature,
+  createCtx,
+  stubApplicationErrorReporter,
+} from "./internal-agent-run.test-helpers.ts";
 
 describe("server/handlers/request/agent-run-cancel.handler", () => {
   it("cancels an active run with a valid control-plane signature", async () => {
@@ -193,14 +193,7 @@ describe("server/handlers/request/agent-run-cancel.handler", () => {
 
   it("returns 500 when session cancel fails unexpectedly, and reports it", async () => {
     const thrown = new Error("cancel boom");
-    const captures: { error: unknown; context: ApplicationErrorContext }[] = [];
-    setApplicationErrorReporter({
-      capture: (error, context) => {
-        captures.push({ error, context });
-        return "test-event-id";
-      },
-      flush: () => Promise.resolve(true),
-    });
+    const { captures, restore } = stubApplicationErrorReporter();
 
     try {
       const handler = new AgentRunCancelHandler({
@@ -239,7 +232,7 @@ describe("server/handlers/request/agent-run-cancel.handler", () => {
       assertEquals(captured.context.requestId, "run_1");
       assertEquals(captured.context.attributes?.["http.status"], 500);
     } finally {
-      setApplicationErrorReporter(undefined);
+      restore();
     }
   });
 });

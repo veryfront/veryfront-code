@@ -2,15 +2,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
-import {
-  type ApplicationErrorContext,
-  setApplicationErrorReporter,
-} from "#veryfront/observability/application-errors.ts";
 import { INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES } from "#veryfront/internal-agents/request-body.ts";
 import { AgentRunResumeHandler } from "./agent-run-resume.handler.ts";
 import {
   createControlPlaneSignature as createTestControlPlaneSignature,
   createCtx,
+  stubApplicationErrorReporter,
 } from "./internal-agent-run.test-helpers.ts";
 
 function createControlPlaneSignature(
@@ -293,14 +290,7 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
 
   it("returns 500 when session resume fails unexpectedly, and reports it", async () => {
     const thrown = new Error("resume boom");
-    const captures: { error: unknown; context: ApplicationErrorContext }[] = [];
-    setApplicationErrorReporter({
-      capture: (error, context) => {
-        captures.push({ error, context });
-        return "test-event-id";
-      },
-      flush: () => Promise.resolve(true),
-    });
+    const { captures, restore } = stubApplicationErrorReporter();
 
     try {
       const handler = new AgentRunResumeHandler({
@@ -339,7 +329,7 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
       assertEquals(captured.context.requestId, "run_1");
       assertEquals(captured.context.attributes?.["http.status"], 500);
     } finally {
-      setApplicationErrorReporter(undefined);
+      restore();
     }
   });
 });

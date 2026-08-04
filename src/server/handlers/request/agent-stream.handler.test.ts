@@ -1,10 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { INVALID_ARGUMENT, SERVICE_OVERLOADED } from "#veryfront/errors";
 import {
-  type ApplicationErrorContext,
-  setApplicationErrorReporter,
-} from "#veryfront/observability/application-errors.ts";
-import {
   __registerLogRecordEmitter,
   __resetLogRecordEmitterForTests,
   type LogEntry,
@@ -25,6 +21,7 @@ import { AgentRunResumeHandler } from "./agent-run-resume.handler.ts";
 import { AgentStreamHandler, type AgentStreamHandlerDeps } from "./agent-stream.handler.ts";
 import type { HandlerContext } from "../types.ts";
 import {
+  type CapturedApplicationError,
   createAgent,
   createAgentWithConfig,
   createControlPlaneSignature,
@@ -33,6 +30,7 @@ import {
   encodeDataStreamEvent,
   readRemainingText,
   readUntil,
+  stubApplicationErrorReporter,
 } from "./internal-agent-run.test-helpers.ts";
 import {
   createAgentStreamRequestBody,
@@ -3478,23 +3476,11 @@ describe("agent stream handler 5xx logging", () => {
 });
 
 describe("agent stream handler application-error reporting", () => {
-  type CapturedApplicationError = {
-    error: unknown;
-    context: ApplicationErrorContext;
-  };
-
   async function handleWithStubbedReporter(
     thrown: unknown,
     runIdSegment = "run_1",
   ): Promise<{ captures: CapturedApplicationError[]; response: Response }> {
-    const captures: CapturedApplicationError[] = [];
-    setApplicationErrorReporter({
-      capture: (error, context) => {
-        captures.push({ error, context });
-        return "test-event-id";
-      },
-      flush: () => Promise.resolve(true),
-    });
+    const { captures, restore } = stubApplicationErrorReporter();
 
     try {
       const handler = createTestAgentStreamHandler({
@@ -3528,7 +3514,7 @@ describe("agent stream handler application-error reporting", () => {
       assertExists(result.response);
       return { captures, response: result.response };
     } finally {
-      setApplicationErrorReporter(undefined);
+      restore();
     }
   }
 

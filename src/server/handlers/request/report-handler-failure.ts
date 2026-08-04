@@ -1,18 +1,9 @@
 import { captureApplicationError } from "#veryfront/observability/application-errors.ts";
 
 /**
- * Report a 5xx request-handler failure.
- *
- * Handlers convert every error into a response, so nothing escapes to a global
- * handler and these would otherwise never reach Sentry. Call this only for 5xx:
- * 4xx is mostly validation and auth noise.
- *
- * Callers pass `detail` where they have it, because errorToResponse strips it
- * from 5xx bodies and it is then lost entirely. Attributes are sanitized by the
- * reporter (URL credentials stripped, sensitive keys redacted, values
- * truncated) before leaving the process.
- *
- * No-op when no reporter is installed, so Sentry stays optional.
+ * Report a 5xx handler failure. Handlers convert errors into responses, so
+ * these never escape to a global handler and would not otherwise reach Sentry.
+ * 4xx is excluded as noise. No-op when no reporter is installed.
  */
 export function reportHandlerFailure(
   error: unknown,

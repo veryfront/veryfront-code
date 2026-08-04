@@ -718,9 +718,7 @@ function reportAgentStreamFailure(
     cause?: string;
   },
 ): void {
-  // `pathRunId` is scoped to the try block, so re-derive it here. Reporting runs
-  // inside a catch, so a malformed percent escape must not throw past it and
-  // take out the response this is describing.
+  // Runs inside a catch, so a malformed percent escape must not throw past it.
   let runId: string | null = null;
   try {
     runId = getPathRunId(new URL(req.url).pathname);
