@@ -190,14 +190,34 @@ export function createApp(config: AppConfig): App {
   /**
    * One key press: adopt the reducer's state, then perform what it asked for.
    * There is exactly one assignment to `state` on this path.
+   *
+   * Nothing here is allowed to throw. `handleInput` is started without being
+   * awaited, so an escaping error becomes an unhandled rejection that the
+   * global handler swallows: the input loop stops, the terminal keeps the
+   * alternate screen, and the TUI just looks hung. Effects reach the network
+   * and the process, so failures are expected and belong in the log.
    */
   async function handleKey(key: string): Promise<void> {
-    const result = reduceKey(state, key, keyEnv);
-    state = result.state;
-    render();
+    try {
+      const result = reduceKey(state, key, keyEnv);
+      state = result.state;
+      render();
 
-    for (const effect of result.effects) {
-      await runEffect(effect);
+      for (const effect of result.effects) {
+        await runEffect(effect);
+      }
+    } catch (error) {
+      reportKeyFailure(error);
+    }
+  }
+
+  function reportKeyFailure(error: unknown): void {
+    try {
+      state = addLog("error", formatError(error))(state);
+      render();
+    } catch {
+      // Painting the failure failed too. Keep the loop alive rather than
+      // taking the terminal down over a log line.
     }
   }
 
