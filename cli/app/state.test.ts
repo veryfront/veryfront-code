@@ -122,6 +122,28 @@ describe("app/state", () => {
       });
     });
 
+    describe("keeping activeList selectable", () => {
+      const signedInWithRemote = (): AppState =>
+        setActiveList("remoteProjects")(
+          setRemoteProjects([{ slug: "alpha" }])(
+            setRemoteUser({ email: "dev@example.com" })(freshState()),
+          ),
+        );
+
+      it("moves off the remote section when the last remote project goes away", () => {
+        // Still signed in, but the dashboard stops rendering an empty section.
+        const newState = setRemoteProjects([])(signedInWithRemote());
+
+        assertEquals(newState.activeList, "projects");
+      });
+
+      it("keeps the remote section active while it still has projects", () => {
+        const newState = setRemoteProjects([{ slug: "beta" }])(signedInWithRemote());
+
+        assertEquals(newState.activeList, "remoteProjects");
+      });
+    });
+
     describe("setRemoteUser(null)", () => {
       it("moves the active list off the remote section on sign-out", () => {
         state = setRemoteProjects([{ slug: "alpha" }])(
@@ -134,11 +156,21 @@ describe("app/state", () => {
         assertEquals(newState.activeList, "projects");
       });
 
-      it("leaves the active list alone when signing in", () => {
-        state = setActiveList("remoteProjects")(freshState());
+      it("keeps the remote section active when signing in with projects", () => {
+        state = setActiveList("remoteProjects")(
+          setRemoteProjects([{ slug: "alpha" }])(freshState()),
+        );
         assertEquals(
           setRemoteUser({ email: "dev@example.com" })(state).activeList,
           "remoteProjects",
+        );
+      });
+
+      it("does not activate an empty remote section on sign-in", () => {
+        state = setActiveList("remoteProjects")(freshState());
+        assertEquals(
+          setRemoteUser({ email: "dev@example.com" })(state).activeList,
+          "projects",
         );
       });
     });

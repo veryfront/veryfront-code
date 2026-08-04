@@ -165,16 +165,17 @@ export function setProjects(
 export function setRemoteProjects(
   projects: Array<{ slug: string }>,
 ): StateUpdater {
-  return (state) => ({
-    ...state,
-    remoteProjects: createListState(
-      projects.map((p) => ({
-        id: p.slug,
-        label: p.slug,
-        data: { slug: p.slug, path: remoteProjectPath(p.slug), type: "remote" as const },
-      })),
-    ),
-  });
+  return (state) =>
+    withSelectableActiveList({
+      ...state,
+      remoteProjects: createListState(
+        projects.map((p) => ({
+          id: p.slug,
+          label: p.slug,
+          data: { slug: p.slug, path: remoteProjectPath(p.slug), type: "remote" as const },
+        })),
+      ),
+    });
 }
 
 /** Where `pull` places a remote project, and what the IDE opens. */
@@ -206,17 +207,21 @@ export function updateMCP(update: Partial<MCPStatus>): StateUpdater {
   return (state) => ({ ...state, mcp: { ...state.mcp, ...update } });
 }
 
-export function setRemoteUser(user: RemoteState["user"]): StateUpdater {
-  return (state) => {
-    // The dashboard only renders the remote section for a signed-in user, so
-    // leaving it active after sign-out would show no cursor anywhere and
-    // resolve action keys to no project.
-    const activeList = !user && state.activeList === "remoteProjects"
-      ? "projects" as const
-      : state.activeList;
+/**
+ * The dashboard renders the remote section only for a signed-in user with at
+ * least one project. Pointing `activeList` at a section that is not rendered
+ * shows no cursor anywhere and resolves action keys to no project, so keep the
+ * two in step whenever either input changes.
+ */
+function withSelectableActiveList(state: AppState): AppState {
+  if (state.activeList !== "remoteProjects") return state;
 
-    return { ...state, activeList, remote: { ...state.remote, user } };
-  };
+  const selectable = !!state.remote.user && state.remoteProjects.items.length > 0;
+  return selectable ? state : { ...state, activeList: "projects" };
+}
+
+export function setRemoteUser(user: RemoteState["user"]): StateUpdater {
+  return (state) => withSelectableActiveList({ ...state, remote: { ...state.remote, user } });
 }
 
 export function navigateTo(view: AppView): StateUpdater {
