@@ -1154,3 +1154,30 @@ describe("ensureProjectDependenciesLoaded — pin cache warm-up independent of r
     );
   });
 });
+
+describe("createDependencyPinningSource project identity", () => {
+  it("should carry the project id onto the source", () => {
+    const source = createDependencyPinningSource({
+      projectDir: "/project",
+      projectId: "project-abc",
+    });
+    assertEquals(source.projectId, "project-abc");
+  });
+
+  it("should carry the project id even without an adapter filesystem", () => {
+    // The pre-existing cacheNamespace path only runs for adapter-backed reads;
+    // the cohort gate needs identity on every source, local ones included.
+    const source = createDependencyPinningSource({
+      projectDir: "/project",
+      projectId: "project-abc",
+      isLocalProject: true,
+    });
+    assertEquals(source.fs, undefined);
+    assertEquals(source.projectId, "project-abc");
+  });
+
+  it("should leave the project id undefined when none is supplied", () => {
+    const source = createDependencyPinningSource({ projectDir: "/project" });
+    assertEquals(source.projectId, undefined);
+  });
+});

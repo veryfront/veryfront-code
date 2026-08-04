@@ -161,6 +161,8 @@ export interface DependencyPinningSource {
   readonly fs?: Pick<FileSystemAdapter, "readFile" | "stat">;
   /** Stable project + content-source namespace for shared proxy projectDir values. */
   readonly cacheNamespace?: string;
+  /** Stable project identity used to resolve the pinning rollout cohort. */
+  readonly projectId?: string | null;
   /** Dependency-affecting overrides captured into the immutable snapshot. */
   readonly config?: VeryfrontConfig | null;
   /** Content source provenance used to prevent non-main API write-back. */
@@ -221,6 +223,7 @@ export function createDependencyPinningSource(
 
   return {
     projectDir: options.projectDir,
+    projectId: options.projectId,
     config: options.config,
     contentSourceId: options.contentSourceId,
     releaseId: options.releaseId,
