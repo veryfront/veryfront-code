@@ -206,11 +206,35 @@ describe("setup-deno CI contract", () => {
     );
     assertStringIncludes(
       install,
-      'archive_sha256="$(awk \'BEGIN {IGNORECASE = 1} /^Hash[[:space:]]*:/ { print tolower($3) }\' "${checksums_path}")"',
+      'checksum_parse_path="${checksums_manifest_path}"',
     );
     assertStringIncludes(
       install,
-      'archive_sha256="$(awk -v target="${archive}" \'$2 == target || $2 == "*" target { print tolower($1) }\' "${checksums_path}")"',
+      'checksums_manifest_actual_sha256="$(sha256sum "${checksums_manifest_path}" | awk',
+    );
+    assertStringIncludes(
+      install,
+      'checksums_manifest_actual_sha256="$(shasum -a 256 "${checksums_manifest_path}" | awk',
+    );
+    assertStringIncludes(
+      install,
+      'checksums_manifest_actual_sha256="$(openssl dgst -sha256 "${checksums_manifest_path}" | awk',
+    );
+    assertStringIncludes(
+      install,
+      'checksums_manifest_actual_sha256="$(node -e "const fs = require(\'fs\'); const crypto = require(\'crypto\'); process.stdout.write(crypto.createHash(\'sha256\').update(fs.readFileSync(process.argv[1])).digest(\'hex\')" "${checksums_manifest_path}")"',
+    );
+    assertStringIncludes(
+      install,
+      'if [ "${checksums_manifest_actual_sha256}" != "${checksums_manifest_sha256}" ]',
+    );
+    assertStringIncludes(
+      install,
+      'archive_sha256="$(awk \'BEGIN {IGNORECASE = 1} /^Hash[[:space:]]*:/ { print tolower($3) }\' "${checksum_parse_path}")"',
+    );
+    assertStringIncludes(
+      install,
+      'archive_sha256="$(awk -v target="${archive}" \'$2 == target || $2 == "\*" target { print tolower($1) }\' "${checksum_parse_path}")"',
     );
     assertStringIncludes(
       install,
