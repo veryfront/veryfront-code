@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { isAuthenticInternalControlPlaneCandidate } from "./control-plane-signature.ts";
+import {
+  isAuthenticInternalControlPlaneCandidate,
+  isVerifiedInternalControlPlaneRequest,
+  resolveVerifiedControlPlaneBranchBinding,
+} from "./control-plane-signature.ts";
 
 /**
  * Cross-repo contract: control-plane-signature.test.ts mints its own compliant
@@ -61,10 +65,6 @@ async function mintApiStyleJws(
     exp: now + 300,
     ...claimOverrides,
   };
-  for (const [key, value] of Object.entries(claimOverrides)) {
-    if (value === undefined) delete payload[key];
-  }
-
   const encodedHeader = base64url(JSON.stringify({ alg: "EdDSA", typ: "JWT" }));
   const encodedPayload = base64url(JSON.stringify(payload));
   const signature = await crypto.subtle.sign(
@@ -79,6 +79,11 @@ async function mintApiStyleJws(
   };
 }
 
+/**
+ * Verify through the BOUND entry point. The unbound candidate check leaves aud,
+ * project_id and request_hash unverified, so asserting through it would let
+ * those three claims drift silently.
+ */
 async function verifyApiStyleRequest(
   claimOverrides: Record<string, unknown> = {},
 ): Promise<boolean> {
@@ -95,7 +100,10 @@ async function verifyApiStyleRequest(
     body,
   });
 
-  return await isAuthenticInternalControlPlaneCandidate(req, new URL(RUN_STREAM_URL));
+  return await isVerifiedInternalControlPlaneRequest(req, new URL(RUN_STREAM_URL), {
+    audience: "protected",
+    expectedProjectId: "proj-1",
+  });
 }
 
 describe("control-plane signature: veryfront-api contract", () => {
@@ -121,10 +129,58 @@ describe("control-plane signature: veryfront-api contract", () => {
     assertEquals(await verifyApiStyleRequest({ request_method: "DELETE" }), false);
   });
 
+  // Verified through the bound entry point, so a drifted audience or project id
+  // is caught. The unbound candidate check leaves both unverified.
+  it("rejects a JWS whose aud is not the bound project", async () => {
+    assertEquals(await verifyApiStyleRequest({ aud: "another-project" }), false);
+  });
+
+  it("rejects a JWS whose project_id is not the bound project", async () => {
+    assertEquals(await verifyApiStyleRequest({ project_id: "another-project-id" }), false);
+  });
+
   it("rejects a JWS whose request_path does not match the request", async () => {
     assertEquals(
       await verifyApiStyleRequest({ request_path: "/api/control-plane/runs/r_1" }),
       false,
+    );
+  });
+});
+
+describe("control-plane signature: body binding", () => {
+  afterEach(() => {
+    Deno.env.delete(PUBLIC_KEY_ENV);
+  });
+
+  async function resolveBinding(signedBody: string, sentBody: string) {
+    const { jws, publicKeyPem } = await mintApiStyleJws(signedBody);
+    Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
+    const req = new Request(RUN_STREAM_URL, {
+      method: "POST",
+      headers: { "x-token": "t", "x-veryfront-control-plane-jws": jws },
+      body: sentBody,
+    });
+    return await resolveVerifiedControlPlaneBranchBinding(req, new URL(RUN_STREAM_URL), {
+      audience: "protected",
+      expectedProjectId: "proj-1",
+    });
+  }
+
+  const RUN_BODY = JSON.stringify({
+    run: { project: {} },
+    agentSource: { type: "release" },
+  });
+
+  it("accepts a body matching the signed request_hash", async () => {
+    assertEquals(await resolveBinding(RUN_BODY, RUN_BODY), {});
+  });
+
+  it("rejects a body that does not match the signed request_hash", async () => {
+    await assertRejects(() =>
+      resolveBinding(
+        RUN_BODY,
+        JSON.stringify({ run: { project: {} }, agentSource: { type: "release" }, tampered: true }),
+      )
     );
   });
 });
@@ -134,24 +190,35 @@ describe("control-plane signature: rejection reasons", () => {
     Deno.env.delete(PUBLIC_KEY_ENV);
   });
 
-  async function reasonFor(
+  async function reasonsFor(
     build: (jws: string) => { headers: Record<string, string>; publicKeyPem?: string },
-  ): Promise<string | undefined> {
+    url = RUN_STREAM_URL,
+  ): Promise<{ reasons: string[]; pathnames: string[] }> {
     const body = JSON.stringify({ messages: [] });
     const { jws, publicKeyPem } = await mintApiStyleJws(body);
     const built = build(jws);
     Deno.env.delete(PUBLIC_KEY_ENV);
-    if (built.publicKeyPem ?? publicKeyPem) {
-      Deno.env.set(PUBLIC_KEY_ENV, built.publicKeyPem ?? publicKeyPem);
-    }
+    const key = built.publicKeyPem ?? publicKeyPem;
+    if (key !== "") Deno.env.set(PUBLIC_KEY_ENV, key);
 
     const reasons: string[] = [];
-    const req = new Request(RUN_STREAM_URL, { method: "POST", headers: built.headers, body });
-    await isAuthenticInternalControlPlaneCandidate(req, new URL(RUN_STREAM_URL), {
+    const pathnames: string[] = [];
+    const req = new Request(url, { method: "POST", headers: built.headers, body });
+    await isAuthenticInternalControlPlaneCandidate(req, new URL(url), {
       warn: (_msg, extra) => {
         if (typeof extra?.reason === "string") reasons.push(extra.reason);
+        if (typeof extra?.pathname === "string") pathnames.push(extra.pathname);
       },
     });
+    return { reasons, pathnames };
+  }
+
+  /** Exactly one warn, carrying the expected reason. */
+  async function reasonFor(
+    build: (jws: string) => { headers: Record<string, string>; publicKeyPem?: string },
+  ): Promise<string | undefined> {
+    const { reasons } = await reasonsFor(build);
+    assertEquals(reasons.length, 1);
     return reasons[0];
   }
 
@@ -172,11 +239,38 @@ describe("control-plane signature: rejection reasons", () => {
     );
   });
 
-  it("reports a missing signature header", async () => {
+  it("reports a missing control-plane header when a dispatch signature was presented", async () => {
     assertEquals(
-      await reasonFor(() => ({ headers: { "x-token": "t" } })),
+      await reasonFor((jws) => ({ headers: { "x-token": "t", "x-veryfront-dispatch-jws": jws } })),
       "missing_signature_header",
     );
+  });
+
+  // An unauthenticated client picks the runId segment, so logging one line per
+  // request would be a remote write into log ingest.
+  it("stays silent for a caller that presented no signature header", async () => {
+    const { reasons } = await reasonsFor(() => ({ headers: { "x-token": "t" } }));
+    assertEquals(reasons, []);
+  });
+
+  it("stays silent for an unauthenticated request with a huge path", async () => {
+    const huge = `http://protected.preview.veryfront.com/api/control-plane/runs/${
+      "A".repeat(8000)
+    }/stream`;
+    const { reasons } = await reasonsFor(() => ({ headers: {} }), huge);
+    assertEquals(reasons, []);
+  });
+
+  it("bounds the logged pathname", async () => {
+    const huge = `http://protected.preview.veryfront.com/api/control-plane/runs/${
+      "A".repeat(8000)
+    }/stream`;
+    const { pathnames } = await reasonsFor(
+      (jws) => ({ headers: { "x-veryfront-control-plane-jws": jws } }),
+      huge,
+    );
+    assertEquals(pathnames.length, 1);
+    assertEquals(pathnames[0].length, 256);
   });
 
   it("reports a rejected signature", async () => {

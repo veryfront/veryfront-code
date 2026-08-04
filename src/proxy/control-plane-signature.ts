@@ -19,6 +19,10 @@
  * not consume the body: authoritative body-hash verification still runs in the
  * renderer. Signature headers remain available to that downstream verifier.
  *
+ * Rejections are logged with a reason so a turned-away internal caller can be
+ * diagnosed from one line. The reason is never returned to the client, and
+ * anonymous traffic that presented no signature header is not logged at all.
+ *
  * @module proxy/control-plane-signature
  */
 
@@ -46,6 +50,7 @@ export const INTERNAL_CONTROL_PLANE_SIGNATURE_HEADERS = [
   DISPATCH_JWS_HEADER,
 ] as const;
 
+const MAX_LOGGED_PATHNAME_CODE_UNITS = 256;
 const PUBLIC_KEY_ENV_VAR = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
 const MAX_SIGNATURE_AGE_SECONDS = 60;
 const MAX_BRANCH_NAME_CODE_UNITS = 255;
@@ -254,9 +259,14 @@ export async function resolveVerifiedControlPlaneBranchBinding(
   return parseVerifiedBranchBinding(rawBody);
 }
 
-/** Why a signed-internal check did not admit the request. */
-type InternalControlPlaneRejection =
-  | "not_an_internal_route"
+/**
+ * Why a signed-internal check did not admit the request.
+ *
+ * "reserved" routes are internal but never admissible, so they share the silent
+ * `route_not_admissible` reason with ordinary public traffic.
+ */
+export type InternalControlPlaneRejection =
+  | "route_not_admissible"
   | "missing_x_token"
   | "verification_key_not_configured"
   | "missing_signature_header"
@@ -268,7 +278,7 @@ async function checkInternalControlPlaneSignature(
   binding?: InternalControlPlaneProjectBinding,
 ): Promise<InternalControlPlaneRejection | null> {
   const routeKind = classifyInternalControlPlaneRequest(req.method, url.pathname);
-  if (routeKind === "public" || routeKind === "reserved") return "not_an_internal_route";
+  if (routeKind === "public" || routeKind === "reserved") return "route_not_admissible";
 
   // The candidate only matters when there is an x-token to use for metadata
   // lookup or forward after the resolved project binding succeeds.
@@ -319,18 +329,33 @@ async function verifyInternalControlPlaneSignature(
   const rejection = await checkInternalControlPlaneSignature(req, url, binding);
   if (rejection === null) return true;
 
-  // Every ordinary page request lands here, so only log the cases where a
-  // request that meant to be internal was turned away.
-  if (rejection !== "not_an_internal_route") {
+  if (shouldLogRejection(req, rejection)) {
     logger?.warn("Internal control-plane signature not accepted", {
       reason: rejection,
       method: req.method,
-      pathname: url.pathname,
+      // Two admissible route patterns carry an unbounded runId segment, and any
+      // unauthenticated client can choose it. Logging it whole is a remote
+      // write into log ingest, so bound it.
+      pathname: url.pathname.slice(0, MAX_LOGGED_PATHNAME_CODE_UNITS),
       ...(binding?.audience ? { audience: binding.audience } : {}),
     });
   }
 
   return false;
+}
+
+/**
+ * Log only rejections that describe a caller which tried to authenticate.
+ *
+ * A request carrying no signature header at all is anonymous internet traffic
+ * that chose its own path; one line per request is amplification, and it buries
+ * the rejections that describe a real internal caller. Every reason still logs
+ * once a signature header is present.
+ */
+function shouldLogRejection(req: Request, rejection: InternalControlPlaneRejection): boolean {
+  if (rejection === "route_not_admissible") return false;
+  if (rejection === "verification_key_not_configured") return true;
+  return INTERNAL_CONTROL_PLANE_SIGNATURE_HEADERS.some((header) => req.headers.get(header));
 }
 
 /**
