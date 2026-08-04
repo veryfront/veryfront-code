@@ -252,6 +252,55 @@ function normalizeToolListPage(result: unknown): NormalizedToolListPage {
   return { definitions, nextCursor };
 }
 
+function normalizeToolListPageTolerant(
+  result: unknown,
+  seenNames: Set<string>,
+): NormalizedToolListPage {
+  if (!isRecord(result)) {
+    throw protocolError("Remote MCP tools/list result was not a JSON object");
+  }
+  const rawTools = result.tools;
+  if (!Array.isArray(rawTools)) {
+    throw protocolError("Remote MCP tools/list result did not include a tools array");
+  }
+  if (rawTools.length > MAX_REMOTE_MCP_TOOL_DEFINITIONS) {
+    throw protocolError(
+      `Remote MCP tools/list cannot contain more than ${MAX_REMOTE_MCP_TOOL_DEFINITIONS} tools`,
+    );
+  }
+
+  const definitions: ToolDefinition[] = [];
+  for (let index = 0; index < rawTools.length; index += 1) {
+    const rawDefinition = rawTools[index];
+    let definition: ToolDefinition | null = null;
+    try {
+      definition = normalizeToolDefinition(rawDefinition, index);
+    } catch {
+      definition = null;
+    }
+    if (definition === null || seenNames.has(definition.name)) {
+      continue;
+    }
+    seenNames.add(definition.name);
+    definitions.push(definition);
+  }
+
+  const rawNextCursor = result.nextCursor;
+  let nextCursor: string | undefined;
+  if (rawNextCursor !== undefined && rawNextCursor !== null) {
+    if (
+      typeof rawNextCursor !== "string" ||
+      rawNextCursor.length === 0 ||
+      rawNextCursor.length > MAX_REMOTE_MCP_CURSOR_LENGTH
+    ) {
+      throw protocolError("Remote MCP tools/list returned an invalid pagination cursor");
+    }
+    nextCursor = rawNextCursor;
+  }
+
+  return { definitions, nextCursor };
+}
+
 function joinCallToolText(content: JsonRpcCallToolContentItem[]): string {
   return content
     .map((item) => (typeof item.text === "string" ? item.text : ""))
@@ -947,6 +996,76 @@ export function createRemoteMCPToolSource(
   config: RemoteMCPToolSourceConfig,
 ): RemoteToolSource {
   return createRemoteMCPToolSourceWithFetch(config, guardedOutboundFetch);
+}
+
+/** Create a remote MCP source that tolerates malformed entries while listing tools. */
+export function createTolerantRemoteMCPToolSource(
+  config: RemoteMCPToolSourceConfig,
+): RemoteToolSource {
+  const strictSource = createRemoteMCPToolSource(config);
+  const sourceId = config.id ?? "remote-mcp";
+  const listMethod = config.listMethod ?? "tools/list";
+
+  return {
+    id: strictSource.id,
+    async listTools(context) {
+      const endpoint = validateEndpoint(await resolveValue(config.endpoint, context));
+      const headers = await resolveHeaders(config.headers, context);
+
+      const definitions: ToolDefinition[] = [];
+      const definitionNames = new Set<string>();
+      const seenCursors = new Set<string>();
+      let cursor: string | undefined;
+
+      for (let page = 0; page < MAX_REMOTE_MCP_TOOL_LIST_PAGES; page += 1) {
+        const requestId = `${sourceId}:tools:list`;
+        const payload = await postJsonRpc(
+          endpoint,
+          headers,
+          {
+            jsonrpc: "2.0",
+            id: requestId,
+            method: listMethod,
+            ...(cursor !== undefined ? { params: { cursor } } : {}),
+          },
+          guardedOutboundFetch,
+          context?.abortSignal,
+          MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
+        );
+
+        const result = getJsonRpcResult(payload, requestId);
+        const { definitions: pageDefinitions, nextCursor } = normalizeToolListPageTolerant(
+          result,
+          definitionNames,
+        );
+        if (
+          definitions.length + pageDefinitions.length >
+            MAX_REMOTE_MCP_TOOL_DEFINITIONS
+        ) {
+          throw protocolError(
+            `Remote MCP tools/list cannot contain more than ${MAX_REMOTE_MCP_TOOL_DEFINITIONS} tools`,
+          );
+        }
+        definitions.push(...pageDefinitions);
+
+        if (nextCursor === undefined) {
+          return definitions;
+        }
+        if (seenCursors.has(nextCursor)) {
+          throw protocolError(
+            `Remote MCP tools/list returned repeated pagination cursor "${nextCursor}"`,
+          );
+        }
+        seenCursors.add(nextCursor);
+        cursor = nextCursor;
+      }
+
+      throw protocolError(
+        `Remote MCP tools/list exceeded ${MAX_REMOTE_MCP_TOOL_LIST_PAGES} pages`,
+      );
+    },
+    executeTool: strictSource.executeTool.bind(strictSource),
+  };
 }
 
 /** Deployment-owned transport policy for exact, immutable MCP endpoints. */

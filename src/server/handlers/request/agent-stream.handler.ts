@@ -1,6 +1,6 @@
 import type { Agent } from "#veryfront/agent";
 import {
-  createRemoteMCPToolSource,
+  createTolerantRemoteMCPToolSource,
   type RemoteToolSource,
   type ToolDefinition,
 } from "#veryfront/tool";
@@ -458,7 +458,7 @@ async function withVeryfrontPlatformRemoteTools(input: {
   }
 
   const apiUrl = resolveVeryfrontApiBaseUrlFromHostEnv();
-  const platformRemoteToolSource = createRemoteMCPToolSource({
+  const platformRemoteToolSource = createTolerantRemoteMCPToolSource({
     id: VERYFRONT_API_MCP_SOURCE_ID,
     endpoint: `${apiUrl}/mcp`,
     headers: { Authorization: `Bearer ${input.token}` },
@@ -539,7 +539,7 @@ function withVeryfrontStudioRemoteTools(input: {
   const runtimeRemoteToolConfig = input.agent.config as Agent["config"] & RuntimeRemoteToolConfig;
   const remoteTools = runtimeRemoteToolConfig.__vfRemoteToolSources ?? [];
   const studioRemoteToolSources = hasVeryfrontStudioRemoteToolSource(remoteTools) ? [] : [
-    createRemoteMCPToolSource({
+    createTolerantRemoteMCPToolSource({
       id: VERYFRONT_STUDIO_MCP_SOURCE_ID,
       endpoint: studioMcpUrl,
       headers: () =>

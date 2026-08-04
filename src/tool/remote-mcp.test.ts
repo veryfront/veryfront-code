@@ -10,6 +10,7 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   createRemoteMCPToolSource,
   createRemoteMCPToolSourceFactoryWithTransport,
+  createTolerantRemoteMCPToolSource,
   MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
   MAX_REMOTE_MCP_TOOL_DEFINITIONS,
   MAX_REMOTE_MCP_TOOL_LIST_PAGES,
@@ -759,6 +760,91 @@ describe("tool/remote-mcp", () => {
         ),
       Error,
       "malformed tool definition",
+    );
+  });
+
+  it("skips malformed tool definitions when listing tools from a tolerant source", async () => {
+    const source = createTolerantRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://93.184.216.34",
+    });
+
+    const tools = await withMockFetch(async () =>
+      Response.json({
+        jsonrpc: "2.0",
+        id: "docs:tools:list",
+        result: {
+          tools: [{
+            name: "search_docs",
+            description: "Search documentation",
+            inputSchema: {},
+          }, {
+            name: "",
+            description: "Malformed",
+            inputSchema: {},
+          }, {
+            name: "search_docs",
+            description: "Duplicate name",
+            inputSchema: {},
+          }],
+        },
+      }), async () => await source.listTools());
+
+    assertEquals(tools, [{
+      name: "search_docs",
+      description: "Search documentation",
+      parameters: { type: "object", properties: {} },
+    }]);
+  });
+
+  it("allows malformed entries on paginated catalogs and retains valid definitions", async () => {
+    let cursorCalls = 0;
+    const source = createTolerantRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://93.184.216.34",
+    });
+    const tools = await withMockFetch(
+      async (_input, init: RequestInit | undefined) => {
+        cursorCalls += 1;
+        const body = JSON.parse(String(init?.body)) as { params?: { cursor: string } };
+        if (body.params?.cursor === "page-2") {
+          return Response.json({
+            jsonrpc: "2.0",
+            id: "docs:tools:list",
+            result: {
+              tools: [{
+                name: "list_projects",
+                description: "List Projects",
+                inputSchema: {},
+              }],
+            },
+          });
+        }
+
+        return Response.json({
+          jsonrpc: "2.0",
+          id: "docs:tools:list",
+          result: {
+            tools: [{
+              name: "search_docs",
+              description: "Search documentation",
+              inputSchema: {},
+            }, {
+              name: "bad-tool",
+              description: 1,
+              inputSchema: {},
+            }],
+            nextCursor: "page-2",
+          },
+        });
+      },
+      async () => await source.listTools(),
+    );
+
+    assertEquals(cursorCalls, 2);
+    assertEquals(
+      tools.map((tool) => tool.name),
+      ["search_docs", "list_projects"],
     );
   });
 

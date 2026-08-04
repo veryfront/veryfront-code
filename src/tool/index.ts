@@ -98,6 +98,7 @@ export type {
 export {
   createRemoteMCPToolSource,
   createRemoteMCPToolSourceFactoryWithTransport,
+  createTolerantRemoteMCPToolSource,
   type RemoteMCPToolSourceTransportOptions,
 } from "./remote-mcp.ts";
 export { hasToolExecutionErrorMarker, isErroredToolExecutionResult } from "./result.ts";
