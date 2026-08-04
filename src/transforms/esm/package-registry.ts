@@ -18,6 +18,10 @@ const logger = rendererLogger.component("package-registry");
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
+import {
+  readDependencyPinningCohortConfig,
+  resolveDependencyPinningCohort,
+} from "./dependency-pinning-cohort.ts";
 import { isExactSemver } from "./npm-registry-client.ts";
 import { DEFAULT_REACT_VERSION } from "../import-rewriter/url-builder.ts";
 
@@ -621,6 +625,18 @@ export async function getDependencyPinningSnapshot(
 ): Promise<DependencyPinningSnapshot> {
   const normalized = normalizeDependencyPinningSource(source);
   if (getHostEnv(DEPENDENCY_PINNING_ENV_FLAG) !== "1") {
+    currentDependencyPinningKeys.delete(normalized.cacheIdentity);
+    return FLAG_OFF_DEPENDENCY_SNAPSHOT;
+  }
+  // The flag arms the rollout; the cohort decides who is in it. Returning the
+  // flag-off snapshot keeps out-of-cohort projects byte-identical to today,
+  // including their render cache identities.
+  const cohortProjectId = typeof source === "object" && source !== null
+    ? source.projectId
+    : undefined;
+  if (
+    !resolveDependencyPinningCohort(cohortProjectId, readDependencyPinningCohortConfig())
+  ) {
     currentDependencyPinningKeys.delete(normalized.cacheIdentity);
     return FLAG_OFF_DEPENDENCY_SNAPSHOT;
   }

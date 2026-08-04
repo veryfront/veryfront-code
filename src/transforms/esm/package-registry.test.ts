@@ -1181,3 +1181,76 @@ describe("createDependencyPinningSource project identity", () => {
     assertEquals(source.projectId, undefined);
   });
 });
+
+describe("getDependencyPinningSnapshot cohort gating", () => {
+  const PERCENT_ENV = "VERYFRONT_DEPENDENCY_PINNING_ROLLOUT_PERCENT";
+  const PROJECTS_ENV = "VERYFRONT_DEPENDENCY_PINNING_PROJECTS";
+  let originalFlag: string | undefined;
+  let originalPercent: string | undefined;
+  let originalProjects: string | undefined;
+
+  beforeEach(() => {
+    originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    originalPercent = getHostEnv(PERCENT_ENV);
+    originalProjects = getHostEnv(PROJECTS_ENV);
+  });
+
+  afterEach(() => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+    setEnv(PERCENT_ENV, originalPercent ?? "");
+    setEnv(PROJECTS_ENV, originalProjects ?? "");
+  });
+
+  it("should stay off when the flag is on but the rollout percent is absent", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    setEnv(PERCENT_ENV, "");
+    setEnv(PROJECTS_ENV, "");
+    const snapshot = await getDependencyPinningSnapshot({
+      projectDir: null,
+      projectId: "project-abc",
+    });
+    assertEquals(snapshot.cacheKey, "off");
+  });
+
+  it("should enable an explicitly allowlisted project", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    setEnv(PERCENT_ENV, "0");
+    setEnv(PROJECTS_ENV, "project-abc");
+    // No package.json path, so an in-cohort project reports no-project rather
+    // than "off" — which is what proves the cohort admitted it.
+    const snapshot = await getDependencyPinningSnapshot({
+      projectDir: null,
+      projectId: "project-abc",
+    });
+    assertEquals(snapshot.cacheKey, "on:no-project");
+  });
+
+  it("should keep a non-allowlisted project off at zero percent", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    setEnv(PERCENT_ENV, "0");
+    setEnv(PROJECTS_ENV, "project-abc");
+    const snapshot = await getDependencyPinningSnapshot({
+      projectDir: null,
+      projectId: "project-other",
+    });
+    assertEquals(snapshot.cacheKey, "off");
+  });
+
+  it("should apply a full rollout even to a source without project identity", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    setEnv(PERCENT_ENV, "100");
+    setEnv(PROJECTS_ENV, "");
+    const snapshot = await getDependencyPinningSnapshot({ projectDir: null });
+    assertEquals(snapshot.cacheKey, "on:no-project");
+  });
+
+  it("should stay off when the flag itself is off regardless of percent", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
+    setEnv(PERCENT_ENV, "100");
+    const snapshot = await getDependencyPinningSnapshot({
+      projectDir: null,
+      projectId: "project-abc",
+    });
+    assertEquals(snapshot.cacheKey, "off");
+  });
+});
