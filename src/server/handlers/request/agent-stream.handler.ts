@@ -109,6 +109,13 @@ const defaultDeps: AgentStreamHandlerDeps = {
     getDiscoveredHostTools({ agentId }) as RuntimeAgentStreamExecutionDeps["localTools"],
 };
 const logger = serverLogger.component("agent-stream-handler");
+
+/** VeryfrontError.cause is `unknown` and is often a plain string. */
+function describeErrorCause(cause: unknown): string | undefined {
+  if (cause === undefined || cause === null) return undefined;
+  if (cause instanceof Error) return cause.message;
+  return typeof cause === "string" ? cause : String(cause);
+}
 const RUN_STREAM_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/stream$/;
 const STUDIO_RUNTIME_REMOTE_TOOL_NAMES = new Set<string>(
   [
@@ -942,6 +949,20 @@ export class AgentStreamHandler extends BaseHandler {
 
       if (isVeryfrontError(error)) {
         const response = errorToResponse(error, new URL(req.url).pathname);
+        // errorToResponse strips `detail` from 5xx bodies, and this branch is
+        // otherwise silent, so the detail would be lost entirely.
+        if (response.status >= 500) {
+          logger.error("Internal agent stream request failed", {
+            projectId: ctx.projectId,
+            projectSlug: ctx.projectSlug,
+            status: response.status,
+            slug: error.slug,
+            category: error.category,
+            detail: error.detail,
+            error: error.message,
+            cause: describeErrorCause(error.cause),
+          });
+        }
         return this.respond(applyBuilderHeaders(response, builder.headers));
       }
 

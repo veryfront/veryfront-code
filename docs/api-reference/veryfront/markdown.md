@@ -28,7 +28,7 @@ import { Markdown } from "veryfront/markdown";
 
 | Name                       | Description                                                                                                    | Source                                                                                                      |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `Markdown`                 | Present Markdown source using an injected rich renderer or the explicit dependency-free plain-source contract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L135) |
+| `Markdown`                 | Present Markdown source using an injected rich renderer or the explicit dependency-free plain-source contract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L169) |
 | `MarkdownRendererProvider` | Provide a trusted rich-Markdown renderer to a React subtree.                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L103) |
 
 ### Classes

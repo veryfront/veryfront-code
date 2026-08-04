@@ -1,4 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { SERVICE_OVERLOADED } from "#veryfront/errors";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+  refreshLoggerConfig,
+} from "#veryfront/utils/logger/index.ts";
 import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import type { AgentMessage } from "#veryfront/agent";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
@@ -3393,6 +3400,75 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(resolveOwnerCalls, 0);
     } finally {
       __resetServerShuttingDownForTests();
+    }
+  });
+});
+
+describe("agent stream handler 5xx logging", () => {
+  it("logs slug, category, detail and cause for a 5xx VeryfrontError", async () => {
+    const entries: LogEntry[] = [];
+    const previousLogLevel = Deno.env.get("LOG_LEVEL");
+    const detail = "Agent service context has not been initialized.";
+    const thrown = SERVICE_OVERLOADED.create({ detail, cause: "adapter boot failed" });
+
+    try {
+      Deno.env.set("LOG_LEVEL", "DEBUG");
+      refreshLoggerConfig();
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+
+      const handler = createTestAgentStreamHandler({
+        ensureProjectDiscovery: () => {
+          throw thrown;
+        },
+        getAgent: () => undefined,
+        getAllAgentIds: () => [],
+        sessionManager: new AgentRunSessionManager(),
+      });
+
+      const body = createAgentStreamRequestBody({
+        agentSource: { type: "branch", branch: "main" },
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: "run_1",
+      });
+
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status >= 500, true, `got ${result.response.status}`);
+
+      // The caller still must not see the detail.
+      const payload = await result.response.json();
+      assertEquals(payload.detail, undefined);
+
+      const logged = entries.find(
+        (entry) => entry.message === "Internal agent stream request failed",
+      );
+      assertExists(
+        logged,
+        `handler did not log; saw: ${entries.map((e) => e.message).join(" | ")}`,
+      );
+      const serialized = JSON.stringify(logged);
+      assertStringIncludes(serialized, detail);
+      // cause is typed `unknown` and is frequently a string, not an Error.
+      assertStringIncludes(serialized, "adapter boot failed");
+      assertStringIncludes(serialized, thrown.slug);
+      assertStringIncludes(serialized, thrown.category);
+    } finally {
+      __resetLogRecordEmitterForTests();
+      if (previousLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+      else Deno.env.set("LOG_LEVEL", previousLogLevel);
+      refreshLoggerConfig();
     }
   });
 });
