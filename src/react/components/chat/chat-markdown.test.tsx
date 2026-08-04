@@ -43,11 +43,11 @@ describe("ChatMarkdown — missing renderer warning", () => {
     const { html, warnings } = renderCapturingWarnings(<ChatMarkdown># Heading</ChatMarkdown>);
 
     assertStringIncludes(html, 'data-vf-markdown-renderer="plain"');
-    assertEquals(warnings.length, 1);
-    assertStringIncludes(warnings[0]!, "no Markdown renderer");
+    assertEquals(warnings, [MISSING_MARKDOWN_RENDERER_WARNING]);
     // The message has to be actionable on its own.
-    assertStringIncludes(warnings[0]!, "MarkdownRendererProvider");
-    assertStringIncludes(warnings[0]!, "app/markdown-renderer.tsx");
+    assertStringIncludes(MISSING_MARKDOWN_RENDERER_WARNING, "MarkdownRendererProvider");
+    assertStringIncludes(MISSING_MARKDOWN_RENDERER_WARNING, "app/markdown-renderer.tsx");
+    assertStringIncludes(MISSING_MARKDOWN_RENDERER_WARNING, "guides/chat-ui");
   });
 
   it("warns once, not once per message", () => {
