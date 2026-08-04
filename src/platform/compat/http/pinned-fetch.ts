@@ -6,8 +6,50 @@
 
 import type { ClientRequest, IncomingMessage, RequestOptions } from "node:http";
 import type { Readable } from "node:stream";
+import { VERSION } from "#veryfront/utils/version-constant.ts";
 
 const NULL_BODY_STATUSES = new Set([204, 205, 304]);
+
+/**
+ * Client identity for guarded egress, standing in for the runtime-supplied
+ * `user-agent` (`node`, `Deno/x.y.z`) that this transport cannot inherit.
+ */
+export const DEFAULT_OUTBOUND_USER_AGENT = `veryfront/${VERSION}`;
+
+/**
+ * Request headers a plain `fetch` attaches on its own. This transport talks to
+ * `node:http` directly, so nothing fills them in and requests leave measurably
+ * thinner than the same call made through `fetch` — hosts behind a WAF reject
+ * user-agent-less requests outright, and omitting `accept-encoding` silently
+ * gives up response compression this transport already knows how to decode.
+ *
+ * Values mirror what Node's `fetch` sends. Exact strings do not need to track
+ * the runtime version by version; `pinned-fetch.test.ts` asserts only that no
+ * header the runtime sends goes missing here, so a runtime that adds one fails
+ * loudly rather than drifting. Caller-supplied headers always win.
+ */
+const RUNTIME_DEFAULT_REQUEST_HEADERS: ReadonlyArray<readonly [string, string]> = [
+  ["accept", "*/*"],
+  ["accept-language", "*"],
+  ["accept-encoding", "gzip, deflate"],
+  ["sec-fetch-mode", "cors"],
+  ["user-agent", DEFAULT_OUTBOUND_USER_AGENT],
+];
+
+/**
+ * Fill in the headers a plain `fetch` would have added, leaving any the caller
+ * set untouched. Split out from the transport so the parity check can run on
+ * every runtime: the transport itself is Node/Bun-only, and a test gated on
+ * that never executes in the Deno-only CI lanes.
+ *
+ * @internal
+ */
+export function applyRuntimeDefaultRequestHeaders(headers: Headers): Headers {
+  for (const [name, value] of RUNTIME_DEFAULT_REQUEST_HEADERS) {
+    if (!headers.has(name)) headers.set(name, value);
+  }
+  return headers;
+}
 
 /** @internal Construct a Fetch response without violating null-body statuses. */
 export function createPinnedFetchResponse(
@@ -159,7 +201,7 @@ export async function fetchWithPinnedAddresses(
   if (addresses.length === 0) {
     throw new Error(`No validated addresses are available for ${url.host}`);
   }
-  const headers = new Headers(init.headers);
+  const headers = applyRuntimeDefaultRequestHeaders(new Headers(init.headers));
   const body = await normalizeRequestBody(url, init, headers);
   const method = (init.method ?? "GET").toUpperCase();
   const requestHeaders: Record<string, string> = {};
