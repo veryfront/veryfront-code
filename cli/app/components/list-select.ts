@@ -99,10 +99,14 @@ export function selectByNumber<T>(
   return { ...state, selectedIndex: index };
 }
 
+/**
+ * Only 1-9 are offered. Letters would collide with the action keys the
+ * dashboard already binds (a, i, o, p, s, u, x…), so an item past the ninth
+ * shows no shortcut and is reached with the arrow keys.
+ */
 function getShortcut(displayNum: number): string | undefined {
-  if (displayNum <= 0 || displayNum > 35) return undefined;
-  if (displayNum <= 9) return String(displayNum);
-  return String.fromCharCode(96 + displayNum - 9); // 10='a', 11='b', etc.
+  if (displayNum <= 0 || displayNum > 9) return undefined;
+  return String(displayNum);
 }
 
 /**

@@ -6,13 +6,11 @@
 
 // Core app
 export { createApp } from "./shell.ts";
-export { showStartup } from "./startup.ts";
+export { startStartupProgress, type StartupProgress } from "./startup.ts";
 
 // Types
 export type { App, AppConfig } from "./types.ts";
 export type { AppState, LogMeta, ProjectInfo, StateUpdater } from "./state.ts";
 
-// State management (for external consumers)
-export * from "./state.ts";
-export * from "./actions.ts";
-export * from "./components/list-select.ts";
+// Key transition (the app's decision surface)
+export { type Effect, type KeyEnv, type KeyResult, reduceKey } from "./key-reducer.ts";

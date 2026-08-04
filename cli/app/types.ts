@@ -5,15 +5,16 @@
  */
 
 import type { AppState, StateUpdater } from "./state.ts";
+import type { Launcher } from "./actions.ts";
 
 export interface AppConfig {
   port: number;
   projects: Map<string, string>;
-  examples?: Map<string, string>;
-  defaultProject?: string;
   mcpPort?: number;
   /** Force headless mode (no TUI) for coding agents */
   headless?: boolean;
+  /** Overrides how projects are opened. Defaults to the platform launcher. */
+  launcher?: Launcher;
 }
 
 export interface App {

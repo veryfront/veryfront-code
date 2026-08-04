@@ -15,7 +15,7 @@ export function renderHelpView(state: AppState): string {
     `  ${dim("Navigation")}`,
     `    ${brand("↑↓")} ${dim("or")} ${brand("jk")}    Navigate list`,
     `    ${brand("Tab")}         Switch sections`,
-    `    ${brand("1-9")}         Quick select item`,
+    `    ${brand("1-9")}         Select item and open`,
     `    ${brand("Enter")}       Select / Open in browser`,
     `    ${brand("Esc")}         Go back`,
     "",
