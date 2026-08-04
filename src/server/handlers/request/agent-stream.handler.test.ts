@@ -1,5 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { SERVICE_OVERLOADED } from "#veryfront/errors";
+import { INVALID_ARGUMENT, SERVICE_OVERLOADED } from "#veryfront/errors";
+import {
+  type ApplicationErrorContext,
+  setApplicationErrorReporter,
+} from "#veryfront/observability/application-errors.ts";
 import {
   __registerLogRecordEmitter,
   __resetLogRecordEmitterForTests,
@@ -3470,5 +3474,127 @@ describe("agent stream handler 5xx logging", () => {
       else Deno.env.set("LOG_LEVEL", previousLogLevel);
       refreshLoggerConfig();
     }
+  });
+});
+
+describe("agent stream handler application-error reporting", () => {
+  type CapturedApplicationError = {
+    error: unknown;
+    context: ApplicationErrorContext;
+  };
+
+  async function handleWithStubbedReporter(
+    thrown: unknown,
+    runIdSegment = "run_1",
+  ): Promise<{ captures: CapturedApplicationError[]; response: Response }> {
+    const captures: CapturedApplicationError[] = [];
+    setApplicationErrorReporter({
+      capture: (error, context) => {
+        captures.push({ error, context });
+        return "test-event-id";
+      },
+      flush: () => Promise.resolve(true),
+    });
+
+    try {
+      const handler = createTestAgentStreamHandler({
+        ensureProjectDiscovery: () => {
+          throw thrown;
+        },
+        getAgent: () => undefined,
+        getAllAgentIds: () => [],
+        sessionManager: new AgentRunSessionManager(),
+      });
+
+      const body = createAgentStreamRequestBody({
+        agentSource: { type: "branch", branch: "main" },
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: "run_1",
+      });
+
+      const result = await handler.handle(
+        new Request(`https://example.com/api/control-plane/runs/${runIdSegment}/stream`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertExists(result.response);
+      return { captures, response: result.response };
+    } finally {
+      setApplicationErrorReporter(undefined);
+    }
+  }
+
+  it("reports a 5xx VeryfrontError with context that is actionable without a log dive", async () => {
+    const detail = "Remote executable discovery requires an isolated project runtime";
+    const thrown = SERVICE_OVERLOADED.create({ detail, cause: "adapter boot failed" });
+
+    const { captures, response } = await handleWithStubbedReporter(thrown);
+    await response.body?.cancel();
+
+    assertEquals(response.status, 503);
+    // The two branches are mutually exclusive, so a rethrow that
+    // double-reports turns this red.
+    assertEquals(captures.length, 1);
+
+    const captured = captures[0];
+    assertExists(captured);
+    assertEquals(captured.error, thrown);
+    assertEquals(captured.context.boundary, "agent.stream.request");
+    assertEquals(captured.context.method, "POST");
+    assertEquals(captured.context.requestId, "run_1");
+
+    const attributes = captured.context.attributes;
+    assertExists(attributes);
+    assertEquals(attributes["error.slug"], "service-overloaded");
+    assertEquals(attributes["error.category"], "SERVER");
+    assertEquals(attributes["error.detail"], detail);
+    assertEquals(attributes["error.cause"], "adapter boot failed");
+    assertEquals(attributes["http.status"], 503);
+    assertEquals(attributes["project.id"], "proj-1");
+    assertEquals(attributes["project.slug"], "demo-project");
+  });
+
+  // A malformed percent escape makes the run-id decode throw. Reporting runs
+  // inside the catch, so an unguarded decode would throw past it and destroy
+  // the 500 instead of describing it.
+  it("still reports and still answers 500 when the run id cannot be decoded", async () => {
+    const { captures, response } = await handleWithStubbedReporter(
+      new TypeError("unused: the malformed path throws first"),
+      "run_%ZZ",
+    );
+    await response.body?.cancel();
+
+    assertEquals(response.status, 500);
+    assertEquals(captures.length, 1);
+
+    const captured = captures[0];
+    assertExists(captured);
+    assertEquals(captured.context.boundary, "agent.stream.handler");
+    assertEquals(captured.context.requestId, undefined);
+
+    const attributes = captured.context.attributes;
+    assertExists(attributes);
+    assertEquals(attributes["http.status"], 500);
+    assertEquals(attributes["project.id"], "proj-1");
+  });
+
+  it("stays silent for a 4xx VeryfrontError so Sentry is not flooded", async () => {
+    const thrown = INVALID_ARGUMENT.create({
+      detail: "Agent source branch is not a known branch",
+    });
+
+    const { captures, response } = await handleWithStubbedReporter(thrown);
+    await response.body?.cancel();
+
+    assertEquals(response.status, 400);
+    assertEquals(captures.length, 0);
   });
 });
