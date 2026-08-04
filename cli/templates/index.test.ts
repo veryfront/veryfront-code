@@ -921,11 +921,17 @@ describe("chat starters scaffold a Markdown renderer", () => {
     for (const name of await chatTemplates()) {
       const files = await getTemplate(name);
       for (const file of files ?? []) {
-        if (!RENDERS_CHAT.test(file.content)) continue;
+        const chatAt = file.content.search(RENDERS_CHAT);
+        if (chatAt < 0) continue;
+
+        // The JSX usage, not the import: a file can import the provider and
+        // still never wrap anything. Requiring it to open before `<Chat>` is a
+        // cheap stand-in for actually wrapping it.
+        const providerAt = file.content.indexOf("<MarkdownRendererProvider");
         assertEquals(
-          file.content.includes("MarkdownRendererProvider"),
+          providerAt >= 0 && providerAt < chatAt,
           true,
-          `${name}/${file.path} renders <Chat> without installing a renderer`,
+          `${name}/${file.path} renders <Chat> without wrapping it in a renderer provider`,
         );
       }
     }
