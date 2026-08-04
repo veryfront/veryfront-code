@@ -49,5 +49,20 @@ const output = `/**
 export const STUDIO_BRIDGE_BUNDLE: string = ${JSON.stringify(js)};
 `;
 
-await Deno.writeTextFile(outputPath, output);
-console.log(`[prebundle-bridge] Written to ${outputPath} (${js.length} bytes)`);
+// --check makes a stale committed bundle fail CI instead of relying on someone
+// noticing it missing from a PR diff.
+if (Deno.args.includes("--check")) {
+  const committed = await Deno.readTextFile(outputPath).catch(() => null);
+  if (committed !== output) {
+    console.error(
+      `[prebundle-bridge] ${outputPath} is stale.\n` +
+        `  The committed bundle does not match src/studio/bridge/.\n` +
+        `  Run \`deno task generate\` and commit the result.`,
+    );
+    Deno.exit(1);
+  }
+  console.log("[prebundle-bridge] Committed bundle is up to date");
+} else {
+  await Deno.writeTextFile(outputPath, output);
+  console.log(`[prebundle-bridge] Written to ${outputPath} (${js.length} bytes)`);
+}
