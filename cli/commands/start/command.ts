@@ -223,57 +223,57 @@ export async function startCommand(options: StartOptions): Promise<void> {
     "Starting server",
   ]);
 
-  progress?.begin(0);
-  await clearAllLocalCaches();
-
-  progress?.begin(1);
-  const discovered = await discoverProjects(projectPath);
-
-  // Log discovered projects for discoverability
-  const totalProjects = discovered.projects.size + discovered.examples.size;
-  if (discovered.defaultProject) {
-    logger.info(`Serving project "${discovered.defaultProject}"`);
-  } else if (totalProjects > 0) {
-    const dirs = [
-      ...new Set(
-        [...discovered.projects.values(), ...discovered.examples.values()]
-          .map((p) => {
-            const rel = p.replace(cwd() + "/", "");
-            return rel.split("/").slice(0, -1).join("/");
-          }),
-      ),
-    ].join(", ");
-    logger.info(`Found ${totalProjects} project(s) in ${dirs}`);
-  } else {
-    logger.info(
-      "No projects found. Create one with `veryfront init my-app` or place projects in ./projects/",
-    );
-  }
-
-  const app = createApp({
-    port,
-    headless,
-    projects: discovered.projects,
-  });
-
-  const restoreConsole = app.interceptConsole();
-
-  progress?.begin(2);
-
-  const selectedProject = selectStartProject(discovered, cwd());
-  const projectDir = selectedProject.projectDir;
-  const linkedProjectSlug = await hydrateStartRuntimeAuth(selectedProject);
-
-  const allProjects = new Map([...discovered.projects, ...discovered.examples]);
-  const proxy = await trySetupProxy(allProjects);
-  const shutdownController = new AbortController();
-  const useProxy = typeof proxy.interceptor === "function";
-
-  // The spinner stops however this ends, so a failed start cannot leave the
-  // ticker running — but only a successful start is allowed to tick the
-  // checklist over to done.
-  let server: { ready: Promise<void>; stop: () => Promise<void> };
+  // Any failure between here and a ready server must stop the ticker and
+  // leave the checklist honest; otherwise the interval keeps the process
+  // alive and the terminal stays in the alternate screen.
   try {
+    progress?.begin(0);
+    await clearAllLocalCaches();
+
+    progress?.begin(1);
+    const discovered = await discoverProjects(projectPath);
+
+    // Log discovered projects for discoverability
+    const totalProjects = discovered.projects.size + discovered.examples.size;
+    if (discovered.defaultProject) {
+      logger.info(`Serving project "${discovered.defaultProject}"`);
+    } else if (totalProjects > 0) {
+      const dirs = [
+        ...new Set(
+          [...discovered.projects.values(), ...discovered.examples.values()]
+            .map((p) => {
+              const rel = p.replace(cwd() + "/", "");
+              return rel.split("/").slice(0, -1).join("/");
+            }),
+        ),
+      ].join(", ");
+      logger.info(`Found ${totalProjects} project(s) in ${dirs}`);
+    } else {
+      logger.info(
+        "No projects found. Create one with `veryfront init my-app` or place projects in ./projects/",
+      );
+    }
+
+    const app = createApp({
+      port,
+      headless,
+      projects: discovered.projects,
+    });
+
+    const restoreConsole = app.interceptConsole();
+
+    progress?.begin(2);
+
+    const selectedProject = selectStartProject(discovered, cwd());
+    const projectDir = selectedProject.projectDir;
+    const linkedProjectSlug = await hydrateStartRuntimeAuth(selectedProject);
+
+    const allProjects = new Map([...discovered.projects, ...discovered.examples]);
+    const proxy = await trySetupProxy(allProjects);
+    const shutdownController = new AbortController();
+    const useProxy = typeof proxy.interceptor === "function";
+
+    let server: { ready: Promise<void>; stop: () => Promise<void> };
     if (useProxy) {
       const defaultProjectId = generateDefaultProjectId(cwd());
       const requestInterceptor = proxy.interceptor;
@@ -300,35 +300,35 @@ export async function startCommand(options: StartOptions): Promise<void> {
 
     await server.ready;
     progress?.finish();
+
+    app.setServerReady();
+
+    let shuttingDown = false;
+    const shutdown = async (signal: "SIGINT" | "SIGTERM"): Promise<void> => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+
+      restoreConsole();
+      cliLogger.info(`Received ${signal}, shutting down...`);
+
+      try {
+        app.stop();
+        shutdownController.abort();
+        await server.stop();
+        await proxy.close();
+      } catch (error) {
+        cliLogger.warn("Error while shutting down start command:", error);
+      } finally {
+        exitProcess(0);
+      }
+    };
+
+    registerTerminationSignals((signal) => shutdown(signal));
+    app.start();
+
+    await new Promise(() => {});
   } catch (error) {
     progress?.stop();
     throw error;
   }
-
-  app.setServerReady();
-
-  let shuttingDown = false;
-  async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
-    if (shuttingDown) return;
-    shuttingDown = true;
-
-    restoreConsole();
-    cliLogger.info(`Received ${signal}, shutting down...`);
-
-    try {
-      app.stop();
-      shutdownController.abort();
-      await server.stop();
-      await proxy.close();
-    } catch (error) {
-      cliLogger.warn("Error while shutting down start command:", error);
-    } finally {
-      exitProcess(0);
-    }
-  }
-
-  registerTerminationSignals((signal) => shutdown(signal));
-  app.start();
-
-  await new Promise(() => {});
 }

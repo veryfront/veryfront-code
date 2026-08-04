@@ -155,6 +155,20 @@ describe("app/startup progress", () => {
     assertEquals(term.writes.length, afterStop);
   });
 
+  it("ignores stop() after a successful finish", () => {
+    // The start command guards its whole sequence with a catch that calls
+    // stop(), including after finish() has already run.
+    const term = fakeTerminal();
+    const progress = startStartupProgress(STEPS, term);
+    progress.finish();
+    const afterFinish = term.writes.length;
+
+    progress.stop();
+
+    assertEquals(term.writes.length, afterFinish);
+    assertStringIncludes(term.screen(), "✓ Starting server");
+  });
+
   it("is safe to finish twice", () => {
     const term = fakeTerminal();
     const progress = startStartupProgress(STEPS, term);

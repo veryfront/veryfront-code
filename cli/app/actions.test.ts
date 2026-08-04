@@ -24,6 +24,7 @@ function fakeHost(options: {
   runFails?: boolean;
   openThrows?: boolean;
   existingFiles?: Record<string, string>;
+  writeFails?: boolean;
 } = {}): FakeHost {
   const installed = new Set<string>(options.installed ?? []);
   const urls: string[] = [];
@@ -45,6 +46,7 @@ function fakeHost(options: {
       return Promise.resolve(!options.runFails);
     },
     ensureFile(path, contents) {
+      if (options.writeFails) return Promise.reject(new Error("read-only file system"));
       if (!files.has(path)) files.set(path, contents);
       return Promise.resolve();
     },
@@ -145,6 +147,17 @@ describe("app/actions", () => {
       await createLauncher(host).openMCPSettings();
 
       assertEquals(host.files.get(path), existing);
+    });
+
+    it("reports a write failure instead of throwing", async () => {
+      // Every other launcher method reports through ActionResult; throwing here
+      // would reject inside the shell's key handling and read as a dead key.
+      const host = fakeHost({ installed: ["cursor"], writeFails: true });
+      const result = await createLauncher(host).openMCPSettings();
+
+      assertEquals(result.success, false);
+      assertEquals(result.message?.includes("read-only file system"), true);
+      assertEquals(host.commands, []);
     });
 
     it("still creates the file but reports that no IDE could open it", async () => {

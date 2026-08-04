@@ -131,7 +131,16 @@ export function createLauncher(host: LauncherHost): Launcher {
 
     async openMCPSettings() {
       const settingsPath = join(host.homeDir(), ".claude", "settings.json");
-      await host.ensureFile(settingsPath, `${JSON.stringify({ mcpServers: {} }, null, 2)}\n`);
+
+      // Every launcher method reports failure through ActionResult. Letting a
+      // write error escape instead would reject inside the shell's key
+      // handling, where it surfaces as a dead keypress rather than a log line.
+      try {
+        await host.ensureFile(settingsPath, `${JSON.stringify({ mcpServers: {} }, null, 2)}\n`);
+      } catch (error) {
+        return { success: false, message: `Failed to write settings: ${formatError(error)}` };
+      }
+
       return openFileInIDE(settingsPath);
     },
   };
