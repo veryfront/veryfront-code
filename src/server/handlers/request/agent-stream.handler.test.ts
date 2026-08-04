@@ -3409,6 +3409,7 @@ describe("agent stream handler 5xx logging", () => {
     const entries: LogEntry[] = [];
     const previousLogLevel = Deno.env.get("LOG_LEVEL");
     const detail = "Agent service context has not been initialized.";
+    const thrown = SERVICE_OVERLOADED.create({ detail, cause: "adapter boot failed" });
 
     try {
       Deno.env.set("LOG_LEVEL", "DEBUG");
@@ -3417,7 +3418,7 @@ describe("agent stream handler 5xx logging", () => {
 
       const handler = createTestAgentStreamHandler({
         ensureProjectDiscovery: () => {
-          throw SERVICE_OVERLOADED.create({ detail, cause: "adapter boot failed" });
+          throw thrown;
         },
         getAgent: () => undefined,
         getAllAgentIds: () => [],
@@ -3461,7 +3462,8 @@ describe("agent stream handler 5xx logging", () => {
       assertStringIncludes(serialized, detail);
       // cause is typed `unknown` and is frequently a string, not an Error.
       assertStringIncludes(serialized, "adapter boot failed");
-      assertStringIncludes(serialized, "service-overloaded");
+      assertStringIncludes(serialized, thrown.slug);
+      assertStringIncludes(serialized, thrown.category);
     } finally {
       __resetLogRecordEmitterForTests();
       if (previousLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
