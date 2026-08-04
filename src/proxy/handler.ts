@@ -794,11 +794,13 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         req,
         url,
         { audience: projectSlug },
+        logger,
       );
     } else if (isCustomDomain) {
       signedInternalControlPlaneCandidate = await isAuthenticInternalControlPlaneCandidate(
         req,
         url,
+        logger,
       );
     }
     let signedInternalControlPlaneRequest = false;
@@ -810,7 +812,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       await isVerifiedInternalControlPlaneRequest(req, url, {
         audience: resolvedProjectSlug,
         expectedProjectId: resolvedProjectId,
-      });
+      }, logger);
 
     if (!projectSlug && parsedDomain.isVeryfrontDomain) {
       return {
@@ -1268,7 +1270,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     const scope = getScope(parsedDomain.environment);
     const projectSlug = parsedDomain.slug ?? undefined;
     const signedInternalControlPlaneRequest = projectSlug !== undefined &&
-      await isVerifiedInternalControlPlaneRequest(req, url, { audience: projectSlug });
+      await isVerifiedInternalControlPlaneRequest(req, url, { audience: projectSlug }, logger);
     const { token } = await resolveProxyRequestToken({
       req,
       url,
