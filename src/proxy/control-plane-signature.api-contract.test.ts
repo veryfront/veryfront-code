@@ -83,6 +83,11 @@ async function mintApiStyleJws(
  * Verify through the BOUND entry point. The unbound candidate check leaves aud,
  * project_id and request_hash unverified, so asserting through it would let
  * those three claims drift silently.
+ *
+ * Two claims stay deliberately unbound here. `sub` is never compared on this
+ * path — the run id is already pinned through request_path — and `surface` is
+ * only checked for membership of CONTROL_PLANE_SURFACES, because the proxy has
+ * no business asserting which surface a caller speaks for.
  */
 async function verifyApiStyleRequest(
   claimOverrides: Record<string, unknown> = {},
@@ -270,7 +275,7 @@ describe("control-plane signature: rejection reasons", () => {
       huge,
     );
     assertEquals(pathnames.length, 1);
-    assertEquals(pathnames[0].length, 256);
+    assertEquals(pathnames[0]?.length, 256);
   });
 
   it("reports a rejected signature", async () => {

@@ -355,7 +355,7 @@ async function verifyInternalControlPlaneSignature(
 function shouldLogRejection(req: Request, rejection: InternalControlPlaneRejection): boolean {
   if (rejection === "route_not_admissible") return false;
   if (rejection === "verification_key_not_configured") return true;
-  return INTERNAL_CONTROL_PLANE_SIGNATURE_HEADERS.some((header) => req.headers.get(header));
+  return INTERNAL_CONTROL_PLANE_SIGNATURE_HEADERS.some((header) => req.headers.has(header));
 }
 
 /**
