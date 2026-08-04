@@ -137,7 +137,18 @@ describe(
       ctx.allowHostProjectCodeExecution = true;
       await ctx.adapter.fs.writeFile(
         "/granted-project/tools/granted.ts",
-        "export default {};",
+        [
+          'import { tool } from "veryfront/tool";',
+          'import { defineSchema } from "veryfront/schemas";',
+          "",
+          "export default tool({",
+          '  id: "granted_tool",',
+          '  description: "Discovered only when host execution is granted.",',
+          "  inputSchema: defineSchema((v) => v.object({}))(),",
+          "  execute: async () => ({ ok: true }),",
+          "});",
+          "",
+        ].join("\n"),
       );
 
       let reads = 0;
@@ -154,6 +165,15 @@ describe(
         reads > 0,
         true,
         "an operator-granted shared executor must actually read project source",
+      );
+      // `reads > 0` alone is satisfied by any incidental probe, so pin the
+      // primitive itself: discovery must have found the granted project's tool.
+      assertEquals(
+        result.tools.has("granted_tool"),
+        true,
+        `granted discovery must surface the project tool, got ${
+          JSON.stringify([...result.tools.keys()])
+        }`,
       );
     });
 
