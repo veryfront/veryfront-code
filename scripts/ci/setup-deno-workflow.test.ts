@@ -196,14 +196,73 @@ describe("setup-deno CI contract", () => {
     assertStringIncludes(install, "--retry-max-time 120");
     assertStringIncludes(install, "--remove-on-error");
     assertMatch(install, /--connect-timeout\s+20\s+--max-time\s+120/);
-    assertEquals(
-      install.match(/archive_sha256="[0-9a-f]{64}"/g)?.length,
-      6,
-      "every supported Deno archive must have a pinned SHA-256 digest",
+    assertStringIncludes(
+      install,
+      "https://github.com/denoland/deno/releases/download/v${version}/${archive}.sha256sum",
+    );
+    assertStringIncludes(
+      install,
+      "https://github.com/denoland/deno/releases/download/v${version}/checksums.txt",
+    );
+    assertStringIncludes(
+      install,
+      'checksum_parse_path="${checksums_manifest_path}"',
+    );
+    assertStringIncludes(
+      install,
+      'checksums_manifest_actual_sha256="$(sha256sum "${checksums_manifest_path}" | awk',
+    );
+    assertStringIncludes(
+      install,
+      'checksums_manifest_actual_sha256="$(shasum -a 256 "${checksums_manifest_path}" | awk',
+    );
+    assertStringIncludes(
+      install,
+      'checksums_manifest_actual_sha256="$(openssl dgst -sha256 "${checksums_manifest_path}" | awk',
+    );
+    assertStringIncludes(
+      install,
+      'checksums_manifest_actual_sha256="$(node -e "const fs = require(\'fs\'); const crypto = require(\'crypto\'); process.stdout.write(crypto.createHash(\'sha256\').update(fs.readFileSync(process.argv[1])).digest(\'hex\')" "${checksums_manifest_path}")"',
+    );
+    assertStringIncludes(
+      install,
+      'if [ "${checksums_manifest_actual_sha256}" != "${checksums_manifest_sha256}" ]',
+    );
+    assertStringIncludes(
+      install,
+      'checksums_manifest_http_code="$(curl --fail --location --show-error --retry 5 --retry-delay 2 \\',
+    );
+    assertStringIncludes(
+      install,
+      '  if [ "${checksums_manifest_http_code}" != "200" ]; then',
+    );
+    assertStringIncludes(
+      install,
+      'if [ "${checksums_manifest_http_code}" != "404" ]; then',
+    );
+    assertStringIncludes(
+      install,
+      'Checksums manifest not published for v${version}; falling back to archive checksum file',
+    );
+    assertStringIncludes(
+      install,
+      'Failed to download Deno archive checksum for ${archive}',
+    );
+    assertStringIncludes(
+      install,
+      'archive_sha256="$(awk \'BEGIN {IGNORECASE = 1} /^Hash[[:space:]]*:/ { print tolower($3) }\' "${checksum_parse_path}")"',
+    );
+    assertStringIncludes(
+      install,
+      'archive_sha256="$(awk -v target="${archive}" \'$2 == target || $2 == "*" target { print tolower($1) }\' "${checksum_parse_path}")"',
     );
     assertStringIncludes(
       install,
       'if [ "${actual_sha256}" != "${archive_sha256}" ]',
+    );
+    assertStringIncludes(
+      install,
+      'if [ -z "${archive_sha256}" ]; then',
     );
     assertEquals(
       /\bnpm\b/.test(install),
