@@ -17,6 +17,12 @@ export type ExtensionManifest = {
     npm?: {
       nodeEngine?: string;
       publish?: boolean;
+      /**
+       * Packages the consuming application supplies rather than the extension.
+       * Use it for host runtimes such as React, which must stay a single
+       * instance across core and extensions.
+       */
+      peerDependencies?: Record<string, string>;
       stagedSources?: ExtensionStagedSourceManifest[];
       runtimePackages?: ExtensionRuntimePackageManifest[];
     };
@@ -76,6 +82,9 @@ export type ExtensionPackageSpec = {
 const TEST_ONLY_IMPORTS = new Set([
   "@std/assert",
   "@std/testing/bdd",
+  // Server rendering is a test harness concern here. dnt rejects a mapping it
+  // never encounters, and extension entry points do not render to string.
+  "react-dom/server",
 ]);
 
 const NODE_ENGINE_PATTERN = /^>=(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
@@ -141,6 +150,34 @@ export function manifestDependencies(
     Object.entries(dependencies).toSorted(([left], [right]) =>
       left.localeCompare(right)
     ),
+  );
+}
+
+/**
+ * Peer packages the consuming application supplies. Declared in the manifest
+ * rather than derived from imports, because a peer must not be bundled or
+ * duplicated: React resolved twice breaks context across core and extensions.
+ */
+export function manifestPeerDependencies(
+  manifest: ExtensionManifest,
+): Record<string, string> {
+  const peers = manifest.veryfront?.npm?.peerDependencies ?? {};
+
+  for (const [name, range] of Object.entries(peers)) {
+    if (typeof range !== "string" || range.trim() === "") {
+      throw new Error(
+        `${manifest.name} veryfront.npm.peerDependencies.${name} must declare a version range`,
+      );
+    }
+    if (name === "veryfront") {
+      throw new Error(
+        `${manifest.name} must not override the veryfront peer range`,
+      );
+    }
+  }
+
+  return Object.fromEntries(
+    Object.entries(peers).toSorted(([left], [right]) => left.localeCompare(right)),
   );
 }
 
@@ -292,6 +329,7 @@ function createBaseExtensionPackageSpec(input: {
       },
       peerDependencies: {
         veryfront: veryfrontPeerRange,
+        ...manifestPeerDependencies(input.manifest),
       },
       dependencies,
       keywords: [
@@ -659,6 +697,22 @@ function emittedRootExportPath(target: string): string | undefined {
   return target.replace(/^\.\//, "").replace(/\.(?:tsx?|jsx?)$/, ".js");
 }
 
+/**
+ * Repo-local React shims mapped to the bare consumer packages, mirroring the
+ * root build. An extension that imports React through `react/*.ts` must emit
+ * `import ... from "react"`, so the application supplies the single React
+ * instance. Vendoring the shim's esm.sh build instead yields an unresolvable
+ * subpath and a second React.
+ */
+const REACT_SHIM_TARGETS: Readonly<Record<string, { name: string; subPath?: string }>> = {
+  "react/react.ts": { name: "react" },
+  "react/jsx-runtime.ts": { name: "react", subPath: "jsx-runtime" },
+  "react/jsx-dev-runtime.ts": { name: "react", subPath: "jsx-dev-runtime" },
+  "react/react-dom.ts": { name: "react-dom" },
+  "react/react-dom-client.ts": { name: "react-dom", subPath: "client" },
+  "react/react-dom-server.ts": { name: "react-dom", subPath: "server" },
+};
+
 function createVeryfrontDntMappings(input: {
   manifest: ExtensionManifest;
   manifestDir: string;
@@ -667,18 +721,39 @@ function createVeryfrontDntMappings(input: {
   version: string;
 }): Record<string, NpmPackageMapping> {
   const exportSubpaths = new Set(Object.keys(input.rootConfig.exports ?? {}));
+  const peers = manifestPeerDependencies(input.manifest);
   const mappings: Record<string, NpmPackageMapping> = {};
 
   for (
     const [specifier, target] of Object.entries(input.manifest.imports ?? {})
   ) {
+    if (TEST_ONLY_IMPORTS.has(specifier)) continue;
+
+    const resolvedTarget = resolveManifestTarget(input.manifestDir, target);
+    const targetUrl = toFileUrl(join(input.rootDir, resolvedTarget)).href;
+
+    const reactShim = REACT_SHIM_TARGETS[resolvedTarget];
+    if (reactShim) {
+      const version = peers[reactShim.name];
+      if (!version) {
+        throw new Error(
+          `${input.manifest.name} imports ${resolvedTarget} but does not declare ${reactShim.name} in veryfront.npm.peerDependencies`,
+        );
+      }
+      mappings[targetUrl] = {
+        name: reactShim.name,
+        version,
+        ...(reactShim.subPath ? { subPath: reactShim.subPath } : {}),
+      };
+      continue;
+    }
+
     if (!specifier.startsWith("veryfront/")) continue;
 
     const exportSubpath = `./${specifier.slice("veryfront/".length)}`;
     if (!exportSubpaths.has(exportSubpath)) continue;
 
-    const resolvedTarget = resolveManifestTarget(input.manifestDir, target);
-    mappings[toFileUrl(join(input.rootDir, resolvedTarget)).href] = {
+    mappings[targetUrl] = {
       name: "veryfront",
       version: `^${input.version}`,
       subPath: exportSubpath.slice(2),

@@ -1469,7 +1469,12 @@ async function findSourceFile(
     basePathWithoutExt = basePathWithoutExt.slice("_vf_modules/".length);
   }
 
-  const isFrameworkPath = basePathWithoutExt.startsWith("_veryfront/");
+  // First-party extension sources ship beside `src/` rather than under the
+  // `_veryfront/` namespace, and client-facing ones (the Markdown renderer)
+  // are imported from framework React modules.
+  const isFrameworkExtensionPath = basePathWithoutExt.startsWith("extensions/");
+  const isFrameworkPath = basePathWithoutExt.startsWith("_veryfront/") ||
+    isFrameworkExtensionPath;
   const isFrameworkPackageAssetPath = basePathWithoutExt.startsWith("react/") ||
     basePathWithoutExt.startsWith("deps/");
   const missCacheKey = buildSourceMissCacheKey({
@@ -1531,7 +1536,9 @@ async function findSourceFile(
 
   if (isFrameworkPath) {
     const frameworkResult = await resolveFrameworkSourcePath(
-      basePathWithoutExt.slice("_veryfront/".length),
+      isFrameworkExtensionPath
+        ? basePathWithoutExt
+        : basePathWithoutExt.slice("_veryfront/".length),
       {
         extraLookupDirs: allowReservedProjectFallback ? [join(projectDir, "src")] : [],
         extensions,

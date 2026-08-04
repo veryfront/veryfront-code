@@ -3,8 +3,11 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   FRAMEWORK_EMBEDDED_SRC_DIR,
+  FRAMEWORK_EXTENSIONS_DIR,
+  FRAMEWORK_ROOT,
   FRAMEWORK_SRC_DIR,
   getFrameworkSourceLookupDirs,
+  isFrameworkSourcePath,
   resolveFrameworkSourcePath,
   resolveRelativeFrameworkSourceImport,
 } from "./framework-source-resolver.ts";
@@ -222,6 +225,94 @@ describe("platform/compat/framework-source-resolver", () => {
 //   "_veryfront/%2e%2e%2fsecret.ts"
 // must resolve to null (HTTP 404) rather than a real file outside the
 // framework source tree.
+describe("framework-source-resolver — first-party extension sources", () => {
+  const found = () => ({
+    isFile: true,
+    isDirectory: false,
+    isSymlink: false,
+    isSymbolicLink: false,
+    size: 0,
+    mtime: null,
+  });
+
+  it("treats the extensions tree as framework source", () => {
+    assertEquals(
+      isFrameworkSourcePath(`${FRAMEWORK_EXTENSIONS_DIR}/ext-markdown-react/src/renderer.js`),
+      true,
+    );
+    assertEquals(isFrameworkSourcePath("/somewhere/else/extensions/x/src/renderer.js"), false);
+  });
+
+  it("roots an extensions/ source key at the framework root, not src/", async () => {
+    const wanted = `${FRAMEWORK_ROOT}/extensions/ext-markdown-react/src/renderer.js`;
+
+    const result = await resolveFrameworkSourcePath(
+      "extensions/ext-markdown-react/src/renderer",
+      {
+        fileSystem: {
+          stat: async (path: string) => {
+            if (path === wanted) return found();
+            throw notFound();
+          },
+        },
+      },
+    );
+
+    assertEquals(result?.path, wanted);
+  });
+
+  it("keeps src/extensions contract modules resolving first", async () => {
+    const contract = `${FRAMEWORK_SRC_DIR}/extensions/contracts.ts`;
+
+    const result = await resolveFrameworkSourcePath("extensions/contracts", {
+      fileSystem: {
+        stat: async (path: string) => {
+          if (path === contract) return found();
+          throw notFound();
+        },
+      },
+    });
+
+    assertEquals(result?.path, contract);
+  });
+
+  it("still rejects traversal in an extensions/ key", async () => {
+    const result = await resolveFrameworkSourcePath("extensions/../../secret", {
+      fileSystem: {
+        stat: async () => found(),
+      },
+    });
+
+    assertEquals(result, null);
+  });
+
+  it("resolves a framework module importing an extension beside src/", async () => {
+    const wanted = `${FRAMEWORK_ROOT}/extensions/ext-markdown-react/src/renderer.tsx`;
+
+    const resolved = await resolveRelativeFrameworkSourceImport(
+      "../../../../extensions/ext-markdown-react/src/renderer.js",
+      `${FRAMEWORK_SRC_DIR}/react/components/chat/chat-markdown.tsx`,
+      {
+        exists: async (path: string) => path === wanted,
+      },
+    );
+
+    assertEquals(resolved, wanted);
+  });
+
+  it("does not let a relative import escape past the extensions tree", async () => {
+    const resolved = await resolveRelativeFrameworkSourceImport(
+      "../../../../../secret.ts",
+      `${FRAMEWORK_SRC_DIR}/react/components/chat/chat-markdown.tsx`,
+      {
+        exists: async () => true,
+      },
+    );
+
+    assertEquals(resolved, null);
+  });
+});
+
 describe("framework-source-resolver (VULN-FS-3) — path containment", () => {
   // Build a stat that claims EVERY probed path is a real file, so the only
   // thing preventing escape is the validator.

@@ -1,6 +1,6 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { Markdown } from "../../markdown.tsx";
+import { ChatMarkdown } from "../../chat-markdown.tsx";
 import { ChevronDownIcon } from "../../../ui/icons/index.ts";
 import { createStrictContext } from "../../../create-strict-context.ts";
 import { Shimmer } from "./animations.tsx";
@@ -214,7 +214,7 @@ function ReasoningContent(
       {children ?? (
         // `text-sm!` overrides Markdown's base `text-base` (cn does not tw-merge)
         // so reasoning renders at 14px like Studio's compact variant.
-        <Markdown className="mb-0 space-y-2.5 text-sm!">{text}</Markdown>
+        <ChatMarkdown className="mb-0 space-y-2.5 text-sm!">{text}</ChatMarkdown>
       )}
     </div>
   );

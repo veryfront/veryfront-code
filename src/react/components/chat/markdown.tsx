@@ -90,6 +90,15 @@ const MarkdownRendererContext = globalMarkdownRendererContext[MARKDOWN_RENDERER_
     MarkdownRenderer | null
   >(null));
 
+/**
+ * Read the rich-Markdown renderer installed for this subtree, or `null` when
+ * only the plain-source contract applies. Use it to resolve a surface-specific
+ * default without overriding an application-installed renderer.
+ */
+export function useMarkdownRenderer(): MarkdownRenderer | null {
+  return React.useContext(MarkdownRendererContext);
+}
+
 /** Provide a trusted rich-Markdown renderer to a React subtree. */
 export function MarkdownRendererProvider({
   renderer,
@@ -119,6 +128,34 @@ export interface MarkdownProps {
 const MARKDOWN_CONTAINER_CLASS =
   "max-w-none min-w-0 overflow-hidden break-words text-base leading-relaxed text-[var(--foreground)] [overflow-wrap:anywhere]";
 
+// Element styling for semantic output. Declared as descendant selectors rather
+// than through the `@tailwindcss/typography` plugin, so consumers do not have
+// to install that plugin. Tailwind preflight strips list markers, so
+// `list-disc`/`list-decimal` and padding are restored here. Applied only on the
+// renderer branch: plain source has no elements to style.
+const MARKDOWN_PROSE_CLASS = [
+  // paragraph rhythm
+  "[&_p]:my-4",
+  // lists — restore the markers and indentation preflight removes
+  "[&_ul]:my-4 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:my-4 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:my-1.5 [&_li]:pl-1",
+  "[&_ul_ul]:my-1 [&_ol_ol]:my-1 [&_ul_ol]:my-1 [&_ol_ul]:my-1",
+  "[&_li>p]:my-0 [&_li_p]:my-2",
+  // headings
+  "[&_h1]:mt-6 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold",
+  "[&_h2]:mt-5 [&_h2]:mb-2 [&_h2]:text-base [&_h2]:font-semibold",
+  "[&_h3]:mt-4 [&_h3]:mb-1 [&_h3]:text-sm [&_h3]:font-semibold",
+  "[&_h4]:mt-3 [&_h4]:mb-1 [&_h4]:text-sm [&_h4]:font-semibold",
+  // inline emphasis
+  "[&_strong]:font-semibold [&_em]:italic",
+  // inline code — `:not(pre)>code` targets bare inline code, because block code
+  // lives inside the code block's own `<pre>`.
+  "[&_:not(pre)>code]:rounded-[var(--radius-xs)] [&_:not(pre)>code]:bg-[var(--accent)] [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:py-0.5 [&_:not(pre)>code]:font-mono [&_:not(pre)>code]:text-[0.9em] [&_:not(pre)>code]:font-medium [&_:not(pre)>code]:text-[var(--foreground)]",
+  // horizontal rule
+  "[&_hr]:my-6 [&_hr]:border-0 [&_hr]:border-t [&_hr]:border-[var(--edge-medium)]",
+  // margin reset for the container edges plus a width guard
+  "[&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_*]:max-w-full",
+].join(" ");
+
 /**
  * Present Markdown source using an injected rich renderer or the explicit
  * dependency-free plain-source contract.
@@ -145,7 +182,7 @@ export function Markdown({
   if (Renderer) {
     return (
       <div
-        className={cn(MARKDOWN_CONTAINER_CLASS, className)}
+        className={cn(MARKDOWN_CONTAINER_CLASS, MARKDOWN_PROSE_CLASS, className)}
         data-vf-markdown-renderer="extension"
       >
         <Renderer

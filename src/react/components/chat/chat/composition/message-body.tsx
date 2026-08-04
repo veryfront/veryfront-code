@@ -8,7 +8,7 @@
 
 import * as React from "react";
 import type { CodeBlockProps, Components } from "../../markdown.tsx";
-import { Markdown } from "../../markdown.tsx";
+import { ChatMarkdown } from "../../chat-markdown.tsx";
 import type { PartGroup } from "../utils/message-parts.ts";
 import { useMessageContext } from "../contexts/message-context.tsx";
 import { Reasoning } from "../components/reasoning.tsx";
@@ -41,13 +41,13 @@ export function renderAnswerPart(
     // card. In the flex-col container the gap doesn't collapse with margins, so
     // this widens text↔tool boundaries while tool↔tool stays at the base gap.
     return (
-      <Markdown
+      <ChatMarkdown
         className="my-2 text-[15px] leading-7"
         renderCodeBlock={opts.codeBlock}
         components={opts.markdownComponents}
       >
         {group.content}
-      </Markdown>
+      </ChatMarkdown>
     );
   }
   if (group.type === "reasoning") {

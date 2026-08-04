@@ -304,12 +304,38 @@ different requests would share the same store.
 Use chat context providers only when nested components need direct state access.
 Prefer preset props or composition components first.
 
+## Render Markdown in chat
+
+`Chat` renders assistant answers and reasoning as semantic Markdown out of the
+box. The built-in `@veryfront/ext-markdown-react` extension supplies the
+renderer, so CommonMark plus GFM tables, task lists, strikethrough, and
+autolinks work with no project setup. Fenced code renders through the shared
+code block, with a language label and a copy button.
+
+To use a different renderer, install one for the subtree. An application
+renderer takes precedence over the built-in extension everywhere, including
+inside chat:
+
+```tsx
+import { Chat } from "veryfront/chat";
+import { MarkdownRendererProvider } from "veryfront/markdown";
+import { ProjectMarkdownRenderer } from "./project-markdown-renderer.tsx";
+
+export default function ChatPage() {
+  return (
+    <MarkdownRendererProvider renderer={ProjectMarkdownRenderer}>
+      <Chat agentId="assistant" />
+    </MarkdownRendererProvider>
+  );
+}
+```
+
 ## Present Markdown source safely
 
-`veryfront/markdown` is the dependency-free Markdown boundary used by chat
-surfaces. Without an installed rich renderer, it preserves the exact source in
-an escaped `<pre><code>` element. This is useful when source visibility matters
-more than semantic formatting:
+`veryfront/markdown` is the dependency-free Markdown boundary. Used on its own,
+without an installed rich renderer, it preserves the exact source in an escaped
+`<pre><code>` element. This is useful when source visibility matters more than
+semantic formatting:
 
 ````tsx
 import { Markdown } from "veryfront/markdown";
@@ -337,10 +363,26 @@ escaped source is present in server HTML.
 
 ### Install a semantic renderer
 
-Semantic Markdown is an explicit extension capability. Select a trusted
-extension or application adapter that implements `MarkdownRendererProps`, then
-install its component for the relevant subtree. In this example,
-`ProjectMarkdownRenderer` comes from that adapter:
+Semantic Markdown is an extension capability. Chat installs
+`@veryfront/ext-markdown-react` for you; outside chat, install a renderer for
+the relevant subtree yourself. Use the built-in extension:
+
+```tsx
+import { Markdown, MarkdownRendererProvider } from "veryfront/markdown";
+import { MarkdownRenderer } from "@veryfront/ext-markdown-react/renderer";
+
+export default function Result() {
+  return (
+    <MarkdownRendererProvider renderer={MarkdownRenderer}>
+      <Markdown>{answer}</Markdown>
+    </MarkdownRendererProvider>
+  );
+}
+```
+
+Or select another trusted extension or application adapter that implements
+`MarkdownRendererProps`. In this example, `ProjectMarkdownRenderer` comes from
+that adapter:
 
 ```tsx
 import { Markdown, MarkdownRendererProvider } from "veryfront/markdown";

@@ -18,6 +18,7 @@ import {
   type ExtensionManifest,
   firstPartyExtensionManifestPaths,
   manifestDependencies,
+  manifestPeerDependencies,
   normalizeExtensionEntryPoints,
   normalizeExtensionPackageJson,
   type RootPackageConfig,
@@ -114,6 +115,95 @@ describe("manifestDependencies", () => {
     assertEquals(manifestDependencies(manifest), {
       "@kreuzberg/wasm": "4.5.2",
     });
+  });
+});
+
+describe("manifestPeerDependencies", () => {
+  it("declares host runtimes the application supplies", async () => {
+    const manifest = JSON.parse(
+      await Deno.readTextFile("extensions/ext-markdown-react/deno.json"),
+    ) as ExtensionManifest;
+
+    assertEquals(manifestPeerDependencies(manifest), {
+      react: "^19.2.4",
+      "react-dom": "^19.2.4",
+    });
+    // React stays a peer, never a bundled dependency: two React copies break
+    // context across the core chat tree and the extension renderer.
+    assertEquals("react" in manifestDependencies(manifest), false);
+  });
+
+  it("returns nothing when a manifest declares no peers", async () => {
+    const manifest = JSON.parse(
+      await Deno.readTextFile("extensions/ext-yaml/deno.json"),
+    ) as ExtensionManifest;
+
+    assertEquals(manifestPeerDependencies(manifest), {});
+  });
+
+  it("rejects an attempt to override the veryfront peer range", () => {
+    const manifest = {
+      name: "@veryfront/ext-example",
+      exports: "./src/index.ts",
+      veryfront: { npm: { peerDependencies: { veryfront: "^1.0.0" } } },
+    } as ExtensionManifest;
+
+    assertThrows(
+      () => manifestPeerDependencies(manifest),
+      Error,
+      "must not override the veryfront peer range",
+    );
+  });
+});
+
+describe("React shim dnt mappings", () => {
+  it("maps the repo React shims onto the consumer's bare packages", async () => {
+    const rootConfig = JSON.parse(await Deno.readTextFile("deno.json")) as RootPackageConfig;
+    const manifestPath = "extensions/ext-markdown-react/deno.json";
+    const manifest = JSON.parse(await Deno.readTextFile(manifestPath)) as ExtensionManifest;
+
+    const spec = createExtensionPackageSpec({
+      manifest,
+      manifestPath,
+      rootConfig,
+      rootDir: Deno.cwd(),
+      version: "0.1.0",
+      license: "Apache-2.0",
+    });
+
+    const mapped = Object.entries(spec.dntMappings)
+      .filter(([url]) => /\/react\/[^/]+\.ts$/.test(url))
+      .map(([, mapping]) => `${mapping.name}${mapping.subPath ? `/${mapping.subPath}` : ""}`)
+      .toSorted();
+
+    // Bare `react`/`react-dom`, never a vendored esm.sh build: a second React
+    // instance breaks context between core chat and the extension renderer.
+    // `react-dom/server` is test-only here, so it gets no mapping: dnt rejects
+    // a mapping that the emitted entry points never reach.
+    assertEquals(mapped, ["react", "react/jsx-runtime"]);
+  });
+
+  it("refuses a React shim import without a declared peer range", () => {
+    const manifest = {
+      name: "@veryfront/ext-example",
+      exports: "./src/index.ts",
+      veryfront: { extension: true },
+      imports: { react: "../../react/react.ts" },
+    } as ExtensionManifest;
+
+    assertThrows(
+      () =>
+        createExtensionPackageSpec({
+          manifest,
+          manifestPath: "extensions/ext-example/deno.json",
+          rootConfig: { exports: {}, workspace: [] },
+          rootDir: Deno.cwd(),
+          version: "0.1.0",
+          license: "Apache-2.0",
+        }),
+      Error,
+      "does not declare react in veryfront.npm.peerDependencies",
+    );
   });
 });
 

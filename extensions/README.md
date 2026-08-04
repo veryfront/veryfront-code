@@ -52,6 +52,7 @@ Extension availability is separate from contract requirement:
 | Package                                           | Contract                      | Description                                           |
 | ------------------------------------------------- | ----------------------------- | ----------------------------------------------------- |
 | [`@veryfront/ext-content-mdx`](./ext-content-mdx) | `ContentProcessor`            | MDX and Markdown processing via unified/remark/rehype |
+| [`@veryfront/ext-markdown-react`](./ext-markdown-react) | `MarkdownRendererProvider` | Rich Markdown rendering for React chat surfaces via react-markdown and remark-gfm |
 | [`@veryfront/ext-yaml`](./ext-yaml)               | `SkillDocumentParserProvider` | YAML parsing for skill and agent documents            |
 
 ### Development and rendering
@@ -128,6 +129,7 @@ baseline subset used by ordinary apps and local development.
 | `@veryfront/ext-parser-babel`                | `CodeParser`                  | Deferred; standard npm baseline           |
 | `@veryfront/ext-yaml`                        | `SkillDocumentParserProvider` | Deferred; standard npm baseline           |
 | `@veryfront/ext-content-mdx`                 | `ContentProcessor`            | Deferred; standard npm baseline           |
+| `@veryfront/ext-markdown-react`              | `MarkdownRendererProvider`    | Deferred; standard npm baseline           |
 | `@veryfront/ext-css-tailwind`                | `CSSProcessor`                | Deferred; standard npm baseline           |
 | `@veryfront/ext-node-websocket-ws`           | `NodeWebSocketServerProvider` | Deferred; standard npm baseline           |
 | `@veryfront/ext-dev-ui-react`                | `DevUiAssetProvider`          | Deferred; standard npm baseline           |
@@ -175,7 +177,7 @@ raw transitive dependencies such as `bash-tool`, `just-bash`, `jose`,
 
 | Runtime or service role                      | Install these extension packages                                                                                                                                                                                       |
 | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CLI, build image, or project server runtime  | `@veryfront/ext-bundler-esbuild`, `@veryfront/ext-content-mdx`, `@veryfront/ext-css-tailwind`, `@veryfront/ext-dev-ui-react`, `@veryfront/ext-node-websocket-ws`, `@veryfront/ext-parser-babel`, `@veryfront/ext-yaml` |
+| CLI, build image, or project server runtime  | `@veryfront/ext-bundler-esbuild`, `@veryfront/ext-content-mdx`, `@veryfront/ext-css-tailwind`, `@veryfront/ext-dev-ui-react`, `@veryfront/ext-markdown-react`, `@veryfront/ext-node-websocket-ws`, `@veryfront/ext-parser-babel`, `@veryfront/ext-yaml` |
 | Build with CSS optimization                  | `@veryfront/ext-css-lightning` (register explicitly)                                                                                                                                                                   |
 | Build with CSS purging or critical CSS       | `@veryfront/ext-css-purgecss` (register explicitly)                                                                                                                                                                    |
 | Build with image optimization                | `@veryfront/ext-image-sharp` (register explicitly)                                                                                                                                                                     |
