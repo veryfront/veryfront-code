@@ -2,7 +2,7 @@
  * CLI App Actions
  *
  * Opening a project in the browser, Studio, or an IDE. Everything that leaves
- * the process — spawning commands, opening URLs, touching disk — goes through
+ * the process, spawning commands, opening URLs, touching disk, goes through
  * the LauncherHost seam, so IDE detection order, the Windows/POSIX split, and
  * the settings-file bootstrap are all reachable from a test.
  *
@@ -14,7 +14,7 @@ import { openBrowser } from "../auth/browser.ts";
 import { createFileSystem } from "veryfront/platform";
 import { getOsType, runCommand } from "veryfront/platform";
 import { formatError } from "../utils/string.ts";
-import { join } from "veryfront/platform/path";
+import { dirname, join } from "veryfront/platform/path";
 import type { ProjectInfo } from "./state.ts";
 import { getEnvironmentConfig } from "veryfront/config";
 
@@ -130,7 +130,14 @@ export function createLauncher(host: LauncherHost): Launcher {
     },
 
     async openMCPSettings() {
-      const settingsPath = join(host.homeDir(), ".claude", "settings.json");
+      const home = host.homeDir().trim();
+      if (!home) {
+        // Joining "" would write .claude/settings.json into the current
+        // directory and still report success.
+        return { success: false, message: "Could not determine your home directory." };
+      }
+
+      const settingsPath = join(home, ".claude", "settings.json");
 
       // Every launcher method reports failure through ActionResult. Letting a
       // write error escape instead would reject inside the shell's key
@@ -172,10 +179,9 @@ export function createPlatformHost(): LauncherHost {
 
     async ensureFile(path, contents) {
       const fs = createFileSystem();
-      const dir = path.slice(0, path.lastIndexOf("/"));
 
       try {
-        await fs.mkdir(dir, { recursive: true });
+        await fs.mkdir(dirname(path), { recursive: true });
       } catch {
         // Already exists
       }

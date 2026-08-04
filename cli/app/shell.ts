@@ -48,8 +48,9 @@ import { createStagedPushOptions, pushCommand } from "../commands/push/index.ts"
 import { createProject } from "./operations/project-creation.ts";
 import { interceptConsole } from "./logging/console-interceptor.ts";
 import { type Effect, type KeyEnv, reduceKey } from "./key-reducer.ts";
+import type { InitTemplate } from "../commands/init/types.ts";
 
-const TEMPLATES = [
+const TEMPLATES: Array<{ id: InitTemplate; name: string; description: string }> = [
   { id: "ai-agent", name: "AI Chatbot", description: "Agent + chat UI + streaming" },
   { id: "docs-agent", name: "Docs Agent", description: "Document Q&A with source citations" },
   {
@@ -225,6 +226,8 @@ export function createApp(config: AppConfig): App {
 
       case "logout":
         await logout();
+        // setRemoteUser(null) also moves the active list off the remote
+        // section, which stops rendering once signed out.
         update(setRemoteUser(null));
         update(setRemoteProjects([]));
         update(addLog("info", "Logged out"));
@@ -257,12 +260,24 @@ export function createApp(config: AppConfig): App {
 
   async function runLogin(provider: "google" | "github" | "microsoft"): Promise<void> {
     const user = await login(provider);
-    if (user && !isApiKeyIdentity(user)) {
-      const result = await fetchRemoteProjects();
-      update(setRemoteUser(user));
-      update(setRemoteProjects(result.projects));
-      update(addLog("info", `Logged in as ${user.email}`));
+
+    if (!user) {
+      update(addLog("error", `Login with ${provider} did not complete.`));
+      render();
+      return;
     }
+
+    if (isApiKeyIdentity(user)) {
+      // Nothing to list: an API key is not a signed-in account.
+      update(addLog("info", "Authenticated with an API key; remote projects are unavailable."));
+      render();
+      return;
+    }
+
+    const result = await fetchRemoteProjects();
+    update(setRemoteUser(user));
+    update(setRemoteProjects(result.projects));
+    update(addLog("info", `Logged in as ${user.email}`));
     render();
   }
 
@@ -295,7 +310,7 @@ export function createApp(config: AppConfig): App {
       const pushOptions = createStagedPushOptions(project.slug, project.path);
       await pushCommand(pushOptions);
       update(
-        addLog("info", `Pushed ${project.slug} to ${pushOptions.branch} — merge in Studio`),
+        addLog("info", `Pushed ${project.slug} to ${pushOptions.branch}, merge in Studio`),
       );
     } catch (err) {
       update(addLog("error", `Push failed: ${formatError(err)}`));

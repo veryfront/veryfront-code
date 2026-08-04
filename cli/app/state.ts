@@ -40,7 +40,7 @@ export interface RemoteState {
 
 /**
  * Why the app is asking for text. Declarative so the key transition stays a
- * pure function of state — a callback here would put behaviour back in state.
+ * pure function of state, a callback here would put behaviour back in state.
  */
 export type InputPurpose = { kind: "create-project"; template: InitTemplate };
 
@@ -207,7 +207,16 @@ export function updateMCP(update: Partial<MCPStatus>): StateUpdater {
 }
 
 export function setRemoteUser(user: RemoteState["user"]): StateUpdater {
-  return (state) => ({ ...state, remote: { ...state.remote, user } });
+  return (state) => {
+    // The dashboard only renders the remote section for a signed-in user, so
+    // leaving it active after sign-out would show no cursor anywhere and
+    // resolve action keys to no project.
+    const activeList = !user && state.activeList === "remoteProjects"
+      ? "projects" as const
+      : state.activeList;
+
+    return { ...state, activeList, remote: { ...state.remote, user } };
+  };
 }
 
 export function navigateTo(view: AppView): StateUpdater {

@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 /**
  * Tests for app actions.
  *
- * Everything runs against a fake LauncherHost — no processes, no browser, no
+ * Everything runs against a fake LauncherHost, no processes, no browser, no
  * disk. The seam is the test surface.
  */
 
@@ -147,6 +147,17 @@ describe("app/actions", () => {
       await createLauncher(host).openMCPSettings();
 
       assertEquals(host.files.get(path), existing);
+    });
+
+    it("refuses to write when the home directory is unknown", async () => {
+      // Joining "" would drop .claude/settings.json into the project and still
+      // report success.
+      const host = { ...fakeHost({ installed: ["cursor"] }), homeDir: () => "" };
+      const result = await createLauncher(host).openMCPSettings();
+
+      assertEquals(result.success, false);
+      assertEquals(host.files.size, 0);
+      assertEquals(host.commands, []);
     });
 
     it("reports a write failure instead of throwing", async () => {

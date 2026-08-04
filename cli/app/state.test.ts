@@ -122,6 +122,27 @@ describe("app/state", () => {
       });
     });
 
+    describe("setRemoteUser(null)", () => {
+      it("moves the active list off the remote section on sign-out", () => {
+        state = setRemoteProjects([{ slug: "alpha" }])(
+          setRemoteUser({ email: "dev@example.com" })(freshState()),
+        );
+        state = setActiveList("remoteProjects")(state);
+
+        const newState = setRemoteUser(null)(state);
+
+        assertEquals(newState.activeList, "projects");
+      });
+
+      it("leaves the active list alone when signing in", () => {
+        state = setActiveList("remoteProjects")(freshState());
+        assertEquals(
+          setRemoteUser({ email: "dev@example.com" })(state).activeList,
+          "remoteProjects",
+        );
+      });
+    });
+
     describe("setRemoteProjects", () => {
       it("stores remote projects as a selectable list", () => {
         state = freshState();

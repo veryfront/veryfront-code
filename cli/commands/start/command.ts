@@ -138,7 +138,7 @@ export async function hydrateStartRuntimeAuth(
 /**
  * The proxy resolves each request to a project through the Veryfront API using
  * its own client credentials. Unconfigured it still loads, forces
- * `PROXY_MODE=1`, and then rejects every request for a missing `x-token` — so
+ * `PROXY_MODE=1`, and then rejects every request for a missing `x-token`, so
  * treat "no credentials" as "no proxy" and let the local dev server serve the
  * project instead.
  *
@@ -223,6 +223,21 @@ export async function startCommand(options: StartOptions): Promise<void> {
     "Starting server",
   ]);
 
+  // Populated as startup progresses so a failure can unwind whatever opened.
+  let openServer: { stop: () => Promise<void> } | undefined;
+  let openProxy: ProxySetup | undefined;
+  let openController: AbortController | undefined;
+
+  const releaseStartupResources = async (): Promise<void> => {
+    try {
+      openController?.abort();
+      await openServer?.stop();
+      await openProxy?.close();
+    } catch (cleanupError) {
+      cliLogger.warn("Error while cleaning up a failed start:", cleanupError);
+    }
+  };
+
   // Any failure between here and a ready server must stop the ticker and
   // leave the checklist honest; otherwise the interval keeps the process
   // alive and the terminal stays in the alternate screen.
@@ -270,7 +285,9 @@ export async function startCommand(options: StartOptions): Promise<void> {
 
     const allProjects = new Map([...discovered.projects, ...discovered.examples]);
     const proxy = await trySetupProxy(allProjects);
+    openProxy = proxy;
     const shutdownController = new AbortController();
+    openController = shutdownController;
     const useProxy = typeof proxy.interceptor === "function";
 
     let server: { ready: Promise<void>; stop: () => Promise<void> };
@@ -298,8 +315,15 @@ export async function startCommand(options: StartOptions): Promise<void> {
       });
     }
 
+    openServer = server;
+
     await server.ready;
     progress?.finish();
+
+    // Startup succeeded; shutdown() owns these from here.
+    openServer = undefined;
+    openProxy = undefined;
+    openController = undefined;
 
     app.setServerReady();
 
@@ -329,6 +353,9 @@ export async function startCommand(options: StartOptions): Promise<void> {
     await new Promise(() => {});
   } catch (error) {
     progress?.stop();
+    // A server that bound a port, or a proxy handler that opened, must not
+    // outlive a failed startup: nothing else will close them before exit.
+    await releaseStartupResources();
     throw error;
   }
 }

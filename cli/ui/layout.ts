@@ -10,8 +10,8 @@ import { pad as sharedPad } from "#cli/ui/box";
 import { ANSI_REGEX, RESET, stripAnsi } from "./ansi.ts";
 
 /** Assumed terminal size when the real one is unusable. */
-const FALLBACK_COLUMNS = 80;
-const FALLBACK_ROWS = 24;
+export const FALLBACK_COLUMNS = 80;
+export const FALLBACK_ROWS = 24;
 
 /**
  * A pty with no window size reports 0 columns rather than failing, so the
@@ -19,7 +19,7 @@ const FALLBACK_ROWS = 24;
  * kicks in. Callers subtract from this value and feed it to `String.repeat`
  * and `padEnd`, both of which throw on a negative count.
  */
-function usableSize(value: number, fallback: number): number {
+export function usableSize(value: number, fallback: number): number {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 

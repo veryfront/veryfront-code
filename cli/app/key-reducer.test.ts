@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 /**
  * Tests for the key transition.
  *
- * Every case goes through reduceKey — the same interface the shell uses. No
+ * Every case goes through reduceKey, the same interface the shell uses. No
  * terminal, no network, no clock.
  */
 
@@ -277,6 +277,17 @@ describe("app/key-reducer", () => {
       assertEquals(state.remoteProjects.selectedIndex, 1);
       assertEquals(effects[0]?.kind, "open-browser");
       assertEquals((effects[0] as { project: { slug: string } }).project.slug, "two");
+    });
+
+    it("scrolls a number-selected row into view", () => {
+      const many = setRemoteProjects(
+        ["a", "b", "c", "d", "e", "f", "g"].map((slug) => ({ slug })),
+      )(setRemoteUser({ email: "dev@example.com" })(withProjects()));
+      const { state } = press(setActiveList("remoteProjects")(many), "7");
+
+      assertEquals(state.remoteProjects.selectedIndex, 6);
+      // Only five rows render, so the window has to move or nothing highlights.
+      assertEquals(state.remoteProjects.scrollOffset, 2);
     });
 
     it("ignores a number past the end of the list", () => {

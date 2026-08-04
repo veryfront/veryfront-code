@@ -2,7 +2,7 @@
  * Startup Progress
  *
  * The three-step checklist shown while the CLI comes up. Steps advance when
- * the work they name actually finishes — the module owns the spinner cadence
+ * the work they name actually finishes. The module owns the spinner cadence
  * but never the pace. Nothing here sleeps, so startup costs what the work
  * costs.
  *
@@ -24,7 +24,7 @@ import {
 export const SPINNER_INTERVAL_MS = 60;
 
 export interface StartupProgress {
-  /** Mark the step at `index` active — everything before it is done. */
+  /** Mark the step at `index` active, everything before it is done. */
   begin(index: number): void;
   /** Mark every step done, paint a final time, and stop animating. */
   finish(): void;
@@ -97,6 +97,11 @@ export function startStartupProgress(
       ticking = false;
       deps.clearInterval(handle);
       paint();
+      // finish() stays in the alternate screen because the dashboard takes
+      // over in place. A failure does not: the caller rethrows, so leaving it
+      // on would print the error into a buffer nobody sees and exit with the
+      // cursor still hidden.
+      deps.write(cursor.show + screen.altOff);
     },
   };
 }

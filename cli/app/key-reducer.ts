@@ -5,7 +5,7 @@
  * (state, key) that settles into the next state plus the effects the shell
  * should perform. Nothing here touches the terminal, the network, or the
  * clock, so every key path is reachable from a test through this one
- * interface — the same one the shell uses.
+ * interface, the same one the shell uses.
  *
  * Effects are data, never callbacks. The shell performs them; this module
  * decides them.
@@ -28,7 +28,12 @@ import {
   updateActiveList,
   updateInputValue,
 } from "./state.ts";
-import { moveDown, moveUp, selectByNumber } from "./components/list-select.ts";
+import {
+  type ListSelectState,
+  moveDown,
+  moveUp,
+  selectByNumber,
+} from "./components/list-select.ts";
 import { handleInputKey } from "./components/inline-input.ts";
 
 export const KEY_UP = "\x1b[A";
@@ -78,7 +83,7 @@ const none = (state: AppState): KeyResult => ({ state, effects: [] });
 /**
  * Reduce one key press against the current state.
  *
- * The returned state is always the state to adopt — there is no second write
+ * The returned state is always the state to adopt, there is no second write
  * path. Callers assign it and run the effects; they never mutate state
  * themselves.
  */
@@ -261,7 +266,11 @@ function reduceDashboardKey(state: AppState, key: string): KeyResult {
     const list = state[state.activeList];
     if (num > list.items.length) return none(state);
 
-    const picked = updateActiveList((l) => selectByNumber(l, num))(state);
+    // selectByNumber moves the cursor but not the window, so a pick outside
+    // the visible rows would highlight nothing.
+    const picked = updateActiveList((l) => scrollIntoView(selectByNumber(l, num), VISIBLE_COUNT))(
+      state,
+    );
     const project = list.items[num - 1]?.data;
     return project ? { state: picked, effects: [{ kind: "open-browser", project }] } : none(picked);
   }
@@ -283,6 +292,19 @@ function reduceDashboardKey(state: AppState, key: string): KeyResult {
   }
 
   return none(state);
+}
+
+/** Keep the selected row inside the visible window. */
+function scrollIntoView<T>(
+  list: ListSelectState<T>,
+  visibleCount: number,
+): ListSelectState<T> {
+  const { selectedIndex, scrollOffset } = list;
+  if (selectedIndex < scrollOffset) return { ...list, scrollOffset: selectedIndex };
+  if (selectedIndex >= scrollOffset + visibleCount) {
+    return { ...list, scrollOffset: selectedIndex - visibleCount + 1 };
+  }
+  return list;
 }
 
 /** Cycle between the local and remote sections, skipping empty ones. */

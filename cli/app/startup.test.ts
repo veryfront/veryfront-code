@@ -50,7 +50,13 @@ function fakeTerminal(): FakeTerminal {
       for (let i = 0; i < n; i++) ticker?.();
     },
     screen() {
-      return (writes[writes.length - 1] ?? "").replace(ANSI, "");
+      // stop() writes a bare restore sequence after its final paint, so look
+      // back to the last write that actually carries text.
+      for (let i = writes.length - 1; i >= 0; i--) {
+        const painted = (writes[i] ?? "").replace(ANSI, "").trim();
+        if (painted) return painted;
+      }
+      return "";
     },
   };
 }
@@ -77,7 +83,7 @@ describe("app/startup progress", () => {
     assertStringIncludes(screen, "○ Starting server");
   });
 
-  it("never waits on its own — nothing is painted between steps", () => {
+  it("never waits on its own, so nothing is painted between steps", () => {
     const term = fakeTerminal();
     const progress = startStartupProgress(STEPS, term);
     const beforeWork = term.writes.length;
@@ -141,6 +147,30 @@ describe("app/startup progress", () => {
     assertEquals(screen.includes("✓ Starting server"), false);
     assertStringIncludes(screen, "✓ Loading configuration");
     assertEquals(term.cleared, true);
+  });
+
+  it("restores the terminal when startup fails", () => {
+    const term = fakeTerminal();
+    const progress = startStartupProgress(STEPS, term);
+    progress.begin(1);
+
+    progress.stop();
+
+    // The caller rethrows after this, so the error must land on the normal
+    // screen with the cursor visible.
+    const last = term.writes[term.writes.length - 1] ?? "";
+    assertStringIncludes(last, "\x1b[?1049l");
+    assertStringIncludes(last, "\x1b[?25h");
+  });
+
+  it("leaves the alternate screen on for a successful finish", () => {
+    const term = fakeTerminal();
+    const progress = startStartupProgress(STEPS, term);
+    progress.finish();
+
+    // The dashboard takes over in place, so this one must not restore.
+    const last = term.writes[term.writes.length - 1] ?? "";
+    assertEquals(last.includes("\x1b[?1049l"), false);
   });
 
   it("stops painting after a failure", () => {
