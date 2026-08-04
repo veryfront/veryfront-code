@@ -190,7 +190,7 @@ async function formatTypeScript(source: string): Promise<string> {
 if (Deno.args.includes("--check")) {
   const formatted = await formatTypeScript(output);
   const committed = await Deno.readTextFile(outputPath).catch(() => null);
-  esbuild.stop();
+  await esbuild.stop();
 
   if (committed !== formatted) {
     console.error(
@@ -217,7 +217,7 @@ if (!fmtResult.success) {
   console.warn(`[prebundle-rsc-scripts] Warning: could not format output: ${err}`);
 }
 
-esbuild.stop();
+await esbuild.stop();
 
 console.log(`[prebundle-rsc-scripts] Written to ${outputPath}`);
 console.log(`  client-boot: ${(clientBootBundle.length / 1024).toFixed(1)} KB`);
