@@ -119,6 +119,21 @@ export function isExplicitHostProjectCodeExecutionAllowed(
 }
 
 /**
+ * Decide whether a surface must refuse to execute tenant project code.
+ *
+ * Execution is denied only when the runtime is shared *and* its host-owned
+ * entrypoint did not grant the host-execution capability. Local development,
+ * dedicated single-project runtimes, and operator-granted shared executors all
+ * carry the capability. Every ambiguous value fails closed.
+ *
+ * Every execution surface shares this single predicate so their boundaries
+ * cannot drift apart.
+ */
+export function requiresIsolatedProjectRuntime(value: unknown): boolean {
+  return !isHostProjectCodeExecutionAllowed(value) && isSharedProjectRuntime(value);
+}
+
+/**
  * Identify a shared multi-project/proxy runtime from host-owned context.
  *
  * This is deliberately independent from `isLocalProject`: a dedicated
