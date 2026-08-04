@@ -503,6 +503,11 @@ export function parseEsmShUrl(url: string): ParsedEsmShUrl | null {
 
   const first = segments[0];
   if (!first || ESM_SH_NON_NPM_PREFIX_RE.test(first)) return null;
+  // A colon in the leading segment means a scheme-qualified specifier such as
+  // `node:crypto`, not an npm package name. Feeding one to the pin resolver
+  // would schedule platform resolution and write-back for something npm has
+  // never heard of.
+  if (first.includes(":")) return null;
 
   const isScoped = first.startsWith("@");
   if (isScoped && segments.length < 2) return null;

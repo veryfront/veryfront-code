@@ -94,6 +94,15 @@ Rewrite baked esm.sh URLs in existing user files back to bare specifiers, moving
 
 W1 already makes unmigrated files safe, so this workstream is hygiene rather than a safety fix. Its failure mode is cosmetic and it can ramp slowly.
 
+**Conflict-safe ordering is a requirement, not an implementation detail.** The codemod changes a user source file and `package.json` as one logical operation, against a manifest that the resolve endpoint and concurrent installs also write. Ordering is therefore specified here rather than left to the implementer:
+
+1. **Write `package.json` first, the source file second.** A crash between the two leaves a manifest entry with no corresponding bare import, which is inert: the URL in the unmigrated file still resolves, and W1 pins it. The reverse order leaves a bare import with no recorded version, which is the failure this milestone exists to prevent.
+2. **Use the manifest's existing optimistic concurrency.** `resolve-dependencies.ts` already writes `package.json` under `expectedVersionId`; the codemod must go through the same path rather than issuing a blind write, so a racing install cannot be clobbered.
+3. **On a version conflict, abandon the migration for that project and retry on the next open.** Never merge manifests by hand. The codemod is never urgent, so losing a round is free, while a bad merge is not.
+4. **Never downgrade an existing exact pin.** If the manifest already records a version for a package, the codemod adopts it and discards any version found in the URL. The manifest is authoritative.
+
+Verification must include a partial-failure test (crash between the two writes leaves a state that still renders) and a racing-write test (a concurrent install's pin survives).
+
 ### W4: Production ramp
 
 1. Promote the release containing W0 and W1 with the percent at `0`. This is a pure runtime upgrade with pinning inert, and it also moves production off its 2026-07-27 artifact.

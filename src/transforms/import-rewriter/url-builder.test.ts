@@ -561,6 +561,14 @@ describe("parseEsmShUrl", () => {
     assertEquals(parseEsmShUrl("https://esm.sh/lodash@"), null);
     assertEquals(parseEsmShUrl("https://esm.sh/@dnd-kit/core@"), null);
   });
+
+  it("should decline scheme-qualified specifiers such as node builtins", () => {
+    // Treating `node:crypto` as a package name would schedule platform
+    // resolution and write-back for something npm has never heard of.
+    assertEquals(parseEsmShUrl("https://esm.sh/node:crypto"), null);
+    assertEquals(parseEsmShUrl("https://esm.sh/node:fs/promises"), null);
+    assertEquals(parseEsmShUrl("https://esm.sh/npm:lodash"), null);
+  });
 });
 
 describe("buildPinnedEsmShUrl", () => {
