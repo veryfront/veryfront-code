@@ -4,6 +4,7 @@ import { buildNonceAttribute } from "../html-escape.ts";
 import { generateDevErrorLoggerScript } from "./dev-error-logger.ts";
 import { generateDevComponentManifestScript } from "./dev-component-manifest.ts";
 import { generateDevClientRendererScript } from "./dev-client-renderer.ts";
+import { generateDevFlagScript } from "./dev-flag.ts";
 
 function generateHMRScript(
   config: VeryfrontConfig,
@@ -22,6 +23,12 @@ interface DevScriptsOptions {
   skipDevHMR?: boolean;
   /** Skip error logger when endpoint is not available (preview mode) */
   skipErrorLogger?: boolean;
+  /**
+   * Skip the client development flag. Preview serves the dev script set for
+   * HMR, but its output is user-facing, so it must not switch on
+   * development-only client behaviour such as configuration warnings.
+   */
+  skipDevFlag?: boolean;
 }
 
 export function getDevScripts(
@@ -33,6 +40,10 @@ export function getDevScripts(
   options?: DevScriptsOptions,
 ): string {
   const scripts: string[] = [];
+
+  // First, so client code that branches on the development signal sees it
+  // before any other dev script runs.
+  if (!options?.skipDevFlag) scripts.push(generateDevFlagScript(nonce));
 
   // Error logger only works in local dev (endpoint returns 404 in preview/prod)
   if (!options?.skipErrorLogger) scripts.push(generateDevErrorLoggerScript(nonce));

@@ -83,12 +83,27 @@ const MARKDOWN_RENDERER_CONTEXT_SYMBOL = Symbol.for(
   "veryfront.react.markdown-renderer-context",
 );
 const globalMarkdownRendererContext = globalThis as typeof globalThis & {
-  [MARKDOWN_RENDERER_CONTEXT_SYMBOL]?: React.Context<MarkdownRenderer | null>;
+  [MARKDOWN_RENDERER_CONTEXT_SYMBOL]?: React.Context<MarkdownRenderer | null | undefined>;
 };
+// The default is `undefined`, not `null`, so a subtree with no provider is
+// distinguishable from one whose provider passed `renderer={null}` to disable an
+// inherited renderer. Both still render plain source; only the diagnostics care.
 const MarkdownRendererContext = globalMarkdownRendererContext[MARKDOWN_RENDERER_CONTEXT_SYMBOL] ??
   (globalMarkdownRendererContext[MARKDOWN_RENDERER_CONTEXT_SYMBOL] = React.createContext<
-    MarkdownRenderer | null
-  >(null));
+    MarkdownRenderer | null | undefined
+  >(undefined));
+
+/**
+ * Read the renderer installed for this subtree.
+ *
+ * Returns the renderer, `null` when a provider explicitly disabled rendering,
+ * and `undefined` when no provider is present at all. Internal: chat uses the
+ * distinction to tell a missing renderer apart from a deliberate plain surface.
+ * Not part of the `veryfront/chat` public surface.
+ */
+export function useInstalledMarkdownRenderer(): MarkdownRenderer | null | undefined {
+  return React.useContext(MarkdownRendererContext);
+}
 
 /** Provide a trusted rich-Markdown renderer to a React subtree. */
 export function MarkdownRendererProvider({
