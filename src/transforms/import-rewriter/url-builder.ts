@@ -494,7 +494,13 @@ export function parseEsmShUrl(url: string): ParsedEsmShUrl | null {
     return null;
   }
 
-  const segments = parsed.pathname.slice(1).split("/").filter(Boolean);
+  // An empty segment means a doubled or trailing slash. Both are meaningful:
+  // a trailing slash is an import-map prefix mapping, not a module URL (see
+  // buildEsmShPrefixUrl). Dropping one would rewrite the author's specifier
+  // into a different request, so decline instead of normalizing.
+  const segments = parsed.pathname.slice(1).split("/");
+  if (segments.some((segment) => segment.length === 0)) return null;
+
   const first = segments[0];
   if (!first || ESM_SH_NON_NPM_PREFIX_RE.test(first)) return null;
 
@@ -506,6 +512,9 @@ export function parseEsmShUrl(url: string): ParsedEsmShUrl | null {
 
   const last = nameSegments[nameSegments.length - 1]!;
   const versionIndex = last.lastIndexOf("@");
+  // `pkg@` is malformed, not unversioned. Treating it as unversioned would
+  // silently promote it to a valid pin the author never wrote.
+  if (versionIndex > 0 && versionIndex === last.length - 1) return null;
   const version = versionIndex > 0 ? last.slice(versionIndex + 1) : null;
   if (versionIndex > 0) {
     nameSegments[nameSegments.length - 1] = last.slice(0, versionIndex);

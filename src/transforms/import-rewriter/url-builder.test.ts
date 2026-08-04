@@ -546,6 +546,21 @@ describe("parseEsmShUrl", () => {
   it("should decline an empty path", () => {
     assertEquals(parseEsmShUrl("https://esm.sh/"), null);
   });
+
+  it("should decline a trailing slash, which is an import-map prefix mapping", () => {
+    assertEquals(parseEsmShUrl("https://esm.sh/lodash/"), null);
+    assertEquals(parseEsmShUrl("https://esm.sh/@dnd-kit/core/"), null);
+  });
+
+  it("should decline doubled slashes rather than normalizing them away", () => {
+    assertEquals(parseEsmShUrl("https://esm.sh//lodash"), null);
+    assertEquals(parseEsmShUrl("https://esm.sh/lodash//fp"), null);
+  });
+
+  it("should decline an empty version suffix rather than treating it as unversioned", () => {
+    assertEquals(parseEsmShUrl("https://esm.sh/lodash@"), null);
+    assertEquals(parseEsmShUrl("https://esm.sh/@dnd-kit/core@"), null);
+  });
 });
 
 describe("buildPinnedEsmShUrl", () => {
