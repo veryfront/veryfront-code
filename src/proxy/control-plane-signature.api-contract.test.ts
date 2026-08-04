@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert";
-import { afterEach, describe, it } from "#veryfront/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { isAuthenticInternalControlPlaneCandidate } from "./control-plane-signature.ts";
 
 /**
@@ -10,8 +10,7 @@ import { isAuthenticInternalControlPlaneCandidate } from "./control-plane-signat
  */
 
 const PUBLIC_KEY_ENV = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
-const RUN_STREAM_URL =
-  "http://outlook-agent-hvjoe9.preview.veryfront.org/api/control-plane/runs/r_1/stream";
+const RUN_STREAM_URL = "http://protected.preview.veryfront.com/api/control-plane/runs/r_1/stream";
 const encoder = new TextEncoder();
 
 function base64url(data: string): string {
@@ -51,10 +50,10 @@ async function mintApiStyleJws(
   const now = Math.floor(Date.now() / 1000);
   const payload: Record<string, unknown> = {
     iss: "veryfront-api",
-    aud: "outlook-agent-hvjoe9",
+    aud: "protected",
     sub: "r_1",
     surface: "studio",
-    project_id: "979f3e04-e951-4807-8aa8-98530d9b8ba1",
+    project_id: "proj-1",
     request_hash: await sha256Base64url(body),
     request_method: "POST",
     request_path: "/api/control-plane/runs/r_1/stream",
@@ -191,7 +190,7 @@ describe("control-plane signature: rejection reasons", () => {
 
   it("stays silent for ordinary non-internal routes", async () => {
     const reasons: string[] = [];
-    const pageUrl = "http://slug.preview.veryfront.org/";
+    const pageUrl = "http://protected.preview.veryfront.com/";
     await isAuthenticInternalControlPlaneCandidate(
       new Request(pageUrl, { method: "GET" }),
       new URL(pageUrl),
