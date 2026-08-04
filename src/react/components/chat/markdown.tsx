@@ -90,6 +90,15 @@ const MarkdownRendererContext = globalMarkdownRendererContext[MARKDOWN_RENDERER_
     MarkdownRenderer | null
   >(null));
 
+/**
+ * Read the renderer installed for this subtree, or `null` for plain source.
+ * Internal: chat uses it to tell a missing renderer apart from a deliberate
+ * plain surface. Not part of the `veryfront/chat` public surface.
+ */
+export function useInstalledMarkdownRenderer(): MarkdownRenderer | null {
+  return React.useContext(MarkdownRendererContext);
+}
+
 /** Provide a trusted rich-Markdown renderer to a React subtree. */
 export function MarkdownRendererProvider({
   renderer,

@@ -4,6 +4,7 @@ import { buildNonceAttribute } from "../html-escape.ts";
 import { generateDevErrorLoggerScript } from "./dev-error-logger.ts";
 import { generateDevComponentManifestScript } from "./dev-component-manifest.ts";
 import { generateDevClientRendererScript } from "./dev-client-renderer.ts";
+import { generateDevFlagScript } from "./dev-flag.ts";
 
 function generateHMRScript(
   config: VeryfrontConfig,
@@ -33,6 +34,10 @@ export function getDevScripts(
   options?: DevScriptsOptions,
 ): string {
   const scripts: string[] = [];
+
+  // First, so client code that branches on the development signal sees it
+  // before any other dev script runs.
+  scripts.push(generateDevFlagScript(nonce));
 
   // Error logger only works in local dev (endpoint returns 404 in preview/prod)
   if (!options?.skipErrorLogger) scripts.push(generateDevErrorLoggerScript(nonce));
