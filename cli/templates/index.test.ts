@@ -81,7 +81,10 @@ describe("cli/templates", () => {
     assertExists(files);
 
     assertEquals(files.some((file) => file.path === "veryfront.config.ts"), false);
-    assertEquals(templateConfigs["saas-starter"], undefined);
+    // The starter may declare its own npm dependencies; it renders `<Chat>`, so
+    // it installs a Markdown renderer like the other chat starters. What it must
+    // not do is pin baseline framework extensions, which the CLI resolves.
+    assertEquals(templateConfigs["saas-starter"]?.firstPartyExtensions, undefined);
   });
 
   it("imports globals.css from each styled starter root layout", async () => {
@@ -846,15 +849,36 @@ describe("cli/templates", () => {
 });
 
 describe("chat starters scaffold a Markdown renderer", () => {
-  const CHAT_TEMPLATES: TemplateName[] = [
-    "ai-agent",
-    "coding-agent",
-    "docs-agent",
-    "multi-agent-system",
-  ];
+  /**
+   * Discovered, not listed. A starter that renders `<Chat>` anywhere needs a
+   * renderer, and a hardcoded list silently misses one added later or nested
+   * below `app/` (which is how `saas-starter` was missed).
+   */
+  // `<Chat` alone also matches `<ChatThemeScope` and `<ChatSidebar`, neither of
+  // which renders Markdown.
+  const RENDERS_CHAT = /<Chat[\s/>]/;
+
+  async function chatTemplates(): Promise<TemplateName[]> {
+    const found: TemplateName[] = [];
+    for (const name of STARTER_TEMPLATE_NAMES) {
+      const files = await getTemplate(name);
+      if (files?.some((file) => RENDERS_CHAT.test(file.content))) found.push(name);
+    }
+    return found;
+  }
+
+  it("finds every starter that renders chat", async () => {
+    const names = await chatTemplates();
+
+    assertEquals(
+      names.toSorted(),
+      ["ai-agent", "coding-agent", "docs-agent", "multi-agent-system", "saas-starter"],
+      "update this list when a starter starts or stops rendering <Chat>",
+    );
+  });
 
   it("ships the renderer alongside the parser it imports", async () => {
-    for (const name of CHAT_TEMPLATES) {
+    for (const name of await chatTemplates()) {
       const files = await getTemplate(name);
       assertExists(files, `${name} should load`);
 
@@ -873,7 +897,7 @@ describe("chat starters scaffold a Markdown renderer", () => {
   });
 
   it("allows the relative .tsx import during consumer tsc", async () => {
-    for (const name of CHAT_TEMPLATES) {
+    for (const name of await chatTemplates()) {
       const files = await getTemplate(name);
       const tsconfig = files?.find((file) => file.path === "tsconfig.json");
       assertExists(tsconfig, `${name} should declare consumer TypeScript options`);
@@ -890,6 +914,26 @@ describe("chat starters scaffold a Markdown renderer", () => {
         true,
         `${name} needs noEmit to keep allowImportingTsExtensions valid`,
       );
+    }
+  });
+
+  it("installs the renderer on every file that renders chat", async () => {
+    for (const name of await chatTemplates()) {
+      const files = await getTemplate(name);
+      for (const file of files ?? []) {
+        const chatAt = file.content.search(RENDERS_CHAT);
+        if (chatAt < 0) continue;
+
+        // The JSX usage, not the import: a file can import the provider and
+        // still never wrap anything. Requiring it to open before `<Chat>` is a
+        // cheap stand-in for actually wrapping it.
+        const providerAt = file.content.indexOf("<MarkdownRendererProvider");
+        assertEquals(
+          providerAt >= 0 && providerAt < chatAt,
+          true,
+          `${name}/${file.path} renders <Chat> without wrapping it in a renderer provider`,
+        );
+      }
     }
   });
 

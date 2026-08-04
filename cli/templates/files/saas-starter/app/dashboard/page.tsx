@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { Chat } from "veryfront/chat";
+import { MarkdownRendererProvider } from "veryfront/markdown";
+import { MarkdownRenderer } from "../markdown-renderer.tsx";
 
 interface Conversation {
   id: string;
@@ -78,12 +80,14 @@ export default function Dashboard(): React.JSX.Element {
 
       {/* Chat */}
       <main className="flex-1 flex flex-col">
-        <Chat
-          agentId="assistant"
-          api="/api/ag-ui"
-          className="flex-1 min-h-0"
-          placeholder="Message..."
-        />
+        <MarkdownRendererProvider renderer={MarkdownRenderer}>
+          <Chat
+            agentId="assistant"
+            api="/api/ag-ui"
+            className="flex-1 min-h-0"
+            placeholder="Message..."
+          />
+        </MarkdownRendererProvider>
       </main>
     </div>
   );
