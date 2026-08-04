@@ -90,15 +90,6 @@ const MarkdownRendererContext = globalMarkdownRendererContext[MARKDOWN_RENDERER_
     MarkdownRenderer | null
   >(null));
 
-/**
- * Read the rich-Markdown renderer installed for this subtree, or `null` when
- * only the plain-source contract applies. Use it to resolve a surface-specific
- * default without overriding an application-installed renderer.
- */
-export function useMarkdownRenderer(): MarkdownRenderer | null {
-  return React.useContext(MarkdownRendererContext);
-}
-
 /** Provide a trusted rich-Markdown renderer to a React subtree. */
 export function MarkdownRendererProvider({
   renderer,
