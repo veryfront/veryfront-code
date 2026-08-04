@@ -19,6 +19,10 @@
  * not consume the body: authoritative body-hash verification still runs in the
  * renderer. Signature headers remain available to that downstream verifier.
  *
+ * Rejections are logged with a reason so a turned-away internal caller can be
+ * diagnosed from one line. The reason is never returned to the client, and
+ * anonymous traffic that presented no signature header is not logged at all.
+ *
  * @module proxy/control-plane-signature
  */
 
@@ -33,6 +37,10 @@ import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts
 import { isWellFormedString } from "#veryfront/utils/is-well-formed-string.ts";
 import { isCanonicalOpaqueProjectIdentifier } from "#veryfront/utils/project-identity.ts";
 
+export interface InternalControlPlaneSignatureLogger {
+  warn: (msg: string, extra?: Record<string, unknown>) => void;
+}
+
 const CONTROL_PLANE_JWS_HEADER = "x-veryfront-control-plane-jws";
 const DISPATCH_JWS_HEADER = "x-veryfront-dispatch-jws";
 
@@ -42,6 +50,7 @@ export const INTERNAL_CONTROL_PLANE_SIGNATURE_HEADERS = [
   DISPATCH_JWS_HEADER,
 ] as const;
 
+const MAX_LOGGED_PATHNAME_CODE_UNITS = 256;
 const PUBLIC_KEY_ENV_VAR = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
 const MAX_SIGNATURE_AGE_SECONDS = 60;
 const MAX_BRANCH_NAME_CODE_UNITS = 255;
@@ -250,25 +259,38 @@ export async function resolveVerifiedControlPlaneBranchBinding(
   return parseVerifiedBranchBinding(rawBody);
 }
 
-async function verifyInternalControlPlaneSignature(
+/**
+ * Why a signed-internal check did not admit the request.
+ *
+ * "reserved" routes are internal but never admissible, so they share the silent
+ * `route_not_admissible` reason with ordinary public traffic.
+ */
+export type InternalControlPlaneRejection =
+  | "route_not_admissible"
+  | "missing_x_token"
+  | "verification_key_not_configured"
+  | "missing_signature_header"
+  | "signature_rejected";
+
+async function checkInternalControlPlaneSignature(
   req: Request,
   url: URL,
   binding?: InternalControlPlaneProjectBinding,
-): Promise<boolean> {
+): Promise<InternalControlPlaneRejection | null> {
   const routeKind = classifyInternalControlPlaneRequest(req.method, url.pathname);
-  if (routeKind === "public" || routeKind === "reserved") return false;
+  if (routeKind === "public" || routeKind === "reserved") return "route_not_admissible";
 
   // The candidate only matters when there is an x-token to use for metadata
   // lookup or forward after the resolved project binding succeeds.
-  if (!req.headers.get("x-token")) return false;
+  if (!req.headers.get("x-token")) return "missing_x_token";
 
   const publicKeyPem = getHostEnv(PUBLIC_KEY_ENV_VAR);
-  if (!publicKeyPem) return false;
+  if (!publicKeyPem) return "verification_key_not_configured";
 
   if (routeKind === "dispatch") {
     const dispatchJws = req.headers.get(DISPATCH_JWS_HEADER);
-    if (!dispatchJws) return false;
-    return await verifyDispatchJwsSignature(dispatchJws, {
+    if (!dispatchJws) return "missing_signature_header";
+    const verified = await verifyDispatchJwsSignature(dispatchJws, {
       publicKeyPem,
       maxAgeSeconds: MAX_SIGNATURE_AGE_SECONDS,
       ...(binding
@@ -278,11 +300,12 @@ async function verifyInternalControlPlaneSignature(
         }
         : {}),
     });
+    return verified ? null : "signature_rejected";
   }
 
   const controlPlaneJws = req.headers.get(CONTROL_PLANE_JWS_HEADER);
-  if (!controlPlaneJws) return false;
-  return await verifyControlPlaneJwsSignature(controlPlaneJws, {
+  if (!controlPlaneJws) return "missing_signature_header";
+  const verified = await verifyControlPlaneJwsSignature(controlPlaneJws, {
     publicKeyPem,
     maxAgeSeconds: MAX_SIGNATURE_AGE_SECONDS,
     requestMethod: req.method,
@@ -294,6 +317,45 @@ async function verifyInternalControlPlaneSignature(
       }
       : {}),
   });
+  return verified ? null : "signature_rejected";
+}
+
+async function verifyInternalControlPlaneSignature(
+  req: Request,
+  url: URL,
+  binding?: InternalControlPlaneProjectBinding,
+  logger?: InternalControlPlaneSignatureLogger,
+): Promise<boolean> {
+  const rejection = await checkInternalControlPlaneSignature(req, url, binding);
+  if (rejection === null) return true;
+
+  if (shouldLogRejection(req, rejection)) {
+    logger?.warn("Internal control-plane signature not accepted", {
+      reason: rejection,
+      method: req.method,
+      // Two admissible route patterns carry an unbounded runId segment, and any
+      // unauthenticated client can choose it. Logging it whole is a remote
+      // write into log ingest, so bound it.
+      pathname: url.pathname.slice(0, MAX_LOGGED_PATHNAME_CODE_UNITS),
+      ...(binding?.audience ? { audience: binding.audience } : {}),
+    });
+  }
+
+  return false;
+}
+
+/**
+ * Log only rejections that describe a caller which tried to authenticate.
+ *
+ * A request carrying no signature header at all is anonymous internet traffic
+ * that chose its own path; one line per request is amplification, and it buries
+ * the rejections that describe a real internal caller. Every reason still logs
+ * once a signature header is present.
+ */
+function shouldLogRejection(req: Request, rejection: InternalControlPlaneRejection): boolean {
+  if (rejection === "route_not_admissible") return false;
+  if (rejection === "verification_key_not_configured") return true;
+  return INTERNAL_CONTROL_PLANE_SIGNATURE_HEADERS.some((header) => req.headers.has(header));
 }
 
 /**
@@ -308,8 +370,9 @@ async function verifyInternalControlPlaneSignature(
 export async function isAuthenticInternalControlPlaneCandidate(
   req: Request,
   url: URL,
+  logger?: InternalControlPlaneSignatureLogger,
 ): Promise<boolean> {
-  return await verifyInternalControlPlaneSignature(req, url);
+  return await verifyInternalControlPlaneSignature(req, url, undefined, logger);
 }
 
 /**
@@ -323,7 +386,8 @@ export async function isVerifiedInternalControlPlaneRequest(
   req: Request,
   url: URL,
   binding: InternalControlPlaneProjectBinding,
+  logger?: InternalControlPlaneSignatureLogger,
 ): Promise<boolean> {
   if (!binding.audience) return false;
-  return await verifyInternalControlPlaneSignature(req, url, binding);
+  return await verifyInternalControlPlaneSignature(req, url, binding, logger);
 }
