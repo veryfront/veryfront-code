@@ -196,14 +196,29 @@ describe("setup-deno CI contract", () => {
     assertStringIncludes(install, "--retry-max-time 120");
     assertStringIncludes(install, "--remove-on-error");
     assertMatch(install, /--connect-timeout\s+20\s+--max-time\s+120/);
-    assertEquals(
-      install.match(/archive_sha256="[0-9a-f]{64}"/g)?.length,
-      6,
-      "every supported Deno archive must have a pinned SHA-256 digest",
+    assertStringIncludes(
+      install,
+      "https://github.com/denoland/deno/releases/download/v${version}/${archive}.sha256sum",
+    );
+    assertStringIncludes(
+      install,
+      "https://github.com/denoland/deno/releases/download/v${version}/checksums.txt",
+    );
+    assertStringIncludes(
+      install,
+      'archive_sha256="$(awk \'BEGIN {IGNORECASE = 1} /^Hash[[:space:]]*:/ { print tolower($3) }\' "${checksums_path}")"',
+    );
+    assertStringIncludes(
+      install,
+      'archive_sha256="$(awk -v target="${archive}" \'$2 == target || $2 == "*" target { print tolower($1) }\' "${checksums_path}")"',
     );
     assertStringIncludes(
       install,
       'if [ "${actual_sha256}" != "${archive_sha256}" ]',
+    );
+    assertStringIncludes(
+      install,
+      'if [ -z "${archive_sha256}" ]; then',
     );
     assertEquals(
       /\bnpm\b/.test(install),
