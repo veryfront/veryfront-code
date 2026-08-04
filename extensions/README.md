@@ -52,7 +52,7 @@ Extension availability is separate from contract requirement:
 | Package                                           | Contract                      | Description                                           |
 | ------------------------------------------------- | ----------------------------- | ----------------------------------------------------- |
 | [`@veryfront/ext-content-mdx`](./ext-content-mdx) | `ContentProcessor`            | MDX and Markdown processing via unified/remark/rehype |
-| [`@veryfront/ext-markdown-react`](./ext-markdown-react) | `MarkdownRendererProvider` | Rich Markdown rendering for React chat surfaces via react-markdown and remark-gfm |
+| [`@veryfront/ext-markdown-react`](./ext-markdown-react) | `MarkdownRendererProvider` | Rich Markdown rendering for React chat and standalone surfaces via react-markdown, remark-gfm, and KaTeX |
 | [`@veryfront/ext-yaml`](./ext-yaml)               | `SkillDocumentParserProvider` | YAML parsing for skill and agent documents            |
 
 ### Development and rendering

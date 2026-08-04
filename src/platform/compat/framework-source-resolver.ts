@@ -146,6 +146,21 @@ function expandFrameworkCandidatePaths(
   return [candidatePath];
 }
 
+/**
+ * The `<extensions>/<package>` directory holding `filePath`, or `null` when the
+ * file is not a first-party extension source. Used as an import containment
+ * boundary, so a relative specifier stays inside its own extension package.
+ */
+function frameworkExtensionPackageDir(
+  extensionsDir: string,
+  filePath: string,
+): string | null {
+  if (!isWithinDirectory(extensionsDir, filePath)) return null;
+  const packageName = filePath.slice(extensionsDir.length + 1).split("/")[0];
+  if (!packageName || packageName === "." || packageName === "..") return null;
+  return join(extensionsDir, packageName);
+}
+
 async function findExistingFrameworkCandidate(
   candidatePath: string,
   options: ResolveRelativeFrameworkSourceImportOptions = {},
@@ -237,11 +252,14 @@ export async function resolveRelativeFrameworkSourceImport(
 
   const candidateSourceDir = join(candidateRoot, "src");
   const candidateEmbeddedDir = join(candidateRoot, "dist", "framework-src");
+  const candidateExtensionsDir = join(candidateRoot, "extensions");
   const containingTree = isWithinDirectory(candidateSourceDir, fromSourcePath)
     ? candidateSourceDir
     : isWithinDirectory(candidateEmbeddedDir, fromSourcePath)
     ? candidateEmbeddedDir
-    : null;
+    // An extension resolves its own relative imports, bounded to its package so
+    // one extension cannot reach into another through `../`.
+    : frameworkExtensionPackageDir(candidateExtensionsDir, fromSourcePath);
   if (!containingTree) return null;
 
   const extensions = options.extensions ?? DEFAULT_FRAMEWORK_SOURCE_EXTENSIONS;

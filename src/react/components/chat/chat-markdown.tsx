@@ -11,7 +11,11 @@
  */
 
 import * as React from "react";
-import { MarkdownRenderer as ReactMarkdownRenderer } from "@veryfront/ext-markdown-react/renderer";
+// Imported by path rather than as `@veryfront/ext-markdown-react/renderer`: a
+// bare specifier is resolved as a remote package by the browser module
+// pipeline, which cannot fetch a first-party extension. The package is still a
+// root npm dependency, so its own dependencies resolve for consumers.
+import { MarkdownRenderer as ReactMarkdownRenderer } from "../../../../extensions/ext-markdown-react/src/renderer.tsx";
 import type { CodeBlockProps, MarkdownProps, MarkdownRenderer } from "./markdown.tsx";
 import { Markdown, useMarkdownRenderer } from "./markdown.tsx";
 import { CodeBlock } from "../ui/code-block.tsx";

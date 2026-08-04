@@ -187,6 +187,7 @@ export function createDocumentStub(): {
   activeElement: null;
   hidden: false;
   visibilityState: "visible";
+  compatMode: "CSS1Compat";
   createDocumentFragment: () => ReturnType<typeof createElementStub>;
   createComment: () => { textContent: string };
   readyState: "complete";
@@ -236,6 +237,10 @@ export function createDocumentStub(): {
     activeElement: null,
     hidden: false,
     visibilityState: "visible",
+    // Veryfront's HTML shell emits `<!DOCTYPE html>`, so the rendered document
+    // is always in standards mode. Reporting it keeps libraries that branch on
+    // quirks mode (KaTeX warns and disables itself) on their browser path.
+    compatMode: "CSS1Compat",
     createDocumentFragment: createElementStub,
     createComment: () => ({ textContent: emptyString }),
     readyState: "complete",

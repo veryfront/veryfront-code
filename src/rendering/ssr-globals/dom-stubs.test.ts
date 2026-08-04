@@ -142,6 +142,14 @@ describe("rendering/ssr-globals/dom-stubs", () => {
       assertEquals(doc.readyState, "complete");
     });
 
+    it("reports standards mode", () => {
+      // The HTML shell emits `<!DOCTYPE html>`. Libraries that branch on quirks
+      // mode must take their browser path during SSR: KaTeX otherwise warns and
+      // disables its renderer.
+      const doc = createDocumentStub();
+      assertEquals(doc.compatMode, "CSS1Compat");
+    });
+
     it("should have empty string for content properties", () => {
       const doc = createDocumentStub();
       assertEquals(doc.cookie, "");

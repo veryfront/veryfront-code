@@ -761,6 +761,37 @@ import { createLLMProviderRegistry, LLMProviderRegistryName } from "veryfront/ex
 | `LLMProviderConfig`   | Config passed to any provider's create* method.                                                                                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/llm/llm-provider.ts#L16)       |
 | `LLMProviderRegistry` | Registry contract. Single impl created at bootstrap.                                                                                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/llm/llm-provider.ts#L44)       |
 
+### `veryfront/extensions/markdown`
+
+Markdown category barrel - `MarkdownRendererProvider` contract.
+
+```ts
+import {
+  createMarkdownRendererProvider,
+  MarkdownRendererProviderName,
+  snapshotMarkdownRendererProvider,
+} from "veryfront/extensions/markdown";
+```
+
+#### Components
+
+| Name                           | Description                                                              | Source                                                                                                                    |
+| ------------------------------ | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `MarkdownRendererProviderName` | Contract name used to register and resolve a Markdown renderer provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/markdown/markdown-renderer-provider.ts#L13) |
+
+#### Functions
+
+| Name                               | Description                                                                | Source                                                                                                                    |
+| ---------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `createMarkdownRendererProvider`   | Build a `MarkdownRendererProvider` with a validated shape.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/markdown/markdown-renderer-provider.ts#L31) |
+| `snapshotMarkdownRendererProvider` | Snapshot a provider for diagnostics without exposing the component itself. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/markdown/markdown-renderer-provider.ts#L49) |
+
+#### Types
+
+| Name                       | Description                                        | Source                                                                                                                    |
+| -------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `MarkdownRendererProvider` | A rich Markdown renderer supplied by an extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/markdown/markdown-renderer-provider.ts#L23) |
+
 ### `veryfront/extensions/observability`
 
 Observability category barrel: tracing and Node telemetry contracts.

@@ -35,7 +35,9 @@ export function createMarkdownRendererProvider(
   if (id.trim() === "") {
     throw new TypeError("A Markdown renderer provider must declare a non-empty id.");
   }
-  if (typeof renderer !== "function" && typeof renderer !== "object") {
+  // `typeof null === "object"`, so null is rejected explicitly: a provider with
+  // no usable renderer must not register.
+  if (renderer === null || (typeof renderer !== "function" && typeof renderer !== "object")) {
     throw new TypeError(
       "A Markdown renderer provider must supply a React component as its renderer.",
     );

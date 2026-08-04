@@ -47,6 +47,31 @@ describe("ChatMarkdown — renderer resolution", () => {
     assert(!html.includes("<h1"), "an explicit null must not fall through to a renderer");
   });
 
+  it("renders fenced code through the shared chat code block", () => {
+    const source = "```ts\nconst release = await deploy();\n```";
+    const html = renderToString(<ChatMarkdown>{source}</ChatMarkdown>);
+
+    // The shared block contributes the language label and a copy control that a
+    // bare `<pre><code>` fallback does not have.
+    assertStringIncludes(html, "const release = await deploy();");
+    assertStringIncludes(html, "ts");
+    assertStringIncludes(html, "Copy code");
+  });
+
+  it("lets a caller override the chat code block", () => {
+    const source = "```ts\nconst release = await deploy();\n```";
+    const html = renderToString(
+      <ChatMarkdown
+        renderCodeBlock={({ language, code }) => <pre data-mine={language}>{code}</pre>}
+      >
+        {source}
+      </ChatMarkdown>,
+    );
+
+    assertStringIncludes(html, 'data-mine="ts"');
+    assert(!html.includes("Copy code"), "the caller's block replaces the shared one");
+  });
+
   it("applies prose styling only on the renderer branch", () => {
     const rendered = renderToString(<ChatMarkdown>text</ChatMarkdown>);
     const plain = renderToString(<ChatMarkdown renderer={null}>text</ChatMarkdown>);

@@ -12,8 +12,21 @@ default, so assistant answers render as semantic HTML without any project setup.
 - CommonMark: headings, paragraphs, lists, blockquotes, links, images, emphasis,
   inline code, and fenced code.
 - GFM: tables, task lists, strikethrough, and autolinks.
-- Fenced code through the shared `CodeBlock` primitive (language label, copy
-  button, and an optional syntax-highlight renderer).
+- LaTeX math through KaTeX, written as `$$x^2$$` (inline), a `$$` fenced block
+  (display), or the `\(x^2\)` and `\[x^2\]` forms models commonly emit.
+- Fenced code as `<pre><code class="language-x">`. Pass `renderCodeBlock` to
+  supply your own presentation. Chat passes the shared `CodeBlock` primitive,
+  which adds a language label, a copy button, and an optional syntax-highlight
+  renderer.
+
+### Math delimiters
+
+Single-dollar text math is off. Assistant answers quote currency constantly, and
+`$84.50 ... $33.24` in one sentence would otherwise render the text between the
+two amounts as an equation. Use `$$` for math; `$` stays literal.
+
+KaTeX emits MathML, so math needs no stylesheet and no web fonts. A malformed
+expression renders as its source rather than throwing.
 
 ## Safety
 

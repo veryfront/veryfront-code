@@ -300,6 +300,28 @@ describe("framework-source-resolver — first-party extension sources", () => {
     assertEquals(resolved, wanted);
   });
 
+  it("resolves an extension's own relative import", async () => {
+    const wanted = `${FRAMEWORK_EXTENSIONS_DIR}/ext-markdown-react/src/renderer.tsx`;
+
+    const resolved = await resolveRelativeFrameworkSourceImport(
+      "./renderer.tsx",
+      `${FRAMEWORK_EXTENSIONS_DIR}/ext-markdown-react/src/index.ts`,
+      { exists: async (path: string) => path === wanted },
+    );
+
+    assertEquals(resolved, wanted);
+  });
+
+  it("keeps one extension from reaching into another", async () => {
+    const resolved = await resolveRelativeFrameworkSourceImport(
+      "../../ext-llm-openai/src/index.ts",
+      `${FRAMEWORK_EXTENSIONS_DIR}/ext-markdown-react/src/index.ts`,
+      { exists: async () => true },
+    );
+
+    assertEquals(resolved, null);
+  });
+
   it("does not let a relative import escape past the extensions tree", async () => {
     const resolved = await resolveRelativeFrameworkSourceImport(
       "../../../../../secret.ts",

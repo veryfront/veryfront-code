@@ -1662,6 +1662,14 @@
           "jsr:@std/testing@1.0.17"
         ]
       },
+      "extensions/ext-markdown-react": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17",
+          "npm:react-markdown@9.0.3",
+          "npm:remark-gfm@4.0.1"
+        ]
+      },
       "extensions/ext-node-websocket-ws": {
         "dependencies": [
           "jsr:@std/assert@1.0.19",

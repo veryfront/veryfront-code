@@ -312,14 +312,27 @@ renderer, so CommonMark plus GFM tables, task lists, strikethrough, and
 autolinks work with no project setup. Fenced code renders through the shared
 code block, with a language label and a copy button.
 
+LaTeX math renders through KaTeX as MathML, so it needs no stylesheet or web
+fonts. Write it as `$$x^2$$`, as a `$$` fenced block for display math, or with
+the `\(x^2\)` and `\[x^2\]` forms models commonly emit. A single `$` is left
+as text, so an answer quoting `$84.50` stays currency instead of becoming an
+equation.
+
 To use a different renderer, install one for the subtree. An application
 renderer takes precedence over the built-in extension everywhere, including
 inside chat:
 
 ```tsx
+// app/page.tsx
+"use client";
 import { Chat } from "veryfront/chat";
-import { MarkdownRendererProvider } from "veryfront/markdown";
-import { ProjectMarkdownRenderer } from "./project-markdown-renderer.tsx";
+import { type MarkdownRendererProps, MarkdownRendererProvider } from "veryfront/markdown";
+
+// Replace this with the renderer your extension or adapter exports. It receives
+// the unmodified Markdown source and owns parsing and sanitization.
+function ProjectMarkdownRenderer({ source }: MarkdownRendererProps) {
+  return <article className="answer">{source}</article>;
+}
 
 export default function ChatPage() {
   return (
@@ -371,6 +384,8 @@ the relevant subtree yourself. Use the built-in extension:
 import { Markdown, MarkdownRendererProvider } from "veryfront/markdown";
 import { MarkdownRenderer } from "@veryfront/ext-markdown-react/renderer";
 
+const answer = "# Deployment result\n\nAll checks **passed**.";
+
 export default function Result() {
   return (
     <MarkdownRendererProvider renderer={MarkdownRenderer}>
@@ -381,12 +396,17 @@ export default function Result() {
 ```
 
 Or select another trusted extension or application adapter that implements
-`MarkdownRendererProps`. In this example, `ProjectMarkdownRenderer` comes from
-that adapter:
+`MarkdownRendererProps`:
 
 ```tsx
-import { Markdown, MarkdownRendererProvider } from "veryfront/markdown";
-import { ProjectMarkdownRenderer } from "./project-markdown-renderer.tsx";
+import { Markdown, type MarkdownRendererProps, MarkdownRendererProvider } from "veryfront/markdown";
+
+const answer = "# Deployment result\n\nAll checks **passed**.";
+
+// Replace this with the renderer your extension or adapter exports.
+function ProjectMarkdownRenderer({ source }: MarkdownRendererProps) {
+  return <article className="answer">{source}</article>;
+}
 
 export default function Result() {
   return (

@@ -15,7 +15,10 @@
 import * as React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 import type { CodeBlockProps, MarkdownRendererProps } from "veryfront/markdown";
+import { normalizeTexDelimiters } from "./tex-delimiters.ts";
 
 /** Props react-markdown passes to a custom `pre` renderer. */
 interface PreRendererProps {
@@ -48,6 +51,7 @@ interface TableCellProps {
 /** Minimal shape of the react-markdown default export used here. */
 interface ReactMarkdownComponentProps {
   remarkPlugins?: unknown[];
+  rehypePlugins?: unknown[];
   components?: Record<string, (props: never) => React.ReactNode>;
   children?: string;
 }
@@ -111,7 +115,9 @@ function buildComponents(
       ) as React.ReactElement<CodeElementProps> | undefined;
       if (!child) return <pre>{props.children}</pre>;
 
-      const match = /language-(\w+)/.exec(child.props.className || "");
+      // Language ids are not all word characters: `c++`, `objective-c`, and
+      // `f#` are all valid fence infos, so match up to the next class boundary.
+      const match = /language-([^\s]+)/.exec(child.props.className || "");
       const code = extractText(child.props.children).replace(/\n$/, "");
       return (
         <FencedCode
@@ -173,8 +179,28 @@ function buildComponents(
 }
 
 /**
- * Render Markdown source as semantic React elements (CommonMark plus GFM
- * tables, task lists, strikethrough, and autolinks).
+ * KaTeX emits MathML rather than its HTML-plus-CSS output, so math renders from
+ * the markup alone. The HTML output would require the KaTeX stylesheet and its
+ * web fonts, which this package must not force on every consumer.
+ */
+const KATEX_OPTIONS = {
+  output: "mathml",
+  // A malformed expression renders as the source text in an error colour rather
+  // than throwing and taking the surrounding answer down with it.
+  throwOnError: false,
+} as const;
+
+/**
+ * Math delimiters are `$$…$$` only. Assistant answers quote currency constantly,
+ * and single-dollar text math turns everything between two amounts (`$84.50` …
+ * `$33.24`) into an equation. `\(…\)` and `\[…\]` are normalized to `$$` before
+ * parsing, so the TeX forms models actually emit still render.
+ */
+const MATH_OPTIONS = { singleDollarTextMath: false } as const;
+
+/**
+ * Render Markdown source as semantic React elements: CommonMark, GFM tables,
+ * task lists, strikethrough and autolinks, plus LaTeX math through KaTeX.
  *
  * react-markdown never injects raw HTML here (no `rehype-raw`), and its default
  * URL transform drops unsafe link protocols such as `javascript:`.
@@ -188,10 +214,15 @@ export function MarkdownRenderer({
     ...buildComponents(renderCodeBlock),
     ...(components as Record<string, (props: never) => React.ReactNode> | undefined),
   }), [components, renderCodeBlock]);
+  const normalized = React.useMemo(() => normalizeTexDelimiters(source), [source]);
 
   return (
-    <Markdown remarkPlugins={[remarkGfm]} components={merged}>
-      {source}
+    <Markdown
+      remarkPlugins={[remarkGfm, [remarkMath, MATH_OPTIONS]]}
+      rehypePlugins={[[rehypeKatex, KATEX_OPTIONS]]}
+      components={merged}
+    >
+      {normalized}
     </Markdown>
   );
 }
