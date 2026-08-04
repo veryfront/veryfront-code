@@ -85,10 +85,10 @@ export class ApiHandlerWrapper extends BaseHandler {
       typeof fsWrapper.isMultiProjectMode === "function" &&
       fsWrapper.isMultiProjectMode();
 
-    const isSharedRuntime = requiresIsolatedProjectRuntime(ctx);
+    const mustDenyProjectExecution = requiresIsolatedProjectRuntime(ctx);
 
     if (!isMultiProject) {
-      return this.handleWithContext(req, ctx, pathname, isSharedRuntime);
+      return this.handleWithContext(req, ctx, pathname, mustDenyProjectExecution);
     }
 
     const isProduction = ctx.requestContext?.mode === "production";
@@ -109,7 +109,7 @@ export class ApiHandlerWrapper extends BaseHandler {
       ctx.proxyToken ?? "",
       // Multi-project mode implies a shared runtime, but not that execution is
       // denied: a host-owned entrypoint can still have granted the capability.
-      () => this.handleWithContext(req, ctx, pathname, isSharedRuntime),
+      () => this.handleWithContext(req, ctx, pathname, mustDenyProjectExecution),
       ctx.projectId,
       {
         productionMode: isProduction,
@@ -125,14 +125,14 @@ export class ApiHandlerWrapper extends BaseHandler {
     req: Request,
     ctx: HandlerContext,
     pathname: string,
-    isSharedRuntime: boolean,
+    mustDenyProjectExecution: boolean,
   ): Promise<HandlerResult> {
     return withSpan(
       "api.handleWithContext",
       async () => {
         try {
           if (
-            isSharedRuntime &&
+            mustDenyProjectExecution &&
             (pathname === "/api" || pathname.startsWith("/api/"))
           ) {
             return this.sharedRuntimeExecutionUnavailable(req, ctx, pathname);
@@ -156,7 +156,7 @@ export class ApiHandlerWrapper extends BaseHandler {
             return this.continue();
           }
 
-          if (isSharedRuntime) {
+          if (mustDenyProjectExecution) {
             return this.sharedRuntimeExecutionUnavailable(req, ctx, pathname);
           }
 

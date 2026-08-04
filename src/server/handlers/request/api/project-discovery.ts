@@ -196,6 +196,9 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
             : `${key}:snapshot:${sourceSnapshotVersion}`,
           config: ctx.config,
           fsAdapter: ctx.adapter.fs,
+          // Correct by construction, unlike a bare literal elsewhere: the
+          // requiresIsolatedProjectRuntime guard at the top of this function
+          // means control cannot reach here without the capability.
           allowHostProjectCodeExecution: true,
         });
         const result = await discoverAll(discoveryOptions);

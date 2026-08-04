@@ -305,10 +305,10 @@ executor. Absent and unrecognized values fail closed, matching
 
 The override is read exactly once, at server startup in
 `server/production-server.ts`, and the resulting capability is fixed into the
-handler for the process lifetime. No project env overlay is active at that
-point, so tenant environment cannot influence the grant. Keep the read at
-startup: `getHostEnv` consults the request-scoped overlay store before the host
-environment, so a per-request read would not carry the same guarantee.
+handler for the process lifetime. It is read through `getHostEnv`, which
+bypasses the project env overlay, so a project environment variable of the
+same name cannot grant execution. Reading once at startup keeps a deployment's
+posture fixed and declared in a single place.
 
 This is a deliberate posture, not a bypass. With the override set, tenant
 project code is evaluated in the shared host process. Per-request separation is

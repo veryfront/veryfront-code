@@ -12,9 +12,10 @@
  * `allowHostProjectCodeExecution` capability that every execution surface
  * already consults.
  *
- * Read this once at startup, never per request. `getHostEnv` consults the
- * request-scoped env overlay store before the host environment, so a
- * per-request read would let tenant environment influence the grant.
+ * Read this once at startup rather than per request. `getHostEnv` already
+ * bypasses the project env overlay, so a project variable of the same name
+ * cannot grant execution; reading once keeps the deployment's posture fixed
+ * for the process lifetime and visible in one place.
  */
 
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";

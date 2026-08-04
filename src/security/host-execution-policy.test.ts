@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withEnv } from "#veryfront/testing";
 import {
   HOST_PROJECT_EXECUTION_OVERRIDE_ENV,
   isHostProjectExecutionOverrideEnabled,
@@ -41,5 +42,41 @@ describe("security/host-execution-policy operator override", () => {
         `"${value}" must not grant host project execution`,
       );
     }
+  });
+
+  it("reads the host environment when no value is supplied", async () => {
+    // Exercises the default parameter, which production uses. Every other case
+    // passes the value explicitly, so without this the getHostEnv path is
+    // never executed and the wiring could silently break.
+    await withEnv({ [HOST_PROJECT_EXECUTION_OVERRIDE_ENV]: "1" }, () => {
+      assertEquals(
+        isHostProjectExecutionOverrideEnabled(),
+        true,
+        "the override must be readable from the host environment",
+      );
+      return Promise.resolve();
+    });
+
+    await withEnv({ [HOST_PROJECT_EXECUTION_OVERRIDE_ENV]: "0" }, () => {
+      assertEquals(
+        isHostProjectExecutionOverrideEnabled(),
+        false,
+        "a negative host value must fail closed",
+      );
+      return Promise.resolve();
+    });
+  });
+
+  it("uses the host environment rather than project env", async () => {
+    // getHostEnv deliberately bypasses the project env overlay, so a project
+    // environment variable of the same name cannot grant host execution.
+    await withEnv({ [HOST_PROJECT_EXECUTION_OVERRIDE_ENV]: "0" }, () => {
+      assertEquals(
+        isHostProjectExecutionOverrideEnabled(),
+        false,
+        "only the host environment decides this grant",
+      );
+      return Promise.resolve();
+    });
   });
 });
