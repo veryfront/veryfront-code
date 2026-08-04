@@ -3485,6 +3485,7 @@ describe("agent stream handler application-error reporting", () => {
 
   async function handleWithStubbedReporter(
     thrown: unknown,
+    runIdSegment = "run_1",
   ): Promise<{ captures: CapturedApplicationError[]; response: Response }> {
     const captures: CapturedApplicationError[] = [];
     setApplicationErrorReporter({
@@ -3513,7 +3514,7 @@ describe("agent stream handler application-error reporting", () => {
       });
 
       const result = await handler.handle(
-        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        new Request(`https://example.com/api/control-plane/runs/${runIdSegment}/stream`, {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -3539,8 +3540,8 @@ describe("agent stream handler application-error reporting", () => {
     await response.body?.cancel();
 
     assertEquals(response.status, 503);
-    // Exactly one capture: the typed and untyped branches are mutually
-    // exclusive, so a rethrow that double-reports would turn this red.
+    // The two branches are mutually exclusive, so a rethrow that
+    // double-reports turns this red.
     assertEquals(captures.length, 1);
 
     const captured = captures[0];
@@ -3548,7 +3549,6 @@ describe("agent stream handler application-error reporting", () => {
     assertEquals(captured.error, thrown);
     assertEquals(captured.context.boundary, "agent.stream.request");
     assertEquals(captured.context.method, "POST");
-    // The run id is what ties a Sentry event back to a single agent run.
     assertEquals(captured.context.requestId, "run_1");
 
     const attributes = captured.context.attributes;
@@ -3562,10 +3562,14 @@ describe("agent stream handler application-error reporting", () => {
     assertEquals(attributes["project.slug"], "demo-project");
   });
 
-  it("reports an unexpected non-VeryfrontError failure that becomes a generic 500", async () => {
-    const thrown = new TypeError("cannot read properties of undefined");
-
-    const { captures, response } = await handleWithStubbedReporter(thrown);
+  // A malformed percent escape makes the run-id decode throw. Reporting runs
+  // inside the catch, so an unguarded decode would throw past it and destroy
+  // the 500 instead of describing it.
+  it("still reports and still answers 500 when the run id cannot be decoded", async () => {
+    const { captures, response } = await handleWithStubbedReporter(
+      new TypeError("unused: the malformed path throws first"),
+      "run_%ZZ",
+    );
     await response.body?.cancel();
 
     assertEquals(response.status, 500);
@@ -3573,15 +3577,13 @@ describe("agent stream handler application-error reporting", () => {
 
     const captured = captures[0];
     assertExists(captured);
-    assertEquals(captured.error, thrown);
     assertEquals(captured.context.boundary, "agent.stream.handler");
-    assertEquals(captured.context.requestId, "run_1");
+    assertEquals(captured.context.requestId, undefined);
 
     const attributes = captured.context.attributes;
     assertExists(attributes);
     assertEquals(attributes["http.status"], 500);
     assertEquals(attributes["project.id"], "proj-1");
-    assertEquals(attributes["project.slug"], "demo-project");
   });
 
   it("stays silent for a 4xx VeryfrontError so Sentry is not flooded", async () => {

@@ -706,22 +706,13 @@ function getPathRunId(pathname: string): string | null {
 }
 
 /**
- * Report a server-side agent stream failure to the application-error reporter.
+ * Report a 5xx agent stream failure.
  *
- * Request handlers convert every error into a response, so nothing escapes to a
- * global handler and per-request 5xx failures are invisible in Sentry unless
- * they are reported here. Only 5xx reaches this function: 4xx failures are
- * validation and auth outcomes that would drown the signal.
- *
- * `detail` is forwarded because it is the field that made the difference during
- * the isolated-runtime incident, and because errorToResponse deliberately
- * strips it from the 5xx body so the caller never receives it. Every attribute
- * is sanitized by the reporter (URL credentials stripped, sensitive keys
- * redacted, values truncated) before it leaves the process.
- *
- * Reporting is best-effort and optional: captureApplicationError is a no-op
- * when no reporter is installed, which is the normal case for framework users
- * running veryfront without Sentry configured.
+ * Handlers convert every error into a response, so nothing escapes to a global
+ * handler and these would otherwise never reach Sentry. 4xx is excluded: it is
+ * mostly validation and auth noise. `detail` is forwarded because
+ * errorToResponse strips it from 5xx bodies. No-op when no reporter is
+ * installed, so Sentry stays optional.
  */
 function reportAgentStreamFailure(
   error: unknown,
@@ -739,9 +730,15 @@ function reportAgentStreamFailure(
   const attributes: Record<string, string | number | boolean> = {
     "http.status": details.status,
   };
-  // `pathRunId` is scoped to the try block, so the run id is re-derived from
-  // the URL here. It is the identifier that ties an event to a single run.
-  const runId = getPathRunId(new URL(req.url).pathname);
+  // `pathRunId` is scoped to the try block, so re-derive it here. Reporting runs
+  // inside a catch, so a malformed percent escape must not throw past it and
+  // take out the response this is describing.
+  let runId: string | null = null;
+  try {
+    runId = getPathRunId(new URL(req.url).pathname);
+  } catch {
+    runId = null;
+  }
   if (details.slug) attributes["error.slug"] = details.slug;
   if (details.category) attributes["error.category"] = details.category;
   if (details.detail) attributes["error.detail"] = details.detail;
@@ -1041,8 +1038,8 @@ export class AgentStreamHandler extends BaseHandler {
         projectSlug: ctx.projectSlug,
         error: error instanceof Error ? error.message : String(error),
       });
-      // Unexpected failures carry no slug/detail, so the log above is a bare
-      // message. This is the case where the captured stack is worth the most.
+      // Unexpected failures have no slug or detail, so the captured stack is
+      // the only real diagnostic.
       reportAgentStreamFailure(error, req, ctx, {
         boundary: "agent.stream.handler",
         status: HTTP_INTERNAL_SERVER_ERROR,
