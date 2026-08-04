@@ -62,7 +62,11 @@ import {
 } from "#veryfront/errors";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
+import {
+  HTTP_INTERNAL_SERVER_ERROR,
+  PRIORITY_MEDIUM_API,
+} from "#veryfront/utils/constants/index.ts";
+import { captureApplicationError } from "#veryfront/observability/application-errors.ts";
 import { buildRuntimeShuttingDownResponse } from "./runtime-shutdown-response.ts";
 import { isServerShuttingDown } from "../../shutdown-state.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
@@ -701,6 +705,58 @@ function getPathRunId(pathname: string): string | null {
   return match?.[1] ? decodeURIComponent(match[1]) : null;
 }
 
+/**
+ * Report a server-side agent stream failure to the application-error reporter.
+ *
+ * Request handlers convert every error into a response, so nothing escapes to a
+ * global handler and per-request 5xx failures are invisible in Sentry unless
+ * they are reported here. Only 5xx reaches this function: 4xx failures are
+ * validation and auth outcomes that would drown the signal.
+ *
+ * `detail` is forwarded because it is the field that made the difference during
+ * the isolated-runtime incident, and because errorToResponse deliberately
+ * strips it from the 5xx body so the caller never receives it. Every attribute
+ * is sanitized by the reporter (URL credentials stripped, sensitive keys
+ * redacted, values truncated) before it leaves the process.
+ *
+ * Reporting is best-effort and optional: captureApplicationError is a no-op
+ * when no reporter is installed, which is the normal case for framework users
+ * running veryfront without Sentry configured.
+ */
+function reportAgentStreamFailure(
+  error: unknown,
+  req: Request,
+  ctx: HandlerContext,
+  details: {
+    boundary: string;
+    status: number;
+    slug?: string;
+    category?: string;
+    detail?: string;
+    cause?: string;
+  },
+): void {
+  const attributes: Record<string, string | number | boolean> = {
+    "http.status": details.status,
+  };
+  // `pathRunId` is scoped to the try block, so the run id is re-derived from
+  // the URL here. It is the identifier that ties an event to a single run.
+  const runId = getPathRunId(new URL(req.url).pathname);
+  if (details.slug) attributes["error.slug"] = details.slug;
+  if (details.category) attributes["error.category"] = details.category;
+  if (details.detail) attributes["error.detail"] = details.detail;
+  if (details.cause) attributes["error.cause"] = details.cause;
+  if (ctx.projectId) attributes["project.id"] = ctx.projectId;
+  if (ctx.projectSlug) attributes["project.slug"] = ctx.projectSlug;
+
+  captureApplicationError(error, {
+    boundary: details.boundary,
+    method: req.method,
+    ...(runId ? { requestId: runId } : {}),
+    attributes,
+  });
+}
+
 export class AgentStreamHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "AgentStreamHandler",
@@ -952,6 +1008,7 @@ export class AgentStreamHandler extends BaseHandler {
         // errorToResponse strips `detail` from 5xx bodies, and this branch is
         // otherwise silent, so the detail would be lost entirely.
         if (response.status >= 500) {
+          const cause = describeErrorCause(error.cause);
           logger.error("Internal agent stream request failed", {
             projectId: ctx.projectId,
             projectSlug: ctx.projectSlug,
@@ -960,7 +1017,15 @@ export class AgentStreamHandler extends BaseHandler {
             category: error.category,
             detail: error.detail,
             error: error.message,
-            cause: describeErrorCause(error.cause),
+            cause,
+          });
+          reportAgentStreamFailure(error, req, ctx, {
+            boundary: "agent.stream.request",
+            status: response.status,
+            slug: error.slug,
+            category: error.category,
+            detail: error.detail,
+            cause,
           });
         }
         return this.respond(applyBuilderHeaders(response, builder.headers));
@@ -975,6 +1040,12 @@ export class AgentStreamHandler extends BaseHandler {
         projectId: ctx.projectId,
         projectSlug: ctx.projectSlug,
         error: error instanceof Error ? error.message : String(error),
+      });
+      // Unexpected failures carry no slug/detail, so the log above is a bare
+      // message. This is the case where the captured stack is worth the most.
+      reportAgentStreamFailure(error, req, ctx, {
+        boundary: "agent.stream.handler",
+        status: HTTP_INTERNAL_SERVER_ERROR,
       });
       return this.respond(builder.json({ error: "Internal agent stream failed" }, 500));
     }
