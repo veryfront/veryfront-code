@@ -683,6 +683,34 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
     assertEquals(calls, 1);
   });
 
+  it("streams request bodies unless a redirect could force a replay", async () => {
+    const capture = async (redirect: RequestRedirect) => {
+      let seen: unknown;
+      const fetchImpl: WorkerEgressFetch = (_input, init) => {
+        seen = init?.body;
+        return Promise.resolve(new Response(null, { status: 204 }));
+      };
+      const request = new Request("http://93.184.216.34/upload", {
+        method: "POST",
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("payload"));
+            controller.close();
+          },
+        }),
+        duplex: "half",
+      } as unknown as RequestInit);
+      await guardedEgressFetch(request, { redirect }, { fetchImpl });
+      return seen;
+    };
+
+    // Nothing can replay the body, so hand the stream to the transport as-is
+    // rather than materializing an upload in memory.
+    assert((await capture("error")) instanceof ReadableStream);
+    // A redirect hop would have to resend it, so it must be buffered.
+    assert((await capture("follow")) instanceof Uint8Array);
+  });
+
   it("follows a public -> public redirect chain and returns the final response", async () => {
     const fetchImpl: WorkerEgressFetch = (input) => {
       const url = input instanceof Request ? input.url : String(input);
