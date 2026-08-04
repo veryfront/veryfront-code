@@ -107,7 +107,9 @@ export class ApiHandlerWrapper extends BaseHandler {
     return fsWrapper.runWithContext!(
       ctx.projectSlug!,
       ctx.proxyToken ?? "",
-      () => this.handleWithContext(req, ctx, pathname, true),
+      // Multi-project mode implies a shared runtime, but not that execution is
+      // denied: a host-owned entrypoint can still have granted the capability.
+      () => this.handleWithContext(req, ctx, pathname, isSharedRuntime),
       ctx.projectId,
       {
         productionMode: isProduction,
