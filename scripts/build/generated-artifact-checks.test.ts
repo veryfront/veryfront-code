@@ -13,7 +13,8 @@
  * proves they work on every PR.
  */
 
-import { assertEquals } from "#std/assert";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 
 type Tasks = Record<string, string>;
 
@@ -50,53 +51,57 @@ function scriptInvocations(command: string): Map<string, boolean> {
 const generators = scriptInvocations(expandTask("generate"));
 const checks = scriptInvocations(expandTask("generate:manifests:check"));
 
-Deno.test("generate runs at least one generator", () => {
-  // Guards against a parsing change quietly emptying both sides and making
-  // every assertion below vacuous.
-  assertEquals(
-    generators.size > 0,
-    true,
-    "no generators parsed out of `generate`",
-  );
-});
+describe("generated artifact checks", () => {
+  it("runs at least one generator", () => {
+    // Guards against a parsing change quietly emptying both sides and making
+    // every assertion below vacuous.
+    assertEquals(
+      generators.size > 0,
+      true,
+      "no generators parsed out of `generate`",
+    );
+  });
 
-Deno.test("every generator that `generate` runs is also checked", () => {
-  const unchecked = [...generators.keys()].filter((script) =>
-    !checks.has(script)
-  ).sort();
+  it("checks every generator that `generate` runs", () => {
+    const unchecked = [...generators.keys()].filter((script) =>
+      !checks.has(script)
+    ).sort();
 
-  assertEquals(
-    unchecked,
-    [],
-    `these generators have no --check counterpart in generate:manifests:check, ` +
-      `so their committed output can go stale without failing CI: ${
-        unchecked.join(", ")
-      }`,
-  );
-});
+    assertEquals(
+      unchecked,
+      [],
+      `these generators have no --check counterpart in generate:manifests:check, ` +
+        `so their committed output can go stale without failing CI: ${
+          unchecked.join(", ")
+        }`,
+    );
+  });
 
-Deno.test("generate:manifests:check passes --check to every generator", () => {
-  const missingFlag = [...checks.entries()]
-    .filter(([, hasCheckFlag]) => !hasCheckFlag)
-    .map(([script]) => script)
-    .sort();
+  it("passes --check to every generator in the check task", () => {
+    const missingFlag = [...checks.entries()]
+      .filter(([, hasCheckFlag]) => !hasCheckFlag)
+      .map(([script]) => script)
+      .sort();
 
-  assertEquals(
-    missingFlag,
-    [],
-    `generate:manifests:check runs these without --check, so they would ` +
-      `rewrite their output instead of verifying it: ${missingFlag.join(", ")}`,
-  );
-});
+    assertEquals(
+      missingFlag,
+      [],
+      `generate:manifests:check runs these without --check, so they would ` +
+        `rewrite their output instead of verifying it: ${
+          missingFlag.join(", ")
+        }`,
+    );
+  });
 
-Deno.test("generate:manifests:check does not check a script `generate` never runs", () => {
-  const orphaned = [...checks.keys()].filter((script) =>
-    !generators.has(script)
-  ).sort();
+  it("does not check a script that `generate` never runs", () => {
+    const orphaned = [...checks.keys()].filter((script) =>
+      !generators.has(script)
+    ).sort();
 
-  assertEquals(
-    orphaned,
-    [],
-    `checked but never generated: ${orphaned.join(", ")}`,
-  );
+    assertEquals(
+      orphaned,
+      [],
+      `checked but never generated: ${orphaned.join(", ")}`,
+    );
+  });
 });
