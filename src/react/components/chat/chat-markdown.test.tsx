@@ -1,6 +1,6 @@
 import * as React from "react";
 import { renderToString } from "react-dom/server";
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { afterEach, describe, it } from "#veryfront/testing/bdd";
 import type { MarkdownRendererProps } from "./markdown.tsx";
 import { MarkdownRendererProvider } from "./markdown.tsx";
@@ -83,11 +83,38 @@ describe("ChatMarkdown — missing renderer warning", () => {
     assertEquals(warnings, []);
   });
 
+  it("stays quiet when a provider disabled rendering", () => {
+    // `<MarkdownRendererProvider renderer={null}>` is the documented way to turn
+    // an inherited renderer off. That is a choice, not a missing renderer.
+    const { html, warnings } = renderCapturingWarnings(
+      <MarkdownRendererProvider renderer={null}>
+        <ChatMarkdown># Heading</ChatMarkdown>
+      </MarkdownRendererProvider>,
+    );
+
+    assertStringIncludes(html, 'data-vf-markdown-renderer="plain"');
+    assertEquals(warnings, []);
+  });
+
+  it("still warns inside a provider that installed a renderer for a sibling", () => {
+    // A provider higher up with a real renderer is inherited, so no warning.
+    const { warnings } = renderCapturingWarnings(
+      <MarkdownRendererProvider renderer={AppRenderer}>
+        <ChatMarkdown renderer={null}>plain on purpose</ChatMarkdown>
+        <ChatMarkdown>inherits the renderer</ChatMarkdown>
+      </MarkdownRendererProvider>,
+    );
+
+    assertEquals(warnings, []);
+  });
+
   it("stays quiet outside development", () => {
     const warnings: string[] = [];
     const originalWarn = console.warn;
     const runtime = globalThis as { __VERYFRONT_SSR__?: boolean };
     const originalEnv = Deno.env.get("NODE_ENV");
+
+    const originalSSR = runtime.__VERYFRONT_SSR__;
 
     console.warn = (...args: unknown[]) => void warnings.push(args.map(String).join(" "));
     runtime.__VERYFRONT_SSR__ = true;
@@ -96,7 +123,8 @@ describe("ChatMarkdown — missing renderer warning", () => {
       renderToString(<ChatMarkdown># Heading</ChatMarkdown>);
     } finally {
       console.warn = originalWarn;
-      delete runtime.__VERYFRONT_SSR__;
+      if (originalSSR === undefined) delete runtime.__VERYFRONT_SSR__;
+      else runtime.__VERYFRONT_SSR__ = originalSSR;
       if (originalEnv === undefined) Deno.env.delete("NODE_ENV");
       else Deno.env.set("NODE_ENV", originalEnv);
     }
@@ -112,7 +140,7 @@ describe("ChatMarkdown — missing renderer warning", () => {
     );
 
     assertStringIncludes(html, "vf-custom");
-    assert(html.includes('data-source="# Heading"') === false, "renderer receives source as child");
-    assertStringIncludes(html, "# Heading");
+    // The renderer receives the unmodified source, not pre-parsed output.
+    assertStringIncludes(html, '<article data-app-renderer="true"># Heading</article>');
   });
 });

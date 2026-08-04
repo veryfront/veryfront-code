@@ -299,6 +299,9 @@ async function generateHTMLShellPartsImpl(
     ? getDevScripts(meta.slug || "", options.config, params, props, nonce, {
       skipDevHMR,
       skipErrorLogger,
+      // Preview renders user-facing output, so it must not be marked as a
+      // development render even though it serves the dev scripts for HMR.
+      skipDevFlag: isPreviewMode,
     })
     : getProdScripts(meta.slug || "", params, props, nonce);
 

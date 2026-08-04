@@ -17,9 +17,10 @@ import { warnMissingMarkdownRenderer } from "./missing-renderer-warning.ts";
 /** Render Markdown on a chat surface. */
 export function ChatMarkdown({ renderer, ...props }: MarkdownProps): React.ReactElement {
   const installed = useInstalledMarkdownRenderer();
-  // `renderer={null}` is an explicit request for plain source, so it is not a
-  // missing renderer. Only an absent prop with nothing installed is.
-  if (renderer === undefined && installed === null) {
+  // Plain source is only a mistake when nobody asked for it. `renderer={null}`
+  // and `<MarkdownRendererProvider renderer={null}>` are both explicit choices,
+  // so the warning needs an absent prop and no provider at all.
+  if (renderer === undefined && installed === undefined) {
     warnMissingMarkdownRenderer();
   }
   return <Markdown {...props} renderer={renderer} />;

@@ -23,6 +23,12 @@ interface DevScriptsOptions {
   skipDevHMR?: boolean;
   /** Skip error logger when endpoint is not available (preview mode) */
   skipErrorLogger?: boolean;
+  /**
+   * Skip the client development flag. Preview serves the dev script set for
+   * HMR, but its output is user-facing, so it must not switch on
+   * development-only client behaviour such as configuration warnings.
+   */
+  skipDevFlag?: boolean;
 }
 
 export function getDevScripts(
@@ -37,7 +43,7 @@ export function getDevScripts(
 
   // First, so client code that branches on the development signal sees it
   // before any other dev script runs.
-  scripts.push(generateDevFlagScript(nonce));
+  if (!options?.skipDevFlag) scripts.push(generateDevFlagScript(nonce));
 
   // Error logger only works in local dev (endpoint returns 404 in preview/prod)
   if (!options?.skipErrorLogger) scripts.push(generateDevErrorLoggerScript(nonce));
