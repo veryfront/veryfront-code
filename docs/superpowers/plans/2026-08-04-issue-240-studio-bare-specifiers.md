@@ -109,7 +109,9 @@ Resolution runs server-side inside the handler that already makes the round-trip
 
 **Interfaces:**
 - Consumes: bare specifiers from Task 1; `RegistrySchema.dependencies` (`shared/types/shadcn.ts:36`).
-- Produces: `resolveInstallDependencies(params: { projectReference: string; specifiers: string[]; branch?: string; authHeader?: string; fetchImpl?: typeof fetch }): Promise<{ resolved: Record<string, string>; failed: boolean }>`. Never rejects.
+- Produces: `resolveInstallDependencies(params: { projectReference: string; specifiers: string[]; branch?: string; authHeader?: string; fetchImpl?: typeof fetch }): Promise<{ resolved: Record<string, string>; persisted: boolean; failed: boolean }>`. Never rejects.
+
+**Where the pins land.** The platform endpoint writes `package.json` itself, under optimistic concurrency, and returns a `persisted` boolean (`veryfront-api/src/usecases/dependencies/resolve-dependencies.ts:451-464`). Studio must not write the manifest a second time: doing so would race the endpoint's own `expectedVersionId` write. Studio's job is to send the right specifier set and to surface `persisted: false`, which means resolution succeeded but the manifest write lost its race and the versions are not recorded yet.
 
 - [ ] **Step 1: Read the handler to find the seam**
 
@@ -304,7 +306,7 @@ that the renderer still resolves at render time, never to a failed install."
 
 ### Task 3: Repoint Monaco import click-through
 
-Behavioral, not cosmetic. `openLink` (`studio/panels/code/hooks/useMonacoOpenLink.ts:57-65`) branches on `isRemotePackageImport` and calls `window.open(importPath)`, which only works because the specifier is currently a URL. After Task 1 that branch stops matching and clicking a package import **silently does nothing**.
+Behavioral, not cosmetic. `openLink` (`studio/panels/code/hooks/useMonacoOpenLink.ts:57-65`) branches on `isRemotePackageImport` and calls `window.open(importPath)`, which only works because the specifier is currently a URL. After Task 1 that branch stops matching and selecting a package import **silently does nothing**.
 
 **Files:**
 - Modify: `studio/panels/code/hooks/useMonacoOpenLink.ts:57-65`
@@ -355,7 +357,7 @@ git add studio/panels/code/hooks
 git commit -m "fix(code): open npmjs.com for bare package specifiers
 
 Import click-through matched only URL specifiers, so once installs write bare
-specifiers a click would have silently done nothing."
+specifiers a selection would have silently done nothing."
 ```
 
 ---
@@ -435,7 +437,7 @@ Install a registry component that pulls at least one third-party dependency, the
 1. No installed file contains `esm.sh`.
 2. `package.json` gained an exact version for each dependency, including any declared only in the registry schema's `dependencies` array.
 3. The preview renders.
-4. Clicking a package import in Monaco opens its npmjs.com page.
+4. Selecting a package import in Monaco opens its npmjs.com page.
 5. With the resolver made to fail (point it at an unreachable base URL), the install still succeeds and the preview still renders.
 
 Item 5 is the one most likely to be skipped and the most important: it is the fail-open guarantee.
