@@ -16,8 +16,10 @@ import { buildEsmShUrl, TAILWIND_VERSION } from "../url-builder.ts";
 import { parseBarePackageSpecifier } from "../../shared/package-specifier.ts";
 import { isServerOnlyPackage } from "../../shared/server-only-packages.ts";
 import { isCrossProjectImport } from "#veryfront/transforms/shared/cross-project-import.ts";
-import { isDependencyPinningEnabled } from "#veryfront/transforms/esm/npm-registry-client.ts";
-import { resolveDependencyPinForImport } from "../dependency-resolution.ts";
+import {
+  isPinningEnabledForRewrite,
+  resolveDependencyPinForImport,
+} from "../dependency-resolution.ts";
 
 const logger = rendererLogger.component("esm");
 
@@ -28,16 +30,6 @@ function hasVersionSpecifier(specifier: string): boolean {
   // @canary) are recognised as version specifiers and are never overridden by
   // a cached numeric pin.
   return parseBarePackageSpecifier(specifier)?.version != null;
-}
-
-function isPinningEnabledForRewrite(ctx: RewriteContext): boolean {
-  // "on:unknown" means the dependency state could not be established
-  // (unreadable package.json); fall back to conservative flag-off behavior,
-  // matching the canonical guard in dependency-resolution.ts.
-  if (ctx.dependencyPinningCacheKey === "on:unknown") return false;
-  return ctx.dependencyPinningCacheKey
-    ? ctx.dependencyPinningCacheKey.startsWith("on:")
-    : isDependencyPinningEnabled();
 }
 
 function warnUnversionedImport(specifier: string, projectId: string): void {
