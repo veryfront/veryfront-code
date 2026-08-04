@@ -36,16 +36,6 @@ export function isSafeFrameworkSourceKey(candidate: string): boolean {
 export const FRAMEWORK_ROOT = getFrameworkRootFromMeta(import.meta.url);
 export const FRAMEWORK_SRC_DIR = join(FRAMEWORK_ROOT, "src");
 export const FRAMEWORK_EMBEDDED_SRC_DIR = join(FRAMEWORK_ROOT, "dist", "framework-src");
-/**
- * First-party extension sources ship beside `src/` rather than inside it, in
- * both the workspace and the published package. Client-facing extensions such
- * as the Markdown renderer are imported from framework React modules, so this
- * tree resolves as framework source too.
- */
-export const FRAMEWORK_EXTENSIONS_DIR = join(FRAMEWORK_ROOT, "extensions");
-
-/** Framework-relative source keys that live under `extensions/` rather than `src/`. */
-const FRAMEWORK_EXTENSION_KEY_PREFIX = "extensions/";
 
 export const DEFAULT_FRAMEWORK_SOURCE_EXTENSIONS = [
   ".tsx.src",
@@ -107,8 +97,7 @@ export function getFrameworkSourceLookupDirs(
 
 export function isFrameworkSourcePath(path: string): boolean {
   return path.startsWith(`${FRAMEWORK_SRC_DIR}/`) ||
-    path.startsWith(`${FRAMEWORK_EMBEDDED_SRC_DIR}/`) ||
-    path.startsWith(`${FRAMEWORK_EXTENSIONS_DIR}/`);
+    path.startsWith(`${FRAMEWORK_EMBEDDED_SRC_DIR}/`);
 }
 
 function expandFrameworkCandidatePaths(
@@ -146,21 +135,6 @@ function expandFrameworkCandidatePaths(
   return [candidatePath];
 }
 
-/**
- * The `<extensions>/<package>` directory holding `filePath`, or `null` when the
- * file is not a first-party extension source. Used as an import containment
- * boundary, so a relative specifier stays inside its own extension package.
- */
-function frameworkExtensionPackageDir(
-  extensionsDir: string,
-  filePath: string,
-): string | null {
-  if (!isWithinDirectory(extensionsDir, filePath)) return null;
-  const packageName = filePath.slice(extensionsDir.length + 1).split("/")[0];
-  if (!packageName || packageName === "." || packageName === "..") return null;
-  return join(extensionsDir, packageName);
-}
-
 async function findExistingFrameworkCandidate(
   candidatePath: string,
   options: ResolveRelativeFrameworkSourceImportOptions = {},
@@ -193,13 +167,7 @@ export async function resolveFrameworkSourcePath(
   if (!isSafeFrameworkSourceKey(relativePathWithoutExt)) return null;
 
   const fs = options.fileSystem ?? createFileSystem();
-  const srcLookupDirs = getFrameworkSourceLookupDirs(options.extraLookupDirs, options.compiled);
-  // `extensions/` is ambiguous: `src/extensions/` holds the contract modules,
-  // while first-party extension packages ship beside `src/`. Keep `src/` first
-  // so contract modules keep resolving, then fall back to the package tree.
-  const lookupDirs = relativePathWithoutExt.startsWith(FRAMEWORK_EXTENSION_KEY_PREFIX)
-    ? [...srcLookupDirs, FRAMEWORK_ROOT]
-    : srcLookupDirs;
+  const lookupDirs = getFrameworkSourceLookupDirs(options.extraLookupDirs, options.compiled);
   const extensions = options.extensions ?? DEFAULT_FRAMEWORK_SOURCE_EXTENSIONS;
   const candidates = [relativePathWithoutExt];
 
@@ -252,14 +220,11 @@ export async function resolveRelativeFrameworkSourceImport(
 
   const candidateSourceDir = join(candidateRoot, "src");
   const candidateEmbeddedDir = join(candidateRoot, "dist", "framework-src");
-  const candidateExtensionsDir = join(candidateRoot, "extensions");
   const containingTree = isWithinDirectory(candidateSourceDir, fromSourcePath)
     ? candidateSourceDir
     : isWithinDirectory(candidateEmbeddedDir, fromSourcePath)
     ? candidateEmbeddedDir
-    // An extension resolves its own relative imports, bounded to its package so
-    // one extension cannot reach into another through `../`.
-    : frameworkExtensionPackageDir(candidateExtensionsDir, fromSourcePath);
+    : null;
   if (!containingTree) return null;
 
   const extensions = options.extensions ?? DEFAULT_FRAMEWORK_SOURCE_EXTENSIONS;
@@ -267,21 +232,10 @@ export async function resolveRelativeFrameworkSourceImport(
   const isPublishedRuntimeHelper = PUBLISHED_RUNTIME_HELPERS.some(
     (helper) => basePath === join(candidateRoot, helper),
   );
-  // First-party extension sources sit beside `src/`, so a framework module
-  // importing one leaves the containing tree by design.
-  const isFrameworkExtension = isWithinDirectory(join(candidateRoot, "extensions"), basePath);
-  if (
-    !isWithinDirectory(containingTree, basePath) &&
-    !isPublishedRuntimeHelper &&
-    !isFrameworkExtension
-  ) {
-    return null;
-  }
+  if (!isWithinDirectory(containingTree, basePath) && !isPublishedRuntimeHelper) return null;
   if (isPublishedRuntimeHelper) {
     return await findExistingFrameworkCandidate(basePath, options);
   }
-  // Extension sources fall through to the normal probes below, so a compiled
-  // `.js` specifier still resolves to the `.tsx` source in a workspace build.
 
   if (/\.(tsx?|jsx?|mjs)$/.test(specifier)) {
     const explicitCandidates = [basePath, `${basePath}.src`];

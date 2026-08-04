@@ -50,23 +50,12 @@ export const EMBEDDED_SRC_DIR = join(RUNTIME_FRAMEWORK_ROOT, "dist", "framework-
  * the pristine `.src` assets first. Source checkouts keep live `src/` files
  * first so local edits cannot be shadowed by stale generated assets.
  */
-
-/** Module-path prefix for first-party extension sources served to the browser. */
-export const FRAMEWORK_EXTENSIONS_PREFIX = "extensions/";
-
 export function getFrameworkLookups(
   compiled = isCompiledBinary(),
 ): Array<[prefix: string, frameworkDir: string]> {
   const source: [string, string] = ["_veryfront/", join(FRAMEWORK_ROOT, "src")];
   const embedded: [string, string] = ["_veryfront/", EMBEDDED_SRC_DIR];
-  // First-party extension sources ship beside `src/`, and client-facing ones
-  // (the Markdown renderer) are imported from framework React modules, so they
-  // reach the module server as `extensions/<package>/src/...`.
-  const extensions: [string, string] = [
-    FRAMEWORK_EXTENSIONS_PREFIX,
-    join(FRAMEWORK_ROOT, "extensions"),
-  ];
-  return compiled ? [embedded, source, extensions] : [source, embedded, extensions];
+  return compiled ? [embedded, source] : [source, embedded];
 }
 
 export const FRAMEWORK_LOOKUPS = getFrameworkLookups();

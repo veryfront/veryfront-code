@@ -140,12 +140,6 @@ export const FIRST_PARTY_EXTENSION_POLICIES = Object.freeze(([
     rootNpm: false,
   },
   {
-    name: "ext-markdown-react",
-    sourceDirectory: "ext-markdown-react",
-    selection: "builtin-deferred",
-    rootNpm: true,
-  },
-  {
     name: "ext-node-websocket-ws",
     sourceDirectory: "ext-node-websocket-ws",
     selection: "builtin-deferred",

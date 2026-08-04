@@ -28,7 +28,7 @@
     "npm:@kreuzberg/node@4.4.2": "4.4.2",
     "npm:@kreuzberg/wasm@4.5.2": "4.5.2",
     "npm:@mdx-js/mdx@3.1.1": "3.1.1",
-    "npm:@mdx-js/react@3.1.1": "3.1.1_@types+react@19.2.17_react@19.2.4",
+    "npm:@mdx-js/react@3.1.1": "3.1.1_react@19.2.4",
     "npm:@opentelemetry/api-logs@0.208.0": "0.208.0",
     "npm:@opentelemetry/api-logs@0.220.0": "0.220.0",
     "npm:@opentelemetry/api@1.9.1": "1.9.1",
@@ -82,11 +82,9 @@
     "npm:protobufjs@7.6.5": "7.6.5",
     "npm:purgecss@8.0.0": "8.0.0",
     "npm:react-dom@19.2.4": "19.2.4_react@19.2.4",
-    "npm:react-markdown@9.0.3": "9.0.3_@types+react@19.2.17_react@19.2.4",
     "npm:react@19.2.4": "19.2.4",
     "npm:redis@5.11.0": "5.11.0",
     "npm:rehype-highlight@7.0.2": "7.0.2",
-    "npm:rehype-katex@7.0.1": "7.0.1",
     "npm:rehype-raw@7.0.0": "7.0.0",
     "npm:rehype-sanitize@6.0.0": "6.0.0",
     "npm:rehype-slug@6.0.0": "6.0.0",
@@ -94,7 +92,6 @@
     "npm:rehype-stringify@10.0.1": "10.0.1",
     "npm:remark-frontmatter@5.0.0": "5.0.0",
     "npm:remark-gfm@4.0.1": "4.0.1",
-    "npm:remark-math@6.0.0": "6.0.0",
     "npm:remark-parse@11.0.0": "11.0.0",
     "npm:remark-rehype@11.1.2": "11.1.2",
     "npm:sharp@0.35.3": "0.35.3",
@@ -1412,7 +1409,7 @@
         "vfile"
       ]
     },
-    "@mdx-js/react@3.1.1_@types+react@19.2.17_react@19.2.4": {
+    "@mdx-js/react@3.1.1_react@19.2.4": {
       "integrity": "sha512-f++rKLQgUVYDAtECQ6fn/is15GkEH9+nZPM3MS0RcxVqoTfawHvDlSCH7JbMhAM6uJ32v3eXLvLmLvjGu7PTQw==",
       "dependencies": [
         "@types/mdx",
@@ -2741,9 +2738,6 @@
         "@types/unist@3.0.2"
       ]
     },
-    "@types/katex@0.16.8": {
-      "integrity": "sha512-trgaNyfU+Xh2Tc+ABIb44a5AYUpicB3uwirOioeOkNPPbmgRNtcWyDeeFRzjPZENO9Vq8gvVqfhaaXWLlevVwg=="
-    },
     "@types/mdast@4.0.3": {
       "integrity": "sha512-LsjtqsyF+d2/yFOYaN22dHZI1Cpwkrj+g06G8+qtUKlhovPW89YhqSnfKtMbkgmEtYpH2gydRNULd6y8mciAFg==",
       "dependencies": [
@@ -3055,9 +3049,6 @@
     },
     "commander@6.2.1": {
       "integrity": "sha512-U7VdrJFnJgo4xjrHpTzu0yrHPGImdsmD95ZlgYSEajAn2JKzDhDTPG9kBTefmObL2w/ngeZnilk+OV9CG3d7UA=="
-    },
-    "commander@8.3.0": {
-      "integrity": "sha512-OkTL9umf+He2DZkUq8f8J9of7yL6RJKI24dVITBmNfZBmri9zYZQrKkuXiKhyfPSu8tUhnVBB1iKXevvnlR4Ww=="
     },
     "core-util-is@1.0.3": {
       "integrity": "sha512-ZQBvi1DcpJ4GDqanjucZ2Hj3wEO5pZDS89BWbkcrvdxksJorwUDDZamX9ldFkp9aw2lmBDLgkObEA4DWNJ9FYQ=="
@@ -3475,34 +3466,6 @@
         "es-define-property"
       ]
     },
-    "hast-util-from-dom@5.0.1": {
-      "integrity": "sha512-N+LqofjR2zuzTjCPzyDUdSshy4Ma6li7p/c3pA78uTwzFgENbgbUrm2ugwsOdcjI1muO+o6Dgzp9p8WHtn/39Q==",
-      "dependencies": [
-        "@types/hast",
-        "hastscript",
-        "web-namespaces"
-      ]
-    },
-    "hast-util-from-html-isomorphic@2.0.0": {
-      "integrity": "sha512-zJfpXq44yff2hmE0XmwEOzdWin5xwH+QIhMLOScpX91e/NSGPsAzNCvLQDIEPyO2TXi+lBmU6hjLIhV8MwP2kw==",
-      "dependencies": [
-        "@types/hast",
-        "hast-util-from-dom",
-        "hast-util-from-html",
-        "unist-util-remove-position"
-      ]
-    },
-    "hast-util-from-html@2.0.3": {
-      "integrity": "sha512-CUSRHXyKjzHov8yKsQjGOElXy/3EKpyX56ELnkHH34vDVw1N1XSQ1ZcAvTyAPtGqLTuKP/uxM+aLkSPqF/EtMw==",
-      "dependencies": [
-        "@types/hast",
-        "devlop",
-        "hast-util-from-parse5",
-        "parse5@7.3.0",
-        "vfile",
-        "vfile-message"
-      ]
-    },
     "hast-util-from-parse5@8.0.3": {
       "integrity": "sha512-3kxEVkEKt0zvcZ3hCRYI8rqrgwtlIOFMWkbclACvjlDw8Li9S2hk/d51OI0nr/gIpdMHNepwgOKqZ/sy0Clpyg==",
       "dependencies": [
@@ -3668,9 +3631,6 @@
       "dependencies": [
         "@exodus/bytes"
       ]
-    },
-    "html-url-attributes@3.0.1": {
-      "integrity": "sha512-ol6UPyBWqsrO6EJySPz2O7ZSr856WDrEzM5zMqp+FJJLGMW35cLYmmZnl0vztAZxRUoNZJFTCohfjuIJ8I4QBQ=="
     },
     "html-void-elements@3.0.0": {
       "integrity": "sha512-bEqo66MRXsUGxWHV5IP0PUiAWwoEjba4VCzg0LjFJBpchPaTfyfCKTG6bc5F8ucKec3q5y6qOdGyYTSBEvhCrg=="
@@ -3845,13 +3805,6 @@
       "optionalDependencies": [
         "@mongodb-js/zstd",
         "node-liblzma"
-      ],
-      "bin": true
-    },
-    "katex@0.16.47": {
-      "integrity": "sha512-Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg==",
-      "dependencies": [
-        "commander@8.3.0"
       ],
       "bin": true
     },
@@ -4067,18 +4020,6 @@
         "mdast-util-to-markdown"
       ]
     },
-    "mdast-util-math@3.0.0": {
-      "integrity": "sha512-Tl9GBNeG/AhJnQM221bJR2HPvLOSnLE/T9cJI9tlc6zwQk2nPk/4f0cHkOdEixQPC/j8UtKDdITswvLAy1OZ1w==",
-      "dependencies": [
-        "@types/hast",
-        "@types/mdast",
-        "devlop",
-        "longest-streak",
-        "mdast-util-from-markdown",
-        "mdast-util-to-markdown",
-        "unist-util-remove-position"
-      ]
-    },
     "mdast-util-mdx-expression@2.0.1": {
       "integrity": "sha512-J6f+9hUp+ldTZqKRSg7Vw5V6MqjATc+3E4gf3CFNcuZNWD8XdyI6zQ8GqH7f8169MM6P7hMBRDVGnn7oHB9kXQ==",
       "dependencies": [
@@ -4277,18 +4218,6 @@
         "micromark-extension-gfm-tagfilter",
         "micromark-extension-gfm-task-list-item",
         "micromark-util-combine-extensions",
-        "micromark-util-types"
-      ]
-    },
-    "micromark-extension-math@3.1.0": {
-      "integrity": "sha512-lvEqd+fHjATVs+2v/8kg9i5Q0AP2k85H0WUOwpIVvUML8BapsMvh1XAogmQjOCsLpoKRCVQqEkQBB3NhVBcsOg==",
-      "dependencies": [
-        "@types/katex",
-        "devlop",
-        "katex",
-        "micromark-factory-space",
-        "micromark-util-character",
-        "micromark-util-symbol",
         "micromark-util-types"
       ]
     },
@@ -4876,23 +4805,6 @@
         "scheduler"
       ]
     },
-    "react-markdown@9.0.3_@types+react@19.2.17_react@19.2.4": {
-      "integrity": "sha512-Yk7Z94dbgYTOrdk41Z74GoKA7rThnsbbqBTRYuxoe08qvfQ9tJVhmAKw6BJS/ZORG7kTy/s1QvYzSuaoBA1qfw==",
-      "dependencies": [
-        "@types/hast",
-        "@types/react",
-        "devlop",
-        "hast-util-to-jsx-runtime",
-        "html-url-attributes",
-        "mdast-util-to-hast",
-        "react",
-        "remark-parse",
-        "remark-rehype",
-        "unified",
-        "unist-util-visit",
-        "vfile"
-      ]
-    },
     "react@19.2.4": {
       "integrity": "sha512-9nfp2hYpCwOjAN+8TZFGhtWEwgvWHXqESH8qT89AT/lWklpLON22Lc8pEtnpsZz7VmawabSU0gCjnj8aC0euHQ=="
     },
@@ -4973,18 +4885,6 @@
         "vfile"
       ]
     },
-    "rehype-katex@7.0.1": {
-      "integrity": "sha512-OiM2wrZ/wuhKkigASodFoo8wimG3H12LWQaH8qSPVJn9apWKFSH3YOCtbKpBorTVw/eI7cuT21XBbvwEswbIOA==",
-      "dependencies": [
-        "@types/hast",
-        "@types/katex",
-        "hast-util-from-html-isomorphic",
-        "hast-util-to-text",
-        "katex",
-        "unist-util-visit-parents",
-        "vfile"
-      ]
-    },
     "rehype-raw@7.0.0": {
       "integrity": "sha512-/aE8hCfKlQeA8LmyeyQvQF3eBiLRGNlfBJEvWH7ivp9sBqs7TNqBL5X3v157rM4IFETqDnIOO+z5M/biZbo9Ww==",
       "dependencies": [
@@ -5054,15 +4954,6 @@
         "micromark-extension-gfm",
         "remark-parse",
         "remark-stringify",
-        "unified"
-      ]
-    },
-    "remark-math@6.0.0": {
-      "integrity": "sha512-MMqgnP74Igy+S3WwnhQ7kqGlEerTETXMvJhrUzDikVZ2/uogJCb+WHUg97hK9/jcfc0dkD73s3LN8zU49cTEtA==",
-      "dependencies": [
-        "@types/mdast",
-        "mdast-util-math",
-        "micromark-extension-math",
         "unified"
       ]
     },
@@ -5489,13 +5380,6 @@
       "integrity": "sha512-fucsC7HjXvkB5R3kTCO7kUjRdrS0BJt3M/FPxmHMBOm8JQi2BsHAHFsy27E0EolP8rp0NzXsJ+jNPyDWvOJZPA==",
       "dependencies": [
         "@types/unist@3.0.2"
-      ]
-    },
-    "unist-util-remove-position@5.0.0": {
-      "integrity": "sha512-Hp5Kh3wLxv0PHj9m2yZhhLt58KzPtEYKQQ4yxfYFEO7EvHwzyDYnduhHnY1mDxoqr7VUwVuHXk9RXKIiYS1N8Q==",
-      "dependencies": [
-        "@types/unist@3.0.2",
-        "unist-util-visit"
       ]
     },
     "unist-util-stringify-position@4.0.0": {
@@ -6597,16 +6481,6 @@
         "dependencies": [
           "jsr:@std/assert@1.0.19",
           "jsr:@std/testing@1.0.17"
-        ]
-      },
-      "extensions/ext-markdown-react": {
-        "dependencies": [
-          "jsr:@std/assert@1.0.19",
-          "jsr:@std/testing@1.0.17",
-          "npm:react-markdown@9.0.3",
-          "npm:rehype-katex@7.0.1",
-          "npm:remark-gfm@4.0.1",
-          "npm:remark-math@6.0.0"
         ]
       },
       "extensions/ext-node-websocket-ws": {

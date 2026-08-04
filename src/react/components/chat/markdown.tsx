@@ -152,6 +152,12 @@ const MARKDOWN_PROSE_CLASS = [
   "[&_:not(pre)>code]:rounded-[var(--radius-xs)] [&_:not(pre)>code]:bg-[var(--accent)] [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:py-0.5 [&_:not(pre)>code]:font-mono [&_:not(pre)>code]:text-[0.9em] [&_:not(pre)>code]:font-medium [&_:not(pre)>code]:text-[var(--foreground)]",
   // horizontal rule
   "[&_hr]:my-6 [&_hr]:border-0 [&_hr]:border-t [&_hr]:border-[var(--edge-medium)]",
+  // tables — a renderer emits bare `<table>`, so the chat surface supplies the
+  // rules and padding rather than every renderer having to override the cells.
+  "[&_table]:my-4 [&_table]:w-full [&_table]:text-sm [&_table]:border-collapse",
+  "[&_thead_tr]:border-b [&_thead_tr]:border-[var(--edge)]",
+  "[&_tbody_tr]:border-b [&_tbody_tr]:border-[var(--edge)] [&_tbody_tr:last-child]:border-b-0",
+  "[&_th]:px-4 [&_th]:py-2 [&_th]:text-left [&_th]:font-medium [&_td]:px-4 [&_td]:py-2",
   // margin reset for the container edges plus a width guard
   "[&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_*]:max-w-full",
 ].join(" ");

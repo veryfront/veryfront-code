@@ -211,16 +211,8 @@ function isSSRModuleRequest(
   return url.searchParams.get("ssr") === "true" || userAgent.startsWith("Deno/");
 }
 
-/**
- * Module-path prefix for first-party extension sources. They ship beside `src/`
- * rather than under the `_veryfront/` namespace, and client-facing ones (the
- * Markdown renderer) are imported from framework React modules.
- */
-const FRAMEWORK_EXTENSION_MODULE_PREFIX = "extensions/";
-
 function isReservedFrameworkModulePath(modulePathWithoutJsExtension: string): boolean {
   return modulePathWithoutJsExtension.startsWith("_veryfront/") ||
-    modulePathWithoutJsExtension.startsWith(FRAMEWORK_EXTENSION_MODULE_PREFIX) ||
     modulePathWithoutJsExtension.startsWith("react/") ||
     modulePathWithoutJsExtension.startsWith("deps/") ||
     modulePathWithoutJsExtension.startsWith("_dnt.") ||
@@ -1477,11 +1469,7 @@ async function findSourceFile(
     basePathWithoutExt = basePathWithoutExt.slice("_vf_modules/".length);
   }
 
-  const isFrameworkExtensionPath = basePathWithoutExt.startsWith(
-    FRAMEWORK_EXTENSION_MODULE_PREFIX,
-  );
-  const isFrameworkPath = basePathWithoutExt.startsWith("_veryfront/") ||
-    isFrameworkExtensionPath;
+  const isFrameworkPath = basePathWithoutExt.startsWith("_veryfront/");
   const isFrameworkPackageAssetPath = basePathWithoutExt.startsWith("react/") ||
     basePathWithoutExt.startsWith("deps/");
   const missCacheKey = buildSourceMissCacheKey({
@@ -1543,9 +1531,7 @@ async function findSourceFile(
 
   if (isFrameworkPath) {
     const frameworkResult = await resolveFrameworkSourcePath(
-      isFrameworkExtensionPath
-        ? basePathWithoutExt
-        : basePathWithoutExt.slice("_veryfront/".length),
+      basePathWithoutExt.slice("_veryfront/".length),
       {
         extraLookupDirs: allowReservedProjectFallback ? [join(projectDir, "src")] : [],
         extensions,

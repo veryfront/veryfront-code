@@ -44,10 +44,34 @@ export {
   validateFeatures,
 } from "./feature-loader.ts";
 
+/**
+ * Markdown renderer dependencies for the chat starters.
+ *
+ * `veryfront/markdown` presents plain source until a renderer is installed, so
+ * every starter that renders `<Chat>` scaffolds one in `app/markdown-renderer.tsx`
+ * and installs the parser it uses. Versions are exact: these reach the browser
+ * through the module pipeline, where a floating range would resolve to whatever
+ * is latest at request time.
+ */
+const CHAT_MARKDOWN_DEPENDENCIES: Record<string, string> = {
+  "react-markdown": "9.0.3",
+  "remark-gfm": "4.0.1",
+};
+
 export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
+  "ai-agent": {
+    npmDependencies: { ...CHAT_MARKDOWN_DEPENDENCIES },
+  },
+  "coding-agent": {
+    npmDependencies: { ...CHAT_MARKDOWN_DEPENDENCIES },
+  },
+  "multi-agent-system": {
+    npmDependencies: { ...CHAT_MARKDOWN_DEPENDENCIES },
+  },
   "docs-agent": {
     firstPartyExtensions: ["@veryfront/ext-document-kreuzberg"],
     npmDependencies: {
+      ...CHAT_MARKDOWN_DEPENDENCIES,
       "@kreuzberg/node": "^4.4.2",
       "@kreuzberg/wasm": "4.5.2",
     },

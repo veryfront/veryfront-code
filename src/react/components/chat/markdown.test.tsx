@@ -159,6 +159,19 @@ describe("Markdown", () => {
     );
   });
 
+  it("styles renderer output but leaves plain source unstyled", () => {
+    function PassThrough({ source }: MarkdownRendererProps): React.ReactElement {
+      return <div>{source}</div>;
+    }
+    const rendered = renderToString(<Markdown renderer={PassThrough}>text</Markdown>);
+    const plain = renderToString(<Markdown>text</Markdown>);
+
+    // `&` is HTML-escaped inside the class attribute.
+    assertStringIncludes(rendered, "[&amp;_ul]:list-disc");
+    assertStringIncludes(rendered, "[&amp;_table]:w-full");
+    assertEquals(plain.includes("_ul]:list-disc"), false);
+  });
+
   it("keeps long source within the chat column", () => {
     const html = renderToString(
       <Markdown>long-source-link-without-natural-break-points</Markdown>,

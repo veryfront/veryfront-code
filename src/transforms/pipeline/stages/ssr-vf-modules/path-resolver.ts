@@ -17,7 +17,6 @@ import { resolveInternalModuleTarget } from "../../../veryfront-module-urls.ts";
 import {
   EMBEDDED_SRC_DIR,
   EXTENSIONS,
-  FRAMEWORK_EXTENSIONS_PREFIX,
   FRAMEWORK_LOOKUPS,
   FRAMEWORK_ROOT,
   LOG_PREFIX,
@@ -101,9 +100,7 @@ export async function resolveFrameworkFile(
       return withPrefix;
     }
 
-    // The framework prefixes name a namespace, not a directory segment, so the
-    // source also lives directly under the lookup dir.
-    if (prefix !== "_veryfront/" && prefix !== FRAMEWORK_EXTENSIONS_PREFIX) continue;
+    if (prefix !== "_veryfront/") continue;
 
     const pathWithoutPrefixDir = join(frameworkDir, relativePath);
     if (!isWithinDirectory(frameworkDir, pathWithoutPrefixDir)) continue;

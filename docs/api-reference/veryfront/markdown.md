@@ -28,8 +28,8 @@ import { Markdown } from "veryfront/markdown";
 
 | Name                       | Description                                                                                                    | Source                                                                                                      |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `Markdown`                 | Present Markdown source using an injected rich renderer or the explicit dependency-free plain-source contract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L163) |
-| `MarkdownRendererProvider` | Provide a trusted rich-Markdown renderer to a React subtree.                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L103) |
+| `Markdown`                 | Present Markdown source using an injected rich renderer or the explicit dependency-free plain-source contract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L126) |
+| `MarkdownRendererProvider` | Provide a trusted rich-Markdown renderer to a React subtree.                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L94)  |
 
 ### Classes
 
@@ -45,7 +45,7 @@ import { Markdown } from "veryfront/markdown";
 | `Components`                    | Backward-compatible type name without a react-markdown dependency.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L46)  |
 | `MarkdownComponents`            | Framework-neutral element overrides consumed only by an injected renderer.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L41)  |
 | `MarkdownElementRendererProps`  | Common props available to injected element overrides.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L32)  |
-| `MarkdownProps`                 | Props accepted by `Markdown`.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L115) |
+| `MarkdownProps`                 | Props accepted by `Markdown`.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L106) |
 | `MarkdownRenderer`              | A trusted rich-Markdown renderer supplied by an extension or application.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L59)  |
 | `MarkdownRendererProps`         | Input contract implemented by a trusted rich-Markdown extension.            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L49)  |
 | `MarkdownRendererProviderProps` | Props accepted by `MarkdownRendererProvider`.                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L62)  |
