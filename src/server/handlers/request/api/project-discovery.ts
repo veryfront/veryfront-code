@@ -6,10 +6,8 @@ import { clearTrackedAgents, createProjectDiscoveryConfig } from "#veryfront/dis
 import { tryGetRegistryScopeContext } from "#veryfront/cache/cache-key-builder.ts";
 import { runWithRegistryTransaction } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
-import {
-  isExplicitlyLocalProject,
-  isSharedProjectRuntime,
-} from "#veryfront/security/project-locality.ts";
+import { HOST_PROJECT_EXECUTION_OVERRIDE_ENV } from "#veryfront/security/host-execution-policy.ts";
+import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import type { HandlerContext } from "../../types.ts";
 
 const logger = serverLogger.component("api-wrapper");
@@ -141,7 +139,15 @@ function shouldCacheCompletedDiscovery(ctx: HandlerContext): boolean {
  * correct project scope.
  */
 export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<DiscoveryResult> {
-  if (!isExplicitlyLocalProject(ctx) && isSharedProjectRuntime(ctx)) {
+  if (requiresIsolatedProjectRuntime(ctx)) {
+    // Log the denial with its inputs. This surfaced as an undiagnosable 500 for
+    // a full day because the reason never reached the response or the logs.
+    logger.warn("Denied executable discovery in a shared runtime", {
+      projectSlug: ctx.projectSlug,
+      projectId: ctx.projectId,
+      // The lever, for an operator whose runtime is meant to be the executor.
+      overrideEnv: HOST_PROJECT_EXECUTION_OVERRIDE_ENV,
+    });
     throw INITIALIZATION_ERROR.create({
       detail:
         "Remote executable discovery requires an isolated project runtime and cannot run in the shared host",

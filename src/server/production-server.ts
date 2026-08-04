@@ -32,6 +32,10 @@ import {
 } from "#veryfront/rendering/ssr-globals.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { snapshotNodeWebSocketServerProvider } from "#veryfront/extensions/websocket";
+import {
+  HOST_PROJECT_EXECUTION_OVERRIDE_ENV,
+  isHostProjectExecutionOverrideEnabled,
+} from "#veryfront/security/host-execution-policy.ts";
 import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
 
 const serverLog = logger.component("server");
@@ -262,6 +266,20 @@ export function startProductionServer(
 
         logger.info("Starting production server", { projectDir, port, bindAddress });
 
+        // A dedicated single-project runtime carries the capability implicitly.
+        // A shared runtime intended to be the executor must be granted it by an
+        // operator, deliberately and visibly.
+        const isolatedRuntimeGrant = bootstrap.config.fs?.veryfront?.proxyMode !== true &&
+          !isSharedProjectRuntime({ adapter });
+        const operatorGrant = isHostProjectExecutionOverrideEnabled();
+
+        if (operatorGrant && !isolatedRuntimeGrant) {
+          logger.warn("Shared runtime is executing tenant project code by operator grant", {
+            overrideEnv: HOST_PROJECT_EXECUTION_OVERRIDE_ENV,
+            proxyMode: bootstrap.config.fs?.veryfront?.proxyMode === true,
+          });
+        }
+
         const baseHandler = createVeryfrontHandler(projectDir, adapter, {
           projectDir,
           debug,
@@ -271,8 +289,7 @@ export function startProductionServer(
           defaultReleaseId,
           defaultEnvironment,
           localProjects,
-          allowHostProjectCodeExecution: bootstrap.config.fs?.veryfront?.proxyMode !== true &&
-            !isSharedProjectRuntime({ adapter }),
+          allowHostProjectCodeExecution: isolatedRuntimeGrant || operatorGrant,
         });
 
         const coreHandler = baseHandler;

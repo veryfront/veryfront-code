@@ -18,7 +18,7 @@ import {
   createErrorResponseFromDefinition,
   PROJECT_EXECUTION_UNAVAILABLE,
 } from "#veryfront/errors";
-import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
+import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 
 type FsWrapper = {
   isMultiProjectMode?: () => boolean;
@@ -85,7 +85,7 @@ export class ApiHandlerWrapper extends BaseHandler {
       typeof fsWrapper.isMultiProjectMode === "function" &&
       fsWrapper.isMultiProjectMode();
 
-    const isSharedRuntime = isSharedProjectRuntime(ctx);
+    const isSharedRuntime = requiresIsolatedProjectRuntime(ctx);
 
     if (!isMultiProject) {
       return this.handleWithContext(req, ctx, pathname, isSharedRuntime);
@@ -107,7 +107,9 @@ export class ApiHandlerWrapper extends BaseHandler {
     return fsWrapper.runWithContext!(
       ctx.projectSlug!,
       ctx.proxyToken ?? "",
-      () => this.handleWithContext(req, ctx, pathname, true),
+      // Multi-project mode implies a shared runtime, but not that execution is
+      // denied: a host-owned entrypoint can still have granted the capability.
+      () => this.handleWithContext(req, ctx, pathname, isSharedRuntime),
       ctx.projectId,
       {
         productionMode: isProduction,

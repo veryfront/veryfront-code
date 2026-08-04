@@ -125,6 +125,38 @@ describe(
       assertEquals((globalThis as Record<string, unknown>)[marker], undefined);
     });
 
+    it("discovers primitives in a shared runtime once the host grants execution", async () => {
+      // Regression for issue-inbox#356: agent chat 500'd on every hosted project
+      // with agents/*.ts because this guard ignored the host-execution
+      // capability that the rest of the execution surfaces already honor.
+      const ctx = createHandlerContext("/granted-project", "granted", "preview");
+      ctx.isLocalProject = false;
+      // Present marks a shared multi-project runtime, as veryfront-server is.
+      // Rejecting also asserts discovery never invokes it on the granted path.
+      ctx.prepareHostedConfigContext = () => Promise.reject(new Error("must not be called"));
+      ctx.allowHostProjectCodeExecution = true;
+      await ctx.adapter.fs.writeFile(
+        "/granted-project/tools/granted.ts",
+        "export default {};",
+      );
+
+      let reads = 0;
+      const readFile = ctx.adapter.fs.readFile.bind(ctx.adapter.fs);
+      ctx.adapter.fs.readFile = (path) => {
+        reads++;
+        return readFile(path);
+      };
+
+      const result = await ensureProjectDiscovery(ctx);
+
+      assertExists(result, "discovery must return a result instead of throwing");
+      assertEquals(
+        reads > 0,
+        true,
+        "an operator-granted shared executor must actually read project source",
+      );
+    });
+
     afterAll(async () => {
       await stopEsbuild();
     });

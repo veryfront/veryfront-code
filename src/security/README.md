@@ -289,11 +289,36 @@ it requires route evaluation, runtime OpenAPI generation is available only for
 explicitly trusted local projects; remote requests fail closed before route
 discovery or import.
 
-Executable primitive discovery and root project middleware use the same
-explicit host-execution capability. Local development and dedicated
-single-project runtimes grant it at their host-owned entrypoints. Shared proxy
-runtimes reject these operations before reading or evaluating tenant modules;
-they must provide an isolated project runtime before enabling either surface.
+Executable primitive discovery, API ownership, app-router execution, and root
+project middleware use the same explicit host-execution capability, expressed
+as the single `requiresIsolatedProjectRuntime` predicate. Local development and
+dedicated single-project runtimes grant the capability at their host-owned
+entrypoints. Shared proxy runtimes reject these operations before reading or
+evaluating tenant modules.
+
+## Operator-granted shared execution
+
+`VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION=1` grants the host-execution capability
+to a shared runtime whose deployment intends that runtime to _be_ the project
+executor. Absent and unrecognized values fail closed, matching
+`VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS`.
+
+The override is read exactly once, at server startup in
+`server/production-server.ts`, and the resulting capability is fixed into the
+handler for the process lifetime. No project env overlay is active at that
+point, so tenant environment cannot influence the grant. Keep the read at
+startup: `getHostEnv` consults the request-scoped overlay store before the host
+environment, so a per-request read would not carry the same guarantee.
+
+This is a deliberate posture, not a bypass. With the override set, tenant
+project code is evaluated in the shared host process. Per-request separation is
+the `runWithContext` source scope and the project-scoped registry transaction —
+**not** a process, memory, or CPU boundary between tenants. Deno Workers do not
+change that; they share the host process.
+
+Operators who need a genuine tenant boundary must leave the override unset and
+route execution to an external or dedicated isolated project runtime. Unsetting
+it re-arms every surface above with no code change.
 
 `WORKER_ISOLATION_SSR=1` additionally requires explicit registration of an
 `IsolatedSsrRendererProvider`. The provider supplies a local, offline renderer

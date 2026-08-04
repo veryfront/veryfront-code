@@ -12,7 +12,7 @@ import { applyCORSHeaders } from "#veryfront/security";
 import { serverLogger } from "#veryfront/utils";
 import { methodNotAllowed } from "#veryfront/http/responses";
 import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
-import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
+import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import {
   createErrorResponseFromDefinition,
   PROJECT_EXECUTION_UNAVAILABLE,
@@ -44,7 +44,7 @@ export async function handleAppRouter(
   ctx: HandlerContext,
 ): Promise<Response | null> {
   try {
-    if (isSharedProjectRuntime(ctx)) {
+    if (requiresIsolatedProjectRuntime(ctx)) {
       const unavailable = createErrorResponseFromDefinition(
         PROJECT_EXECUTION_UNAVAILABLE,
         {

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { ApiHandlerWrapper } from "./api-handler-wrapper.ts";
@@ -335,6 +335,54 @@ describe("ApiHandlerWrapper", () => {
     assertEquals(
       problem.type,
       "https://veryfront.com/docs/errors/project-execution-unavailable",
+    );
+  });
+
+  it("starts shared-runtime API discovery once the host grants execution", async () => {
+    // The granted counterpart of the fail-closed case above. Without this,
+    // nothing pins that the operator grant actually reaches this surface.
+    let projectContextEntries = 0;
+    let filesystemReads = 0;
+    const ctx = createCtx({});
+    ctx.allowHostProjectCodeExecution = true;
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+      exists: (path: string) => Promise<boolean>;
+      readDir: (path: string) => AsyncIterable<never>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => {
+      projectContextEntries++;
+      return await fn();
+    };
+    fs.exists = () => {
+      filesystemReads++;
+      return Promise.resolve(false);
+    };
+    fs.readDir = async function* () {
+      filesystemReads++;
+      yield* [];
+    };
+
+    const handler = new ApiHandlerWrapper("/tmp/project", ctx.adapter);
+    const result = await handler.handle(
+      new Request("http://localhost/api/private"),
+      ctx,
+    );
+
+    assertNotEquals(
+      result.response?.status,
+      503,
+      "a granted shared executor must not return project-execution-unavailable",
+    );
+    assertEquals(projectContextEntries, 1);
+    assertEquals(
+      filesystemReads > 0,
+      true,
+      "the request must reach source resolution instead of failing at the guard",
     );
   });
 
