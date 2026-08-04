@@ -226,11 +226,27 @@ describe("setup-deno CI contract", () => {
     );
     assertStringIncludes(
       install,
-      'if [ "${checksums_manifest_downloaded}" = "true" ]; then',
+      'if [ "${checksums_manifest_actual_sha256}" != "${checksums_manifest_sha256}" ]',
     );
     assertStringIncludes(
       install,
-      'if [ "${checksums_manifest_actual_sha256}" != "${checksums_manifest_sha256}" ]',
+      'checksums_manifest_http_code="$(curl --fail --location --show-error --retry 5 --retry-delay 2 \\',
+    );
+    assertStringIncludes(
+      install,
+      '  if [ "${checksums_manifest_http_code}" != "200" ]; then',
+    );
+    assertStringIncludes(
+      install,
+      'if [ "${checksums_manifest_http_code}" != "404" ]; then',
+    );
+    assertStringIncludes(
+      install,
+      'Checksums manifest not published for v${version}; falling back to archive checksum file',
+    );
+    assertStringIncludes(
+      install,
+      'Failed to download Deno archive checksum for ${archive}',
     );
     assertStringIncludes(
       install,
@@ -238,7 +254,7 @@ describe("setup-deno CI contract", () => {
     );
     assertStringIncludes(
       install,
-      'archive_sha256="$(awk -v target="${archive}" \'$2 == target || $2 == "\*" target { print tolower($1) }\' "${checksum_parse_path}")"',
+      'archive_sha256="$(awk -v target="${archive}" \'$2 == target || $2 == "*" target { print tolower($1) }\' "${checksum_parse_path}")"',
     );
     assertStringIncludes(
       install,

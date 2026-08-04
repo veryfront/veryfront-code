@@ -69,38 +69,23 @@ runs:
           checksums_manifest_path="${deno_dir}/checksums.txt"
           checksums_manifest_sha256="0019dfc4b32d63c1392aa264aed2253c1e0c2fb09216f8e2cc269bbfb8bb49b5"
           archive_checksum_path="${deno_dir}/archive-checksum.txt"
-          checksums_manifest_downloaded="false"
 
-          if ! curl --fail --location --show-error --retry 5 --retry-delay 2 \
+          checksums_manifest_http_code="$(curl --fail --location --show-error --retry 5 --retry-delay 2 \
             --retry-max-time 120 \
             --remove-on-error \
             --connect-timeout 20 --max-time 120 \
-            "https://github.com/denoland/deno/releases/download/v${version}/${archive}.sha256sum" \
-            --output "${archive_checksum_path}"; then
-            if ! curl --fail --location --show-error --retry 5 --retry-delay 2 \
-              --retry-max-time 120 \
-              --remove-on-error \
-              --connect-timeout 20 --max-time 120 \
-              "https://github.com/denoland/deno/releases/download/v${version}/checksums.txt" \
-              --output "${checksums_manifest_path}"; then
-              echo "Failed to download checksums manifest for v${version}" >&2
+            "https://github.com/denoland/deno/releases/download/v${version}/checksums.txt" \
+            --write-out "%{http_code}" \
+            --output "${checksums_manifest_path}")" || true
+          if [ "${checksums_manifest_http_code}" != "200" ]; then
+            if [ "${checksums_manifest_http_code}" != "404" ]; then
+              echo "Failed to download checksums manifest for v${version} (HTTP ${checksums_manifest_http_code})" >&2
               exit 1
             fi
-            checksum_parse_path="${checksums_manifest_path}"
-            checksums_manifest_downloaded="true"
-          else
-            checksum_parse_path="${archive_checksum_path}"
-            if curl --fail --location --show-error --retry 5 --retry-delay 2 \
-              --retry-max-time 120 \
-              --remove-on-error \
-              --connect-timeout 20 --max-time 120 \
-              "https://github.com/denoland/deno/releases/download/v${version}/checksums.txt" \
-              --output "${checksums_manifest_path}"; then
-              checksums_manifest_downloaded="true"
-            fi
-          fi
 
-          if [ "${checksums_manifest_downloaded}" = "true" ] && [ -n "${checksums_manifest_sha256}" ]; then
+            echo "Checksums manifest not published for v${version}; falling back to archive checksum file" >&2
+            checksum_parse_path="${archive_checksum_path}"
+          else
             if command -v sha256sum >/dev/null 2>&1; then
               checksums_manifest_actual_sha256="$(sha256sum "${checksums_manifest_path}" | awk '{print $1}')"
             elif command -v shasum >/dev/null 2>&1; then
@@ -119,10 +104,18 @@ runs:
               echo "Actual:   ${checksums_manifest_actual_sha256}" >&2
               exit 1
             fi
+
+            checksum_parse_path="${checksums_manifest_path}"
           fi
 
-          if [ "${checksums_manifest_downloaded}" = "true" ]; then
-            checksum_parse_path="${checksums_manifest_path}"
+          if ! curl --fail --location --show-error --retry 5 --retry-delay 2 \
+            --retry-max-time 120 \
+            --remove-on-error \
+            --connect-timeout 20 --max-time 120 \
+            "https://github.com/denoland/deno/releases/download/v${version}/${archive}.sha256sum" \
+            --output "${archive_checksum_path}"; then
+            echo "Failed to download Deno archive checksum for ${archive}" >&2
+            exit 1
           fi
 
           if ! curl --fail --location --show-error --retry 5 --retry-delay 2 \

@@ -72,7 +72,9 @@ jobs:
           node-version: "24"
           package-manager-cache: false
       - name: Install Node resolver test dependencies
-        run: npm install --no-save esbuild@0.28.1 ajv@8.18.0 ajv-formats@3.0.1 zod@4.3.6 es-module-lexer@2.3.1 react@19.2.4 react-dom@19.2.4
+        run: |
+          npm ci --ignore-scripts --prefix tests/node/resolver-dependencies
+          cp -R tests/node/resolver-dependencies/node_modules/. npm/node_modules/
       - name: Run Node cache-link compatibility tests
         run: node ./tests/node/run-tests.mjs 'src/utils/cache-dir.test.ts'
       - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
