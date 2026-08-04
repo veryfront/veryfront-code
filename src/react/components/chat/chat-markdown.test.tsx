@@ -96,8 +96,9 @@ describe("ChatMarkdown — missing renderer warning", () => {
     assertEquals(warnings, []);
   });
 
-  it("still warns inside a provider that installed a renderer for a sibling", () => {
-    // A provider higher up with a real renderer is inherited, so no warning.
+  it("stays quiet when the renderer is inherited from an ancestor provider", () => {
+    // An ancestor provider installs a real renderer, so the second child
+    // inherits it and neither child is a missing-renderer case.
     const { warnings } = renderCapturingWarnings(
       <MarkdownRendererProvider renderer={AppRenderer}>
         <ChatMarkdown renderer={null}>plain on purpose</ChatMarkdown>
