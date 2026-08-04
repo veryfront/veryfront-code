@@ -463,6 +463,69 @@ export function isEsmShUrl(url: string): boolean {
   return url.startsWith("https://esm.sh/") || url.startsWith("http://esm.sh/");
 }
 
+export interface ParsedEsmShUrl {
+  readonly origin: string;
+  readonly packageName: string;
+  readonly version: string | null;
+  readonly subpath: string;
+  readonly search: string;
+  readonly hash: string;
+}
+
+/**
+ * esm.sh path prefixes that are not plain npm package names. Rewriting these
+ * would corrupt the specifier, so they are declined rather than pinned.
+ */
+const ESM_SH_NON_NPM_PREFIX_RE = /^(?:v\d+|stable|gh|jsr|pr|node)$/;
+
+/**
+ * Split an esm.sh URL into its npm coordinates. Returns null for anything that
+ * is not a plain `pkg`, `pkg@version`, or `@scope/pkg` path, so callers can
+ * leave unfamiliar esm.sh URL shapes exactly as the author wrote them.
+ */
+export function parseEsmShUrl(url: string): ParsedEsmShUrl | null {
+  if (!isEsmShUrl(url)) return null;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch (_) {
+    /* expected: a malformed URL is left untouched */
+    return null;
+  }
+
+  const segments = parsed.pathname.slice(1).split("/").filter(Boolean);
+  const first = segments[0];
+  if (!first || ESM_SH_NON_NPM_PREFIX_RE.test(first)) return null;
+
+  const isScoped = first.startsWith("@");
+  if (isScoped && segments.length < 2) return null;
+
+  const nameSegments = isScoped ? segments.slice(0, 2) : segments.slice(0, 1);
+  const subpathSegments = segments.slice(nameSegments.length);
+
+  const last = nameSegments[nameSegments.length - 1]!;
+  const versionIndex = last.lastIndexOf("@");
+  const version = versionIndex > 0 ? last.slice(versionIndex + 1) : null;
+  if (versionIndex > 0) {
+    nameSegments[nameSegments.length - 1] = last.slice(0, versionIndex);
+  }
+
+  return {
+    origin: parsed.origin,
+    packageName: arrayJoin(nameSegments, "/"),
+    version: version && version.length > 0 ? version : null,
+    subpath: subpathSegments.length > 0 ? `/${arrayJoin(subpathSegments, "/")}` : "",
+    search: parsed.search,
+    hash: parsed.hash,
+  };
+}
+
+/** Rebuild an esm.sh URL with an exact version, preserving every other part. */
+export function buildPinnedEsmShUrl(parsed: ParsedEsmShUrl, version: string): string {
+  return `${parsed.origin}/${parsed.packageName}@${version}${parsed.subpath}${parsed.search}${parsed.hash}`;
+}
+
 /**
  * Add deps query param to esm.sh URL if not already present.
  */
