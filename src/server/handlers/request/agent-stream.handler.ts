@@ -705,33 +705,13 @@ function getPathRunId(pathname: string): string | null {
   return match?.[1] ? decodeURIComponent(match[1]) : null;
 }
 
-function reportAgentStreamFailure(
-  error: unknown,
-  req: Request,
-  ctx: HandlerContext,
-  details: {
-    boundary: string;
-    status: number;
-    slug?: string;
-    category?: string;
-    detail?: string;
-    cause?: string;
-  },
-): void {
-  // Runs inside a catch, so a malformed percent escape must not throw past it.
-  let runId: string | null = null;
+/** getPathRunId decodes, which throws on a malformed escape; reporting must not. */
+function safeRunId(req: Request): string | null {
   try {
-    runId = getPathRunId(new URL(req.url).pathname);
+    return getPathRunId(new URL(req.url).pathname);
   } catch {
-    runId = null;
+    return null;
   }
-  reportHandlerFailure(error, {
-    ...details,
-    method: req.method,
-    runId,
-    projectId: ctx.projectId,
-    projectSlug: ctx.projectSlug,
-  });
 }
 
 export class AgentStreamHandler extends BaseHandler {
@@ -982,8 +962,8 @@ export class AgentStreamHandler extends BaseHandler {
 
       if (isVeryfrontError(error)) {
         const response = errorToResponse(error, new URL(req.url).pathname);
-        // errorToResponse strips `detail` from 5xx bodies, and this branch is
-        // otherwise silent, so the detail would be lost entirely.
+        // errorToResponse strips `detail` from 5xx bodies, so the log and the
+        // reported event are the only places it survives.
         if (response.status >= 500) {
           const cause = describeErrorCause(error.cause);
           logger.error("Internal agent stream request failed", {
@@ -996,9 +976,13 @@ export class AgentStreamHandler extends BaseHandler {
             error: error.message,
             cause,
           });
-          reportAgentStreamFailure(error, req, ctx, {
+          reportHandlerFailure(error, {
             boundary: "agent.stream.request",
+            method: req.method,
             status: response.status,
+            runId: safeRunId(req),
+            projectId: ctx.projectId,
+            projectSlug: ctx.projectSlug,
             slug: error.slug,
             category: error.category,
             detail: error.detail,
@@ -1020,9 +1004,13 @@ export class AgentStreamHandler extends BaseHandler {
       });
       // Unexpected failures have no slug or detail, so the captured stack is
       // the only real diagnostic.
-      reportAgentStreamFailure(error, req, ctx, {
+      reportHandlerFailure(error, {
         boundary: "agent.stream.handler",
+        method: req.method,
         status: HTTP_INTERNAL_SERVER_ERROR,
+        runId: safeRunId(req),
+        projectId: ctx.projectId,
+        projectSlug: ctx.projectSlug,
       });
       return this.respond(builder.json({ error: "Internal agent stream failed" }, 500));
     }
