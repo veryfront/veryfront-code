@@ -10,7 +10,7 @@ import type { ImportSpecifierInfo, RewriteContext } from "../types.ts";
  * Acceptance criterion 1 of issue #240: no unversioned dependency URL is ever
  * emitted for a project inside the pinning cohort.
  *
- * This is a regression wall, not a driver — the behavior is implemented by
+ * This is a regression wall, not a driver: the behavior is implemented by
  * bare-strategy and url-strategy. If a case here fails, fix the strategy, not
  * the expectation.
  */

@@ -445,7 +445,8 @@ describe("isPinningEnabledForRewrite", () => {
   });
 
   afterEach(() => {
-    setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+    if (originalFlag === undefined) deleteEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    else setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
     if (originalPercent === undefined) deleteEnv(PERCENT_ENV);
     else setEnv(PERCENT_ENV, originalPercent);
     if (originalProjects === undefined) deleteEnv(PROJECTS_ENV);

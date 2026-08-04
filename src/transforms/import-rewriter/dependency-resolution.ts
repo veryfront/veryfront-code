@@ -83,7 +83,7 @@ export interface ImportDependencyResolutionContext {
  * Decide whether pinning applies to this rewrite.
  *
  * A cache key means the snapshot already decided, and that decision is
- * authoritative — re-deciding here would let a mid-render configuration change
+ * authoritative: re-deciding here would let a mid-render configuration change
  * split a single render across two policies. Only the keyless fallback path
  * consults the rollout cohort. "on:unknown" means the dependency state could
  * not be established (unreadable package.json), so it falls back to

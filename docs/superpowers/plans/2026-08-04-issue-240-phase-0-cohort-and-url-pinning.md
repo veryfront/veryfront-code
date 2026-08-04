@@ -1,10 +1,10 @@
-# Issue #240 Phase 0 — Cohort Gate and URL Pinning Implementation Plan
+# Issue #240 Phase 0: Cohort Gate and URL Pinning Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the already-armed production dependency-pinning flag inert by construction via a per-project cohort gate, and close the emission gap so unversioned esm.sh URLs already baked into user source files are pinned to exact versions.
 
-**Architecture:** `getDependencyPinningSnapshot` in `src/transforms/esm/package-registry.ts` is the single place where `VERYFRONT_DEPENDENCY_PINNING` becomes a decision — every downstream consumer (import-rewrite strategies, render cache keys, the RSC pin header) reads the resulting `dependencyPinningCacheKey` rather than the env var. Adding a cohort check there means out-of-cohort projects fall back to the existing `FLAG_OFF_DEPENDENCY_SNAPSHOT` and produce byte-identical legacy cache keys. Separately, `UrlStrategy` already intercepts every esm.sh URL in user source to canonicalize its query parameters; version pinning slots into that existing seam using the same resolution ladder `BareStrategy` uses.
+**Architecture:** `getDependencyPinningSnapshot` in `src/transforms/esm/package-registry.ts` is the single place where `VERYFRONT_DEPENDENCY_PINNING` becomes a decision: every downstream consumer (import-rewrite strategies, render cache keys, the RSC pin header) reads the resulting `dependencyPinningCacheKey` rather than the env var. Adding a cohort check there means out-of-cohort projects fall back to the existing `FLAG_OFF_DEPENDENCY_SNAPSHOT` and produce byte-identical legacy cache keys. Separately, `UrlStrategy` already intercepts every esm.sh URL in user source to canonicalize its query parameters; version pinning slots into that existing seam using the same resolution ladder `BareStrategy` uses.
 
 **Tech Stack:** Deno 2.6+, TypeScript, `deno test` with the repo's BDD helpers (`#veryfront/testing/bdd.ts`, `#veryfront/testing/assert.ts`), Helm chart values in `veryfront-server`.
 
@@ -168,7 +168,7 @@ DENO_TESTING=1 deno test --no-check --allow-all \
   --preload=src/schemas/_test-setup.ts \
   src/transforms/esm/dependency-pinning-cohort.test.ts
 ```
-Expected: FAIL — `Module not found "…/dependency-pinning-cohort.ts"`.
+Expected: FAIL: `Module not found "…/dependency-pinning-cohort.ts"`.
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -301,7 +301,7 @@ git commit -m "feat(deps): add dependency-pinning cohort resolver"
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
-- Produces: `DependencyPinningSource.projectId?: string | null` — read by Task 3.
+- Produces: `DependencyPinningSource.projectId?: string | null`: read by Task 3.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -347,7 +347,7 @@ DENO_TESTING=1 deno test --no-check --allow-all \
   --filter "createDependencyPinningSource project identity" \
   src/transforms/esm/package-registry.test.ts
 ```
-Expected: FAIL — `source.projectId` is `undefined` where `"project-abc"` was expected.
+Expected: FAIL: `source.projectId` is `undefined` where `"project-abc"` was expected.
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -391,7 +391,7 @@ DENO_TESTING=1 deno test --no-check --allow-all \
   --preload=src/schemas/_test-setup.ts \
   src/transforms/esm/package-registry.test.ts
 ```
-Expected: PASS — the three new tests plus every pre-existing test in the file.
+Expected: PASS: the three new tests plus every pre-existing test in the file.
 
 - [ ] **Step 5: Format, lint, commit**
 
@@ -467,7 +467,7 @@ describe("getDependencyPinningSnapshot cohort gating", () => {
         projectId: "project-abc",
       });
       // No package.json path, so an in-cohort project reports no-project
-      // rather than "off" — proving the cohort admitted it.
+      // rather than "off": proving the cohort admitted it.
       assertEquals(snapshot.cacheKey, "on:no-project");
     });
   });
@@ -521,7 +521,7 @@ DENO_TESTING=1 deno test --no-check --allow-all \
   --filter "getDependencyPinningSnapshot cohort gating" \
   src/transforms/esm/package-registry.test.ts
 ```
-Expected: FAIL — the first test reports `"on:no-project"` where `"off"` was expected, because no cohort check exists yet.
+Expected: FAIL: the first test reports `"on:no-project"` where `"off"` was expected, because no cohort check exists yet.
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -598,7 +598,7 @@ git commit -m "feat(deps): gate the pinning snapshot on the rollout cohort"
 
 **Interfaces:**
 - Consumes: `isProjectInDependencyPinningCohort` from Task 1.
-- Produces: `isPinningEnabledForRewrite(ctx: ImportDependencyResolutionContext): boolean`, exported from `dependency-resolution.ts` — used by Task 6.
+- Produces: `isPinningEnabledForRewrite(ctx: ImportDependencyResolutionContext): boolean`, exported from `dependency-resolution.ts`: used by Task 6.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -682,7 +682,7 @@ DENO_TESTING=1 deno test --no-check --allow-all \
   --filter "isPinningEnabledForRewrite" \
   src/transforms/import-rewriter/dependency-resolution.test.ts
 ```
-Expected: FAIL — `isPinningEnabledForRewrite` is not exported.
+Expected: FAIL: `isPinningEnabledForRewrite` is not exported.
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -699,7 +699,7 @@ and replace the private helper with an exported, cohort-aware one:
  * Decide whether pinning applies to this rewrite.
  *
  * A cache key means the snapshot already decided, and that decision is
- * authoritative — re-deciding here would let a mid-render configuration change
+ * authoritative: re-deciding here would let a mid-render configuration change
  * split a single render across two policies. Only the keyless fallback path
  * consults the cohort. "on:unknown" means the dependency state could not be
  * established (unreadable package.json), so it falls back to flag-off behavior.
@@ -929,7 +929,7 @@ DENO_TESTING=1 deno test --no-check --allow-all \
   --filter "EsmShUrl" \
   src/transforms/import-rewriter/url-builder.test.ts
 ```
-Expected: FAIL — `parseEsmShUrl` is not exported.
+Expected: FAIL: `parseEsmShUrl` is not exported.
 
 - [ ] **Step 3: Implement the parser**
 
@@ -1097,7 +1097,7 @@ DENO_TESTING=1 deno test --no-check --allow-all \
   --preload=src/schemas/_test-setup.ts \
   src/transforms/import-rewriter/strategies/url-strategy.test.ts
 ```
-Expected: FAIL — the first new test yields `https://esm.sh/lodash?external=react,react-dom&target=es2022`, with no version.
+Expected: FAIL: the first new test yields `https://esm.sh/lodash?external=react,react-dom&target=es2022`, with no version.
 
 - [ ] **Step 7: Implement pinning in the strategy**
 
@@ -1209,7 +1209,7 @@ Record each hit in the audit document with three columns: file and line, whether
 
 - [ ] **Step 2: Write the audit document**
 
-Create `docs/superpowers/plans/2026-08-04-issue-240-url-construction-audit.md` with one section per site. Each section states the verdict — `honors ladder`, `unreachable when unversioned`, or `gap` — and for each `gap`, the exact change needed. This document is the evidence for spec acceptance criterion 1; a reviewer must be able to check it without re-deriving the search.
+Create `docs/superpowers/plans/2026-08-04-issue-240-url-construction-audit.md` with one section per site. Each section states the verdict: `honors ladder`, `unreachable when unversioned`, or `gap`: and for each `gap`, the exact change needed. This document is the evidence for spec acceptance criterion 1; a reviewer must be able to check it without re-deriving the search.
 
 - [ ] **Step 3: Write a failing test for each gap**
 
@@ -1351,7 +1351,7 @@ DENO_TESTING=1 deno test --no-check --allow-all \
   --preload=src/schemas/_test-setup.ts \
   src/transforms/import-rewriter/__tests__/no-unversioned-emission.test.ts
 ```
-Expected: PASS, because Tasks 6 and 7 already implement the behavior. This test is a regression wall, not a driver. If any case fails, that is a genuine gap in Task 6 or 7 — fix the source, not the test.
+Expected: PASS, because Tasks 6 and 7 already implement the behavior. This test is a regression wall, not a driver. If any case fails, that is a genuine gap in Task 6 or 7: fix the source, not the test.
 
 - [ ] **Step 4: Verify the wall actually catches a regression**
 
@@ -1473,7 +1473,7 @@ DENO_TESTING=1 VF_DISABLE_LRU_INTERVAL=1 deno test --no-check --allow-all \
   $(find src/transforms src/cache src/server src/routing -name '*.test.ts')
 mv .env.local-backup .env 2>/dev/null || true
 ```
-Expected: PASS. Any failure here is a real regression from Tasks 3, 4, 6, or 7 — diagnose it rather than narrowing the run.
+Expected: PASS. Any failure here is a real regression from Tasks 3, 4, 6, or 7: diagnose it rather than narrowing the run.
 
 - [ ] **Step 4: Format, lint, typecheck, commit**
 
@@ -1502,7 +1502,7 @@ After this plan lands and merges:
 
 1. Cut a release bump pull request (`deno.json` and `src/utils/version.ts` together).
 2. Merge the `veryfront-server` chart change from Task 5.
-3. Promote the release to production with the percent at `0` — a pure runtime upgrade with pinning inert, which also moves production off its 2026-07-27 artifact.
+3. Promote the release to production with the percent at `0`: a pure runtime upgrade with pinning inert, which also moves production off its 2026-07-27 artifact.
 4. Ramp per spec W4: internal allowlist, 1%, 10%, 50%, 100%, exercising rollback at the 10% step.
 
 W2 (Studio install migration) and W3 (lazy codemod) are separate plans and can proceed in parallel with all of the above.

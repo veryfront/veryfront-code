@@ -1,4 +1,4 @@
-# Issue #240 Phase 0 — Studio bare specifiers (W2) Implementation Plan
+# Issue #240 Phase 0: Studio bare specifiers (W2) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -15,7 +15,7 @@
 ## Context an implementer needs
 
 - `convertPackageImportsToRemoteEsmUrlImports` (`studio/panels/code/subsystems/install/lib/convertImports.ts:3-38`) rewrites every non-ignored bare import to `https://esm.sh/${importPath}`, unversioned, with a hardcoded host. It is called from `processFileContent` (`prepareInstallFiles.ts:101`).
-- `prepareInstallFiles` (`prepareInstallFiles.ts:257`) is **pure and synchronous**. Do not make it async — it is called from `useInstallForm.ts:94` and covered by three test files that call it directly.
+- `prepareInstallFiles` (`prepareInstallFiles.ts:257`) is **pure and synchronous**. Do not make it async: it is called from `useInstallForm.ts:94` and covered by three test files that call it directly.
 - The renderer resolves bare specifiers through its own pin ladder, and as of veryfront-code#3368 also pins esm.sh URLs already in source. **Existing files therefore keep working unchanged either way**; this plan stops new debt rather than fixing old files. That is why no flag day is needed.
 - `RegistrySchema.dependencies?: string[]` is at `shared/types/shadcn.ts:36`. Only `registryDependencies` is honored today.
 - The platform endpoint already exists and has zero callers: `POST /projects/{project_reference}/dependencies/resolve` in `veryfront-api`, accepting bare names, inline exact versions, and semver ranges, with an optional `branch`.
@@ -26,7 +26,7 @@
 - **Resolution must fail open.** If the resolve call errors, times out, or returns partial results, the install still completes with bare specifiers. A resolver blip must never become an install outage. This is the single most important property in this plan.
 - **Never reintroduce a host literal in client code.** After Task 1 no file under `studio/panels/` may contain `esm.sh`.
 - **`prepareInstallFiles` stays pure and synchronous.**
-- **React and the `@repo/shadcn-ui` alias keep their existing exclusions** — they are handled by alias transformation and the framework's own React ladder.
+- **React and the `@repo/shadcn-ui` alias keep their existing exclusions**: they are handled by alias transformation and the framework's own React ladder.
 - Run `pnpm lint` and the relevant `pnpm test` lane before each commit.
 
 ---
@@ -70,13 +70,13 @@ it('still leaves react imports untouched', () => {
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `pnpm vitest run studio/panels/code/subsystems/install/lib/convertImports.unit.test.ts`
-Expected: FAIL — the first two cases receive `'https://esm.sh/lodash'` and `'https://esm.sh/@dnd-kit/core'`.
+Expected: FAIL: the first two cases receive `'https://esm.sh/lodash'` and `'https://esm.sh/@dnd-kit/core'`.
 
 - [ ] **Step 3: Delete the rewrite**
 
 The function's only remaining job would be identity. Delete `convertPackageImportsToRemoteEsmUrlImports` entirely, remove its import at `prepareInstallFiles.ts:7`, and delete the call at `prepareInstallFiles.ts:101`. Deleting beats keeping an identity function that still names esm.sh.
 
-Delete `convertImports.unit.test.ts`'s cases for that function too — Step 1's tests exist to drive the change; once the function is gone, the surviving guarantee belongs in `prepareInstallFiles`'s tests, which already assert the import shape of installed files.
+Delete `convertImports.unit.test.ts`'s cases for that function too: Step 1's tests exist to drive the change; once the function is gone, the surviving guarantee belongs in `prepareInstallFiles`'s tests, which already assert the import shape of installed files.
 
 - [ ] **Step 4: Update the install-file expectation fixtures**
 
@@ -109,7 +109,7 @@ Resolution runs server-side inside the handler that already makes the round-trip
 
 **Interfaces:**
 - Consumes: bare specifiers from Task 1; `RegistrySchema.dependencies` (`shared/types/shadcn.ts:36`).
-- Produces: `resolveInstallDependencies(params: { projectReference: string; specifiers: string[]; branch?: string; authHeader?: string; fetchImpl?: typeof fetch }): Promise<{ resolved: Record<string, string>; failed: boolean }>` — never rejects.
+- Produces: `resolveInstallDependencies(params: { projectReference: string; specifiers: string[]; branch?: string; authHeader?: string; fetchImpl?: typeof fetch }): Promise<{ resolved: Record<string, string>; failed: boolean }>`. Never rejects.
 
 - [ ] **Step 1: Read the handler to find the seam**
 
@@ -197,11 +197,11 @@ describe('resolveInstallDependencies', () => {
 - [ ] **Step 3: Run to verify it fails**
 
 Run: `pnpm vitest run server/install-component/resolveDependencies.unit.test.ts`
-Expected: FAIL — module not found.
+Expected: FAIL: module not found.
 
 - [ ] **Step 4: Implement**
 
-Create `server/install-component/resolveDependencies.ts`. Reuse the project's existing import-manifest helper for extracting specifiers rather than writing a new regex — check whether `getImportManifestFromContent` is importable from the server side, and if it is not, extract the shared piece rather than duplicating it.
+Create `server/install-component/resolveDependencies.ts`. Reuse the project's existing import-manifest helper for extracting specifiers rather than writing a new regex: check whether `getImportManifestFromContent` is importable from the server side, and if it is not, extract the shared piece rather than duplicating it.
 
 ```ts
 /** Specifiers that never resolve through the platform resolver. */
@@ -280,7 +280,7 @@ Expected: PASS.
 
 - [ ] **Step 6: Call it from the handler**
 
-In `server/install-component/handler.ts`, after the registry schema is available, collect specifiers from the schema's `dependencies` **and** the file contents, then call the resolver. Await it — it cannot reject and it rides a round-trip the install already makes — but do not let its result gate the response body's files.
+In `server/install-component/handler.ts`, after the registry schema is available, collect specifiers from the schema's `dependencies` **and** the file contents, then call the resolver. Await it, since it cannot reject and it rides a round-trip the install already makes, but do not let its result gate the response body's files.
 
 Log a warning when `failed` is true so a silent resolver outage is visible, and include a `dependenciesResolved` boolean on the response so Task 3 can surface it.
 
@@ -340,7 +340,7 @@ it('still opens a URL specifier directly', async () => {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Expected: FAIL — the bare cases call `window.open` zero times, because neither `isRemotePackageImport` nor the local-file lookup matches.
+Expected: FAIL: the bare cases call `window.open` zero times, because neither `isRemotePackageImport` nor the local-file lookup matches.
 
 - [ ] **Step 3: Implement**
 
@@ -375,7 +375,7 @@ import { describe, expect, it } from 'vitest'
 
 /**
  * Acceptance criterion 2 of issue #240: Studio never writes a dependency URL
- * into user source. The host literal is the thing to guard — a future edit
+ * into user source. The host literal is the thing to guard: a future edit
  * that reintroduces it would silently restore the floating-dependency class.
  */
 describe('studio never emits esm.sh literals into user source', () => {

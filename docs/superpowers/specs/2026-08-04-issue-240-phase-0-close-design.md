@@ -9,9 +9,9 @@ State verified against the repositories on 2026-08-04, not against the issue's r
 - **Phase 0 renderer track is complete and staging-verified.** `veryfront-code#3114` merged 2026-07-30 behind `VERYFRONT_DEPENDENCY_PINNING`, followed by `#3198` (percent-encoded file URLs), `#3201` (request-scoped writeback auth), and `#3204` (SSR singleflight race). The staging soak recorded 120 of 120 concurrent 200s with exact-version writeback proven.
 - **The Phase 0 API resolve endpoint is complete.** `POST /projects/{project_reference}/dependencies/resolve` (`veryfront-api/src/api/http/rest/projects/dependencies/routes.ts:80-86`) accepts bare names, inline exact versions, and semver ranges, scoped to a branch. It has zero callers.
 - **The Phase 0 Studio track was never started.** `veryfront-studio/studio/panels/code/subsystems/install/lib/convertImports.ts:26` still emits `https://esm.sh/${importInfo.importPath}` with a hardcoded host and no version, exactly as issue #240 described it on 2026-07-25. Its unit test asserts that behavior, and the `prepareInstallFiles` tests bake unversioned URLs for `recharts`, `zod`, `motion/react`, `lucide-react`, `sonner`, and the `@dnd-kit` and `@radix-ui` scopes.
-- **A URL in a source file never enters the pinning ladder.** The renderer pins bare specifiers. Component install — the dominant way dependencies enter a project — writes URLs, so everything it installs is unprotected by the entire renderer track. Acceptance criterion 1 of issue #240 is therefore unmet even in staging.
+- **A URL in a source file never enters the pinning ladder.** The renderer pins bare specifiers. Component install (the dominant way dependencies enter a project) writes URLs, so everything it installs is unprotected by the entire renderer track. Acceptance criterion 1 of issue #240 is therefore unmet even in staging.
 - **The production flag is armed with no rollout decision.** `veryfront-server#273` merged 2026-08-03 and set `VERYFRONT_DEPENDENCY_PINNING: "1"` on both the production proxy and renderer in `chart/values-production.yaml`. `.github/production-release.json` still points at artifact `20260727215958-09eda661f829`, a 2026-07-27 build that predates `#3114`. Production therefore runs no pinning code while the flag waits.
-- **Production has no chart-only apply path.** `cicd.yml` deploys staging only. `production-release.yml` triggers exclusively on changes to `.github/production-release.json`. The armed flag cannot be applied, ramped, or withdrawn except by riding a full artifact promotion, so the next production promotion — for any reason, by anyone — enables dependency pinning for every hosted project simultaneously, with no canary and no rollback independent of the runtime upgrade.
+- **Production has no chart-only apply path.** `cicd.yml` deploys staging only. `production-release.yml` triggers exclusively on changes to `.github/production-release.json`. The armed flag cannot be applied, ramped, or withdrawn except by riding a full artifact promotion, so the next production promotion, for any reason and by anyone, enables dependency pinning for every hosted project simultaneously, with no canary and no rollback independent of the runtime upgrade.
 - **Three seams are inert.** `src/release-assets/dependency-artifact-mode.ts` implements a complete four-mode rollout controller with zero consumers. The `task:dependency-artifact-build` capability from `veryfront-code#3208` has no dispatcher. `ensureDependencyArtifacts` in `veryfront-api` documents itself as deliberately read-only. Phase 1 Release 3 shipped as 0.1.1185 on 2026-08-02 with no reported staging verification.
 
 Zero of issue #240's six acceptance criteria are met in production.
@@ -48,7 +48,7 @@ The `veryfront-code#3358` finding also survives: esm.sh selecting the `browser` 
 
 ## Design
 
-### W0 — Cohort gate (lands first, alone)
+### W0: Cohort gate (lands first, alone)
 
 Add `VERYFRONT_DEPENDENCY_PINNING_ROLLOUT_PERCENT` and `VERYFRONT_DEPENDENCY_PINNING_PROJECTS` to the renderer, reusing the design already written and tested in `src/release-assets/dependency-artifact-mode.ts`: a deterministic hash bucket over a rollout-specific domain prefix, a union of the percentage cohort and an explicit project allowlist, and fail-closed resolution when `projectId` is absent so framework-only requests cannot enter a rollout.
 
@@ -58,7 +58,7 @@ The gate ships wired into the pinning read path in the same pull request. This m
 
 After W0 is released and promoted, an unrelated production promotion is safe. Until then the coupling is live, so production promotions should be held or must carry W0's chart change.
 
-### W1 — Close the emission gap (renderer)
+### W1: Close the emission gap (renderer)
 
 `UrlStrategy` (`src/transforms/import-rewriter/strategies/url-strategy.ts`) already intercepts every esm.sh URL in user source and rewrites it to inject `deps` parameters. It is a 22-line class, and version pinning slots into that existing seam:
 
@@ -79,7 +79,7 @@ Add two enforcement tests:
 - **Emission assertion.** For a project in a pinned cohort, no emitted dependency URL lacks an `@version` segment.
 - **Determinism assertion.** Two renders of an unchanged draft produce byte-identical import maps.
 
-### W2 — Stop the source (Studio and API)
+### W2: Stop the source (Studio and API)
 
 - Delete the URL rewrite at `convertImports.ts:26`. Installed files keep bare specifiers.
 - `prepareInstallFiles` collects bare specifiers from installed files **plus** the registry item's declared `dependencies: string[]` (`shared/types/shadcn.ts:36`), which is currently dropped on the floor, and calls `POST /projects/{project_reference}/dependencies/resolve`. This rides the server round-trip the install dialog already performs, so it adds no perceived latency.
@@ -88,13 +88,13 @@ Add two enforcement tests:
 - **Monaco import click-through must be repointed, and this is behavioral rather than cosmetic.** `openLink` (`studio/panels/code/hooks/useMonacoOpenLink.ts:57-65`) branches on `isRemotePackageImport` and calls `window.open(importPath)`, which works only because the specifier is currently a URL. Once installs write bare specifiers that branch stops matching and click-through silently does nothing. Bare package specifiers must resolve to their npmjs.com page.
 - Rewrite the unit tests in `convertImports.unit.test.ts`, `prepareInstallFiles.unit.test.ts`, and `prepareInstallFiles.comprehensive.unit.test.ts` that currently assert esm.sh URLs as correct behavior.
 
-### W3 — Lazy codemod (source hygiene)
+### W3: Lazy codemod (source hygiene)
 
 Rewrite baked esm.sh URLs in existing user files back to bare specifiers, moving the version into `package.json`. Runs incrementally per project on next open or save, in the existing `scripts/codemods` workspace, and must be idempotent.
 
 W1 already makes unmigrated files safe, so this workstream is hygiene rather than a safety fix. Its failure mode is cosmetic and it can ramp slowly.
 
-### W4 — Production ramp
+### W4: Production ramp
 
 1. Promote the release containing W0 and W1 with the percent at `0`. This is a pure runtime upgrade with pinning inert, and it also moves production off its 2026-07-27 artifact.
 2. Ramp through internal allowlist projects, then 1%, 10%, 50%, and 100%. Each step is a `values-production.yaml` change paired with a `production-release.json` promotion, because that is the only production apply path.
@@ -102,7 +102,7 @@ W1 already makes unmigrated files safe, so this workstream is hygiene rather tha
 
 Stop conditions, evaluated at each step: preview and render 5xx rate, `Failed to transform module` log count, dependency-load failure count, and p95 render latency.
 
-### W5 — Verify Release 3 and correct the record
+### W5: Verify Release 3 and correct the record
 
 Confirm that the Phase 1 Release 3 builder shipped in 0.1.1185 advertises `dependency-artifact-build-v1` and that `task:dependency-artifact-build` is dispatchable but unreachable in staging, before Phase 1 resumes on top of it.
 
@@ -141,4 +141,4 @@ W0 lands first and alone. W1 and W2 then run in parallel across different reposi
 5. No seam introduced by this milestone lacks a consumer.
 6. Every dependency in a pinned project carries an exact version, satisfying the `pkg@exact_version` input contract of Phase 1's content-addressed store.
 
-This is a defensible stopping point. If Phase 1 slipped, the platform would rest in a coherent state — deterministic, non-drifting, with one resolution choke point — rather than mid-migration with inert seams and an armed production flag.
+This is a defensible stopping point. If Phase 1 slipped, the platform would rest in a coherent state (deterministic, non-drifting, with one resolution choke point) rather than mid-migration with inert seams and an armed production flag.
