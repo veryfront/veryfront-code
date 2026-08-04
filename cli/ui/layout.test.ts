@@ -2,6 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  getTerminalHeight,
+  getTerminalWidth,
   lines,
   maxLineWidth,
   pad,
@@ -13,6 +15,29 @@ import {
 } from "./layout.ts";
 
 describe("cli/ui/layout", () => {
+  describe("terminal size", () => {
+    it("reports a usable width even when the terminal reports none", () => {
+      // A pty with no window size reports 0 columns. Callers subtract from
+      // this and pass the result to String.repeat, which throws on a negative
+      // count — that took the whole TUI down when the input prompt rendered.
+      const width = getTerminalWidth();
+      assertEquals(width > 0, true, `expected a positive width, got ${width}`);
+      assertEquals(Number.isFinite(width), true);
+    });
+
+    it("reports a usable height even when the terminal reports none", () => {
+      const height = getTerminalHeight();
+      assertEquals(height > 0, true, `expected a positive height, got ${height}`);
+    });
+
+    it("keeps the derived divider width non-negative", () => {
+      const dividerWidth = Math.max(0, Math.min(getTerminalWidth() - 4, 80));
+      assertEquals(dividerWidth >= 0, true);
+      // Would throw RangeError if the width went negative.
+      assertEquals(typeof "-".repeat(dividerWidth), "string");
+    });
+  });
+
   describe("visibleLength", () => {
     it("should return length of plain text", () => {
       assertEquals(visibleLength("hello"), 5);
