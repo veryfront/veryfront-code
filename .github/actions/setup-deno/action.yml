@@ -66,30 +66,60 @@ runs:
         if [ ! -x "${deno_bin}" ]; then
           mkdir -p "${deno_dir}"
           zip_path="${deno_dir}/deno.zip"
-          checksums_path="${deno_dir}/checksums.txt"
+          checksums_manifest_path="${deno_dir}/checksums.txt"
+          checksums_manifest_sha256="0019dfc4b32d63c1392aa264aed2253c1e0c2fb09216f8e2cc269bbfb8bb49b5"
+          archive_checksum_path="${deno_dir}/archive-checksum.txt"
+
           if ! curl --fail --location --show-error --retry 5 --retry-delay 2 \
             --retry-max-time 120 \
             --remove-on-error \
             --connect-timeout 20 --max-time 120 \
             "https://github.com/denoland/deno/releases/download/v${version}/${archive}.sha256sum" \
-            --output "${checksums_path}"; then
-            curl --fail --location --show-error --retry 5 --retry-delay 2 \
+            --output "${archive_checksum_path}"; then
+            if ! curl --fail --location --show-error --retry 5 --retry-delay 2 \
               --retry-max-time 120 \
               --remove-on-error \
               --connect-timeout 20 --max-time 120 \
               "https://github.com/denoland/deno/releases/download/v${version}/checksums.txt" \
-              --output "${checksums_path}"
+              --output "${checksums_manifest_path}"; then
+              echo "Failed to download checksums manifest for v${version}" >&2
+              exit 1
+            fi
+            checksum_parse_path="${checksums_manifest_path}"
+          else
+            checksum_parse_path="${archive_checksum_path}"
+            if ! curl --fail --location --show-error --retry 5 --retry-delay 2 \
+              --retry-max-time 120 \
+              --remove-on-error \
+              --connect-timeout 20 --max-time 120 \
+              "https://github.com/denoland/deno/releases/download/v${version}/checksums.txt" \
+              --output "${checksums_manifest_path}"; then
+              echo "Failed to download checksums manifest for v${version}" >&2
+              exit 1
+            fi
           fi
-          curl --fail --location --show-error --retry 5 --retry-delay 2 \
+
+          checksums_manifest_actual_sha256="$(sha256sum "${checksums_manifest_path}" | awk '{print $1}')"
+          if [ "${checksums_manifest_actual_sha256}" != "${checksums_manifest_sha256}" ]; then
+            echo "Checksums manifest checksum mismatch for v${version}" >&2
+            echo "Expected: ${checksums_manifest_sha256}" >&2
+            echo "Actual:   ${checksums_manifest_actual_sha256}" >&2
+            exit 1
+          fi
+
+          if ! curl --fail --location --show-error --retry 5 --retry-delay 2 \
             --retry-max-time 120 \
             --remove-on-error \
             --connect-timeout 20 --max-time 120 \
             "https://github.com/denoland/deno/releases/download/v${version}/${archive}" \
-            --output "${zip_path}"
+            --output "${zip_path}"; then
+            echo "Failed to download Deno archive for ${archive}" >&2
+            exit 1
+          fi
 
-          archive_sha256="$(awk 'BEGIN {IGNORECASE = 1} /^Hash[[:space:]]*:/ { print tolower($3) }' "${checksums_path}")"
+          archive_sha256="$(awk 'BEGIN {IGNORECASE = 1} /^Hash[[:space:]]*:/ { print tolower($3) }' "${checksum_parse_path}")"
           if [ -z "${archive_sha256}" ]; then
-            archive_sha256="$(awk -v target="${archive}" '$2 == target || $2 == "*" target { print tolower($1) }' "${checksums_path}")"
+            archive_sha256="$(awk -v target="${archive}" '$2 == target || $2 == "*" target { print tolower($1) }' "${checksum_parse_path}")"
           fi
           if [ -z "${archive_sha256}" ]; then
             echo "Missing Deno archive checksum for ${archive} in release checksums for v${version}" >&2
@@ -103,7 +133,7 @@ runs:
           elif command -v openssl >/dev/null 2>&1; then
             actual_sha256="$(openssl dgst -sha256 "${zip_path}" | awk '{print $NF}')"
           elif command -v node >/dev/null 2>&1; then
-            actual_sha256="$(node -e "const fs = require('fs'); const crypto = require('crypto'); process.stdout.write(crypto.createHash('sha256').update(fs.readFileSync(process.argv[1])).digest('hex'));" "${zip_path}")"
+            actual_sha256="$(node -e \"const fs = require('fs'); const crypto = require('crypto'); process.stdout.write(crypto.createHash('sha256').update(fs.readFileSync(process.argv[1])).digest('hex'));\" "${zip_path}")"
           else
             echo "No checksum utility available (sha256sum/shasum/openssl/node)" >&2
             exit 1
