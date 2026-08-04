@@ -74,6 +74,7 @@ jobs:
       - name: Install Node resolver test dependencies
         run: |
           npm ci --ignore-scripts --prefix tests/node/resolver-dependencies
+          mkdir -p node_modules npm/node_modules
           cp -R tests/node/resolver-dependencies/node_modules/. npm/node_modules/
       - name: Run Node cache-link compatibility tests
         run: node ./tests/node/run-tests.mjs 'src/utils/cache-dir.test.ts'
