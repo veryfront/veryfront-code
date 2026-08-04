@@ -80,9 +80,19 @@ export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
 
 const DIRECTORY_BASED_TEMPLATES: TemplateName[] = [...STARTER_TEMPLATE_NAMES];
 
+/**
+ * The router aliases scaffold the `ai-agent` files, so they must resolve the
+ * same config. Keeping the mapping in one place stops files and dependencies
+ * from drifting apart.
+ */
+function resolveTemplateAlias(name: TemplateName): TemplateName {
+  return name === "pages-router" || name === "app-router" ? "ai-agent" : name;
+}
+
 export async function getTemplate(name: TemplateName): Promise<TemplateFile[] | null> {
-  if (name === "pages-router" || name === "app-router") {
-    return getTemplate("ai-agent");
+  const resolved = resolveTemplateAlias(name);
+  if (resolved !== name) {
+    return getTemplate(resolved);
   }
 
   if (!DIRECTORY_BASED_TEMPLATES.includes(name)) {
@@ -102,7 +112,7 @@ export async function getTemplate(name: TemplateName): Promise<TemplateFile[] | 
 }
 
 export function getTemplateConfig(name: TemplateName): TemplateConfig | null {
-  return templateConfigs[name] ?? null;
+  return templateConfigs[resolveTemplateAlias(name)] ?? null;
 }
 
 export function getAiRuleTemplate(templateName: string): string | null {
