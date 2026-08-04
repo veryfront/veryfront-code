@@ -34,6 +34,11 @@ const DEFAULT_ACCEPT_ENCODING = "gzip, deflate";
  * only that no header the runtime sends goes missing, so a runtime that adds
  * one fails loudly rather than drifting.
  *
+ * `user-agent` is the deliberate exception: the runtime default (`node`,
+ * `Deno/x.y.z`) cannot be inherited here and identifies nothing useful, so
+ * guarded egress sends DEFAULT_OUTBOUND_USER_AGENT instead. Parity for that
+ * header means "present", not "identical".
+ *
  * Split out from the transport so that parity check can run on every runtime:
  * the transport itself is Node/Bun-only, and a test gated on that never
  * executes in the Deno-only CI lanes.
