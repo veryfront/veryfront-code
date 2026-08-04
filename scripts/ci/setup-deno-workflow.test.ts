@@ -226,6 +226,10 @@ describe("setup-deno CI contract", () => {
     );
     assertStringIncludes(
       install,
+      'if [ "${checksums_manifest_downloaded}" = "true" ]; then',
+    );
+    assertStringIncludes(
+      install,
       'if [ "${checksums_manifest_actual_sha256}" != "${checksums_manifest_sha256}" ]',
     );
     assertStringIncludes(
