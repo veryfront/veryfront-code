@@ -942,6 +942,22 @@ export class AgentStreamHandler extends BaseHandler {
 
       if (isVeryfrontError(error)) {
         const response = errorToResponse(error, new URL(req.url).pathname);
+        // errorToResponse strips `detail` from 5xx bodies so internals never
+        // reach the caller. Nothing else on this branch logs, so without this
+        // the only record of a server-side failure is a bare status code —
+        // no detail in the response, none in the logs, none in Sentry.
+        if (response.status >= 500) {
+          logger.error("Internal agent stream request failed", {
+            projectId: ctx.projectId,
+            projectSlug: ctx.projectSlug,
+            status: response.status,
+            slug: error.slug,
+            category: error.category,
+            detail: error.detail,
+            error: error.message,
+            cause: error.cause instanceof Error ? error.cause.message : undefined,
+          });
+        }
         return this.respond(applyBuilderHeaders(response, builder.headers));
       }
 
