@@ -135,7 +135,32 @@ export async function hydrateStartRuntimeAuth(
   return linkedProjectSlug;
 }
 
+/**
+ * The proxy resolves each request to a project through the Veryfront API using
+ * its own client credentials. Unconfigured it still loads, forces
+ * `PROXY_MODE=1`, and then rejects every request for a missing `x-token` — so
+ * treat "no credentials" as "no proxy" and let the local dev server serve the
+ * project instead.
+ *
+ * A plain login token is deliberately not enough. `applyRuntimeAuthContext`
+ * puts the stored CLI login token in `VERYFRONT_API_TOKEN` before this runs, so
+ * accepting it would mean that merely being logged in pushes `veryfront start`
+ * into a proxy mode it cannot actually serve from.
+ */
+export function hasProxyCredentials(
+  read: (name: string) => string | undefined = getEnv,
+): boolean {
+  const clientId = read("VERYFRONT_PROXY_API_CLIENT_ID")?.trim();
+  const clientSecret = read("VERYFRONT_PROXY_API_CLIENT_SECRET")?.trim();
+
+  return Boolean(clientId && clientSecret);
+}
+
 async function trySetupProxy(localProjects: Map<string, string>): Promise<ProxySetup> {
+  if (!hasProxyCredentials()) {
+    return { interceptor: undefined, close: () => Promise.resolve() };
+  }
+
   try {
     // Proxy is only available in local dev, not in the npm package
     const { createProxyHandler, injectContextHeaders } = await import(
@@ -188,9 +213,20 @@ export async function startCommand(options: StartOptions): Promise<void> {
     return true;
   });
 
+  const { createApp, startStartupProgress } = await import("../../app/index.ts");
+
+  // Each step advances when its work finishes, so startup costs what the work
+  // costs rather than a fixed animation length.
+  const progress = headless ? null : startStartupProgress([
+    "Loading configuration",
+    "Discovering projects",
+    "Starting server",
+  ]);
+
+  progress?.begin(0);
   await clearAllLocalCaches();
 
-  const { createApp, showStartup } = await import("../../app/index.ts");
+  progress?.begin(1);
   const discovered = await discoverProjects(projectPath);
 
   // Log discovered projects for discoverability
@@ -218,17 +254,11 @@ export async function startCommand(options: StartOptions): Promise<void> {
     port,
     headless,
     projects: discovered.projects,
-    examples: discovered.examples,
-    defaultProject: discovered.defaultProject ?? undefined,
   });
 
   const restoreConsole = app.interceptConsole();
 
-  if (!headless) {
-    await showStartup(["Loading configuration", "Discovering projects", "Starting server"]);
-  }
-
-  let server: { ready: Promise<void>; stop: () => Promise<void> };
+  progress?.begin(2);
 
   const selectedProject = selectStartProject(discovered, cwd());
   const projectDir = selectedProject.projectDir;
@@ -239,31 +269,41 @@ export async function startCommand(options: StartOptions): Promise<void> {
   const shutdownController = new AbortController();
   const useProxy = typeof proxy.interceptor === "function";
 
-  if (useProxy) {
-    const defaultProjectId = generateDefaultProjectId(cwd());
-    const requestInterceptor = proxy.interceptor;
-    if (!requestInterceptor) {
-      throw new Error("Proxy interceptor missing in proxy mode");
+  // The spinner stops however this ends, so a failed start cannot leave the
+  // ticker running — but only a successful start is allowed to tick the
+  // checklist over to done.
+  let server: { ready: Promise<void>; stop: () => Promise<void> };
+  try {
+    if (useProxy) {
+      const defaultProjectId = generateDefaultProjectId(cwd());
+      const requestInterceptor = proxy.interceptor;
+      if (!requestInterceptor) {
+        throw new Error("Proxy interceptor missing in proxy mode");
+      }
+      server = await startCliProxyModeServer({
+        port,
+        projectDir,
+        signal: shutdownController.signal,
+        requestInterceptor,
+        defaultProjectId,
+        linkedProjectSlug,
+      });
+    } else {
+      server = await startCliDevServer({
+        port,
+        projectDir,
+        enableHMR: true,
+        enableFastRefresh: true,
+        signal: shutdownController.signal,
+      });
     }
-    server = await startCliProxyModeServer({
-      port,
-      projectDir,
-      signal: shutdownController.signal,
-      requestInterceptor,
-      defaultProjectId,
-      linkedProjectSlug,
-    });
-  } else {
-    server = await startCliDevServer({
-      port,
-      projectDir,
-      enableHMR: true,
-      enableFastRefresh: true,
-      signal: shutdownController.signal,
-    });
-  }
 
-  await server.ready;
+    await server.ready;
+    progress?.finish();
+  } catch (error) {
+    progress?.stop();
+    throw error;
+  }
 
   app.setServerReady();
 

@@ -4,6 +4,7 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { readTextFile } from "veryfront/platform";
 import { saveToken } from "../../auth/token-store.ts";
 import {
+  hasProxyCredentials,
   hydrateStartRuntimeAuth,
   selectStartProject,
   shouldSkipProjectDirectory,
@@ -217,6 +218,60 @@ describe("commands/start/command", () => {
 
       assertEquals(optionText.includes("mcp-port"), false);
       assertEquals(helpText.includes("9999"), false);
+    });
+  });
+
+  describe("proxy engagement", () => {
+    const read = (values: Record<string, string>) => (name: string) => values[name];
+
+    it("stays off when nothing is configured", () => {
+      assertEquals(hasProxyCredentials(read({})), false);
+    });
+
+    it("stays off for blank credentials", () => {
+      assertEquals(
+        hasProxyCredentials(read({
+          VERYFRONT_PROXY_API_CLIENT_ID: "  ",
+          VERYFRONT_PROXY_API_CLIENT_SECRET: "",
+        })),
+        false,
+      );
+    });
+
+    it("stays off for a plain login token, so being logged in does not force proxy mode", () => {
+      assertEquals(hasProxyCredentials(read({ VERYFRONT_API_TOKEN: "vf_login_token" })), false);
+    });
+
+    it("stays off with only half of a client credential pair", () => {
+      assertEquals(
+        hasProxyCredentials(read({ VERYFRONT_PROXY_API_CLIENT_ID: "id" })),
+        false,
+      );
+      assertEquals(
+        hasProxyCredentials(read({ VERYFRONT_PROXY_API_CLIENT_SECRET: "secret" })),
+        false,
+      );
+    });
+
+    it("engages for a complete client credential pair", () => {
+      assertEquals(
+        hasProxyCredentials(read({
+          VERYFRONT_PROXY_API_CLIENT_ID: "id",
+          VERYFRONT_PROXY_API_CLIENT_SECRET: "secret",
+        })),
+        true,
+      );
+    });
+
+    it("engages for a credential pair even alongside a login token", () => {
+      assertEquals(
+        hasProxyCredentials(read({
+          VERYFRONT_PROXY_API_CLIENT_ID: "id",
+          VERYFRONT_PROXY_API_CLIENT_SECRET: "secret",
+          VERYFRONT_API_TOKEN: "vf_login_token",
+        })),
+        true,
+      );
     });
   });
 });
