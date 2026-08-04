@@ -304,6 +304,59 @@ different requests would share the same store.
 Use chat context providers only when nested components need direct state access.
 Prefer preset props or composition components first.
 
+## Render Markdown in chat
+
+`veryfront/markdown` presents plain escaped source until a renderer is
+installed, so `<Chat>` shows raw Markdown on its own. Every chat starter
+scaffolds a renderer in `app/markdown-renderer.tsx` and installs it around
+`<Chat>`, so a new project renders assistant answers with no extra setup.
+
+Add the same two pieces to an existing project. Install the parser:
+
+```bash
+npm install react-markdown@9.0.3 remark-gfm@4.0.1
+```
+
+Then create the renderer and install it for the chat subtree:
+
+```tsx
+// app/markdown-renderer.tsx
+"use client";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import type { MarkdownRendererProps } from "veryfront/markdown";
+
+export function MarkdownRenderer({ source }: MarkdownRendererProps): React.JSX.Element {
+  return <ReactMarkdown remarkPlugins={[remarkGfm]}>{source}</ReactMarkdown>;
+}
+```
+
+```tsx
+// app/page.tsx
+"use client";
+import { Chat } from "veryfront/chat";
+import { MarkdownRendererProvider } from "veryfront/markdown";
+import { MarkdownRenderer } from "./markdown-renderer.tsx";
+
+export default function ChatPage() {
+  return (
+    <MarkdownRendererProvider renderer={MarkdownRenderer}>
+      <Chat agentId="assistant" />
+    </MarkdownRendererProvider>
+  );
+}
+```
+
+The provider covers assistant answers and reasoning. Chat applies its own prose
+styling around whatever the renderer returns, so lists, headings, and inline
+code match the rest of the chat surface. Pin the parser to an exact version:
+these packages reach the browser through the module pipeline, where a floating
+range resolves to whatever is latest at request time.
+
+Your renderer owns parsing, sanitization, and link policy. To add syntax
+highlighting, tables, or math, extend it with the remark and rehype plugins you
+want rather than changing anything in chat.
+
 ## Present Markdown source safely
 
 `veryfront/markdown` is the dependency-free Markdown boundary used by chat

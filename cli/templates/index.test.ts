@@ -8,7 +8,7 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { EvalRecord } from "veryfront/eval";
 
-import { getTemplate, templateConfigs } from "./index.ts";
+import { getTemplate, getTemplateConfig, templateConfigs } from "./index.ts";
 import { STARTER_TEMPLATE_NAMES, type TemplateName } from "./types.ts";
 
 const STYLED_STARTER_TEMPLATES: TemplateName[] = [
@@ -842,5 +842,68 @@ describe("cli/templates", () => {
         offenders.join(", ")
       }`,
     );
+  });
+});
+
+describe("chat starters scaffold a Markdown renderer", () => {
+  const CHAT_TEMPLATES: TemplateName[] = [
+    "ai-agent",
+    "coding-agent",
+    "docs-agent",
+    "multi-agent-system",
+  ];
+
+  it("ships the renderer alongside the parser it imports", async () => {
+    for (const name of CHAT_TEMPLATES) {
+      const files = await getTemplate(name);
+      assertExists(files, `${name} should load`);
+
+      const renderer = files.find((file) => file.path === "app/markdown-renderer.tsx");
+      assertExists(renderer, `${name} should scaffold app/markdown-renderer.tsx`);
+
+      const dependencies = getTemplateConfig(name)?.npmDependencies ?? {};
+      for (const dependency of ["react-markdown", "remark-gfm"]) {
+        assertEquals(
+          typeof dependencies[dependency],
+          "string",
+          `${name} imports ${dependency} but does not install it`,
+        );
+      }
+    }
+  });
+
+  it("allows the relative .tsx import during consumer tsc", async () => {
+    for (const name of CHAT_TEMPLATES) {
+      const files = await getTemplate(name);
+      const tsconfig = files?.find((file) => file.path === "tsconfig.json");
+      assertExists(tsconfig, `${name} should declare consumer TypeScript options`);
+
+      // `app/page.tsx` imports `./markdown-renderer.tsx`, which consumer tsc
+      // rejects with TS5097 unless both options are set.
+      assertEquals(
+        tsconfig.content.includes('"allowImportingTsExtensions": true'),
+        true,
+        `${name} imports a .tsx module and must allow the extension`,
+      );
+      assertEquals(
+        tsconfig.content.includes('"noEmit": true'),
+        true,
+        `${name} needs noEmit to keep allowImportingTsExtensions valid`,
+      );
+    }
+  });
+
+  it("gives the router aliases the same dependencies as ai-agent", () => {
+    // `getTemplate` serves ai-agent files for these names, so the config has to
+    // follow or they scaffold the renderer with nothing to import.
+    const expected = getTemplateConfig("ai-agent")?.npmDependencies;
+
+    for (const alias of ["pages-router", "app-router"] as TemplateName[]) {
+      assertEquals(
+        getTemplateConfig(alias)?.npmDependencies,
+        expected,
+        `${alias} scaffolds the ai-agent files and must resolve its dependencies`,
+      );
+    }
   });
 });
