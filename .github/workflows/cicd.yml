@@ -71,8 +71,8 @@ jobs:
         with:
           node-version: "24"
           package-manager-cache: false
-      - name: Install Node resolver test dependencies
-        run: npm --prefix npm install --no-save esbuild
+      - name: Install Node resolver test dependency
+        run: npm install --no-save esbuild
       - name: Run Node cache-link compatibility tests
         run: node ./tests/node/run-tests.mjs 'src/utils/cache-dir.test.ts'
       - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
