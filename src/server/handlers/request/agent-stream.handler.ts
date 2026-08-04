@@ -66,7 +66,7 @@ import {
   HTTP_INTERNAL_SERVER_ERROR,
   PRIORITY_MEDIUM_API,
 } from "#veryfront/utils/constants/index.ts";
-import { captureApplicationError } from "#veryfront/observability/application-errors.ts";
+import { reportHandlerFailure } from "./report-handler-failure.ts";
 import { buildRuntimeShuttingDownResponse } from "./runtime-shutdown-response.ts";
 import { isServerShuttingDown } from "../../shutdown-state.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
@@ -705,15 +705,6 @@ function getPathRunId(pathname: string): string | null {
   return match?.[1] ? decodeURIComponent(match[1]) : null;
 }
 
-/**
- * Report a 5xx agent stream failure.
- *
- * Handlers convert every error into a response, so nothing escapes to a global
- * handler and these would otherwise never reach Sentry. 4xx is excluded: it is
- * mostly validation and auth noise. `detail` is forwarded because
- * errorToResponse strips it from 5xx bodies. No-op when no reporter is
- * installed, so Sentry stays optional.
- */
 function reportAgentStreamFailure(
   error: unknown,
   req: Request,
@@ -727,9 +718,6 @@ function reportAgentStreamFailure(
     cause?: string;
   },
 ): void {
-  const attributes: Record<string, string | number | boolean> = {
-    "http.status": details.status,
-  };
   // `pathRunId` is scoped to the try block, so re-derive it here. Reporting runs
   // inside a catch, so a malformed percent escape must not throw past it and
   // take out the response this is describing.
@@ -739,18 +727,12 @@ function reportAgentStreamFailure(
   } catch {
     runId = null;
   }
-  if (details.slug) attributes["error.slug"] = details.slug;
-  if (details.category) attributes["error.category"] = details.category;
-  if (details.detail) attributes["error.detail"] = details.detail;
-  if (details.cause) attributes["error.cause"] = details.cause;
-  if (ctx.projectId) attributes["project.id"] = ctx.projectId;
-  if (ctx.projectSlug) attributes["project.slug"] = ctx.projectSlug;
-
-  captureApplicationError(error, {
-    boundary: details.boundary,
+  reportHandlerFailure(error, {
+    ...details,
     method: req.method,
-    ...(runId ? { requestId: runId } : {}),
-    attributes,
+    runId,
+    projectId: ctx.projectId,
+    projectSlug: ctx.projectSlug,
   });
 }
 

@@ -2,6 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
+import {
+  type ApplicationErrorContext,
+  setApplicationErrorReporter,
+} from "#veryfront/observability/application-errors.ts";
 import { AgentRunCancelHandler } from "./agent-run-cancel.handler.ts";
 import { createControlPlaneSignature, createCtx } from "./internal-agent-run.test-helpers.ts";
 
@@ -185,5 +189,57 @@ describe("server/handlers/request/agent-run-cancel.handler", () => {
     );
 
     assertEquals(result.response, undefined);
+  });
+
+  it("returns 500 when session cancel fails unexpectedly, and reports it", async () => {
+    const thrown = new Error("cancel boom");
+    const captures: { error: unknown; context: ApplicationErrorContext }[] = [];
+    setApplicationErrorReporter({
+      capture: (error, context) => {
+        captures.push({ error, context });
+        return "test-event-id";
+      },
+      flush: () => Promise.resolve(true),
+    });
+
+    try {
+      const handler = new AgentRunCancelHandler({
+        cancelRun() {
+          throw thrown;
+        },
+      } as unknown as AgentRunSessionManager);
+      const body = JSON.stringify({ runId: "run_1" });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: "run_1",
+        requestMethod: "DELETE",
+        requestPath: "/api/control-plane/runs/run_1",
+      });
+
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1", {
+          method: "DELETE",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 500);
+      assertEquals(await result.response.json(), { error: "Internal cancel failed" });
+
+      assertEquals(captures.length, 1);
+      const captured = captures[0];
+      assertExists(captured);
+      assertEquals(captured.error, thrown);
+      assertEquals(captured.context.boundary, "agent.run.cancel");
+      assertEquals(captured.context.requestId, "run_1");
+      assertEquals(captured.context.attributes?.["http.status"], 500);
+    } finally {
+      setApplicationErrorReporter(undefined);
+    }
   });
 });
