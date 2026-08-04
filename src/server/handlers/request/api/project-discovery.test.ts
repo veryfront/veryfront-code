@@ -131,7 +131,9 @@ describe(
       // capability that the rest of the execution surfaces already honor.
       const ctx = createHandlerContext("/granted-project", "granted", "preview");
       ctx.isLocalProject = false;
-      ctx.prepareHostedConfigContext = () => Promise.resolve(undefined);
+      // Present marks a shared multi-project runtime, as veryfront-server is.
+      // Rejecting also asserts discovery never invokes it on the granted path.
+      ctx.prepareHostedConfigContext = () => Promise.reject(new Error("must not be called"));
       ctx.allowHostProjectCodeExecution = true;
       await ctx.adapter.fs.writeFile(
         "/granted-project/tools/granted.ts",
