@@ -99,7 +99,18 @@ runs:
             fi
           fi
 
-          checksums_manifest_actual_sha256="$(sha256sum "${checksums_manifest_path}" | awk '{print $1}')"
+          if command -v sha256sum >/dev/null 2>&1; then
+            checksums_manifest_actual_sha256="$(sha256sum "${checksums_manifest_path}" | awk '{print $1}')"
+          elif command -v shasum >/dev/null 2>&1; then
+            checksums_manifest_actual_sha256="$(shasum -a 256 "${checksums_manifest_path}" | awk '{print $1}')"
+          elif command -v openssl >/dev/null 2>&1; then
+            checksums_manifest_actual_sha256="$(openssl dgst -sha256 "${checksums_manifest_path}" | awk '{print $NF}')"
+          elif command -v node >/dev/null 2>&1; then
+            checksums_manifest_actual_sha256="$(node -e \"const fs = require('fs'); const crypto = require('crypto'); process.stdout.write(crypto.createHash('sha256').update(fs.readFileSync(process.argv[1])).digest('hex')\" "${checksums_manifest_path}")"
+          else
+            echo "No checksum utility available (sha256sum/shasum/openssl/node)" >&2
+            exit 1
+          fi
           if [ "${checksums_manifest_actual_sha256}" != "${checksums_manifest_sha256}" ]; then
             echo "Checksums manifest checksum mismatch for v${version}" >&2
             echo "Expected: ${checksums_manifest_sha256}" >&2
@@ -133,7 +144,7 @@ runs:
           elif command -v openssl >/dev/null 2>&1; then
             actual_sha256="$(openssl dgst -sha256 "${zip_path}" | awk '{print $NF}')"
           elif command -v node >/dev/null 2>&1; then
-            actual_sha256="$(node -e \"const fs = require('fs'); const crypto = require('crypto'); process.stdout.write(crypto.createHash('sha256').update(fs.readFileSync(process.argv[1])).digest('hex'));\" "${zip_path}")"
+            actual_sha256="$(node -e \"const fs = require('fs'); const crypto = require('crypto'); process.stdout.write(crypto.createHash('sha256').update(fs.readFileSync(process.argv[1])).digest('hex')\" "${zip_path}")"
           else
             echo "No checksum utility available (sha256sum/shasum/openssl/node)" >&2
             exit 1
