@@ -68,6 +68,9 @@ export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
   "multi-agent-system": {
     npmDependencies: { ...CHAT_MARKDOWN_DEPENDENCIES },
   },
+  "saas-starter": {
+    npmDependencies: { ...CHAT_MARKDOWN_DEPENDENCIES },
+  },
   "docs-agent": {
     firstPartyExtensions: ["@veryfront/ext-document-kreuzberg"],
     npmDependencies: {
