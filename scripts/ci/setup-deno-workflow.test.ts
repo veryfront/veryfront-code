@@ -211,7 +211,8 @@ describe("setup-deno CI contract", () => {
     // Every checksum backend must read the file on stdin. Passing the path as an
     // argument makes GNU sha256sum/shasum escape filenames containing a backslash
     // by prefixing the output line with a literal "\", which corrupts the parsed
-    // digest on Windows runners where RUNNER_TEMP is "D:\a\_temp".
+    // digest on Windows runners, where RUNNER_TEMP is always a backslash-separated
+    // path and so always triggers the escaping.
     assertStringIncludes(install, 'sha256sum < "$1" | awk');
     assertStringIncludes(install, 'shasum -a 256 < "$1" | awk');
     assertStringIncludes(install, 'openssl dgst -sha256 < "$1" | awk');
