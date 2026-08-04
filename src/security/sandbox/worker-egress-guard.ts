@@ -1177,15 +1177,20 @@ export async function guardedEgressFetch(
     init?.headers ?? (input instanceof Request ? input.headers : undefined),
   );
   // Following a redirect means resending the body, and a stream cannot replay,
-  // so it is materialized only when redirects are actually followed. Callers
-  // that pass `redirect: "error"` or `"manual"` -- every guarded caller today,
-  // blob uploads included -- stream straight through rather than holding the
-  // whole payload in memory.
+  // so streams are materialized only when redirects are actually followed --
+  // otherwise isReplayableBody rejects the hop. Callers that pass
+  // `redirect: "error"` or `"manual"` -- every guarded caller today, blob
+  // uploads included -- stream straight through rather than holding the whole
+  // payload in memory, and never reach the replay check because both modes
+  // return or throw first.
+  const mayFollowRedirect = requestedRedirect === "follow";
   let body: BodyInit | undefined;
   if (init?.body != null) {
-    body = init.body as BodyInit;
+    body = mayFollowRedirect && init.body instanceof ReadableStream
+      ? new Uint8Array(await new Response(init.body).arrayBuffer())
+      : init.body as BodyInit;
   } else if (input instanceof Request && input.body) {
-    body = requestedRedirect === "follow" ? new Uint8Array(await input.arrayBuffer()) : input.body;
+    body = mayFollowRedirect ? new Uint8Array(await input.arrayBuffer()) : input.body;
   }
 
   // Preserve request-level options (notably `signal`, so aborts keep working)

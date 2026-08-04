@@ -106,6 +106,62 @@ describe("fetchWithPinnedAddresses", () => {
     }
   });
 
+  it("derives sec-fetch-mode and accept-encoding the way the runtime does", async () => {
+    // Both defaults are conditional in undici, so a fixed value would be wrong
+    // for range requests (a compressed byte range is ambiguous to decode) and
+    // for any non-default request mode. Baselines come from the live runtime.
+    const { createServer } = await import("node:http");
+    const seen = new Map<string, Record<string, string | string[] | undefined>>();
+    const server = createServer((request, response) => {
+      seen.set(request.url ?? "", request.headers);
+      response.writeHead(204);
+      response.end();
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Test server did not expose a TCP address");
+      }
+      const origin = `http://127.0.0.1:${address.port}`;
+      await fetch(`${origin}/range`, { headers: { range: "bytes=0-0" } });
+      await fetch(`${origin}/no-cors`, { mode: "no-cors" });
+
+      const ranged = applyRuntimeDefaultRequestHeaders(
+        new Headers({ range: "bytes=0-0" }),
+      );
+      assertEquals(
+        ranged.get("accept-encoding"),
+        seen.get("/range")?.["accept-encoding"],
+      );
+      assertEquals(ranged.get("accept-encoding"), "identity");
+
+      // Both Node and Deno send `identity` for a range request, so that
+      // baseline is compared unconditionally above. Fetch metadata is not
+      // universal — Deno omits `sec-fetch-mode` entirely — so cross-check it
+      // only where the runtime actually emits one.
+      const noCors = applyRuntimeDefaultRequestHeaders(new Headers(), "no-cors");
+      const runtimeMode = seen.get("/no-cors")?.["sec-fetch-mode"];
+      if (runtimeMode !== undefined) {
+        assertEquals(noCors.get("sec-fetch-mode"), runtimeMode);
+      }
+      assertEquals(noCors.get("sec-fetch-mode"), "no-cors");
+
+      // Unranged, default-mode requests keep the compressed-body offer.
+      const plain = applyRuntimeDefaultRequestHeaders(new Headers());
+      assertEquals(plain.get("accept-encoding"), "gzip, deflate");
+      assertEquals(plain.get("sec-fetch-mode"), "cors");
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
+  });
+
   it("keeps caller-supplied headers ahead of the runtime defaults", () => {
     const headers = applyRuntimeDefaultRequestHeaders(
       new Headers({ "user-agent": "caller/1.0", accept: "application/json" }),

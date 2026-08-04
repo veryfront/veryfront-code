@@ -684,31 +684,48 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
   });
 
   it("streams request bodies unless a redirect could force a replay", async () => {
-    const capture = async (redirect: RequestRedirect) => {
+    const streamBody = () =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("payload"));
+          controller.close();
+        },
+      });
+
+    // A stream reaches the guard either on a Request or through `init.body`.
+    // Both have to obey the same rule, or a followed 307/308 hits
+    // isReplayableBody and the hop is refused.
+    const capture = async (redirect: RequestRedirect, source: "request" | "init") => {
       let seen: unknown;
       const fetchImpl: WorkerEgressFetch = (_input, init) => {
         seen = init?.body;
         return Promise.resolve(new Response(null, { status: 204 }));
       };
-      const request = new Request("http://93.184.216.34/upload", {
-        method: "POST",
-        body: new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(new TextEncoder().encode("payload"));
-            controller.close();
-          },
-        }),
-        duplex: "half",
-      } as unknown as RequestInit);
-      await guardedEgressFetch(request, { redirect }, { fetchImpl });
+      if (source === "request") {
+        const request = new Request("http://93.184.216.34/upload", {
+          method: "POST",
+          body: streamBody(),
+          duplex: "half",
+        } as unknown as RequestInit);
+        await guardedEgressFetch(request, { redirect }, { fetchImpl });
+      } else {
+        await guardedEgressFetch("http://93.184.216.34/upload", {
+          method: "POST",
+          body: streamBody(),
+          redirect,
+          duplex: "half",
+        } as unknown as RequestInit, { fetchImpl });
+      }
       return seen;
     };
 
-    // Nothing can replay the body, so hand the stream to the transport as-is
-    // rather than materializing an upload in memory.
-    assert((await capture("error")) instanceof ReadableStream);
-    // A redirect hop would have to resend it, so it must be buffered.
-    assert((await capture("follow")) instanceof Uint8Array);
+    for (const source of ["request", "init"] as const) {
+      // Nothing can replay the body, so hand the stream to the transport as-is
+      // rather than materializing an upload in memory.
+      assert((await capture("error", source)) instanceof ReadableStream, `${source}/error`);
+      // A redirect hop would have to resend it, so it must be buffered.
+      assert((await capture("follow", source)) instanceof Uint8Array, `${source}/follow`);
+    }
   });
 
   it("follows a public -> public redirect chain and returns the final response", async () => {
