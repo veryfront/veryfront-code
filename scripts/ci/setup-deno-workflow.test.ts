@@ -208,21 +208,39 @@ describe("setup-deno CI contract", () => {
       install,
       'checksum_parse_path="${checksums_manifest_path}"',
     );
+    // Every checksum backend must read the file on stdin. Passing the path as an
+    // argument makes GNU sha256sum/shasum escape filenames containing a backslash
+    // by prefixing the output line with a literal "\", which corrupts the parsed
+    // digest on Windows runners, where RUNNER_TEMP is always a backslash-separated
+    // path and so always triggers the escaping.
+    assertStringIncludes(install, 'sha256sum < "$1" | awk');
+    assertStringIncludes(install, 'shasum -a 256 < "$1" | awk');
+    assertStringIncludes(install, 'openssl dgst -sha256 < "$1" | awk');
     assertStringIncludes(
       install,
-      'checksums_manifest_actual_sha256="$(sha256sum "${checksums_manifest_path}" | awk',
+      'update(fs.readFileSync(0)).digest(\'hex\'))" < "$1"',
+    );
+    for (
+      const argvForm of [
+        'sha256sum "${',
+        'shasum -a 256 "${',
+        'openssl dgst -sha256 "${',
+        "fs.readFileSync(process.argv[1])",
+      ]
+    ) {
+      assertEquals(
+        install.includes(argvForm),
+        false,
+        `checksums must be computed from stdin, not "${argvForm}" (breaks on Windows paths)`,
+      );
+    }
+    assertStringIncludes(
+      install,
+      'checksums_manifest_actual_sha256="$(compute_sha256 "${checksums_manifest_path}")"',
     );
     assertStringIncludes(
       install,
-      'checksums_manifest_actual_sha256="$(shasum -a 256 "${checksums_manifest_path}" | awk',
-    );
-    assertStringIncludes(
-      install,
-      'checksums_manifest_actual_sha256="$(openssl dgst -sha256 "${checksums_manifest_path}" | awk',
-    );
-    assertStringIncludes(
-      install,
-      'checksums_manifest_actual_sha256="$(node -e "const fs = require(\'fs\'); const crypto = require(\'crypto\'); process.stdout.write(crypto.createHash(\'sha256\').update(fs.readFileSync(process.argv[1])).digest(\'hex\')" "${checksums_manifest_path}")"',
+      'actual_sha256="$(compute_sha256 "${zip_path}")"',
     );
     assertStringIncludes(
       install,
