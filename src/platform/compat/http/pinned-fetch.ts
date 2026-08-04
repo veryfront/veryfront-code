@@ -6,8 +6,64 @@
 
 import type { ClientRequest, IncomingMessage, RequestOptions } from "node:http";
 import type { Readable } from "node:stream";
+import { VERSION } from "#veryfront/utils/version-constant.ts";
 
 const NULL_BODY_STATUSES = new Set([204, 205, 304]);
+
+/**
+ * Client identity for guarded egress, standing in for the runtime-supplied
+ * `user-agent` (`node`, `Deno/x.y.z`) that this transport cannot inherit.
+ */
+export const DEFAULT_OUTBOUND_USER_AGENT = `veryfront/${VERSION}`;
+
+/** What the runtime advertises when it is willing to decode a compressed body. */
+const DEFAULT_ACCEPT_ENCODING = "gzip, deflate";
+
+/**
+ * Fill in the request headers a plain `fetch` attaches on its own, leaving any
+ * the caller set untouched. This transport talks to `node:http` directly, so
+ * nothing supplies them and requests leave measurably thinner than the same
+ * call made through `fetch` — hosts behind a WAF reject user-agent-less
+ * requests outright, and omitting `accept-encoding` silently gives up response
+ * compression this transport already knows how to decode.
+ *
+ * Values mirror what Node's `fetch` sends, including the two that are derived
+ * rather than fixed: `sec-fetch-mode` follows the request mode, and
+ * `accept-encoding` becomes `identity` for range requests. Exact strings need
+ * not track the runtime version by version — `pinned-fetch.test.ts` asserts
+ * only that no header the runtime sends goes missing, so a runtime that adds
+ * one fails loudly rather than drifting.
+ *
+ * `user-agent` is the deliberate exception: the runtime default (`node`,
+ * `Deno/x.y.z`) cannot be inherited here and identifies nothing useful, so
+ * guarded egress sends DEFAULT_OUTBOUND_USER_AGENT instead. Parity for that
+ * header means "present", not "identical".
+ *
+ * Split out from the transport so that parity check can run on every runtime:
+ * the transport itself is Node/Bun-only, and a test gated on that never
+ * executes in the Deno-only CI lanes.
+ *
+ * @internal
+ */
+export function applyRuntimeDefaultRequestHeaders(
+  headers: Headers,
+  mode?: RequestMode,
+): Headers {
+  if (!headers.has("accept")) headers.set("accept", "*/*");
+  if (!headers.has("accept-language")) headers.set("accept-language", "*");
+  if (!headers.has("accept-encoding")) {
+    // A compressed byte range is ambiguous to decode, so the runtime asks for
+    // `identity` whenever the caller requested a range.
+    headers.set(
+      "accept-encoding",
+      headers.has("range") ? "identity" : DEFAULT_ACCEPT_ENCODING,
+    );
+  }
+  // Fetch metadata reports the request mode; it is not always `cors`.
+  if (!headers.has("sec-fetch-mode")) headers.set("sec-fetch-mode", mode ?? "cors");
+  if (!headers.has("user-agent")) headers.set("user-agent", DEFAULT_OUTBOUND_USER_AGENT);
+  return headers;
+}
 
 /** @internal Construct a Fetch response without violating null-body statuses. */
 export function createPinnedFetchResponse(
@@ -159,7 +215,7 @@ export async function fetchWithPinnedAddresses(
   if (addresses.length === 0) {
     throw new Error(`No validated addresses are available for ${url.host}`);
   }
-  const headers = new Headers(init.headers);
+  const headers = applyRuntimeDefaultRequestHeaders(new Headers(init.headers), init.mode);
   const body = await normalizeRequestBody(url, init, headers);
   const method = (init.method ?? "GET").toUpperCase();
   const requestHeaders: Record<string, string> = {};

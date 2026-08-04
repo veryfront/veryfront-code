@@ -78,6 +78,11 @@ jobs:
           cp -R tests/node/resolver-dependencies/node_modules/. npm/node_modules/
       - name: Run Node cache-link compatibility tests
         run: node ./tests/node/run-tests.mjs 'src/utils/cache-dir.test.ts'
+      # The pinned egress transport is Node/Bun-only, so the Deno lanes skip its
+      # tests entirely. Without this step nothing in CI exercises it, which is
+      # how it shipped omitting the request headers `fetch` normally supplies.
+      - name: Run Node egress transport tests
+        run: node ./tests/node/run-tests.mjs 'src/platform/compat/http/pinned-fetch.test.ts'
       - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
         with:
           timeout_minutes: 10

@@ -1176,11 +1176,21 @@ export async function guardedEgressFetch(
   const headers = new Headers(
     init?.headers ?? (input instanceof Request ? input.headers : undefined),
   );
+  // Following a redirect means resending the body, and a stream cannot replay,
+  // so streams are materialized only when redirects are actually followed --
+  // otherwise isReplayableBody rejects the hop. Callers that pass
+  // `redirect: "error"` or `"manual"` -- every guarded caller today, blob
+  // uploads included -- stream straight through rather than holding the whole
+  // payload in memory, and never reach the replay check because both modes
+  // return or throw first.
+  const mayFollowRedirect = requestedRedirect === "follow";
   let body: BodyInit | undefined;
   if (init?.body != null) {
-    body = init.body as BodyInit;
+    body = mayFollowRedirect && init.body instanceof ReadableStream
+      ? new Uint8Array(await new Response(init.body).arrayBuffer())
+      : init.body as BodyInit;
   } else if (input instanceof Request && input.body) {
-    body = new Uint8Array(await input.arrayBuffer());
+    body = mayFollowRedirect ? new Uint8Array(await input.arrayBuffer()) : input.body;
   }
 
   // Preserve request-level options (notably `signal`, so aborts keep working)
@@ -1207,13 +1217,15 @@ export async function guardedEgressFetch(
     let pinnedResponse: Promise<Response> | undefined;
     const isNetworkRequest = hostname !== null &&
       (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:");
-    const requestInit: RequestInit = {
+    const requestInit: RequestInit & { duplex?: "half" } = {
       ...init,
       ...carryInit,
       method,
       headers,
       body,
       redirect: "manual",
+      // Streaming a request body requires the half-duplex opt-in.
+      ...(body instanceof ReadableStream ? { duplex: "half" as const } : {}),
     };
 
     if (options.httpBroker && isNetworkRequest) {
