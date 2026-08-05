@@ -33,6 +33,9 @@ function recorder() {
   };
 }
 
+/** Placeholder base dir: recorder() never touches the filesystem. */
+const PROJECT_DIR = "<PROJECT_DIR>";
+
 /** No adapter is extended, so discovery takes the unscoped branch. */
 const noExtendedAdapters = (_fs: FileSystemAdapter): _fs is ExtendedFileSystemAdapter => false;
 
@@ -44,7 +47,7 @@ describe("server/startup-discovery", () => {
     const { calls, discoverAll } = recorder();
 
     await runStartupDiscovery({
-      config: { baseDir: "/app" },
+      config: { baseDir: PROJECT_DIR },
       allowHostProjectCodeExecution: false,
       discoverAll,
       isExtendedFSAdapter: noExtendedAdapters,
@@ -58,7 +61,7 @@ describe("server/startup-discovery", () => {
     const { calls, discoverAll } = recorder();
 
     await runStartupDiscovery({
-      config: { baseDir: "/app" },
+      config: { baseDir: PROJECT_DIR },
       allowHostProjectCodeExecution: true,
       discoverAll,
       isExtendedFSAdapter: noExtendedAdapters,
@@ -67,23 +70,65 @@ describe("server/startup-discovery", () => {
     assertEquals(calls[0]?.allowHostProjectCodeExecution, true);
   });
 
-  it("keeps the scoped multi-project path ungranted", async () => {
+  it("skips the scoped multi-project path rather than calling discovery ungranted", async () => {
     const { calls, discoverAll } = recorder();
     const fsAdapter = {
       isMultiProjectMode: () => true,
       runWithContext: <T>(_slug: string, _token: string, fn: () => Promise<T>) => fn(),
     } as unknown as ExtendedFileSystemAdapter;
 
-    await runStartupDiscovery({
-      config: { baseDir: "/app", projectSlug: "p", apiToken: "t", fsAdapter },
+    const outcome = await runStartupDiscovery({
       // Even with the deployment granting, the scoped branch must not pass it:
       // that path evaluates tenant source under a project context.
+      config: { baseDir: PROJECT_DIR, projectSlug: "p", apiToken: "t", fsAdapter },
       allowHostProjectCodeExecution: true,
       discoverAll,
       isExtendedFSAdapter: allExtendedAdapters,
     });
 
-    assertEquals(calls.length, 1);
-    assertEquals(calls[0]?.allowHostProjectCodeExecution, undefined);
+    assertEquals(outcome, { ran: false, reason: "scoped-multi-project" });
+    assertEquals(calls.length, 0);
+  });
+
+  it("never calls discovery in a way the real implementation would reject", async () => {
+    // The stub above accepts any config, but the real `discoverAll` throws on
+    // an ungranted one (`discovery-engine.ts`, "Executable project discovery
+    // requires explicit trusted-local execution"). A permissive stub is why the
+    // scoped branch could call it ungranted on every startup while the suite
+    // stayed green, so this stub enforces the same rule the real one does.
+    const enforcing = (config: DiscoveryConfig) => {
+      if (config.allowHostProjectCodeExecution !== true) {
+        return Promise.reject(
+          new TypeError("Executable project discovery requires explicit trusted-local execution"),
+        );
+      }
+      return Promise.resolve(emptyResult());
+    };
+    const fsAdapter = {
+      isMultiProjectMode: () => true,
+      runWithContext: <T>(_slug: string, _token: string, fn: () => Promise<T>) => fn(),
+    } as unknown as ExtendedFileSystemAdapter;
+
+    // Scoped: must skip, so the enforcing stub is never reached.
+    assertEquals(
+      await runStartupDiscovery({
+        config: { baseDir: PROJECT_DIR, projectSlug: "p", apiToken: "t", fsAdapter },
+        allowHostProjectCodeExecution: true,
+        discoverAll: enforcing,
+        isExtendedFSAdapter: allExtendedAdapters,
+      }),
+      { ran: false, reason: "scoped-multi-project" },
+    );
+
+    // Unscoped and granted: must reach discovery and be accepted.
+    assertEquals(
+      await runStartupDiscovery({
+        config: { baseDir: PROJECT_DIR },
+        allowHostProjectCodeExecution: true,
+        discoverAll: enforcing,
+        isExtendedFSAdapter: noExtendedAdapters,
+      }),
+      { ran: true },
+    );
   });
 });

@@ -38,30 +38,37 @@ function scopedAdapter(
   return config.fsAdapter.isMultiProjectMode() ? config.fsAdapter : undefined;
 }
 
-export async function runStartupDiscovery(input: RunStartupDiscoveryInput): Promise<void> {
-  const { config } = input;
-  const base = {
-    baseDir: config.baseDir,
-    fsAdapter: config.fsAdapter,
-    verbose: config.verbose ?? false,
-  };
+/** What startup discovery did, so the caller can report it accurately. */
+export type StartupDiscoveryOutcome =
+  | { ran: true }
+  | { ran: false; reason: "scoped-multi-project" };
 
-  const adapter = scopedAdapter(input);
-  if (adapter) {
+export async function runStartupDiscovery(
+  input: RunStartupDiscoveryInput,
+): Promise<StartupDiscoveryOutcome> {
+  const { config } = input;
+
+  if (scopedAdapter(input)) {
     // Scoped to one project, so tenant source is in reach. This path stays
     // ungranted whatever the deployment's posture: the capability is for a
     // host-owned entrypoint evaluating its own project, not for discovery
     // running inside a tenant's context.
-    await adapter.runWithContext(
-      config.projectSlug as string,
-      config.apiToken as string,
-      () => input.discoverAll(base),
-    );
-    return;
+    //
+    // `discoverAll` refuses an ungranted config by throwing, so an ungranted
+    // call here cannot discover anything, it can only raise. Previously this
+    // branch called it anyway inside `runWithContext`, and every scoped
+    // multi-project startup logged "Primitive discovery failed" while the real
+    // meaning was "this deployment does not run startup discovery". Skipping
+    // is the same behaviour with an honest name and no exception as control
+    // flow.
+    return { ran: false, reason: "scoped-multi-project" };
   }
 
   await input.discoverAll({
-    ...base,
+    baseDir: config.baseDir,
+    fsAdapter: config.fsAdapter,
+    verbose: config.verbose ?? false,
     allowHostProjectCodeExecution: input.allowHostProjectCodeExecution,
   });
+  return { ran: true };
 }

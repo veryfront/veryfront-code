@@ -246,12 +246,16 @@ export function startProductionServer(
               "#veryfront/platform/adapters/fs/wrapper.ts"
             );
 
-            await runStartupDiscovery({
+            const outcome = await runStartupDiscovery({
               config: discoveryConfig,
               allowHostProjectCodeExecution,
               discoverAll,
               isExtendedFSAdapter,
             });
+
+            if (!outcome.ran) {
+              serverLog.info("Primitive discovery skipped", { reason: outcome.reason });
+            }
           } catch (error) {
             serverLog.error("Primitive discovery failed", {
               error: error instanceof Error ? error.message : String(error),
