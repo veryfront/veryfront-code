@@ -56,7 +56,6 @@ export {
 const CHAT_MARKDOWN_DEPENDENCIES: Record<string, string> = {
   "react-markdown": "9.0.3",
   "remark-gfm": "4.0.1",
-  katex: "0.18.1",
 };
 
 export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {

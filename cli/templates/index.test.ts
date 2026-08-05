@@ -886,7 +886,7 @@ describe("chat starters scaffold a Markdown renderer", () => {
       assertExists(renderer, `${name} should scaffold app/markdown-renderer.tsx`);
 
       const dependencies = getTemplateConfig(name)?.npmDependencies ?? {};
-      for (const dependency of ["react-markdown", "remark-gfm", "katex"]) {
+      for (const dependency of ["react-markdown", "remark-gfm"]) {
         assertEquals(
           typeof dependencies[dependency],
           "string",
