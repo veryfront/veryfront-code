@@ -47,10 +47,7 @@ import {
   createErrorResponseFromDefinition,
   PROJECT_EXECUTION_UNAVAILABLE,
 } from "#veryfront/errors";
-import {
-  isHostProjectCodeExecutionAllowed,
-  isSharedProjectRuntime,
-} from "#veryfront/security/project-locality.ts";
+import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 
 const logger = serverLogger.component("ssr");
 
@@ -97,14 +94,13 @@ export class SSRHandler extends BaseHandler {
 
     const slug = pathname === "/" ? "" : pathname.replace(/^\//, "").replace(/\/$/, "");
     const requestId = `${slug || "index"}-${Date.now()}`;
-    startRequest(requestId);
 
     if (shouldHideRouteInProduction(ctx, slug)) {
       this.logDebug("Dot path blocked in production", { slug }, ctx);
       return Promise.resolve(this.continue());
     }
 
-    if (isSharedProjectRuntime(ctx) && !isHostProjectCodeExecutionAllowed(ctx)) {
+    if (requiresIsolatedProjectRuntime(ctx)) {
       const problem = createErrorResponseFromDefinition(
         PROJECT_EXECUTION_UNAVAILABLE,
         {
@@ -123,6 +119,12 @@ export class SSRHandler extends BaseHandler {
     }
 
     this.logDebug("SSR attempt", { pathname, slug }, ctx);
+
+    // Allocated only once the request is certain to be rendered. `startRequest`
+    // registers a timings entry that `endRequest` removes, but `endRequest`
+    // returns early when no timer ever ran, so an entry allocated before the
+    // guards above would survive on every hidden-route or fail-closed request.
+    startRequest(requestId);
 
     return this.setupContextAndRender(req, ctx, slug, requestId, url);
   }

@@ -163,6 +163,37 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       assertEquals(renderCalls, 0);
     });
 
+    it("renders once the host grants execution", async () => {
+      // The granted counterpart to the fail-closed test above. veryfront-code
+      // #3364 shipped a hardcoded `true` on a sibling surface that survived
+      // review because a fail-closed test cannot tell a correct predicate from
+      // a literal denial. Only this direction can.
+      let renderCalls = 0;
+      const handler = new SSRHandler(createMockSSRService({
+        renderPage: () => {
+          renderCalls++;
+          return Promise.resolve({
+            status: 200,
+            html: "<html>granted</html>",
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "private-page",
+          });
+        },
+      }));
+      const result = await handler.handle(
+        new Request("https://tenant.example/private-page"),
+        makeCtx({
+          isLocalProject: false,
+          allowHostProjectCodeExecution: true,
+          prepareHostedConfigContext: (() => {}) as HandlerContext["prepareHostedConfigContext"],
+        } as Partial<HandlerContext>),
+      );
+
+      assertEquals(result.response?.status, 200);
+      assertEquals(renderCalls, 1);
+    });
+
     it("returns response from renderPage result", async () => {
       const mockService = createMockSSRService({
         renderPage: () =>

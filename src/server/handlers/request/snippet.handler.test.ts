@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { validateLexicalPath } from "#veryfront/security";
 import { SnippetHandler } from "./snippet.handler.ts";
@@ -90,11 +90,16 @@ Deno.test("SnippetHandler rejects shared rendering before proxy context or sourc
       return Promise.resolve("");
     },
   };
+  // `isLocalProject: false` matters. This context used to say `true`, which
+  // reads as a denial test but no longer is one: an explicitly local project
+  // carries the host-execution capability, so the surface is now supposed to
+  // serve it. Only a shared runtime that was never granted execution belongs
+  // here.
   const ctx = {
     projectDir: "/project",
     projectSlug: "project",
     proxyToken: "token",
-    isLocalProject: true,
+    isLocalProject: false,
     adapter: { fs },
   } as unknown as HandlerContext;
 
@@ -106,6 +111,58 @@ Deno.test("SnippetHandler rejects shared rendering before proxy context or sourc
   assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
   assertEquals(contextCalls, 0);
   assertEquals(readPath, undefined);
+});
+
+describe("SnippetHandler host-execution capability", () => {
+  it("serves a shared runtime the host granted execution", async () => {
+    // The granted counterpart to the test above. Without it, a handler that
+    // simply denies every shared runtime, which is the pre-#366 behaviour,
+    // passes the whole suite.
+    let readPath: string | undefined;
+    const fs = {
+      symlinkSemantics: "none" as const,
+      isMultiProjectMode: () => true,
+      isContextualMode: () => true,
+      runWithContext: async (
+        _slug: string,
+        _token: string,
+        fn: () => Promise<unknown>,
+      ) => await fn(),
+      exists: () => Promise.resolve(true),
+      stat: () =>
+        Promise.resolve({
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+          size: 0,
+          mtime: new Date(),
+        }),
+      readFile: (path: string) => {
+        readPath = path;
+        return Promise.resolve("export default function Button() {}\n");
+      },
+    };
+    const ctx = {
+      projectDir: "/project",
+      projectSlug: "project",
+      proxyToken: "token",
+      isLocalProject: false,
+      allowHostProjectCodeExecution: true,
+      adapter: { fs },
+    } as unknown as HandlerContext;
+
+    const result = await new SnippetHandler().handle(
+      new Request("http://localhost/@components/button"),
+      ctx,
+    );
+
+    assertNotEquals(
+      result.response?.status,
+      503,
+      "a granted shared executor must not return project-execution-unavailable",
+    );
+    assertNotEquals(readPath, undefined, "the granted path must reach the source read");
+  });
 });
 
 Deno.test("SnippetHandler preserves dedicated local rendering", async () => {
