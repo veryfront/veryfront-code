@@ -226,7 +226,6 @@ export async function* streamOpenAICompatibleParts(
   let sawChoiceEnvelope = false;
   let sawFinishReason = false;
   let sawDone = false;
-  let sawPostFinishUsage = false;
   const toolArgumentBudget: OpenAIStreamToolArgumentBudget = {
     bytes: 0,
     fragments: 0,
@@ -258,12 +257,6 @@ export async function* streamOpenAICompatibleParts(
       if (!usageRecord) {
         throw invalidOpenAIStream(context, "event had neither choices nor usage");
       }
-      if (sawFinishReason) {
-        if (sawPostFinishUsage) {
-          throw invalidOpenAIStream(context, "stream contained multiple post-finish usage events");
-        }
-        sawPostFinishUsage = true;
-      }
       return;
     }
     if (!Array.isArray(record.choices)) {
@@ -272,12 +265,6 @@ export async function* streamOpenAICompatibleParts(
     if (record.choices.length === 0) {
       if (!usageRecord) {
         throw invalidOpenAIStream(context, "empty choices event had no usage");
-      }
-      if (sawFinishReason) {
-        if (sawPostFinishUsage) {
-          throw invalidOpenAIStream(context, "stream contained multiple post-finish usage events");
-        }
-        sawPostFinishUsage = true;
       }
       return;
     }
