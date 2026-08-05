@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
 import {
@@ -753,7 +753,7 @@ describe("package-registry adapter-backed snapshot sources", () => {
   });
 });
 
-describe("readProjectDependencyVersions — flag-gated dependency materialization", () => {
+describe("readProjectDependencyVersions: flag-gated dependency materialization", () => {
   let tmpDir: string;
   let originalFlag: string | undefined;
 
@@ -1068,7 +1068,7 @@ describe("readProjectDependencyVersions — flag-gated dependency materializatio
   });
 });
 
-describe("ensureProjectDependenciesLoaded — pin cache warm-up independent of react config", () => {
+describe("ensureProjectDependenciesLoaded: pin cache warm-up independent of react config", () => {
   let tmpDir: string;
   let originalFetch: typeof globalThis.fetch;
   let originalFlag: string | undefined;
@@ -1099,7 +1099,7 @@ describe("ensureProjectDependenciesLoaded — pin cache warm-up independent of r
     await Deno.remove(tmpDir, { recursive: true });
   });
 
-  it("warms the dep cache from a real package.json (config null — baseline path)", async () => {
+  it("warms the dep cache from a real package.json (config null: baseline path)", async () => {
     await ensureProjectDependenciesLoaded(tmpDir);
     assertEquals(getProjectDependenciesSync(tmpDir)?.["lodash"], "4.17.20");
   });
@@ -1152,5 +1152,115 @@ describe("ensureProjectDependenciesLoaded — pin cache warm-up independent of r
       true,
       `Expected pinned URL; got: ${result}`,
     );
+  });
+});
+
+describe("createDependencyPinningSource project identity", () => {
+  it("should carry the project id onto the source", () => {
+    const source = createDependencyPinningSource({
+      projectDir: "/project",
+      projectId: "project-abc",
+    });
+    assertEquals(source.projectId, "project-abc");
+  });
+
+  it("should carry the project id even without an adapter filesystem", () => {
+    // The pre-existing cacheNamespace path only runs for adapter-backed reads;
+    // the cohort gate needs identity on every source, local ones included.
+    const source = createDependencyPinningSource({
+      projectDir: "/project",
+      projectId: "project-abc",
+      isLocalProject: true,
+    });
+    assertEquals(source.fs, undefined);
+    assertEquals(source.projectId, "project-abc");
+  });
+
+  it("should leave the project id undefined when none is supplied", () => {
+    const source = createDependencyPinningSource({ projectDir: "/project" });
+    assertEquals(source.projectId, undefined);
+  });
+});
+
+describe("getDependencyPinningSnapshot cohort gating", () => {
+  const PERCENT_ENV = "VERYFRONT_DEPENDENCY_PINNING_ROLLOUT_PERCENT";
+  const PROJECTS_ENV = "VERYFRONT_DEPENDENCY_PINNING_PROJECTS";
+
+  function restoreEnv(name: string, original: string | undefined): void {
+    if (original === undefined) deleteEnv(name);
+    else setEnv(name, original);
+  }
+
+  let originalFlag: string | undefined;
+  let originalPercent: string | undefined;
+  let originalProjects: string | undefined;
+
+  beforeEach(() => {
+    originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    originalPercent = getHostEnv(PERCENT_ENV);
+    originalProjects = getHostEnv(PROJECTS_ENV);
+  });
+
+  afterEach(() => {
+    // Restore absence as absence. The cohort reader distinguishes an unset
+    // variable from an empty one, and the test preload only supplies its
+    // default when the variable is undefined, so restoring "" here would
+    // leak a different cohort state into every later test file.
+    restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+    restoreEnv(PERCENT_ENV, originalPercent);
+    restoreEnv(PROJECTS_ENV, originalProjects);
+  });
+
+  it("should stay off when the flag is on but the rollout percent is absent", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    setEnv(PERCENT_ENV, "");
+    setEnv(PROJECTS_ENV, "");
+    const snapshot = await getDependencyPinningSnapshot({
+      projectDir: null,
+      projectId: "project-abc",
+    });
+    assertEquals(snapshot.cacheKey, "off");
+  });
+
+  it("should enable an explicitly allowlisted project", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    setEnv(PERCENT_ENV, "0");
+    setEnv(PROJECTS_ENV, "project-abc");
+    // No package.json path, so an in-cohort project reports no-project rather
+    // than "off": which is what proves the cohort admitted it.
+    const snapshot = await getDependencyPinningSnapshot({
+      projectDir: null,
+      projectId: "project-abc",
+    });
+    assertEquals(snapshot.cacheKey, "on:no-project");
+  });
+
+  it("should keep a non-allowlisted project off at zero percent", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    setEnv(PERCENT_ENV, "0");
+    setEnv(PROJECTS_ENV, "project-abc");
+    const snapshot = await getDependencyPinningSnapshot({
+      projectDir: null,
+      projectId: "project-other",
+    });
+    assertEquals(snapshot.cacheKey, "off");
+  });
+
+  it("should apply a full rollout even to a source without project identity", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    setEnv(PERCENT_ENV, "100");
+    setEnv(PROJECTS_ENV, "");
+    const snapshot = await getDependencyPinningSnapshot({ projectDir: null });
+    assertEquals(snapshot.cacheKey, "on:no-project");
+  });
+
+  it("should stay off when the flag itself is off regardless of percent", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
+    setEnv(PERCENT_ENV, "100");
+    const snapshot = await getDependencyPinningSnapshot({
+      projectDir: null,
+      projectId: "project-abc",
+    });
+    assertEquals(snapshot.cacheKey, "off");
   });
 });

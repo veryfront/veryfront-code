@@ -14,7 +14,10 @@ import {
   _pendingResolutions,
   _setDependencyResolutionPosterForTest,
 } from "../esm/npm-registry-client.ts";
-import { resolveDependencyPinForImport } from "./dependency-resolution.ts";
+import {
+  isPinningEnabledForRewrite,
+  resolveDependencyPinForImport,
+} from "./dependency-resolution.ts";
 
 interface MemoryPackageState {
   content: string;
@@ -425,5 +428,81 @@ describe("dependency resolution write-back authority", () => {
     const request = requests[0]!;
     assertEquals(request.specifiers, ["__proto__@^1.2.3"]);
     assertEquals(request.expected["__proto__"], "^1.2.3");
+  });
+});
+
+describe("isPinningEnabledForRewrite", () => {
+  const PERCENT_ENV = "VERYFRONT_DEPENDENCY_PINNING_ROLLOUT_PERCENT";
+  const PROJECTS_ENV = "VERYFRONT_DEPENDENCY_PINNING_PROJECTS";
+  let originalFlag: string | undefined;
+  let originalPercent: string | undefined;
+  let originalProjects: string | undefined;
+
+  beforeEach(() => {
+    originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    originalPercent = getHostEnv(PERCENT_ENV);
+    originalProjects = getHostEnv(PROJECTS_ENV);
+  });
+
+  afterEach(() => {
+    if (originalFlag === undefined) deleteEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    else setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+    if (originalPercent === undefined) deleteEnv(PERCENT_ENV);
+    else setEnv(PERCENT_ENV, originalPercent);
+    if (originalProjects === undefined) deleteEnv(PROJECTS_ENV);
+    else setEnv(PROJECTS_ENV, originalProjects);
+  });
+
+  it("should trust an on cache key without consulting the cohort", () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    setEnv(PERCENT_ENV, "0");
+    deleteEnv(PROJECTS_ENV);
+    // The snapshot already decided. Re-deciding here would let a mid-render
+    // configuration change split one render across two policies.
+    assertEquals(
+      isPinningEnabledForRewrite({
+        dependencyPinningCacheKey: "on:abc",
+        projectId: "project-abc",
+      }),
+      true,
+    );
+  });
+
+  it("should reject the unknown snapshot key", () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    setEnv(PERCENT_ENV, "100");
+    assertEquals(
+      isPinningEnabledForRewrite({
+        dependencyPinningCacheKey: "on:unknown",
+        projectId: "project-abc",
+      }),
+      false,
+    );
+  });
+
+  it("should treat an off cache key as disabled", () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    setEnv(PERCENT_ENV, "100");
+    assertEquals(
+      isPinningEnabledForRewrite({
+        dependencyPinningCacheKey: "off",
+        projectId: "project-abc",
+      }),
+      false,
+    );
+  });
+
+  it("should apply the cohort when no cache key is present", () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    setEnv(PERCENT_ENV, "0");
+    setEnv(PROJECTS_ENV, "project-abc");
+    assertEquals(isPinningEnabledForRewrite({ projectId: "project-abc" }), true);
+    assertEquals(isPinningEnabledForRewrite({ projectId: "project-other" }), false);
+  });
+
+  it("should stay disabled with no cache key when the flag is off", () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
+    setEnv(PERCENT_ENV, "100");
+    assertEquals(isPinningEnabledForRewrite({ projectId: "project-abc" }), false);
   });
 });

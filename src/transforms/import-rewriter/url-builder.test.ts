@@ -11,12 +11,14 @@ import {
   buildCrossProjectUrl,
   buildEsmShUrl,
   buildModuleServerUrl,
+  buildPinnedEsmShUrl,
   buildReactUrl,
   buildVeryfrontModuleUrl,
   extractDependencyPinningPathKey,
   getReactImportMap,
   isEsmShUrl,
   normalizeExtension,
+  parseEsmShUrl,
 } from "./url-builder.ts";
 
 describe("transforms/import-rewriter/url-builder", () => {
@@ -477,5 +479,120 @@ describe("transforms/import-rewriter/url-builder", () => {
         "https://esm.sh/@tanstack/react-query@5?external=react,react-dom&target=es2022",
       );
     });
+  });
+});
+
+describe("parseEsmShUrl", () => {
+  it("should parse an unversioned package", () => {
+    assertEquals(parseEsmShUrl("https://esm.sh/lodash"), {
+      origin: "https://esm.sh",
+      packageName: "lodash",
+      version: null,
+      subpath: "",
+      search: "",
+      hash: "",
+    });
+  });
+
+  it("should parse a versioned package with a subpath and query", () => {
+    assertEquals(parseEsmShUrl("https://esm.sh/lodash@4.17.21/fp?target=es2022"), {
+      origin: "https://esm.sh",
+      packageName: "lodash",
+      version: "4.17.21",
+      subpath: "/fp",
+      search: "?target=es2022",
+      hash: "",
+    });
+  });
+
+  it("should parse an unversioned scoped package", () => {
+    assertEquals(parseEsmShUrl("https://esm.sh/@dnd-kit/core"), {
+      origin: "https://esm.sh",
+      packageName: "@dnd-kit/core",
+      version: null,
+      subpath: "",
+      search: "",
+      hash: "",
+    });
+  });
+
+  it("should parse a versioned scoped package with a subpath", () => {
+    assertEquals(parseEsmShUrl("https://esm.sh/@radix-ui/react-dialog@1.1.1/dist"), {
+      origin: "https://esm.sh",
+      packageName: "@radix-ui/react-dialog",
+      version: "1.1.1",
+      subpath: "/dist",
+      search: "",
+      hash: "",
+    });
+  });
+
+  it("should decline non-esm.sh URLs", () => {
+    assertEquals(parseEsmShUrl("https://cdn.example.com/lib.js"), null);
+  });
+
+  it("should decline esm.sh build-prefixed and non-npm paths", () => {
+    // Rewriting these would corrupt the specifier; leave them untouched.
+    assertEquals(parseEsmShUrl("https://esm.sh/v135/lodash@4.17.21"), null);
+    assertEquals(parseEsmShUrl("https://esm.sh/stable/react@19.2.4"), null);
+    assertEquals(parseEsmShUrl("https://esm.sh/gh/user/repo"), null);
+    assertEquals(parseEsmShUrl("https://esm.sh/jsr/@std/path"), null);
+  });
+
+  it("should decline a bare scope with no package", () => {
+    assertEquals(parseEsmShUrl("https://esm.sh/@dnd-kit"), null);
+  });
+
+  it("should decline an empty path", () => {
+    assertEquals(parseEsmShUrl("https://esm.sh/"), null);
+  });
+
+  it("should decline a trailing slash, which is an import-map prefix mapping", () => {
+    assertEquals(parseEsmShUrl("https://esm.sh/lodash/"), null);
+    assertEquals(parseEsmShUrl("https://esm.sh/@dnd-kit/core/"), null);
+  });
+
+  it("should decline doubled slashes rather than normalizing them away", () => {
+    assertEquals(parseEsmShUrl("https://esm.sh//lodash"), null);
+    assertEquals(parseEsmShUrl("https://esm.sh/lodash//fp"), null);
+  });
+
+  it("should decline an empty version suffix rather than treating it as unversioned", () => {
+    assertEquals(parseEsmShUrl("https://esm.sh/lodash@"), null);
+    assertEquals(parseEsmShUrl("https://esm.sh/@dnd-kit/core@"), null);
+  });
+
+  it("should decline scheme-qualified specifiers such as node builtins", () => {
+    // Treating `node:crypto` as a package name would schedule platform
+    // resolution and write-back for something npm has never heard of.
+    assertEquals(parseEsmShUrl("https://esm.sh/node:crypto"), null);
+    assertEquals(parseEsmShUrl("https://esm.sh/node:fs/promises"), null);
+    assertEquals(parseEsmShUrl("https://esm.sh/npm:lodash"), null);
+  });
+});
+
+describe("buildPinnedEsmShUrl", () => {
+  it("should insert the version and preserve subpath, query, and hash", () => {
+    const parsed = parseEsmShUrl("https://esm.sh/lodash/fp?target=es2022#frag");
+    assertEquals(
+      buildPinnedEsmShUrl(parsed!, "4.17.21"),
+      "https://esm.sh/lodash@4.17.21/fp?target=es2022#frag",
+    );
+  });
+
+  it("should insert the version for a scoped package", () => {
+    const parsed = parseEsmShUrl("https://esm.sh/@dnd-kit/core");
+    assertEquals(
+      buildPinnedEsmShUrl(parsed!, "6.1.0"),
+      "https://esm.sh/@dnd-kit/core@6.1.0",
+    );
+  });
+
+  it("should round-trip a pinned URL back through the parser", () => {
+    const parsed = parseEsmShUrl("https://esm.sh/@dnd-kit/core/dist?target=es2022");
+    const pinned = buildPinnedEsmShUrl(parsed!, "6.1.0");
+    assertEquals(parseEsmShUrl(pinned)?.version, "6.1.0");
+    assertEquals(parseEsmShUrl(pinned)?.packageName, "@dnd-kit/core");
+    assertEquals(parseEsmShUrl(pinned)?.subpath, "/dist");
   });
 });
