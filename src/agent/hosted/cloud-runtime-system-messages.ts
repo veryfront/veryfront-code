@@ -21,6 +21,10 @@ export function createVeryfrontCloudRuntimeSystemMessages(
 ): ChatSystemMessage[] {
   return buildAgentCallContext({
     instructions: input.agent.instructions,
+    // Interactive hosted chat has long idle gaps between turns; a 1-hour cache
+    // TTL keeps sparsely-spaced turns reading cache instead of paying full
+    // input price on every turn. See RFC 0002 §4.1.
+    cacheTtl: "1h",
     ...(input.instructions ? { projectInstructions: input.instructions } : {}),
     ...(input.projectId
       ? {

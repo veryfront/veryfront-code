@@ -66,7 +66,17 @@ export type BuildAgentCallContextInput = {
   includeSkillToolUsage?: boolean;
   /** Host-supplied environment facts. */
   environmentContext?: string;
+  /**
+   * Anthropic prompt-cache TTL for the cached static system message.
+   * `"5m"` (default) keeps the standard ephemeral breakpoint; `"1h"` extends it
+   * so interactive turns spaced minutes-to-tens-of-minutes apart still read
+   * cache instead of paying full input price. See RFC 0002 §4.1.
+   */
+  cacheTtl?: AgentCallCacheTtl;
 };
+
+/** Supported prompt-cache TTLs for the cached static system message. */
+export type AgentCallCacheTtl = "5m" | "1h";
 
 /** Builds the shared project-context prompt block (project reference + branch). */
 export function buildProjectContextPromptBlock(input: AgentCallProjectContext): string {
@@ -127,6 +137,18 @@ function hasBlock(instructions: string, blockName: string): boolean {
   return instructions.indexOf(`</${blockName}>`, openIndex) > openIndex;
 }
 
+/**
+ * Renders the Anthropic `cacheControl` for the static system message. The
+ * default (`"5m"`) omits `ttl` to preserve the standard 5-minute ephemeral
+ * breakpoint byte-for-byte; `"1h"` requests the 1-hour cache.
+ */
+function buildCacheControl(cacheTtl: AgentCallCacheTtl | undefined): {
+  type: "ephemeral";
+  ttl?: "1h";
+} {
+  return cacheTtl === "1h" ? { type: "ephemeral", ttl: "1h" } : { type: "ephemeral" };
+}
+
 /** Builds the complete system-message set for one provider call. */
 export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSystemMessage[] {
   const runtimeContextMarker = input.runtimeContextMarker ?? DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER;
@@ -183,7 +205,7 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
       role: "system",
       content: staticParts.join("\n\n"),
       providerOptions: {
-        anthropic: { cacheControl: { type: "ephemeral" } },
+        anthropic: { cacheControl: buildCacheControl(input.cacheTtl) },
       },
     },
   ];

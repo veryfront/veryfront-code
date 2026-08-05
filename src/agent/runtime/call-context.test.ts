@@ -109,6 +109,22 @@ describe("agent/runtime/call-context", () => {
         content: "<environment_context>\nRuntime facts\n</environment_context>",
       });
     });
+
+    it("defaults the static message to the 5-minute ephemeral breakpoint", () => {
+      const messages = buildAgentCallContext({ instructions: "Base" });
+
+      assertEquals(messages[0]?.providerOptions, {
+        anthropic: { cacheControl: { type: "ephemeral" } },
+      });
+    });
+
+    it("requests the 1-hour cache when cacheTtl is 1h", () => {
+      const messages = buildAgentCallContext({ instructions: "Base", cacheTtl: "1h" });
+
+      assertEquals(messages[0]?.providerOptions, {
+        anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+      });
+    });
   });
 
   describe("empty inputs", () => {
