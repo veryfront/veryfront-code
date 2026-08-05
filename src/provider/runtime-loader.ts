@@ -151,7 +151,10 @@ export function createWarningCollector(): WarningCollector {
 export function stringifyJsonValue(value: unknown): string {
   try {
     const serialized = JSON.stringify(
-      snapshotProviderJsonValue(value, { sortObjectKeys: false }),
+      snapshotProviderJsonValue(value, {
+        sortObjectKeys: false,
+        dropUndefinedMembers: true,
+      }),
     );
     if (serialized === undefined) {
       throw new TypeError("value has no JSON representation");

@@ -80,6 +80,22 @@ Do work.`,
     assertEquals(result.scripts, ["scripts/lib/helper.ts", "scripts/run.sh"]);
   });
 
+  it("load_skill should omit allowedTools when the skill declares no policy", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/SKILL.md": `---
+name: my-skill
+description: Skill from adapter
+---
+# Instructions
+Do work.`,
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+
+    const result = await createLoadSkillTool().execute({ skillId: "my-skill" });
+
+    assertEquals(Object.hasOwn(result, "allowedTools"), false);
+  });
+
   it("framework tools use the immutable normalized registry snapshot", async () => {
     const registeredAdapter = createSkillTestAdapter({
       "/project/skills/registered/SKILL.md": `---

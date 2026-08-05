@@ -64,6 +64,31 @@ describe("provider/runtime-loader helpers", () => {
     assertEquals(stringifyToolResultValue({ ok: true }), '{"ok":true}');
   });
 
+  it("matches JSON.stringify on undefined members without loosening the strict snapshot", () => {
+    // The load_skill result from run b2eca9d0, whose undefined allowedTools
+    // aborted the next model call.
+    const toolResult = {
+      skillId: "morning-email-summary",
+      instructions: "# Instructions",
+      allowedTools: undefined,
+      references: [],
+      scripts: [],
+    };
+    assertEquals(stringifyToolResultValue(toolResult), JSON.stringify(toolResult));
+    assertEquals(stringifyJsonValue({ a: undefined, b: 1 }), '{"b":1}');
+    assertEquals(stringifyJsonValue({ a: undefined }), "{}");
+    assertEquals(stringifyJsonValue([1, undefined, 2]), "[1,null,2]");
+    assertEquals(
+      stringifyJsonValue({ nested: { a: undefined, b: [undefined] } }),
+      '{"nested":{"b":[null]}}',
+    );
+
+    // The audit primitive stays fail-closed.
+    assertThrows(() => snapshotJsonValue({ value: undefined }), TypeError);
+    assertThrows(() => snapshotJsonValue([undefined]), TypeError);
+    assertEquals(jsonValuesEqual({ hidden: undefined }, {}), false);
+  });
+
   it("preserves provider-native tool argument text without weakening structured serialization", () => {
     assertEquals(stringifyToolArguments('{"id":"one"}'), '{"id":"one"}');
     assertEquals(stringifyToolArguments({ id: "one" }), '{"id":"one"}');
