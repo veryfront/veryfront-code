@@ -7,6 +7,7 @@ import { AgentRunResumeHandler } from "./agent-run-resume.handler.ts";
 import {
   createControlPlaneSignature as createTestControlPlaneSignature,
   createCtx,
+  stubApplicationErrorReporter,
 } from "./internal-agent-run.test-helpers.ts";
 
 function createControlPlaneSignature(
@@ -287,33 +288,48 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
     assertEquals(await result.response.json(), { error: "RUN_NOT_ACTIVE" });
   });
 
-  it("returns 500 when session resume fails unexpectedly", async () => {
-    const handler = new AgentRunResumeHandler({
-      submitToolResult() {
-        throw new Error("resume boom");
-      },
-    } as unknown as AgentRunSessionManager);
-    const body = JSON.stringify({
-      type: "tool_result",
-      toolCallId: "tool_1",
-      result: { ok: true },
-    });
-    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+  it("returns 500 when session resume fails unexpectedly, and reports it", async () => {
+    const thrown = new Error("resume boom");
+    const { captures, restore } = stubApplicationErrorReporter();
 
-    const result = await handler.handle(
-      new Request("https://example.com/api/control-plane/runs/run_1/resume", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-veryfront-control-plane-jws": jws,
+    try {
+      const handler = new AgentRunResumeHandler({
+        submitToolResult() {
+          throw thrown;
         },
-        body,
-      }),
-      createCtx(publicKeyPem),
-    );
+      } as unknown as AgentRunSessionManager);
+      const body = JSON.stringify({
+        type: "tool_result",
+        toolCallId: "tool_1",
+        result: { ok: true },
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
 
-    assertExists(result.response);
-    assertEquals(result.response.status, 500);
-    assertEquals(await result.response.json(), { error: "Internal resume failed" });
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/resume", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 500);
+      assertEquals(await result.response.json(), { error: "Internal resume failed" });
+
+      assertEquals(captures.length, 1);
+      const captured = captures[0];
+      assertExists(captured);
+      assertEquals(captured.error, thrown);
+      assertEquals(captured.context.boundary, "agent.run.resume");
+      assertEquals(captured.context.requestId, "run_1");
+      assertEquals(captured.context.attributes?.["http.status"], 500);
+    } finally {
+      restore();
+    }
   });
 });
