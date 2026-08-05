@@ -123,9 +123,9 @@ export class ProxyFSAdapterManager {
     const getAdapterStartTime = performance.now();
 
     const effectiveProductionMode = productionMode ?? false;
+    // All three must use the same predicate the cache key uses, or an identity
+    // that is not part of the key can still differ and fail the reuse assertion.
     const effectiveReleaseId = effectiveProductionMode ? (releaseId ?? null) : null;
-    // Both must use the same predicate the cache key uses, or an identity that
-    // is not part of the key can still differ and fail the reuse assertion.
     const effectiveEnvironmentName = environmentName || null;
     const effectiveBranch = effectiveProductionMode ? null : (branch ?? "main");
 
