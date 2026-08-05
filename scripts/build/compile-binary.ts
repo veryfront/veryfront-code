@@ -24,6 +24,9 @@ const PROJECT_ROOT = fromFileUrl(new URL("../..", import.meta.url));
  */
 export const UNTRACEABLE_WORKER_INCLUDES = [
   "src/config/declarative-evaluator-worker-entry.ts",
+  "extensions/ext-react-ssr/src/worker-renderer.ts",
+  "extensions/ext-document-kreuzberg/src/upload-extraction-worker.ts",
+  "extensions/ext-document-kreuzberg/src/native-progress-extraction-worker.ts",
 ];
 
 export const DEFAULT_INCLUDES = [
@@ -55,27 +58,30 @@ export const DEFAULT_INCLUDES = [
   "extensions/ext-parser-babel/src/index.ts",
   "extensions/ext-parser-babel/src/parser-only.ts",
   "extensions/ext-react-ssr/src/index.ts",
-  // Resolved through a computed sibling URL at runtime, so compile cannot
-  // discover either the worker entrypoint or its embedded renderer payload.
-  "extensions/ext-react-ssr/src/worker-renderer.ts",
+  // The renderer payload the worker loads. Not an entrypoint, so it is not in
+  // UNTRACEABLE_WORKER_INCLUDES, but compile cannot discover it either.
   "extensions/ext-react-ssr/src/worker-renderer-bundle.generated.ts",
   "extensions/ext-yaml/src/index.ts",
   "extensions/ext-sandbox-shell-tools/src/index.ts",
-  // Spawned via `new Worker(new URL(...))`, which deno compile does not trace.
-  "extensions/ext-document-kreuzberg/src/upload-extraction-worker.ts",
-  "extensions/ext-document-kreuzberg/src/native-progress-extraction-worker.ts",
   "src/rendering/rsc",
   "src/utils/clsx.ts",
   "dist/framework-src",
 ];
 
 export const PROXY_INCLUDES = [
-  // Deliberately omits UNTRACEABLE_WORKER_INCLUDES. `cli/proxy-main.ts` pulls
-  // the declarative evaluator's *runner* into its module graph, but embedding
-  // the worker entry drags the evaluator's babel dependency tree into
-  // scripts/build/proxy-deno.lock, which --frozen rejects. That lock has never
-  // carried those packages, so the proxy cannot have been spawning this worker.
-  // If it ever needs to, both this list and the proxy lock must change together.
+  // Deliberately omits UNTRACEABLE_WORKER_INCLUDES, on build grounds only.
+  // Adding them fails the compile outright: the worker entry's graph wants
+  // @babel/types@7.29.8 plus @babel/helper-string-parser and
+  // @babel/helper-validator-identifier, while proxy-deno.lock pins
+  // @babel/types@7.29.0, and --frozen refuses to update the lock.
+  //
+  // This is NOT evidence that the proxy is safe. The lock already carries a
+  // babel parse toolchain (parser, generator, traverse, types), so "the deps
+  // are absent, therefore the worker never runs here" does not follow --
+  // the conflict is a version skew, not an absence. `cli/proxy-main.ts` does
+  // pull the evaluator's runner into its graph, so whether the proxy can reach
+  // a spawn at runtime is an open question, tracked separately. If it can, this
+  // list and the proxy lock have to be regenerated together.
   //
   // The proxy runtime is loaded after provider activation. Providers are
   // statically referenced by cli/proxy-main.ts so --include does not embed the

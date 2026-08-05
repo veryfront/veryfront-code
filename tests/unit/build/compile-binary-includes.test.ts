@@ -27,6 +27,15 @@ describe("compile-binary includes", () => {
   }
 
   it("should embed the untraceable worker entrypoints in the full profile", () => {
+    // Wiring check on the `...UNTRACEABLE_WORKER_INCLUDES` spread, not the real
+    // protection -- iterating the constant makes an empty constant vacuously
+    // green. The two discovery tests below are what actually guard the class,
+    // so assert the constant is populated before trusting this.
+    assertEquals(
+      UNTRACEABLE_WORKER_INCLUDES.length > 0,
+      true,
+      "UNTRACEABLE_WORKER_INCLUDES is empty, which makes this test vacuous",
+    );
     const includeFlags = getIncludeFlags("full");
     for (const workerInclude of UNTRACEABLE_WORKER_INCLUDES) {
       assertEquals(
@@ -40,10 +49,17 @@ describe("compile-binary includes", () => {
   });
 
   it("should keep untraceable workers out of the frozen proxy profile", () => {
-    // Not an accident worth "fixing": embedding these drags the declarative
-    // evaluator's babel tree into scripts/build/proxy-deno.lock, which --frozen
-    // rejects, so the proxy binary fails to build. If the proxy ever needs to
-    // spawn one, the lock has to be regenerated in the same change.
+    // Pins a build constraint, not a safety claim. Embedding these fails the
+    // proxy compile: the worker entry's graph wants a newer @babel/types than
+    // proxy-deno.lock pins, and --frozen refuses to update it. The lock does
+    // carry a babel toolchain already, so this says nothing about whether the
+    // proxy can reach a worker spawn -- that question is tracked separately.
+    // Regenerate the lock in the same change if the answer turns out to be yes.
+    assertEquals(
+      UNTRACEABLE_WORKER_INCLUDES.length > 0,
+      true,
+      "UNTRACEABLE_WORKER_INCLUDES is empty, which makes this test vacuous",
+    );
     const includeFlags = getIncludeFlags("proxy");
     for (const workerInclude of UNTRACEABLE_WORKER_INCLUDES) {
       assertEquals(
