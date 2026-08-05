@@ -17,6 +17,7 @@ import { registerTool } from "#veryfront/mcp";
 import { assertLocalToolId, toolRegistry, toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import type { Skill } from "#veryfront/skill/types.ts";
+import type { ResolvedSkillSelectorSnapshot } from "#veryfront/skill/selector.ts";
 import {
   createExecuteSkillScriptTool,
   createLoadSkillReferenceTool,
@@ -135,7 +136,7 @@ interface AgentInstanceDeps {
   publicConfig: ResolvedAgentConfig;
   toolsConfig: AgentConfig["tools"];
   runtime: AgentRuntime;
-  resolveSkillSnapshot: () => { allowedSkillIds: string[] };
+  resolveSkillSnapshot: () => Pick<ResolvedSkillSelectorSnapshot<Skill>, "allowedSkillIds">;
   shouldAttachAllowedSkillIds: boolean;
 }
 
@@ -294,7 +295,7 @@ function resolveToolsConfiguration(input: {
   id: string;
   delegates: string[] | undefined;
   exposeSkillTools: boolean;
-  resolveSkillSnapshot: () => { allowedSkillIds: string[] };
+  resolveSkillSnapshot: () => Pick<ResolvedSkillSelectorSnapshot<Skill>, "allowedSkillIds">;
 }): AgentConfig["tools"] {
   const { config, id, delegates, exposeSkillTools, resolveSkillSnapshot } = input;
   let merged = config.tools;
@@ -353,7 +354,7 @@ function resolveToolsConfiguration(input: {
 function createAugmentedSystem(input: {
   config: AgentConfig;
   configuredToolNames: string[] | undefined;
-  resolveSkillSnapshot: () => { definitions: Skill[] };
+  resolveSkillSnapshot: () => Pick<ResolvedSkillSelectorSnapshot<Skill>, "definitions">;
 }): () => Promise<string> {
   const { config, configuredToolNames, resolveSkillSnapshot } = input;
   const originalSystem = config.system;
