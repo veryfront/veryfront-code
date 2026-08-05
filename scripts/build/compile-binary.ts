@@ -7,7 +7,27 @@ import { parseArgs } from "#std/flags";
 import { fromFileUrl, isAbsolute, join } from "#std/path.ts";
 
 const PROJECT_ROOT = fromFileUrl(new URL("../..", import.meta.url));
+
+/**
+ * Worker entrypoints `deno compile` cannot discover.
+ *
+ * These are spawned through a sibling URL whose extension is computed at
+ * runtime. Compile embeds a worker only when it can statically read the
+ * specifier, so these are invisible to it and must be listed explicitly.
+ *
+ * Omitting one fails nothing that runs from source -- the file resolves from
+ * disk, so the build and every test pass. The binary then starts, serves
+ * traffic, and dies on the first request that spawns the worker. The
+ * declarative config evaluator reached production this way and crash-looped it.
+ *
+ * See PROXY_INCLUDES for why the proxy profile does not carry these.
+ */
+export const UNTRACEABLE_WORKER_INCLUDES = [
+  "src/config/declarative-evaluator-worker-entry.ts",
+];
+
 export const DEFAULT_INCLUDES = [
+  ...UNTRACEABLE_WORKER_INCLUDES,
   "src/platform/polyfills",
   "src/proxy/main.ts",
   "src/security/sandbox/worker-script.ts",
@@ -50,6 +70,13 @@ export const DEFAULT_INCLUDES = [
 ];
 
 export const PROXY_INCLUDES = [
+  // Deliberately omits UNTRACEABLE_WORKER_INCLUDES. `cli/proxy-main.ts` pulls
+  // the declarative evaluator's *runner* into its module graph, but embedding
+  // the worker entry drags the evaluator's babel dependency tree into
+  // scripts/build/proxy-deno.lock, which --frozen rejects. That lock has never
+  // carried those packages, so the proxy cannot have been spawning this worker.
+  // If it ever needs to, both this list and the proxy lock must change together.
+  //
   // The proxy runtime is loaded after provider activation. Providers are
   // statically referenced by cli/proxy-main.ts so --include does not embed the
   // workspace file tree for each extension.
