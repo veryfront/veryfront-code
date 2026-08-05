@@ -41,7 +41,11 @@ const captureExclusiveCreateCapability = (
 ).captureExclusiveCreateCapability!;
 const captureStaticReadCapabilities = (
   capabilityModule as unknown as {
-    captureStaticReadCapabilities?: (value: unknown, label?: string) => StaticReaders;
+    captureStaticReadCapabilities?: (
+      value: unknown,
+      label?: string,
+      allowExplicitUndefined?: boolean,
+    ) => StaticReaders;
   }
 ).captureStaticReadCapabilities!;
 const captureLegacyFileSystemCapabilitiesForSnapshot = (
@@ -234,6 +238,29 @@ describe("platform/adapters/file-system-capabilities", () => {
     await captured.create("/root/new", new Uint8Array([1]));
     assertEquals(created, "/root/new");
     assertEquals(unrelatedReads, 0);
+  });
+
+  it("keeps virtual authority when a wrapper publishes absent slots as undefined", () => {
+    // FSAdapterWrapper freezes every optional capability slot, publishing
+    // `undefined` for the ones the adapter does not implement. Strict capture
+    // threw on that shape, and SecureFs swallows the throw, so wrapper-backed
+    // filesystems lost virtual snapshot authority silently rather than loudly.
+    const wrapperShaped = {
+      symlinkSemantics: "none",
+      getSourceSnapshotVersion: () => 7,
+      readFileBytes: () => Promise.resolve(new Uint8Array([1])),
+      readFileBytesWithinLimit: () => Promise.resolve(new Uint8Array([1])),
+      maxWholeFileReadBytes: 1024,
+      // Published but unimplemented, exactly as the wrapper does.
+      readFileSnapshotWithinLimit: undefined,
+    };
+
+    assertThrows(() => captureStaticReadCapabilities(wrapperShaped));
+
+    const captured = captureStaticReadCapabilities(wrapperShaped, "Filesystem", true);
+    assertEquals(captured.snapshot, undefined);
+    assertEquals(typeof captured.virtual?.generation, "function");
+    assertEquals(typeof captured.virtual?.exact, "function");
   });
 
   it("returns undefined only when a single-purpose raw method is absent", () => {

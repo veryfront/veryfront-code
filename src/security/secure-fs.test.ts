@@ -7,6 +7,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createSecureFs, SecureFs, wrapAdapterWithSecurity } from "./secure-fs.ts";
+import { wrapFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/adapter.ts";
 import type { RuntimeAdapter, ServeOptions, Server } from "#veryfront/platform/adapters/base.ts";
@@ -1388,5 +1389,48 @@ describe("SecureFs", () => {
       TypeError,
       "construction-time root",
     );
+  });
+});
+
+describe("SecureFs with the platform filesystem wrapper", () => {
+  it("accepts a wrapper whose unsupported capabilities are published as undefined", () => {
+    // FSAdapterWrapper publishes every optional capability as a frozen own
+    // property, including ones the underlying adapter lacks, so project code
+    // cannot inject one after construction. SecureFs previously read that
+    // shape as a malformed capability and rejected it with "SecureFs
+    // filesystem snapshot capability is invalid", which failed every hosted
+    // render on a remote filesystem.
+    const bareAdapter = {
+      readFile: (_path: string) => Promise.resolve("x"),
+      readFileBytes: (_path: string) => Promise.resolve(new Uint8Array()),
+      writeFile: (_path: string, _content: string) => Promise.resolve(),
+      exists: (_path: string) => Promise.resolve(true),
+      stat: (_path: string) =>
+        Promise.resolve({
+          size: 0,
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+          mtime: null,
+        }),
+      readDir: async function* (_path: string) {},
+      mkdir: (_path: string) => Promise.resolve(),
+      remove: (_path: string) => Promise.resolve(),
+    } as unknown as Parameters<typeof wrapFSAdapter>[0];
+
+    const wrapped = wrapFSAdapter(bareAdapter);
+    // Precondition: the capability really is published as an explicit undefined.
+    const descriptor = Object.getOwnPropertyDescriptor(
+      wrapped,
+      "readFileSnapshotWithinLimit",
+    );
+    assertEquals(descriptor !== undefined, true);
+    assertEquals(descriptor?.value, undefined);
+
+    const secureFs = createSecureFs({
+      baseDir: "/project",
+      adapter: { fs: wrapped } as unknown as RuntimeAdapter,
+    });
+    assertEquals(secureFs instanceof SecureFs, true);
   });
 });
