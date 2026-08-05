@@ -357,7 +357,17 @@ describe("cache/keys", () => {
     it("keeps the branch key stable when no environment is named", () => {
       assertEquals(
         buildProxyManagerCacheKey("example-project", false, null, "main"),
-        buildProxyManagerCacheKey("example-project", false, null, "main", null),
+        "proxy:example-project:preview:main",
+      );
+    });
+
+    it("escapes delimiters in an environment name", () => {
+      const forged = buildProxyManagerCacheKey("example-project", false, null, "main", "a:b");
+
+      assertEquals(forged.includes("a:b"), false);
+      assertNotEquals(
+        forged,
+        buildProxyManagerCacheKey("example-project", false, null, "main", "a"),
       );
     });
 

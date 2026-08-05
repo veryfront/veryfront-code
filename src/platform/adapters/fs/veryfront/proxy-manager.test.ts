@@ -138,6 +138,122 @@ describe("ProxyFSAdapterManager", () => {
     });
   });
 
+  describe("adapter identity", () => {
+    function stubbedManager(): ProxyFSAdapterManager {
+      return createManager({
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = () => Promise.resolve();
+          return adapter;
+        },
+      });
+    }
+
+    it("keeps distinct preview environments on separate adapters", async () => {
+      const manager = stubbedManager();
+      try {
+        const unnamed = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+        );
+        const preview = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          "preview",
+          "main",
+        );
+
+        assertNotStrictEquals(unnamed, preview);
+      } finally {
+        manager.dispose();
+      }
+    });
+
+    it("reuses a preview adapter without a fatal identity mismatch", async () => {
+      const manager = stubbedManager();
+      try {
+        const first = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          "preview",
+          "main",
+        );
+        const second = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          "preview",
+          "main",
+        );
+
+        assertEquals(first, second);
+      } finally {
+        manager.dispose();
+      }
+    });
+
+    it("treats an empty environment name as unnamed", async () => {
+      const manager = stubbedManager();
+      try {
+        await manager.getAdapter("my-project", "test-token", undefined, false, null, "", "main");
+        const unnamed = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+        );
+
+        assertExists(unnamed);
+      } finally {
+        manager.dispose();
+      }
+    });
+
+    it("ignores branch when resolving a production adapter identity", async () => {
+      const manager = stubbedManager();
+      try {
+        await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          true,
+          "release-42",
+          "Production",
+          "main",
+        );
+        const withoutBranch = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          true,
+          "release-42",
+          "Production",
+          null,
+        );
+
+        assertExists(withoutBranch);
+      } finally {
+        manager.dispose();
+      }
+    });
+  });
+
   describe("exact production source", () => {
     it("rejects mutable environment selection without an immutable release", async () => {
       const manager = createManager();

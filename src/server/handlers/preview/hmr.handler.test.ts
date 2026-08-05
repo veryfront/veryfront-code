@@ -547,4 +547,42 @@ describe("server/handlers/preview/hmr.handler", () => {
       assertEquals(result.response!.status, 501);
     });
   });
+
+  describe("ensureAdapterInitialized", () => {
+    it("warms the adapter for the resolved environment", async () => {
+      let observed: Record<string, unknown> | undefined;
+      const handler = new HMRHandler();
+      const ctx = {
+        projectSlug: "demo-project",
+        proxyToken: "test-token",
+        projectId: "proj_123",
+        resolvedEnvironment: "preview",
+        requestContext: { branch: "main" },
+        adapter: {
+          fs: {
+            isVeryfrontAdapter: true,
+            getUnderlyingAdapter: () => undefined,
+            isMultiProjectMode: () => true,
+            runWithContext: (
+              _slug: string,
+              _token: string,
+              run: () => Promise<void>,
+              _projectId: string,
+              options: Record<string, unknown>,
+            ) => {
+              observed = options;
+              return run();
+            },
+            exists: () => Promise.resolve(true),
+          },
+        },
+      } as unknown as HandlerContext;
+
+      await (handler as unknown as {
+        ensureAdapterInitialized(ctx: HandlerContext): Promise<void>;
+      }).ensureAdapterInitialized(ctx);
+
+      assertEquals(observed?.environmentName, "preview");
+    });
+  });
 });
