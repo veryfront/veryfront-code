@@ -16,6 +16,7 @@ import {
 } from "./integration.ts";
 import { denoAdapter } from "../deno.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
 describe("integration.ts", () => {
   it("should export enhanceAdapterWithFS function", () => {
@@ -311,6 +312,59 @@ describe("integration.ts", () => {
         Error,
         'FSAdapter type "unsupported" is not implemented',
       );
+    });
+  });
+
+  describe("enhanced adapter shape", () => {
+    function enhanceWithRemoteFs() {
+      // The GitHub adapter fetches and schema-validates a repository tree at
+      // construction, so the mock has to satisfy that shape.
+      return withMockFetch(
+        () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({ sha: "deadbeef", tree: [], truncated: false }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+        () =>
+          enhanceAdapterWithFS(denoAdapter, {
+            fs: {
+              type: "github",
+              github: { token: "test-token", owner: "owner", repo: "repo" },
+            },
+          }),
+      );
+    }
+
+    it("is not a Proxy, because security consumers refuse one outright", async () => {
+      // A Proxy here failed every hosted render using a remote filesystem with
+      // "SecureFs runtime adapter cannot be a Proxy".
+      const enhanced = await enhanceWithRemoteFs();
+      assertEquals(enhanced === denoAdapter, false);
+      assertEquals(isProxyWithoutHooks(enhanced), false);
+    });
+
+    it("exposes the remote filesystem as an own data property", async () => {
+      // SecureFs resolves the filesystem through getOwnPropertyDescriptor. A
+      // Proxy carrying only a get trap forwarded that to the target and handed
+      // back the host filesystem, silently serving the wrong source.
+      const enhanced = await enhanceWithRemoteFs();
+      const descriptor = Object.getOwnPropertyDescriptor(enhanced, "fs");
+      assertExists(descriptor);
+      assertEquals("value" in descriptor, true);
+      assertEquals(typeof descriptor.value, "object");
+      assertEquals(descriptor.value === denoAdapter.fs, false);
+    });
+
+    it("keeps the rest of the adapter, with methods bound to the original", async () => {
+      const enhanced = await enhanceWithRemoteFs();
+      assertEquals(enhanced.id, denoAdapter.id);
+      assertEquals(enhanced.name, denoAdapter.name);
+      assertEquals(enhanced.capabilities, denoAdapter.capabilities);
+      // `shutdown` lives on the prototype and closes over instance state, so it
+      // must survive materialization already bound to the source adapter.
+      assertEquals(typeof enhanced.shutdown, "function");
     });
   });
 });

@@ -167,6 +167,38 @@ export async function extractUserIdFromToken(
   }
 }
 
+/**
+ * Apex domains that may host the sign-in page, most specific first.
+ *
+ * The result is always one of these constants, never a value taken from the
+ * request, so a forged Host header cannot redirect a user off-platform.
+ */
+const SIGN_IN_APEX_DOMAINS = ["veryfront.org", "veryfront.com"] as const;
+const DEFAULT_SIGN_IN_APEX = "veryfront.com";
+
+/**
+ * Pick the sign-in host matching the environment the request arrived on.
+ *
+ * This used to be hardcoded to production. A staging visitor was therefore sent
+ * to veryfront.com to sign in, received a cookie scoped to that domain, and
+ * returned to a veryfront.org host that never receives it, so the redirect loop
+ * could not close and staging previews were unreachable while signed in.
+ */
+function resolveSignInApex(hostname: string, isHostedProductionDeployment: boolean): string {
+  // Production-mode deployments keep the default apex. `*.production.veryfront.org`
+  // has signed in at veryfront.com since #1827, and which environment owns that
+  // hostname is not derivable from the code, so it is left alone rather than
+  // changed on an assumption. Only preview hosts, which the cluster shows split
+  // cleanly (production serves *.preview.veryfront.com, staging serves
+  // *.preview.veryfront.org), are routed by apex here.
+  if (isHostedProductionDeployment) return DEFAULT_SIGN_IN_APEX;
+
+  for (const apex of SIGN_IN_APEX_DOMAINS) {
+    if (hostname === apex || hostname.endsWith(`.${apex}`)) return apex;
+  }
+  return DEFAULT_SIGN_IN_APEX;
+}
+
 export function buildProxyAuthRedirectUrl(url: URL): string {
   const safePath = normalizeProxyOriginFormPath(url.pathname);
   const returnPath = safePath + url.search;
@@ -182,7 +214,8 @@ export function buildProxyAuthRedirectUrl(url: URL): string {
     ? `https://${url.hostname}${returnPath}`
     : returnPath;
 
-  return `https://veryfront.com/sign-in?from=${encodeURIComponent(returnTarget)}`;
+  const signInApex = resolveSignInApex(url.hostname, isHostedProductionDeployment);
+  return `https://${signInApex}/sign-in?from=${encodeURIComponent(returnTarget)}`;
 }
 
 export function isProjectMember(
