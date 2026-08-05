@@ -109,6 +109,19 @@ export type JsonSnapshotOptions = {
   maxBytes?: number;
   /** Sort object keys for deterministic snapshots. Defaults to true. */
   sortObjectKeys?: boolean;
+  /**
+   * Follow `JSON.stringify` on `undefined` members: drop object properties
+   * holding `undefined` and encode `undefined` array elements as `null`.
+   *
+   * Off by default so audit and equality callers keep failing closed — an own
+   * property holding `undefined` stays distinguishable from an absent one.
+   * Enable it only when producing a provider wire payload, where the value has
+   * to survive exactly as `JSON.stringify` would have encoded it. Descriptor
+   * validation is unchanged: accessors, symbols, and Proxies still fail.
+   *
+   * @default false
+   */
+  dropUndefinedMembers?: boolean;
 };
 
 type ResolvedJsonSnapshotOptions = {
@@ -116,6 +129,7 @@ type ResolvedJsonSnapshotOptions = {
   maxNodes: number;
   maxBytes: number;
   sortObjectKeys: boolean;
+  dropUndefinedMembers: boolean;
 };
 
 type SnapshotState = ResolvedJsonSnapshotOptions & {
@@ -201,11 +215,16 @@ function resolveOptions(options: JsonSnapshotOptions): ResolvedJsonSnapshotOptio
   if (sortObjectKeys !== undefined && typeof sortObjectKeys !== "boolean") {
     throw new NativeTypeError("Provider JSON snapshot sortObjectKeys must be a boolean");
   }
+  const dropUndefinedMembers = readOwnOption(inspectedOptions, "dropUndefinedMembers");
+  if (dropUndefinedMembers !== undefined && typeof dropUndefinedMembers !== "boolean") {
+    throw new NativeTypeError("Provider JSON snapshot dropUndefinedMembers must be a boolean");
+  }
   return {
     maxDepth: readLimit(maxDepth, DEFAULT_MAX_DEPTH, "maxDepth", 0),
     maxNodes: readLimit(maxNodes, DEFAULT_MAX_NODES, "maxNodes", 1),
     maxBytes: readLimit(maxBytes, DEFAULT_MAX_BYTES, "maxBytes", 1),
     sortObjectKeys: sortObjectKeys ?? true,
+    dropUndefinedMembers: dropUndefinedMembers ?? false,
   };
 }
 
@@ -433,10 +452,17 @@ function snapshotArray(
     if (index > 0) {
       addBytes(state, 1);
     }
+    // JSON.stringify encodes a present-but-undefined element as null. The
+    // density check above still rejects holes, which have no JSON encoding.
+    const element = elementValues[index];
     defineArrayElement(
       snapshot,
       index,
-      snapshotValue(elementValues[index], depth + 1, state),
+      snapshotValue(
+        element === undefined && state.dropUndefinedMembers ? null : element,
+        depth + 1,
+        state,
+      ),
     );
   }
   addBytes(state, 1);
@@ -470,9 +496,15 @@ function snapshotObject(
     if (typeof key !== "string") {
       invalidValue("must not contain symbol properties");
     }
+    // Read through the descriptor first so accessors still fail closed; only
+    // a genuine own data property holding `undefined` may be dropped.
+    const propertyValue = readDataProperty(value, key, true);
+    if (propertyValue === undefined && state.dropUndefinedMembers) {
+      continue;
+    }
     defineArrayElement(entries, entries.length, {
       key,
-      value: readDataProperty(value, key, true),
+      value: propertyValue,
     });
   }
   if (state.sortObjectKeys) {

@@ -10,6 +10,7 @@ import {
   createLoadSkillTool,
 } from "./tools.ts";
 import type { Skill, SkillScriptResult } from "./types.ts";
+import { stringifyToolResultValue } from "../provider/shared/index.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSkillTestAdapter } from "./testing.ts";
 import { LocalScriptExecutor } from "./executor.ts";
@@ -78,6 +79,26 @@ Do work.`,
     assertEquals(result.allowedTools, ["Read", "api:*"]);
     assertEquals(result.references, ["references/guide.md"]);
     assertEquals(result.scripts, ["scripts/lib/helper.ts", "scripts/run.sh"]);
+  });
+
+  it("load_skill should omit allowedTools when the skill declares no policy", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/SKILL.md": `---
+name: my-skill
+description: Skill from adapter
+---
+# Instructions
+Do work.`,
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+
+    const result = await createLoadSkillTool().execute({ skillId: "my-skill" });
+
+    // An own `allowedTools` property holding `undefined` is not JSON data. The
+    // provider boundary snapshots tool results without dropping undefined the
+    // way JSON.stringify does, so emitting the key fails the next model call.
+    assertEquals(Object.hasOwn(result, "allowedTools"), false);
+    assertEquals(stringifyToolResultValue(result), JSON.stringify(result));
   });
 
   it("framework tools use the immutable normalized registry snapshot", async () => {

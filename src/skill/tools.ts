@@ -538,7 +538,10 @@ export function createLoadSkillTool(options: SkillSelectorToolOptions = {}): Too
       return {
         skillId: skill.id,
         instructions: parsed.body,
-        allowedTools: skill.metadata.allowedTools,
+        // Omit the key entirely when the skill declares no policy. An own
+        // property holding `undefined` is not JSON data, and tool results
+        // cross the provider boundary as a strict JSON snapshot.
+        ...(skill.metadata.allowedTools ? { allowedTools: skill.metadata.allowedTools } : {}),
         references: loadableReferences,
         scripts,
       };
