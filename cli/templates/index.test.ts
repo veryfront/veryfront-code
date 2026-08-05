@@ -234,6 +234,25 @@ describe("cli/templates", () => {
     }
   });
 
+  it("keeps the eval's expected answers out of the system prompt", async () => {
+    // A worked example in the prompt lets the model copy the answer instead of
+    // computing it, which passes the money gates and the rubric while the
+    // calculator is never called. The gates then measure the prompt, not the
+    // agent.
+    const agent = await Deno.readTextFile(
+      new URL("./files/ai-agent/agents/assistant.ts", import.meta.url),
+    );
+    const system = /system:\s*\n?\s*"([\s\S]*?)",\n/.exec(agent)?.[1] ?? "";
+    assertEquals(system.length > 0, true, "could not read the system prompt");
+
+    const leaked = ["15.21", "99.71", "33.24", "33.23"].filter((amount) => system.includes(amount));
+    assertEquals(
+      leaked,
+      [],
+      "the system prompt states amounts the eval asserts the agent should derive",
+    );
+  });
+
   it("keeps the ai-agent starter slim, actionable, and viewport-bound", async () => {
     const agent = await Deno.readTextFile(
       new URL("./files/ai-agent/agents/assistant.ts", import.meta.url),
