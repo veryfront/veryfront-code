@@ -386,6 +386,27 @@ describe("describeReadyReleaseAssetManifestRejection", () => {
     );
   });
 
+  it("survives a hostile envelope instead of throwing while classifying", () => {
+    // This runs inside the error path, to build a classified DEPLOYMENT_ERROR.
+    // A throw here would surface as the unclassified error this diagnostic
+    // exists to eliminate, so property reads must not be able to raise.
+    const hostile = new Proxy({}, {
+      getOwnPropertyDescriptor() {
+        throw new Error("hostile proxy");
+      },
+      ownKeys() {
+        throw new Error("hostile proxy");
+      },
+      get() {
+        throw new Error("hostile proxy");
+      },
+    });
+
+    const reason = describeReadyReleaseAssetManifestRejection(hostile, "r1");
+    assertEquals(typeof reason, "string");
+    assertEquals(reason.length > 0, true);
+  });
+
   it("reports a body that fails schema checks without echoing it", () => {
     const reason = describeReadyReleaseAssetManifestRejection(
       { state: "ready", manifest_version: 1, manifest: { secret: "do-not-echo" } },

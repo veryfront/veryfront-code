@@ -386,12 +386,12 @@ export function describeReadyReleaseAssetManifestRejection(
     return "the response envelope was not an object";
   }
 
-  const manifestVersion = readOwnDataProperty(value, "manifest_version");
+  const manifestVersion = readUntrustedOwnDataProperty(value, "manifest_version");
   if (!isSafeIntegerInRange(manifestVersion, Number.MAX_SAFE_INTEGER)) {
     return "the response envelope carried no usable manifest_version";
   }
 
-  const body = readOwnDataProperty(value, "manifest");
+  const body = readUntrustedOwnDataProperty(value, "manifest");
   const manifest = parseReleaseAssetManifest(body);
   if (!manifest) {
     const schemaVersion = readUntrustedOwnDataProperty(body, "schemaVersion");
