@@ -75,6 +75,16 @@ const UI: NavGridEntry[] = [
   { title: "ProgressBar", id: "ui-progressbar--docs" },
   { title: "ScrollFade", id: "ui-scrollfade--docs" },
   { title: "CodeBlock", id: "ui-codeblock--docs" },
+  { title: "Meter", id: "ui-meter--docs" },
+  { title: "ScrollArea", id: "ui-scrollarea--docs" },
+  { title: "InputOTP", id: "ui-inputotp--docs" },
+  { title: "Breadcrumb", id: "ui-breadcrumb--docs" },
+  { title: "Pagination", id: "ui-pagination--docs" },
+  { title: "Field", id: "ui-field--docs" },
+  { title: "Calendar", id: "ui-calendar--docs" },
+  { title: "DatePicker", id: "ui-datepicker--docs" },
+  { title: "AlertDialog", id: "ui-alertdialog--docs" },
+  { title: "NavigationMenu", id: "ui-navigationmenu--docs" },
 ];
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
