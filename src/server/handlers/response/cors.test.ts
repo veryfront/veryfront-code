@@ -141,11 +141,61 @@ describe("server/handlers/response/cors", () => {
           prepareHostedConfigContext: (() => {
             throw new Error("shared preflight prepared project config");
           }) as HandlerContext["prepareHostedConfigContext"],
+          securityConfig: { cors: { origin: ["https://app.example"] } } as never,
         }),
       );
 
       assertEquals(result.response instanceof Response, true);
       assertEquals(routeResolutionCalls, 0);
+      assertEquals(
+        result.response?.headers.get("access-control-allow-methods"),
+        "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+      );
+    });
+
+    it("resolves project route methods once the host grants execution", async () => {
+      const dir = await Deno.makeTempDir({ prefix: "vf-cors-granted-" });
+      const routeFile = `${dir}/route.ts`;
+      await Deno.writeTextFile(
+        routeFile,
+        "export function GET() {}\nexport function POST() {}\n",
+      );
+
+      let routeResolutionCalls = 0;
+      const handler = new CorsHandler({
+        resolveAppRouteFile: () => {
+          routeResolutionCalls++;
+          return Promise.resolve({ file: routeFile } as never);
+        },
+      });
+
+      try {
+        const result = await handler.handle(
+          new Request("https://tenant.example/api/private", {
+            method: "OPTIONS",
+            headers: {
+              Origin: "https://app.example",
+              "access-control-request-method": "POST",
+            },
+          }),
+          makeCtx({
+            allowHostProjectCodeExecution: true,
+            prepareHostedConfigContext: (() =>
+              Promise.resolve(
+                undefined,
+              )) as unknown as HandlerContext["prepareHostedConfigContext"],
+            securityConfig: { cors: { origin: ["https://app.example"] } } as never,
+          }),
+        );
+
+        assertEquals(routeResolutionCalls, 1);
+        assertEquals(
+          result.response?.headers.get("access-control-allow-methods"),
+          "HEAD, GET, POST, OPTIONS",
+        );
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+      }
     });
 
     it("does not advertise infrastructure-only request headers", async () => {

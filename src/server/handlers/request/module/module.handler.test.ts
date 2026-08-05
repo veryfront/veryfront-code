@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ModuleHandler } from "./module.handler.ts";
 import { handleBatchModuleEndpoint } from "./batch-module-handler.ts";
@@ -272,6 +272,54 @@ describe("server/handlers/request/module/module.handler", () => {
 
       assertEquals(result.response?.status, 503);
       assertEquals(await result.response?.text(), "");
+    });
+
+    it("reaches the host renderer once the host grants execution", async () => {
+      let rendererCalls = 0;
+      const renderer = {
+        renderPage: () =>
+          Promise.resolve({ pageModule: { code: "export default 1;" } }) as ReturnType<
+            Renderer["renderPage"]
+          >,
+      } as unknown as Renderer;
+      setRendererInitializer({
+        initialize: () => {
+          rendererCalls++;
+          return Promise.resolve(renderer);
+        },
+        isInitialized: () => rendererCalls > 0,
+        get: () => renderer,
+        destroy: () => Promise.resolve(),
+      });
+
+      const result = await new ModuleHandler().handle(
+        new Request("https://tenant.example/_veryfront/pages/page.js"),
+        makeCtx({
+          isLocalProject: false,
+          allowHostProjectCodeExecution: true,
+          projectSlug: "tenant",
+          proxyToken: "token",
+          adapter: {
+            fs: {
+              isMultiProjectMode: () => true,
+              runWithContext: <R>(_s: string, _t: string, fn: () => Promise<R>) => fn(),
+              exists: () => Promise.resolve(true),
+              readFile: () => Promise.resolve(""),
+            },
+          } as unknown as HandlerContext["adapter"],
+        }),
+      );
+
+      assertNotEquals(
+        result.response?.status,
+        503,
+        "a granted shared executor must not return project-execution-unavailable",
+      );
+      assertEquals(
+        rendererCalls > 0,
+        true,
+        "the request must reach the host renderer instead of failing at the guard",
+      );
     });
   });
 

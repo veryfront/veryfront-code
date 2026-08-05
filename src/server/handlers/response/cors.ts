@@ -10,7 +10,7 @@ import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { getConfig } from "#veryfront/config";
 import { PRIORITY_VERY_HIGH } from "#veryfront/utils/constants/index.ts";
 import { resolveAppRouteFile } from "../request/api/app-router-resolver.ts";
-import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
+import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import { isInfrastructureOnlyRequestHeader } from "#veryfront/security/http/application-request.ts";
 
 type AppRouteResolver = typeof resolveAppRouteFile;
@@ -50,13 +50,13 @@ export class CorsHandler extends BaseHandler {
     if (req.method.toUpperCase() !== "OPTIONS") return this.continue();
 
     const pathname = new URL(req.url).pathname;
-    const isSharedRuntime = isSharedProjectRuntime(ctx);
-    const allowMethods = isSharedRuntime
+    const mustDenyProjectExecution = requiresIsolatedProjectRuntime(ctx);
+    const allowMethods = mustDenyProjectExecution
       ? CorsHandler.DEFAULT_METHODS
       : await this.resolveAllowedMethods(pathname, ctx);
 
     let corsConfig = ctx.securityConfig?.cors;
-    if (!isSharedRuntime) {
+    if (!mustDenyProjectExecution) {
       try {
         const cfg = await getConfig(ctx.projectDir, ctx.adapter);
         corsConfig = cfg?.security?.cors ?? corsConfig;

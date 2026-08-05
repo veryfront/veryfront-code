@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import type { HandlerContext } from "../types.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MarkdownPreviewHandler } from "./markdown-preview.handler.ts";
@@ -97,6 +97,73 @@ Deno.test("MarkdownPreviewHandler fails closed before shared source reads", asyn
   assertEquals(result.response?.status, 503);
   assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
   assertEquals(reads, 0);
+});
+
+Deno.test("MarkdownPreviewHandler renders shared markdown once the host grants execution", async () => {
+  const originalFetch = globalThis.fetch;
+  let contentReads = 0;
+  globalThis.fetch = (input) => {
+    const url = String(input);
+    if (url.includes("/git/trees/")) {
+      return Promise.resolve(Response.json({
+        sha: "tree",
+        tree: [{ path: "README.md", mode: "100644", type: "blob", sha: "readme", size: 7 }],
+        truncated: false,
+      }));
+    }
+    if (url.includes("/contents/README.md")) {
+      contentReads += 1;
+      const content = "# Hello";
+      return Promise.resolve(Response.json({
+        type: "file",
+        name: "README.md",
+        path: "README.md",
+        sha: "readme",
+        size: content.length,
+        content: btoa(content),
+        encoding: "base64",
+        download_url: null,
+      }));
+    }
+    return Promise.resolve(new Response("Not found", { status: 404 }));
+  };
+
+  const github = new GitHubFSAdapter({
+    type: "github",
+    projectDir: "/project",
+    github: { token: "token", owner: "owner", repo: "repo" },
+  });
+  const fs = new FSAdapterWrapper(github);
+  try {
+    const result = await new MarkdownPreviewHandler().handle(
+      new Request("https://tenant.example/README.md"),
+      makeCtx({
+        isLocalProject: false,
+        allowHostProjectCodeExecution: true,
+        requestContext: { mode: "preview" } as HandlerContext["requestContext"],
+        prepareHostedConfigContext: (() =>
+          Promise.resolve(
+            undefined,
+          )) as unknown as HandlerContext["prepareHostedConfigContext"],
+        securityConfig: null,
+        adapter: { fs } as unknown as HandlerContext["adapter"],
+      }),
+    );
+
+    assertNotEquals(
+      result.response?.status,
+      503,
+      "a granted shared executor must not return project-execution-unavailable",
+    );
+    assertEquals(
+      contentReads,
+      1,
+      "the request must reach the project source read instead of failing at the guard",
+    );
+  } finally {
+    await fs.shutdown();
+    globalThis.fetch = originalFetch;
+  }
 });
 
 Deno.test("MarkdownPreviewHandler admits and reads through a real wrapped GitHub adapter", async () => {

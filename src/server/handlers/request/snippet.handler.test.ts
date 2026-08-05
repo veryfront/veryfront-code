@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { validateLexicalPath } from "#veryfront/security";
 import { SnippetHandler } from "./snippet.handler.ts";
@@ -94,7 +94,7 @@ Deno.test("SnippetHandler rejects shared rendering before proxy context or sourc
     projectDir: "/project",
     projectSlug: "project",
     proxyToken: "token",
-    isLocalProject: true,
+    isLocalProject: false,
     adapter: { fs },
   } as unknown as HandlerContext;
 
@@ -106,6 +106,57 @@ Deno.test("SnippetHandler rejects shared rendering before proxy context or sourc
   assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
   assertEquals(contextCalls, 0);
   assertEquals(readPath, undefined);
+});
+
+Deno.test("SnippetHandler renders shared snippets once the host grants execution", async () => {
+  let contextCalls = 0;
+  let readPath: string | undefined;
+  const fs = {
+    symlinkSemantics: "none" as const,
+    isMultiProjectMode: () => true,
+    isContextualMode: () => true,
+    runWithContext: async (
+      _slug: string,
+      _token: string,
+      fn: () => Promise<unknown>,
+    ) => {
+      contextCalls++;
+      return await fn();
+    },
+    exists: () => Promise.resolve(true),
+    stat: () =>
+      Promise.resolve({
+        isFile: true,
+        isDirectory: false,
+        isSymlink: false,
+        size: 0,
+        mtime: new Date(),
+      }),
+    readFile: (path: string) => {
+      readPath = path;
+      return Promise.resolve("");
+    },
+  };
+  const ctx = {
+    projectDir: "/project",
+    projectSlug: "project",
+    proxyToken: "token",
+    isLocalProject: false,
+    allowHostProjectCodeExecution: true,
+    adapter: { fs },
+  } as unknown as HandlerContext;
+
+  const result = await new SnippetHandler().handle(
+    new Request("http://localhost/@components/button"),
+    ctx,
+  );
+  assertNotEquals(
+    result.response?.status,
+    503,
+    "a granted shared executor must not return project-execution-unavailable",
+  );
+  assertEquals(contextCalls, 1);
+  assertEquals(readPath, "/project/components/button.snippet.mdx");
 });
 
 Deno.test("SnippetHandler preserves dedicated local rendering", async () => {

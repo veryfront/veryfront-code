@@ -16,7 +16,7 @@ import {
   createErrorResponseFromDefinition,
   PROJECT_EXECUTION_UNAVAILABLE,
 } from "#veryfront/errors";
-import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
+import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 
 const MODULE_ENDPOINT_PREFIXES = [
   "/_vf_modules/",
@@ -69,11 +69,11 @@ export class ModuleHandler extends BaseHandler {
     }
 
     // These endpoints delegate to the legacy renderer, whose module loader
-    // imports page and layout code in the host process. Remote source must not
-    // reach that path until rendering has a generation-owned prepared module
-    // graph equivalent to isolated API routes.
+    // imports page and layout code in the host process. A shared runtime must
+    // not reach that path unless its host-owned entrypoint granted the
+    // host-execution capability.
     if (
-      isSharedProjectRuntime(ctx) &&
+      requiresIsolatedProjectRuntime(ctx) &&
       HOST_RENDERER_ENDPOINT_PREFIXES.some((prefix) => pathname.startsWith(prefix))
     ) {
       const problem = createErrorResponseFromDefinition(

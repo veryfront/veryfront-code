@@ -12,7 +12,7 @@ import {
   VeryfrontError,
 } from "#veryfront/errors";
 import { validatePath, ValidationPresets } from "#veryfront/security";
-import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
+import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import {
   createHandlerDependencyPinningSource,
   getHandlerDependencyPinningIdentity,
@@ -37,7 +37,7 @@ export class SnippetHandler extends BaseHandler {
       return this.continue();
     }
 
-    if (isSharedProjectRuntime(ctx)) {
+    if (requiresIsolatedProjectRuntime(ctx)) {
       const problem = createErrorResponseFromDefinition(
         PROJECT_EXECUTION_UNAVAILABLE,
         {
