@@ -123,9 +123,11 @@ export class ProxyFSAdapterManager {
     const getAdapterStartTime = performance.now();
 
     const effectiveProductionMode = productionMode ?? false;
-    const effectiveReleaseId = releaseId ?? null;
-    const effectiveEnvironmentName = environmentName ?? null;
-    const effectiveBranch = branch ?? (effectiveProductionMode ? null : "main");
+    // All three must use the same predicate the cache key uses, or an identity
+    // that is not part of the key can still differ and fail the reuse assertion.
+    const effectiveReleaseId = effectiveProductionMode ? (releaseId ?? null) : null;
+    const effectiveEnvironmentName = environmentName || null;
+    const effectiveBranch = effectiveProductionMode ? null : (branch ?? "main");
 
     if (
       this.baseConfig.veryfront?.proxyMode === true &&

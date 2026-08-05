@@ -5,6 +5,7 @@ import {
   assertExists,
   assertNotStrictEquals,
   assertRejects,
+  assertStrictEquals,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -132,6 +133,168 @@ describe("ProxyFSAdapterManager", () => {
         );
         assertEquals(disposeCalls, 1);
         assertEquals(manager.hasAdapter("my-project", false, null, "main"), false);
+      } finally {
+        manager.dispose();
+      }
+    });
+  });
+
+  describe("adapter identity", () => {
+    function stubbedManager(): ProxyFSAdapterManager {
+      return createManager({
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = () => Promise.resolve();
+          return adapter;
+        },
+      });
+    }
+
+    it("keeps distinct preview environments on separate adapters", async () => {
+      const manager = stubbedManager();
+      try {
+        const unnamed = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+        );
+        const preview = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          "preview",
+          "main",
+        );
+
+        assertNotStrictEquals(unnamed, preview);
+      } finally {
+        manager.dispose();
+      }
+    });
+
+    it("reuses an unnamed preview adapter after a named one is created", async () => {
+      const manager = stubbedManager();
+      try {
+        const first = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+        );
+        const named = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          "preview",
+          "main",
+        );
+        const again = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+        );
+
+        assertNotStrictEquals(first, named);
+        assertStrictEquals(first, again);
+      } finally {
+        manager.dispose();
+      }
+    });
+
+    it("treats an empty environment name as unnamed", async () => {
+      const manager = stubbedManager();
+      try {
+        const empty = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          "",
+          "main",
+        );
+        const unnamed = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+        );
+
+        assertStrictEquals(empty, unnamed);
+      } finally {
+        manager.dispose();
+      }
+    });
+
+    it("ignores releaseId when resolving a preview adapter identity", async () => {
+      const manager = stubbedManager();
+      try {
+        const withRelease = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          false,
+          "release-7",
+          null,
+          "main",
+        );
+        const withoutRelease = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+        );
+
+        assertStrictEquals(withRelease, withoutRelease);
+      } finally {
+        manager.dispose();
+      }
+    });
+
+    it("ignores branch when resolving a production adapter identity", async () => {
+      const manager = stubbedManager();
+      try {
+        const withBranch = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          true,
+          "release-42",
+          "Production",
+          "main",
+        );
+        const withoutBranch = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          true,
+          "release-42",
+          "Production",
+          null,
+        );
+
+        assertStrictEquals(withBranch, withoutBranch);
       } finally {
         manager.dispose();
       }

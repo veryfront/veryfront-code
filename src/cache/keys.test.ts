@@ -340,6 +340,37 @@ describe("cache/keys", () => {
       assertEquals(release.includes("release:release-1"), true);
     });
 
+    it("separates preview environments so adapter identities cannot collide", () => {
+      const unnamed = buildProxyManagerCacheKey("example-project", false, null, "main");
+      const preview = buildProxyManagerCacheKey("example-project", false, null, "main", "preview");
+
+      assertNotEquals(unnamed, preview);
+    });
+
+    it("separates distinct preview environment names on the same branch", () => {
+      const preview = buildProxyManagerCacheKey("example-project", false, null, "main", "preview");
+      const staging = buildProxyManagerCacheKey("example-project", false, null, "main", "staging");
+
+      assertNotEquals(preview, staging);
+    });
+
+    it("keeps the branch key stable when no environment is named", () => {
+      assertEquals(
+        buildProxyManagerCacheKey("example-project", false, null, "main"),
+        "proxy:example-project:preview:main",
+      );
+    });
+
+    it("escapes delimiters in an environment name", () => {
+      const forged = buildProxyManagerCacheKey("example-project", false, null, "main", "a:b");
+
+      assertEquals(forged.includes("a:b"), false);
+      assertNotEquals(
+        forged,
+        buildProxyManagerCacheKey("example-project", false, null, "main", "a"),
+      );
+    });
+
     it("separates canonical projects and credential principals", () => {
       const first = buildProxyManagerCacheKey(
         "reusable-slug",

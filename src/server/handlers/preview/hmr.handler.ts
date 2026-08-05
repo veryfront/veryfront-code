@@ -248,6 +248,10 @@ export class HMRHandler extends BaseHandler {
         {
           productionMode: false,
           branch: ctx.requestContext?.branch ?? "main",
+          // The named environment, not the mode in `resolvedEnvironment`. Must
+          // match what renders resolve, or HMR warms a different adapter and
+          // its WebSocketManager never receives pokes.
+          environmentName: ctx.environmentName ?? null,
         },
       );
     } catch (error) {
