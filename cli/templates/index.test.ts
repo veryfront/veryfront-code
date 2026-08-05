@@ -6,6 +6,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { fromFileUrl } from "#veryfront/compat/path";
 import type { EvalRecord } from "veryfront/eval";
 
 import { getTemplate, getTemplateConfig, templateConfigs } from "./index.ts";
@@ -232,6 +233,78 @@ describe("cli/templates", () => {
     ) {
       assertEquals((await tipMetric.evaluate(createRecord(invalid))).pass, false);
     }
+  });
+
+  it("offers every tool its eval gates on", async () => {
+    // `tools: true` does not expose project tools to the model. It authorizes
+    // the scoped catalog behind `tool_search`, so the model has to go looking
+    // first, and for easy work it simply will not. The ai-agent starter shipped
+    // that way: its prompt said to use the calculator and its eval gated on
+    // `calledTool("calculator")`, but the tool was never offered, so the demo
+    // failed its own eval while answering correctly.
+    const templatesDir = fromFileUrl(new URL("./files/", import.meta.url));
+    const offences: string[] = [];
+
+    for await (const entry of Deno.readDir(templatesDir)) {
+      if (!entry.isDirectory) continue;
+      const evalsDir = `${templatesDir}${entry.name}/evals`;
+
+      const gated = new Set<string>();
+      try {
+        for await (const file of Deno.readDir(evalsDir)) {
+          if (!file.name.endsWith(".ts")) continue;
+          const source = await Deno.readTextFile(`${evalsDir}/${file.name}`);
+          for (const match of source.matchAll(/calledTool\(\s*"([^"]+)"/g)) {
+            if (match[1]) gated.add(match[1]);
+          }
+        }
+      } catch {
+        continue;
+      }
+      if (gated.size === 0) continue;
+
+      let agents = "";
+      try {
+        for await (const file of Deno.readDir(`${templatesDir}${entry.name}/agents`)) {
+          if (!file.name.endsWith(".ts")) continue;
+          agents += await Deno.readTextFile(`${templatesDir}${entry.name}/agents/${file.name}`);
+        }
+      } catch {
+        // No agents directory: the gate cannot be satisfied at all.
+      }
+
+      for (const tool of gated) {
+        if (!new RegExp(`\\b${tool}\\s*:`).test(agents)) {
+          offences.push(`${entry.name} gates on ${tool}`);
+        }
+      }
+    }
+
+    assertEquals(
+      offences.toSorted(),
+      [],
+      "an eval gates on a tool the agent never names. `tools: true` is not " +
+        "enough: list the tool explicitly, as `tools: { name: true }`.",
+    );
+  });
+
+  it("keeps the eval's expected answers out of the system prompt", async () => {
+    // A worked example in the prompt lets the model copy the answer instead of
+    // computing it, which passes the money gates and the rubric while the
+    // calculator is never called. The gates then measure the prompt, not the
+    // agent.
+    const agent = await Deno.readTextFile(
+      new URL("./files/ai-agent/agents/assistant.ts", import.meta.url),
+    );
+    const system = /system:\s*\n?\s*"([\s\S]*?)",\n/.exec(agent)?.[1] ?? "";
+    assertEquals(system.length > 0, true, "could not read the system prompt");
+
+    const leaked = ["15.21", "99.71", "33.24", "33.23"].filter((amount) => system.includes(amount));
+    assertEquals(
+      leaked,
+      [],
+      "the system prompt states amounts the eval asserts the agent should derive",
+    );
   });
 
   it("keeps the ai-agent starter slim, actionable, and viewport-bound", async () => {
