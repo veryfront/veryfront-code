@@ -1454,9 +1454,16 @@ describe("modules/import-map/preloader", () => {
           settledEarly = true;
         },
       );
-      for (let turn = 0; turn < 50; turn++) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      // Host time must genuinely pass loadTimeoutMs, otherwise this proves
+      // nothing: a retry still reading performance.now would also be inside its
+      // deadline, and the test would pass with the bug present. Yield on timed
+      // sleeps rather than a fixed turn count, so the wait is bounded by the
+      // real clock advancing instead of by a turn budget that can run out first.
+      const hostDeadline = performance.now() + 50;
+      while (performance.now() < hostDeadline) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 5));
       }
+      assertEquals(performance.now() >= hostDeadline, true);
       assertEquals(settledEarly, false);
 
       // Releasing capacity, not the passage of host time, is what lets it run.
