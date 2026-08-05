@@ -19,9 +19,13 @@ import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/constants/limits.ts";
 import type { ImportMapConfig } from "./types.ts";
 
 /**
- * `loadTimeoutMs` arms a real `setTimeout`, not the injected `now` clock, so
- * tests holding a load unresolved race wall time and flake under CI load. Tests
- * that do exercise timeout behavior keep their own small values.
+ * Budget for loads whose deadline must not fire during the test.
+ *
+ * Deliberately far larger than any test needs. A test that wants a deadline to
+ * fire no longer shortens this value and waits for the host clock to catch up —
+ * it injects `setTimer`/`cancelTimer` from `createInertTimers` and fires the
+ * deadline explicitly. So no assertion here depends on how much wall time the
+ * host took, and reaching this value means the test hung on its own logic.
  */
 const TIMEOUT_NOT_UNDER_TEST_MS = 600_000;
 
@@ -95,7 +99,33 @@ function createInertTimers() {
       pending.clear();
       for (const callback of callbacks) callback();
     },
+    /** Deadlines currently armed, so a test can wait for one to exist. */
+    pendingCount: () => pending.size,
   };
+}
+
+/**
+ * Fire the preloader's next armed deadline, once it is actually armed.
+ *
+ * A deadline the test wants to trigger is armed several async turns after the
+ * call that requests it — a capacity wait, for instance, is only armed after
+ * admission has already failed. Spinning until one appears ties the trigger to
+ * the arming rather than to a guessed turn count, which is what keeps these
+ * tests independent of how fast the host happens to be.
+ */
+async function fireWhenArmed(
+  timers: ReturnType<typeof createInertTimers>,
+  label: string,
+  turns = 200,
+): Promise<void> {
+  for (let turn = 0; turn < turns; turn++) {
+    if (timers.pendingCount() > 0) {
+      timers.fireAll();
+      return;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error(`${label} never armed a deadline within ${turns} macrotask turns`);
 }
 
 /**
@@ -1243,11 +1273,16 @@ describe("modules/import-map/preloader", () => {
     it("keeps timed-out underlying work scoped to its project capacity", async () => {
       const adapter = createMinimalAdapter();
       const loads: Array<ReturnType<typeof createDeferred<ImportMapConfig>>> = [];
+      const timers = createInertTimers();
       const preloader = new ImportMapPreloader({
         maxProjects: 2,
         maxVariantsPerProject: 1,
         ttlMs: 1_000,
-        loadTimeoutMs: 20,
+        loadTimeoutMs: TIMEOUT_NOT_UNDER_TEST_MS,
+        setTimer: timers.setTimer,
+        cancelTimer: timers.cancelTimer,
+        monotonicNow: () => 0,
+        now: () => 1,
         loadImportMap: () => {
           const load = createDeferred<ImportMapConfig>();
           loads.push(load);
@@ -1255,18 +1290,26 @@ describe("modules/import-map/preloader", () => {
         },
       });
 
+      // Both deadlines below are the subject of the test, so they are fired
+      // explicitly. The frozen clocks keep every other load in flight for the
+      // rest of the test no matter how long the host takes to get there.
       const hungA = preloader.preload("/hung-a", adapter, "hung-a");
       await waitForLoadCount(loads, 1);
-      await assertRejects(
+      const hungARejected = assertRejects(
         () => hungA,
         RangeError,
         "load timed out",
       );
-      await assertRejects(
+      await fireWhenArmed(timers, "hung-a load");
+      await hungARejected;
+
+      const capacityBlocked = assertRejects(
         () => preloader.preload("/hung-a", adapter, "hung-a"),
         RangeError,
         "capacity wait timed out",
       );
+      await fireWhenArmed(timers, "hung-a capacity wait");
+      await capacityBlocked;
       assertEquals(loads.length, 1);
 
       const hungB = preloader.preload("/hung-b", adapter, "hung-b");
@@ -1276,17 +1319,24 @@ describe("modules/import-map/preloader", () => {
       assertEquals(loads.length, 2);
 
       loads[1]!.resolve({ imports: { source: "b" } });
-      assertEquals((await hungB).imports?.source, "b");
+      assertEquals((await settleWithin(hungB, "hung-b preload")).imports?.source, "b");
       loads[0]!.resolve({ imports: { source: "late" } });
       await waitForLoadCount(loads, 3);
       loads[2]!.resolve({ imports: { source: "next" } });
-      assertEquals((await nextBlockedByCapacity).imports?.source, "next");
+      assertEquals(
+        (await settleWithin(nextBlockedByCapacity, "next preload")).imports?.source,
+        "next",
+      );
 
       await Promise.resolve();
       const sameProjectRecovered = preloader.preload("/hung-a", adapter, "hung-a");
       await waitForLoadCount(loads, 4);
       loads[3]!.resolve({ imports: { source: "hung-recovered" } });
-      assertEquals((await sameProjectRecovered).imports?.source, "hung-recovered");
+      assertEquals(
+        (await settleWithin(sameProjectRecovered, "hung-a recovery preload")).imports
+          ?.source,
+        "hung-recovered",
+      );
     });
 
     it("reserves project capacity before an invalidated load times out", async () => {
@@ -1329,11 +1379,16 @@ describe("modules/import-map/preloader", () => {
     it("counts timed-out work against the total project bound", async () => {
       const adapter = createMinimalAdapter();
       const loads: Array<ReturnType<typeof createDeferred<ImportMapConfig>>> = [];
+      const timers = createInertTimers();
       const preloader = new ImportMapPreloader({
         maxProjects: 2,
         maxVariantsPerProject: 1,
         ttlMs: 1_000,
-        loadTimeoutMs: 100,
+        loadTimeoutMs: TIMEOUT_NOT_UNDER_TEST_MS,
+        setTimer: timers.setTimer,
+        cancelTimer: timers.cancelTimer,
+        monotonicNow: () => 0,
+        now: () => 1,
         loadImportMap: () => {
           const load = createDeferred<ImportMapConfig>();
           loads.push(load);
@@ -1341,9 +1396,17 @@ describe("modules/import-map/preloader", () => {
         },
       });
 
+      // Only project-a's deadline is under test; it is fired explicitly so the
+      // later loads can stay in flight for as long as the host needs.
       const timedOutA = preloader.preload("/project-a", adapter, "project-a");
       await waitForLoadCount(loads, 1);
-      await assertRejects(() => timedOutA, RangeError, "load timed out");
+      const timedOutARejected = assertRejects(
+        () => timedOutA,
+        RangeError,
+        "load timed out",
+      );
+      await fireWhenArmed(timers, "project-a load");
+      await timedOutARejected;
 
       const activeB = preloader.preload("/project-b", adapter, "project-b");
       await waitForLoadCount(loads, 2);
@@ -1355,8 +1418,14 @@ describe("modules/import-map/preloader", () => {
       await waitForLoadCount(loads, 3);
       loads[1]!.resolve({ imports: { source: "b" } });
       loads[2]!.resolve({ imports: { source: "c" } });
-      assertEquals((await activeB).imports?.source, "b");
-      assertEquals((await queuedC).imports?.source, "c");
+      assertEquals(
+        (await settleWithin(activeB, "project-b preload")).imports?.source,
+        "b",
+      );
+      assertEquals(
+        (await settleWithin(queuedC, "project-c preload")).imports?.source,
+        "c",
+      );
     });
 
     it("does not miss capacity released before a waiter observes its signal", async () => {
