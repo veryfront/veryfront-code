@@ -51,6 +51,8 @@ import {
   mapRuntimeEventToAgUi,
   parseSseJsonEvents,
 } from "./ag-ui-sse.ts";
+import type { AgentRunEvent, AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
+import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
 import { AgentRunCancelledError, type AgentRunSessionManager } from "./session-manager.ts";
 import { composeInternalAgentRunSystemPrompt } from "./run-system-prompt.ts";
 import type { RuntimeRunAgentInput } from "./schema.ts";
@@ -64,6 +66,12 @@ const INTERNAL_AGENT_RUNTIME_HEARTBEAT_INTERVAL_MS = 25_000;
 const INTERNAL_AGENT_RUNTIME_HEARTBEAT_FRAME = new TextEncoder().encode(
   ": internal-agent-runtime-heartbeat\n\n",
 );
+/**
+ * SSE frame name carrying AGENT_RUN_MODEL_CALL_CONTEXT to veryfront-api. Not an
+ * AG-UI event: veryfront-api persists it under its own event type rather than
+ * folding it into the run's public event sequence.
+ */
+export const MODEL_CALL_CONTEXT_SSE_EVENT_NAME = "AgentRunModelCallContext";
 
 type RuntimeFilteredAgent = Agent & {
   config: Agent["config"] & {
@@ -638,6 +646,31 @@ function compactRuntimeMessagesForStream(
   ) as Message[];
 }
 
+/**
+ * Relays run events produced by the runtime into the run's SSE stream.
+ *
+ * The first model call is dispatched while `runtime.stream()` is still being
+ * awaited, before there is a controller to enqueue into, so events raised
+ * before `attach` are buffered and replayed once the stream opens.
+ */
+function createModelCallContextRelay(): {
+  sink: AgentRunEventSink;
+  attach: (emit: (event: AgentRunEvent) => void) => void;
+} {
+  const buffered: AgentRunEvent[] = [];
+  let emit: ((event: AgentRunEvent) => void) | undefined;
+  return {
+    sink: (event) => {
+      if (emit) emit(event);
+      else buffered.push(event);
+    },
+    attach: (next) => {
+      emit = next;
+      for (const event of buffered.splice(0)) next(event);
+    },
+  };
+}
+
 export async function createRuntimeAgentStreamResponse(
   input: RuntimeRunAgentInput,
   agent: Agent,
@@ -659,6 +692,7 @@ export async function createRuntimeAgentStreamResponse(
   let completedResponse: AgentResponse | null = null;
   let runtimeStream: ReadableStream<Uint8Array>;
   let closeSandbox = createIdempotentAsyncCleanup();
+  const modelCallContextRelay = createModelCallContextRelay();
   try {
     const forwardedAllowedRemoteToolNames = getAllowedRemoteToolNames(input.forwardedProps);
     const sourceAllowedRemoteToolNames = getAgentAllowedRemoteToolNames(agent);
@@ -788,27 +822,34 @@ export async function createRuntimeAgentStreamResponse(
       runtimeToolNames.length,
     );
     const maxOutputTokens = getForwardedMaxOutputTokens(input.forwardedProps);
-    const candidateRuntimeStream = await runtime.stream(
-      runtimeMessages,
-      {
-        threadId: input.threadId,
-        runId: input.runId,
-        ...(deps.projectAgentSandbox?.authToken
-          ? { authToken: deps.projectAgentSandbox.authToken }
-          : {}),
-        ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
-        ...(input.state !== undefined ? { state: input.state } : {}),
-        context: input.context,
-        forwardedProps: input.forwardedProps,
-      },
-      {
-        onFinish: (response) => {
-          completedResponse = response;
-        },
-      },
-      undefined,
-      maxOutputTokens,
-      abortSignal,
+    // Scoped here because the runtime dispatches the run's first model call
+    // before stream() resolves. Later steps inherit this scope through the
+    // stream they are pumped from.
+    const candidateRuntimeStream = await runWithMandatoryRunEventSink(
+      modelCallContextRelay.sink,
+      () =>
+        runtime.stream(
+          runtimeMessages,
+          {
+            threadId: input.threadId,
+            runId: input.runId,
+            ...(deps.projectAgentSandbox?.authToken
+              ? { authToken: deps.projectAgentSandbox.authToken }
+              : {}),
+            ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
+            ...(input.state !== undefined ? { state: input.state } : {}),
+            context: input.context,
+            forwardedProps: input.forwardedProps,
+          },
+          {
+            onFinish: (response) => {
+              completedResponse = response;
+            },
+          },
+          undefined,
+          maxOutputTokens,
+          abortSignal,
+        ),
     );
     if (candidateRuntimeStream.locked) {
       throw new TypeError("Internal agent runtime returned a locked stream");
@@ -960,6 +1001,14 @@ export async function createRuntimeAgentStreamResponse(
               threadId: input.threadId,
               agentId: agent.id,
             });
+            // Replays whatever the first model call already produced, then
+            // forwards later steps as they happen. RunStarted stays first.
+            modelCallContextRelay.attach((event) =>
+              enqueueIfAttached(
+                MODEL_CALL_CONTEXT_SSE_EVENT_NAME,
+                event as unknown as Record<string, unknown>,
+              )
+            );
             heartbeatTimer = setInterval(
               enqueueHeartbeatIfAttached,
               INTERNAL_AGENT_RUNTIME_HEARTBEAT_INTERVAL_MS,
@@ -968,7 +1017,13 @@ export async function createRuntimeAgentStreamResponse(
             while (true) {
               throwIfAborted();
 
-              const { done, value } = await reader.read();
+              // A runtime that dispatches later model calls from its pull()
+              // rather than from a continuation of stream() needs the sink in
+              // scope on the read that triggers the pull.
+              const { done, value } = await runWithMandatoryRunEventSink(
+                modelCallContextRelay.sink,
+                () => reader.read(),
+              );
               throwIfAborted();
 
               if (done) {

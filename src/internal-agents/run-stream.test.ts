@@ -21,8 +21,22 @@ import type {
 import { registerSkill } from "#veryfront/skill/registry.ts";
 import type { RemoteToolSource, Tool } from "#veryfront/tool";
 import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
+import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
+import { getActiveRunEventSinks } from "#veryfront/runtime/run-event-sink-context.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
-import { buildMergedTools, createRuntimeAgentStreamResponse } from "./run-stream.ts";
+import {
+  buildMergedTools,
+  createRuntimeAgentStreamResponse,
+  MODEL_CALL_CONTEXT_SSE_EVENT_NAME,
+} from "./run-stream.ts";
+
+function parseSseFrames(body: string): Array<{ event: string; data: unknown }> {
+  return body.split("\n\n").flatMap((frame) => {
+    const event = /^event: (.+)$/m.exec(frame)?.[1];
+    const data = /^data: (.+)$/m.exec(frame)?.[1];
+    return event && data ? [{ event, data: JSON.parse(data) as unknown }] : [];
+  });
+}
 
 class RecordingSpan implements Span {
   readonly attributes: Record<string, AttributeValue> = {};
@@ -2560,5 +2574,119 @@ describe("internal-agents/run-stream", () => {
       entry.message === "Internal agent runtime reader cancellation failed during cleanup"
     );
     assertEquals(debugEntry?.component, "internal-agent-run-stream");
+  });
+  describe("model call context", () => {
+    const modelCallContextEvent = {
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      messages: [{ role: "system", content: "test system prompt" }],
+      tools: [{ type: "function", name: "granted_tool", inputSchema: {} }],
+    };
+
+    function contextAgent(): Agent {
+      return {
+        id: "context-agent",
+        config: { id: "context-agent", model: "anthropic/claude-opus-4-6", system: "test" },
+      } as unknown as Agent;
+    }
+
+    function contextRunInput(runId: string) {
+      return {
+        agentId: "context-agent",
+        threadId: crypto.randomUUID(),
+        runId,
+        messages: [],
+        tools: [],
+        context: [],
+      } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+    }
+
+    it("streams a context emitted while the runtime stream is created", async () => {
+      let sinkDuringCreate: AgentRunEventSink | undefined;
+
+      const response = await createRuntimeAgentStreamResponse(
+        contextRunInput("run_context_setup"),
+        contextAgent(),
+        {
+          sessionManager: new AgentRunSessionManager(),
+          createRuntime: () => ({
+            stream: async () => {
+              // The real runtime dispatches its first model call here, so the
+              // sink has to already be scoped by the time stream() runs.
+              sinkDuringCreate = getActiveRunEventSinks().mandatory;
+              await sinkDuringCreate?.(modelCallContextEvent as never);
+              return new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              });
+            },
+          }),
+        },
+      );
+
+      const frames = parseSseFrames(await response.text());
+      assertEquals(Boolean(sinkDuringCreate), true);
+      assertEquals(
+        frames
+          .filter((frame) => frame.event === MODEL_CALL_CONTEXT_SSE_EVENT_NAME)
+          .map((frame) => frame.data),
+        [modelCallContextEvent],
+      );
+    });
+
+    it("keeps the context ahead of the step it describes", async () => {
+      const response = await createRuntimeAgentStreamResponse(
+        contextRunInput("run_context_order"),
+        contextAgent(),
+        {
+          sessionManager: new AgentRunSessionManager(),
+          createRuntime: () => ({
+            stream: async () => {
+              await getActiveRunEventSinks().mandatory?.(modelCallContextEvent as never);
+              return new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              });
+            },
+          }),
+        },
+      );
+
+      const names = parseSseFrames(await response.text()).map((frame) => frame.event);
+      assertEquals(names[0], "RunStarted");
+      assertEquals(names[1], MODEL_CALL_CONTEXT_SSE_EVENT_NAME);
+    });
+
+    it("streams a context emitted for a later step while the client reads", async () => {
+      let sinkDuringConsume: AgentRunEventSink | undefined;
+
+      const response = await createRuntimeAgentStreamResponse(
+        contextRunInput("run_context_step_two"),
+        contextAgent(),
+        {
+          sessionManager: new AgentRunSessionManager(),
+          createRuntime: () => ({
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                // Multi-step runs dispatch later model calls as the stream is
+                // pulled, long after stream() returned.
+                async pull(controller) {
+                  sinkDuringConsume = getActiveRunEventSinks().mandatory;
+                  await sinkDuringConsume?.(modelCallContextEvent as never);
+                  controller.close();
+                },
+              }),
+          }),
+        },
+      );
+
+      const frames = parseSseFrames(await response.text());
+      assertEquals(Boolean(sinkDuringConsume), true);
+      assertEquals(
+        frames.filter((frame) => frame.event === MODEL_CALL_CONTEXT_SSE_EVENT_NAME).length,
+        1,
+      );
+    });
   });
 });
