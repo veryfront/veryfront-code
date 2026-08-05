@@ -3,7 +3,7 @@ import { captureApplicationError } from "#veryfront/observability/application-er
 /**
  * Report a 5xx handler failure. Handlers convert errors into responses, so
  * these never escape to a global handler and would not otherwise reach Sentry.
- * 4xx is excluded as noise. No-op when no reporter is installed.
+ * Anything below 500 is dropped as noise. No-op when no reporter is installed.
  */
 export function reportHandlerFailure(
   error: unknown,
@@ -20,6 +20,10 @@ export function reportHandlerFailure(
     cause?: string;
   },
 ): void {
+  // Enforced here, not just documented: a future caller passing a 4xx would
+  // otherwise flood Sentry with the validation and auth noise this excludes.
+  if (details.status < 500) return;
+
   const attributes: Record<string, string | number | boolean> = {
     "http.status": details.status,
   };
