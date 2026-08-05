@@ -744,9 +744,18 @@ async function evaluateWithAdmissionController(
   admissionController: DeclarativeConfigWorkerAdmissionController,
   terminationDrainTimeoutMs = DEFAULT_WORKER_TERMINATION_DRAIN_TIMEOUT_MS,
   startupController: DeclarativeConfigWorkerStartupController = workerStartupController,
+  /**
+   * Monotonic clock used to charge admission wait time against the caller
+   * deadline. Seamed so a test can hold it still: the budget check below
+   * otherwise races real time spent inside `acquire`, and a starved worker can
+   * exhaust a short deadline before the startup permit is ever taken. Both
+   * outcomes report `worker-timeout`, but only one leaves the orphan accounted
+   * for, so a test asserting that accounting cannot depend on wall time.
+   */
+  now: () => number = monotonicNow,
 ): Promise<ConfigSnapshotRecord> {
   const timeoutMs = validateTimeoutMs(options.timeoutMs);
-  const startedAt = monotonicNow();
+  const startedAt = now();
   const release = await admissionController.acquire(
     timeoutMs,
     options.signal,
@@ -756,7 +765,7 @@ async function evaluateWithAdmissionController(
   let operation: WorkerEvaluationOperation;
   try {
     const remainingMs = MathCeil(
-      timeoutMs - (monotonicNow() - startedAt),
+      timeoutMs - (now() - startedAt),
     );
     if (remainingMs < 1) {
       throw createDeclarativeConfigWorkerInfrastructureError(
