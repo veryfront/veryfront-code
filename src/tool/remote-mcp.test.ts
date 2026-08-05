@@ -23,7 +23,9 @@ describe("tool/remote-mcp", () => {
       trustedEndpoints: ["http://veryfront-api/mcp"],
       requestFetch: async (_input, init) => {
         transportCalls++;
-        const body = JSON.parse(String(init?.body)) as { id: string };
+        const body = JSON.parse(String(init && "body" in init ? init.body : undefined)) as {
+          id: string;
+        };
         return Response.json({
           jsonrpc: "2.0",
           id: body.id,
@@ -46,7 +48,9 @@ describe("tool/remote-mcp", () => {
       trustedEndpoints: ["http://veryfront-api:80/mcp"],
       requestFetch: async (_input, init) => {
         transportCalls++;
-        const body = JSON.parse(String(init?.body)) as { id: string };
+        const body = JSON.parse(String(init && "body" in init ? init.body : undefined)) as {
+          id: string;
+        };
         return Response.json({
           jsonrpc: "2.0",
           id: body.id,
