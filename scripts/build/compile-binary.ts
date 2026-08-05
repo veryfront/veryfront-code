@@ -142,6 +142,101 @@ export function createCompileArgs(options: CompileBinaryOptions): string[] {
   return args;
 }
 
+/**
+ * Names the worker entries a compiled binary is missing.
+ *
+ * Every include-list check answers "did we ask for this?", which the binary
+ * that crash-looped production would have passed -- it was asked for by nobody
+ * and no test noticed. This answers "did it actually ship?", which is the only
+ * question whose answer differs between a working and a broken binary.
+ *
+ * Matches the embedded VFS entry (`"n":"<file>"`) rather than worker body
+ * symbols. `dist/framework-src` ships a renamed copy of the same source as a
+ * data asset (`...worker-entry.ts.src`), so body symbols appear in a broken
+ * binary too and read as a pass. The trailing quote keeps `.ts` from matching
+ * `.ts.src`.
+ */
+export function findMissingEmbeddedWorkers(
+  binaryContent: string,
+  workerIncludes: readonly string[],
+): string[] {
+  return workerIncludes.filter((include) => {
+    const fileName = include.slice(include.lastIndexOf("/") + 1);
+    return !binaryContent.includes(`"n":"${fileName}"`);
+  });
+}
+
+/**
+ * Streams the binary looking for each worker's VFS entry.
+ *
+ * Reads in chunks rather than decoding the file at once: these binaries embed
+ * hundreds of megabytes, and a single decode throws "buffer exceeds maximum
+ * length" well before it can check anything. Decodes as latin1 so bytes map to
+ * characters one-for-one and the ASCII markers survive arbitrary binary data,
+ * and carries the tail of each chunk forward so a marker split across a
+ * boundary is still found.
+ */
+async function findMissingEmbeddedWorkersInFile(
+  path: string,
+  workerIncludes: readonly string[],
+): Promise<string[]> {
+  const CHUNK_BYTES = 8 * 1024 * 1024;
+  const markerLength = (include: string) => include.length - include.lastIndexOf("/") + 6;
+  const carryLength = Math.max(...workerIncludes.map(markerLength));
+
+  const remaining = new Set(workerIncludes);
+  const decoder = new TextDecoder("latin1");
+  const buffer = new Uint8Array(CHUNK_BYTES);
+  const file = await Deno.open(path, { read: true });
+
+  try {
+    let carry = "";
+    while (remaining.size > 0) {
+      const bytesRead = await file.read(buffer);
+      if (bytesRead === null) break;
+
+      const text = carry + decoder.decode(buffer.subarray(0, bytesRead));
+      for (const include of [...remaining]) {
+        if (findMissingEmbeddedWorkers(text, [include]).length === 0) {
+          remaining.delete(include);
+        }
+      }
+      carry = text.slice(-carryLength);
+    }
+  } finally {
+    file.close();
+  }
+
+  return [...remaining];
+}
+
+async function assertWorkersEmbedded(
+  outputPath: string,
+  profile: CompileBinaryProfile,
+): Promise<void> {
+  // Expectations come from the declared constant, NOT from the resolved include
+  // list. Deriving them from the include list makes this tautological: dropping
+  // a worker from the list would also drop it from what is checked, so the one
+  // regression this exists to catch would pass. The proxy profile is the sole
+  // exemption, for the build reason documented on PROXY_INCLUDES.
+  const expected = profile === "proxy" ? [] : UNTRACEABLE_WORKER_INCLUDES;
+  if (expected.length === 0) {
+    return;
+  }
+
+  const missing = await findMissingEmbeddedWorkersInFile(
+    normalizeOutputPath(outputPath),
+    expected,
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `Compiled binary is missing ${missing.length} worker entrypoint(s): ${
+        missing.join(", ")
+      }.\nThe binary would start, serve traffic, and crash the first time one is spawned.`,
+    );
+  }
+}
+
 export async function compileBinary(options: CompileBinaryOptions): Promise<void> {
   const result = await new Deno.Command("deno", {
     args: createCompileArgs(options),
@@ -153,6 +248,8 @@ export async function compileBinary(options: CompileBinaryOptions): Promise<void
   if (!result.success) {
     throw new Error(`deno compile failed with exit code ${result.code}`);
   }
+
+  await assertWorkersEmbedded(options.output, options.profile ?? "full");
 }
 
 function normalizeOutputPath(path: string): string {

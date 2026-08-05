@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createCompileArgs,
+  findMissingEmbeddedWorkers,
   UNTRACEABLE_WORKER_INCLUDES,
 } from "../../../scripts/build/compile-binary.ts";
 
@@ -25,6 +26,36 @@ describe("compile-binary includes", () => {
 
     return includeFlags;
   }
+
+  it("should detect a worker entry missing from a compiled binary", () => {
+    // The include-list tests all answer "did we ask for this?". The binary that
+    // crash-looped production would pass every one of them. This answers "did it
+    // ship?", which is the only question whose answer differed.
+    const embedded = '{"File":{"n":"declarative-evaluator-worker-entry.ts","o":[1,2]}}';
+    assertEquals(
+      findMissingEmbeddedWorkers(embedded, ["src/config/declarative-evaluator-worker-entry.ts"]),
+      [],
+    );
+    assertEquals(
+      findMissingEmbeddedWorkers("", ["src/config/declarative-evaluator-worker-entry.ts"]),
+      ["src/config/declarative-evaluator-worker-entry.ts"],
+    );
+  });
+
+  it("should not accept the framework-src data asset as an embedded worker", () => {
+    // dist/framework-src ships the same source renamed `.ts.src` so compile
+    // treats it as data, not a module. A broken binary therefore still contains
+    // the worker's body and its `.src` name. Only the exact VFS entry
+    // discriminates, so the trailing quote in the marker is load-bearing.
+    const brokenBinary =
+      '{"File":{"n":"declarative-evaluator-worker-entry.ts.src","o":[1,2]}} evaluateRequest';
+    assertEquals(
+      findMissingEmbeddedWorkers(brokenBinary, [
+        "src/config/declarative-evaluator-worker-entry.ts",
+      ]),
+      ["src/config/declarative-evaluator-worker-entry.ts"],
+    );
+  });
 
   it("should embed the untraceable worker entrypoints in the full profile", () => {
     // Wiring check on the `...UNTRACEABLE_WORKER_INCLUDES` spread, not the real
