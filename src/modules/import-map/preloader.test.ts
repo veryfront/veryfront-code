@@ -1458,6 +1458,11 @@ describe("modules/import-map/preloader", () => {
       const first = preloader.preload("/project", adapter, "project", {
         contentSourceId: "source-a",
       });
+      // Wait for source-a to reach the loader before starting source-b. The
+      // loader runs in a microtask after an async identity hash, so two
+      // concurrently started preloads can reach it in either order under load,
+      // and this test indexes `loads` positionally.
+      await waitForLoadCount(loads, 1);
       const unrelated = preloader.preload("/project", adapter, "project", {
         contentSourceId: "source-b",
       });

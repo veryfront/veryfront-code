@@ -647,6 +647,20 @@ Deno.test("declarative config worker bounds active and queued evaluations", asyn
   assertEquals(terminationCount, 2);
 });
 
+/**
+ * A monotonic clock that never advances.
+ *
+ * The runner charges time spent inside `admissionController.acquire` against
+ * the caller deadline, so a short `timeoutMs` can be exhausted before the
+ * startup permit is taken. That path reports `worker-timeout` without ever
+ * counting the orphan, which is indistinguishable by reason from the timeout
+ * these tests do want. Freezing the clock keeps the deadline unspent until the
+ * evaluation itself owns it.
+ */
+function frozenClock(): () => number {
+  return () => 0;
+}
+
 Deno.test("declarative config worker bounds factories that never settle without retaining ordinary admission", async () => {
   const payload = await createPayload("export default { ready: true };");
   const admission = declarativeConfigWorkerRunnerInternals
@@ -667,6 +681,7 @@ Deno.test("declarative config worker bounds factories that never settle without 
       admission,
       5,
       startup,
+      frozenClock(),
     );
   const timeoutError = await assertRejects(
     () => first,
@@ -772,6 +787,7 @@ Deno.test("declarative config worker terminates a late factory result and recove
       admission,
       5,
       startup,
+      frozenClock(),
     );
   const timeoutError = await assertRejects(
     () => first,
