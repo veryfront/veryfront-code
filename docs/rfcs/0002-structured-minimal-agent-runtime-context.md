@@ -102,18 +102,35 @@ runtime/system layer (it is stable orchestration policy, not per-call skill
 output). Document every field the `load_skill` result returns and its consumer.
 Coordinate with the agent-prompt test that currently asserts the string.
 
-### 4.4 tool_search must surface Studio callback tools (#357 dependency)
-The veryfront-agent #357 fix tells the model to `tool_search` for
-`studio_suggestions` then call it. Verify the deferred-schema resolver
-(`src/agent/hosted/chat-runtime-tool-assembly.ts`) actually indexes Studio
-callback tools (`studio_suggestions` et al.), not just API/host tools. If it
-does not, either index them or move `studio_suggestions` into the always-on set
-— otherwise the agent-side rule points down a dead path.
+### 4.4 tool_search → studio_suggestions — CONFIRMED WORKING (no framework change required)
+The deferred-schema resolver **does** index Studio callback tools. Confirmed in
+production (run `run_856ec7d6-5f3c-4d14-ba86-10230830e635`, opus-4-6): the agent
+called `tool_search({query:"studio_suggestions"})` → `miss:false`, one match,
+`status:"loaded"`, then called `studio_suggestions` with the correct
+`{title,prompt,description}` schema and the chips rendered in Studio. So the
+veryfront-agent #357 fix is **purely behavioral** (prompt rule: `tool_search`
+then call, never markup) — the path is live, not a dead end.
+
+The same run confirms #357's root cause: the bug reproduced only because the
+model skipped `tool_search` and invented a wrong markup shape; with the schema
+loaded via `tool_search`, it used the correct input shape.
+
+**Optional hardening (not required):** promote `studio_suggestions` from
+`VERYFRONT_STUDIO_PRODUCT_TOOLS` into the always-on bootstrap set so its schema
+is in-context every turn and the model can call it with no `tool_search` hop.
+Costs one always-on schema; removes any chance of markup invention. Belt-and-
+suspenders on top of the prompt rule, not a dependency.
+
+### 4.5 tool_search also emits an opaque `nextStep` (same family as #5)
+`tool_search` results carry a `nextStep` string ("Continue to the next model
+step. Loaded tool schemas will be available then."). Like `load_skill`'s
+`nextStep` (#5), this is orchestration prose in a tool result. Fold it into the
+#5 cleanup: document the field or move the signal to the trusted layer.
 
 ## 5. Plan
 1. 1-hour cache TTL for the product agent (small, high-value, independent).
 2. Structured-context accept + render at the marker (behind the compat window).
-3. Verify/fix `tool_search` surfacing of Studio callback tools (#357 dep).
+3. ~~Verify `tool_search` surfacing of Studio callback tools~~ — DONE, confirmed working (§4.4). Optional: bootstrap `studio_suggestions` as hardening.
 4. #5: strip orchestration policy from `load_skill` result; document the schema;
    coordinate the agent-prompt test change.
 
