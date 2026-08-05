@@ -76,6 +76,15 @@ invalid, readers return `null`. Callers then use the existing release-scoped JIT
 module path. This availability fallback does not bypass authentication,
 project scoping, or release scoping.
 
+`deploy` follows the same rule for one specific rejection. When a ready body
+declares a schema version other than the one this build reads, the assets were
+produced by a different framework version and neither side can act on the
+other's body. `readMismatchedReleaseAssetManifestSchemaVersion()` identifies
+that case, and the deploy proceeds with a warning instead of failing, because
+the operator cannot change the builder from the deploying machine. Every other
+rejection stays fatal: only a declared schema version separates a version skew
+from a corrupt or tampered body.
+
 Manifest fetchers are registered per release ID. Cache entries and in-flight
 requests are tied to the current fetcher owner, use collision-free tuple keys,
 time out after 10 seconds, and are aborted when ownership or cache generation

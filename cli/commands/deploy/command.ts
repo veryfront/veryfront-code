@@ -127,13 +127,15 @@ async function deployCommandHuman(options: DeployOptions): Promise<DeployResult 
     progressText = next;
     spinner.update(next);
   };
-  let warning: string | null = null;
+  // A deploy can now emit more than one warning, so keeping only the last would
+  // drop whichever fired first.
+  const warnings: string[] = [];
   let outcome: DeployProjectOutcome;
   try {
     outcome = await deployRunner(options).execute(toDeployRequest(options), {
       onEvent(event) {
         if (event.kind === "warning") {
-          warning = event.message;
+          warnings.push(event.message);
           return;
         }
         updateProgress(deployProgressText(event, env, verbose));
@@ -189,7 +191,7 @@ async function deployCommandHuman(options: DeployOptions): Promise<DeployResult 
     logInfo(`  Control plane: ${result.controlPlane}`);
   }
 
-  if (warning) logWarning(warning);
+  for (const warning of warnings) logWarning(warning);
 
   if (verbose) {
     const { getPostDeployTips } = await import("../../help/tips.ts");

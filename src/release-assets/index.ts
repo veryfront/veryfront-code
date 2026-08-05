@@ -54,6 +54,7 @@ export {
   isSafeBoundedText,
   parseReadyReleaseAssetManifestResponse,
   parseReleaseAssetManifest,
+  readMismatchedReleaseAssetManifestSchemaVersion,
   readUntrustedOwnDataProperty,
   type ReadyReleaseAssetManifestResponse,
   type ReleaseAssetCssEntry,

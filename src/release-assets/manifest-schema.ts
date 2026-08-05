@@ -394,11 +394,8 @@ export function describeReadyReleaseAssetManifestRejection(
   const body = readUntrustedOwnDataProperty(value, "manifest");
   const manifest = parseReleaseAssetManifest(body);
   if (!manifest) {
-    const schemaVersion = readUntrustedOwnDataProperty(body, "schemaVersion");
-    if (
-      isSafeIntegerInRange(schemaVersion, Number.MAX_SAFE_INTEGER) &&
-      schemaVersion !== RELEASE_ASSET_MANIFEST_SCHEMA_VERSION
-    ) {
+    const schemaVersion = readMismatchedReleaseAssetManifestSchemaVersion(value);
+    if (schemaVersion !== null) {
       return `the release assets declare manifest schema version ${schemaVersion}, but this ` +
         `build reads version ${RELEASE_ASSET_MANIFEST_SCHEMA_VERSION}. The assets were built ` +
         `by a different framework version than the one running this deploy`;
@@ -414,6 +411,40 @@ export function describeReadyReleaseAssetManifestRejection(
   }
 
   return "the manifest failed validation for an unrecognized reason";
+}
+
+/**
+ * Read the schema version a rejected ready body declares, when that version is
+ * the reason it was rejected.
+ *
+ * A body that names a bounded, different schema version was produced by a
+ * framework build other than the one reading it. That is a producer/consumer
+ * skew, not a corrupt or tampered payload, and callers may degrade to the JIT
+ * path instead of failing closed. Every other rejection returns null so it keeps
+ * whatever handling the caller already applies.
+ *
+ * The mismatch is reported in both directions. An older builder against a newer
+ * reader and a newer builder against an older reader are the same condition:
+ * neither side can consume the other's body, and neither is evidence of a
+ * hostile one.
+ *
+ * Only a bounded integer read from the untrusted body is returned, never any
+ * other untrusted value.
+ */
+export function readMismatchedReleaseAssetManifestSchemaVersion(
+  value: unknown,
+): number | null {
+  const body = readUntrustedOwnDataProperty(value, "manifest");
+  if (parseReleaseAssetManifest(body)) return null;
+
+  const schemaVersion = readUntrustedOwnDataProperty(body, "schemaVersion");
+  if (
+    !isSafeIntegerInRange(schemaVersion, Number.MAX_SAFE_INTEGER) ||
+    schemaVersion === RELEASE_ASSET_MANIFEST_SCHEMA_VERSION
+  ) {
+    return null;
+  }
+  return schemaVersion;
 }
 
 /**

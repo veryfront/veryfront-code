@@ -12,6 +12,7 @@ import {
   getReleaseAssetManifestSchema,
   parseReadyReleaseAssetManifestResponse,
   parseReleaseAssetManifest,
+  readMismatchedReleaseAssetManifestSchemaVersion,
   type ReleaseAssetManifest,
 } from "./manifest-schema.ts";
 import { RELEASE_ASSET_MANIFEST_SCHEMA_VERSION } from "./constants.ts";
@@ -415,5 +416,114 @@ describe("describeReadyReleaseAssetManifestRejection", () => {
 
     assertStringIncludes(reason, "did not match the expected schema");
     assertEquals(reason.includes("do-not-echo"), false);
+  });
+});
+
+describe("readMismatchedReleaseAssetManifestSchemaVersion", () => {
+  it("reports the version a real v1 hosted build declares", () => {
+    // Shape taken verbatim from a production asset-manifest response built by
+    // framework 0.1.1162: `fallback` in place of `dependencyMode`, and a legacy
+    // six-character styleProfileHash with no cssPipelineIdentity. Those CSS
+    // identities cannot be reconstructed, which is why v1 stays unparseable.
+    const legacyBody = {
+      schemaVersion: 1,
+      projectId: "bd80f018-d3e7-4bcd-ba86-76e70e75c641",
+      releaseId: "43f1a553-9477-4b25-b5d9-5f154a142241",
+      releaseVersion: 1,
+      manifestVersion: 1,
+      builderVersion: "0.1.1162",
+      sourceContentHash: "4".repeat(64),
+      createdAt: "2026-08-05T23:28:40.940Z",
+      assetBasePath: "/_vf/assets",
+      modules: {
+        "app/page.tsx": { contentHash: "7".repeat(64), size: 505, contentType: "text/javascript" },
+      },
+      css: [{
+        contentHash: "7".repeat(64),
+        size: 68631,
+        contentType: "text/css",
+        styleProfileHash: "qpyvqf",
+      }],
+      routes: { "/": { modules: ["app/page.tsx"], css: ["7".repeat(64)] } },
+      dependencies: {},
+      fallback: { mode: "jit", gaps: [] },
+    };
+
+    assertEquals(parseReleaseAssetManifest(legacyBody), null);
+    assertEquals(
+      readMismatchedReleaseAssetManifestSchemaVersion({
+        state: "ready",
+        manifest_version: 1,
+        manifest: legacyBody,
+      }),
+      1,
+    );
+  });
+
+  it("reports a newer builder as the same condition", () => {
+    // An older CLI against a newer platform is the mirror image of the same
+    // skew. Treating only older bodies as skew would fail those deploys closed.
+    assertEquals(
+      readMismatchedReleaseAssetManifestSchemaVersion({
+        state: "ready",
+        manifest_version: 1,
+        manifest: { schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION + 1 },
+      }),
+      RELEASE_ASSET_MANIFEST_SCHEMA_VERSION + 1,
+    );
+  });
+
+  it("returns null for a body that parses at the current version", () => {
+    assertEquals(
+      readMismatchedReleaseAssetManifestSchemaVersion({
+        state: "ready",
+        manifest_version: validManifest().manifestVersion,
+        manifest: validManifest(),
+      }),
+      null,
+    );
+  });
+
+  it("returns null for corruption that is not a schema mismatch", () => {
+    // Callers degrade on a mismatch and fail closed otherwise, so anything that
+    // is merely malformed must not be reported as a version skew.
+    for (
+      const manifest of [
+        { ...validManifest(), modules: "not-a-record" },
+        { schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION },
+        { schemaVersion: "2" },
+        { schemaVersion: 1.5 },
+        { schemaVersion: -1 },
+        { secret: "do-not-echo" },
+        "not-an-object",
+        null,
+      ]
+    ) {
+      assertEquals(
+        readMismatchedReleaseAssetManifestSchemaVersion({
+          state: "ready",
+          manifest_version: 1,
+          manifest,
+        }),
+        null,
+        `${JSON.stringify(manifest)?.slice(0, 40)} must not read as a schema skew`,
+      );
+    }
+  });
+
+  it("survives a hostile envelope instead of throwing", () => {
+    const hostile = new Proxy({}, {
+      getOwnPropertyDescriptor() {
+        throw new Error("hostile proxy");
+      },
+      ownKeys() {
+        throw new Error("hostile proxy");
+      },
+      get() {
+        throw new Error("hostile proxy");
+      },
+    });
+
+    assertEquals(readMismatchedReleaseAssetManifestSchemaVersion(hostile), null);
   });
 });

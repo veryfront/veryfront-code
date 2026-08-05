@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import {
   assertEquals,
+  assertExists,
   assertMatch,
   assertRejects,
   assertStrictEquals,
@@ -1262,6 +1263,7 @@ describe("release asset manifest", () => {
       polling,
     );
 
+    assertExists(result);
     assertEquals(result.state, "ready");
     assertEquals(result.manifest.releaseId, "release-1");
   });
@@ -1289,6 +1291,7 @@ describe("release asset manifest", () => {
     await time.tickAsync(100);
 
     const result = await pending;
+    assertExists(result);
     assertEquals(result.state, "ready");
     assertEquals(reads, 3);
   });
@@ -1384,6 +1387,7 @@ describe("release asset manifest", () => {
     await time.tickAsync(100);
 
     const result = await pending;
+    assertExists(result);
     assertEquals(result.state, "ready");
     assertEquals(reads, 4);
   });
@@ -1499,23 +1503,72 @@ describe("release asset manifest", () => {
     }
   });
 
-  it("rejects legacy ready manifests", async () => {
+  it("degrades to the module path for a manifest built to another schema version", async () => {
+    // A hosted builder older or newer than this CLI is a version skew the
+    // operator cannot resolve from here. Failing the deploy would block it on
+    // a condition the manifest module already treats as an availability
+    // fallback, so the deploy proceeds without precompiled assets.
+    for (const declaredSchemaVersion of [1, 3]) {
+      const current = readyManifest();
+      const skews: number[] = [];
+
+      const result = await waitForReleaseAssetManifest(
+        manifestControlPlane({
+          ...current,
+          manifest: { ...current.manifest!, schemaVersion: declaredSchemaVersion },
+        }),
+        PROJECT_SLUG,
+        "release-1",
+        { ...polling, onSchemaSkew: (version) => void skews.push(version) },
+      );
+
+      assertEquals(result, null, `schema ${declaredSchemaVersion} must not fail the deploy`);
+      assertEquals(skews, [declaredSchemaVersion]);
+    }
+  });
+
+  it("reports the schema skew as a deploy warning without failing the deploy", async () => {
+    // The route-coverage assertion cannot run against a body this build cannot
+    // read, so the operator has to be told the assets were skipped.
+    const current = readyManifest();
+    const skews: number[] = [];
+
+    await waitForReleaseAssetManifest(
+      manifestControlPlane({
+        ...current,
+        manifest: { ...current.manifest!, schemaVersion: 1 },
+      }),
+      PROJECT_SLUG,
+      "release-1",
+      {
+        ...polling,
+        // A route the skewed manifest cannot possibly cover.
+        expectedRoutes: ["/", "/never-covered"],
+        onSchemaSkew: (version) => void skews.push(version),
+      },
+    );
+
+    assertEquals(skews, [1]);
+  });
+
+  it("still rejects a ready manifest that is not a schema mismatch", async () => {
+    // Only a declared schema version distinguishes skew from corruption. A body
+    // that parses at the current version but fails an identity check is not a
+    // builder-version problem and must keep failing closed.
     const current = readyManifest();
     await assertRejects(
       () =>
         waitForReleaseAssetManifest(
           manifestControlPlane({
             ...current,
-            manifest: { ...current.manifest!, schemaVersion: 1 },
+            manifest: { ...current.manifest!, modules: "not-a-record" as never },
           }),
           PROJECT_SLUG,
           "release-1",
           polling,
         ),
       Error,
-      // A legacy manifest is a framework version skew, so the message must say so:
-      // "rebuild the assets" would rebuild against the same mismatched builder.
-      "declare manifest schema version 1, but this build reads version 2",
+      "the manifest body did not match the expected schema",
     );
   });
 
@@ -1666,6 +1719,7 @@ describe("release asset manifest", () => {
       timeoutMs: 100,
     });
 
+    assertExists(result);
     assertEquals(result.state, "ready", "module-less apps deploy without page routes");
   });
 });

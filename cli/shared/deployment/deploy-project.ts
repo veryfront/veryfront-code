@@ -7,6 +7,7 @@ import {
   describeReadyReleaseAssetManifestRejection,
   isSafeBoundedText,
   parseReadyReleaseAssetManifestResponse,
+  readMismatchedReleaseAssetManifestSchemaVersion,
   readUntrustedOwnDataProperty,
   type ReadyReleaseAssetManifestResponse,
   type ReleaseAssetManifestResponse,
@@ -102,7 +103,7 @@ export type DeployEvent =
   }
   | {
     kind: "warning";
-    code: "routing-convergence-unconfirmed";
+    code: "routing-convergence-unconfirmed" | "release-assets-schema-skew";
     message: string;
   };
 
@@ -659,6 +660,16 @@ async function readReleaseAssetManifestBeforeDeadline(options: {
   }
 }
 
+/**
+ * Wait for a release's assets to reach a terminal state.
+ *
+ * Resolves with the parsed manifest, or with null when the assets are ready but
+ * their body was built to a different manifest schema version than this build
+ * reads. Null is not a failure: the deployed release serves pages through the
+ * existing release-scoped JIT path, which is the same availability fallback
+ * every other unavailable-manifest condition already takes. Callers that want
+ * to report the skew pass `onSchemaSkew`.
+ */
 export async function waitForReleaseAssetManifest(
   controlPlane: DeployControlPlane,
   projectSlug: string,
@@ -667,8 +678,9 @@ export async function waitForReleaseAssetManifest(
     expectedRoutes?: string[];
     pollIntervalMs?: number;
     timeoutMs?: number;
+    onSchemaSkew?: (declaredSchemaVersion: number) => void | Promise<void>;
   } = {},
-): Promise<ReadyReleaseAssetManifestResponse> {
+): Promise<ReadyReleaseAssetManifestResponse | null> {
   const pollIntervalMs = Math.max(100, options.pollIntervalMs ?? 2_000);
   const timeoutMs = Math.max(pollIntervalMs, options.timeoutMs ?? 120_000);
   const expectedRoutes = options.expectedRoutes ?? [];
@@ -713,6 +725,16 @@ export async function waitForReleaseAssetManifest(
       if (state === "ready") {
         const result = parseReadyReleaseAssetManifestResponse(raw, releaseId);
         if (!result) {
+          // A schema mismatch means the builder and this CLI are different
+          // framework versions. Neither side can act on the other's body and
+          // the operator cannot change the builder from here, so failing the
+          // deploy blocks it on a condition the manifest module already treats
+          // as an availability fallback. Degrade to JIT and report it instead.
+          const declaredSchemaVersion = readMismatchedReleaseAssetManifestSchemaVersion(raw);
+          if (declaredSchemaVersion !== null) {
+            await options.onSchemaSkew?.(declaredSchemaVersion);
+            return null;
+          }
           // Naming the failing check matters: a schema mismatch is fixed by
           // deploying a matching framework build, while "rebuild the assets"
           // sends the operator to rebuild against the same mismatched builder.
@@ -1187,6 +1209,17 @@ export function createDeployProject(options: {
           expectedRoutes: expectedPageRoutes,
           pollIntervalMs: polling.assetManifestPollIntervalMs,
           timeoutMs: polling.assetManifestTimeoutMs,
+          onSchemaSkew: async (declaredSchemaVersion) => {
+            await emit(observer, {
+              kind: "warning",
+              code: "release-assets-schema-skew",
+              message: `Release assets for this release declare manifest schema version ` +
+                `${declaredSchemaVersion}, which this CLI does not read. They were built by a ` +
+                `different framework version than the one running this deploy. Deploying ` +
+                `without precompiled browser assets; pages are served through the release ` +
+                `module path instead.`,
+            });
+          },
         });
       });
 
