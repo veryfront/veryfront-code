@@ -37,8 +37,8 @@ Do NOT infer tool availability from examples, skills, or the base prompt.`,
     const callableList = content.slice(0, content.indexOf("Only treat the tools"));
     assertEquals(callableList.includes("calculator"), false);
     assertEquals(content.includes("- calculator: Perform arithmetic."), true);
-    assertEquals(content.includes("NOT callable until loaded"), true);
-    assertEquals(content.includes("Do not call a deferred tool directly."), true);
+    assertEquals(content.includes("You cannot call these until they are loaded"), true);
+    assertEquals(content.includes("You must not call a deferred tool directly."), true);
   });
 
   it("omits the deferred section when nothing is deferred", () => {

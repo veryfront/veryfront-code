@@ -9,9 +9,9 @@ const RUNTIME_TOOL_SEARCH_GUIDANCE =
   "When tool_search is listed, additional authorized tools may be deferred. You MUST call tool_search before declaring a requested or required tool unavailable. Query with one exact tool name when known, or one short capability phrase; do not combine alternatives in one query. A loaded match becomes callable on the next model step.";
 
 const RUNTIME_DEFERRED_TOOL_HEADER =
-  "Authorized but not loaded. These are NOT callable until loaded:";
+  "Authorized but not loaded. You cannot call these until they are loaded:";
 const RUNTIME_DEFERRED_TOOL_FOOTER =
-  "Load one by calling tool_search with its exact name. It becomes callable on the next model step. Do not call a deferred tool directly.";
+  "Load one by calling tool_search with its exact name. It becomes callable on the next model step. You must not call a deferred tool directly.";
 
 /** A tool the model may load but cannot yet call. */
 export interface DeferredToolSummary {
