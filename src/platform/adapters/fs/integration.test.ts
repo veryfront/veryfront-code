@@ -17,6 +17,8 @@ import {
 import { denoAdapter } from "../deno.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import { createSecureFs } from "#veryfront/security/secure-fs.ts";
+import type { RuntimeAdapter } from "../base.ts";
 
 describe("integration.ts", () => {
   it("should export enhanceAdapterWithFS function", () => {
@@ -355,6 +357,20 @@ describe("integration.ts", () => {
       assertEquals("value" in descriptor, true);
       assertEquals(typeof descriptor.value, "object");
       assertEquals(descriptor.value === denoAdapter.fs, false);
+    });
+
+    it("produces an adapter SecureFs accepts end to end", async () => {
+      // The composed path is what broke in production, twice: SecureFs first
+      // rejected the Proxy adapter, then rejected the wrapped filesystem
+      // because an unimplemented optional capability was published as an own
+      // `undefined`. Each gate had a unit test, but nothing asserted the two
+      // together, so the second only surfaced after the first was deployed.
+      const enhanced = await enhanceWithRemoteFs();
+      const secureFs = createSecureFs({
+        baseDir: "/project",
+        adapter: enhanced as unknown as RuntimeAdapter,
+      });
+      assertExists(secureFs);
     });
 
     it("keeps the rest of the adapter, with methods bound to the original", async () => {
