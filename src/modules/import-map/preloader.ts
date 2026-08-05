@@ -207,6 +207,15 @@ export interface ImportMapPreloaderOptions {
   loadTimeoutMs?: number;
   /** Monotonic-enough clock seam; defaults to Date.now. */
   now?: () => number;
+  /**
+   * Timer seam, paired with `now`. Defaults to the host timers.
+   *
+   * Without this, a caller that injects `now` still has its deadlines measured
+   * against the wall clock, so a starved process can trip a timeout during work
+   * that took no virtual time at all. Override both halves together.
+   */
+  setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
+  cancelTimer?: (handle: ReturnType<typeof setTimeout>) => void;
   /** Loader seam for alternate runtimes and deterministic verification. */
   loadImportMap?: typeof loadImportMap;
 }
@@ -368,6 +377,11 @@ export class ImportMapPreloader {
   private readonly ttlMs: number;
   private readonly loadTimeoutMs: number;
   private readonly now: () => number;
+  private readonly setTimer: (
+    callback: () => void,
+    delayMs: number,
+  ) => ReturnType<typeof setTimeout>;
+  private readonly cancelTimer: (handle: ReturnType<typeof setTimeout>) => void;
   private readonly loader: typeof loadImportMap;
 
   constructor(options: ImportMapPreloaderOptions = {}) {
@@ -395,6 +409,11 @@ export class ImportMapPreloader {
       DEFAULT_IMPORT_MAP_LOAD_TIMEOUT_MS,
     );
     this.now = options.now ?? DateNow;
+    // Wrap rather than store the host timers directly: called as `this.setTimer`
+    // they would receive the preloader as their receiver, and Deno's timers
+    // reject any receiver that is not the global object.
+    this.setTimer = options.setTimer ?? ((callback, delayMs) => SetTimeout(callback, delayMs));
+    this.cancelTimer = options.cancelTimer ?? ((handle) => ClearTimeout(handle));
     this.loader = options.loadImportMap ?? loadImportMap;
   }
 
@@ -554,17 +573,17 @@ export class ImportMapPreloader {
     if (!hasActiveWork) return resolvedPromise();
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeout = new IntrinsicPromise<void>((_, reject) => {
-      timeoutId = SetTimeout(() => {
+      timeoutId = this.setTimer(() => {
         reject(new IntrinsicRangeError("Import-map preloader capacity wait timed out"));
       }, timeoutMs);
     });
     return promiseThen(
       raceTwo(capacityChange, timeout),
       () => {
-        if (timeoutId !== undefined) ClearTimeout(timeoutId);
+        if (timeoutId !== undefined) this.cancelTimer(timeoutId);
       },
       (error) => {
-        if (timeoutId !== undefined) ClearTimeout(timeoutId);
+        if (timeoutId !== undefined) this.cancelTimer(timeoutId);
         throw error;
       },
     );
@@ -824,7 +843,7 @@ export class ImportMapPreloader {
     this.trackActiveLoad(loaderPromise);
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new IntrinsicPromise<ImportMapConfig>((_, reject) => {
-      timeoutId = SetTimeout(() => {
+      timeoutId = this.setTimer(() => {
         if (setDelete(this.activeLoads, loaderPromise)) {
           this.trackOrphanedLoad(cacheKey, loaderPromise);
           this.notifyCapacityChange();
@@ -836,11 +855,11 @@ export class ImportMapPreloader {
     const boundedLoaderPromise = promiseThen(
       raceTwo(loaderPromise, timeoutPromise),
       (value) => {
-        if (timeoutId !== undefined) ClearTimeout(timeoutId);
+        if (timeoutId !== undefined) this.cancelTimer(timeoutId);
         return value;
       },
       (error) => {
-        if (timeoutId !== undefined) ClearTimeout(timeoutId);
+        if (timeoutId !== undefined) this.cancelTimer(timeoutId);
         throw error;
       },
     );

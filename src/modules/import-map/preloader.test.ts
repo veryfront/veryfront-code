@@ -68,6 +68,72 @@ async function waitForLoadCount(
   assertEquals(loads.length, expected);
 }
 
+/**
+ * Timer seam that never fires on its own.
+ *
+ * Tests that inject a virtual clock must inject timers too. Otherwise the
+ * preloader's deadline is measured against the wall clock while the rest of the
+ * test advances by fake ticks, so a starved CI worker can trip a timeout during
+ * work that consumed no virtual time at all. That turned a millisecond test into
+ * a ten-minute hang that only reproduced under full-shard load.
+ */
+function createInertTimers() {
+  let nextHandle = 1;
+  const pending = new Map<number, () => void>();
+  return {
+    setTimer: (callback: () => void, _delayMs: number) => {
+      const handle = nextHandle++;
+      pending.set(handle, callback);
+      return handle as unknown as ReturnType<typeof setTimeout>;
+    },
+    cancelTimer: (handle: ReturnType<typeof setTimeout>) => {
+      pending.delete(handle as unknown as number);
+    },
+    /** Fire a pending deadline explicitly when the timeout *is* under test. */
+    fireAll: () => {
+      const callbacks = [...pending.values()];
+      pending.clear();
+      for (const callback of callbacks) callback();
+    },
+  };
+}
+
+/**
+ * Await `promise` within a bounded number of macrotask turns.
+ *
+ * With inert timers a missed signal would hang forever rather than fail, so the
+ * bound is what keeps a genuine regression fast and legible instead of silent.
+ */
+async function settleWithin<T>(
+  promise: Promise<T>,
+  label: string,
+  turns = 200,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancelled = false;
+  const deadline = new Promise<never>((_, reject) => {
+    let turn = 0;
+    const tick = () => {
+      if (cancelled) return;
+      if (++turn >= turns) {
+        reject(new Error(`${label} did not settle within ${turns} macrotask turns`));
+        return;
+      }
+      timer = setTimeout(tick, 0);
+    };
+    timer = setTimeout(tick, 0);
+  });
+  try {
+    return await Promise.race([promise, deadline]);
+  } finally {
+    // The chain must be torn down explicitly: a pending tick would outlive the
+    // test and trip the runner's timer-leak detector.
+    cancelled = true;
+    if (timer !== undefined) clearTimeout(timer);
+    deadline.catch(() => {});
+  }
+}
+
 describe("modules/import-map/preloader", () => {
   describe("preloadImportMap", () => {
     it("should return an import map config", async () => {
@@ -1299,11 +1365,14 @@ describe("modules/import-map/preloader", () => {
       let releaseDuringAdmission = false;
       let admissionClockReads = 0;
       let clock = 0;
+      const timers = createInertTimers();
       const preloader = new ImportMapPreloader({
         maxProjects: 1,
         maxVariantsPerProject: 2,
         ttlMs: 1_000,
         loadTimeoutMs: TIMEOUT_NOT_UNDER_TEST_MS,
+        setTimer: timers.setTimer,
+        cancelTimer: timers.cancelTimer,
         now: () => {
           if (releaseDuringAdmission && admissionClockReads++ === 0) {
             loads[0]!.resolve({ imports: { source: "a" } });
@@ -1332,10 +1401,13 @@ describe("modules/import-map/preloader", () => {
 
       await waitForLoadCount(loads, 3);
       loads[2]!.resolve({ imports: { source: "c" } });
-      assertEquals((await first).imports?.source, "a");
-      assertEquals((await queued).imports?.source, "c");
+      assertEquals((await settleWithin(first, "first preload")).imports?.source, "a");
+      assertEquals((await settleWithin(queued, "queued preload")).imports?.source, "c");
       loads[1]!.resolve({ imports: { source: "b" } });
-      assertEquals((await unrelated).imports?.source, "b");
+      assertEquals(
+        (await settleWithin(unrelated, "unrelated preload")).imports?.source,
+        "b",
+      );
     });
 
     it("keeps variant identity and capacity deterministic after primordial poisoning", async () => {
