@@ -11,7 +11,7 @@ describe("compile-binary includes", () => {
     const args = createCompileArgs({
       entrypoint: profile === "proxy" ? "cli/proxy-main.ts" : "cli/main.ts",
       extraIncludes: [],
-      output: "/tmp/test-veryfront",
+      output: "test-veryfront",
       profile,
     });
 
