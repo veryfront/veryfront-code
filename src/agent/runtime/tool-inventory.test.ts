@@ -22,6 +22,53 @@ Do NOT infer tool availability from examples, skills, or the base prompt.`,
     ]);
   });
 
+  it("names deferred tools without listing them as callable", () => {
+    // A deferred tool absent from both the provider tool list and this inventory
+    // cannot even be searched for: the model has no reason to believe it exists.
+    // It must not join the callable list either, because the footer tells the
+    // model to treat that list as what it actually has.
+    const [, inventory] = withRuntimeToolInventory(
+      "Base system",
+      ["form_input", "tool_search"],
+      [{ name: "calculator", description: "Perform arithmetic." }],
+    );
+
+    const content = inventory?.content ?? "";
+    const callableList = content.slice(0, content.indexOf("Only treat the tools"));
+    assertEquals(callableList.includes("calculator"), false);
+    assertEquals(content.includes("- calculator: Perform arithmetic."), true);
+    assertEquals(content.includes("NOT callable until loaded"), true);
+    assertEquals(content.includes("Do not call a deferred tool directly."), true);
+  });
+
+  it("omits the deferred section when nothing is deferred", () => {
+    // The common case must render exactly as before, so an agent with no
+    // deferred catalog gains no prompt weight from this feature.
+    assertEquals(
+      withRuntimeToolInventory("Base system", ["read_file"], []),
+      withRuntimeToolInventory("Base system", ["read_file"]),
+    );
+  });
+
+  it("replaces a previous inventory that carried a deferred section", () => {
+    // The deferred block is written last, so it terminates the inventory. If the
+    // removal guard does not recognise that ending, the old inventory survives
+    // and a second one is appended on the next step.
+    const first = flattenSystemInstructions(
+      withRuntimeToolInventory("Base system", ["tool_search"], [{
+        name: "calculator",
+        description: "Perform arithmetic.",
+      }]),
+    );
+    const second = flattenSystemInstructions(
+      withRuntimeToolInventory(first, ["tool_search"], [{ name: "web_search" }]),
+    );
+
+    assertEquals(second.split("Current run tool inventory:").length - 1, 1);
+    assertEquals(second.includes("calculator"), false);
+    assertEquals(second.includes("- web_search"), true);
+  });
+
   it("replaces stale inventory messages when instructions are already materialized", () => {
     const instructions: ChatSystemMessage[] = [
       { role: "system", content: "Base system" },

@@ -185,6 +185,12 @@ export async function prepareAgentRuntimeStep(
         [...toolExposurePlan.visible.map((tool) => tool.name), ...(input.providerToolNames ?? [])]
           .filter((name, index, names) => names.indexOf(name) === index)
           .sort(),
+        // Naming what is deferred is the difference between a tool the model
+        // can seek and one it has no reason to believe exists.
+        toolExposurePlan.deferred.map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+        })),
       ),
     )
     : runtimeState.systemPrompt;
