@@ -727,6 +727,11 @@ export class SecureFs {
         virtualSnapshotReader = captureStaticReadCapabilities(
           suppliedFileSystem,
           "SecureFs filesystem",
+          // Same wrapper shape as the snapshot capture above. Without this the
+          // capture threw on FSAdapterWrapper's frozen `undefined` slots, and
+          // the catch below turned that into a silent loss of virtual snapshot
+          // authority rather than an error.
+          true,
         ).virtual;
       } catch {
         // A malformed optional virtual publisher must not weaken otherwise

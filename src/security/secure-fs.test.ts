@@ -1401,14 +1401,21 @@ describe("SecureFs with the platform filesystem wrapper", () => {
     // filesystem snapshot capability is invalid", which failed every hosted
     // render on a remote filesystem.
     const bareAdapter = {
-      readFile: () => Promise.resolve("x"),
-      readFileBytes: () => Promise.resolve(new Uint8Array()),
-      exists: () => Promise.resolve(true),
-      stat: () => Promise.resolve({ size: 0, isFile: true, isDirectory: false, isSymlink: false }),
-      readDir: async function* () {},
-      mkdir: () => Promise.resolve(),
-      remove: () => Promise.resolve(),
-      writeFile: () => Promise.resolve(),
+      readFile: (_path: string) => Promise.resolve("x"),
+      readFileBytes: (_path: string) => Promise.resolve(new Uint8Array()),
+      writeFile: (_path: string, _content: string) => Promise.resolve(),
+      exists: (_path: string) => Promise.resolve(true),
+      stat: (_path: string) =>
+        Promise.resolve({
+          size: 0,
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+          mtime: null,
+        }),
+      readDir: async function* (_path: string) {},
+      mkdir: (_path: string) => Promise.resolve(),
+      remove: (_path: string) => Promise.resolve(),
     } as unknown as Parameters<typeof wrapFSAdapter>[0];
 
     const wrapped = wrapFSAdapter(bareAdapter);
