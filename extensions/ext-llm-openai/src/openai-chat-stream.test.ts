@@ -407,6 +407,30 @@ describe("ext-llm-openai/openai-chat-stream", () => {
     );
   });
 
+  it("accepts repeated post-finish usage events without double counting", async () => {
+    // OpenAI's include_usage chunk uses `choices: []`; aggregators add a bare
+    // `{usage}`. Repeated cumulative totals must merge, not accumulate.
+    const usage = { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 };
+    const finish = data({ choices: [{ delta: {}, finish_reason: "stop" }] });
+    const emptyChoices = data({ choices: [], usage });
+    const bare = data({ usage });
+
+    for (
+      const tail of [[emptyChoices, emptyChoices], [emptyChoices, bare], [bare, bare]]
+    ) {
+      assertEquals(
+        await collectParts(
+          streamFromText([finish, ...tail, "data: [DONE]\r\n\r\n"].join("")),
+        ),
+        [{
+          type: "finish",
+          finishReason: "stop",
+          usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 },
+        }],
+      );
+    }
+  });
+
   it("rejects structurally empty and unterminated successful streams", async () => {
     await assertRejects(
       () => collectParts(streamFromText(data({}))),
