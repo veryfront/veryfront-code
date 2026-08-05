@@ -561,7 +561,7 @@ describe("server/handlers/preview/hmr.handler", () => {
         requestContext: { branch: "main" },
         adapter: {
           fs: {
-            isVeryfrontAdapter: true,
+            isVeryfrontAdapter: () => true,
             getUnderlyingAdapter: () => undefined,
             isMultiProjectMode: () => true,
             runWithContext: (

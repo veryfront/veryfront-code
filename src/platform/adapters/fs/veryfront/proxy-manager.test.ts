@@ -5,6 +5,7 @@ import {
   assertExists,
   assertNotStrictEquals,
   assertRejects,
+  assertStrictEquals,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -177,7 +178,7 @@ describe("ProxyFSAdapterManager", () => {
       }
     });
 
-    it("reuses a preview adapter without a fatal identity mismatch", async () => {
+    it("reuses an unnamed preview adapter after a named one is created", async () => {
       const manager = stubbedManager();
       try {
         const first = await manager.getAdapter(
@@ -186,10 +187,10 @@ describe("ProxyFSAdapterManager", () => {
           undefined,
           false,
           null,
-          "preview",
+          null,
           "main",
         );
-        const second = await manager.getAdapter(
+        const named = await manager.getAdapter(
           "my-project",
           "test-token",
           undefined,
@@ -198,8 +199,18 @@ describe("ProxyFSAdapterManager", () => {
           "preview",
           "main",
         );
+        const again = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+        );
 
-        assertEquals(first, second);
+        assertNotStrictEquals(first, named);
+        assertStrictEquals(first, again);
       } finally {
         manager.dispose();
       }
@@ -208,7 +219,15 @@ describe("ProxyFSAdapterManager", () => {
     it("treats an empty environment name as unnamed", async () => {
       const manager = stubbedManager();
       try {
-        await manager.getAdapter("my-project", "test-token", undefined, false, null, "", "main");
+        const empty = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          "",
+          "main",
+        );
         const unnamed = await manager.getAdapter(
           "my-project",
           "test-token",
@@ -219,7 +238,35 @@ describe("ProxyFSAdapterManager", () => {
           "main",
         );
 
-        assertExists(unnamed);
+        assertStrictEquals(empty, unnamed);
+      } finally {
+        manager.dispose();
+      }
+    });
+
+    it("ignores releaseId when resolving a preview adapter identity", async () => {
+      const manager = stubbedManager();
+      try {
+        const withRelease = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          false,
+          "release-7",
+          null,
+          "main",
+        );
+        const withoutRelease = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+        );
+
+        assertStrictEquals(withRelease, withoutRelease);
       } finally {
         manager.dispose();
       }
@@ -228,7 +275,7 @@ describe("ProxyFSAdapterManager", () => {
     it("ignores branch when resolving a production adapter identity", async () => {
       const manager = stubbedManager();
       try {
-        await manager.getAdapter(
+        const withBranch = await manager.getAdapter(
           "my-project",
           "test-token",
           undefined,
@@ -247,7 +294,7 @@ describe("ProxyFSAdapterManager", () => {
           null,
         );
 
-        assertExists(withoutBranch);
+        assertStrictEquals(withBranch, withoutBranch);
       } finally {
         manager.dispose();
       }
