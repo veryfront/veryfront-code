@@ -54,6 +54,45 @@ describe("compile-binary includes", () => {
     }
   });
 
+  it("should include every worker entrypoint named as one", async () => {
+    // Complements the call-site scan below, which finds workers by how they are
+    // spawned and so misses an entrypoint that exists but is not yet wired to a
+    // `new Worker(...)` the scan recognises. This finds them by name instead, so
+    // the two together cover both a worker the code spawns and a worker the
+    // repo merely contains.
+    const projectRoot = new URL("../../../", import.meta.url);
+    const entrypointName = /-worker-entry\.ts$|(?:^|-)worker-script\.ts$/;
+
+    const workerEntrypoints: string[] = [];
+    async function collect(dir: string): Promise<void> {
+      for await (const entry of Deno.readDir(new URL(dir, projectRoot))) {
+        const path = `${dir}/${entry.name}`;
+        if (entry.isDirectory) {
+          if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+          await collect(path);
+        } else if (entry.name.endsWith(".ts") && entrypointName.test(entry.name)) {
+          workerEntrypoints.push(path);
+        }
+      }
+    }
+    await collect("src");
+
+    assertEquals(
+      workerEntrypoints.length > 0,
+      true,
+      "expected to discover at least one worker entrypoint under src",
+    );
+
+    const includeFlags = getIncludeFlags("full");
+    for (const entrypoint of workerEntrypoints) {
+      assertEquals(
+        includeFlags.some((path) => entrypoint === path || entrypoint.startsWith(`${path}/`)),
+        true,
+        `${entrypoint} must be in compile-binary.ts DEFAULT_INCLUDES; deno compile cannot trace the computed worker URL, so the binary crashes when the worker is spawned`,
+      );
+    }
+  });
+
   it("should include every worker entrypoint spawned from a sibling URL", async () => {
     // `deno compile` embeds a worker only when it can statically read the
     // specifier. Every worker here resolves one relative to `import.meta.url`,
