@@ -259,9 +259,9 @@ describe("server/handlers/request/module/module.handler", () => {
 
     it("serves the endpoints once the host grants execution", async () => {
       // The granted counterpart to the fail-closed test above. A handler that
-      // denies every shared runtime unconditionally — which is what this
-      // surface did before veryfront-issue-inbox#366 — passes that test and
-      // fails this one. Without the pair, the two are indistinguishable.
+      // denies every shared runtime unconditionally, which is what this surface
+      // did before veryfront-issue-inbox#366, passes that test and fails this
+      // one. Without the pair, the two are indistinguishable.
       const handler = new ModuleHandler();
       for (
         const pathname of [
@@ -277,6 +277,14 @@ describe("server/handlers/request/module/module.handler", () => {
             isLocalProject: false,
             allowHostProjectCodeExecution: true,
           } as Partial<HandlerContext>),
+        );
+        // `continue: false` matters as much as the absent 503. Without it a
+        // handler that fell through entirely, emitting no response at all,
+        // would satisfy "did not return project-execution-unavailable".
+        assertEquals(
+          result.continue,
+          false,
+          `${pathname} fell through instead of serving a granted host`,
         );
         const type = result.response
           ? await result.response.clone().json().then(

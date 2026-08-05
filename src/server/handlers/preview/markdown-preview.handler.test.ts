@@ -99,41 +99,65 @@ Deno.test("MarkdownPreviewHandler fails closed before shared source reads", asyn
   assertEquals(reads, 0);
 });
 
-Deno.test("MarkdownPreviewHandler renders once the host grants execution", async () => {
-  // The granted counterpart of the shared-runtime denial above. #3364 collapsed
-  // the execution surfaces onto requiresIsolatedProjectRuntime so they could not
-  // drift apart, but markdown preview kept a bare isSharedProjectRuntime check
-  // and denied unconditionally. Without this case, an unconditional denial here
-  // is indistinguishable from a correct fail-closed guard.
-  let reads = 0;
-  const ctx = {
-    projectDir: "/remote/project",
-    isLocalProject: false,
-    requestContext: { mode: "preview" },
-    adapter: {
-      fs: {
-        isMultiProjectMode: () => true,
-        readFile: () => {
-          reads++;
-          throw new Error("not found");
+describe("MarkdownPreviewHandler host-execution capability", () => {
+  it("renders once the host grants execution", async () => {
+    // The granted counterpart of the shared-runtime denial above. #3364
+    // collapsed the execution surfaces onto requiresIsolatedProjectRuntime so
+    // they could not drift apart, but markdown preview kept a bare
+    // isSharedProjectRuntime check and denied unconditionally. Without this
+    // case, an unconditional denial here is indistinguishable from a correct
+    // fail-closed guard.
+    let reads = 0;
+    const ctx = {
+      projectDir: "/remote/project",
+      projectSlug: "project",
+      proxyToken: "token",
+      isLocalProject: false,
+      requestContext: { mode: "preview" },
+      adapter: {
+        fs: {
+          symlinkSemantics: "none" as const,
+          isMultiProjectMode: () => true,
+          isContextualMode: () => true,
+          runWithContext: async (
+            _slug: string,
+            _token: string,
+            fn: () => Promise<unknown>,
+          ) => await fn(),
+          exists: () => Promise.resolve(true),
+          stat: () =>
+            Promise.resolve({
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+              size: 0,
+              mtime: new Date(),
+            }),
+          readFile: () => {
+            reads++;
+            return Promise.resolve("# Readme\n");
+          },
         },
       },
-    },
-    securityConfig: null,
-    cspUserHeader: null,
-    allowHostProjectCodeExecution: true,
-  } as unknown as HandlerContext;
+      securityConfig: null,
+      cspUserHeader: null,
+      allowHostProjectCodeExecution: true,
+    } as unknown as HandlerContext;
 
-  const result = await new MarkdownPreviewHandler().handle(
-    new Request("https://tenant.example/README.md"),
-    ctx,
-  );
+    const result = await new MarkdownPreviewHandler().handle(
+      new Request("https://tenant.example/README.md"),
+      ctx,
+    );
 
-  assertNotEquals(
-    result.response?.status,
-    503,
-    "a granted shared executor must not return project-execution-unavailable",
-  );
+    assertNotEquals(
+      result.response?.status,
+      503,
+      "a granted shared executor must not return project-execution-unavailable",
+    );
+    // Not merely "did not 503": the granted request has to actually reach the
+    // shared filesystem, otherwise a fallthrough returning no response passes.
+    assertNotEquals(reads, 0, "the granted path must reach the project source read");
+  });
 });
 
 Deno.test("MarkdownPreviewHandler admits and reads through a real wrapped GitHub adapter", async () => {

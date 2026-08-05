@@ -7,7 +7,7 @@ import { fromFileUrl } from "#veryfront/compat/path";
  * Guards the shared-runtime execution boundary against silent drift.
  *
  * Every surface that refuses to run tenant project code must ask the same
- * question: `requiresIsolatedProjectRuntime(ctx)` — refuse only when the
+ * question: `requiresIsolatedProjectRuntime(ctx)`, which refuses only when the
  * runtime is shared *and* the host did not grant execution. Asking the
  * narrower `isSharedProjectRuntime(ctx)` instead denies hosts that were
  * explicitly granted the capability.
@@ -19,11 +19,11 @@ import { fromFileUrl } from "#veryfront/compat/path";
  * it was wrong. Once the Proxy was corrected, markdown preview started
  * returning 503 on staging (veryfront-issue-inbox#376, #366).
  *
- * Per-handler tests cannot catch this: each one is individually consistent.
- * Only an inventory across surfaces can, so this test is the inventory. It
- * reads source rather than behaviour deliberately — a behavioural sweep can
- * only cover the surfaces someone remembered to add to it, whereas an
- * unlisted file here is a failure by construction.
+ * Per-handler tests cannot catch this, because each one is individually
+ * consistent. Only an inventory across surfaces can, so this test is the
+ * inventory. It reads source rather than behaviour deliberately: a behavioural
+ * sweep can only cover the surfaces someone remembered to add to it, whereas
+ * an unlisted file here is a failure by construction.
  */
 
 const HANDLERS_DIR = fromFileUrl(new URL(".", import.meta.url));
@@ -69,16 +69,25 @@ async function readHandlerSources(): Promise<Map<string, string>> {
   return sources;
 }
 
-/** Ignore the import statement so only real call sites count. */
+/** Read the tree once so every assertion inspects the same snapshot. */
+let cachedSources: Promise<Map<string, string>> | undefined;
+function handlerSources(): Promise<Map<string, string>> {
+  cachedSources ??= readHandlerSources();
+  return cachedSources;
+}
+
+/** Strip imports first, so only real call sites count. */
 function callsPredicate(source: string, predicate: string): boolean {
-  return new RegExp(`(?<!import\\s*\\{[^}]*)\\b${predicate}\\s*\\(`).test(
-    source.split("\n").filter((line) => !line.trim().startsWith("import ")).join("\n"),
-  );
+  const body = source
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("import "))
+    .join("\n");
+  return new RegExp(`\\b${predicate}\\s*\\(`).test(body);
 }
 
 describe("server/handlers shared-runtime execution boundary", () => {
   it("gates every execution surface on the capability, not on sharedness alone", async () => {
-    const sources = await readHandlerSources();
+    const sources = await handlerSources();
     const drifted: string[] = [];
 
     for (const [path, source] of sources) {
@@ -98,7 +107,7 @@ describe("server/handlers shared-runtime execution boundary", () => {
   });
 
   it("keeps the capability-gated inventory accurate", async () => {
-    const sources = await readHandlerSources();
+    const sources = await handlerSources();
 
     const missing = CAPABILITY_GATED_SURFACES.filter((path) => {
       const source = sources.get(path);
@@ -110,7 +119,7 @@ describe("server/handlers shared-runtime execution boundary", () => {
       [],
       `These surfaces are listed as capability-gated but no longer call ` +
         `requiresIsolatedProjectRuntime(). Either restore the call or remove the entry ` +
-        `deliberately — silently dropping the gate is how a surface stops being enforced.`,
+        `deliberately. Silently dropping the gate is how a surface stops being enforced.`,
     );
 
     const unlisted = [...sources.keys()]
@@ -122,13 +131,13 @@ describe("server/handlers shared-runtime execution boundary", () => {
       unlisted,
       [],
       `New execution surfaces found. Add them to CAPABILITY_GATED_SURFACES and give each ` +
-        `a paired fail-closed and granted-path test — a fail-closed test alone cannot ` +
+        `a paired fail-closed and granted-path test. A fail-closed test alone cannot ` +
         `distinguish a correct predicate from a hardcoded denial.`,
     );
   });
 
   it("documents why each non-gate use of the narrow predicate is safe", async () => {
-    const sources = await readHandlerSources();
+    const sources = await handlerSources();
     const stale = Object.keys(NON_GATE_USES).filter((path) => {
       const source = sources.get(path);
       return !source || !callsPredicate(source, "isSharedProjectRuntime");
