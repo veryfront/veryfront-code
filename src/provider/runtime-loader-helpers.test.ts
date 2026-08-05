@@ -65,10 +65,8 @@ describe("provider/runtime-loader helpers", () => {
   });
 
   it("matches JSON.stringify on undefined members without loosening the strict snapshot", () => {
-    // Host tools build results with optional fields, so an absent value
-    // arrives as an own property holding `undefined`. JSON.stringify drops
-    // those; the provider wire format has to do the same or every such tool
-    // result kills the next model call.
+    // The load_skill result from run b2eca9d0, whose undefined allowedTools
+    // aborted the next model call.
     const toolResult = {
       skillId: "morning-email-summary",
       instructions: "# Instructions",
@@ -85,8 +83,7 @@ describe("provider/runtime-loader helpers", () => {
       '{"nested":{"b":[null]}}',
     );
 
-    // The audit primitive stays fail-closed: dropping undefined is a wire
-    // concession, not a change to what counts as a valid JSON value.
+    // The audit primitive stays fail-closed.
     assertThrows(() => snapshotJsonValue({ value: undefined }), TypeError);
     assertThrows(() => snapshotJsonValue([undefined]), TypeError);
     assertEquals(jsonValuesEqual({ hidden: undefined }, {}), false);

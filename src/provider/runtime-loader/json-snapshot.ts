@@ -111,13 +111,9 @@ export type JsonSnapshotOptions = {
   sortObjectKeys?: boolean;
   /**
    * Follow `JSON.stringify` on `undefined` members: drop object properties
-   * holding `undefined` and encode `undefined` array elements as `null`.
-   *
-   * Off by default so audit and equality callers keep failing closed — an own
-   * property holding `undefined` stays distinguishable from an absent one.
-   * Enable it only when producing a provider wire payload, where the value has
-   * to survive exactly as `JSON.stringify` would have encoded it. Descriptor
-   * validation is unchanged: accessors, symbols, and Proxies still fail.
+   * holding `undefined` and encode `undefined` array elements as `null`. Set
+   * this only for wire payloads; audit callers need `undefined` to stay
+   * distinguishable from absent.
    *
    * @default false
    */
@@ -452,8 +448,6 @@ function snapshotArray(
     if (index > 0) {
       addBytes(state, 1);
     }
-    // JSON.stringify encodes a present-but-undefined element as null. The
-    // density check above still rejects holes, which have no JSON encoding.
     const element = elementValues[index];
     defineArrayElement(
       snapshot,
@@ -496,8 +490,7 @@ function snapshotObject(
     if (typeof key !== "string") {
       invalidValue("must not contain symbol properties");
     }
-    // Read through the descriptor first so accessors still fail closed; only
-    // a genuine own data property holding `undefined` may be dropped.
+    // Read through the descriptor first so accessors still fail closed.
     const propertyValue = readDataProperty(value, key, true);
     if (propertyValue === undefined && state.dropUndefinedMembers) {
       continue;

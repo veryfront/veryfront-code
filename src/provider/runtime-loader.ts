@@ -151,10 +151,6 @@ export function createWarningCollector(): WarningCollector {
 export function stringifyJsonValue(value: unknown): string {
   try {
     const serialized = JSON.stringify(
-      // Host tools build results from optional fields, so absent values arrive
-      // as own properties holding `undefined`. JSON.stringify drops those, and
-      // the wire payload has to match or the request fails on data that has a
-      // perfectly good JSON encoding.
       snapshotProviderJsonValue(value, {
         sortObjectKeys: false,
         dropUndefinedMembers: true,
