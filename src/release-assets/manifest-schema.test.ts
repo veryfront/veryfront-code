@@ -421,19 +421,20 @@ describe("describeReadyReleaseAssetManifestRejection", () => {
 
 describe("readMismatchedReleaseAssetManifestSchemaVersion", () => {
   it("reports the version a real v1 hosted build declares", () => {
-    // Shape taken verbatim from a production asset-manifest response built by
-    // framework 0.1.1162: `fallback` in place of `dependencyMode`, and a legacy
-    // six-character styleProfileHash with no cssPipelineIdentity. Those CSS
-    // identities cannot be reconstructed, which is why v1 stays unparseable.
+    // Shape reproduced from a v1 hosted build: `fallback` in place of
+    // `dependencyMode`, and a legacy six-character styleProfileHash with no
+    // cssPipelineIdentity. Those CSS identities cannot be reconstructed, which
+    // is why v1 stays unparseable. Only the shape is load-bearing, so the
+    // identifiers here are synthetic.
     const legacyBody = {
       schemaVersion: 1,
-      projectId: "bd80f018-d3e7-4bcd-ba86-76e70e75c641",
-      releaseId: "43f1a553-9477-4b25-b5d9-5f154a142241",
+      projectId: "11111111-1111-1111-1111-111111111111",
+      releaseId: "22222222-2222-2222-2222-222222222222",
       releaseVersion: 1,
       manifestVersion: 1,
       builderVersion: "0.1.1162",
       sourceContentHash: "4".repeat(64),
-      createdAt: "2026-08-05T23:28:40.940Z",
+      createdAt: "2026-01-01T00:00:00.000Z",
       assetBasePath: "/_vf/assets",
       modules: {
         "app/page.tsx": { contentHash: "7".repeat(64), size: 505, contentType: "text/javascript" },
