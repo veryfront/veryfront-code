@@ -549,7 +549,7 @@ describe("server/handlers/preview/hmr.handler", () => {
   });
 
   describe("ensureAdapterInitialized", () => {
-    it("warms the adapter for the resolved environment", async () => {
+    it("warms the adapter for the named environment, not the mode", async () => {
       let observed: Record<string, unknown> | undefined;
       const handler = new HMRHandler();
       const ctx = {
@@ -557,6 +557,7 @@ describe("server/handlers/preview/hmr.handler", () => {
         proxyToken: "test-token",
         projectId: "proj_123",
         resolvedEnvironment: "preview",
+        environmentName: "Development",
         requestContext: { branch: "main" },
         adapter: {
           fs: {
@@ -582,7 +583,7 @@ describe("server/handlers/preview/hmr.handler", () => {
         ensureAdapterInitialized(ctx: HandlerContext): Promise<void>;
       }).ensureAdapterInitialized(ctx);
 
-      assertEquals(observed?.environmentName, "preview");
+      assertEquals(observed?.environmentName, "Development");
     });
   });
 });
