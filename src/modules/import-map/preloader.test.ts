@@ -1410,6 +1410,70 @@ describe("modules/import-map/preloader", () => {
       );
     });
 
+    it("measures the capacity deadline on the injected monotonic clock", async () => {
+      // The injected monotonic clock is frozen while host time keeps running.
+      // A capacity-blocked caller must therefore never reach its deadline: if
+      // the retry still consulted performance.now, real time would sail past
+      // loadTimeoutMs and reject it. Keeping this seam separate from `now` also
+      // matters, because `now` defaults to Date.now, which NTP can move
+      // backwards, and deadline arithmetic needs a monotonic source.
+      const adapter = createMinimalAdapter();
+      const loads: Array<ReturnType<typeof createDeferred<ImportMapConfig>>> = [];
+      const timers = createInertTimers();
+      const preloader = new ImportMapPreloader({
+        maxProjects: 1,
+        maxVariantsPerProject: 1,
+        ttlMs: TIMEOUT_NOT_UNDER_TEST_MS,
+        loadTimeoutMs: 50,
+        setTimer: timers.setTimer,
+        cancelTimer: timers.cancelTimer,
+        monotonicNow: () => 1_000,
+        now: () => 1,
+        loadImportMap: () => {
+          const load = createDeferred<ImportMapConfig>();
+          loads.push(load);
+          return load.promise;
+        },
+      });
+
+      const occupying = preloader.preload("/project", adapter, "project", {
+        contentSourceId: "source-a",
+      });
+      await waitForLoadCount(loads, 1);
+
+      const blocked = preloader.preload("/project", adapter, "project", {
+        contentSourceId: "source-b",
+      });
+
+      let settledEarly = false;
+      const observed = blocked.then(
+        () => {
+          settledEarly = true;
+        },
+        () => {
+          settledEarly = true;
+        },
+      );
+      for (let turn = 0; turn < 50; turn++) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+      assertEquals(settledEarly, false);
+
+      // Releasing capacity, not the passage of host time, is what lets it run.
+      loads[0]!.resolve({ imports: { source: "a" } });
+      assertEquals(
+        (await settleWithin(occupying, "occupying preload")).imports?.source,
+        "a",
+      );
+      await waitForLoadCount(loads, 2);
+      loads[1]!.resolve({ imports: { source: "b" } });
+      assertEquals(
+        (await settleWithin(blocked, "capacity-blocked preload")).imports?.source,
+        "b",
+      );
+      await observed;
+    });
+
     it("keeps variant identity and capacity deterministic after primordial poisoning", async () => {
       const worker = new Worker(
         new URL("./preloader-primordial-poisoning.worker.ts", import.meta.url),
