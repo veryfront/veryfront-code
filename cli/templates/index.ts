@@ -56,7 +56,6 @@ export {
 const CHAT_MARKDOWN_DEPENDENCIES: Record<string, string> = {
   "react-markdown": "9.0.3",
   "remark-gfm": "4.0.1",
-  "remark-math": "6.0.0",
   katex: "0.18.1",
 };
 

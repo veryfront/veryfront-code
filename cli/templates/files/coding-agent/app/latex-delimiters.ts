@@ -1,23 +1,31 @@
 /**
- * Normalise LaTeX delimiters before Markdown parsing.
+ * Carry LaTeX through Markdown parsing without letting the parser touch it.
  *
- * Two problems make this a pre-parse pass rather than a plugin.
+ * `\(` and `\[` cannot survive a Markdown parser. CommonMark treats a backslash
+ * before ASCII punctuation as a character escape, so `\(x\)` reaches the syntax
+ * tree as plain `(x)`. By the time any remark or rehype plugin runs the
+ * delimiters are gone, and a KaTeX DOM pass has nothing left to match. The
+ * rewrite therefore happens before parsing.
  *
- * First, `\(` and `\[` cannot survive the Markdown parser. CommonMark treats a
- * backslash before ASCII punctuation as a character escape, so `\(x\)` reaches
- * the syntax tree as plain `(x)`. By the time any remark or rehype plugin runs,
- * the delimiters are already gone, and a KaTeX DOM pass has nothing to match.
+ * Dollar delimiters are not used as the carrier, despite being what
+ * `remark-math` expects. Two independent facts rule them out:
  *
- * Second, `$` cannot be trusted as a delimiter in this content. Assistant
- * answers are full of currency: "18% tip on $84.50 ... totals $99.71". Enabling
- * single dollar math against that text turns the prose between two amounts into
- * a formula. So every dollar sign that the author wrote is escaped first, and
- * the only unescaped dollars left in the document are the delimiters introduced
- * here. That is what makes `singleDollarTextMath` safe downstream.
+ * 1. `remark-math` ends an inline expression at the first `$` it meets and does
+ *    not honour `\$`, so an expression cannot contain a dollar sign.
+ * 2. KaTeX only draws a dollar sign from a literal one (`\$`, `\text{\$}`).
+ *    `\textdollar` and `\mathdollar` are not math-mode commands and render as
+ *    an error.
  *
- * Code is never rewritten. Fenced blocks and inline spans are copied through
- * untouched, so a snippet containing `$` or `\(` keeps its exact source.
+ * Together those mean a dollar-delimited expression can never display money,
+ * which is most of what an assistant computes.
+ *
+ * A code span is used instead. Its content is literal by definition, so `\$`,
+ * `\times` and every other backslash reach the renderer exactly as written, and
+ * prose dollars need no escaping because `$` is no longer a delimiter at all.
  */
+
+/** Marks a code span as maths. U+E000 is private use, so no author writes it. */
+export const MATH_SENTINEL = "\uE000";
 
 /** A half-open source range that must be copied through verbatim. */
 interface CodeSpan {
@@ -26,14 +34,15 @@ interface CodeSpan {
 }
 
 const FENCE_RE = /^[ \t]*(`{3,}|~{3,})/;
+const MATH_RE = /\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)/g;
 
 /**
  * Locate fenced code blocks.
  *
  * A fence closes on the first later fence of the same character that is at
  * least as long as the opener. An unterminated fence runs to end of input,
- * matching how CommonMark treats it, so trailing text is not rewritten as if it
- * were prose.
+ * matching how CommonMark treats it, so a block still being streamed is not
+ * rewritten as if it were prose.
  */
 function findFencedSpans(source: string): CodeSpan[] {
   const spans: CodeSpan[] = [];
@@ -87,46 +96,47 @@ function findInlineSpans(source: string, fenced: readonly CodeSpan[]): CodeSpan[
   return spans;
 }
 
-const MATH_RE = /\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)/g;
-
-/** Outside maths a dollar is currency, so hide it from the math tokenizer. */
-function escapeProseDollars(text: string): string {
-  return text.replace(/\$/g, "\\$");
-}
-
 /**
- * Inside maths a dollar has to stop being a dollar character entirely.
+ * Wrap a payload in a code span long enough to contain it.
  *
- * `remark-math` closes an inline expression at the first `$` it meets and does
- * not honour a backslash escape, so `\textbf{ \$99.71 }` silently fails to
- * render rather than producing a dollar sign. `\textdollar` is the TeX spelling
- * that survives, and the braces keep it from swallowing a following digit.
+ * A fence must be longer than any backtick run inside, and CommonMark strips
+ * one leading and one trailing space, so padding keeps a payload that begins or
+ * ends with a backtick intact. This is defensive: a closed backtick pair in the
+ * source is already a code span and is skipped before maths is looked for, so
+ * only an unbalanced backtick can reach here.
  */
-function convertMathDollars(body: string): string {
-  return body.replace(/\$/g, "{\\textdollar}");
+function wrapAsCodeSpan(payload: string): string {
+  let longestRun = 0;
+  let run = 0;
+  for (const character of payload) {
+    run = character === "`" ? run + 1 : 0;
+    if (run > longestRun) longestRun = run;
+  }
+  const fence = "`".repeat(longestRun + 1);
+  const pad = payload.startsWith("`") || payload.endsWith("`") ? " " : "";
+  return `${fence}${pad}${payload}${pad}${fence}`;
 }
 
-/** Promote LaTeX delimiters to remark-math syntax, per region. */
+/** Rewrite the maths in one prose region into sentinel-tagged code spans. */
 function convertProse(text: string): string {
   let result = "";
   let cursor = 0;
 
   for (const match of text.matchAll(MATH_RE)) {
     const index = match.index ?? 0;
-    result += escapeProseDollars(text.slice(cursor, index));
+    result += text.slice(cursor, index);
     const display = match[1] !== undefined;
-    const body = convertMathDollars(display ? match[1] : (match[2] ?? ""));
-    result += display ? `$$${body}$$` : `$${body}$`;
+    const tex = display ? match[1] : (match[2] ?? "");
+    result += wrapAsCodeSpan(`${MATH_SENTINEL}${display ? "d" : "i"}${tex}`);
     cursor = index + match[0].length;
   }
 
-  result += escapeProseDollars(text.slice(cursor));
-  return result;
+  return result + text.slice(cursor);
 }
 
 /**
- * Rewrite `\(inline\)` and `\[display\]` into `$inline$` and `$$display$$`,
- * leaving every code region and every author-written `$` untouched.
+ * Rewrite `\(inline\)` and `\[display\]` into code spans the renderer can
+ * recognise, leaving author code and every dollar sign untouched.
  */
 export function normalizeLatexDelimiters(source: string): string {
   const fenced = findFencedSpans(source);
@@ -143,4 +153,12 @@ export function normalizeLatexDelimiters(source: string): string {
   }
   result += convertProse(source.slice(cursor));
   return result;
+}
+
+/** Decode a code span's content, or `null` when it is ordinary code. */
+export function readMathPayload(
+  content: string,
+): { tex: string; display: boolean } | null {
+  if (!content.startsWith(MATH_SENTINEL)) return null;
+  return { display: content[1] === "d", tex: content.slice(2) };
 }

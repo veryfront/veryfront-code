@@ -2,47 +2,53 @@
 
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import remarkMath from "remark-math";
 import katex from "katex";
 import type { MarkdownRendererProps } from "veryfront/markdown";
-import { normalizeLatexDelimiters } from "./latex-delimiters.ts";
+import { normalizeLatexDelimiters, readMathPayload } from "./latex-delimiters.ts";
 
 /**
- * Render one `remark-math` node with KaTeX.
+ * Render a code span, or the maths hiding inside one.
  *
- * `rehype-katex` is deliberately not used. It reparses KaTeX's output through
- * `hast-util-from-html-isomorphic`, which selects its browser branch under this
- * runtime and fails server-side with "DOMParser is not defined", taking the
- * whole page render down with it. `katex.renderToString` is pure string work
- * with no DOM, so it is safe in SSR and in the browser alike.
+ * `normalizeLatexDelimiters` parks each expression in a code span, because code
+ * spans are the only Markdown construct whose content is literal. That is what
+ * lets `\$` and `\times` arrive here exactly as the model wrote them.
  *
- * The markup is trusted because KaTeX generated it: input is escaped during
- * rendering, `trust` defaults to false so `\href` and friends stay inert, and
- * `throwOnError: false` turns a bad expression into a visible KaTeX error
- * instead of a failed render.
+ * KaTeX is called directly rather than through `rehype-katex`, which reparses
+ * its output with `hast-util-from-html-isomorphic`; that picks a browser branch
+ * under this runtime and fails server-side with "DOMParser is not defined",
+ * taking the whole page render down. `renderToString` is pure string work.
+ *
+ * The markup is trusted because KaTeX produced it: it escapes its own input,
+ * `trust` defaults to false so `\href` stays inert, and `throwOnError: false`
+ * shows a bad expression as an error instead of failing the render.
+ *
+ * Display maths renders as an inline-block rather than a `div`, because this
+ * sits inside a paragraph and a `div` there is invalid nesting.
  */
-function MathCode(
+function MarkdownCode(
   { className, children, ...props }: {
     className?: string;
     children?: React.ReactNode;
     [key: string]: unknown;
   },
 ): React.JSX.Element {
-  const classes = className ?? "";
-  const isDisplay = classes.includes("math-display");
+  const math = readMathPayload(String(children ?? ""));
 
-  if (!isDisplay && !classes.includes("math-inline")) {
+  if (math === null) {
     return <code className={className} {...props}>{children}</code>;
   }
 
-  const html = katex.renderToString(String(children ?? ""), {
-    displayMode: isDisplay,
+  const html = katex.renderToString(math.tex, {
+    displayMode: math.display,
     throwOnError: false,
   });
 
-  return isDisplay
-    ? <div dangerouslySetInnerHTML={{ __html: html }} />
-    : <span dangerouslySetInnerHTML={{ __html: html }} />;
+  return (
+    <span
+      style={math.display ? { display: "block" } : undefined}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
 }
 
 /**
@@ -51,19 +57,12 @@ function MathCode(
  * `veryfront/markdown` presents plain source until a renderer is installed, so
  * this component supplies one. Swap in any renderer that accepts
  * `MarkdownRendererProps` to change how answers are parsed and rendered.
- *
- * `normalizeLatexDelimiters` runs before parsing because `\(` and `\[` cannot
- * survive it: CommonMark reads a backslash before ASCII punctuation as a
- * character escape, so `\(x\)` reaches the syntax tree as plain `(x)` and no
- * later plugin can recover it. That same pass is what makes dollar-delimited
- * maths safe here, by escaping every dollar the author wrote so the money in
- * "totals $99.71" is never mistaken for a formula.
  */
 export function MarkdownRenderer({ source }: MarkdownRendererProps): React.JSX.Element {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkMath]}
-      components={{ code: MathCode }}
+      remarkPlugins={[remarkGfm]}
+      components={{ code: MarkdownCode }}
     >
       {normalizeLatexDelimiters(source)}
     </ReactMarkdown>

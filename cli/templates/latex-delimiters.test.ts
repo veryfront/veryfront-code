@@ -2,7 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { fromFileUrl } from "#veryfront/compat/path";
-import { normalizeLatexDelimiters } from "./files/ai-agent/app/latex-delimiters.ts";
+import {
+  MATH_SENTINEL,
+  normalizeLatexDelimiters,
+  readMathPayload,
+} from "./files/ai-agent/app/latex-delimiters.ts";
 
 /**
  * The scaffolded renderer cannot render maths without this pass, and each rule
@@ -12,35 +16,36 @@ import { normalizeLatexDelimiters } from "./files/ai-agent/app/latex-delimiters.
  * starter ships an identical copy, so covering one covers all of them.
  */
 describe("cli/templates latex delimiter normalisation", () => {
-  it("promotes inline and display delimiters to remark-math syntax", () => {
+  it("parks inline and display maths in a code span the renderer decodes", () => {
     // `\(` and `\[` cannot be handled after parsing: CommonMark consumes the
-    // backslash as a character escape, so the syntax tree only ever sees `(`.
-    assertEquals(
-      normalizeLatexDelimiters("area is \\(\\pi r^2\\) exactly"),
-      "area is $\\pi r^2$ exactly",
-    );
-    assertEquals(
-      normalizeLatexDelimiters("\\[x^2 + y^2 = z^2\\]"),
-      "$$x^2 + y^2 = z^2$$",
-    );
+    // backslash as a character escape, so the tree only ever sees `(`.
+    const inline = normalizeLatexDelimiters("area is \\(\\pi r^2\\) exactly");
+    assertEquals(inline, `area is \`${MATH_SENTINEL}i\\pi r^2\` exactly`);
+    assertEquals(readMathPayload(`${MATH_SENTINEL}i\\pi r^2`), {
+      tex: "\\pi r^2",
+      display: false,
+    });
+
+    const display = normalizeLatexDelimiters("\\[x^2 + y^2 = z^2\\]");
+    assertEquals(display, `\`${MATH_SENTINEL}dx^2 + y^2 = z^2\``);
+    assertEquals(readMathPayload(`${MATH_SENTINEL}dx^2`), { tex: "x^2", display: true });
   });
 
-  it("escapes currency so prose between two amounts is never parsed as maths", () => {
-    // Assistant answers quote money constantly. Unescaped, everything between
-    // "$84.50" and "$99.71" becomes one formula and the words vanish.
-    assertEquals(
-      normalizeLatexDelimiters("tip on $84.50 brings it to $99.71"),
-      "tip on \\$84.50 brings it to \\$99.71",
-    );
+  it("carries a dollar sign through untouched, escaped or not", () => {
+    // This is the whole reason a code span is the carrier. `remark-math` ends an
+    // expression at the first `$` and ignores `\$`, while KaTeX will only draw a
+    // dollar from a literal one, so a `$`-delimited expression can never show
+    // money. Models write `\$15.21` constantly.
+    const escaped = normalizeLatexDelimiters("\\(84.50 \\times 0.18 = \\$15.21\\)");
+    assertEquals(readMathPayload(escaped.slice(1, -1))?.tex, "84.50 \\times 0.18 = \\$15.21");
+
+    const bare = normalizeLatexDelimiters("\\(\\textbf{ $99.71 }\\)");
+    assertEquals(readMathPayload(bare.slice(1, -1))?.tex, "\\textbf{ $99.71 }");
   });
 
-  it("rewrites a dollar inside maths rather than escaping it", () => {
-    // remark-math closes an inline expression at the first `$` and does not
-    // honour `\$`, so an escaped dollar silently kills the whole expression.
-    assertEquals(
-      normalizeLatexDelimiters("\\(\\textbf{ $99.71 }\\)"),
-      "$\\textbf{ {\\textdollar}99.71 }$",
-    );
+  it("leaves prose currency alone, because $ is not a delimiter", () => {
+    const prose = "tip on $84.50 brings it to $99.71";
+    assertEquals(normalizeLatexDelimiters(prose), prose);
   });
 
   it("leaves code untouched", () => {
