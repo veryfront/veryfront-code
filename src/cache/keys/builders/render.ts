@@ -138,7 +138,12 @@ export function buildProxyManagerCacheKey(
   }
 
   const source = encodeCacheSourceIdentity({ type: "branch", branch: branch ?? "main" });
-  return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${source.qualifier}${authorityKey}`;
+  // ProxyFSAdapterManager asserts environmentName matches on reuse, so it must
+  // be part of the key. Omitted when unnamed to keep existing keys stable.
+  const environmentQualifier = environmentName
+    ? `:env:${encodeCacheKeyLiteralSegment(environmentName)}`
+    : "";
+  return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${source.qualifier}${environmentQualifier}${authorityKey}`;
 }
 
 /**
