@@ -80,8 +80,8 @@ export const PROXY_INCLUDES = [
   // are absent, therefore the worker never runs here" does not follow --
   // the conflict is a version skew, not an absence. `cli/proxy-main.ts` does
   // pull the evaluator's runner into its graph, so whether the proxy can reach
-  // a spawn at runtime is an open question, tracked separately. If it can, this
-  // list and the proxy lock have to be regenerated together.
+  // a spawn at runtime is an open question, tracked in veryfront-issue-inbox#382.
+  // If it can, this list and the proxy lock have to be regenerated together.
   //
   // The proxy runtime is loaded after provider activation. Providers are
   // statically referenced by cli/proxy-main.ts so --include does not embed the
