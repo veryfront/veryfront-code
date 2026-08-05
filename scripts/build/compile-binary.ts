@@ -11,6 +11,12 @@ export const DEFAULT_INCLUDES = [
   "src/platform/polyfills",
   "src/proxy/main.ts",
   "src/security/sandbox/worker-script.ts",
+  // Spawned through a computed sibling URL in
+  // src/config/declarative-evaluator-worker-runner.ts, which compile cannot
+  // trace. Without this the binary boots and only fails when the declarative
+  // config evaluator first runs, and the unhandled child-worker error takes
+  // the process down instead of failing the single request.
+  "src/config/declarative-evaluator-worker-entry.ts",
   "extensions/ext-auth-jwt/src/index.ts",
   // Explicit extensions remain inert until selected. Default extensions are
   // activated by the normal builtin composition when their source is embedded.

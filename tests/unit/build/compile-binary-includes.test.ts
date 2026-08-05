@@ -110,4 +110,47 @@ describe("compile-binary includes", () => {
       );
     }
   });
+
+  it("should include every worker entrypoint under src", async () => {
+    // Worker entrypoints are reached through a computed sibling URL, e.g.
+    // `new URL(`./name-worker-entry${extension}`, import.meta.url)`, which
+    // deno compile's module graph cannot follow. A missing entry compiles and
+    // boots fine, then throws "Module not found" the first time the worker is
+    // spawned. The child-worker failure is unhandled, so it takes the whole
+    // process down rather than degrading that one request.
+    //
+    // Regression: src/config/declarative-evaluator-worker-entry.ts was absent,
+    // which crashlooped veryfront-server in production once traffic reached
+    // the declarative config evaluator.
+    const workerEntrypoints: string[] = [];
+    async function collect(dir: string): Promise<void> {
+      for await (const entry of Deno.readDir(dir)) {
+        const path = `${dir}/${entry.name}`;
+        if (entry.isDirectory) {
+          await collect(path);
+          continue;
+        }
+        if (!entry.isFile || entry.name.endsWith(".test.ts")) continue;
+        if (/-worker-entry\.ts$|(?:^|-)worker-script\.ts$/.test(entry.name)) {
+          workerEntrypoints.push(path);
+        }
+      }
+    }
+    await collect("src");
+
+    assertEquals(
+      workerEntrypoints.length > 0,
+      true,
+      "expected to discover at least one worker entrypoint under src",
+    );
+
+    const includeFlags = getIncludeFlags();
+    for (const entrypoint of workerEntrypoints) {
+      assertEquals(
+        includeFlags.some((path) => entrypoint === path || entrypoint.startsWith(`${path}/`)),
+        true,
+        `${entrypoint} must be in compile-binary.ts DEFAULT_INCLUDES; deno compile cannot trace the computed worker URL, so the binary crashes when the worker is spawned`,
+      );
+    }
+  });
 });
