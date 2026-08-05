@@ -366,6 +366,57 @@ export function parseReadyReleaseAssetManifestResponse(
 }
 
 /**
+ * Explain why a ready manifest response was rejected.
+ *
+ * `parseReadyReleaseAssetManifestResponse` returns null for five distinct
+ * reasons, which left operators with "invalid or mismatched" and no way to tell
+ * a stale build from a corrupt payload. The commonest cause by far is version
+ * skew: assets built by a framework older than the reader expect a different
+ * schema, and the remedy is to deploy a newer builder, not to rebuild against
+ * the same one.
+ *
+ * Only bounded, self-produced text is returned. Untrusted values are reported
+ * as their shape or as a bounded integer, never echoed.
+ */
+export function describeReadyReleaseAssetManifestRejection(
+  value: unknown,
+  expectedReleaseId: string,
+): string {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return "the response envelope was not an object";
+  }
+
+  const manifestVersion = readOwnDataProperty(value, "manifest_version");
+  if (!isSafeIntegerInRange(manifestVersion, Number.MAX_SAFE_INTEGER)) {
+    return "the response envelope carried no usable manifest_version";
+  }
+
+  const body = readOwnDataProperty(value, "manifest");
+  const manifest = parseReleaseAssetManifest(body);
+  if (!manifest) {
+    const schemaVersion = readUntrustedOwnDataProperty(body, "schemaVersion");
+    if (
+      isSafeIntegerInRange(schemaVersion, Number.MAX_SAFE_INTEGER) &&
+      schemaVersion !== RELEASE_ASSET_MANIFEST_SCHEMA_VERSION
+    ) {
+      return `the release assets declare manifest schema version ${schemaVersion}, but this ` +
+        `build reads version ${RELEASE_ASSET_MANIFEST_SCHEMA_VERSION}. The assets were built ` +
+        `by a different framework version than the one running this deploy`;
+    }
+    return "the manifest body did not match the expected schema";
+  }
+
+  if (manifest.releaseId !== expectedReleaseId) {
+    return "the manifest identifies a different release than the one being deployed";
+  }
+  if (manifest.manifestVersion !== manifestVersion) {
+    return "the envelope and manifest body disagree on the manifest version";
+  }
+
+  return "the manifest failed validation for an unrecognized reason";
+}
+
+/**
  * Read an own data property from an untrusted value without invoking accessors.
  *
  * Returns undefined for primitives, accessor-backed properties, and values
