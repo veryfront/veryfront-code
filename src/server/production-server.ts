@@ -37,6 +37,7 @@ import {
   isHostProjectExecutionOverrideEnabled,
 } from "#veryfront/security/host-execution-policy.ts";
 import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
+import { runStartupDiscovery } from "./startup-discovery.ts";
 
 const serverLog = logger.component("server");
 const globalLog = logger.component("global");
@@ -225,6 +226,18 @@ export function startProductionServer(
         // the actual data client-side after hydration.
         enableSSRClientOnlyFetching();
 
+        // A dedicated single-project runtime carries the capability implicitly.
+        // A shared runtime intended to be the executor must be granted it by an
+        // operator, deliberately and visibly.
+        //
+        // Computed before discovery so startup and request handling share one
+        // value. They disagreed before issue-inbox#363: discovery hardcoded a
+        // grant while the handler computed the real posture.
+        const isolatedRuntimeGrant = bootstrap.config.fs?.veryfront?.proxyMode !== true &&
+          !isSharedProjectRuntime({ adapter });
+        const operatorGrant = isHostProjectExecutionOverrideEnabled();
+        const allowHostProjectCodeExecution = isolatedRuntimeGrant || operatorGrant;
+
         // Run primitive discovery before serving (registries must be populated before first request)
         if (discoveryConfig) {
           try {
@@ -233,29 +246,15 @@ export function startProductionServer(
               "#veryfront/platform/adapters/fs/wrapper.ts"
             );
 
-            if (
-              discoveryConfig.projectSlug && discoveryConfig.apiToken &&
-              discoveryConfig.fsAdapter && isExtendedFSAdapter(discoveryConfig.fsAdapter) &&
-              discoveryConfig.fsAdapter.isMultiProjectMode()
-            ) {
-              // Multi-project proxy: scope discovery to specific project
-              await discoveryConfig.fsAdapter.runWithContext(
-                discoveryConfig.projectSlug,
-                discoveryConfig.apiToken,
-                () =>
-                  discoverAll({
-                    baseDir: discoveryConfig.baseDir,
-                    fsAdapter: discoveryConfig.fsAdapter,
-                    verbose: discoveryConfig.verbose ?? false,
-                  }),
-              );
-            } else {
-              await discoverAll({
-                baseDir: discoveryConfig.baseDir,
-                fsAdapter: discoveryConfig.fsAdapter,
-                verbose: discoveryConfig.verbose ?? false,
-                allowHostProjectCodeExecution: true,
-              });
+            const outcome = await runStartupDiscovery({
+              config: discoveryConfig,
+              allowHostProjectCodeExecution,
+              discoverAll,
+              isExtendedFSAdapter,
+            });
+
+            if (!outcome.ran) {
+              serverLog.info("Primitive discovery skipped", { reason: outcome.reason });
             }
           } catch (error) {
             serverLog.error("Primitive discovery failed", {
@@ -265,13 +264,6 @@ export function startProductionServer(
         }
 
         logger.info("Starting production server", { projectDir, port, bindAddress });
-
-        // A dedicated single-project runtime carries the capability implicitly.
-        // A shared runtime intended to be the executor must be granted it by an
-        // operator, deliberately and visibly.
-        const isolatedRuntimeGrant = bootstrap.config.fs?.veryfront?.proxyMode !== true &&
-          !isSharedProjectRuntime({ adapter });
-        const operatorGrant = isHostProjectExecutionOverrideEnabled();
 
         if (operatorGrant && !isolatedRuntimeGrant) {
           logger.warn("Shared runtime is executing tenant project code by operator grant", {
@@ -289,7 +281,7 @@ export function startProductionServer(
           defaultReleaseId,
           defaultEnvironment,
           localProjects,
-          allowHostProjectCodeExecution: isolatedRuntimeGrant || operatorGrant,
+          allowHostProjectCodeExecution,
         });
 
         const coreHandler = baseHandler;
