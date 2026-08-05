@@ -9,6 +9,7 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
+  createEnhancedAdapter,
   createFSAdapterFromConfig,
   enhanceAdapterWithFS,
   getFSAdapterType,
@@ -16,6 +17,8 @@ import {
 } from "./integration.ts";
 import { denoAdapter } from "../deno.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import type { RuntimeAdapter } from "../base.ts";
 
 describe("integration.ts", () => {
   it("should export enhanceAdapterWithFS function", () => {
@@ -99,6 +102,27 @@ describe("integration.ts", () => {
 
   it("should return local when fs.type is not set", () => {
     assertEquals(getFSAdapterType({ fs: {} }), "local");
+  });
+
+  describe("createEnhancedAdapter", () => {
+    // SecureFs rejects Proxy adapters, so returning one here took hosted preview
+    // rendering down with a 400 on every request.
+    const stubFs = { symlinkSemantics: "none" } as unknown as RuntimeAdapter["fs"];
+
+    it("returns a non-Proxy adapter so SecureFs can accept it", () => {
+      const adapter = createEnhancedAdapter(denoAdapter, stubFs);
+
+      assertEquals(isProxyWithoutHooks(adapter), false);
+      assertExists(Object.getOwnPropertyDescriptor(adapter, "fs"));
+    });
+
+    it("overrides fs and keeps the rest of the adapter usable", () => {
+      const adapter = createEnhancedAdapter(denoAdapter, stubFs);
+
+      assertStrictEquals(adapter.fs, stubFs);
+      assertEquals(typeof adapter.shutdown, "function");
+      assertStrictEquals(adapter.capabilities, denoAdapter.capabilities);
+    });
   });
 
   describe("enhanceAdapterWithFS error propagation", () => {
