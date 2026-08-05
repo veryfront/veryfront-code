@@ -68,6 +68,72 @@ async function waitForLoadCount(
   assertEquals(loads.length, expected);
 }
 
+/**
+ * Timer seam that never fires on its own.
+ *
+ * Tests that inject a virtual clock must inject timers too. Otherwise the
+ * preloader's deadline is measured against the wall clock while the rest of the
+ * test advances by fake ticks, so a starved CI worker can trip a timeout during
+ * work that consumed no virtual time at all. That turned a millisecond test into
+ * a ten-minute hang that only reproduced under full-shard load.
+ */
+function createInertTimers() {
+  let nextHandle = 1;
+  const pending = new Map<number, () => void>();
+  return {
+    setTimer: (callback: () => void, _delayMs: number) => {
+      const handle = nextHandle++;
+      pending.set(handle, callback);
+      return handle as unknown as ReturnType<typeof setTimeout>;
+    },
+    cancelTimer: (handle: ReturnType<typeof setTimeout>) => {
+      pending.delete(handle as unknown as number);
+    },
+    /** Fire a pending deadline explicitly when the timeout *is* under test. */
+    fireAll: () => {
+      const callbacks = [...pending.values()];
+      pending.clear();
+      for (const callback of callbacks) callback();
+    },
+  };
+}
+
+/**
+ * Await `promise` within a bounded number of macrotask turns.
+ *
+ * With inert timers a missed signal would hang forever rather than fail, so the
+ * bound is what keeps a genuine regression fast and legible instead of silent.
+ */
+async function settleWithin<T>(
+  promise: Promise<T>,
+  label: string,
+  turns = 200,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancelled = false;
+  const deadline = new Promise<never>((_, reject) => {
+    let turn = 0;
+    const tick = () => {
+      if (cancelled) return;
+      if (++turn >= turns) {
+        reject(new Error(`${label} did not settle within ${turns} macrotask turns`));
+        return;
+      }
+      timer = setTimeout(tick, 0);
+    };
+    timer = setTimeout(tick, 0);
+  });
+  try {
+    return await Promise.race([promise, deadline]);
+  } finally {
+    // The chain must be torn down explicitly: a pending tick would outlive the
+    // test and trip the runner's timer-leak detector.
+    cancelled = true;
+    if (timer !== undefined) clearTimeout(timer);
+    deadline.catch(() => {});
+  }
+}
+
 describe("modules/import-map/preloader", () => {
   describe("preloadImportMap", () => {
     it("should return an import map config", async () => {
@@ -1299,11 +1365,14 @@ describe("modules/import-map/preloader", () => {
       let releaseDuringAdmission = false;
       let admissionClockReads = 0;
       let clock = 0;
+      const timers = createInertTimers();
       const preloader = new ImportMapPreloader({
         maxProjects: 1,
         maxVariantsPerProject: 2,
         ttlMs: 1_000,
         loadTimeoutMs: TIMEOUT_NOT_UNDER_TEST_MS,
+        setTimer: timers.setTimer,
+        cancelTimer: timers.cancelTimer,
         now: () => {
           if (releaseDuringAdmission && admissionClockReads++ === 0) {
             loads[0]!.resolve({ imports: { source: "a" } });
@@ -1332,10 +1401,84 @@ describe("modules/import-map/preloader", () => {
 
       await waitForLoadCount(loads, 3);
       loads[2]!.resolve({ imports: { source: "c" } });
-      assertEquals((await first).imports?.source, "a");
-      assertEquals((await queued).imports?.source, "c");
+      assertEquals((await settleWithin(first, "first preload")).imports?.source, "a");
+      assertEquals((await settleWithin(queued, "queued preload")).imports?.source, "c");
       loads[1]!.resolve({ imports: { source: "b" } });
-      assertEquals((await unrelated).imports?.source, "b");
+      assertEquals(
+        (await settleWithin(unrelated, "unrelated preload")).imports?.source,
+        "b",
+      );
+    });
+
+    it("measures the capacity deadline on the injected monotonic clock", async () => {
+      // The injected monotonic clock is frozen while host time keeps running.
+      // A capacity-blocked caller must therefore never reach its deadline: if
+      // the retry still consulted performance.now, real time would sail past
+      // loadTimeoutMs and reject it. Keeping this seam separate from `now` also
+      // matters, because `now` defaults to Date.now, which NTP can move
+      // backwards, and deadline arithmetic needs a monotonic source.
+      const adapter = createMinimalAdapter();
+      const loads: Array<ReturnType<typeof createDeferred<ImportMapConfig>>> = [];
+      const timers = createInertTimers();
+      const preloader = new ImportMapPreloader({
+        maxProjects: 1,
+        maxVariantsPerProject: 1,
+        ttlMs: TIMEOUT_NOT_UNDER_TEST_MS,
+        loadTimeoutMs: 50,
+        setTimer: timers.setTimer,
+        cancelTimer: timers.cancelTimer,
+        monotonicNow: () => 1_000,
+        now: () => 1,
+        loadImportMap: () => {
+          const load = createDeferred<ImportMapConfig>();
+          loads.push(load);
+          return load.promise;
+        },
+      });
+
+      const occupying = preloader.preload("/project", adapter, "project", {
+        contentSourceId: "source-a",
+      });
+      await waitForLoadCount(loads, 1);
+
+      const blocked = preloader.preload("/project", adapter, "project", {
+        contentSourceId: "source-b",
+      });
+
+      let settledEarly = false;
+      const observed = blocked.then(
+        () => {
+          settledEarly = true;
+        },
+        () => {
+          settledEarly = true;
+        },
+      );
+      // Host time must genuinely pass loadTimeoutMs, otherwise this proves
+      // nothing: a retry still reading performance.now would also be inside its
+      // deadline, and the test would pass with the bug present. Yield on timed
+      // sleeps rather than a fixed turn count, so the wait is bounded by the
+      // real clock advancing instead of by a turn budget that can run out first.
+      const hostDeadline = performance.now() + 50;
+      while (performance.now() < hostDeadline) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      }
+      assertEquals(performance.now() >= hostDeadline, true);
+      assertEquals(settledEarly, false);
+
+      // Releasing capacity, not the passage of host time, is what lets it run.
+      loads[0]!.resolve({ imports: { source: "a" } });
+      assertEquals(
+        (await settleWithin(occupying, "occupying preload")).imports?.source,
+        "a",
+      );
+      await waitForLoadCount(loads, 2);
+      loads[1]!.resolve({ imports: { source: "b" } });
+      assertEquals(
+        (await settleWithin(blocked, "capacity-blocked preload")).imports?.source,
+        "b",
+      );
+      await observed;
     });
 
     it("keeps variant identity and capacity deterministic after primordial poisoning", async () => {
