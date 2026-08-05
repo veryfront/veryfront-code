@@ -99,6 +99,45 @@ describe("proxy/proxy-access-control", () => {
     );
   });
 
+  it("signs in on the apex the request arrived on", () => {
+    // Sending a staging visitor to veryfront.com mints a cookie for a domain
+    // that a veryfront.org host never receives, so the redirect loop cannot
+    // close and staging previews stay unreachable while signed in.
+    assertEquals(
+      buildProxyAuthRedirectUrl(new URL("https://app.preview.veryfront.org/dashboard?a=1")),
+      "https://veryfront.org/sign-in?from=%2Fdashboard%3Fa%3D1",
+    );
+    // Production-mode deployments keep the default apex, unchanged since #1827.
+    assertEquals(
+      buildProxyAuthRedirectUrl(
+        new URL("https://app.production.veryfront.org/dashboard?a=1"),
+      ),
+      "https://veryfront.com/sign-in?from=https%3A%2F%2Fapp.production.veryfront.org%2Fdashboard%3Fa%3D1",
+    );
+    assertEquals(
+      buildProxyAuthRedirectUrl(new URL("https://veryfront.org/dashboard")),
+      "https://veryfront.org/sign-in?from=%2Fdashboard",
+    );
+  });
+
+  it("never takes the sign-in host from an unrecognized request host", () => {
+    // The apex is chosen from a fixed allowlist, so a forged Host header cannot
+    // point the sign-in redirect off-platform.
+    for (
+      const hostname of [
+        "evil.com",
+        "veryfront.org.evil.com",
+        "notveryfront.org",
+        "app.preview.veryfront.io",
+      ]
+    ) {
+      assertEquals(
+        buildProxyAuthRedirectUrl(new URL(`https://${hostname}/dashboard`)),
+        "https://veryfront.com/sign-in?from=%2Fdashboard",
+      );
+    }
+  });
+
   it("checks project membership by user id", () => {
     assertEquals(isProjectMember([{ id: "user-1" }], "user-1"), true);
     assertEquals(isProjectMember([{ id: "user-1" }], "user-2"), false);
