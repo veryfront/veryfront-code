@@ -4,6 +4,7 @@ import { join, relative, resolve } from "veryfront/platform/path";
 import { isWithinDirectory, normalizePath } from "veryfront/utils";
 import { parseProjectDomain } from "veryfront/server";
 import {
+  describeReadyReleaseAssetManifestRejection,
   isSafeBoundedText,
   parseReadyReleaseAssetManifestResponse,
   readUntrustedOwnDataProperty,
@@ -712,20 +713,30 @@ export async function waitForReleaseAssetManifest(
       if (state === "ready") {
         const result = parseReadyReleaseAssetManifestResponse(raw, releaseId);
         if (!result) {
-          throw new Error(
-            `Release assets for ${releaseId} returned an invalid or mismatched ready manifest. Rebuild the release assets and run deploy again.`,
-          );
+          // Naming the failing check matters: a schema mismatch is fixed by
+          // deploying a matching framework build, while "rebuild the assets"
+          // sends the operator to rebuild against the same mismatched builder.
+          const reason = describeReadyReleaseAssetManifestRejection(raw, releaseId);
+          throw DEPLOYMENT_ERROR.create({
+            detail: `Release assets for ${releaseId} could not be read: ${reason}.`,
+            context: { releaseId },
+          });
         }
         assertReadyManifestCoversPageRoutes(releaseId, result, expectedRoutes);
         return result;
       }
       if (state === "partial") {
-        throw new Error(
-          `Release asset build produced an unsupported partial manifest for release ${releaseId}. Rebuild the release assets and run deploy again.`,
-        );
+        throw DEPLOYMENT_ERROR.create({
+          detail:
+            `Release asset build produced an unsupported partial manifest for release ${releaseId}.`,
+          context: { releaseId },
+        });
       }
       if (state === "failed") {
-        throw new Error(`Release asset build failed for release ${releaseId}`);
+        throw DEPLOYMENT_ERROR.create({
+          detail: `Release asset build failed for release ${releaseId}.`,
+          context: { releaseId },
+        });
       }
       if (state === "superseded") {
         throw new Error(

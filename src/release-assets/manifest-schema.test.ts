@@ -1,8 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  describeReadyReleaseAssetManifestRejection,
   getReleaseAssetManifestSchema,
   parseReadyReleaseAssetManifestResponse,
   parseReleaseAssetManifest,
@@ -350,5 +356,64 @@ describe("release asset manifest schema", () => {
     assertEquals(parseReleaseAssetManifest(null), null);
     assertEquals(parseReleaseAssetManifest("nope"), null);
     assertEquals(parseReleaseAssetManifest(42), null);
+  });
+});
+
+describe("describeReadyReleaseAssetManifestRejection", () => {
+  it("names a schema version skew and points at the framework, not a rebuild", () => {
+    // The failure this exists for: assets built by an older framework declare an
+    // older schema. The previous message ("invalid or mismatched ready manifest.
+    // Rebuild the release assets") sent operators to rebuild against the same
+    // mismatched builder, which cannot succeed.
+    const reason = describeReadyReleaseAssetManifestRejection(
+      { state: "ready", manifest_version: 1, manifest: { schemaVersion: 1, releaseId: "r1" } },
+      "r1",
+    );
+
+    assertStringIncludes(reason, "schema version 1");
+    assertStringIncludes(reason, `version ${RELEASE_ASSET_MANIFEST_SCHEMA_VERSION}`);
+    assertStringIncludes(reason, "different framework version");
+  });
+
+  it("distinguishes the other rejection paths", () => {
+    assertStringIncludes(
+      describeReadyReleaseAssetManifestRejection("not-an-object", "r1"),
+      "was not an object",
+    );
+    assertStringIncludes(
+      describeReadyReleaseAssetManifestRejection({ state: "ready" }, "r1"),
+      "no usable manifest_version",
+    );
+  });
+
+  it("survives a hostile envelope instead of throwing while classifying", () => {
+    // This runs inside the error path, to build a classified DEPLOYMENT_ERROR.
+    // A throw here would surface as the unclassified error this diagnostic
+    // exists to eliminate, so property reads must not be able to raise.
+    const hostile = new Proxy({}, {
+      getOwnPropertyDescriptor() {
+        throw new Error("hostile proxy");
+      },
+      ownKeys() {
+        throw new Error("hostile proxy");
+      },
+      get() {
+        throw new Error("hostile proxy");
+      },
+    });
+
+    const reason = describeReadyReleaseAssetManifestRejection(hostile, "r1");
+    assertEquals(typeof reason, "string");
+    assertEquals(reason.length > 0, true);
+  });
+
+  it("reports a body that fails schema checks without echoing it", () => {
+    const reason = describeReadyReleaseAssetManifestRejection(
+      { state: "ready", manifest_version: 1, manifest: { secret: "do-not-echo" } },
+      "r1",
+    );
+
+    assertStringIncludes(reason, "did not match the expected schema");
+    assertEquals(reason.includes("do-not-echo"), false);
   });
 });

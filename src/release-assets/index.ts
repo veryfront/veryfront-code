@@ -47,6 +47,7 @@ export {
   releaseAssetUrl,
 } from "./constants.ts";
 export {
+  describeReadyReleaseAssetManifestRejection,
   getReleaseAssetManifestSchema,
   hasImmutableReleaseAssetDependencies,
   type ImmutableReleaseAssetManifest,

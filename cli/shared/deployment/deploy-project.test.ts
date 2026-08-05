@@ -1513,7 +1513,9 @@ describe("release asset manifest", () => {
           polling,
         ),
       Error,
-      "invalid or mismatched ready manifest",
+      // A legacy manifest is a framework version skew, so the message must say so:
+      // "rebuild the assets" would rebuild against the same mismatched builder.
+      "declare manifest schema version 1, but this build reads version 2",
     );
   });
 
@@ -1531,7 +1533,7 @@ describe("release asset manifest", () => {
           polling,
         ),
       Error,
-      "invalid or mismatched ready manifest",
+      "identifies a different release than the one being deployed",
     );
   });
 
