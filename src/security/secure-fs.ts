@@ -707,6 +707,16 @@ export class SecureFs {
       snapshotReader = captureSnapshotReadCapability(
         suppliedFileSystem,
         "SecureFs filesystem",
+        // Treat an explicitly undefined capability as unsupported rather than
+        // malformed. FSAdapterWrapper deliberately publishes every optional
+        // capability as a frozen own property, including the ones the
+        // underlying adapter does not provide, so that project code cannot
+        // inject one after construction. Rejecting that shape made SecureFs
+        // refuse the platform's own wrapper, and every hosted project on a
+        // remote filesystem failed its render. The wrapper itself captures with
+        // this same allowance. A present-but-non-function value is still
+        // rejected below.
+        true,
       );
     } catch (_) {
       invalidSecureFsOption("SecureFs filesystem snapshot capability is invalid");
