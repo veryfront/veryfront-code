@@ -18,6 +18,13 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/constants/limits.ts";
 import type { ImportMapConfig } from "./types.ts";
 
+/**
+ * `loadTimeoutMs` arms a real `setTimeout`, not the injected `now` clock, so
+ * tests holding a load unresolved race wall time and flake under CI load. Tests
+ * that do exercise timeout behavior keep their own small values.
+ */
+const TIMEOUT_NOT_UNDER_TEST_MS = 600_000;
+
 function createMinimalAdapter(): RuntimeAdapter {
   return {
     fs: {
@@ -1135,7 +1142,7 @@ describe("modules/import-map/preloader", () => {
         maxProjects: 2,
         maxVariantsPerProject: 1,
         ttlMs: 1_000,
-        loadTimeoutMs: 1_000,
+        loadTimeoutMs: TIMEOUT_NOT_UNDER_TEST_MS,
         loadImportMap: () => {
           const load = createDeferred<ImportMapConfig>();
           loads.push(load);
@@ -1223,7 +1230,7 @@ describe("modules/import-map/preloader", () => {
         maxProjects: 2,
         maxVariantsPerProject: 2,
         ttlMs: 1_000,
-        loadTimeoutMs: 1_000,
+        loadTimeoutMs: TIMEOUT_NOT_UNDER_TEST_MS,
         loadImportMap: () => {
           const load = createDeferred<ImportMapConfig>();
           loads.push(load);
@@ -1296,7 +1303,7 @@ describe("modules/import-map/preloader", () => {
         maxProjects: 1,
         maxVariantsPerProject: 2,
         ttlMs: 1_000,
-        loadTimeoutMs: 10_000,
+        loadTimeoutMs: TIMEOUT_NOT_UNDER_TEST_MS,
         now: () => {
           if (releaseDuringAdmission && admissionClockReads++ === 0) {
             loads[0]!.resolve({ imports: { source: "a" } });
