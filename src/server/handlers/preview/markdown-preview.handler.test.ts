@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import type { HandlerContext } from "../types.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MarkdownPreviewHandler } from "./markdown-preview.handler.ts";
@@ -97,6 +97,43 @@ Deno.test("MarkdownPreviewHandler fails closed before shared source reads", asyn
   assertEquals(result.response?.status, 503);
   assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
   assertEquals(reads, 0);
+});
+
+Deno.test("MarkdownPreviewHandler renders once the host grants execution", async () => {
+  // The granted counterpart of the shared-runtime denial above. #3364 collapsed
+  // the execution surfaces onto requiresIsolatedProjectRuntime so they could not
+  // drift apart, but markdown preview kept a bare isSharedProjectRuntime check
+  // and denied unconditionally. Without this case, an unconditional denial here
+  // is indistinguishable from a correct fail-closed guard.
+  let reads = 0;
+  const ctx = {
+    projectDir: "/remote/project",
+    isLocalProject: false,
+    requestContext: { mode: "preview" },
+    adapter: {
+      fs: {
+        isMultiProjectMode: () => true,
+        readFile: () => {
+          reads++;
+          throw new Error("not found");
+        },
+      },
+    },
+    securityConfig: null,
+    cspUserHeader: null,
+    allowHostProjectCodeExecution: true,
+  } as unknown as HandlerContext;
+
+  const result = await new MarkdownPreviewHandler().handle(
+    new Request("https://tenant.example/README.md"),
+    ctx,
+  );
+
+  assertNotEquals(
+    result.response?.status,
+    503,
+    "a granted shared executor must not return project-execution-unavailable",
+  );
 });
 
 Deno.test("MarkdownPreviewHandler admits and reads through a real wrapped GitHub adapter", async () => {

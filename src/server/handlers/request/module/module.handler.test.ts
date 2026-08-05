@@ -257,6 +257,41 @@ describe("server/handlers/request/module/module.handler", () => {
       assertEquals(rendererCalls, 0);
     });
 
+    it("serves the endpoints once the host grants execution", async () => {
+      // The granted counterpart to the fail-closed test above. A handler that
+      // denies every shared runtime unconditionally — which is what this
+      // surface did before veryfront-issue-inbox#366 — passes that test and
+      // fails this one. Without the pair, the two are indistinguishable.
+      const handler = new ModuleHandler();
+      for (
+        const pathname of [
+          "/_veryfront/modules/runtime.js",
+          "/_veryfront/pages/page.js",
+          "/_veryfront/data/page.json",
+          "/_veryfront/page-data/page.json",
+        ]
+      ) {
+        const result = await handler.handle(
+          new Request(`https://tenant.example${pathname}`),
+          makeCtx({
+            isLocalProject: false,
+            allowHostProjectCodeExecution: true,
+          } as Partial<HandlerContext>),
+        );
+        const type = result.response
+          ? await result.response.clone().json().then(
+            (body: { type?: string }) => body.type,
+            () => undefined,
+          )
+          : undefined;
+        assertEquals(
+          type === "https://veryfront.com/docs/errors/project-execution-unavailable",
+          false,
+          `${pathname} denied execution to a granted host`,
+        );
+      }
+    });
+
     it("returns an empty fail-closed response for HEAD", async () => {
       const result = await new ModuleHandler().handle(
         new Request("https://tenant.example/_veryfront/page-data/page.json", {

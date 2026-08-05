@@ -16,7 +16,7 @@ import { extract } from "#std/front-matter/yaml.ts";
 import { tryNotFoundFallback } from "../request/ssr/not-found-fallback.ts";
 import { generateMarkdownHtml } from "./markdown-html-generator.ts";
 import { validateLexicalPath, validatePath, ValidationPresets } from "#veryfront/security";
-import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
+import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import {
   createErrorResponseFromDefinition,
   PROJECT_EXECUTION_UNAVAILABLE,
@@ -48,7 +48,7 @@ export class MarkdownPreviewHandler extends BaseHandler {
       return this.continue();
     }
 
-    if (isSharedProjectRuntime(ctx)) {
+    if (requiresIsolatedProjectRuntime(ctx)) {
       const problem = createErrorResponseFromDefinition(
         PROJECT_EXECUTION_UNAVAILABLE,
         {

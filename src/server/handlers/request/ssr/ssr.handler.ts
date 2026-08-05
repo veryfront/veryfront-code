@@ -47,10 +47,7 @@ import {
   createErrorResponseFromDefinition,
   PROJECT_EXECUTION_UNAVAILABLE,
 } from "#veryfront/errors";
-import {
-  isHostProjectCodeExecutionAllowed,
-  isSharedProjectRuntime,
-} from "#veryfront/security/project-locality.ts";
+import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 
 const logger = serverLogger.component("ssr");
 
@@ -104,7 +101,7 @@ export class SSRHandler extends BaseHandler {
       return Promise.resolve(this.continue());
     }
 
-    if (isSharedProjectRuntime(ctx) && !isHostProjectCodeExecutionAllowed(ctx)) {
+    if (requiresIsolatedProjectRuntime(ctx)) {
       const problem = createErrorResponseFromDefinition(
         PROJECT_EXECUTION_UNAVAILABLE,
         {
