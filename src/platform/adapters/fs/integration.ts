@@ -21,39 +21,22 @@ function isLocalFS(config: FSIntegrationConfig): boolean {
 
 /**
  * Override `fs` without a Proxy. SecureFs rejects Proxy adapters because their
- * traps can run arbitrary code, so copy the adapter's members onto a real
- * object with methods bound back to the original instance.
+ * traps can run arbitrary code. Inheriting from the adapter keeps its methods,
+ * accessors and identity live, while `fs` is the one own data property SecureFs
+ * requires.
  */
 export function createEnhancedAdapter(
   adapter: RuntimeAdapter,
   fs: RuntimeAdapter["fs"],
 ): RuntimeAdapter {
-  const enhanced: Record<PropertyKey, unknown> = {};
-  const chain: object[] = [];
-  for (
-    let current: object | null = adapter;
-    current !== null && current !== Object.prototype;
-    current = Object.getPrototypeOf(current)
-  ) {
-    chain.push(current);
-  }
-
-  // Base first so subclass overrides win.
-  for (const source of chain.reverse()) {
-    for (const key of Reflect.ownKeys(source)) {
-      if (key === "constructor" || key === "fs") continue;
-      const value = Reflect.get(adapter, key);
-      enhanced[key] = typeof value === "function" ? value.bind(adapter) : value;
-    }
-  }
-
+  const enhanced = Object.create(adapter) as RuntimeAdapter;
   Object.defineProperty(enhanced, "fs", {
     value: fs,
     writable: false,
     enumerable: true,
     configurable: false,
   });
-  return enhanced as unknown as RuntimeAdapter;
+  return enhanced;
 }
 
 export function enhanceAdapterWithFS(

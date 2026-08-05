@@ -707,6 +707,10 @@ export class SecureFs {
       snapshotReader = captureSnapshotReadCapability(
         suppliedFileSystem,
         "SecureFs filesystem",
+        // FSAdapterWrapper freezes every optional capability slot, publishing
+        // `undefined` for the ones no adapter implements. Treat that as absent,
+        // as the wrapper itself does, instead of rejecting the filesystem.
+        true,
       );
     } catch (_) {
       invalidSecureFsOption("SecureFs filesystem snapshot capability is invalid");

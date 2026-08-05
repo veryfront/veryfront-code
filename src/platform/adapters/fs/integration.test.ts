@@ -19,6 +19,9 @@ import { denoAdapter } from "../deno.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import type { RuntimeAdapter } from "../base.ts";
+import type { FSAdapter } from "./veryfront/types.ts";
+import { wrapFSAdapter } from "./wrapper.ts";
+import { createSecureFs } from "#veryfront/security/secure-fs.ts";
 
 describe("integration.ts", () => {
   it("should export enhanceAdapterWithFS function", () => {
@@ -102,6 +105,40 @@ describe("integration.ts", () => {
 
   it("should return local when fs.type is not set", () => {
     assertEquals(getFSAdapterType({ fs: {} }), "local");
+  });
+
+  describe("remote filesystem reaches SecureFs", () => {
+    // Two gates broke hosted preview in sequence: SecureFs rejected the Proxy
+    // adapter, then rejected the wrapped fs because an unimplemented optional
+    // capability was published as an own `undefined`.
+    function bareRemoteFs(): FSAdapter {
+      return {
+        readFile: () => Promise.resolve(""),
+        writeFile: () => Promise.resolve(),
+        exists: () => Promise.resolve(true),
+        mkdir: () => Promise.resolve(),
+        remove: () => Promise.resolve(),
+        stat: () =>
+          Promise.resolve({
+            isSymlink: false,
+            isDirectory: false,
+            isFile: true,
+            size: 0,
+            mtime: null,
+          }),
+        // deno-lint-ignore require-yield
+        async *readDir() {},
+      } as unknown as FSAdapter;
+    }
+
+    it("produces an adapter SecureFs accepts", () => {
+      const adapter = createEnhancedAdapter(
+        denoAdapter,
+        wrapFSAdapter(bareRemoteFs()) as unknown as RuntimeAdapter["fs"],
+      );
+
+      assertExists(createSecureFs({ baseDir: "/project", adapter }));
+    });
   });
 
   describe("createEnhancedAdapter", () => {
