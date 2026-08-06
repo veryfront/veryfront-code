@@ -1,6 +1,6 @@
 ---
 title: "Security headers and CSP"
-description: "Veryfront applies a Content-Security-Policy by default. Use this guide to allow Google Fonts, analytics, and other third-party origins."
+description: "Veryfront applies a Content-Security-Policy by default. Use this guide to allow analytics, embeds, and other third-party origins your site needs."
 order: 11
 ---
 
@@ -13,10 +13,10 @@ In production, Veryfront serves this policy:
 ```http
 default-src 'self';
 script-src 'self' 'nonce-<generated>' https://esm.sh;
-style-src 'self' 'unsafe-inline';
+style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
 style-src-attr 'unsafe-inline';
 img-src 'self' https://images.veryfront.com https://cdn.veryfront.com data:;
-font-src 'self' data:;
+font-src 'self' data: https://fonts.gstatic.com;
 connect-src 'self' https://esm.sh;
 media-src 'self' blob:;
 worker-src 'self' blob:;
@@ -31,9 +31,10 @@ Alongside it: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Refer
 
 Development serves no CSP at all, so HMR and dev tooling are never blocked and a local allowance can never widen your production policy.
 
-Two directives are worth understanding:
+Three directives are worth understanding:
 
 - **`script-src` includes `https://esm.sh`** because the renderer writes React imports from that CDN into every document. A fresh nonce is generated per response for the framework's own inline bootstrap.
+- **`style-src` and `font-src` include the Google Fonts origins** because `veryfront/fonts` writes those tags into the document itself. Google Fonts therefore works with no configuration. If your project never uses it, see [Tightening the policy](#tightening-the-policy).
 - **`frame-ancestors`** is `'none'` on your own domain. On `*.veryfront.com` addresses it instead allows the Studio origins, so the Studio preview iframe works.
 
 ## Adding an origin
@@ -44,16 +45,29 @@ Set `security.csp` in `veryfront.config.ts`. Values are **added to** the default
 export default {
   security: {
     csp: {
-      styleSrc: ["https://fonts.googleapis.com"],
-      fontSrc: ["https://fonts.gstatic.com"],
+      // An analytics endpoint your client code posts to
+      connectSrc: ["https://analytics.example.com"],
     },
   },
 };
 ```
 
-That is the complete Google Fonts setup: `fonts.googleapis.com` serves the stylesheet, `fonts.gstatic.com` serves the font files, and both directives keep everything they already had.
+`connect-src` keeps everything it already had and gains your origin.
 
 Directive names may be camelCase (`fontSrc`) or the CSP spelling (`font-src`). Both work; camelCase matches the rest of your config. You do not need to repeat `'self'`; it is already there.
+
+A font service other than Google's needs both halves, the stylesheet origin and the font-file origin:
+
+```ts
+export default {
+  security: {
+    csp: {
+      styleSrc: ["https://use.typekit.net"],
+      fontSrc: ["https://use.typekit.net"],
+    },
+  },
+};
+```
 
 A few more examples:
 
@@ -61,8 +75,6 @@ A few more examples:
 export default {
   security: {
     csp: {
-      // An analytics endpoint your client code posts to
-      connectSrc: ["https://analytics.example.com"],
       // Embedding YouTube
       frameSrc: ["https://www.youtube.com"],
       // Images from your own CDN
@@ -88,7 +100,7 @@ To remove the platform's optional sources for one directive, set it to `null`:
 export default {
   security: {
     csp: {
-      // Serve no inline styles. Keeps 'self', drops 'unsafe-inline'.
+      // Keeps 'self'. Drops 'unsafe-inline' and the Google Fonts origin.
       styleSrc: null,
     },
   },
@@ -97,7 +109,7 @@ export default {
 
 `null` removes the optional half of a directive and keeps the required half. It cannot lock you out of your own site.
 
-Before doing this, check what your components actually need. `'unsafe-inline'` is in the default `style-src` because many React component libraries, including Veryfront's own, create styles at runtime. Removing it is safe only if you are certain yours do not.
+Before doing this, check what your components actually need. `'unsafe-inline'` is in the default `style-src` because many React component libraries, including Veryfront's own, create styles at runtime. Removing it is safe only if you are certain yours do not. The same setting drops the Google Fonts stylesheet origin, so only reach for it if your project does not use `veryfront/fonts`.
 
 ## Replacing the policy entirely
 

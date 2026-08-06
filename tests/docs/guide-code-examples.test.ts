@@ -308,25 +308,41 @@ describe("Guide: security-headers.md", () => {
     }
   });
 
-  it("documents a Google Fonts config that actually admits the fonts", async () => {
+  it("documents that Google Fonts needs no config, and it actually does not", async () => {
     const guide = await readGuide("security-headers.md");
-    assertStringIncludes(guide, 'styleSrc: ["https://fonts.googleapis.com"]');
-    assertStringIncludes(guide, 'fontSrc: ["https://fonts.gstatic.com"]');
+    assertStringIncludes(guide, "Google Fonts therefore works with no configuration");
 
-    const csp = buildCSP(false, "n", {
-      csp: {
-        styleSrc: ["https://fonts.googleapis.com"],
-        fontSrc: ["https://fonts.gstatic.com"],
-      },
-    });
+    // The claim the guide now makes: a project that configures nothing can
+    // still load what `veryfront/fonts` emits.
+    const csp = buildCSP(false, "n", null);
     const directive = (name: string) =>
       csp.split("; ").find((part) => part.startsWith(`${name} `)) ?? "";
 
     assertStringIncludes(directive("style-src"), "https://fonts.googleapis.com");
     assertStringIncludes(directive("font-src"), "https://fonts.gstatic.com");
-    // The guide promises the floor survives an addition.
     assertStringIncludes(directive("script-src"), "'nonce-n'");
     assert(!csp.includes("style-src-elem"), "no directive shadows the documented style-src");
+  });
+
+  it("documents a third-party font service addition that actually admits it", async () => {
+    const guide = await readGuide("security-headers.md");
+    assertStringIncludes(guide, 'styleSrc: ["https://use.typekit.net"]');
+    assertStringIncludes(guide, 'fontSrc: ["https://use.typekit.net"]');
+
+    const csp = buildCSP(false, "n", {
+      csp: {
+        styleSrc: ["https://use.typekit.net"],
+        fontSrc: ["https://use.typekit.net"],
+      },
+    });
+    const directive = (name: string) =>
+      csp.split("; ").find((part) => part.startsWith(`${name} `)) ?? "";
+
+    assertStringIncludes(directive("style-src"), "https://use.typekit.net");
+    assertStringIncludes(directive("font-src"), "https://use.typekit.net");
+    // The guide promises the floor survives an addition.
+    assertStringIncludes(directive("style-src"), "https://fonts.googleapis.com");
+    assertStringIncludes(directive("script-src"), "'nonce-n'");
   });
 
   it("documents a null opt-out that keeps the required sources", async () => {
