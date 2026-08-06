@@ -111,6 +111,36 @@ describe("release asset manifest fetcher ownership", () => {
     assertStringIncludes(logged, "built by a different framework version");
   });
 
+  it("reports a ready response whose envelope has no usable manifest_version", async () => {
+    // `state` is normalized to "invalid" when the envelope is unusable, so
+    // classifying on it routed this rejection to debug, silencing one of the
+    // exact reasons the diagnostic exists to surface. Classification follows
+    // the publisher's claimed state instead.
+    Deno.env.set("VERYFRONT_RELEASE_ASSET_MANIFEST", "1");
+    registerManifestFetcherForRelease("release-envelope", () =>
+      Promise.resolve({
+        state: "ready",
+        manifest_version: -1,
+        manifest: manifest("release-envelope", 1),
+      } as unknown as ReturnType<typeof readyManifestResponse>));
+
+    const originalError = console.error;
+    let logged = "";
+    console.error = (...values: unknown[]) => {
+      logged += values.map((value) => typeof value === "string" ? value : JSON.stringify(value))
+        .join(" ");
+    };
+
+    try {
+      assertEquals(await getReadyManifestForRenderAsync("release-envelope"), null);
+    } finally {
+      console.error = originalError;
+    }
+
+    assertStringIncludes(logged, "release-envelope");
+    assertStringIncludes(logged, "no usable manifest_version");
+  });
+
   it("keeps cache identities distinct for delimiter-shaped release IDs", async () => {
     Deno.env.set("VERYFRONT_RELEASE_ASSET_MANIFEST", "1");
     const calls: string[] = [];

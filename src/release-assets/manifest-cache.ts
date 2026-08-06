@@ -451,7 +451,12 @@ function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> 
         });
         return manifest;
       } else {
-        if (state === "ready") {
+        // Classify on what the publisher claimed, not on the derived `state`.
+        // A response that says `ready` with an unusable `manifest_version` is
+        // normalized to "invalid" above, so keying on `state` would route the
+        // envelope-level rejections to debug — silencing exactly the reasons
+        // this diagnostic exists to surface.
+        if (rawState === "ready") {
           markManifestDecision("fetch_ready_invalid");
           // A manifest the publisher calls ready but this build cannot read is
           // an operator problem, not a wait: browser modules are refused for
