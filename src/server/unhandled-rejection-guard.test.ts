@@ -85,6 +85,7 @@ describe("server/unhandled-rejection-guard", () => {
 
     assertEquals(logger.errors.length, 1);
     const [logged] = logger.errors;
+    assertExists(logged);
     assertStringIncludes(String(logged.context.error), "cannot resolve stylesheet import");
     assertExists(logged.context.stack);
   });
@@ -97,7 +98,9 @@ describe("server/unhandled-rejection-guard", () => {
     target.dispatch("unhandledrejection", rejectionEvent("bare string reason"));
 
     assertEquals(logger.errors.length, 1);
-    assertStringIncludes(String(logger.errors[0].context.error), "bare string reason");
+    const [logged] = logger.errors;
+    assertExists(logged);
+    assertStringIncludes(String(logged.context.error), "bare string reason");
   });
 
   it("counts rejections so a rising rate is observable", () => {
