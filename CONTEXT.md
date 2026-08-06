@@ -53,6 +53,23 @@ never the decision. There is exactly one persisted link format
 (inferred or local-link) and never on a dry run. The project client
 (control plane over HTTP, CLI API client, fake in tests) is its one seam.
 
+## Tool Replay Reconciliation
+
+The single owner of deciding which tool-call and tool-result occurrences in
+UI-message replay history are authoritative for provider conversion:
+`src/chat/tool-replay-reconciliation.ts`. Matching is by part **object
+identity**, so one pass over history marks parts as matched, superseded,
+batch-starting, or transient-but-preserved without mutating them. Provider
+conversion and message preparation both consult this module rather than
+re-deriving which occurrence wins.
+
+## Tool Part Interpretation
+
+The single owner of interpreting one message part — tool, text, reasoning, or
+file — into a normalized shape: `src/chat/tool-part-parsing.ts`. Provider
+conversion and Tool Replay Reconciliation both read parts through it, so a
+change to how a part is recognized lands in one file.
+
 ## Stream Delivery
 
 The separate agent-loop fan-out boundary that will route lifecycle frames to

@@ -109,6 +109,15 @@ const FILE_SIZE_CEILINGS: Record<string, number> = {
   "src/react/components/chat/chat-actions.tsx": 203,
   "src/react/components/chat/chat/controlled-chat.tsx": 242,
   "src/react/components/chat/chat/app-mode-chat.tsx": 177,
+  // Chat core: message construction and provider-conversion, split along its
+  // real seams (part-field-access, tool-part-parsing, tool-replay
+  // reconciliation). Not React components, so this map does not subject them
+  // to the antipattern ratchets above — it only pins their size.
+  "src/chat/conversation.ts": 1019,
+  "src/chat/message-prep.ts": 2016,
+  "src/chat/tool-replay-reconciliation.ts": 293,
+  "src/chat/tool-part-parsing.ts": 265,
+  "src/chat/part-field-access.ts": 66,
 };
 
 function checkFileSizes(): boolean {
