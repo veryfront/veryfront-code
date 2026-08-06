@@ -28,6 +28,8 @@ function respond(
   status: number,
   headers: Record<string, string>,
 ): Response {
+  // This module is failure-only by design. A 2xx success shape must not be added without
+  // revisiting the metric label logic to avoid silently recording success as "error".
   metrics.recordModuleServe(status === HTTP_NOT_FOUND ? "not_found" : "error");
   return new Response(method === "HEAD" ? null : body, { status, headers });
 }

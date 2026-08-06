@@ -915,6 +915,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             projectSlug,
             projectDir,
           });
+          // no-store, not no-cache: this miss is probed against the tenant's projectDir
+          // after admission, so a cacheable answer would leak project layout (see #3290).
           return moduleRejected(method);
         }
 
