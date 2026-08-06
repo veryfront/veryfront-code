@@ -13,9 +13,10 @@
  * cache that getaddrinfo uses. Resolvers that serialize concurrent queries then
  * add seconds: a Tailscale MagicDNS resolver measured 46ms for one lookup but
  * 2061ms for 51 concurrent lookups, against roughly 60ms for public resolvers at
- * the same concurrency. HTTP_MODULE_FETCH_TIMEOUT_MS allows each module fetch
- * 2_500ms total, so DNS alone exhausted the budget and the fetches failed with
- * AbortError until the render hit its idle deadline.
+ * the same concurrency. HTTP_MODULE_FETCH_TIMEOUT_MS gives each fetch attempt
+ * 2_500ms rather than each fetch, so DNS alone exhausted one attempt. Every
+ * attempt then failed the same way and the fetches died with AbortError, until
+ * the render hit its idle deadline.
  *
  * Caching resolved addresses does not widen the DNS-rebinding window that
  * pinning closes: reusing an already validated address set is what pinning
