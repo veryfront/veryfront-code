@@ -65,7 +65,17 @@ describe("platform/compat/dynamic-import", () => {
       } else {
         return null;
       }
-      const candidates = [base, `${base}.ts`, `${base}.tsx`, `${base}/index.ts`];
+      // index.tsx matters as much as index.ts here: the client entries walk
+      // React subtrees, and src/react/components/chat/chat/index.tsx is a
+      // directory module inside the one entry that actually leaked. Omitting
+      // it would make the traversal stop early and silently pass.
+      const candidates = [
+        base,
+        `${base}.ts`,
+        `${base}.tsx`,
+        `${base}/index.ts`,
+        `${base}/index.tsx`,
+      ];
       for (const candidate of candidates) {
         if (read(candidate) !== null) return candidate;
       }
