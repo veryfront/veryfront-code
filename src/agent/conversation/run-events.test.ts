@@ -209,6 +209,48 @@ describe("agent/conversation-run-events", () => {
     }]);
   });
 
+  it("gives an unresolved provider-executed tool call a durable terminal result", () => {
+    // The reported incident read as TOOL_CALL_START + TOOL_CALL_END with no
+    // TOOL_CALL_RESULT in the persisted run-event log, so the runs panel showed
+    // a tool call that never finished.
+    //
+    // The stream handler synthesizes a terminal `tool-output-error` chunk for a
+    // provider-executed call the provider never resolved — chat-stream-handler
+    // tests cover that it is emitted. This covers the other half of the chain:
+    // that chunk must encode to a TOOL_CALL_RESULT, because the durable lane the
+    // runs panel reads is fed by teeing these chunks into the run mirror. Change
+    // this mapping and the live SSE card recovers while the runs panel silently
+    // regresses to the original signature.
+    const encoder = new ConversationRunEventEncoder();
+    const toolCallId = "srvtoolu_provider_fetch";
+
+    const types = [
+      { type: "tool-input-start", toolCallId, toolName: "web_fetch", providerExecuted: true },
+      { type: "tool-input-delta", toolCallId, inputTextDelta: '{"url":"https://example.com"}' },
+      {
+        type: "tool-input-available",
+        toolCallId,
+        toolName: "web_fetch",
+        input: { url: "https://example.com" },
+        providerExecuted: true,
+      },
+      {
+        type: "tool-output-error",
+        toolCallId,
+        errorText:
+          'Provider-executed tool "web_fetch" returned no result before the model turn ended.',
+        providerExecuted: true,
+      },
+    ].flatMap((chunk) => encoder.encode(chunk as never)).map((event) => event.type);
+
+    assertEquals(types, [
+      conversationRunEventTypes.toolCallStart,
+      conversationRunEventTypes.toolCallArgs,
+      conversationRunEventTypes.toolCallEnd,
+      conversationRunEventTypes.toolCallResult,
+    ]);
+  });
+
   it("encodes and normalizes whole event lists", () => {
     const events = [
       { type: "text-start", id: "msg-1" },
