@@ -11,6 +11,8 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
+import { HOST_PROJECT_EXECUTION_OVERRIDE_ENV } from "#veryfront/security/host-execution-policy.ts";
+import { __setCompiledBinaryForTests } from "./isolation-capability.ts";
 import type { ProjectWorker, ProjectWorkerOptions } from "./project-worker.ts";
 import {
   __resetPoolForTests,
@@ -1495,7 +1497,65 @@ describe("Feature flag caching", () => {
     try {
       Deno.env.delete("WORKER_REQUEST_TIMEOUT_MS");
     } catch { /* ok */ }
+    try {
+      Deno.env.delete(HOST_PROJECT_EXECUTION_OVERRIDE_ENV);
+    } catch { /* ok */ }
+    __setCompiledBinaryForTests(undefined);
     await __resetPoolForTests();
+  });
+
+  describe("when the runtime cannot prepare an isolated API module", () => {
+    it("downgrades WORKER_ISOLATION_API under an explicit host-execution grant", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      Deno.env.set(HOST_PROJECT_EXECUTION_OVERRIDE_ENV, "1");
+      __setCompiledBinaryForTests(true);
+      await __resetPoolForTests();
+
+      assertEquals(isWorkerIsolationEnabled(), false);
+    });
+
+    it("keeps WORKER_ISOLATION_API set when host execution is not granted", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      __setCompiledBinaryForTests(true);
+      await __resetPoolForTests();
+
+      // Fails closed rather than silently downgrading. API ownership turns this
+      // into a typed 503; it must never become host-realm execution.
+      assertEquals(isWorkerIsolationEnabled(), true);
+    });
+
+    it("does not downgrade when the runtime can prepare an isolated module", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      Deno.env.set(HOST_PROJECT_EXECUTION_OVERRIDE_ENV, "1");
+      __setCompiledBinaryForTests(false);
+      await __resetPoolForTests();
+
+      assertEquals(isWorkerIsolationEnabled(), true);
+    });
+
+    it("never downgrades data isolation, which uses a different transport", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      Deno.env.set("WORKER_ISOLATION_DATA", "1");
+      Deno.env.set(HOST_PROJECT_EXECUTION_OVERRIDE_ENV, "1");
+      __setCompiledBinaryForTests(true);
+      await __resetPoolForTests();
+
+      assertEquals(isWorkerIsolationEnabled(), false);
+      assertEquals(isDataIsolationEnabled(), true);
+    });
+
+    it("does not enable API isolation that was never requested", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set(HOST_PROJECT_EXECUTION_OVERRIDE_ENV, "1");
+      __setCompiledBinaryForTests(true);
+      await __resetPoolForTests();
+
+      assertEquals(isWorkerIsolationEnabled(), false);
+    });
   });
 
   it("returns false when master switch is off", async () => {

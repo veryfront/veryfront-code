@@ -36,6 +36,11 @@ import {
 } from "./worker-egress-guard.ts";
 import { isWorkerGenerationInScope } from "./worker-generation.ts";
 import { buildWorkerPermissions } from "./worker-permissions.ts";
+import { isHostProjectExecutionOverrideEnabled } from "#veryfront/security/host-execution-policy.ts";
+import {
+  ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
+  isIsolatedApiPreparationSupported,
+} from "./isolation-capability.ts";
 import type {
   RenderSSRRequest,
   WorkerPoolConfig,
@@ -1238,15 +1243,65 @@ let _apiIsolation = false;
 let _dataIsolation = false;
 let _ssrIsolation = false;
 
+/**
+ * Resolve the host-owned isolation flags once per process.
+ *
+ * `WORKER_ISOLATION_API` asks for a posture this build may be unable to provide.
+ * When it cannot, there is no configuration that serves traffic: every project
+ * API route dead-ends in `prepareHandlerModule` and is masked as a 500. The flag
+ * is downgraded in exactly one case — the operator has *already* granted
+ * host-realm project execution via VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION, in
+ * writing, at the host-owned entrypoint. That is a documented, explicit,
+ * operator-granted precondition, and the downgrade cannot grant anything beyond
+ * it: `useHostRealm` (routing/api/handler.ts) and `isolationRequired`
+ * (routing/api/route-executor.ts) are both conjunctions with
+ * `allowHostProjectCodeExecution`. Removing the isolation term never removes
+ * that one.
+ *
+ * Without the grant the flag stands and the request fails closed — as a typed
+ * `project-execution-unavailable` 503 from API ownership, not a masked 500.
+ *
+ * Remove the downgrade once isolated preparation works in a compiled binary; the
+ * blocker is documented on `isIsolatedApiPreparationSupported`.
+ */
 function resolveFlags(): void {
   if (_flagsResolved) return;
   // Isolation is host-owned security policy. Project env overlays must never
   // enable or disable it for the framework process.
   const master = getHostEnvBoolean("WORKER_ISOLATION_ENABLED", false);
-  _apiIsolation = master && getHostEnvBoolean("WORKER_ISOLATION_API", false);
+  const apiRequested = master && getHostEnvBoolean("WORKER_ISOLATION_API", false);
   _dataIsolation = master && getHostEnvBoolean("WORKER_ISOLATION_DATA", false);
   _ssrIsolation = master && getHostEnvBoolean("WORKER_ISOLATION_SSR", false);
+
+  const preparationSupported = isIsolatedApiPreparationSupported();
+  const hostExecutionGranted = isHostProjectExecutionOverrideEnabled();
+  const downgraded = apiRequested && !preparationSupported && hostExecutionGranted;
+
+  _apiIsolation = apiRequested && !downgraded;
   _flagsResolved = true;
+
+  if (downgraded) {
+    logger.warn(
+      "WORKER_ISOLATION_API downgraded to host-realm execution under an explicit operator grant",
+      {
+        flag: "WORKER_ISOLATION_API",
+        requested: true,
+        effective: false,
+        reason: ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
+        grantedBy: "VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION",
+      },
+    );
+  } else if (apiRequested && !preparationSupported) {
+    logger.error(
+      "WORKER_ISOLATION_API cannot be honoured by this runtime and host project execution is not granted; project API routes will fail closed",
+      {
+        flag: "WORKER_ISOLATION_API",
+        requested: true,
+        effective: true,
+        reason: ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
+      },
+    );
+  }
 }
 
 /**

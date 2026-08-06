@@ -282,7 +282,20 @@ import route modules to discover methods, and component-snippet requests fail
 before source reads or compilation. Shared markdown previews likewise stop
 before source reads or custom not-found rendering.
 Defined invalid flags and pool limits are startup errors; they are not silently
-replaced with defaults.
+replaced with defaults. The isolation flags are resolved once at server startup
+so that promise holds, and the resolved posture is logged there.
+
+A runtime that cannot honour a configured isolation flag never fakes it. A
+compiled binary cannot prepare isolated API route source
+(`security/sandbox/isolation-capability.ts`), so `WORKER_ISOLATION_API=1` in a
+compiled deployment resolves one of two ways, both logged once at startup: where
+the operator has explicitly granted host project code execution through
+`VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION`, the flag is downgraded and execution
+uses the host realm the operator already opted into; where that grant is absent,
+the flag stands and API ownership returns the typed
+`project-execution-unavailable` 503 naming it. The downgrade cannot grant
+execution on its own — every execution gate is a conjunction with
+`allowHostProjectCodeExecution`.
 
 OpenAPI metadata is currently attached to handler functions. Because reading
 it requires route evaluation, runtime OpenAPI generation is available only for

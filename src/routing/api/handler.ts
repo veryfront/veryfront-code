@@ -31,6 +31,10 @@ import {
   evictWorkerScopeIfPresent,
   isWorkerIsolationEnabled,
 } from "#veryfront/security/sandbox/worker-pool.ts";
+import {
+  ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
+  isIsolatedApiPreparationSupported,
+} from "#veryfront/security/sandbox/isolation-capability.ts";
 import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
 import {
   isHostProjectCodeExecutionAllowed,
@@ -265,6 +269,41 @@ export class APIRouteHandler {
           }) ?? unavailable;
         }
         const useHostRealm = allowHostProjectCodeExecution && !isWorkerIsolationEnabled();
+
+        // The isolated path is the only one left and this build cannot prepare
+        // an isolated module. Every continuation dead-ends inside loadRoute and
+        // is flattened to "Handler not found" below, which sends operators
+        // hunting a routing bug that does not exist. Name the flag, at the
+        // status code that means "not servable here, route it elsewhere".
+        //
+        // Gated on !useHostRealm rather than on the isolation flag so the
+        // dedicated-but-ungranted runtime — which skips the shared-runtime 503
+        // above because isSharedProjectRuntime is false — gets a typed answer too.
+        if (!useHostRealm && !isIsolatedApiPreparationSupported()) {
+          const isolationRequested = isWorkerIsolationEnabled();
+          logger.error("API route unservable under the configured execution posture", {
+            pathname,
+            reason: ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
+            workerIsolationApi: isolationRequested,
+            allowHostProjectCodeExecution,
+          });
+          const unservable = createErrorResponseFromDefinition(
+            PROJECT_EXECUTION_UNAVAILABLE,
+            {
+              detail: isolationRequested
+                ? "WORKER_ISOLATION_API is set but this runtime cannot prepare isolated API route source"
+                : "Host project code execution is not granted and this runtime cannot prepare isolated API route source",
+              instance: pathname,
+            },
+          );
+          unservable.headers.set("cache-control", "no-store");
+          return await applyCORSHeaders({
+            request,
+            response: unservable,
+            config: this.corsConfig ?? undefined,
+          }) ?? unservable;
+        }
+
         const { route, errorMessage } = await this.loadRoute(match, useHostRealm);
         if (!route) {
           const msg = errorMessage ?? "Handler not found";

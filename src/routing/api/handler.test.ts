@@ -11,6 +11,8 @@ import {
   sanitizeLoadErrorForResponse,
 } from "./handler.ts";
 import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
+import { __setCompiledBinaryForTests } from "#veryfront/security/sandbox/isolation-capability.ts";
+import { HOST_PROJECT_EXECUTION_OVERRIDE_ENV } from "#veryfront/security/host-execution-policy.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 
@@ -383,6 +385,109 @@ describe("APIRouteHandler", () => {
       assertEquals(await response?.text(), "local-isolated");
       assertEquals(hostLoads, 0);
       assertEquals(preparations, 1);
+    });
+
+    describe("when the runtime cannot prepare an isolated module", () => {
+      afterEach(() => {
+        __setCompiledBinaryForTests(undefined);
+        Deno.env.delete(HOST_PROJECT_EXECUTION_OVERRIDE_ENV);
+      });
+
+      it("serves through the host realm when the operator has granted host execution", async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(
+          "/test/project/pages/api/hosted.ts",
+          "export function GET() { return new Response('discovery-only'); }",
+        );
+        let hostLoads = 0;
+        let preparations = 0;
+        __injectDepsForTests({
+          loadHandlerModule: () => {
+            hostLoads++;
+            return Promise.resolve({
+              GET: () => new Response("hosted"),
+            });
+          },
+          prepareHandlerModule: () => {
+            preparations++;
+            throw new Error("prepared an isolated module this runtime cannot link");
+          },
+        });
+        Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+        Deno.env.set("WORKER_ISOLATION_API", "1");
+        Deno.env.set(HOST_PROJECT_EXECUTION_OVERRIDE_ENV, "1");
+        __setCompiledBinaryForTests(true);
+        await __resetPoolForTests();
+
+        const handler = await createInitializedHandler("/test/project", adapter);
+        const response = await handler.handle(
+          new Request("http://localhost/api/hosted"),
+          {
+            projectDir: "/test/project",
+            adapter,
+            securityConfig: null,
+            isLocalProject: false,
+            allowHostProjectCodeExecution: true,
+          },
+        );
+
+        assertEquals(response?.status, 200);
+        assertEquals(await response?.text(), "hosted");
+        // The downgrade has to reach route execution too. route-executor.ts
+        // recomputes the isolation decision independently, so a handler-only
+        // fix 500s here with "Isolated API execution requires prepared route
+        // source".
+        assertEquals(hostLoads, 1);
+        assertEquals(preparations, 0);
+      });
+
+      it("fails closed with a typed 503 when host execution is not granted", async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(
+          "/test/project/pages/api/hosted.ts",
+          "export function GET() { return new Response('discovery-only'); }",
+        );
+        let hostLoads = 0;
+        let preparations = 0;
+        __injectDepsForTests({
+          loadHandlerModule: () => {
+            hostLoads++;
+            throw new Error("host fallback under an ungranted isolation posture");
+          },
+          prepareHandlerModule: () => {
+            preparations++;
+            throw new Error("unreachable");
+          },
+        });
+        Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+        Deno.env.set("WORKER_ISOLATION_API", "1");
+        // Deliberately no VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION.
+        __setCompiledBinaryForTests(true);
+        await __resetPoolForTests();
+
+        const handler = await createInitializedHandler("/test/project", adapter);
+        const response = await handler.handle(
+          new Request("http://localhost/api/hosted"),
+          {
+            projectDir: "/test/project",
+            adapter,
+            securityConfig: null,
+            isLocalProject: false,
+            // A dedicated runtime carries the capability implicitly; the
+            // operator grant that would license the downgrade is still absent.
+            allowHostProjectCodeExecution: true,
+          },
+        );
+
+        assertEquals(response?.status, 503);
+        assert(
+          response?.headers.get("content-type")?.includes("application/problem+json"),
+        );
+        const body = await response?.json();
+        assert(String(body.detail).includes("WORKER_ISOLATION_API"));
+        assertEquals(hostLoads, 0); // no silent host-realm fallback
+        assertEquals(preparations, 0); // and no masked 500 from the loader
+      });
     });
   });
 
