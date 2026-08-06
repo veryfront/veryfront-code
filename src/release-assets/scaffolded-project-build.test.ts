@@ -110,9 +110,12 @@ const fsAdapter = {
  * from somewhere else. Reading the markup keeps the assertion tied to the
  * template and lets templates change without weakening it.
  *
- * Deliberately plain tokens only. Variants (`hover:`), arbitrary values
- * (`w-[3px]`) and slashes (`bg-black/50`) compile to escaped selectors, and
- * matching those is a CSS-escaping exercise this check does not need.
+ * Deliberately narrow: only tokens matching `/^[a-z][a-z0-9-]*$/`. That leaves
+ * out variants (`hover:`), arbitrary values (`w-[3px]`), slashes
+ * (`bg-black/50`), negative utilities (`-mt-4`) and anything leading with a
+ * digit, all of which compile to escaped or prefixed selectors. Matching those
+ * is a CSS-escaping exercise this check does not need to take on, and every
+ * starter declares plain utilities without them.
  */
 function scaffoldUtilityClasses(
   files: ReadonlyArray<{ path: string; content: string }>,
