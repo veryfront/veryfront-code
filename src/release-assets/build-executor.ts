@@ -2651,13 +2651,20 @@ async function runBuildInner(
     );
   }
 
+  // Module-level failures are held apart from the structural gaps above. A
+  // module that cannot be finalized costs its own routes, not the release: it
+  // is simply absent from `modules`, and the browser-module endpoint already
+  // refuses anything absent from the manifest. These only become fatal below,
+  // when they leave the release with no serveable route at all.
+  const moduleGaps: string[] = [];
+
   const { modules, skippedModules } = await finalizeProjectModules(
     transformedModules,
     knownPaths,
     dependencyUrls,
     uploadQueue,
     pendingBytes,
-    gaps,
+    moduleGaps,
     !vendorDependencies,
   );
 
@@ -2735,6 +2742,7 @@ async function runBuildInner(
   // B2. Routes: walk the transformed browser import closure from each page entrypoint.
   // Modules missing from transformedModules are recorded as closure gaps.
   const routes: Record<string, ReleaseAssetRouteEntry> = {};
+  const droppedRoutes = new Map<string, string[]>();
   const pageModules = Object.keys(modules).filter((p) =>
     routeForConfiguredPage(p, routeDirectories) !== null
   );
@@ -2769,11 +2777,39 @@ async function runBuildInner(
         pushGap(closureGaps, `route-gap:${route}:${missing}`);
       }
     }
+
+    // A route with a hole in its closure is omitted rather than published with
+    // one. Shipping it would hand the browser an import map pointing at a
+    // module the admission boundary refuses.
     if (closureGaps.length > 0) {
-      for (const gap of closureGaps) pushGap(gaps, gap);
+      droppedRoutes.set(route, closureGaps);
+      continue;
     }
 
     routes[route] = { modules: manifestedModules, css: cssHashes };
+  }
+
+  // Every route the release could not cover, so an operator sees which pages
+  // this build left unserveable even when the manifest publishes.
+  if (droppedRoutes.size > 0) {
+    logger.warn("Omitting routes with incomplete release asset coverage", {
+      dropped: [...droppedRoutes.keys()],
+      published: Object.keys(routes).length,
+    });
+  }
+
+  // One unbuildable page must not take the site down. Module and route gaps
+  // only become fatal when they leave nothing to serve -- a project whose sole
+  // page is broken still fails closed, while a project with one bad page among
+  // many publishes the rest. Before this, a single unresolvable import failed
+  // the whole manifest, and the renderer then 503'd every module on every
+  // route because manifest admission had nothing to admit against.
+  const hasServeableRoute = Object.keys(routes).length > 0;
+  if (!hasServeableRoute) {
+    for (const gap of moduleGaps) pushGap(gaps, gap);
+    for (const routeGaps of droppedRoutes.values()) {
+      for (const gap of routeGaps) pushGap(gaps, gap);
+    }
   }
 
   // A v2 manifest is publishable only when every requested module,

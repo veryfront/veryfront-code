@@ -628,6 +628,55 @@ describe("release asset build executor", () => {
     assertCoverageFailure(result, rec, "module-rewrite-failed:pages/index.tsx");
   });
 
+  it("publishes healthy routes when one page has an unresolvable import", async () => {
+    // A production outage: one leftover scratch page imported a URL that had
+    // since become a sign-in redirect. Its coverage gap failed the entire
+    // manifest, so the renderer had no manifest to admit against and 503'd
+    // every browser module on every route -- the whole site went dead over one
+    // page nothing linked to. The broken page must cost only itself.
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient([
+      { path: "pages/index.tsx", content: "export default () => null;" },
+      { path: "pages/scratch.tsx", content: 'import "./missing.ts"; export default null;' },
+    ], rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true);
+    assertEquals(result.state, "ready");
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    // The healthy page ships and stays admissible.
+    assertEquals(manifest.routes["/"]?.modules, ["pages/index.tsx"]);
+    assertExists(manifest.modules["pages/index.tsx"]);
+    // The broken page ships nowhere: no route, and no manifest entry, so the
+    // browser-module endpoint still refuses it rather than serving a hole.
+    assertEquals(manifest.routes["/scratch"], undefined);
+    assertEquals(manifest.modules["pages/scratch.tsx"], undefined);
+  });
+
+  it("still fails closed when every page is unbuildable", async () => {
+    // Degrading per route must not become "publish an empty manifest". With no
+    // serveable route left there is nothing to ship, so the build fails and the
+    // previous release keeps serving.
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient([
+      { path: "pages/index.tsx", content: 'import "./missing.ts"; export default null;' },
+      { path: "pages/other.tsx", content: 'import "./gone.ts"; export default null;' },
+    ], rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertCoverageFailure(result, rec, "module-rewrite-failed:pages/");
+  });
+
   it("never publishes project modules with unresolved relative imports", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const client = makeClient(

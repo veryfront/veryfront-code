@@ -40,7 +40,11 @@
 export { cva, cx, type VariantProps } from "./cva.ts";
 export { generateTokenCSS } from "./design-tokens.ts";
 export { DesignTokenStyle } from "./tokens.tsx";
-export { getDocumentNonce } from "./csp-nonce.ts";
+// `useDocumentNonce` ships alongside the getter because third-party providers
+// that render their own inline script -- next-themes is the common one -- take
+// the nonce as a prop and emit an unusable empty attribute without it, which
+// the default CSP then blocks with nothing but a console error to show for it.
+export { getDocumentNonce, useDocumentNonce } from "./csp-nonce.ts";
 export {
   ColorModeProvider,
   type ColorModeProviderProps,
