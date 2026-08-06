@@ -11,11 +11,17 @@ import {
   getNonEmptyStringField,
   getOptionalStringField,
   isRecord,
-  stringifyUnknown,
-  toJsonValue,
   toRecord,
 } from "./part-field-access.ts";
 import type { JsonValue } from "./part-field-access.ts";
+import {
+  buildRawToolCallResultOutput,
+  buildToolResultOutput,
+  getRawToolCallPart,
+  getRawToolResultPart,
+  getToolPart,
+  hasSelfContainedRawToolCallResult,
+} from "./tool-part-parsing.ts";
 
 export { getStringField, isRecord, stringifyUnknown } from "./part-field-access.ts";
 export type { JsonValue } from "./part-field-access.ts";
@@ -678,123 +684,6 @@ function getFilePart(part: unknown): {
   };
 }
 
-function getToolPart(part: unknown): {
-  toolCallId: string;
-  toolName: string;
-  input: Record<string, unknown>;
-  state: string;
-  output?: unknown;
-  errorText?: string;
-} | null {
-  if (!isRecord(part) || typeof part.type !== "string") {
-    return null;
-  }
-
-  const type = part.type;
-  const toolCallId = getNonEmptyStringField(part, "toolCallId");
-  const state = getNonEmptyStringField(part, "state");
-  const explicitToolName = getNonEmptyStringField(part, "toolName") ??
-    getNonEmptyStringField(part, "name");
-  const derivedToolName =
-    type === "dynamic-tool" || type === "tool_call" || !type.startsWith("tool-")
-      ? undefined
-      : type.replace(/^tool-/, "");
-  const toolName = explicitToolName ?? derivedToolName;
-  if (!toolCallId || !state || !toolName) {
-    return null;
-  }
-
-  const errorText = getOptionalStringField(part, "errorText");
-  const output = Object.hasOwn(part, "output") ? part.output : undefined;
-
-  return {
-    toolCallId,
-    toolName,
-    input: toRecord(part.input),
-    state,
-    ...(output !== undefined ? { output } : {}),
-    ...(errorText !== undefined ? { errorText } : {}),
-  };
-}
-
-function getRawToolCallPart(part: unknown): {
-  toolCallId: string;
-  toolName: string;
-  input: Record<string, unknown>;
-  state?: string;
-  output?: unknown;
-  errorText?: string;
-} | null {
-  if (!isRecord(part) || part.type !== "tool_call") {
-    return null;
-  }
-
-  const toolCallId = getNonEmptyStringField(part, "toolCallId") ??
-    getNonEmptyStringField(part, "tool_call_id") ??
-    getNonEmptyStringField(part, "id");
-  const toolName = getNonEmptyStringField(part, "toolName") ??
-    getNonEmptyStringField(part, "tool_name") ??
-    getNonEmptyStringField(part, "name");
-
-  if (!toolCallId || !toolName) {
-    return null;
-  }
-
-  return {
-    toolCallId,
-    toolName,
-    input: toRecord(part.input),
-    ...(typeof part.state === "string" ? { state: part.state } : {}),
-    ...(Object.hasOwn(part, "output") ? { output: part.output } : {}),
-    ...(typeof part.errorText === "string" ? { errorText: part.errorText } : {}),
-  };
-}
-
-function getRawToolResultPart(part: unknown): {
-  toolCallId: string;
-  toolName?: string;
-  output:
-    | {
-      type: "json";
-      value: JsonValue;
-    }
-    | {
-      type: "error-text";
-      value: string;
-    };
-} | null {
-  if (!isRecord(part) || part.type !== "tool_result") {
-    return null;
-  }
-
-  const toolCallId = getNonEmptyStringField(part, "toolCallId") ??
-    getNonEmptyStringField(part, "tool_call_id") ??
-    getNonEmptyStringField(part, "id");
-  if (!toolCallId) {
-    return null;
-  }
-
-  const toolName = getNonEmptyStringField(part, "toolName") ??
-    getNonEmptyStringField(part, "tool_name") ??
-    getNonEmptyStringField(part, "name");
-  const isError = part.is_error === true || part.isError === true;
-  const output = isError
-    ? {
-      type: "error-text" as const,
-      value: stringifyUnknown(part.output ?? "Tool error"),
-    }
-    : {
-      type: "json" as const,
-      value: toJsonValue(part.output),
-    };
-
-  return {
-    toolCallId,
-    ...(toolName ? { toolName } : {}),
-    output,
-  };
-}
-
 function buildToolNameMap(parts: ReadonlyArray<unknown>): Map<string, string> {
   const toolNames = new Map<string, string>();
 
@@ -837,36 +726,6 @@ function resolveRawToolResultPart(
   };
 }
 
-function buildToolResultOutput(toolPart: { state: string; output?: unknown; errorText?: string }):
-  | {
-    type: "json";
-    value: JsonValue;
-  }
-  | {
-    type: "error-text";
-    value: string;
-  }
-  | null {
-  if (toolPart.state === "output-available") {
-    return {
-      type: "json",
-      value: toJsonValue(toolPart.output),
-    };
-  }
-
-  if (
-    toolPart.state === "output-error" || toolPart.state === "output-denied" ||
-    toolPart.state === "error"
-  ) {
-    return {
-      type: "error-text",
-      value: toolPart.errorText ?? stringifyUnknown(toolPart.output ?? "Tool error"),
-    };
-  }
-
-  return null;
-}
-
 function isTransientToolState(state: string | undefined): boolean {
   return state === "pending" || state === "input-available" || state === "input-streaming" ||
     state === "streaming" || state === "approval-requested" || state === "approval-responded";
@@ -883,33 +742,6 @@ type ReplayToolCallPart = {
 type PendingReplayToolCall = Omit<ReplayToolCallPart, "selfContainedResult"> & {
   originMessageIndex: number;
 };
-
-function buildRawToolCallResultOutput(
-  rawToolCall: NonNullable<ReturnType<typeof getRawToolCallPart>>,
-): ReturnType<typeof buildToolResultOutput> {
-  if (!rawToolCall.state) {
-    return null;
-  }
-
-  return buildToolResultOutput({
-    state: rawToolCall.state,
-    ...(rawToolCall.output !== undefined ? { output: rawToolCall.output } : {}),
-    ...(rawToolCall.errorText !== undefined ? { errorText: rawToolCall.errorText } : {}),
-  });
-}
-
-function hasSelfContainedRawToolCallResult(
-  rawToolCall: NonNullable<ReturnType<typeof getRawToolCallPart>>,
-): boolean {
-  if (
-    rawToolCall.state === "error" && rawToolCall.output === undefined &&
-    rawToolCall.errorText === undefined
-  ) {
-    return false;
-  }
-
-  return buildRawToolCallResultOutput(rawToolCall) !== null;
-}
 
 function shouldSkipTransientToolCall(
   part: unknown,
