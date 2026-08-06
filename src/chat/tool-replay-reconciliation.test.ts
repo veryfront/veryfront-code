@@ -212,15 +212,20 @@ describe("tool-replay-reconciliation", () => {
       "streaming",
     );
     const mismatchedResult = rawToolResult("tool-1", { data: [] }, "github__list_prs");
+    const controlCall = rawToolCall("tool-2", "github__list_prs", { state: "open" });
+    const controlResult = rawToolResult("tool-2", { data: [] }, "github__list_prs");
 
     const matches = findProviderVisibleToolReplayMatches([
-      assistantMessage([call]),
-      toolMessage([mismatchedResult]),
+      assistantMessage([call, controlCall]),
+      toolMessage([mismatchedResult, controlResult]),
     ]);
 
     assertEquals(matches.matchedToolCallParts.has(call), false);
     assertEquals(matches.matchedToolResultParts.has(mismatchedResult), false);
     assertEquals(matches.preservedTransientToolParts.has(call), false);
+    // Positive control: a compatible pair in the same history really is
+    // matched, proving the fixture was processed rather than short-circuited.
+    assertEquals(matches.matchedToolCallParts.has(controlCall), true);
   });
 
   it("leaves a pending call with no result unmatched and unpreserved", () => {
@@ -275,36 +280,86 @@ describe("tool-replay-reconciliation", () => {
     assertEquals(matches.matchedToolResultParts.has(secondResult), false);
   });
 
-  it("drops earlier-message pending calls once a user message intervenes", () => {
-    const staleCall = dynamicToolCall(
-      "duplicate-call",
-      "github__get_pr_diff",
-      { pull_number: 1 },
-      "streaming",
-    );
-    const freshCall = dynamicToolCall(
-      "duplicate-call",
-      "github__get_pr_diff",
-      { pull_number: 2 },
-      "output-available",
-      { files: ["new.ts"] },
-    );
+  it(
+    "supersedes an earlier same-id call via toolCallsById even once it's been evicted from the pending queue",
+    () => {
+      // This pins toolCallsById-based supersession only: staleCall and
+      // freshCall share a toolCallId, so removePendingCallsWithId's own
+      // id-based eviction removes staleCall from pendingCalls when freshCall
+      // is processed, regardless of whether any earlier-message/user-turn
+      // boundary flush ran. And freshCall is self-contained, so no result
+      // ever needs to match against pendingCalls. Neither of those redundant
+      // paths exercises the user-message boundary itself — see the next case
+      // for a fixture that actually discriminates that behavior.
+      const staleCall = dynamicToolCall(
+        "duplicate-call",
+        "github__get_pr_diff",
+        { pull_number: 1 },
+        "streaming",
+      );
+      const freshCall = dynamicToolCall(
+        "duplicate-call",
+        "github__get_pr_diff",
+        { pull_number: 2 },
+        "output-available",
+        { files: ["new.ts"] },
+      );
 
-    const matches = findProviderVisibleToolReplayMatches([
-      assistantMessage([staleCall], "assistant-1"),
-      userMessage("continue with a different PR", "user-2"),
-      assistantMessage([freshCall], "assistant-2"),
-    ]);
+      const matches = findProviderVisibleToolReplayMatches([
+        assistantMessage([staleCall], "assistant-1"),
+        userMessage("continue with a different PR", "user-2"),
+        assistantMessage([freshCall], "assistant-2"),
+      ]);
 
-    // The stale transient call from before the user turn is never resolved
-    // (its slot was dropped, not matched), so it is not preserved.
-    assertEquals(matches.preservedTransientToolParts.has(staleCall), false);
-    assertEquals(matches.matchedToolCallParts.has(staleCall), false);
-    // The fresh occurrence is self-contained and needs no separate match, but
-    // supersession still tracks it via toolCallsById independent of
-    // pendingCalls eviction: the stale call is superseded even though it was
-    // already dropped from the pending queue by the user-message boundary.
-    assertEquals(matches.supersededToolCallParts.has(staleCall), true);
-    assertEquals(matches.matchedToolCallParts.has(freshCall), false);
-  });
+      // The stale transient call from before the user turn is never resolved
+      // (its slot was dropped, not matched), so it is not preserved.
+      assertEquals(matches.preservedTransientToolParts.has(staleCall), false);
+      assertEquals(matches.matchedToolCallParts.has(staleCall), false);
+      // supersession tracks it via toolCallsById independent of pendingCalls
+      // eviction: the stale call is superseded even though it was already
+      // dropped from the pending queue by the same-id removal above.
+      assertEquals(matches.supersededToolCallParts.has(staleCall), true);
+      assertEquals(matches.matchedToolCallParts.has(freshCall), false);
+    },
+  );
+
+  it(
+    "ends a pending call's window at a user message, so a later result can't resolve it",
+    () => {
+      // Unlike the case above, staleCall and lateResult share a toolCallId
+      // that appears nowhere else, so removePendingCallsWithId's same-id
+      // eviction can't be doing the work, and lateResult actually needs
+      // pendingCalls to still hold an entry to match against. If user text
+      // stopped counting as provider-visible content, staleCall would
+      // survive in pendingCalls and lateResult would match it, flipping all
+      // three assertions below to true. (A mutant that deletes only the
+      // immediate origin-filtered flush call inside the visible-content
+      // branch is *not* caught here: for a callless user message, the
+      // end-of-message-loop `pendingCalls.splice(0,
+      // pendingCountBeforeSameMessageVisibleContent)` fallback evicts the
+      // exact same entries regardless, since everything in pendingCalls
+      // before such a message is by construction from an earlier message.)
+      const staleCall = dynamicToolCall(
+        "only-call",
+        "github__get_pr_diff",
+        { pull_number: 1 },
+        "streaming",
+      );
+      const lateResult = rawToolResult(
+        "only-call",
+        { files: ["late.ts"] },
+        "github__get_pr_diff",
+      );
+
+      const matches = findProviderVisibleToolReplayMatches([
+        assistantMessage([staleCall], "assistant-1"),
+        userMessage("different question", "user-2"),
+        assistantMessage([lateResult], "assistant-3"),
+      ]);
+
+      assertEquals(matches.matchedToolCallParts.has(staleCall), false);
+      assertEquals(matches.preservedTransientToolParts.has(staleCall), false);
+      assertEquals(matches.matchedToolResultParts.has(lateResult), false);
+    },
+  );
 });
