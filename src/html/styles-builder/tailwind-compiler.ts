@@ -6,7 +6,7 @@
  * an explicit CSSOptimizationEngine owns minification.
  */
 
-import { resolve } from "#veryfront/extensions/contracts.ts";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import {
   captureCSSOptimizationEngine,
   type CSSOptimizationEngine,
@@ -128,9 +128,18 @@ function getCSSPipelineCacheIdentity(
 /** Capture all output-affecting providers before the operation performs an await. */
 export function acquireCSSGenerationSession(minify: boolean): CSSGenerationSession {
   const compilationSession = acquireCSSCompilationSession();
-  const optimizationEngine = minify
-    ? captureCSSOptimizationEngine(resolve<unknown>(CSSOptimizationEngineName))
-    : undefined;
+  // Minification is an optional enhancement, not a precondition for serving
+  // CSS. No first-party package installs a CSSOptimizationEngine by default,
+  // so requiring one here failed every hosted render and every release asset
+  // build for projects that never opted into one. Absent an engine the CSS is
+  // emitted unminified, and the pipeline identity below records it as such.
+  const optimizationProvider = minify ? tryResolve<unknown>(CSSOptimizationEngineName) : undefined;
+  if (minify && optimizationProvider === undefined) {
+    logger.debug("No CSSOptimizationEngine registered; emitting unminified CSS");
+  }
+  const optimizationEngine = optimizationProvider === undefined
+    ? undefined
+    : captureCSSOptimizationEngine(optimizationProvider);
   const session: CSSGenerationSession = {
     minify,
     compilationSession,

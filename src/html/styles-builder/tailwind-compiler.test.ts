@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "./__tests__/css-processor-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MAX_CSS_SELECTOR_TOKEN_CHARACTERS } from "#veryfront/utils/constants/css.ts";
 import {
@@ -98,16 +98,30 @@ describe("styles-builder/tailwind-compiler", () => {
       assertEquals(candidates.includes("bg-[var(--color)]"), true);
     });
 
-    it("rejects an overlong candidate as one token instead of extracting fragments", () => {
+    it("drops an overlong run whole instead of extracting fragments", () => {
       const admitted = "a".repeat(MAX_CSS_SELECTOR_TOKEN_CHARACTERS);
       const overlong = `${admitted}a`;
 
       assertEquals(extractCandidates(`class="${admitted}"`).includes(admitted), true);
-      assertThrows(
-        () => extractCandidates(`class="${overlong}"`),
-        TypeError,
-        `cannot exceed ${MAX_CSS_SELECTOR_TOKEN_CHARACTERS} characters`,
-      );
+
+      const candidates = extractCandidates(`class="mt-4 ${overlong} flex"`);
+      assertEquals(candidates.includes("mt-4"), true);
+      assertEquals(candidates.includes("flex"), true);
+      assertEquals(candidates.includes(overlong), false);
+      assertEquals(candidates.some((candidate) => candidate.startsWith("aa")), false);
+    });
+
+    it("scans past an inline base64 sourcemap instead of failing the file", () => {
+      // esbuild writes these into the build cache. Base64's alphabet sits
+      // entirely inside the candidate body class, so the payload reads as one
+      // unbroken multi-kilobyte token. This threw and took down every render.
+      const payload = "eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbXX0".repeat(64);
+      const content =
+        `<div className="mt-4 flex" />\n//# sourceMappingURL=data:application/json;base64,${payload}\n`;
+
+      const candidates = extractCandidates(content);
+      assertEquals(candidates.includes("mt-4"), true);
+      assertEquals(candidates.includes("flex"), true);
     });
   });
 

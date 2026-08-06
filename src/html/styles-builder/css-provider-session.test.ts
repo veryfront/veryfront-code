@@ -6,7 +6,7 @@ import {
   type CSSProcessor,
   CSSProcessorName,
 } from "#veryfront/extensions/css/index.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   acquireCSSGenerationSession,
@@ -182,17 +182,18 @@ describe("styles-builder CSS provider sessions", () => {
     }
   });
 
-  it("fails closed when minification is requested without an optimizer", async () => {
+  it("serves unminified CSS when minification is requested without an optimizer", async () => {
     installProcessor(createProcessor("missing-optimizer"));
-    assertThrows(
-      () => acquireCSSGenerationSession(true),
-      Error,
-      'Missing extension for contract "CSSOptimizationEngine"',
-    );
-    await assertRejects(
-      () => generateTailwindCSS("sheet", ["alpha"], { minify: true }),
-      Error,
-      'Missing extension for contract "CSSOptimizationEngine"',
-    );
+
+    // Minification is an enhancement, not a precondition. No first-party
+    // package registers a CSSOptimizationEngine, while the production shell
+    // always asks for minify:true -- so failing here took down every hosted
+    // render and blocked every release asset build.
+    const session = acquireCSSGenerationSession(true);
+    assertEquals(session.minify, true);
+    assertEquals(session.optimizationEngine, undefined);
+
+    const generated = await generateTailwindCSS("sheet", ["alpha"], { minify: true });
+    assertEquals(generated.css, "missing-optimizer|sheet|alpha");
   });
 });
