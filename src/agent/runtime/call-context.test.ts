@@ -29,9 +29,12 @@ function createSkills(): RuntimeSkillDefinition[] {
 }
 
 describe("agent/runtime/call-context", () => {
-  describe("block ordering", () => {
-    it("orders project instructions, project context, and extra blocks before the marker tail", () => {
-      const [message] = buildAgentCallContext({
+  // Layer 0 = the cached static prompt (marker head + tail). The dynamic tail
+  // (project blocks, extra blocks, skills, environment) is a second, uncached
+  // system message. See RFC 0001.
+  describe("layering", () => {
+    it("keeps the prompt in the static message and orders project, extra, and skills in the dynamic tail", () => {
+      const [staticMsg, dynamicMsg] = buildAgentCallContext({
         instructions: `Head\n\n${MARKER}\n\nTail`,
         projectInstructions: "Follow the policy.",
         projectContext: { projectId: "project-1", branchId: "branch-9" },
@@ -39,49 +42,88 @@ describe("agent/runtime/call-context", () => {
         skills: createSkills(),
       });
 
-      const content = message?.content ?? "";
+      // Static Layer 0 — prompt only (marker head + tail), no project/skills.
+      assertEquals(staticMsg?.content, "Head\n\nTail");
+
+      const dynamic = dynamicMsg?.content ?? "";
       const order = [
-        "Head",
         "<project_instructions>",
         "<project_context>",
         "<runtime_info>",
-        "Tail",
         "<available_skills>",
-      ].map((fragment) => content.indexOf(fragment));
+      ].map((fragment) => dynamic.indexOf(fragment));
 
       assertEquals(order.some((index) => index < 0), false);
       assertEquals([...order].sort((a, b) => a - b), order);
     });
 
-    it("appends blocks after the instructions when the marker is absent", () => {
-      const [message] = buildAgentCallContext({
+    it("keeps the static prompt byte-identical across projects (shared cache key)", () => {
+      const layer0For = (projectId: string) =>
+        buildAgentCallContext({
+          instructions: "Shared prompt body",
+          projectInstructions: `steering for ${projectId}`,
+          projectContext: { projectId, branchId: "main" },
+          skills: createSkills(),
+          environmentContext: `facts for ${projectId}`,
+        })[0]?.content;
+
+      assertEquals(layer0For("project-a"), layer0For("project-b"));
+      assertEquals(layer0For("project-a"), "Shared prompt body");
+    });
+
+    it("caches only the static message and leaves the dynamic tail uncached", () => {
+      const messages = buildAgentCallContext({
+        instructions: "Prompt",
+        projectContext: { projectId: "project-1" },
+        environmentContext: "Runtime facts",
+      });
+
+      assertEquals(messages[0]?.providerOptions, {
+        anthropic: { cacheControl: { type: "ephemeral" } },
+      });
+      assertEquals(messages[1]?.providerOptions, undefined);
+      // Nothing project-specific leaks into the cached prefix.
+      assertEquals((messages[0]?.content ?? "").includes("project-1"), false);
+    });
+
+    it("extends the static breakpoint to 1h when cacheTtl is 1h", () => {
+      const messages = buildAgentCallContext({ instructions: "Prompt", cacheTtl: "1h" });
+
+      assertEquals(messages[0]?.providerOptions, {
+        anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+      });
+    });
+
+    it("puts extra blocks in the dynamic tail, separate from the static prompt", () => {
+      const [staticMsg, dynamicMsg] = buildAgentCallContext({
         instructions: "Base instructions",
         extraBlocks: ["Dynamic block"],
       });
 
-      assertEquals(message?.content, "Base instructions\n\nDynamic block");
+      assertEquals(staticMsg?.content, "Base instructions");
+      assertEquals(dynamicMsg?.content, "Dynamic block");
     });
   });
 
   describe("block tags", () => {
-    it("renders project instructions with the mandatory-compliance preamble", () => {
-      const [message] = buildAgentCallContext({
+    it("renders project instructions with the mandatory-compliance preamble in the dynamic tail", () => {
+      const [, dynamicMsg] = buildAgentCallContext({
         instructions: "Base",
         projectInstructions: "Use the project policy.",
       });
 
       assertEquals(
-        message?.content,
-        "Base\n\n<project_instructions>\nCRITICAL: You MUST follow these project-specific guidelines:\n\nUse the project policy.\n</project_instructions>",
+        dynamicMsg?.content,
+        "<project_instructions>\nCRITICAL: You MUST follow these project-specific guidelines:\n\nUse the project policy.\n</project_instructions>",
       );
     });
 
     it("renders an explicit branch id and falls back to main guidance", () => {
-      const [explicit] = buildAgentCallContext({
+      const [, explicit] = buildAgentCallContext({
         instructions: "Base",
         projectContext: { projectId: "project-1", branchId: "branch-9" },
       });
-      const [fallback] = buildAgentCallContext({
+      const [, fallback] = buildAgentCallContext({
         instructions: "Base",
         projectContext: { projectId: "project-1" },
       });
@@ -112,7 +154,7 @@ describe("agent/runtime/call-context", () => {
   });
 
   describe("empty inputs", () => {
-    it("returns instructions alone when nothing else is supplied", () => {
+    it("returns the prompt alone when nothing else is supplied", () => {
       const messages = buildAgentCallContext({ instructions: "Base instructions" });
 
       assertEquals(messages.length, 1);
@@ -120,26 +162,26 @@ describe("agent/runtime/call-context", () => {
     });
 
     it("omits the skills block for an empty skill list and drops empty extra blocks", () => {
-      const messages = buildAgentCallContext({
+      const [staticMsg, dynamicMsg] = buildAgentCallContext({
         instructions: "Base",
         skills: [],
         extraBlocks: ["", "Kept"],
       });
 
-      assertEquals(messages.length, 1);
-      assertEquals(messages[0]?.content, "Base\n\nKept");
+      assertEquals(staticMsg?.content, "Base");
+      assertEquals(dynamicMsg?.content, "Kept");
     });
   });
 
   describe("skills rendering", () => {
     it("renders skill metadata and scopes delegation to the available tools", () => {
-      const [message] = buildAgentCallContext({
+      const [, dynamicMsg] = buildAgentCallContext({
         instructions: "Base",
         skills: createSkills(),
         availableToolNames: ["agent_reviewer", "load_skill"],
       });
 
-      const content = message?.content ?? "";
+      const content = dynamicMsg?.content ?? "";
       assertStringIncludes(content, "<available_skills>");
       assertStringIncludes(
         content,
@@ -157,8 +199,8 @@ describe("agent/runtime/call-context", () => {
     });
 
     it("adds the skill tool call signatures only when the caller opts in", () => {
-      const [without] = buildAgentCallContext({ instructions: "Base", skills: createSkills() });
-      const [with_] = buildAgentCallContext({
+      const [, without] = buildAgentCallContext({ instructions: "Base", skills: createSkills() });
+      const [, with_] = buildAgentCallContext({
         instructions: "Base",
         skills: createSkills(),
         includeSkillToolUsage: true,
@@ -171,23 +213,25 @@ describe("agent/runtime/call-context", () => {
   });
 
   describe("marker splitting", () => {
-    it("honours a caller-supplied marker", () => {
-      const [message] = buildAgentCallContext({
+    it("honours a caller-supplied marker, keeping head and tail in the static prompt", () => {
+      const [staticMsg, dynamicMsg] = buildAgentCallContext({
         instructions: "Head\n<!--CUT-->\nTail",
         runtimeContextMarker: "<!--CUT-->",
         extraBlocks: ["Block"],
       });
 
-      assertEquals(message?.content, "Head\n\nBlock\n\nTail");
+      assertEquals(staticMsg?.content, "Head\n\nTail");
+      assertEquals(dynamicMsg?.content, "Block");
     });
 
     it("drops a whitespace-only tail", () => {
-      const [message] = buildAgentCallContext({
+      const [staticMsg, dynamicMsg] = buildAgentCallContext({
         instructions: `Head\n\n${MARKER}\n\n   `,
         extraBlocks: ["Block"],
       });
 
-      assertEquals(message?.content, "Head\n\nBlock");
+      assertEquals(staticMsg?.content, "Head");
+      assertEquals(dynamicMsg?.content, "Block");
     });
   });
 
@@ -200,6 +244,8 @@ describe("agent/runtime/call-context", () => {
         environmentContext: "Runtime facts",
       });
 
+      // The authored block stays in the (static) instructions; the runtime copy
+      // is deduped, so the dynamic tail carries only the environment context.
       assertEquals(
         messages[0]?.content,
         '<project_context>\nproject_reference: "already-there"\n</project_context>\n\nBase',
@@ -211,14 +257,16 @@ describe("agent/runtime/call-context", () => {
     });
 
     it("still emits the block when the instructions only name the tag in prose", () => {
-      const [message] = buildAgentCallContext({
+      const [staticMsg, dynamicMsg] = buildAgentCallContext({
         instructions:
           "Never invent a project reference; read it from the <project_context> block instead.",
         projectContext: { projectId: "project-1" },
       });
 
-      assertStringIncludes(message?.content ?? "", 'project_reference: "project-1"');
-      assertEquals((message?.content ?? "").split("<project_context>").length - 1, 2);
+      // A prose mention (no closing tag) must not suppress the real block.
+      assertStringIncludes(staticMsg?.content ?? "", "<project_context>");
+      assertStringIncludes(dynamicMsg?.content ?? "", 'project_reference: "project-1"');
+      assertStringIncludes(dynamicMsg?.content ?? "", "</project_context>");
     });
 
     it("still emits environment context when the instructions only name the tag in prose", () => {
@@ -245,39 +293,41 @@ describe("agent/runtime/call-context", () => {
     });
 
     it("skips the skills block when the instructions already carry one", () => {
-      const [message] = buildAgentCallContext({
+      const messages = buildAgentCallContext({
         instructions:
           "Base\n\n<available_skills>\n- authored: An authored catalog\n</available_skills>",
         skills: createSkills(),
       });
 
+      assertEquals(messages.length, 1);
       assertEquals(
-        message?.content,
+        messages[0]?.content,
         "Base\n\n<available_skills>\n- authored: An authored catalog\n</available_skills>",
       );
-      assertEquals((message?.content ?? "").includes("Deployment guidance"), false);
+      assertEquals((messages[0]?.content ?? "").includes("Deployment guidance"), false);
     });
 
     it("still emits the skills block when the instructions only name the tag in prose", () => {
-      const [message] = buildAgentCallContext({
+      const [, dynamicMsg] = buildAgentCallContext({
         instructions: "Your catalog arrives in an <available_skills> block.",
         skills: createSkills(),
       });
 
       assertStringIncludes(
-        message?.content ?? "",
+        dynamicMsg?.content ?? "",
         '- {"skillId":"review","name":"Review","description":"Review guidance"}',
       );
-      assertStringIncludes(message?.content ?? "", "</available_skills>");
+      assertStringIncludes(dynamicMsg?.content ?? "", "</available_skills>");
     });
 
     it("keeps untagged extra blocks that cannot be matched by tag", () => {
-      const [message] = buildAgentCallContext({
+      const [staticMsg, dynamicMsg] = buildAgentCallContext({
         instructions: "Base",
         extraBlocks: ["Plain guidance", "Plain guidance"],
       });
 
-      assertEquals(message?.content, "Base\n\nPlain guidance\n\nPlain guidance");
+      assertEquals(staticMsg?.content, "Base");
+      assertEquals(dynamicMsg?.content, "Plain guidance\n\nPlain guidance");
     });
   });
 });

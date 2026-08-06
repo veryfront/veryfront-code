@@ -66,7 +66,17 @@ export type BuildAgentCallContextInput = {
   includeSkillToolUsage?: boolean;
   /** Host-supplied environment facts. */
   environmentContext?: string;
+  /**
+   * Prompt-cache TTL for the static (Layer 0) system message. `"5m"` (default)
+   * keeps the standard ephemeral breakpoint; `"1h"` extends it for interactive
+   * multi-turn sessions. Gate this at the call site — only set `"1h"` where a
+   * second read is likely (root chat run, steering refresh). See RFC 0001.
+   */
+  cacheTtl?: AgentCallCacheTtl;
 };
+
+/** Supported prompt-cache TTLs for the cached static system message. */
+export type AgentCallCacheTtl = "5m" | "1h";
 
 /** Builds the shared project-context prompt block (project reference + branch). */
 export function buildProjectContextPromptBlock(input: AgentCallProjectContext): string {
@@ -127,7 +137,30 @@ function hasBlock(instructions: string, blockName: string): boolean {
   return instructions.indexOf(`</${blockName}>`, openIndex) > openIndex;
 }
 
-/** Builds the complete system-message set for one provider call. */
+/**
+ * Renders the Anthropic `cacheControl` for the static system message. The
+ * default (`"5m"`) omits `ttl` to preserve the standard 5-minute ephemeral
+ * breakpoint byte-for-byte; `"1h"` requests the 1-hour cache.
+ */
+function buildCacheControl(cacheTtl: AgentCallCacheTtl | undefined): {
+  type: "ephemeral";
+  ttl?: "1h";
+} {
+  return cacheTtl === "1h" ? { type: "ephemeral", ttl: "1h" } : { type: "ephemeral" };
+}
+
+/**
+ * Builds the layered system-message set for one provider call (RFC 0001).
+ *
+ * Layer 0 (cached, shared across runs): the agent prompt only — nothing
+ * project- or turn-specific. Its `cacheControl` breakpoint is the sole shared
+ * cache key, so it must be byte-identical across projects.
+ *
+ * Dynamic tail (uncached): project context/instructions, extra blocks, the
+ * skills catalog, and host environment facts — everything that varies by
+ * project, session, or turn. Kept out of the cached prefix so a fresh project
+ * or session still reads the shared Layer 0 instead of paying full price.
+ */
 export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSystemMessage[] {
   const runtimeContextMarker = input.runtimeContextMarker ?? DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER;
   const instructions = splitInstructionsAtMarker({
@@ -135,22 +168,25 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
     runtimeContextMarker,
   });
 
-  const blocks: string[] = [];
+  // Layer 0 — static prompt only (the marker split's head and tail).
+  const staticPrompt = [instructions.before, instructions.after]
+    .filter((part): part is string => Boolean(part && part.length > 0))
+    .join("\n\n");
+
+  // Dynamic tail — project blocks, extra blocks, skills, environment. Each is
+  // dropped if the agent's instructions already carry the same block (dedup).
+  const dynamicParts: string[] = [];
+
+  const projectBlocks: string[] = [];
   if (input.projectInstructions) {
-    blocks.push(buildProjectInstructionsPromptBlock(input.projectInstructions));
+    projectBlocks.push(buildProjectInstructionsPromptBlock(input.projectInstructions));
   }
   if (input.projectContext) {
-    blocks.push(buildProjectContextPromptBlock(input.projectContext));
+    projectBlocks.push(buildProjectContextPromptBlock(input.projectContext));
   }
-  blocks.push(...(input.extraBlocks ?? []));
+  projectBlocks.push(...(input.extraBlocks ?? []));
 
-  const staticParts: string[] = [];
-
-  if (instructions.before) {
-    staticParts.push(instructions.before);
-  }
-
-  for (const block of blocks) {
+  for (const block of projectBlocks) {
     if (block.length === 0) {
       continue;
     }
@@ -158,15 +194,11 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
     if (blockName !== null && hasBlock(input.instructions, blockName)) {
       continue;
     }
-    staticParts.push(block);
-  }
-
-  if (instructions.after) {
-    staticParts.push(instructions.after);
+    dynamicParts.push(block);
   }
 
   if (input.skills?.length && !hasBlock(input.instructions, AVAILABLE_SKILLS_BLOCK_NAME)) {
-    staticParts.push(
+    dynamicParts.push(
       buildRuntimeAvailableSkillsPromptBlock(input.skills, {
         ...(input.availableToolNames === undefined
           ? {}
@@ -178,23 +210,29 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
     );
   }
 
+  if (input.environmentContext && !hasBlock(input.instructions, ENVIRONMENT_CONTEXT_BLOCK_NAME)) {
+    dynamicParts.push(
+      createRuntimePromptBlock({
+        name: ENVIRONMENT_CONTEXT_BLOCK_NAME,
+        content: input.environmentContext,
+      }),
+    );
+  }
+
   const messages: ChatSystemMessage[] = [
     {
       role: "system",
-      content: staticParts.join("\n\n"),
+      content: staticPrompt,
       providerOptions: {
-        anthropic: { cacheControl: { type: "ephemeral" } },
+        anthropic: { cacheControl: buildCacheControl(input.cacheTtl) },
       },
     },
   ];
 
-  if (input.environmentContext && !hasBlock(input.instructions, ENVIRONMENT_CONTEXT_BLOCK_NAME)) {
+  if (dynamicParts.length > 0) {
     messages.push({
       role: "system",
-      content: createRuntimePromptBlock({
-        name: ENVIRONMENT_CONTEXT_BLOCK_NAME,
-        content: input.environmentContext,
-      }),
+      content: dynamicParts.join("\n\n"),
     });
   }
 
