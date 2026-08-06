@@ -88,6 +88,21 @@ interface AdapterResolutionOptions {
   ) => Promise<PreparedHostedConfigContext>;
 }
 
+/**
+ * Whether a config-load failure means "this release has no config file".
+ *
+ * The API answers 404 for a release that never published one, which is an
+ * ordinary project shape rather than an error. Scoped deliberately narrow: only
+ * a 404, and only from inside the config-load block, so a transport failure, an
+ * auth rejection, or a config that exists but cannot be parsed still surfaces.
+ * A 404 raised by some other call within that block would be read as a missing
+ * config, which is why the block should stay limited to loading the config.
+ */
+function isMissingHostedConfig(error: unknown): boolean {
+  return typeof error === "object" && error !== null &&
+    (error as { status?: unknown }).status === 404;
+}
+
 function usesExactSourceConfig(opts: AdapterResolutionOptions): boolean {
   return opts.isProxyMode &&
     !!opts.projectSlug &&
@@ -257,19 +272,32 @@ export async function resolveAdapter(
         router: effectiveConfig?.router,
       });
     } catch (error) {
-      // Log at error level — this is a real failure that will affect rendering.
-      // Config loading failure in proxy mode means the project's routes, layouts,
-      // and settings won't be available, leading to 404s for valid pages.
-      logger.error("Failed to load project config in proxy mode", {
-        projectSlug: opts.projectSlug,
-        projectId: opts.projectId,
-        releaseId: opts.releaseId,
-        proxyEnv: opts.proxyEnv,
-        error: getErrorMessage(error),
-      });
-      // Re-throw so the caller (runtime-handler) can return a proper error response
-      // instead of silently proceeding with broken defaults.
-      throw error;
+      // A release with no config file at all is an ordinary project shape, not
+      // a failure: the API answers 404 because there is nothing to serve. This
+      // used to be re-thrown with everything else, which turned every request
+      // for such a project into a 404. Fall through to defaults instead --
+      // the same outcome as a project whose config resolves to nothing.
+      if (isMissingHostedConfig(error)) {
+        logger.debug("No hosted config for this release; using defaults", {
+          projectSlug: opts.projectSlug,
+          projectId: opts.projectId,
+          releaseId: opts.releaseId,
+        });
+      } else {
+        // Log at error level — this is a real failure that will affect rendering.
+        // Config loading failure in proxy mode means the project's routes, layouts,
+        // and settings won't be available, leading to 404s for valid pages.
+        logger.error("Failed to load project config in proxy mode", {
+          projectSlug: opts.projectSlug,
+          projectId: opts.projectId,
+          releaseId: opts.releaseId,
+          proxyEnv: opts.proxyEnv,
+          error: getErrorMessage(error),
+        });
+        // Re-throw so the caller (runtime-handler) can return a proper error response
+        // instead of silently proceeding with broken defaults.
+        throw error;
+      }
     }
   }
 

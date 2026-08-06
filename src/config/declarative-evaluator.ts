@@ -3598,9 +3598,16 @@ async function evaluateCapturedInput(
   const { source, fileName, preparedState } = input;
   let parsedAst: unknown;
   try {
+    // filePath is withheld on purpose. The parser picks its plugins from the
+    // file extension, and hosted configs are authored in TypeScript but can
+    // arrive named `.js`, so passing the name parses TS syntax as JavaScript
+    // and reports valid config as a syntax error. Omitting it selects the
+    // permissive plugin set (see pickPlugins: `isTypeScript || !filePath`),
+    // which is the right posture for a config whose authored dialect we do not
+    // know from its name. `fileName` is still used for the error location
+    // below, so diagnostics keep pointing at the right file.
     parsedAst = await parser.parse({
       code: source,
-      filePath: fileName,
     });
   } catch (error) {
     const reason = parserErrorReason(error);

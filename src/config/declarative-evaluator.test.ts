@@ -281,6 +281,42 @@ export default defineConfig({
     assertEquals(reachableNpmNames.has("@redis/client"), false);
   });
 
+  it("accepts TypeScript syntax in a config named .js or .mjs", async () => {
+    // Regression: hosted configs are authored in TypeScript but can be served
+    // under a .js name. The parser chooses its plugins from the file extension,
+    // so passing the name parsed `as const` as plain JavaScript and rejected
+    // valid config with "Hosted configuration rejected (syntax-error:
+    // syntax-error)", which took customer sites down.
+    //
+    // The suite never caught it because DeclarativeConfigFileName defaults to
+    // veryfront.config.ts, so every other test here implicitly picked the one
+    // extension that works.
+    const source = `
+import { defineConfig } from "veryfront";
+
+const router = "pages" as const;
+
+export default defineConfig({
+  title: "TS syntax under a JS name",
+  router,
+});
+`;
+
+    const asJs = await evaluateDeclarativeConfig({
+      ...DEFAULT_OPTIONS,
+      fileName: "veryfront.config.js",
+      source,
+    });
+    assertEquals(asJs.router, "pages", "veryfront.config.js must parse TypeScript syntax");
+
+    const asMjs = await evaluateDeclarativeConfig({
+      ...DEFAULT_OPTIONS,
+      fileName: "veryfront.config.mjs",
+      source,
+    });
+    assertEquals(asMjs.router, "pages", "veryfront.config.mjs must parse TypeScript syntax");
+  });
+
   it("supports helper aliases, safe spreads, environment branching, templates, and TS wrappers", async () => {
     const snapshot = await evaluateDeclarativeConfig({
       source: `

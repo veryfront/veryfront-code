@@ -2345,6 +2345,57 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     );
   });
 
+  it("merges module CSS from sources containing real JSX", async () => {
+    // Regression: the CSS import scan fed project source to es-module-lexer,
+    // which parses neither JSX nor TypeScript. Every .tsx file with a tag threw,
+    // each throw recorded a coverage gap, and gaps are fatal, so no project with
+    // a JSX component could publish a release.
+    //
+    // The suite missed it because every fixture put plain JavaScript inside
+    // .tsx files. These bodies are the shapes that actually broke in production:
+    // a closing component tag, a self-closing tag, and a nested element.
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "globals.css", content: ":root { --brand: blue; }" },
+      { path: "app/styles.css", content: ".calc { background: #191919; }" },
+      {
+        path: "app/layout.tsx",
+        content: 'import "./styles.css";\n' +
+          "export default ({ children }) => (\n" +
+          "  <html><head><title>Assistant</title></head><body>{children}</body></html>\n" +
+          ");",
+      },
+      {
+        path: "app/markdown-renderer.tsx",
+        content: 'import ReactMarkdown from "react-markdown";\n' +
+          "export const R = ({ source }) => <ReactMarkdown>{source}</ReactMarkdown>;",
+      },
+      {
+        path: "pages/index.tsx",
+        content: 'import { Chat } from "veryfront/chat";\n' +
+          "export default () => <Provider><Chat /></Provider>;",
+      },
+    ];
+    let seenStylesheet: string | undefined;
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet) => {
+        seenStylesheet = stylesheet;
+        return Promise.resolve(compiledCss(".calc{background:#191919}"));
+      },
+    });
+    const transform = () => Promise.resolve("export default null;");
+
+    // The build completing at all is the assertion that matters: a parse gap
+    // here aborts it with "Release asset coverage is incomplete".
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertExists(seenStylesheet);
+    assert(
+      seenStylesheet!.includes(".calc"),
+      "CSS imported from a JSX-bearing layout must still be merged",
+    );
+  });
+
   it("does not duplicate the resolved stylesheet when a module imports it directly", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
