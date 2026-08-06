@@ -208,7 +208,7 @@ async function buildToolAssembly(
           instructions: liveProjectSteering.initialProjectInstructions ?? "",
           skills: liveProjectSteering.initialSkills ?? [],
           availableToolNames: modelVisibleToolNames,
-        }),
+        }, { cacheTtl: "1h" }),
     }),
     localTools: await input.buildLocalTools(input.taskContext),
     hostToolPolicy: input.hostToolPolicy,

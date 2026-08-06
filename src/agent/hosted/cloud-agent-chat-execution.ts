@@ -125,7 +125,8 @@ export function createProjectSteeringRefresh(context: NodeVeryfrontCloudAgentSer
   return createDefaultHostedProjectSteeringRefresh({
     fetchProjectInstructions: (lookup) => getProjectInstructions(context, lookup),
     fetchSkills: (lookup) => getSkillsConfig(context, lookup),
-    buildInstructions: buildVeryfrontCloudRuntimeInstructions,
+    // Interactive multi-turn runs opt into the 1h prompt-cache TTL (RFC 0001).
+    buildInstructions: (input) => buildVeryfrontCloudRuntimeInstructions(input, { cacheTtl: "1h" }),
     projectScopedRemoteToolOptions: {
       projectNavigationToolNames: DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES,
     },
@@ -341,7 +342,8 @@ export async function prepareChatExecutionWithinProjectRuntime(
       },
     },
     fetchSteering: (steeringInput) => fetchProjectSteering(context, steeringInput),
-    buildInstructions: buildVeryfrontCloudRuntimeInstructions,
+    // Interactive multi-turn runs opt into the 1h prompt-cache TTL (RFC 0001).
+    buildInstructions: (input) => buildVeryfrontCloudRuntimeInstructions(input, { cacheTtl: "1h" }),
     contextBudget: createHostedChatContextBudgetOptions(
       context,
       req,
