@@ -46,6 +46,72 @@ const logger = serverLogger.component("styles-css-handler");
 type GeneratedStylesResult = Awaited<ReturnType<typeof getProjectCSS>>;
 type StyleArtifactSelectorContext = Omit<ResolveStyleArtifactInput, "styleProfileHash">;
 
+/** Longest diagnostic text embedded in a served stylesheet. */
+const MAX_DIAGNOSTIC_LENGTH = 2_000;
+
+/**
+ * Neutralize the only sequence that can terminate a CSS comment (a star
+ * followed by a slash). Diagnostic text is derived from project-controlled
+ * input — a stylesheet's `@plugin` name reaches the message verbatim — so
+ * leaving that sequence intact would close the banner early and let the rest
+ * of the message be parsed as CSS rules.
+ */
+function forCSSComment(value: string): string {
+  return value.replaceAll("*/", "* /");
+}
+
+/**
+ * Escape text for a double-quoted CSS string. Backslash must be escaped first
+ * or it would re-escape the quotes added afterwards, and newlines terminate a
+ * CSS string literal outright.
+ */
+function forCSSString(value: string): string {
+  return value
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"')
+    // deno-lint-ignore no-control-regex -- raw control characters terminate a CSS string.
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ");
+}
+
+function clampDiagnostic(value: string): string {
+  const text = typeof value === "string" ? value : String(value);
+  return text.length > MAX_DIAGNOSTIC_LENGTH ? `${text.slice(0, MAX_DIAGNOSTIC_LENGTH)}…` : text;
+}
+
+/**
+ * Render a stylesheet that both explains the failure in the source and shows
+ * it in the page. Every error path serves this: a stylesheet that failed to
+ * build must never be mistaken for a project that simply has no styles.
+ */
+function renderCSSDiagnostic(
+  heading: string,
+  detail: { title: string; message: string; suggestion: string },
+): string {
+  const summary = clampDiagnostic(
+    `${detail.title}: ${detail.message}\nSuggestion: ${detail.suggestion}`,
+  );
+  return `/*
+  ${forCSSComment(heading)}
+  ${forCSSComment(summary).replaceAll("\n", "\n  ")}
+*/
+
+body::before {
+  content: "CSS Error: ${forCSSString(summary.replaceAll("\n", " "))}";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 16px;
+  background: #dc2626;
+  color: white;
+  font-family: monospace;
+  font-size: 14px;
+  z-index: 99999;
+  white-space: pre-wrap;
+}
+`;
+}
+
 export class StylesCSSHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "StylesCSSHandler",
@@ -179,33 +245,12 @@ export class StylesCSSHandler extends BaseHandler {
             suggestion: formatted.suggestion,
           });
 
-          const errorMessage =
-            `${formatted.title}: ${formatted.message}\nSuggestion: ${formatted.suggestion}`;
-          const errorCSS = `/*
-  ╔══════════════════════════════════════════════════════════════╗
-  ║  TAILWIND CSS COMPILATION ERROR                               ║
-  ╠══════════════════════════════════════════════════════════════╣
-  ║  ${errorMessage.replace(/\n/g, "\n  ║  ")}
-  ╚══════════════════════════════════════════════════════════════╝
-*/
-
-body::before {
-  content: "CSS Error: ${errorMessage.replace(/"/g, '\\"').replace(/\n/g, " ")}";
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  padding: 16px;
-  background: #dc2626;
-  color: white;
-  font-family: monospace;
-  font-size: 14px;
-  z-index: 99999;
-  white-space: pre-wrap;
-}
-`;
           return this.respond(
-            responseBuilder.withContentType("text/css; charset=utf-8", errorCSS, HTTP_OK),
+            responseBuilder.withContentType(
+              "text/css; charset=utf-8",
+              renderCSSDiagnostic("TAILWIND CSS COMPILATION ERROR", formatted),
+              HTTP_OK,
+            ),
           );
         }
 
@@ -254,12 +299,22 @@ body::before {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       });
+      // This path used to answer with a bare CSS comment: 200, zero rules, no
+      // visible signal. A stylesheet that failed to build is indistinguishable
+      // from a project that legitimately has no styles, so the page renders
+      // completely unstyled and nothing in the browser says why. Route it
+      // through the same visible diagnostic the compile path uses.
       const responseBuilder = this.createResponseBuilder(ctx).withCache("no-cache");
-      const errorCSS = `/* StylesCSSHandler error: ${
-        (error instanceof Error ? error.message : String(error)).replace(/\*\//g, "")
-      } */`;
       return this.respond(
-        responseBuilder.withContentType("text/css; charset=utf-8", errorCSS, HTTP_OK),
+        responseBuilder.withContentType(
+          "text/css; charset=utf-8",
+          renderCSSDiagnostic("STYLESHEET COULD NOT BE BUILT", {
+            title: "CSS Handler Error",
+            message: error instanceof Error ? error.message : String(error),
+            suggestion: "Check the server logs for the full stack trace.",
+          }),
+          HTTP_OK,
+        ),
       );
     }
   }
