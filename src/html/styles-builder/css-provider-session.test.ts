@@ -6,16 +6,19 @@ import {
   type CSSProcessor,
   CSSProcessorName,
 } from "#veryfront/extensions/css/index.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   acquireCSSGenerationSession,
+  cacheCSSAsync,
   clearCSSCache,
   generateTailwindCSS,
   getCompilerCacheStats,
   getProjectCSS,
+  hashCSS,
   invalidateCompiler,
   invalidateProjectCSS,
+  regenerateCSSByHash,
 } from "./tailwind-compiler.ts";
 
 interface ProcessorCounters {
@@ -182,17 +185,55 @@ describe("styles-builder CSS provider sessions", () => {
     }
   });
 
-  it("fails closed when minification is requested without an optimizer", async () => {
+  it("serves unminified CSS when minification is requested without an optimizer", async () => {
+    // Replaces an earlier "fails closed" assertion. Failing closed is right for
+    // a correctness or security property. Minification is neither -- it is a
+    // size optimization whose absence still yields a working page, and no
+    // first-party package registers an engine while the production shell always
+    // asks for minify:true. The old stance could therefore only ever fire as an
+    // outage: every hosted render and every release asset build, including a
+    // freshly scaffolded project, failed on it.
     installProcessor(createProcessor("missing-optimizer"));
-    assertThrows(
-      () => acquireCSSGenerationSession(true),
-      Error,
-      'Missing extension for contract "CSSOptimizationEngine"',
-    );
-    await assertRejects(
-      () => generateTailwindCSS("sheet", ["alpha"], { minify: true }),
-      Error,
-      'Missing extension for contract "CSSOptimizationEngine"',
-    );
+
+    const session = acquireCSSGenerationSession(true);
+    assertEquals(session.minify, true);
+    assertEquals(session.optimizationEngine, undefined);
+
+    const generated = await generateTailwindCSS("sheet", ["alpha"], { minify: true });
+    assertEquals(generated.css, "missing-optimizer|sheet|alpha");
+  });
+
+  it("keeps minified and unminified output in separate cache identities", async () => {
+    // The reversal above is only safe because an absent optimizer is recorded
+    // in the pipeline identity, so an unminified entry can never be served in
+    // place of a minified one.
+    installProcessor(createProcessor("identity-split"));
+    const withoutEngine = acquireCSSGenerationSession(true).cacheIdentity;
+
+    register(CSSOptimizationEngineName, createOptimizer("split-optimizer"));
+    const withEngine = acquireCSSGenerationSession(true).cacheIdentity;
+
+    assertEquals(withoutEngine === withEngine, false);
+  });
+
+  it("regenerates a cached stylesheet unminified when no optimizer exists", async () => {
+    // regenerateCSSByHash serves /_vf/css/<hash>.css on a cold cache, so it is
+    // the path a second replica takes for a page another replica rendered. The
+    // session and the generation request must agree on minify or
+    // resolveGenerationSession rejects the pair; both ask for it, and an absent
+    // engine downgrades the output rather than failing the request.
+    installProcessor(createProcessor("no-optimizer-regeneration"));
+    const stylesheet = "sheet";
+    const candidates = ["alpha", "beta"];
+
+    const generated = await generateTailwindCSS(stylesheet, candidates, { minify: false });
+    const hash = hashCSS(generated.css);
+    await cacheCSSAsync(generated.css, hash, {
+      candidates,
+      stylesheet,
+      pipelineIdentity: generated.cacheIdentity,
+    });
+
+    assertEquals(await regenerateCSSByHash(hash, "vf-no-optimizer"), generated.css);
   });
 });

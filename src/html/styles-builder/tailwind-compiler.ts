@@ -6,7 +6,7 @@
  * an explicit CSSOptimizationEngine owns minification.
  */
 
-import { resolve } from "#veryfront/extensions/contracts.ts";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import {
   captureCSSOptimizationEngine,
   type CSSOptimizationEngine,
@@ -128,9 +128,24 @@ function getCSSPipelineCacheIdentity(
 /** Capture all output-affecting providers before the operation performs an await. */
 export function acquireCSSGenerationSession(minify: boolean): CSSGenerationSession {
   const compilationSession = acquireCSSCompilationSession();
-  const optimizationEngine = minify
-    ? captureCSSOptimizationEngine(resolve<unknown>(CSSOptimizationEngineName))
-    : undefined;
+  // Minification is an optional enhancement, not a precondition for serving
+  // CSS. No first-party package registers a CSSOptimizationEngine -- it ships
+  // only in @veryfront/ext-css-lightning, which `veryfront` does not depend on
+  // -- while the production shell always asks for minify:true. Resolving
+  // through `resolve()` therefore made the fail-closed path unreachable-by-
+  // design for a default project: it could only ever fire as an outage. Absent
+  // an engine the CSS is emitted unminified and the identity below records it
+  // as such, so no cache can serve a stale minified entry in its place.
+  const optimizationProvider = minify ? tryResolve<unknown>(CSSOptimizationEngineName) : undefined;
+  if (minify && optimizationProvider === undefined) {
+    // Warn, not debug: this is a silent quality regression for a project that
+    // did select an optimizer and whose registration failed. It must not be
+    // indistinguishable from a project that never wanted one.
+    logger.warn("No CSSOptimizationEngine registered; emitting unminified CSS");
+  }
+  const optimizationEngine = optimizationProvider === undefined
+    ? undefined
+    : captureCSSOptimizationEngine(optimizationProvider);
   const session: CSSGenerationSession = {
     minify,
     compilationSession,
@@ -288,7 +303,12 @@ export async function regenerateCSSByHash(
   projectSlug: string | undefined,
 ): Promise<string | undefined> {
   if (!isCSSContentHash(expectedHash)) return undefined;
-  const generationSession = acquireCSSGenerationSession(true);
+  // The session tolerates an absent optimizer and records the result in its
+  // cache identity, so asking for minify here is safe whether or not an engine
+  // is registered. The request below must pass the same value, or
+  // resolveGenerationSession rejects the pair.
+  const minify = true;
+  const generationSession = acquireCSSGenerationSession(minify);
   const inFlightKey = `${hashString(generationSession.cacheIdentity)}:${expectedHash}`;
   const pending = inFlightRegeneration.get(inFlightKey);
   if (pending) return await pending;
@@ -305,7 +325,7 @@ export async function regenerateCSSByHash(
       const result = await generateTailwindCSS(
         inputs.stylesheet,
         inputs.candidates,
-        { minify: true, projectSlug },
+        { minify, projectSlug },
         { generationSession },
       );
       if (hashCSS(result.css) !== expectedHash) return undefined;
