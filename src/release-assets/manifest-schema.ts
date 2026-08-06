@@ -335,15 +335,33 @@ export interface ReadyReleaseAssetManifestResponse {
 // Dependency-free consumption parser
 // ---------------------------------------------------------------------------
 
+/** Options shared by the dependency-free consumption parsers. */
+export interface ReleaseAssetManifestParseOptions {
+  /**
+   * Accept the v1 body still held for releases published before the v2 move.
+   *
+   * Off by default, and deliberately opt-in per call site. Runtime reads must
+   * set it or every pre-v2 release loses its browser modules. Producer-side
+   * callers -- the build executor verifying what it just emitted, the CLI
+   * waiting on a deploy, a locally built bundle -- must not: there a v1 body
+   * means the builder and this framework are skewed, and accepting it would
+   * hide the skew instead of naming it.
+   */
+  readonly acceptLegacyV1?: boolean;
+}
+
 /**
  * Parse an untrusted manifest without requiring a registered schema extension.
  *
  * The parser is non-throwing, applies explicit work and memory bounds, validates
  * route references, and returns a detached deeply frozen snapshot.
  */
-export function parseReleaseAssetManifest(value: unknown): ReleaseAssetManifest | null {
+export function parseReleaseAssetManifest(
+  value: unknown,
+  options: ReleaseAssetManifestParseOptions = {},
+): ReleaseAssetManifest | null {
   try {
-    return parseReleaseAssetManifestImpl(value);
+    return parseReleaseAssetManifestImpl(value, options.acceptLegacyV1 === true);
   } catch {
     return null;
   }
@@ -359,6 +377,7 @@ export function parseReleaseAssetManifest(value: unknown): ReleaseAssetManifest 
 export function parseReadyReleaseAssetManifestResponse(
   value: unknown,
   expectedReleaseId: string,
+  options: ReleaseAssetManifestParseOptions = {},
 ): ReadyReleaseAssetManifestResponse | null {
   try {
     if (!isSafeBoundedText(expectedReleaseId, MAX_IDENTIFIER_LENGTH)) return null;
@@ -366,7 +385,7 @@ export function parseReadyReleaseAssetManifestResponse(
 
     const state = readOwnDataProperty(value, "state");
     const manifestVersion = readOwnDataProperty(value, "manifest_version");
-    const manifest = parseReleaseAssetManifest(readOwnDataProperty(value, "manifest"));
+    const manifest = parseReleaseAssetManifest(readOwnDataProperty(value, "manifest"), options);
     if (
       state !== "ready" ||
       !isSafeIntegerInRange(manifestVersion, Number.MAX_SAFE_INTEGER) ||
@@ -403,6 +422,7 @@ export function parseReadyReleaseAssetManifestResponse(
 export function describeReadyReleaseAssetManifestRejection(
   value: unknown,
   expectedReleaseId: string,
+  options: ReleaseAssetManifestParseOptions = {},
 ): string {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return "the response envelope was not an object";
@@ -414,21 +434,26 @@ export function describeReadyReleaseAssetManifestRejection(
   }
 
   const body = readUntrustedOwnDataProperty(value, "manifest");
-  const manifest = parseReleaseAssetManifest(body);
+  const manifest = parseReleaseAssetManifest(body, options);
   if (!manifest) {
     const schemaVersion = readUntrustedOwnDataProperty(body, "schemaVersion");
-    // v1 is a supported read format, so a v1 body that fails to parse is
-    // malformed rather than skewed. Naming it a skew would send operators to
-    // upgrade the builder for what is actually a corrupt payload.
+    // Which versions count as skew depends on what this caller reads. A
+    // producer-side caller reads v2 only, so a v1 body there is a genuine
+    // framework skew. A runtime read also accepts v1, so a v1 body that still
+    // fails is corrupt -- calling that a skew would send operators to upgrade
+    // the builder for something an upgrade cannot fix.
+    const acceptsLegacyV1 = options.acceptLegacyV1 === true;
     if (
       isSafeIntegerInRange(schemaVersion, Number.MAX_SAFE_INTEGER) &&
       schemaVersion !== RELEASE_ASSET_MANIFEST_SCHEMA_VERSION &&
-      schemaVersion !== LEGACY_V1_SCHEMA_VERSION
+      !(acceptsLegacyV1 && schemaVersion === LEGACY_V1_SCHEMA_VERSION)
     ) {
+      const readable = acceptsLegacyV1
+        ? `versions ${LEGACY_V1_SCHEMA_VERSION} and ${RELEASE_ASSET_MANIFEST_SCHEMA_VERSION}`
+        : `version ${RELEASE_ASSET_MANIFEST_SCHEMA_VERSION}`;
       return `the release assets declare manifest schema version ${schemaVersion}, but this ` +
-        `build reads versions ${LEGACY_V1_SCHEMA_VERSION} and ` +
-        `${RELEASE_ASSET_MANIFEST_SCHEMA_VERSION}. The assets were built by a different ` +
-        `framework version than the one running this deploy`;
+        `build reads ${readable}. The assets were built ` +
+        `by a different framework version than the one running this deploy`;
     }
     return "the manifest body did not match the expected schema";
   }
@@ -468,9 +493,12 @@ export function readUntrustedOwnDataProperty(value: unknown, key: PropertyKey): 
  * written — while reads adapt the old shape and then apply the full v2
  * validator to it. The adapter only reshapes; it never validates.
  */
-function parseReleaseAssetManifestImpl(value: unknown): ReleaseAssetManifest | null {
+function parseReleaseAssetManifestImpl(
+  value: unknown,
+  acceptLegacyV1: boolean,
+): ReleaseAssetManifest | null {
   const current = parseCurrentManifestBody(value);
-  if (current) return current;
+  if (current || !acceptLegacyV1) return current;
 
   const adapted = adaptLegacyV1ManifestBody(value);
   return adapted ? parseCurrentManifestBody(adapted) : null;
