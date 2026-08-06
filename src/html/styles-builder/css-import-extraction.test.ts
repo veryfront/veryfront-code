@@ -23,6 +23,16 @@ describe("html/styles-builder/css-import-extraction", () => {
       ]);
     });
 
+    it("ignores identifiers that merely contain the word import", () => {
+      // Without a word boundary, `important` reads as an import statement. In a
+      // release-asset build a bogus specifier becomes a fatal coverage gap, so
+      // a false positive here fails the whole release.
+      assertEquals(extractCssImportSpecifiers('const important = "./styles.css";'), []);
+      assertEquals(extractCssImportSpecifiers('let unimportant = "./a.css";'), []);
+      // The real thing still matches, including with no space before the quote.
+      assertEquals(extractCssImportSpecifiers('import"./styles.css";'), ["./styles.css"]);
+    });
+
     it("does not match specifiers across statement boundaries", () => {
       const source = 'const a = 1; import { b } from "./b.ts"; const s = "x.css";';
       assertEquals(extractCssImportSpecifiers(source), []);

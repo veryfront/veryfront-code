@@ -89,18 +89,20 @@ interface AdapterResolutionOptions {
 }
 
 /**
- * Whether a config-load failure means "this release has no config file".
+ * Whether an error carries an own `status` of 404.
  *
- * The API answers 404 for a release that never published one, which is an
- * ordinary project shape rather than an error. Scoped deliberately narrow: only
- * a 404, and only from inside the config-load block, so a transport failure, an
- * auth rejection, or a config that exists but cannot be parsed still surfaces.
- * A 404 raised by some other call within that block would be read as a missing
- * config, which is why the block should stay limited to loading the config.
+ * Read through an own-property descriptor rather than plain access: this runs on
+ * a rejection value that may be anything, and a getter on an attacker-shaped
+ * object should not execute during error handling.
+ *
+ * Callers must scope this to the single operation whose 404 means "absent",
+ * never to a block that also performs other requests -- see the config load
+ * below, where only the getHostedConfig call is treated this way.
  */
-function isMissingHostedConfig(error: unknown): boolean {
-  return typeof error === "object" && error !== null &&
-    (error as { status?: unknown }).status === 404;
+function hasNotFoundStatus(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const descriptor = Object.getOwnPropertyDescriptor(error, "status");
+  return descriptor !== undefined && descriptor.value === 404;
 }
 
 function usesExactSourceConfig(opts: AdapterResolutionOptions): boolean {
@@ -234,6 +236,12 @@ export async function resolveAdapter(
     // Load config via proxy mode with project context.
     // Unlike local projects, proxy mode config loading failures are propagated
     // because proceeding without config causes silent 404s for valid projects.
+    // Set only when getHostedConfig itself reports 404, never when some other
+    // request in this block does. The catch below spans prepareProxyConfigLoad,
+    // the snapshot refresh and runWithContext too, and a 404 from any of those
+    // is a real failure that must not be read as "no config published".
+    let hostedConfigAbsent = false;
+
     try {
       effectiveConfig = await timeAsync("config:load-proxy-project", async () => {
         const hosted = await prepareProxyConfigLoad(opts, false);
@@ -244,6 +252,9 @@ export async function resolveAdapter(
           return await getHostedConfig(effectiveProjectDir, effectiveAdapter, {
             ...hosted,
             signal: opts.req.signal,
+          }).catch((error: unknown) => {
+            if (hasNotFoundStatus(error)) hostedConfigAbsent = true;
+            throw error;
           });
         };
 
@@ -277,7 +288,10 @@ export async function resolveAdapter(
       // used to be re-thrown with everything else, which turned every request
       // for such a project into a 404. Fall through to defaults instead --
       // the same outcome as a project whose config resolves to nothing.
-      if (isMissingHostedConfig(error)) {
+      if (hostedConfigAbsent) {
+        // Defaults, not whatever a caller happened to pass in: a project with no
+        // published config must not silently inherit another config's routes.
+        effectiveConfig = undefined;
         logger.debug("No hosted config for this release; using defaults", {
           projectSlug: opts.projectSlug,
           projectId: opts.projectId,

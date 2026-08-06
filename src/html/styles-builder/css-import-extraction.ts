@@ -28,9 +28,13 @@ export const CSS_IMPORTING_SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", "
  * Static ESM import statements whose specifier ends in `.css`:
  *   import "./styles.css";
  *   import styles from "./button.module.css";
- * `[^'";]*` keeps the match from crossing statement boundaries.
+ * `[^'";]*` keeps the match from crossing statement boundaries, and `\bimport\b`
+ * keeps identifiers that merely contain the word out of it -- without it,
+ * `const important = "./styles.css"` reads as an import. That matters more here
+ * than it looks: release-asset builds turn a bogus specifier into a fatal
+ * coverage gap, so a false positive fails the release.
  */
-const CSS_IMPORT_RE = /import[^'";]*['"]([^'"]+\.css)['"]/g;
+const CSS_IMPORT_RE = /\bimport\b[^'";]*['"]([^'"]+\.css)['"]/g;
 
 /** Extract the raw specifiers of all static CSS imports in a source file. */
 export function extractCssImportSpecifiers(source: string): string[] {
