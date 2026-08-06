@@ -71,6 +71,7 @@ import {
   resolveProjectReactVersion,
   resolveRequestedDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
+import { isProjectInDependencyPinningCohort } from "#veryfront/transforms/esm/dependency-pinning-cohort.ts";
 import {
   appendDependencyPinningPathKey,
   extractDependencyPinningPathKey,
@@ -414,7 +415,13 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         requestedPinCount > 1 ||
         (hasRequestedPinKey &&
           (!requestedPinKey || !isCanonicalDependencyPinningCacheKey(requestedPinKey))) ||
-        (!hasRequestedPinKey && dependencyPinningEnabled)
+        // The flag arms the rollout; the cohort decides who is in it. Gating on
+        // the flag alone conflicted every module of every project while the
+        // rollout sat at 0%, because an out-of-cohort document correctly emits
+        // no key -- so the armed flag was never inert, which is the property it
+        // is supposed to have.
+        (!hasRequestedPinKey && dependencyPinningEnabled &&
+          isProjectInDependencyPinningCohort(options.projectId))
       ) {
         return unknownDependencySnapshotModuleResponse(method);
       }

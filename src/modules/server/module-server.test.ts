@@ -41,6 +41,7 @@ import {
   clearReactVersionCache,
   getDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
+import { DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV } from "#veryfront/transforms/esm/dependency-pinning-cohort.ts";
 import { buildImportMapJson, clearImportMapCache } from "../../html/utils.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
@@ -2862,6 +2863,38 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
         assertEquals(response.headers.get("cache-control"), "no-store");
       }
     } finally {
+      clearReactVersionCache();
+      clearImportMapCache();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("serves a client boundary for a project outside the pinning cohort", async () => {
+    // The flag arms the rollout; the cohort decides who is in it. An armed flag
+    // at 0% must stay inert. It did not: the early snapshot resolve was gated on
+    // the flag alone, so an out-of-cohort project skipped it, then carried no
+    // requested key -- because its document correctly emits none -- and every
+    // client module answered 409 instead of being served unpinned.
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-cohort-out-" });
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      setEnv(DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV, "0");
+      await Deno.writeTextFile(
+        `${projectDir}/package.json`,
+        JSON.stringify({ dependencies: { react: "19.2.4" } }),
+      );
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/Widget.tsx`,
+        ['"use client";', "export default function Widget() { return null; }"].join("\n"),
+      );
+
+      const url = new URL("http://localhost:3000/_vf_modules/components/Widget.js");
+      const response = await serve(new Request(url), projectDir);
+      assertEquals(response.status, 200);
+      assertEquals(response.headers.get("content-type")?.includes("javascript"), true);
+    } finally {
+      deleteEnv(DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV);
       clearReactVersionCache();
       clearImportMapCache();
       await Deno.remove(projectDir, { recursive: true });
