@@ -33,21 +33,31 @@ describe("html/styles-builder/css-import-extraction", () => {
       assertEquals(extractCssImportSpecifiers('import"./styles.css";'), ["./styles.css"]);
     });
 
-    it("ignores imports that are not code", () => {
-      // These are not ignored merely as a nicety. A release-asset build records
-      // any specifier it cannot resolve as a coverage gap, and gaps abort the
-      // build -- so a commented-out import to a since-deleted stylesheet would
-      // block that project's releases permanently.
-      assertEquals(extractCssImportSpecifiers('// import "./legacy.css";'), []);
-      assertEquals(extractCssImportSpecifiers('/* import "./legacy.css"; */'), []);
+    it("over-matches commented and quoted imports, which is the contract", () => {
+      // Not an oversight. Callers skip what they cannot resolve, so a phantom
+      // specifier costs nothing. An earlier revision blanked these regions
+      // because the release build had made this output fatal; that fix kept
+      // finding new holes, and an unpaired `/*` or backtick blanked across real
+      // code and silently dropped a genuine import. Looseness is the safer
+      // failure: an extra specifier is ignored, a missing one loses a stylesheet.
+      assertEquals(extractCssImportSpecifiers('// import "./legacy.css";'), ["./legacy.css"]);
+      assertEquals(extractCssImportSpecifiers('const t = `import "./legacy.css"`;'), [
+        "./legacy.css",
+      ]);
+    });
+
+    it("never loses a real import to an unpaired comment or backtick", () => {
+      // The regression the blanking introduced: `/*` inside a line comment
+      // paired with a later real `*/`, and a stray backtick in prose paired
+      // with the next one, blanking the real import in between. A build that
+      // ships a page without its stylesheet is worse than one that over-matches.
       assertEquals(
-        extractCssImportSpecifiers('/*\n * import "./legacy.css";\n */'),
-        [],
+        extractCssImportSpecifiers('// TODO drop /* legacy\nimport "./real.css";\nconst a = 1;'),
+        ["./real.css"],
       );
-      assertEquals(extractCssImportSpecifiers('const t = `import "./legacy.css"`;'), []);
       assertEquals(
-        extractCssImportSpecifiers('```tsx\nimport "./theme.css";\n```'),
-        [],
+        extractCssImportSpecifiers('Use the ` char.\n\nimport "./real.css";\n\n`Button`'),
+        ["./real.css"],
       );
     });
 
@@ -78,14 +88,19 @@ describe("html/styles-builder/css-import-extraction", () => {
       assertEquals(extractCssImportSpecifiers('import.meta.resolve("./a.css");'), []);
     });
 
-    it("still finds real imports alongside non-code lookalikes", () => {
+    it("finds every real import in a mixed file", () => {
       const source = [
         '// import "./commented.css";',
         'import "./real.css";',
-        'const sample = `import "./template.css"`;',
         'import styles from "./mod.module.css";',
       ].join("\n");
-      assertEquals(extractCssImportSpecifiers(source), ["./real.css", "./mod.module.css"]);
+      // The commented one comes along too; what matters is that neither real
+      // import is lost.
+      assertEquals(extractCssImportSpecifiers(source), [
+        "./commented.css",
+        "./real.css",
+        "./mod.module.css",
+      ]);
     });
 
     it("keeps a URL in a string from reading as a comment", () => {

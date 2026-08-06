@@ -2496,7 +2496,7 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     assertEquals(first.css, second.css);
   });
 
-  it("fails closed when an imported stylesheet is missing or unsupported", async () => {
+  it("still publishes when an imported stylesheet cannot be resolved", async () => {
     for (
       const specifier of ["./missing.css", "theme-package/theme.css", "https://cdn.test/x.css"]
     ) {
@@ -2516,19 +2516,22 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
         },
       );
 
-      const result = await runReleaseAssetBuild(
+      // Completing at all is half the assertion: an unresolvable specifier used
+      // to abort this with "Release asset coverage is incomplete".
+      await runReleaseAssetBuild(
         baseInput(client, () => Promise.resolve("export default null;")),
         await tmp(),
       );
 
-      assertCoverageFailure(
-        result,
-        rec,
-        specifier.startsWith("./")
-          ? "stylesheet-import-missing:pages/missing.css"
-          : "stylesheet-import-unsupported:pages/index.tsx",
-      );
-      assertEquals(compileCalls, 0, specifier);
+      // Used to fail the release. It no longer does, and that is the point: a
+      // text match is not knowledge that the build needs the file. The same
+      // check could not tell a real import from one inside a comment, a string
+      // or an MDX fence, so ordinary source could block a project's releases.
+      // Unresolvable means the CSS is not merged, not that the release is
+      // refused. Genuine missing-CSS detection belongs on the resolved module
+      // graph, over transformed code, where the lexer can be trusted.
+      assertExists(rec.manifest, specifier);
+      assertEquals(compileCalls > 0, true, specifier);
     }
   });
 

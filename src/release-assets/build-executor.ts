@@ -2687,7 +2687,7 @@ async function runBuildInner(
     pushGap(gaps, `stylesheet-missing:${stylesheetPath}`);
     assertCompleteReleaseAssetCoverage(gaps);
   }
-  const stylesheet = await mergeModuleCssImports(sourceByPath, resolvedStylesheet, gaps);
+  const stylesheet = await mergeModuleCssImports(sourceByPath, resolvedStylesheet);
   assertCompleteReleaseAssetCoverage(gaps);
   const cssRequested = candidates.size > 0 || stylesheet !== undefined;
   if (cssRequested) {
@@ -2911,7 +2911,6 @@ function resolveProjectStylesheet(
 async function mergeModuleCssImports(
   sourceByPath: Map<string, string>,
   stylesheet: { content: string; path: string } | undefined,
-  gaps: string[],
 ): Promise<string | undefined> {
   const importedPaths = new Set<string>();
   for (const [path, content] of sourceByPath) {
@@ -2929,19 +2928,32 @@ async function mergeModuleCssImports(
     for (const specifier of extractCssImportSpecifiers(content)) {
       const cssPath = specifier.split(/[?#]/, 1)[0] ?? "";
       if (!cssPath.endsWith(".css")) continue;
+      // Nothing this scan fails to resolve is fatal, because a regex match is
+      // not knowledge that the build needs the file. extractCssImportSpecifiers
+      // is text-based by design and says so ("over-matching is harmless"); this
+      // path broke that contract by turning its output into a coverage gap, and
+      // assertCompleteReleaseAssetCoverage throws on gaps. Three rounds of
+      // review found three more ways ordinary source produces a phantom
+      // specifier, each of which would have blocked a project's releases.
+      //
+      // Merging module CSS is an enhancement: when it cannot resolve something
+      // the right outcome is unmerged CSS, not a refused release. Genuine
+      // missing-CSS detection belongs on the resolved module graph
+      // (collectProjectModuleImports, over transformed code where the lexer is
+      // trustworthy), not on this text scan.
       if (cssPath !== specifier) {
-        pushGap(gaps, `stylesheet-import-unsupported:${path}`);
+        logger.debug("Skipping CSS import with an unsupported specifier", { path, specifier });
         continue;
       }
       const importedPath = resolveCssImportPath(specifier, `/${path}`, "/");
       if (!importedPath) {
-        pushGap(gaps, `stylesheet-import-unsupported:${path}`);
+        logger.debug("Skipping CSS import that does not resolve", { path, specifier });
         continue;
       }
 
       const relativePath = importedPath.replace(/^\/+/, "");
       if (!sourceByPath.has(relativePath)) {
-        pushGap(gaps, `stylesheet-import-missing:${relativePath}`);
+        logger.debug("Skipping CSS import with no matching source file", { path, relativePath });
         continue;
       }
       importedPaths.add(relativePath);
