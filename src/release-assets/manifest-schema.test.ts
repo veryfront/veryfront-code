@@ -54,6 +54,101 @@ function validManifest(): ReleaseAssetManifest {
   };
 }
 
+/**
+ * A stored v1 body, shaped exactly as production holds it: `fallback` present,
+ * `dependencyMode` absent, and a CSS entry whose `styleProfileHash` is the
+ * legacy short token rather than a sha256.
+ */
+function legacyV1Manifest(): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    projectId: "11111111-1111-1111-1111-111111111111",
+    releaseId: "22222222-2222-2222-2222-222222222222",
+    releaseVersion: 7,
+    manifestVersion: 1,
+    builderVersion: "0.1.841",
+    sourceContentHash: "d".repeat(64),
+    createdAt: "2026-06-12T00:00:00.000Z",
+    assetBasePath: "/_vf/assets",
+    modules: {
+      "pages/index.tsx": {
+        contentHash: "a".repeat(64),
+        size: 1234,
+        contentType: "text/javascript",
+      },
+    },
+    css: [
+      {
+        contentHash: "b".repeat(64),
+        size: 4321,
+        contentType: "text/css",
+        styleProfileHash: "-4ij92d",
+      },
+    ],
+    routes: {
+      "/": { modules: ["pages/index.tsx"], css: ["b".repeat(64)] },
+    },
+    dependencies: {},
+    fallback: { mode: "none", gaps: [] },
+  };
+}
+
+describe("legacy v1 manifest consumption", () => {
+  it("admits modules from a stored v1 body", () => {
+    const manifest = parseReleaseAssetManifest(legacyV1Manifest());
+    assertExists(manifest);
+    assertEquals(manifest.schemaVersion, RELEASE_ASSET_MANIFEST_SCHEMA_VERSION);
+    assertEquals(manifest.modules["pages/index.tsx"]?.contentHash, "a".repeat(64));
+    assertEquals(manifest.routes["/"]?.modules, ["pages/index.tsx"]);
+  });
+
+  it("drops legacy CSS rather than inventing v2 identities", () => {
+    // v1 CSS carries no `cssPipelineIdentity` and a non-sha256 profile hash.
+    // Synthesizing either would fabricate a cache-correctness key, so the
+    // adapter reports no manifest CSS and the renderer keeps its own pipeline.
+    const manifest = parseReleaseAssetManifest(legacyV1Manifest());
+    assertExists(manifest);
+    assertEquals(manifest.css, []);
+    assertEquals(manifest.routes["/"]?.css, []);
+  });
+
+  it("reports source dependency mode for a v1 body", () => {
+    const manifest = parseReleaseAssetManifest(legacyV1Manifest());
+    assertExists(manifest);
+    assertEquals(manifest.dependencyMode, "source");
+  });
+
+  it("applies v2 bounds to the adapted body", () => {
+    const corruptModuleKey = legacyV1Manifest();
+    corruptModuleKey.modules = {
+      "../escape.tsx": { contentHash: "a".repeat(64), size: 1, contentType: "text/javascript" },
+    };
+    assertEquals(parseReleaseAssetManifest(corruptModuleKey), null);
+
+    const danglingRoute = legacyV1Manifest();
+    danglingRoute.routes = { "/": { modules: ["pages/missing.tsx"], css: [] } };
+    assertEquals(parseReleaseAssetManifest(danglingRoute), null);
+  });
+
+  it("accepts a ready response carrying a v1 body", () => {
+    const response = {
+      state: "ready",
+      manifest_version: 1,
+      manifest: legacyV1Manifest(),
+    };
+    const parsed = parseReadyReleaseAssetManifestResponse(
+      response,
+      "22222222-2222-2222-2222-222222222222",
+    );
+    assertExists(parsed);
+    assertEquals(parsed.manifest.modules["pages/index.tsx"]?.size, 1234);
+  });
+
+  it("keeps the strict validator v2-only so builds cannot emit v1", () => {
+    assertEquals(getReleaseAssetManifestSchema().safeParse(legacyV1Manifest()).success, false);
+  });
+});
+
 describe("release asset manifest schema", () => {
   it("round-trips a valid manifest through the zod validator", () => {
     const manifest = validManifest();
