@@ -22,6 +22,8 @@ const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
 const SetConstructor = Set;
 const stringCharAt = String.prototype.charAt;
+/** Sticky, so an over-long run is consumed in one native scan. */
+const candidateRunPattern = new RegExp(`${candidateBodyCharacterClass}+`, "y");
 
 function hasCandidateContinuation(content: string, index: number): boolean {
   if (index >= content.length) return false;
@@ -55,9 +57,14 @@ export function extractCandidatesWithByteLength(
       // selector, no fragment of it should be admitted, and failing here fails
       // the render for a reason unrelated to styling.
       if (hasCandidateContinuation(content, candidatePattern.lastIndex)) {
-        let end = candidatePattern.lastIndex;
-        while (hasCandidateContinuation(content, end)) end++;
-        candidatePattern.lastIndex = end;
+        // Consumed in one sticky-regex scan rather than advancing a character
+        // at a time: MAX_CSS_FILE_BYTES permits inputs where a single base64
+        // blob would mean millions of JS-level iterations.
+        candidateRunPattern.lastIndex = candidatePattern.lastIndex;
+        const overlongRun = apply(regExpExec, candidateRunPattern, [content]) as
+          | RegExpExecArray
+          | null;
+        if (overlongRun) candidatePattern.lastIndex += overlongRun[0].length;
         continue;
       }
       if (apply(setHas, seenCandidates, [candidate])) continue;
