@@ -87,6 +87,49 @@ async function runPermissionlessWorker(source: string): Promise<unknown> {
 }
 
 describe("evaluateDeclarativeConfig", () => {
+  it("evaluates a TypeScript config under every recognized file name", async () => {
+    // Regression, production 2026-08-06. This is the customer config, byte for
+    // byte, that returned HTTP 400 "Hosted configuration rejected
+    // (syntax-error: syntax-error)" and took their site down. `as const` is
+    // TypeScript-only, and Babel's typescript plugin used to be selected from
+    // the file name. Evaluated under a .js or .mjs name the config parsed as
+    // JavaScript and was rejected as a syntax error.
+    //
+    // The evaluator cannot trust the name: it is the candidate the hosted
+    // loader asked for, not necessarily the file it received.
+    const source = `/**
+ * Veryfront Config for local development
+ */
+export default {
+  router: "pages" as const,
+  app: "components/app.tsx",
+  layout: "components/layouts/DefaultLayout.mdx",
+  dev: {
+    port: 3003,
+    host: "localhost",
+    hmr: true,
+  },
+};
+`;
+
+    for (
+      const fileName of
+        ["veryfront.config.ts", "veryfront.config.js", "veryfront.config.mjs"] as const
+    ) {
+      const snapshot = await evaluateDeclarativeConfig({
+        source,
+        fileName,
+        environmentName: DEFAULT_OPTIONS.environmentName,
+        environment: DEFAULT_OPTIONS.environment,
+      });
+      assertEquals(
+        (snapshot as Record<string, unknown>).router,
+        "pages",
+        `expected ${fileName} to evaluate the TypeScript config`,
+      );
+    }
+  });
+
   it("evaluates a representative documented configuration as a frozen snapshot", async () => {
     const snapshot = await evaluateDeclarativeConfig({
       source: `
