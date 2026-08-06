@@ -55,6 +55,16 @@ function parseDirectiveRemoteHosts(csp: string, directiveName: string): string[]
     .sort();
 }
 
+/**
+ * Exact membership in a parsed source list, never substring containment.
+ * Matching `https://api.example.com` inside the serialized policy would also
+ * pass for a hostile `https://api.example.com.evil.test`, and would pass when
+ * the source is present but under some other directive.
+ */
+function assertAllows(sources: readonly string[], expected: string, msg: string): void {
+  assert(new Set(sources).has(expected), `${msg}; got: ${sources.join(" ") || "(none)"}`);
+}
+
 function applyHeaders(
   {
     isDev = false,
@@ -141,8 +151,9 @@ describe("security/http/response/security-handler", () => {
 
       assertEquals(parseDirectiveRemoteHosts(result, "font-src"), ["fonts.gstatic.com"]);
       assert(parseDirectiveSources(result, "font-src").includes("'self'"), "floor kept");
-      assert(
-        parseDirectiveRemoteHosts(result, "style-src").includes("fonts.googleapis.com"),
+      assertAllows(
+        parseDirectiveRemoteHosts(result, "style-src"),
+        "fonts.googleapis.com",
         "style-src carries the stylesheet origin",
       );
       assert(result.includes("'nonce-n1'"), "script-src floor survives a font addition");
@@ -164,13 +175,66 @@ describe("security/http/response/security-handler", () => {
       assertEquals(camel, kebab);
     });
 
+    it("keeps both spellings of one directive instead of dropping either", () => {
+      // The two spellings address the same directive, so overwriting would
+      // discard a configured origin with no error and no signal.
+      const result = buildCSP(false, "n", {
+        csp: {
+          fontSrc: ["https://a.example"],
+          "font-src": ["https://b.example"],
+        },
+      });
+      assertEquals(parseDirectiveRemoteHosts(result, "font-src"), [
+        "a.example",
+        "b.example",
+      ]);
+    });
+
+    it("lets null win over the other spelling whichever side it is written on", () => {
+      // Order-independent, and the safer of the two readings: a project that
+      // spells one directive twice gets the tighter policy, not a coin flip.
+      const nullFirst = buildCSP(false, "n", {
+        csp: { styleSrc: null, "style-src": ["https://a.example"] },
+      });
+      const nullLast = buildCSP(false, "n", {
+        csp: { "style-src": ["https://a.example"], styleSrc: null },
+      });
+      assertEquals(nullFirst, nullLast);
+      assertEquals(parseDirectiveSources(nullFirst, "style-src"), ["'self'"]);
+    });
+
+    it("never resolves a directive key against Object.prototype", () => {
+      // Config validation rejects these names, so this guards the builder
+      // itself. Keyed on object literals, `constructor` resolved to the Object
+      // constructor and spreading it threw, taking down every response; and
+      // `merged["__proto__"] = [...]` reset the result's prototype instead of
+      // adding a directive.
+      const result = buildCSP(false, "n", {
+        csp: {
+          ["__proto__"]: ["https://evil.example"],
+          ["constructor"]: ["https://evil.example"],
+        } as unknown as SecurityConfig["csp"],
+      });
+      assertAllows(
+        parseDirectiveSources(result, "default-src"),
+        "'self'",
+        "the floor is still built and serialized",
+      );
+      assertEquals(
+        (Object.prototype as unknown as Record<string, unknown>)["default-src"],
+        undefined,
+        "Object.prototype is untouched",
+      );
+    });
+
     it("should skip undefined CSP directive values", () => {
       const config: SecurityConfig = {
         csp: { imgSrc: ["https://cdn.example.com"], scriptSrc: undefined },
       };
       const result = buildCSP(false, "n4", config);
-      assert(
-        parseDirectiveRemoteHosts(result, "img-src").includes("cdn.example.com"),
+      assertAllows(
+        parseDirectiveRemoteHosts(result, "img-src"),
+        "cdn.example.com",
         "the configured origin is admitted",
       );
       assert(result.includes("'nonce-n4'"), "an undefined value leaves the floor intact");
@@ -202,8 +266,9 @@ describe("security/http/response/security-handler", () => {
         const sources = parseDirectiveSources(result, "script-src");
         assert(sources.includes("'self'"), `'self' survives ${JSON.stringify(attempt)}`);
         assert(sources.includes("'nonce-n'"), `nonce survives ${JSON.stringify(attempt)}`);
-        assert(
-          parseDirectiveRemoteHosts(result, "script-src").includes("esm.sh"),
+        assertAllows(
+          parseDirectiveRemoteHosts(result, "script-src"),
+          "esm.sh",
           `the ESM CDN survives ${JSON.stringify(attempt)}`,
         );
       }
@@ -716,8 +781,9 @@ describe("security/http/response/security-handler", () => {
       // a no-op in production while every other assertion here passed.
       const config: SecurityConfig = { csp: { connectSrc: ["https://api.example.com"] } };
       const headers = applyHeaders({ config });
-      assert(
-        (headers.get("Content-Security-Policy") ?? "").includes("https://api.example.com"),
+      assertAllows(
+        parseDirectiveSources(headers.get("Content-Security-Policy") ?? "", "connect-src"),
+        "https://api.example.com",
         "a configured source must reach the served header",
       );
     });

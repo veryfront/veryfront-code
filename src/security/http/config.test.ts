@@ -119,7 +119,7 @@ describe("security/http/config", () => {
     }
   });
 
-  it("serializes object CSP config for downstream handler context", async () => {
+  it("merges object CSP config into the policy the loader builds", async () => {
     const loader = new SecurityConfigLoader(
       "/project",
       createMockAdapter(),

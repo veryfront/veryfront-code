@@ -124,14 +124,14 @@ function requiredDirectives(
  * need them. Nothing here is structural, so removing any of it can only affect
  * the project's own content — never the platform's.
  */
-const BASELINE_DIRECTIVES: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  "style-src": ["'unsafe-inline'"],
-  "style-src-attr": ["'unsafe-inline'"],
-  "img-src": ["data:"],
-  "font-src": ["data:"],
-  "media-src": ["blob:"],
-  "worker-src": ["blob:"],
-});
+const BASELINE_DIRECTIVES: ReadonlyMap<string, readonly string[]> = new Map([
+  ["style-src", ["'unsafe-inline'"]],
+  ["style-src-attr", ["'unsafe-inline'"]],
+  ["img-src", ["data:"]],
+  ["font-src", ["data:"]],
+  ["media-src", ["blob:"]],
+  ["worker-src", ["blob:"]],
+]);
 
 /** Directives that carry no source list; emitting one with sources is invalid. */
 const VALUELESS_DIRECTIVES: ReadonlySet<string> = new Set([
@@ -163,27 +163,46 @@ function mergeCspDirectives(
   const project = new Map<string, readonly string[] | null>();
   for (const [key, value] of Object.entries(projectCsp ?? {})) {
     if (value === undefined) continue;
+    const name = toCspDirectiveName(key);
     const sources = value === null
       ? null
       // `{NONCE}` is the same placeholder VERYFRONT_CSP uses, kept so both
       // surfaces spell a nonce the same way.
       : (Array.isArray(value) ? value : [String(value)])
         .map((source) => source.replace(/\{NONCE\}/g, nonce));
-    project.set(toCspDirectiveName(key), sources);
+    // `fontSrc` and `font-src` name one directive, so both spellings
+    // contribute instead of the later key silently dropping the earlier one.
+    // An explicit `null` wins whichever side it is written on, which keeps the
+    // result independent of key order.
+    const existing = project.get(name);
+    if (existing === null) continue;
+    project.set(
+      name,
+      existing === undefined || sources === null ? sources : [...existing, ...sources],
+    );
   }
 
+  // Keyed by Map rather than object literal: directive names originate in
+  // project config, and a key like `__proto__` or `constructor` must not reach
+  // Object.prototype in the builder that produces a security header.
+  const requiredByName = new Map(Object.entries(required));
+
   const names = new Set([
-    ...Object.keys(required),
-    ...Object.keys(BASELINE_DIRECTIVES),
+    ...requiredByName.keys(),
+    ...BASELINE_DIRECTIVES.keys(),
     ...project.keys(),
   ]);
 
-  const merged: Record<string, string[]> = {};
+  const merged: Record<string, string[]> = Object.create(null);
   for (const name of names) {
     const configured = project.get(name);
-    const baseline = configured === null ? [] : BASELINE_DIRECTIVES[name] ?? [];
+    const baseline = configured === null ? [] : BASELINE_DIRECTIVES.get(name) ?? [];
     const additions = configured ?? [];
-    merged[name] = normalizeSources([...(required[name] ?? []), ...baseline, ...additions]);
+    merged[name] = normalizeSources([
+      ...(requiredByName.get(name) ?? []),
+      ...baseline,
+      ...additions,
+    ]);
   }
 
   return merged;

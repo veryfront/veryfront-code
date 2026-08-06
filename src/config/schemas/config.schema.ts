@@ -538,7 +538,10 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
                     `Use a directive name such as ${
                       EXAMPLE_CSP_DIRECTIVES.join(", ")
                     } (camelCase or kebab-case).`,
-                  path: ["csp", key],
+                  // Relative to the refined value, which is already
+                  // `security.csp`. Prefixing "csp" would report
+                  // `security.csp.csp.<key>`.
+                  path: [key],
                 });
               }
             })

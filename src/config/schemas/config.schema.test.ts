@@ -558,6 +558,34 @@ describe("configSchema", () => {
     }
   });
 
+  it("accepts CSP directives in either spelling, including null", () => {
+    const csp = {
+      styleSrc: ["https://fonts.googleapis.com"],
+      "font-src": ["https://fonts.gstatic.com"],
+      scriptSrcAttr: null,
+    };
+
+    assertEquals(validateVeryfrontConfig({ security: { csp } }).security?.csp, csp);
+  });
+
+  it("rejects an unknown CSP directive and names the offending key", () => {
+    // Browsers ignore unrecognized directives, so a typo would otherwise read
+    // as configured and protect nothing.
+    const error = assertThrows(
+      () => validateVeryfrontConfig({ security: { csp: { fontSource: ["https://a.example"] } } }),
+      Error,
+      "Invalid veryfront.config at security.csp",
+    ) as Error;
+
+    assertStringIncludes(
+      error.message,
+      'Unknown Content-Security-Policy directive "fontSource"',
+    );
+    // The refinement runs on `security.csp`, so its path is relative to it.
+    // A "csp" prefix here would report `security.csp.csp.fontSource`.
+    assertEquals(error.message.includes("security.csp.csp"), false);
+  });
+
   it("gives helpful error for invalid cors", () => {
     const error = assertThrows(
       () => validateVeryfrontConfig({ security: { cors: { origin: 123 } } }),

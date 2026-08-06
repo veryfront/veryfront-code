@@ -1,6 +1,6 @@
 ---
 title: "Security headers and CSP"
-description: "The Content-Security-Policy Veryfront applies by default, and how to allow Google Fonts, analytics, and other third-party origins."
+description: "Veryfront applies a Content-Security-Policy by default. Use this guide to allow Google Fonts, analytics, and other third-party origins."
 order: 11
 ---
 
@@ -58,37 +58,41 @@ Directive names may be camelCase (`fontSrc`) or the CSP spelling (`font-src`). B
 A few more examples:
 
 ```ts
-security: {
-  csp: {
-    // An analytics endpoint your client code posts to
-    connectSrc: ["https://analytics.example.com"],
-    // Embedding YouTube
-    frameSrc: ["https://www.youtube.com"],
-    // Images from your own CDN
-    imgSrc: ["https://cdn.example.com"],
+export default {
+  security: {
+    csp: {
+      // An analytics endpoint your client code posts to
+      connectSrc: ["https://analytics.example.com"],
+      // Embedding YouTube
+      frameSrc: ["https://www.youtube.com"],
+      // Images from your own CDN
+      imgSrc: ["https://cdn.example.com"],
+    },
   },
-}
+};
 ```
 
-Misspelling a directive fails your build rather than silently doing nothing. Browsers ignore unrecognized directive names, so `fontSource: [...]` would otherwise look configured and protect nothing.
+Misspelling a directive fails configuration loading rather than silently doing nothing. Browsers ignore unrecognized directive names, so `fontSource: [...]` would otherwise look configured and protect nothing.
 
 ## What you cannot remove
 
-Some sources are structural: the renderer writes those URLs into the documents it serves, so a project that dropped them would break only its own site. `'self'`, the nonce, `https://esm.sh` in `script-src`, and the platform image origins are always present, whatever your config says.
+Some sources are structural: the renderer writes those URLs into the documents it serves, so a project that dropped them would break only its own site. `'self'`, the nonce, `https://esm.sh` in `script-src`, and the platform image origins are always present. No `security.csp` setting can remove them. (`VERYFRONT_CSP`, described below, is an operations-level exception.)
 
-Everything else is a convenience you may drop.
+Everything else is a convenience you can drop.
 
 ## Tightening the policy
 
 To remove the platform's optional sources for one directive, set it to `null`:
 
 ```ts
-security: {
-  csp: {
-    // Serve no inline styles. Keeps 'self'; drops 'unsafe-inline'.
-    styleSrc: null,
+export default {
+  security: {
+    csp: {
+      // Serve no inline styles. Keeps 'self', drops 'unsafe-inline'.
+      styleSrc: null,
+    },
   },
-}
+};
 ```
 
 `null` removes the optional half of a directive and keeps the required half. It cannot lock you out of your own site.
