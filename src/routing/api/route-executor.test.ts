@@ -1104,6 +1104,8 @@ describe("routing/api/route-executor", () => {
             normalizeSourceIntegrationPolicy({ allow: {} }),
             () => resolvePreparedRouteMethods(undefined, options),
           ),
+        Error,
+        "Prepared API route module has no callable route export",
       );
     });
   });
