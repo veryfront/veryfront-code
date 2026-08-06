@@ -498,7 +498,11 @@ describe("release asset build executor", () => {
     );
   });
 
-  it("fails closed when one module transform fails", async () => {
+  it("never admits a module whose transform failed", async () => {
+    // Previously this failed the whole build. It no longer does -- a broken page
+    // costs only its own route -- but the safety half still holds: the module
+    // that failed must never reach the manifest, so the browser-module endpoint
+    // keeps refusing it.
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       { path: "pages/index.tsx", content: "export default () => null;" },
@@ -514,7 +518,14 @@ describe("release asset build executor", () => {
 
     const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
 
-    assertCoverageFailure(result, rec, "module-transform-failed:pages/broken.tsx");
+    assertEquals(result.success, true);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.modules["pages/broken.tsx"], undefined);
+    assertEquals(manifest.routes["/broken"], undefined);
+    // The healthy page is unaffected.
+    assertExists(manifest.modules["pages/index.tsx"]);
+    assertEquals(manifest.routes["/"]?.modules, ["pages/index.tsx"]);
   });
 
   it("fails closed when HTTP dependency vendoring fails", async () => {
@@ -657,6 +668,21 @@ describe("release asset build executor", () => {
     // browser-module endpoint still refuses it rather than serving a hole.
     assertEquals(manifest.routes["/scratch"], undefined);
     assertEquals(manifest.modules["pages/scratch.tsx"], undefined);
+  });
+
+  it("still fails closed when every page fails to transform", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient([
+      { path: "pages/index.tsx", content: "export default () => null;" },
+      { path: "pages/other.tsx", content: "export default () => null;" },
+    ], rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, () => Promise.reject(new Error("compile error"))),
+      await tmp(),
+    );
+
+    assertCoverageFailure(result, rec, "module-transform-failed:pages/");
   });
 
   it("still fails closed when every page is unbuildable", async () => {

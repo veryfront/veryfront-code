@@ -1168,10 +1168,24 @@ class IncompleteReleaseAssetBuildError extends Error {
   }
 }
 
-function assertCompleteReleaseAssetCoverage(coverageFailures: readonly string[]): void {
-  if (coverageFailures.length > 0) {
-    throw new IncompleteReleaseAssetBuildError(coverageFailures);
-  }
+/**
+ * Fail the build when any structural gap remains.
+ *
+ * `moduleGaps` never fails a build on its own -- per-module failures cost only
+ * their own routes. It is passed here so that when something structural does
+ * fail, the report still names the modules that failed on the way there. Those
+ * are usually the actionable part, and omitting them hid the failing page
+ * behind a generic dependency error.
+ */
+function assertCompleteReleaseAssetCoverage(
+  coverageFailures: readonly string[],
+  moduleGaps: readonly string[] = [],
+): void {
+  if (coverageFailures.length === 0) return;
+
+  const combined = [...coverageFailures];
+  for (const gap of moduleGaps) pushGap(combined, gap);
+  throw new IncompleteReleaseAssetBuildError(combined);
 }
 
 function dependencyLookupKeys(specifier: string): Set<string> {
@@ -2416,6 +2430,12 @@ async function runBuildInner(
   const transformedModules = new Map<string, TransformedProjectModule>();
   const dependencyModules = createDependencyModuleCollection();
   const gaps: string[] = [];
+  // Per-module failures are held apart from the structural gaps in `gaps`. A
+  // module that cannot be built costs its own routes, not the release: it never
+  // reaches `modules`, and the browser-module endpoint already refuses anything
+  // absent from the manifest. These are promoted into `gaps` at route assembly,
+  // and only when they leave the release with no serveable route at all.
+  const moduleGaps: string[] = [];
   const uploadQueue: PreparedAsset[] = [];
   // Bytes are held per-hash only until uploaded, then dropped (M3).
   const pendingBytes = createPendingAssetStore();
@@ -2477,7 +2497,7 @@ async function runBuildInner(
       });
     } catch (error) {
       const sanitized = sanitizeError(error);
-      pushGap(gaps, `module-transform-failed:${logicalPath}`);
+      pushGap(moduleGaps, `module-transform-failed:${logicalPath}`);
       logger.warn("Module transform failed during release asset build", {
         path: logicalPath,
         error: sanitized,
@@ -2485,7 +2505,7 @@ async function runBuildInner(
       return [];
     }
     if (typeof code !== "string") {
-      pushGap(gaps, `module-transform-failed:${logicalPath}`);
+      pushGap(moduleGaps, `module-transform-failed:${logicalPath}`);
       logger.warn("Module transform returned a non-string result", {
         path: logicalPath,
       });
@@ -2493,7 +2513,7 @@ async function runBuildInner(
     }
     const transformedSize = textEncoder.encode(code).byteLength;
     if (transformedSize > RELEASE_ASSET_MAX_SIZE_BYTES) {
-      pushGap(gaps, `oversized:${logicalPath}`);
+      pushGap(moduleGaps, `oversized:${logicalPath}`);
       logger.warn("Module transform output exceeds the release asset limit", {
         path: logicalPath,
         size: transformedSize,
@@ -2523,6 +2543,11 @@ async function runBuildInner(
         imports = vendoredImports;
       } catch (error) {
         const sanitized = sanitizeError(error);
+        // Deliberately fatal rather than route-local, unlike the other
+        // per-module failures. This path does not drop the module: it keeps
+        // going with the *unvendored* code, and it is this gap that stops that
+        // result from being published. Degrading it to a route-local gap would
+        // let a module whose dependencies were never vendored reach a manifest.
         pushGap(gaps, `module-dependency-vendor-failed:${logicalPath}`);
         logger.warn("HTTP dependency vendoring failed during release asset build", {
           path: logicalPath,
@@ -2537,7 +2562,7 @@ async function runBuildInner(
         imports = await collectProjectModuleImports(code, logicalPath, knownPaths);
       } catch (error) {
         const sanitized = sanitizeError(error);
-        pushGap(gaps, `module-import-parse-failed:${logicalPath}`);
+        pushGap(moduleGaps, `module-import-parse-failed:${logicalPath}`);
         logger.warn("Module import parse failed during release asset build", {
           path: logicalPath,
           error: sanitized,
@@ -2651,13 +2676,6 @@ async function runBuildInner(
     );
   }
 
-  // Module-level failures are held apart from the structural gaps above. A
-  // module that cannot be finalized costs its own routes, not the release: it
-  // is simply absent from `modules`, and the browser-module endpoint already
-  // refuses anything absent from the manifest. These only become fatal below,
-  // when they leave the release with no serveable route at all.
-  const moduleGaps: string[] = [];
-
   const { modules, skippedModules } = await finalizeProjectModules(
     transformedModules,
     knownPaths,
@@ -2692,10 +2710,10 @@ async function runBuildInner(
   const resolvedStylesheet = resolveProjectStylesheet(sourceByPath, stylesheetPath);
   if (stylesheetPath !== undefined && resolvedStylesheet === undefined) {
     pushGap(gaps, `stylesheet-missing:${stylesheetPath}`);
-    assertCompleteReleaseAssetCoverage(gaps);
+    assertCompleteReleaseAssetCoverage(gaps, moduleGaps);
   }
   const stylesheet = await mergeModuleCssImports(sourceByPath, resolvedStylesheet);
-  assertCompleteReleaseAssetCoverage(gaps);
+  assertCompleteReleaseAssetCoverage(gaps, moduleGaps);
   const cssRequested = candidates.size > 0 || stylesheet !== undefined;
   if (cssRequested) {
     const stylesheetBytes = stylesheet ? textEncoder.encode(stylesheet).byteLength : 0;
@@ -2814,7 +2832,7 @@ async function runBuildInner(
 
   // A v2 manifest is publishable only when every requested module,
   // dependency, route closure, and stylesheet has complete immutable coverage.
-  assertCompleteReleaseAssetCoverage(gaps);
+  assertCompleteReleaseAssetCoverage(gaps, moduleGaps);
 
   // Upload only after coverage is proven complete, so failed builds do not
   // leave unreferenced immutable assets behind.
