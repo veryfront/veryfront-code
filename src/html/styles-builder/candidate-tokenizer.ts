@@ -49,13 +49,16 @@ export function extractCandidatesWithByteLength(
       (match = apply(regExpExec, candidatePattern, [content]) as RegExpExecArray | null) !== null
     ) {
       const candidate = match[0];
-      if (
-        candidate.length > MAX_CSS_SELECTOR_TOKEN_CHARACTERS ||
-        hasCandidateContinuation(content, candidatePattern.lastIndex)
-      ) {
-        throw new NativeTypeError(
-          `CSS candidate tokens cannot exceed ${MAX_CSS_SELECTOR_TOKEN_CHARACTERS} characters`,
-        );
+      // A run longer than the cap is data, not a class name: a base64 data URI
+      // for an inline image or font is one unbroken run of characters this class
+      // accepts. Skip the whole run rather than throwing -- it cannot be a
+      // selector, no fragment of it should be admitted, and failing here fails
+      // the render for a reason unrelated to styling.
+      if (hasCandidateContinuation(content, candidatePattern.lastIndex)) {
+        let end = candidatePattern.lastIndex;
+        while (hasCandidateContinuation(content, end)) end++;
+        candidatePattern.lastIndex = end;
+        continue;
       }
       if (apply(setHas, seenCandidates, [candidate])) continue;
       if (candidates.length >= MAX_CSS_SELECTOR_TOKENS) {

@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "./__tests__/css-processor-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MAX_CSS_SELECTOR_TOKEN_CHARACTERS } from "#veryfront/utils/constants/css.ts";
 import {
@@ -98,16 +98,18 @@ describe("styles-builder/tailwind-compiler", () => {
       assertEquals(candidates.includes("bg-[var(--color)]"), true);
     });
 
-    it("rejects an overlong candidate as one token instead of extracting fragments", () => {
+    it("skips an overlong run whole instead of extracting fragments", () => {
       const admitted = "a".repeat(MAX_CSS_SELECTOR_TOKEN_CHARACTERS);
       const overlong = `${admitted}a`;
 
       assertEquals(extractCandidates(`class="${admitted}"`).includes(admitted), true);
-      assertThrows(
-        () => extractCandidates(`class="${overlong}"`),
-        TypeError,
-        `cannot exceed ${MAX_CSS_SELECTOR_TOKEN_CHARACTERS} characters`,
-      );
+
+      // The run is skipped entirely: no fragment of it becomes a candidate, and
+      // scanning continues past it. This used to throw, which failed the render
+      // for any project with an inline base64 asset.
+      const candidates = extractCandidates(`class="${overlong}" class="text-red-500"`);
+      assertEquals(candidates.some((candidate) => /^a+$/.test(candidate)), false);
+      assertEquals(candidates.includes("text-red-500"), true);
     });
   });
 
