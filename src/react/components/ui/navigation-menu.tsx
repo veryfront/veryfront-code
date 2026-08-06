@@ -1,5 +1,5 @@
 /**
- * NavigationMenu — a horizontal site-navigation bar whose items can open a
+ * NavigationMenu: a horizontal site-navigation bar whose items can open a
  * dropdown panel of links. Self-contained (context + `aria-expanded` triggers,
  * no floating engine): the root owns which item's panel is open and only one is
  * open at a time. A `NavigationMenuTrigger` toggles its panel on click and opens
@@ -42,15 +42,21 @@ import { cx as cn } from "./cva.ts";
 
 /** Root-level state shared from `NavigationMenu` down to every item. */
 interface NavigationMenuState {
-  /** Value of the item whose panel is open, or `null` when all are closed. */
-  openValue: string | null;
-  /** Open the item with `value` (or close all with `null`). */
-  setOpenValue: (value: string | null) => void;
+  /** Internal id of the item whose panel is open, or `null` when all are closed. */
+  openItemId: string | null;
+  /** Open the item with `itemId` (or close all with `null`). */
+  setOpenItemId: (itemId: string | null) => void;
+}
+
+/** Per-item identity. `value` is the caller's label; `itemId` is unique per instance. */
+interface NavigationMenuItemIdentity {
+  value: string;
+  itemId: string;
 }
 
 const NavigationMenuContext = React.createContext<NavigationMenuState | null>(null);
-/** Per-item context carrying the stable value that links a trigger to its panel. */
-const NavigationMenuItemContext = React.createContext<string | null>(null);
+/** Per-item context carrying the identity that links a trigger to its panel. */
+const NavigationMenuItemContext = React.createContext<NavigationMenuItemIdentity | null>(null);
 
 function useNavigationMenuContext(part: string): NavigationMenuState {
   const ctx = React.useContext(NavigationMenuContext);
@@ -58,10 +64,10 @@ function useNavigationMenuContext(part: string): NavigationMenuState {
   return ctx;
 }
 
-function useNavigationMenuItem(part: string): string {
-  const value = React.useContext(NavigationMenuItemContext);
-  if (value == null) throw new Error(`<${part}> must be used within <NavigationMenuItem>`);
-  return value;
+function useNavigationMenuItem(part: string): NavigationMenuItemIdentity {
+  const identity = React.useContext(NavigationMenuItemContext);
+  if (identity == null) throw new Error(`<${part}> must be used within <NavigationMenuItem>`);
+  return identity;
 }
 
 /** Props accepted by `<NavigationMenu>`. */
@@ -70,11 +76,11 @@ export interface NavigationMenuProps extends React.HTMLAttributes<HTMLElement> {
   label?: string;
   /** The `NavigationMenuList` (and its items) that make up the nav. */
   children: React.ReactNode;
-  /** React 19: ref is a regular prop — points at the `<nav>` landmark. */
+  /** React 19: ref is a regular prop, points at the `<nav>` landmark. */
   ref?: React.Ref<HTMLElement>;
 }
 
-/** Navigation root — a `<nav>` landmark that owns which item's panel is open. */
+/** Navigation root: a `<nav>` landmark that owns which item's panel is open. */
 export function NavigationMenu({
   label = "Main",
   className,
@@ -82,17 +88,17 @@ export function NavigationMenu({
   ref,
   ...props
 }: NavigationMenuProps): React.ReactElement {
-  const [openValue, setOpenValue] = React.useState<string | null>(null);
+  const [openItemId, setOpenItemId] = React.useState<string | null>(null);
   const ctx = React.useMemo<NavigationMenuState>(
-    () => ({ openValue, setOpenValue }),
-    [openValue],
+    () => ({ openItemId, setOpenItemId }),
+    [openItemId],
   );
   return (
     <NavigationMenuContext.Provider value={ctx}>
       <nav
         ref={ref}
         aria-label={label}
-        data-state={openValue == null ? "closed" : "open"}
+        data-state={openItemId == null ? "closed" : "open"}
         className={cn("relative inline-flex max-w-max items-center", className)}
         {...props}
       >
@@ -106,11 +112,11 @@ export function NavigationMenu({
 export interface NavigationMenuListProps extends React.HTMLAttributes<HTMLUListElement> {
   /** The `NavigationMenuItem` children of the bar. */
   children: React.ReactNode;
-  /** React 19: ref is a regular prop — points at the `<ul>`. */
+  /** React 19: ref is a regular prop, points at the `<ul>`. */
   ref?: React.Ref<HTMLUListElement>;
 }
 
-/** The horizontal list container — a flex `<ul>` of items. */
+/** The horizontal list container: a flex `<ul>` of items. */
 export function NavigationMenuList({
   className,
   children,
@@ -134,11 +140,11 @@ export interface NavigationMenuItemProps extends React.LiHTMLAttributes<HTMLLIEl
   value: string;
   /** The `NavigationMenuTrigger` + `NavigationMenuContent` (or a plain `NavigationMenuLink`). */
   children: React.ReactNode;
-  /** React 19: ref is a regular prop — points at the `<li>`. */
+  /** React 19: ref is a regular prop, points at the `<li>`. */
   ref?: React.Ref<HTMLLIElement>;
 }
 
-/** One item in the bar — an `<li>` that provides its value to its trigger/panel. */
+/** One item in the bar: an `<li>` that provides its value to its trigger/panel. */
 export function NavigationMenuItem({
   value,
   className,
@@ -147,11 +153,18 @@ export function NavigationMenuItem({
   ...props
 }: NavigationMenuItemProps): React.ReactElement {
   const ctx = React.useContext(NavigationMenuContext);
-  const open = ctx?.openValue === value;
+  // Identity is per instance, not per `value`. Two items may legitimately carry
+  // the same `value`; keying open state on it would open both panels at once
+  // and mint duplicate panel ids, making aria-controls ambiguous.
+  const reactId = React.useId().replace(/[^A-Za-z0-9_-]/g, "");
+  const itemId = `vf-navigation-menu-${reactId}`;
+  const open = ctx?.openItemId === itemId;
+  const identity = React.useMemo(() => ({ value, itemId }), [value, itemId]);
   return (
-    <NavigationMenuItemContext.Provider value={value}>
+    <NavigationMenuItemContext.Provider value={identity}>
       <li
         ref={ref}
+        data-value={value}
         data-state={open ? "open" : "closed"}
         className={cn("relative", className)}
         {...props}
@@ -166,11 +179,11 @@ export function NavigationMenuItem({
 export interface NavigationMenuTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   /** The trigger label (usually a nav word like "Products"). */
   children: React.ReactNode;
-  /** React 19: ref is a regular prop — points at the trigger button. */
+  /** React 19: ref is a regular prop, points at the trigger button. */
   ref?: React.Ref<HTMLButtonElement>;
 }
 
-/** The button that toggles its item's panel — `aria-expanded` + `aria-controls`, with a caret. */
+/** The button that toggles its item's panel: `aria-expanded` + `aria-controls`, with a caret. */
 export function NavigationMenuTrigger({
   className,
   onClick,
@@ -180,23 +193,25 @@ export function NavigationMenuTrigger({
   ...props
 }: NavigationMenuTriggerProps): React.ReactElement {
   const ctx = useNavigationMenuContext("NavigationMenuTrigger");
-  const value = useNavigationMenuItem("NavigationMenuTrigger");
-  const open = ctx.openValue === value;
-  const panelId = `${value}-panel`;
+  const { itemId } = useNavigationMenuItem("NavigationMenuTrigger");
+  const open = ctx.openItemId === itemId;
+  const panelId = `${itemId}-panel`;
   return (
     <button
       ref={ref}
       type="button"
       aria-expanded={open}
-      aria-controls={panelId}
+      // Only reference the panel while it exists: NavigationMenuContent renders
+      // null when closed, so a constant aria-controls would dangle.
+      aria-controls={open ? panelId : undefined}
       data-state={open ? "open" : "closed"}
       onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
         onClick?.(event);
-        if (!event.defaultPrevented) ctx.setOpenValue(open ? null : value);
+        if (!event.defaultPrevented) ctx.setOpenItemId(open ? null : itemId);
       }}
       onPointerEnter={(event: React.PointerEvent<HTMLButtonElement>) => {
         onPointerEnter?.(event);
-        if (!event.defaultPrevented) ctx.setOpenValue(value);
+        if (!event.defaultPrevented) ctx.setOpenItemId(itemId);
       }}
       className={cn(
         "inline-flex h-9 select-none items-center gap-1 rounded-md px-3 text-sm font-medium",
@@ -230,11 +245,11 @@ export function NavigationMenuTrigger({
 export interface NavigationMenuContentProps extends React.HTMLAttributes<HTMLDivElement> {
   /** The `NavigationMenuLink`s (or other content) for this item's dropdown panel. */
   children: React.ReactNode;
-  /** React 19: ref is a regular prop — points at the panel. */
+  /** React 19: ref is a regular prop, points at the panel. */
   ref?: React.Ref<HTMLDivElement>;
 }
 
-/** The dropdown panel for one item — absolutely positioned, rendered only while open. */
+/** The dropdown panel for one item: absolutely positioned, rendered only while open. */
 export function NavigationMenuContent({
   className,
   children,
@@ -242,14 +257,18 @@ export function NavigationMenuContent({
   ...props
 }: NavigationMenuContentProps): React.ReactElement | null {
   const ctx = useNavigationMenuContext("NavigationMenuContent");
-  const value = useNavigationMenuItem("NavigationMenuContent");
-  const open = ctx.openValue === value;
+  const { itemId } = useNavigationMenuItem("NavigationMenuContent");
+  const open = ctx.openItemId === itemId;
   if (!open) return null;
+  // Deliberately not role="menu". That role declares an application-menu
+  // keyboard model (arrows, Home/End, Escape, roving focus) which site
+  // navigation does not implement and does not want. A plain disclosure panel
+  // of links is the accessible pattern here.
   return (
     <div
       ref={ref}
-      id={`${value}-panel`}
-      role="menu"
+      id={`${itemId}-panel`}
+      data-slot="navigation-menu-content"
       data-state="open"
       className={cn(
         "absolute left-0 top-full z-50 mt-1 flex min-w-[12rem] flex-col gap-1 p-1",
@@ -269,11 +288,11 @@ export interface NavigationMenuLinkProps extends React.AnchorHTMLAttributes<HTML
   active?: boolean;
   /** The link label / content. */
   children: React.ReactNode;
-  /** React 19: ref is a regular prop — points at the `<a>`. */
+  /** React 19: ref is a regular prop, points at the `<a>`. */
   ref?: React.Ref<HTMLAnchorElement>;
 }
 
-/** A single navigable link — used inside a panel or as a plain top-level item. */
+/** A single navigable link: used inside a panel or as a plain top-level item. */
 export function NavigationMenuLink({
   active = false,
   className,
@@ -282,9 +301,10 @@ export function NavigationMenuLink({
   ...props
 }: NavigationMenuLinkProps): React.ReactElement {
   return (
+    // No role="menuitem": it is only meaningful inside a real menu/menubar, and
+    // a plain top-level link has no menu owner at all. A bare <a> is correct.
     <a
       ref={ref}
-      role="menuitem"
       aria-current={active ? "page" : undefined}
       data-active={active ? "" : undefined}
       className={cn(

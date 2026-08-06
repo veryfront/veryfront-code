@@ -34,12 +34,12 @@ function PaginationDocsPage() {
     <DocsPage>
       <DocsHero
         title="Pagination"
-        lead="Landmark navigation for paging through a list — Previous, numbered pages, an ellipsis gap, and Next."
+        lead="Landmark navigation for paging through a list: Previous, numbered pages, an ellipsis gap, and Next."
       />
 
       <DocsSection
         title="Full pager"
-        description="A complete pager with Previous, pages 1–3, an ellipsis, and Next. Page 2 is the current page (aria-current='page')."
+        description="A complete pager with Previous, pages 1-3, an ellipsis, and Next. Page 2 is the current page (aria-current='page')."
       >
         <DocsExampleAuto of={FullPager} />
       </DocsSection>
@@ -61,7 +61,7 @@ function PaginationDocsPage() {
               name: "isActive",
               type: "boolean",
               default: "false",
-              description: "Marks the current page — sets aria-current='page' and active styling",
+              description: "Marks the current page: sets aria-current='page' and active styling",
             },
             {
               name: "href",

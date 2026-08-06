@@ -1,5 +1,5 @@
 /**
- * ScrollArea — a styled native-overflow scroll container. The builtin engine uses
+ * ScrollArea: a styled native-overflow scroll container. The builtin engine uses
  * the platform's own scrolling (no custom scrollbar JS): a single `<div>` that
  * clips and scrolls its `children`, dressed with a tasteful thin scrollbar drawn
  * from the veryfront theme tokens. Pick the scroll axis with `orientation`.

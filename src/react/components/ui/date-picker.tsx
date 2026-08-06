@@ -1,9 +1,9 @@
 /**
- * DatePicker — a button that opens a {@link Popover} holding a {@link Calendar};
+ * DatePicker: a button that opens a {@link Popover} holding a {@link Calendar};
  * picking a day sets the value and closes the surface. Composition-only: all
  * overlay behaviour (portal into the token scope, positioning, outside-click /
  * `Escape` dismiss) is reused from Popover, and the month grid is the shared
- * Calendar — nothing is re-implemented here. Both the selected `value` and the
+ * Calendar: nothing is re-implemented here. Both the selected `value` and the
  * `open` state support controlled and uncontrolled use; the parts share
  * value/open/format through context. Skinned with the veryfront theme tokens.
  *
@@ -78,7 +78,7 @@ export interface DatePickerProps {
   defaultMonth?: Date;
 }
 
-/** Root — owns `{ value, open }`, provides context, and renders the Popover. */
+/** Root: owns `{ value, open }`, provides context, and renders the Popover. */
 export function DatePicker({
   children,
   value,

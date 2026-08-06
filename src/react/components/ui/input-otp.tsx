@@ -1,5 +1,5 @@
 /**
- * InputOTP — a segmented one-time-code input. A single visually-hidden real
+ * InputOTP: a segmented one-time-code input. A single visually-hidden real
  * `<input>` (numeric, `autocomplete="one-time-code"`) captures typing and paste,
  * while `maxLength` presentational slots mirror each character of the controlled
  * `value`. The slot at `index === value.length` is the "active" caret position
@@ -43,8 +43,14 @@ export function InputOTP({
   disabled = false,
   className,
   ref,
+  "aria-label": ariaLabel = "One-time code",
   ...props
 }: InputOTPProps): React.ReactElement {
+  // One sanitized value drives both the input and the slots. Without this a
+  // caller passing a longer or non-digit `value` puts the input out of step
+  // with the rendered slots, and `active` lands past the last slot so no
+  // caret ring shows.
+  const code = value.replace(/\D/g, "").slice(0, maxLength);
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const next = event.target.value.replace(/\D/g, "").slice(0, maxLength);
     onChange?.(next);
@@ -53,7 +59,7 @@ export function InputOTP({
   return (
     <div
       role="group"
-      aria-label="One-time code"
+      aria-label={ariaLabel}
       data-disabled={disabled ? "" : undefined}
       className={cn("relative inline-flex items-center gap-2", className)}
       {...props}
@@ -67,13 +73,16 @@ export function InputOTP({
         pattern="[0-9]*"
         maxLength={maxLength}
         disabled={disabled}
-        value={value}
+        // The input is what receives focus, so it carries the name itself. The
+        // group label alone is not announced for the focused control.
+        aria-label={ariaLabel}
+        value={code}
         onChange={handleChange}
         className="absolute inset-0 z-10 h-full w-full cursor-default opacity-0 disabled:cursor-not-allowed"
       />
       {Array.from({ length: maxLength }, (_, index) => {
-        const char = value[index] ?? "";
-        const active = index === value.length;
+        const char = code[index] ?? "";
+        const active = index === code.length;
         return (
           <div
             key={index}

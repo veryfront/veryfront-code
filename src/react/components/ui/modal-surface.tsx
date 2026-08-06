@@ -81,11 +81,31 @@ function isFocusableElement(value: Element | null): value is HTMLElement {
   return value !== null && typeof (value as HTMLElement).focus === "function";
 }
 
-function useModalContentEffect(
+/** Options for {@link useModalFocusLifecycle}. */
+export interface ModalFocusLifecycleOptions {
+  /**
+   * Register the panel with the document Escape arbiter so Escape closes it.
+   * Set false for surfaces that must never self-dismiss, such as AlertDialog,
+   * which requires the user to pick an explicit action.
+   * @default true
+   */
+  dismissOnEscape?: boolean;
+}
+
+/**
+ * The shared modal focus lifecycle: focus the panel on open, keep Tab trapped
+ * inside it, lock document scroll, maintain the modal stack so only the topmost
+ * surface reacts, and restore focus to the trigger on close.
+ *
+ * Split out of the Dialog/Drawer content effect so alert-style surfaces can
+ * adopt the same behaviour without the Escape dismissal they must not have.
+ */
+export function useModalFocusLifecycle(
   open: boolean,
   setOpen: (open: boolean) => void,
   ref: React.RefObject<HTMLElement | null>,
   triggerRef: React.RefObject<HTMLButtonElement | null>,
+  { dismissOnEscape = true }: ModalFocusLifecycleOptions = {},
 ): void {
   React.useEffect(() => {
     const panel = ref.current;
@@ -100,11 +120,13 @@ function useModalContentEffect(
     const unlockScroll = lockDocumentScroll(document);
     const isTopModal = (): boolean => stack.at(-1) === panel;
 
-    const unregisterDismissableLayer = registerDismissableLayer(
-      document,
-      () => ref.current,
-      () => setOpen(false),
-    );
+    const unregisterDismissableLayer = dismissOnEscape
+      ? registerDismissableLayer(
+        document,
+        () => ref.current,
+        () => setOpen(false),
+      )
+      : () => {};
     const onKey = (e: KeyboardEvent) => {
       if (!isTopModal() || e.defaultPrevented) return;
       trapTabKey(e, panel);
@@ -142,7 +164,16 @@ function useModalContentEffect(
         : null;
       if (restoreTarget) focusWithoutScroll(restoreTarget);
     };
-  }, [open, ref, setOpen, triggerRef]);
+  }, [dismissOnEscape, open, ref, setOpen, triggerRef]);
+}
+
+function useModalContentEffect(
+  open: boolean,
+  setOpen: (open: boolean) => void,
+  ref: React.RefObject<HTMLElement | null>,
+  triggerRef: React.RefObject<HTMLButtonElement | null>,
+): void {
+  useModalFocusLifecycle(open, setOpen, ref, triggerRef);
 }
 
 /**

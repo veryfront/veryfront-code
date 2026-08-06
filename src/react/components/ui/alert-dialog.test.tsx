@@ -183,4 +183,99 @@ describe("AlertDialog", () => {
       unmount();
     }
   });
+
+  it("keeps the dialog open when a handler calls preventDefault()", () => {
+    for (const which of ["Delete", "Cancel"]) {
+      const stop = (e: React.MouseEvent) => e.preventDefault();
+      const { doc, click, unmount } = render(
+        <AlertDialog defaultOpen>
+          <AlertDialogTrigger>Delete account</AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogTitle>Delete account?</AlertDialogTitle>
+            <AlertDialogDescription>This permanently removes your account.</AlertDialogDescription>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={stop}>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={stop}>Delete</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>,
+      );
+      try {
+        const button = Array.from(doc.querySelectorAll("button"))
+          .find((b) => (b.textContent ?? "").includes(which))!;
+        click(button);
+        assert(
+          doc.querySelector('[role="alertdialog"]') !== null,
+          `${which} must not close the dialog after preventDefault()`,
+        );
+      } finally {
+        unmount();
+      }
+    }
+  });
+
+  // Async: the shared lifecycle moves focus in a queueMicrotask, which does not
+  // drain between statements of a synchronous test body.
+  it("restores focus to the trigger when it closes", async () => {
+    const { doc, click, unmount } = render(
+      <AlertDialog>
+        <AlertDialogTrigger>Delete account</AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogTitle>Delete account?</AlertDialogTitle>
+          <AlertDialogDescription>This permanently removes your account.</AlertDialogDescription>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>,
+    );
+    try {
+      const trigger = Array.from(doc.querySelectorAll("button"))
+        .find((b) => (b.textContent ?? "").includes("Delete account"))!;
+      click(trigger);
+      const panel = doc.querySelector('[role="alertdialog"]');
+      assert(panel, "the trigger opens the dialog");
+      await Promise.resolve();
+      // Guards against a vacuous pass: focus must leave the trigger first,
+      // otherwise "restored" would be indistinguishable from "never moved".
+      assert(
+        doc.activeElement !== trigger && panel.contains(doc.activeElement),
+        "opening must move focus into the panel",
+      );
+      const cancel = Array.from(doc.querySelectorAll("button"))
+        .find((b) => (b.textContent ?? "").includes("Cancel"))!;
+      click(cancel);
+      assert(
+        doc.activeElement === trigger,
+        "closing must return focus to the trigger, not leave it on <body>",
+      );
+    } finally {
+      unmount();
+    }
+  });
+
+  it("keeps the generated title/description ids authoritative against a consumer id", () => {
+    const { doc, unmount } = render(
+      <AlertDialog defaultOpen>
+        <AlertDialogTrigger>Delete account</AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogTitle id="consumer-title">Delete account?</AlertDialogTitle>
+          <AlertDialogDescription id="consumer-description">Removes it.</AlertDialogDescription>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>,
+    );
+    try {
+      const panel = doc.querySelector('[role="alertdialog"]')!;
+      for (const attr of ["aria-labelledby", "aria-describedby"]) {
+        const id = panel.getAttribute(attr)!;
+        assert(doc.getElementById(id), `${attr} must still resolve to a rendered node`);
+      }
+    } finally {
+      unmount();
+    }
+  });
 });

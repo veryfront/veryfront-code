@@ -1,13 +1,13 @@
 /**
- * AlertDialog — a confirmation modal. Semantically a {@link Dialog} with
+ * AlertDialog, a confirmation modal. Semantically a {@link Dialog} with
  * `role="alertdialog"`, a REQUIRED title + description, and explicit
  * Action / Cancel buttons. Unlike `Dialog` it does NOT dismiss on outside-click
  * or `Escape`: the user must choose an option.
  *
- * It reuses the shared modal-surface machinery (`createModalSurfaceParts` — the
+ * It reuses the shared modal-surface machinery (`createModalSurfaceParts`, the
  * same open-state / trigger / focus helpers Dialog and Drawer use) so trigger +
  * open state behave identically, but renders its own alert-specific
- * overlay + panel — the panel carries `role="alertdialog"` and its
+ * overlay + panel. The panel carries `role="alertdialog"` and its
  * `aria-labelledby` / `aria-describedby` are wired to the Title / Description
  * ids, and neither the overlay nor a key listener dismisses it.
  *
@@ -36,7 +36,8 @@
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
 import { Button, type ButtonProps } from "./button.tsx";
-import { createModalSurfaceParts } from "./modal-surface.tsx";
+import { createModalSurfaceParts, useModalFocusLifecycle } from "./modal-surface.tsx";
+import { composeRefs } from "./slot.tsx";
 
 // The confirm modal reuses the shared modal-surface machinery (open state +
 // trigger + focus, the same `createModalSurfaceParts` Dialog and Drawer use), so
@@ -61,17 +62,6 @@ function useAlertDialogIds(): AlertDialogIds {
   return ctx;
 }
 
-const FOCUSABLE =
-  'input:not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
-
-/** Assign a value to a callback- or object-ref (no-op for null). */
-function assignRef<T>(ref: React.Ref<T> | undefined, value: T | null): void {
-  if (typeof ref === "function") ref(value);
-  else if (ref && typeof ref === "object") {
-    (ref as React.MutableRefObject<T | null>).current = value;
-  }
-}
-
 /** Props accepted by `<AlertDialog>`. */
 export interface AlertDialogProps {
   /** The trigger and content parts to compose. */
@@ -84,7 +74,7 @@ export interface AlertDialogProps {
   onOpenChange?: (open: boolean) => void;
 }
 
-/** AlertDialog root — owns open state (shared modal-surface machinery). */
+/** AlertDialog root: owns open state (shared modal-surface machinery). */
 export function AlertDialog(props: AlertDialogProps): React.ReactElement {
   return <_Root {...props} />;
 }
@@ -97,7 +87,7 @@ export interface AlertDialogTriggerProps extends React.ButtonHTMLAttributes<HTML
   ref?: React.Ref<HTMLButtonElement>;
 }
 
-/** Trigger — opens the alert dialog. `asChild` merges onto the child element. */
+/** Trigger: opens the alert dialog. `asChild` merges onto the child element. */
 export function AlertDialogTrigger(props: AlertDialogTriggerProps): React.ReactElement {
   return <_Trigger {...props} />;
 }
@@ -109,7 +99,7 @@ export interface AlertDialogContentProps extends React.HTMLAttributes<HTMLDivEle
 }
 
 /**
- * Alert surface — non-dismissing overlay + centered `role="alertdialog"` panel,
+ * Alert surface: non-dismissing overlay + centered `role="alertdialog"` panel,
  * rendered only while open. Generates the title / description ids, wires them to
  * `aria-labelledby` / `aria-describedby`, and moves focus into the panel on open.
  */
@@ -119,20 +109,19 @@ export function AlertDialogContent({
   ref,
   ...props
 }: AlertDialogContentProps): React.ReactElement | null {
-  const { open } = _useModal();
+  const { open, setOpen, triggerRef } = _useModal();
   const titleId = React.useId();
   const descriptionId = React.useId();
-  const panelRef = React.useRef<HTMLDivElement>(null);
-  const setNode = React.useCallback((node: HTMLDivElement | null) => {
-    panelRef.current = node;
-    assignRef(ref, node);
-  }, [ref]);
-  // Move focus into the panel on open (no Escape listener → no key-dismiss).
-  React.useEffect(() => {
-    if (!open) return;
-    const focusable = panelRef.current?.querySelector<HTMLElement>(FOCUSABLE);
-    (focusable ?? panelRef.current)?.focus();
-  }, [open]);
+  const panelRef = React.useRef<HTMLDivElement | null>(null);
+  // composeRefs propagates React 19 ref cleanup functions, which a hand-rolled
+  // assignment would swallow.
+  const setNode = React.useMemo(
+    () => composeRefs<HTMLDivElement>(panelRef, ref),
+    [ref],
+  );
+  // Full modal focus lifecycle (focus in, Tab trapped, focus restored to the
+  // trigger on close), minus the Escape dismissal an alert dialog must not have.
+  useModalFocusLifecycle(open, setOpen, panelRef, triggerRef, { dismissOnEscape: false });
   const ids = React.useMemo<AlertDialogIds>(() => ({ titleId, descriptionId }), [
     titleId,
     descriptionId,
@@ -141,7 +130,7 @@ export function AlertDialogContent({
   return (
     <AlertDialogContext.Provider value={ids}>
       <div className="fixed inset-0 z-50" data-state="open">
-        {/* Overlay: intentionally has NO onClick — an alert dialog never dismisses on outside-click. */}
+        {/* Overlay: intentionally has NO onClick, an alert dialog never dismisses on outside-click. */}
         <div className="fixed inset-0 bg-[var(--overlay)]" data-state="open" />
         <div
           ref={setNode}
@@ -152,7 +141,7 @@ export function AlertDialogContent({
           data-state="open"
           tabIndex={-1}
           className={cn(
-            "fixed left-1/2 top-1/2 z-50 w-[calc(100%-3rem)] max-w-md -translate-x-1/2 -translate-y-1/2",
+            "fixed left-1/2 top-1/2 z-50 w-[calc(100%_-_3rem)] max-w-md -translate-x-1/2 -translate-y-1/2",
             "rounded-xl bg-[var(--dialog)] text-[var(--foreground)] shadow-lg outline-none",
             "flex flex-col gap-4 p-6",
             className,
@@ -172,19 +161,21 @@ export interface AlertDialogTitleProps extends React.HTMLAttributes<HTMLHeadingE
   ref?: React.Ref<HTMLHeadingElement>;
 }
 
-/** Required accessible name — adopts the Content-generated `aria-labelledby` id. */
+/** Required accessible name: adopts the Content-generated `aria-labelledby` id. */
 export function AlertDialogTitle({
   className,
   ref,
   ...props
 }: AlertDialogTitleProps): React.ReactElement {
   const { titleId } = useAlertDialogIds();
+  // `id` is spread first so the generated id stays authoritative: Content's
+  // aria-labelledby points at it, and a consumer id would orphan that reference.
   return (
     <h2
       ref={ref}
-      id={titleId}
       className={cn("text-lg font-semibold text-[var(--foreground)]", className)}
       {...props}
+      id={titleId}
     />
   );
 }
@@ -195,19 +186,21 @@ export interface AlertDialogDescriptionProps extends React.HTMLAttributes<HTMLPa
   ref?: React.Ref<HTMLParagraphElement>;
 }
 
-/** Required supporting copy — adopts the Content-generated `aria-describedby` id. */
+/** Required supporting copy: adopts the Content-generated `aria-describedby` id. */
 export function AlertDialogDescription({
   className,
   ref,
   ...props
 }: AlertDialogDescriptionProps): React.ReactElement {
   const { descriptionId } = useAlertDialogIds();
+  // See AlertDialogTitle: the generated id must win over a consumer id so
+  // Content's aria-describedby keeps resolving.
   return (
     <p
       ref={ref}
-      id={descriptionId}
       className={cn("text-sm font-normal text-[var(--muted-foreground)]", className)}
       {...props}
+      id={descriptionId}
     />
   );
 }
@@ -218,7 +211,7 @@ export interface AlertDialogFooterProps extends React.HTMLAttributes<HTMLDivElem
   ref?: React.Ref<HTMLDivElement>;
 }
 
-/** Right-aligned action row — Cancel first, then the Action. */
+/** Right-aligned action row: Cancel first, then the Action. */
 export function AlertDialogFooter({
   className,
   ref,
@@ -237,7 +230,11 @@ export function AlertDialogFooter({
 /** Props accepted by `<AlertDialogAction>`. */
 export type AlertDialogActionProps = ButtonProps;
 
-/** Confirming action — runs its `onClick`, then closes the alert dialog. */
+/**
+ * Confirming action. Runs its `onClick`, then closes the alert dialog unless
+ * that handler called `preventDefault()`, which lets consumer validation keep
+ * the dialog open. Matches `ModalClose`.
+ */
 export function AlertDialogAction({
   variant = "primary",
   size = "default",
@@ -253,7 +250,7 @@ export function AlertDialogAction({
       size={size}
       onClick={(e) => {
         onClick?.(e);
-        ctx.setOpen(false);
+        if (!e.defaultPrevented) ctx.setOpen(false);
       }}
       {...props}
     />
@@ -263,7 +260,7 @@ export function AlertDialogAction({
 /** Props accepted by `<AlertDialogCancel>`. */
 export type AlertDialogCancelProps = ButtonProps;
 
-/** Dismissing action — closes the alert dialog without confirming. */
+/** Dismissing action: closes the alert dialog without confirming. */
 export function AlertDialogCancel({
   variant = "secondary",
   size = "default",
@@ -279,7 +276,7 @@ export function AlertDialogCancel({
       size={size}
       onClick={(e) => {
         onClick?.(e);
-        ctx.setOpen(false);
+        if (!e.defaultPrevented) ctx.setOpen(false);
       }}
       {...props}
     />

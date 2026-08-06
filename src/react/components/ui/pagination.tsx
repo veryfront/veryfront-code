@@ -1,5 +1,5 @@
 /**
- * Pagination — a non-interactive compound for paging navigation. Structure is
+ * Pagination: a non-interactive compound for paging navigation. Structure is
  * modelled on shadcn's pagination (a landmark `<nav>` wrapping a `<ul>` of
  * `<li>` links) and restyled with the veryfront theme tokens. The active page is
  * a {@link PaginationLink} with `isActive` (→ `aria-current="page"`);
@@ -31,7 +31,7 @@ export interface PaginationProps extends React.HTMLAttributes<HTMLElement> {
   ref?: React.Ref<HTMLElement>;
 }
 
-/** The paging landmark — a centered `role="navigation"` region. */
+/** The paging landmark: a centered `role="navigation"` region. */
 export function Pagination({ className, ref, ...props }: PaginationProps): React.ReactElement {
   return (
     <nav
@@ -51,7 +51,7 @@ export interface PaginationContentProps extends React.HTMLAttributes<HTMLUListEl
   ref?: React.Ref<HTMLUListElement>;
 }
 
-/** The list of page items — a horizontal `<ul>`. */
+/** The list of page items: a horizontal `<ul>`. */
 export function PaginationContent(
   { className, ref, ...props }: PaginationContentProps,
 ): React.ReactElement {
@@ -71,7 +71,7 @@ export interface PaginationItemProps extends React.HTMLAttributes<HTMLLIElement>
   ref?: React.Ref<HTMLLIElement>;
 }
 
-/** A single page slot — an `<li>` wrapping a link or ellipsis. */
+/** A single page slot: an `<li>` wrapping a link or ellipsis. */
 export function PaginationItem(
   { className, ref, ...props }: PaginationItemProps,
 ): React.ReactElement {
@@ -80,13 +80,13 @@ export function PaginationItem(
 
 /** Props accepted by `<PaginationLink>`. */
 export interface PaginationLinkProps extends React.AnchorHTMLAttributes<HTMLAnchorElement> {
-  /** Marks this link as the current page — sets `aria-current="page"` and active styling. @default false */
+  /** Marks this link as the current page: sets `aria-current="page"` and active styling. @default false */
   isActive?: boolean;
   /** React 19: ref is a regular prop. */
   ref?: React.Ref<HTMLAnchorElement>;
 }
 
-/** A page link — highlighted when `isActive`, otherwise hover-highlighted. */
+/** A page link: highlighted when `isActive`, otherwise hover-highlighted. */
 export function PaginationLink(
   { className, isActive = false, ref, ...props }: PaginationLinkProps,
 ): React.ReactElement {
@@ -116,7 +116,7 @@ export interface PaginationPreviousProps extends PaginationLinkProps {
   ref?: React.Ref<HTMLAnchorElement>;
 }
 
-/** A "‹ Previous" link — a labelled {@link PaginationLink} variant. */
+/** A "‹ Previous" link: a labelled {@link PaginationLink} variant. */
 export function PaginationPrevious(
   { className, children, ref, ...props }: PaginationPreviousProps,
 ): React.ReactElement {
@@ -144,7 +144,7 @@ export interface PaginationNextProps extends PaginationLinkProps {
   ref?: React.Ref<HTMLAnchorElement>;
 }
 
-/** A "Next ›" link — a labelled {@link PaginationLink} variant. */
+/** A "Next ›" link: a labelled {@link PaginationLink} variant. */
 export function PaginationNext(
   { className, children, ref, ...props }: PaginationNextProps,
 ): React.ReactElement {
@@ -179,7 +179,6 @@ export function PaginationEllipsis(
   return (
     <span
       ref={ref}
-      aria-hidden
       role="presentation"
       data-slot="pagination-ellipsis"
       className={cn(

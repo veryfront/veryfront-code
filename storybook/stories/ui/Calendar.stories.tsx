@@ -23,7 +23,7 @@ function CalendarDocsPage() {
     <DocsPage>
       <DocsHero
         title="Calendar"
-        lead="A dependency-free single-month date grid — pick a day, page between months."
+        lead="A dependency-free single-month date grid: pick a day, page between months."
       />
 
       <DocsSection
@@ -80,7 +80,7 @@ function CalendarDocsPage() {
               name: "weekStartsOn",
               type: "0 | 1",
               default: "0",
-              description: "First day of the week — 0 = Sunday, 1 = Monday",
+              description: "First day of the week: 0 = Sunday, 1 = Monday",
             },
             {
               name: "className",

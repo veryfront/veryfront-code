@@ -174,4 +174,58 @@ describe("Field", () => {
       unmount();
     }
   });
+
+  it("omits aria-describedby when no FieldDescription is rendered", () => {
+    const { host, unmount } = render(
+      <Field invalid>
+        <FieldLabel>Email</FieldLabel>
+        <FieldControl>
+          <input type="email" />
+        </FieldControl>
+        <FieldError>Enter a valid email.</FieldError>
+      </Field>,
+    );
+    try {
+      const control = host.querySelector("input")!;
+      const describedBy = control.getAttribute("aria-describedby");
+      for (const id of (describedBy ?? "").split(" ").filter(Boolean)) {
+        assert(
+          host.ownerDocument.getElementById(id) ?? host.querySelector(`#${id}`),
+          `aria-describedby must not reference the missing node ${id}`,
+        );
+      }
+    } finally {
+      unmount();
+    }
+  });
+
+  it("preserves a ref and aria-describedby set directly on the child control", () => {
+    let node: HTMLElement | null = null;
+    const { host, unmount } = render(
+      <Field>
+        <FieldLabel>Email</FieldLabel>
+        <FieldControl>
+          <input
+            type="email"
+            aria-describedby="consumer-hint"
+            ref={(el: HTMLInputElement | null) => {
+              node = el;
+            }}
+          />
+        </FieldControl>
+        <FieldDescription>Veryfront never shares it.</FieldDescription>
+      </Field>,
+    );
+    try {
+      const control = host.querySelector("input")!;
+      assert(node === control, "a ref on the child control must still receive the node");
+      const describedBy = control.getAttribute("aria-describedby") ?? "";
+      assert(
+        describedBy.split(" ").includes("consumer-hint"),
+        "the child's own aria-describedby must be merged, not dropped",
+      );
+    } finally {
+      unmount();
+    }
+  });
 });

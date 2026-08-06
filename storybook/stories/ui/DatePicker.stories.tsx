@@ -31,7 +31,7 @@ function DatePickerDocsPage() {
     <DocsPage>
       <DocsHero
         title="DatePicker"
-        lead="A field-styled button that opens a Popover holding a Calendar — pick a day, it fills the field and closes."
+        lead="A field-styled button that opens a Popover holding a Calendar: pick a day, it fills the field and closes."
       />
 
       <DocsSection
@@ -59,7 +59,7 @@ function DatePickerDocsPage() {
       <DocsSection title="API Reference">
         <DocsPropsTable
           component="DatePicker"
-          description="Root — owns value + open state, provides context, renders the Popover."
+          description="Root: owns value + open state, provides context, renders the Popover."
           props={[
             { name: "value", type: "Date", description: "Controlled selected day" },
             { name: "defaultValue", type: "Date", description: "Uncontrolled initial selected day" },

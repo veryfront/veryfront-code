@@ -52,7 +52,7 @@ function NavigationMenuDocsPage() {
 
       <DocsSection
         title="Active link"
-        description="Pass active to mark the current page — it gets aria-current='page' and active styling."
+        description="Pass active to mark the current page: it gets aria-current='page' and active styling."
       >
         <DocsExampleAuto of={ActiveLink} />
       </DocsSection>

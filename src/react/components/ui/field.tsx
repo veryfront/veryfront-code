@@ -1,5 +1,5 @@
 /**
- * Field — a form-field wrapper that wires a label, description, and error to a
+ * Field: a form-field wrapper that wires a label, description, and error to a
  * single control for accessibility. `<Field>` derives a stable base id with
  * `React.useId()` and shares it (plus derived description/error ids and the
  * `invalid` flag) through context, so `<FieldLabel>` targets the control via
@@ -16,7 +16,7 @@
  * <Field invalid>
  *   <FieldLabel>Email</FieldLabel>
  *   <FieldControl><Input type="email" /></FieldControl>
- *   <FieldDescription>We'll never share it.</FieldDescription>
+ *   <FieldDescription>Veryfront never shares it.</FieldDescription>
  *   <FieldError>Enter a valid email.</FieldError>
  * </Field>;
  * ```
@@ -25,6 +25,7 @@
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
+import { composeRefs } from "./slot.tsx";
 
 interface FieldContextValue {
   /** Base id shared by the control and its `<FieldLabel htmlFor>`. */
@@ -35,6 +36,36 @@ interface FieldContextValue {
   errorId: string;
   /** Whether the field is in an invalid state. */
   invalid: boolean;
+  /** Whether a `<FieldDescription>` is present in this field's subtree. */
+  descriptionPresent: boolean;
+  /** Whether a `<FieldError>` will render (it renders nothing when empty). */
+  errorPresent: boolean;
+}
+
+/**
+ * Walks the element tree looking for a rendered `<FieldDescription>` and a
+ * non-empty `<FieldError>`.
+ *
+ * Presence is resolved synchronously from `children` rather than registered
+ * from an effect: `FieldControl` renders before any child effect runs, so an
+ * effect-based registry would emit `aria-describedby` a commit too late (and
+ * never at all in a non-`act` render).
+ */
+function findFieldParts(
+  children: React.ReactNode,
+  found = { description: false, error: false },
+): { description: boolean; error: boolean } {
+  React.Children.forEach(children, (child) => {
+    if (!React.isValidElement(child)) return;
+    if (child.type === FieldDescription) found.description = true;
+    else if (child.type === FieldError) {
+      const props = child.props as { children?: React.ReactNode };
+      if (React.Children.count(props.children) > 0) found.error = true;
+    }
+    const props = child.props as { children?: React.ReactNode };
+    if (props?.children) findFieldParts(props.children, found);
+  });
+  return found;
 }
 
 const FieldContext = React.createContext<FieldContextValue | null>(null);
@@ -47,13 +78,13 @@ function useField(part: string): FieldContextValue {
 
 /** Props accepted by `<Field>`. */
 export interface FieldProps extends React.HTMLAttributes<HTMLDivElement> {
-  /** Mark the field invalid — flags the label/control/error via context. @default false */
+  /** Mark the field invalid: flags the label/control/error via context. @default false */
   invalid?: boolean;
   /** React 19: ref is a regular prop. */
   ref?: React.Ref<HTMLDivElement>;
 }
 
-/** The field wrapper — derives ids and provides them to its sub-parts. */
+/** The field wrapper: derives ids and provides them to its sub-parts. */
 export function Field({
   invalid = false,
   className,
@@ -62,14 +93,17 @@ export function Field({
   ...props
 }: FieldProps): React.ReactElement {
   const base = React.useId();
+  const { description: descriptionPresent, error: errorPresent } = findFieldParts(children);
   const ctx = React.useMemo<FieldContextValue>(
     () => ({
       id: base,
       descriptionId: `${base}-description`,
       errorId: `${base}-error`,
       invalid,
+      descriptionPresent,
+      errorPresent,
     }),
-    [base, invalid],
+    [base, invalid, descriptionPresent, errorPresent],
   );
   return (
     <FieldContext.Provider value={ctx}>
@@ -91,7 +125,7 @@ export interface FieldLabelProps extends React.LabelHTMLAttributes<HTMLLabelElem
   ref?: React.Ref<HTMLLabelElement>;
 }
 
-/** The field's label — wired to the control with `htmlFor`. */
+/** The field's label: wired to the control with `htmlFor`. */
 export function FieldLabel({
   className,
   children,
@@ -118,14 +152,14 @@ export function FieldLabel({
 
 /** Props accepted by `<FieldControl>`. */
 export interface FieldControlProps {
-  /** The single form control element to wire — its `id`/`aria-*` are set for you. */
+  /** The single form control element to wire: its `id`/`aria-*` are set for you. */
   children: React.ReactElement;
   /** React 19: ref is forwarded onto the cloned child control (not a wrapper node). */
   ref?: React.Ref<HTMLElement>;
 }
 
 /**
- * Wiring wrapper — renders no node of its own; clones its single child control
+ * Wiring wrapper: renders no node of its own; clones its single child control
  * with the shared `id`, `aria-describedby` (the description, plus the error id
  * when invalid), and `aria-invalid`.
  */
@@ -134,14 +168,23 @@ export function FieldControl({ children, ref }: FieldControlProps): React.ReactE
   const child = React.Children.only(children) as React.ReactElement<
     Record<string, unknown> & { ref?: React.Ref<HTMLElement> }
   >;
-  const describedBy = [ctx.descriptionId, ctx.invalid ? ctx.errorId : null]
+  const childRef = child.props.ref;
+  // Reference an id only while its node is actually mounted, otherwise
+  // aria-describedby points at nothing and assistive tech resolves no text.
+  // The child's own aria-describedby is preserved and merged, not replaced.
+  const describedBy = [
+    typeof child.props["aria-describedby"] === "string" ? child.props["aria-describedby"] : null,
+    ctx.descriptionPresent ? ctx.descriptionId : null,
+    ctx.invalid && ctx.errorPresent ? ctx.errorId : null,
+  ]
     .filter(Boolean)
     .join(" ");
   return React.cloneElement(child, {
     id: ctx.id,
     "aria-describedby": describedBy || undefined,
     "aria-invalid": ctx.invalid || undefined,
-    ref,
+    // Compose so a ref set directly on the child control still receives the node.
+    ref: ref || childRef ? composeRefs<HTMLElement>(ref, childRef) : undefined,
   });
 }
 
@@ -151,7 +194,7 @@ export interface FieldDescriptionProps extends React.HTMLAttributes<HTMLParagrap
   ref?: React.Ref<HTMLParagraphElement>;
 }
 
-/** Helper text describing the field — referenced by the control's `aria-describedby`. */
+/** Helper text describing the field: referenced by the control's `aria-describedby`. */
 export function FieldDescription({
   className,
   children,
@@ -177,7 +220,7 @@ export interface FieldErrorProps extends React.HTMLAttributes<HTMLParagraphEleme
   ref?: React.Ref<HTMLParagraphElement>;
 }
 
-/** The field's error message — a live `role="alert"`; renders nothing when empty. */
+/** The field's error message: a live `role="alert"`; renders nothing when empty. */
 export function FieldError({
   className,
   children,
