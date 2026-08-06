@@ -19,4 +19,18 @@ describe("platform/compat/dynamic-import", () => {
       () => dynamicImport("__nonexistent_module_12345__"),
     );
   });
+
+  // This module is reachable from client bundles (veryfront/chat, /mdx,
+  // /workflow pull it in transitively). Project pages are served with
+  // `script-src 'self' 'nonce-...' https://esm.sh` — no 'unsafe-eval' — so a
+  // `new Function` here throws EvalError in the browser and blanks the page
+  // before hydration starts.
+  it("should not use new Function, which the page CSP blocks", () => {
+    const source = Deno.readTextFileSync(new URL("./dynamic-import.ts", import.meta.url));
+    assertEquals(
+      /\bnew Function\s*\(/.test(source),
+      false,
+      "dynamic-import.ts must not use new Function — project CSP forbids 'unsafe-eval'",
+    );
+  });
 });

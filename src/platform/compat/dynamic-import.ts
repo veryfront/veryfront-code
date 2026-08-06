@@ -1,15 +1,18 @@
 /**
  * Opaque dynamic import helper.
  *
- * Uses `new Function` to hide the `import()` call from static analysis
- * by bundlers and `deno compile`, preventing them from tracing into
- * the imported specifier.
+ * The specifier is a runtime parameter, so bundlers and `deno compile` cannot
+ * resolve it to a concrete module and will not trace into it. That opacity is
+ * what this helper exists for.
+ *
+ * This deliberately does NOT use `new Function`. This module is reachable from
+ * client bundles (`veryfront/chat`, `veryfront/mdx`, `veryfront/workflow` all
+ * pull it in transitively), and the CSP served for project pages does not allow
+ * `'unsafe-eval'`. A `new Function` here throws `EvalError` in the browser
+ * before hydration can start, which blanks the page.
  *
  * @module platform/compat
  */
 
-export const dynamicImport = new Function("specifier", "return import(specifier)") as <
-  T = unknown,
->(
-  specifier: string,
-) => Promise<T>;
+export const dynamicImport = <T = unknown>(specifier: string): Promise<T> =>
+  import(specifier) as Promise<T>;
