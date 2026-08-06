@@ -1,4 +1,5 @@
 import { serverLogger as logger } from "#veryfront/utils";
+import { installUnhandledRejectionGuard } from "./unhandled-rejection-guard.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
@@ -195,6 +196,10 @@ export function startProductionServer(
       const baseAdapter = options.adapter ?? (await runtime.get());
       const memoryMonitoringConfig = startConfiguredMemoryMonitoring(baseAdapter.env);
       const ownsMemoryMonitoring = memoryMonitoringConfig.enabled;
+      // Installed before bootstrap so a rejection during startup is contained
+      // too. This process serves every project on the pod, so one dropped
+      // promise must not take the others down with it.
+      const rejectionGuard = installUnhandledRejectionGuard();
 
       try {
         // Use pre-computed bootstrap result if provided, otherwise bootstrap here
@@ -325,6 +330,7 @@ export function startProductionServer(
         const stop = async (): Promise<void> => {
           setServerInitialized(false);
           if (ownsMemoryMonitoring) stopMemoryMonitoring();
+          rejectionGuard.dispose();
 
           try {
             await server.stop();
@@ -336,6 +342,7 @@ export function startProductionServer(
         return { ready, stop };
       } catch (error) {
         if (ownsMemoryMonitoring) stopMemoryMonitoring();
+        rejectionGuard.dispose();
         throw error;
       }
     },
