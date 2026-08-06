@@ -1,7 +1,6 @@
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { HTMLGenerationOptions } from "#veryfront/html";
 import { getProjectCSS } from "#veryfront/html/styles-builder/index.ts";
-import { isCSSOptimizationAvailable } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { warmPreparedCSSArtifactFromFiles } from "#veryfront/html/styles-builder/css-pregeneration.ts";
 import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
@@ -96,9 +95,7 @@ export function startProjectCSSPreparation(
     htmlOptions.globalCSS,
     new Set([...(htmlOptions.projectClasses ?? [])]),
     {
-      // Only when an engine exists: minification is opt-in, and asking for it
-      // without one fails closed, which would fail the whole render.
-      minify: isCSSOptimizationAvailable(),
+      minify: true,
       environment: htmlOptions.environment,
       buildMode: htmlOptions.mode as "development" | "production",
     },
@@ -143,7 +140,7 @@ export function startPreparedCSSWarmup(
         files,
         styleProfile,
         stylesheetPath,
-        minify: isCSSOptimizationAvailable(),
+        minify: true,
         environment: "preview",
         buildMode: "production",
       })

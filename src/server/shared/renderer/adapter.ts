@@ -226,22 +226,43 @@ async function loadConfigForHandler(
   cacheKey: string | undefined,
 ): Promise<VeryfrontConfig> {
   if (shouldUseMultiProjectContext(ctx) && ctx.prepareHostedConfigContext && cacheKey) {
+    // Prepared outside the try: a 404 from context preparation means the
+    // project, release or token could not be resolved, which is a real failure
+    // and must not be read as "this release published no config".
+    const hosted = await ctx.prepareHostedConfigContext();
+
+    // Set only where a 404 genuinely means absence. hasNotFoundStatus is
+    // documented as scoped to a single operation, never to a block that also
+    // performs other requests -- adapter-factory.ts does the same thing for the
+    // first config load, and the two must not drift.
+    let hostedConfigAbsent = false;
     try {
-      return await getHostedConfig(ctx.projectDir, ctx.adapter, {
-        cacheKey,
-        ...await ctx.prepareHostedConfigContext(),
-      });
+      return await getHostedConfig(ctx.projectDir, ctx.adapter, { cacheKey, ...hosted })
+        .catch((error: unknown) => {
+          if (hasNotFoundStatus(error)) hostedConfigAbsent = true;
+          throw error;
+        });
     } catch (error) {
       // A release that published no config answers 404. The adapter factory
       // already treats that as an ordinary project shape and falls through to
       // defaults; this second load has to agree, or a project without a config
       // clears that guard and dies here instead.
-      if (!hasNotFoundStatus(error)) throw error;
-      const hosted = await ctx.prepareHostedConfigContext();
+      if (!hostedConfigAbsent) throw error;
+      rendererLogger.debug("No hosted config for this release; using defaults", {
+        projectSlug: ctx.projectSlug,
+        projectId: ctx.projectId,
+      });
+      // `source: null` returns merged defaults on the first statement, so
+      // nothing below it is read today. The values are still the correct ones
+      // rather than placeholders: `?? "release"` would mislabel preview, whose
+      // VirtualConfigSourceContext carries no environmentName at all, and this
+      // becomes a live bug the moment the short-circuit moves. `environment` is
+      // empty because there is no source to evaluate against it -- the real one
+      // lives inside `hosted.preparedContext`, not on the context itself.
       return await evaluateHostedConfigSource({
         cacheKey,
         source: null,
-        environmentName: hosted.sourceContext.environmentName ?? "release",
+        environmentName: hosted.sourceContext.environmentName ?? resolveEnvironment(ctx),
         environment: {},
       });
     }
