@@ -3598,30 +3598,17 @@ async function evaluateCapturedInput(
   const { source, fileName, preparedState } = input;
   let parsedAst: unknown;
   try {
-    // filePath is withheld on purpose. The parser picks its plugins from the
-    // extension, and the name that reaches here is not reliably the name of the
-    // file whose contents we are holding: VERYFRONT_CONFIG_FILES is ordered
-    // `.js, .ts, .mjs`, and in production a project's `veryfront.config.ts` was
-    // evaluated under the `.js` name after the `.js` candidate 404'd. Parsing
-    // TypeScript as JavaScript then rejects valid config as a syntax error.
-    //
-    // Measured against that project's actual deployed config:
-    //   filePath=veryfront.config.ts -> parses
-    //   filePath=veryfront.config.js -> Unexpected token, expected "," (5:18)
-    //   filePath omitted             -> parses
-    // where 5:18 is an `as const`.
-    //
-    // Omitting it selects the permissive plugin set (see pickPlugins:
-    // `isTypeScript || !filePath`), which is the right posture for a config
-    // whose authored dialect the name does not reliably tell us. `fileName` is
-    // still used for the error location below, so diagnostics keep pointing at
-    // the right file.
+    // The name is not reliably the file we are holding: VERYFRONT_CONFIG_FILES
+    // is ordered `.js, .ts, .mjs`, and in production a project's
+    // veryfront.config.ts was evaluated under the `.js` name. pickPlugins now
+    // enables TypeScript regardless of extension, so the name only selects JSX.
     //
     // The mislabeling itself is a separate defect and is still unfixed:
     // readHostedConfigSource returns the candidate it actually loaded, so the
     // substitution happens downstream of it on the API-backed path.
     parsedAst = await parser.parse({
       code: source,
+      filePath: fileName,
     });
   } catch (error) {
     const reason = parserErrorReason(error);

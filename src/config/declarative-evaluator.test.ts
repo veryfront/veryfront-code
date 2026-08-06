@@ -317,6 +317,17 @@ export default defineConfig({
     assertEquals(asMjs.router, "pages", "veryfront.config.mjs must parse TypeScript syntax");
   });
 
+  it("still allows angle-bracket type assertions in a .ts config", async () => {
+    // Withholding filePath would put every config in TSX mode, where `<T>x` is
+    // an unclosed JSX element rather than a type assertion.
+    const snapshot = await evaluateDeclarativeConfig({
+      ...DEFAULT_OPTIONS,
+      fileName: "veryfront.config.ts",
+      source: 'const router = <string> "pages";\nexport default { router };',
+    });
+    assertEquals(snapshot.router, "pages");
+  });
+
   it("supports helper aliases, safe spreads, environment branching, templates, and TS wrappers", async () => {
     const snapshot = await evaluateDeclarativeConfig({
       source: `
