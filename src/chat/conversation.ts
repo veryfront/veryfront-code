@@ -7,7 +7,18 @@ import type {
   ChatUiMessageRole,
   ProviderModelMessage,
 } from "./types.ts";
-import { stringifyChatJson, toChatJsonValue } from "./json-value.ts";
+import {
+  getNonEmptyStringField,
+  getOptionalStringField,
+  isRecord,
+  stringifyUnknown,
+  toJsonValue,
+  toRecord,
+} from "./part-field-access.ts";
+import type { JsonValue } from "./part-field-access.ts";
+
+export { getStringField, isRecord, stringifyUnknown } from "./part-field-access.ts";
+export type { JsonValue } from "./part-field-access.ts";
 
 const PROVIDER_MODEL_MESSAGE_SOURCE_ID = Symbol.for("veryfront.providerModelMessageSourceId");
 const UPLOAD_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
@@ -207,7 +218,6 @@ export interface ReasoningPartLike {
 
 /** Chat UI tool part with a call ID and state. */
 type ToolUiPart = Extract<ChatUiMessagePart, { toolCallId: string; state: string }>;
-type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 type ProviderToolResultContent = {
   type: "tool-result";
   toolCallId: string;
@@ -290,52 +300,6 @@ export function mapToolState(sdkState: string): "streaming" | "pending" | "compl
     default:
       return "pending";
   }
-}
-
-/** Record shape for is. */
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Return string field. */
-export function getStringField(value: unknown, field: string, fallback: string): string {
-  if (!isRecord(value) || typeof value[field] !== "string") {
-    return fallback;
-  }
-
-  return value[field];
-}
-
-function getOptionalStringField(value: unknown, key: string): string | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
-
-  const field = value[key];
-  return typeof field === "string" ? field : undefined;
-}
-
-function getNonEmptyStringField(value: unknown, key: string): string | undefined {
-  const field = getOptionalStringField(value, key);
-  return field && field.length > 0 ? field : undefined;
-}
-
-function toRecord(value: unknown): Record<string, unknown> {
-  return isRecord(value) ? Object.fromEntries(Object.entries(value)) : {};
-}
-
-/** Stringify unknown helper. */
-export function stringifyUnknown(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (
-    typeof value === "bigint" ||
-    typeof value === "undefined" ||
-    typeof value === "function" ||
-    typeof value === "symbol"
-  ) {
-    return String(value);
-  }
-  return stringifyChatJson(value);
 }
 
 /** Check whether a chat part is a custom data part. */
@@ -675,10 +639,6 @@ export function extractTextFromMessage(message: ProviderModelMessage): string {
   }
 
   return "";
-}
-
-function toJsonValue(value: unknown): JsonValue {
-  return toChatJsonValue(value);
 }
 
 function getFilePart(part: unknown): {
