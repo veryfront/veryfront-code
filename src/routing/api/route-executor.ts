@@ -22,7 +22,7 @@ import { serverLogger as logger } from "#veryfront/utils";
 import type { HandlerContext } from "#veryfront/types";
 import {
   getWorkerPool,
-  isWorkerIsolationEnabled,
+  isHostRealmApiExecution,
 } from "#veryfront/security/sandbox/worker-pool.ts";
 import {
   resolveWorkerGeneration,
@@ -1231,8 +1231,7 @@ export function executeAppRoute(
 ): Promise<Response> {
   const routeOptions = snapshotExecuteRouteOptions(options);
   const isLocalProject = routeOptions.isLocalProject === true;
-  const isolationRequired = isWorkerIsolationEnabled() ||
-    !routeOptions.allowHostProjectCodeExecution;
+  const isolationRequired = !isHostRealmApiExecution(routeOptions.allowHostProjectCodeExecution);
 
   // Routes without an explicit host-execution capability require prepared
   // worker execution. Local development projects retain the legacy capability.
@@ -1309,8 +1308,7 @@ export function executePagesRoute(
 ): Promise<Response> {
   const routeOptions = snapshotExecuteRouteOptions(options);
   const isLocalProject = routeOptions.isLocalProject === true;
-  const isolationRequired = isWorkerIsolationEnabled() ||
-    !routeOptions.allowHostProjectCodeExecution;
+  const isolationRequired = !isHostRealmApiExecution(routeOptions.allowHostProjectCodeExecution);
   const isolatedProjectDir = routeOptions.projectDir ?? projectDir;
 
   // Routes without an explicit host-execution capability require prepared

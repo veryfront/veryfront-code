@@ -29,6 +29,7 @@ import type { HandlerContext } from "#veryfront/types";
 import type { PreparedWorkerModule } from "#veryfront/security/sandbox/worker-types.ts";
 import {
   evictWorkerScopeIfPresent,
+  isHostRealmApiExecution,
   isWorkerIsolationEnabled,
 } from "#veryfront/security/sandbox/worker-pool.ts";
 import {
@@ -268,7 +269,7 @@ export class APIRouteHandler {
             config: this.corsConfig ?? undefined,
           }) ?? unavailable;
         }
-        const useHostRealm = allowHostProjectCodeExecution && !isWorkerIsolationEnabled();
+        const useHostRealm = isHostRealmApiExecution(allowHostProjectCodeExecution);
 
         // The isolated path is the only one left and this build cannot prepare
         // an isolated module. Every continuation dead-ends inside loadRoute and

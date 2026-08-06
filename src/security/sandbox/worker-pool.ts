@@ -1314,6 +1314,23 @@ export function isWorkerIsolationEnabled(): boolean {
 }
 
 /**
+ * The one place that decides which realm a project API route executes in.
+ *
+ * `routing/api/handler.ts` and both sites in `routing/api/route-executor.ts`
+ * used to recompute this independently, which is why patching only the handler
+ * moved the failure instead of removing it. Every API execution surface asks
+ * here now.
+ *
+ * On a shared runtime that has been granted host project execution this returns
+ * true, so API routes run in the same host realm as agent streams and every
+ * other shared-runtime execution surface — none of which consult isolation at
+ * all.
+ */
+export function isHostRealmApiExecution(allowHostProjectCodeExecution: boolean): boolean {
+  return allowHostProjectCodeExecution === true && !isWorkerIsolationEnabled();
+}
+
+/**
  * Whether worker isolation is enabled for data fetchers (getServerData).
  * Controlled by WORKER_ISOLATION_DATA=1 (requires WORKER_ISOLATION_ENABLED=1).
  */

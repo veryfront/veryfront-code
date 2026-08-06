@@ -282,8 +282,14 @@ import route modules to discover methods, and component-snippet requests fail
 before source reads or compilation. Shared markdown previews likewise stop
 before source reads or custom not-found rendering.
 Defined invalid flags and pool limits are startup errors; they are not silently
-replaced with defaults. The isolation flags are resolved once at server startup
-so that promise holds, and the resolved posture is logged there.
+replaced with defaults.
+
+`WORKER_ISOLATION_API` is the only isolation flag any execution surface
+consults, and only API routes consult it (`routing/api/handler.ts` and
+`routing/api/route-executor.ts`). Agent streams and other shared-runtime
+execution surfaces are gated by `allowHostProjectCodeExecution` alone. On a
+shared runtime that has been granted host project execution, API routes
+therefore execute in the same host realm as those surfaces.
 
 A runtime that cannot honour a configured isolation flag never fakes it. A
 compiled binary cannot prepare isolated API route source
@@ -295,7 +301,8 @@ uses the host realm the operator already opted into; where that grant is absent,
 the flag stands and API ownership returns the typed
 `project-execution-unavailable` 503 naming it. The downgrade cannot grant
 execution on its own — every execution gate is a conjunction with
-`allowHostProjectCodeExecution`.
+`allowHostProjectCodeExecution`, so the downgrade only ever lands API routes in
+the realm that grant already licenses for every other surface.
 
 OpenAPI metadata is currently attached to handler functions. Because reading
 it requires route evaluation, runtime OpenAPI generation is available only for

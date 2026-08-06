@@ -38,8 +38,6 @@ import {
   isHostProjectExecutionOverrideEnabled,
 } from "#veryfront/security/host-execution-policy.ts";
 import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
-import { isWorkerIsolationEnabled } from "#veryfront/security/sandbox/worker-pool.ts";
-import { isIsolatedApiPreparationSupported } from "#veryfront/security/sandbox/isolation-capability.ts";
 import { runStartupDiscovery } from "./startup-discovery.ts";
 
 const serverLog = logger.component("server");
@@ -258,29 +256,6 @@ export function startProductionServer(
           !isSharedProjectRuntime({ adapter });
         const operatorGrant = isHostProjectExecutionOverrideEnabled();
         const allowHostProjectCodeExecution = isolatedRuntimeGrant || operatorGrant;
-
-        // Resolve the host-owned isolation flags here, at boot, instead of
-        // lazily on the first request. security/README.md already promises that
-        // malformed WORKER_ISOLATION_* values are startup errors; until now
-        // resolveFlags() was first driven from the API handler, so a typo
-        // surfaced as a per-request masked 500 instead. This is also the only
-        // point where both host-owned execution postures are known, which makes
-        // it the only place a contradiction between them is visible.
-        const apiIsolation = isWorkerIsolationEnabled();
-        serverLog.info("Execution posture", {
-          isolatedRuntimeGrant,
-          operatorGrant,
-          allowHostProjectCodeExecution,
-          apiIsolation,
-          isolatedApiPreparationSupported: isIsolatedApiPreparationSupported(),
-        });
-        if (apiIsolation && operatorGrant) {
-          serverLog.warn(
-            "Contradictory execution posture: VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION and " +
-              "WORKER_ISOLATION_API are both set. Isolation wins for API routes; the host " +
-              "execution grant is inert for them.",
-          );
-        }
 
         // Run primitive discovery before serving (registries must be populated before first request)
         if (discoveryConfig) {
