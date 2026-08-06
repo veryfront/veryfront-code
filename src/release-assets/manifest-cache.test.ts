@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
 import {
   clearCachedReleaseAssetManifests,
   clearReleaseAssetManifestCache,
@@ -9,6 +10,36 @@ import {
 } from "./manifest-cache.ts";
 import type { ReleaseAssetManifest } from "./manifest-schema.ts";
 import { RELEASE_ASSET_MANIFEST_SCHEMA_VERSION } from "./constants.ts";
+
+/** Component the manifest cache logs under, and the only one these tests read. */
+const MANIFEST_LOG_COMPONENT = "release-asset-manifest";
+
+/**
+ * Collect this component's structured log records for the duration of `run`.
+ *
+ * Reads the records operators actually consume rather than the rendered console
+ * line: the reason exists to reach a log pipeline, so asserting on the record is
+ * asserting on the thing that has to work. It also keeps the test off global
+ * mutable state — patching `console.error` leaks across a file if a run throws
+ * before it is restored, and couples every assertion to the text formatter.
+ */
+async function captureManifestLogs(run: () => Promise<void>): Promise<LogEntry[]> {
+  const records: LogEntry[] = [];
+  const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+    if (entry.component === MANIFEST_LOG_COMPONENT) records.push(entry);
+  });
+  try {
+    await run();
+  } finally {
+    unsubscribe();
+  }
+  return records;
+}
+
+/** The single error-level rejection record, or undefined when none was emitted. */
+function rejectionRecord(records: LogEntry[]): LogEntry | undefined {
+  return records.find((entry) => entry.level === "error");
+}
 
 function manifest(releaseId: string, manifestVersion: number): ReleaseAssetManifest {
   return {
@@ -93,22 +124,21 @@ describe("release asset manifest fetcher ownership", () => {
         },
       }));
 
-    const originalError = console.error;
-    let logged = "";
-    console.error = (...values: unknown[]) => {
-      logged += values.map((value) => typeof value === "string" ? value : JSON.stringify(value))
-        .join(" ");
-    };
-
-    try {
+    const records = await captureManifestLogs(async () => {
       assertEquals(await getReadyManifestForRenderAsync("release-skew"), null);
-    } finally {
-      console.error = originalError;
-    }
+    });
 
-    assertStringIncludes(logged, "release-skew");
-    assertStringIncludes(logged, "manifest schema version");
-    assertStringIncludes(logged, "built by a different framework version");
+    // Error level is load-bearing: it is what separates "an operator must act"
+    // from the debug-level "not ready yet" that is the normal path.
+    const rejection = rejectionRecord(records);
+    assertExists(rejection, "expected an error-level rejection record");
+    assertEquals(rejection.context?.releaseId, "release-skew");
+
+    // Assert on the versions the reason has to name, not its prose. Naming both
+    // is what tells an operator to deploy a newer builder rather than rebuild.
+    const reason = String(rejection.context?.reason ?? "");
+    assertStringIncludes(reason, String(RELEASE_ASSET_MANIFEST_SCHEMA_VERSION + 1));
+    assertStringIncludes(reason, String(RELEASE_ASSET_MANIFEST_SCHEMA_VERSION));
   });
 
   it("reports a ready response whose envelope has no usable manifest_version", async () => {
@@ -124,21 +154,17 @@ describe("release asset manifest fetcher ownership", () => {
         manifest: manifest("release-envelope", 1),
       } as unknown as ReturnType<typeof readyManifestResponse>));
 
-    const originalError = console.error;
-    let logged = "";
-    console.error = (...values: unknown[]) => {
-      logged += values.map((value) => typeof value === "string" ? value : JSON.stringify(value))
-        .join(" ");
-    };
-
-    try {
+    const records = await captureManifestLogs(async () => {
       assertEquals(await getReadyManifestForRenderAsync("release-envelope"), null);
-    } finally {
-      console.error = originalError;
-    }
+    });
 
-    assertStringIncludes(logged, "release-envelope");
-    assertStringIncludes(logged, "no usable manifest_version");
+    // Classifying on the derived `state` routes this to debug, which the level
+    // gate drops before it ever reaches a subscriber — so an empty record set is
+    // exactly the regression, and this assertion is what catches it.
+    const rejection = rejectionRecord(records);
+    assertExists(rejection, "expected an error-level rejection record");
+    assertEquals(rejection.context?.releaseId, "release-envelope");
+    assertStringIncludes(String(rejection.context?.reason ?? ""), "manifest_version");
   });
 
   it("keeps cache identities distinct for delimiter-shaped release IDs", async () => {
