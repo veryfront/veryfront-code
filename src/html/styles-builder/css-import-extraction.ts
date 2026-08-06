@@ -25,14 +25,39 @@ import { isWithinDirectory, normalizePath } from "#veryfront/utils/path-utils.ts
 export const CSS_IMPORTING_SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
 
 /**
- * Static ESM import statements whose specifier ends in `.css`:
+ * ESM imports whose specifier ends in `.css`:
  *   import "./styles.css";
  *   import styles from "./button.module.css";
- * `[^'";]*` keeps the match from crossing statement boundaries.
+ *   import("./theme.css")
+ *
+ * Dynamic imports are matched on purpose, despite this once being described as
+ * static-only. `import("./theme.css")` loads that stylesheet at runtime, so
+ * leaving it out means the compiled stylesheet is missing CSS the page actually
+ * uses. A dynamic specifier pointing at a file that does not exist is a broken
+ * reference, not a false positive -- exactly as a static one would be.
+ * `[^'";]*` keeps the match from crossing statement boundaries, and `\bimport\b`
+ * keeps identifiers that merely contain the word out of it -- without it,
+ * `const important = "./styles.css"` reads as an import. That matters more here
+ * than it looks: release-asset builds turn a bogus specifier into a fatal
+ * coverage gap, so a false positive fails the release.
  */
-const CSS_IMPORT_RE = /import[^'";]*['"]([^'"]+\.css)['"]/g;
+const CSS_IMPORT_RE = /\bimport\b(?!\s*\.)[^'";]*['"]([^'"]+\.css)['"]/g;
 
-/** Extract the raw specifiers of all static CSS imports in a source file. */
+/**
+ * Extract the raw specifiers of all CSS imports in a source file.
+ *
+ * Deliberately loose, per this module's contract: over-matching is harmless
+ * because unresolvable specifiers are skipped downstream. A commented-out or
+ * quoted `import "./x.css"` will be reported, and that is fine.
+ *
+ * An earlier revision blanked comments, template literals and fenced blocks
+ * before matching, because the release-asset build had made this function's
+ * output fatal. That was the wrong layer to fix it: telling code from prose
+ * with a regex kept finding new holes, and worse, an unpaired `/*` or backtick
+ * blanked across intervening real code and silently dropped a genuine import --
+ * trading a loud failure for a page shipped without its stylesheet. The build
+ * no longer gaps on what it cannot resolve, so the looseness costs nothing.
+ */
 export function extractCssImportSpecifiers(source: string): string[] {
   const specifiers: string[] = [];
   for (const match of source.matchAll(CSS_IMPORT_RE)) {

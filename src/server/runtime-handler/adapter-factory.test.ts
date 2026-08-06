@@ -5,6 +5,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
+import { API_CLIENT_ERROR } from "#veryfront/errors";
 import { resolveAdapter } from "./adapter-factory.ts";
 import { defaultDiscoveryCache, ProjectDiscoveryCache } from "./local-project-discovery.ts";
 
@@ -1031,5 +1032,118 @@ describe("adapter-factory", () => {
       // One of the two paths must have been taken
       assertEquals(succeeded || threw, true);
     });
+  });
+
+  it("uses defaults when the release published no config", async () => {
+    // A release with no config file gets a legitimate 404 from the API. It used
+    // to be re-thrown, so every request for such a project returned 404.
+    const adapter = createMockAdapter({});
+    adapter.fs.readFile = () =>
+      Promise.reject(
+        API_CLIENT_ERROR.create({ detail: "API request failed: 404 Not Found", status: 404 }),
+      );
+
+    const result = await resolveAdapter({
+      req: await makeReq(),
+      projectDir: "/base/project",
+      adapter,
+      config: { router: "pages" } as never,
+      projectSlug: "noconfig",
+      projectId: "proj_noconfig",
+      proxyToken: "token",
+      releaseId: "rel_1",
+      proxyEnv: "preview",
+      branch: null,
+      environmentName: undefined,
+      parsedDomain: {
+        slug: "noconfig",
+        branch: null,
+        environment: null,
+        isVeryfrontDomain: true,
+        isDraft: false,
+        allowIframeEmbed: false,
+      },
+      isProxyMode: true,
+      prepareHostedConfigContext: preparePreviewHostedConfigContext,
+    });
+
+    // Defaults, not the caller's config.
+    assertEquals(result.config, undefined);
+  });
+
+  it("uses defaults when the 404 arrives wrapped rather than at the top level", async () => {
+    // Same underlying 404, different error shape. readHostedConfigSource lets a
+    // VeryfrontError through untouched but wraps anything else in
+    // CONFIG_PARSE_ERROR, which buries the status one level down in `cause`.
+    // Reading only the outermost object made the fallback fire for one shape and
+    // not the other, so this project 404'd while an identical one did not.
+    const adapter = createMockAdapter({});
+    adapter.fs.readFile = () =>
+      Promise.reject(
+        Object.assign(new Error("API request failed: 404 Not Found"), { status: 404 }),
+      );
+
+    const result = await resolveAdapter({
+      req: await makeReq(),
+      projectDir: "/base/project",
+      adapter,
+      config: { router: "pages" } as never,
+      projectSlug: "noconfig",
+      projectId: "proj_noconfig",
+      proxyToken: "token",
+      releaseId: "rel_1",
+      proxyEnv: "preview",
+      branch: null,
+      environmentName: undefined,
+      parsedDomain: {
+        slug: "noconfig",
+        branch: null,
+        environment: null,
+        isVeryfrontDomain: true,
+        isDraft: false,
+        allowIframeEmbed: false,
+      },
+      isProxyMode: true,
+      prepareHostedConfigContext: preparePreviewHostedConfigContext,
+    });
+
+    assertEquals(result.config, undefined);
+  });
+
+  it("still fails when a 404 comes from something other than the config read", async () => {
+    // Only getHostedConfig's own 404 means "no config published". A 404 from the
+    // snapshot refresh is a real failure and must not be read as absence.
+    const adapter = createMockAdapter({});
+    (adapter.fs as unknown as Record<string, unknown>).ensureSourceSnapshotFresh = () =>
+      Promise.reject(
+        API_CLIENT_ERROR.create({ detail: "API request failed: 404 Not Found", status: 404 }),
+      );
+
+    const req = await makeReq();
+    await assertRejects(() =>
+      resolveAdapter({
+        req,
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "snapshot404",
+        projectId: "proj_snapshot404",
+        proxyToken: "token",
+        releaseId: "rel_1",
+        proxyEnv: "preview",
+        branch: null,
+        environmentName: undefined,
+        parsedDomain: {
+          slug: "snapshot404",
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: true,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        isProxyMode: true,
+        prepareHostedConfigContext: preparePreviewHostedConfigContext,
+      })
+    );
   });
 });

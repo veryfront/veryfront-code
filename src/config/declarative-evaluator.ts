@@ -3598,6 +3598,14 @@ async function evaluateCapturedInput(
   const { source, fileName, preparedState } = input;
   let parsedAst: unknown;
   try {
+    // The name is not reliably the file we are holding: VERYFRONT_CONFIG_FILES
+    // is ordered `.js, .ts, .mjs`, and in production a project's
+    // veryfront.config.ts was evaluated under the `.js` name. pickPlugins now
+    // enables TypeScript regardless of extension, so the name only selects JSX.
+    //
+    // The mislabeling itself is a separate defect and is still unfixed:
+    // readHostedConfigSource returns the candidate it actually loaded, so the
+    // substitution happens downstream of it on the API-backed path.
     parsedAst = await parser.parse({
       code: source,
       filePath: fileName,

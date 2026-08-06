@@ -88,6 +88,37 @@ interface AdapterResolutionOptions {
   ) => Promise<PreparedHostedConfigContext>;
 }
 
+/**
+ * Whether an error carries an own `status` of 404.
+ *
+ * Read through an own-property descriptor rather than plain access: this runs on
+ * a rejection value that may be anything, and a getter on an attacker-shaped
+ * object should not execute during error handling.
+ *
+ * Callers must scope this to the single operation whose 404 means "absent",
+ * never to a block that also performs other requests -- see the config load
+ * below, where only the getHostedConfig call is treated this way.
+ */
+function hasNotFoundStatus(error: unknown): boolean {
+  // Walks `cause`, because the 404 does not always arrive on the outermost
+  // error. readHostedConfigSource lets a VeryfrontError through untouched but
+  // wraps anything else in CONFIG_PARSE_ERROR, which buries the original status
+  // one level down. Reading only the top object made the fallback fire for one
+  // error shape and not the other, for the same underlying 404.
+  //
+  // Depth-bounded so a self-referential cause cannot spin.
+  let current: unknown = error;
+  for (let depth = 0; depth < 8; depth++) {
+    if (typeof current !== "object" || current === null) return false;
+    const status = Object.getOwnPropertyDescriptor(current, "status");
+    if (status !== undefined && status.value === 404) return true;
+    const cause = Object.getOwnPropertyDescriptor(current, "cause");
+    if (cause === undefined) return false;
+    current = cause.value;
+  }
+  return false;
+}
+
 function usesExactSourceConfig(opts: AdapterResolutionOptions): boolean {
   return opts.isProxyMode &&
     !!opts.projectSlug &&
@@ -219,6 +250,12 @@ export async function resolveAdapter(
     // Load config via proxy mode with project context.
     // Unlike local projects, proxy mode config loading failures are propagated
     // because proceeding without config causes silent 404s for valid projects.
+    // Set only when getHostedConfig itself reports 404, never when some other
+    // request in this block does. The catch below spans prepareProxyConfigLoad,
+    // the snapshot refresh and runWithContext too, and a 404 from any of those
+    // is a real failure that must not be read as "no config published".
+    let hostedConfigAbsent = false;
+
     try {
       effectiveConfig = await timeAsync("config:load-proxy-project", async () => {
         const hosted = await prepareProxyConfigLoad(opts, false);
@@ -229,6 +266,9 @@ export async function resolveAdapter(
           return await getHostedConfig(effectiveProjectDir, effectiveAdapter, {
             ...hosted,
             signal: opts.req.signal,
+          }).catch((error: unknown) => {
+            if (hasNotFoundStatus(error)) hostedConfigAbsent = true;
+            throw error;
           });
         };
 
@@ -257,19 +297,35 @@ export async function resolveAdapter(
         router: effectiveConfig?.router,
       });
     } catch (error) {
-      // Log at error level — this is a real failure that will affect rendering.
-      // Config loading failure in proxy mode means the project's routes, layouts,
-      // and settings won't be available, leading to 404s for valid pages.
-      logger.error("Failed to load project config in proxy mode", {
-        projectSlug: opts.projectSlug,
-        projectId: opts.projectId,
-        releaseId: opts.releaseId,
-        proxyEnv: opts.proxyEnv,
-        error: getErrorMessage(error),
-      });
-      // Re-throw so the caller (runtime-handler) can return a proper error response
-      // instead of silently proceeding with broken defaults.
-      throw error;
+      // A release with no config file at all is an ordinary project shape, not
+      // a failure: the API answers 404 because there is nothing to serve. This
+      // used to be re-thrown with everything else, which turned every request
+      // for such a project into a 404. Fall through to defaults instead --
+      // the same outcome as a project whose config resolves to nothing.
+      if (hostedConfigAbsent) {
+        // Defaults, not whatever a caller happened to pass in: a project with no
+        // published config must not silently inherit another config's routes.
+        effectiveConfig = undefined;
+        logger.debug("No hosted config for this release; using defaults", {
+          projectSlug: opts.projectSlug,
+          projectId: opts.projectId,
+          releaseId: opts.releaseId,
+        });
+      } else {
+        // Log at error level — this is a real failure that will affect rendering.
+        // Config loading failure in proxy mode means the project's routes, layouts,
+        // and settings won't be available, leading to 404s for valid pages.
+        logger.error("Failed to load project config in proxy mode", {
+          projectSlug: opts.projectSlug,
+          projectId: opts.projectId,
+          releaseId: opts.releaseId,
+          proxyEnv: opts.proxyEnv,
+          error: getErrorMessage(error),
+        });
+        // Re-throw so the caller (runtime-handler) can return a proper error response
+        // instead of silently proceeding with broken defaults.
+        throw error;
+      }
     }
   }
 

@@ -20,7 +20,6 @@ export interface BabelParseOnlyParserContract {
 
 function pickPlugins(filePath?: string): parser.ParserPlugin[] {
   const normalizedPath = filePath?.toLowerCase() ?? "";
-  const isTypeScript = /\.(?:tsx?|[cm]ts)$/.test(normalizedPath);
   const supportsJsx = !filePath ||
     /\.(?:tsx|jsx|js|mjs|cjs)$/.test(normalizedPath);
   const plugins: parser.ParserPlugin[] = [
@@ -33,8 +32,12 @@ function pickPlugins(filePath?: string): parser.ParserPlugin[] {
     "dynamicImport",
     "importAttributes",
     "topLevelAwait",
+    // Hosted configs are authored in TypeScript but can arrive named `.js`, so
+    // the extension cannot decide the dialect. TypeScript is a superset, so
+    // enabling it always only widens what parses.
+    "typescript",
   ];
-  if (isTypeScript || !filePath) plugins.push("typescript");
+  // JSX stays extension-driven so `.ts` keeps `<T>x` as a type assertion.
   if (supportsJsx) plugins.push("jsx");
   return plugins;
 }
