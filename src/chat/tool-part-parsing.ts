@@ -1,9 +1,11 @@
 /**
- * Interpreting one tool part.
+ * Interpreting one message part.
  *
  * The single owner of turning one raw or UI tool-call/tool-result part into a
  * normalized shape, so provider conversion and replay reconciliation read the
- * same interpretation of a part rather than each deriving their own.
+ * same interpretation of a part rather than each deriving their own. Also
+ * owns the non-tool part predicates (text, reasoning, file/image) that both
+ * of those callers need to classify provider-visible content.
  */
 import {
   getNonEmptyStringField,
@@ -189,4 +191,75 @@ export function hasSelfContainedRawToolCallResult(
   }
 
   return buildRawToolCallResultOutput(rawToolCall) !== null;
+}
+
+/** Text-like provider message part. */
+export interface TextPartLike {
+  type: "text";
+  text: string;
+}
+
+/** Reasoning-like provider message part. */
+export interface ReasoningPartLike {
+  type: "reasoning";
+  text?: string;
+  signature?: string;
+  redactedData?: string;
+}
+
+/** Check whether a value is a text part. */
+export function isTextPart(value: unknown): value is TextPartLike {
+  return isRecord(value) && value.type === "text" && typeof value.text === "string";
+}
+
+/** Check whether a value is a reasoning part. */
+export function isReasoningPart(value: unknown): value is ReasoningPartLike {
+  return isRecord(value) && value.type === "reasoning" &&
+    (typeof value.text === "string" ||
+      typeof value.signature === "string" ||
+      typeof value.redactedData === "string");
+}
+
+export function isProviderVisibleReasoningPart(value: unknown): value is ReasoningPartLike {
+  return isReasoningPart(value) &&
+    (getNonEmptyStringField(value, "text") !== undefined ||
+      getNonEmptyStringField(value, "signature") !== undefined ||
+      getNonEmptyStringField(value, "redactedData") !== undefined);
+}
+
+export function getFilePart(part: unknown): {
+  type: "file" | "image";
+  mediaType: string;
+  data: string;
+  url: string;
+  filename?: string;
+  uploadId?: string;
+  uploadPath?: string;
+} | null {
+  if (!isRecord(part) || (part.type !== "file" && part.type !== "image")) {
+    return null;
+  }
+
+  const mediaType = getNonEmptyStringField(part, "mediaType") ??
+    getNonEmptyStringField(part, "media_type");
+  const data = getNonEmptyStringField(part, "url");
+  if (!mediaType || !data) {
+    return null;
+  }
+
+  const filename = getNonEmptyStringField(part, "filename");
+  const uploadId = getNonEmptyStringField(part, "uploadId") ??
+    getNonEmptyStringField(part, "upload_id");
+  const uploadPath = getNonEmptyStringField(part, "uploadPath") ??
+    getNonEmptyStringField(part, "upload_path");
+
+  return {
+    type: part.type === "image" ? "image" : "file",
+    mediaType,
+    data,
+    url: data,
+    ...(filename ? { filename } : {}),
+    ...(uploadId ? { uploadId } : {}),
+    ...(uploadPath ? { uploadPath } : {}),
+  };
 }

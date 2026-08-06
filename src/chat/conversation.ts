@@ -7,19 +7,17 @@ import type {
   ChatUiMessageRole,
   ProviderModelMessage,
 } from "./types.ts";
-import {
-  getNonEmptyStringField,
-  getOptionalStringField,
-  isRecord,
-  toRecord,
-} from "./part-field-access.ts";
+import { getOptionalStringField, isRecord, toRecord } from "./part-field-access.ts";
 import type { JsonValue } from "./part-field-access.ts";
 import {
   buildRawToolCallResultOutput,
   buildToolResultOutput,
+  getFilePart,
   getRawToolCallPart,
   getRawToolResultPart,
   getToolPart,
+  isProviderVisibleReasoningPart,
+  isTextPart,
 } from "./tool-part-parsing.ts";
 import {
   findProviderVisibleToolReplayMatches,
@@ -29,6 +27,8 @@ import type { ProviderVisibleToolReplayMatches } from "./tool-replay-reconciliat
 
 export { getStringField, isRecord, stringifyUnknown } from "./part-field-access.ts";
 export type { JsonValue } from "./part-field-access.ts";
+export { isReasoningPart, isTextPart } from "./tool-part-parsing.ts";
+export type { ReasoningPartLike, TextPartLike } from "./tool-part-parsing.ts";
 
 const PROVIDER_MODEL_MESSAGE_SOURCE_ID = Symbol.for("veryfront.providerModelMessageSourceId");
 const UPLOAD_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
@@ -210,20 +210,6 @@ export interface ToolResultLike {
   toolName: string;
   output: unknown;
   providerOptions?: unknown;
-}
-
-/** Text-like provider message part. */
-export interface TextPartLike {
-  type: "text";
-  text: string;
-}
-
-/** Reasoning-like provider message part. */
-export interface ReasoningPartLike {
-  type: "reasoning";
-  text?: string;
-  signature?: string;
-  redactedData?: string;
 }
 
 /** Chat UI tool part with a call ID and state. */
@@ -608,26 +594,6 @@ export function isToolResultPart(value: unknown): value is ToolResultLike {
   );
 }
 
-/** Check whether a value is a text part. */
-export function isTextPart(value: unknown): value is TextPartLike {
-  return isRecord(value) && value.type === "text" && typeof value.text === "string";
-}
-
-/** Check whether a value is a reasoning part. */
-export function isReasoningPart(value: unknown): value is ReasoningPartLike {
-  return isRecord(value) && value.type === "reasoning" &&
-    (typeof value.text === "string" ||
-      typeof value.signature === "string" ||
-      typeof value.redactedData === "string");
-}
-
-function isProviderVisibleReasoningPart(value: unknown): value is ReasoningPartLike {
-  return isReasoningPart(value) &&
-    (getNonEmptyStringField(value, "text") !== undefined ||
-      getNonEmptyStringField(value, "signature") !== undefined ||
-      getNonEmptyStringField(value, "redactedData") !== undefined);
-}
-
 /** Message shape for extract text from. */
 export function extractTextFromMessage(message: ProviderModelMessage): string {
   if (!message || !message.content) return "";
@@ -649,43 +615,6 @@ export function extractTextFromMessage(message: ProviderModelMessage): string {
   }
 
   return "";
-}
-
-function getFilePart(part: unknown): {
-  type: "file" | "image";
-  mediaType: string;
-  data: string;
-  url: string;
-  filename?: string;
-  uploadId?: string;
-  uploadPath?: string;
-} | null {
-  if (!isRecord(part) || (part.type !== "file" && part.type !== "image")) {
-    return null;
-  }
-
-  const mediaType = getNonEmptyStringField(part, "mediaType") ??
-    getNonEmptyStringField(part, "media_type");
-  const data = getNonEmptyStringField(part, "url");
-  if (!mediaType || !data) {
-    return null;
-  }
-
-  const filename = getNonEmptyStringField(part, "filename");
-  const uploadId = getNonEmptyStringField(part, "uploadId") ??
-    getNonEmptyStringField(part, "upload_id");
-  const uploadPath = getNonEmptyStringField(part, "uploadPath") ??
-    getNonEmptyStringField(part, "upload_path");
-
-  return {
-    type: part.type === "image" ? "image" : "file",
-    mediaType,
-    data,
-    url: data,
-    ...(filename ? { filename } : {}),
-    ...(uploadId ? { uploadId } : {}),
-    ...(uploadPath ? { uploadPath } : {}),
-  };
 }
 
 function buildToolNameMap(parts: ReadonlyArray<unknown>): Map<string, string> {

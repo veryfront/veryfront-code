@@ -7,13 +7,16 @@
  * matched, superseded, batch-starting, or transient-but-preserved without
  * mutating them.
  */
-import { getNonEmptyStringField, isRecord } from "./part-field-access.ts";
+import { isRecord } from "./part-field-access.ts";
 import {
   buildToolResultOutput,
+  getFilePart,
   getRawToolCallPart,
   getRawToolResultPart,
   getToolPart,
   hasSelfContainedRawToolCallResult,
+  isProviderVisibleReasoningPart,
+  isTextPart,
 } from "./tool-part-parsing.ts";
 import type { ChatUiMessageRole } from "./types.ts";
 import type { ChatProviderModelInputMessage } from "./conversation.ts";
@@ -101,69 +104,6 @@ function getReplayToolResultPart(part: unknown, role: ChatUiMessageRole): {
   }
 
   return null;
-}
-
-// isProviderVisibleNonToolPart below is moved verbatim from conversation.ts per
-// the brief, but its three helpers (isTextPart, isProviderVisibleReasoningPart,
-// getFilePart) are NOT on the brief's move list: conversation.ts keeps its own
-// copies because they're also used by convertUserMessage/convertAssistantMessage,
-// and isTextPart's sibling isReasoningPart is part of the public chat API surface
-// re-exported from src/chat/index.ts. Importing those value-level helpers from
-// conversation.ts here would create a real import cycle (conversation.ts already
-// imports findProviderVisibleToolReplayMatches from this module), so their exact
-// logic is reproduced privately below, sourced only from part-field-access.ts.
-// This is a deviation from "move, do not rewrite" forced by a brief gap — see
-// task-3-report.md.
-function isTextPart(value: unknown): value is { type: "text"; text: string } {
-  return isRecord(value) && value.type === "text" && typeof value.text === "string";
-}
-
-function isProviderVisibleReasoningPart(value: unknown): boolean {
-  const hasReasoningShape = isRecord(value) && value.type === "reasoning" &&
-    (typeof value.text === "string" ||
-      typeof value.signature === "string" ||
-      typeof value.redactedData === "string");
-  return hasReasoningShape &&
-    (getNonEmptyStringField(value, "text") !== undefined ||
-      getNonEmptyStringField(value, "signature") !== undefined ||
-      getNonEmptyStringField(value, "redactedData") !== undefined);
-}
-
-function getFilePart(part: unknown): {
-  type: "file" | "image";
-  mediaType: string;
-  data: string;
-  url: string;
-  filename?: string;
-  uploadId?: string;
-  uploadPath?: string;
-} | null {
-  if (!isRecord(part) || (part.type !== "file" && part.type !== "image")) {
-    return null;
-  }
-
-  const mediaType = getNonEmptyStringField(part, "mediaType") ??
-    getNonEmptyStringField(part, "media_type");
-  const data = getNonEmptyStringField(part, "url");
-  if (!mediaType || !data) {
-    return null;
-  }
-
-  const filename = getNonEmptyStringField(part, "filename");
-  const uploadId = getNonEmptyStringField(part, "uploadId") ??
-    getNonEmptyStringField(part, "upload_id");
-  const uploadPath = getNonEmptyStringField(part, "uploadPath") ??
-    getNonEmptyStringField(part, "upload_path");
-
-  return {
-    type: part.type === "image" ? "image" : "file",
-    mediaType,
-    data,
-    url: data,
-    ...(filename ? { filename } : {}),
-    ...(uploadId ? { uploadId } : {}),
-    ...(uploadPath ? { uploadPath } : {}),
-  };
 }
 
 function isProviderVisibleNonToolPart(role: ChatUiMessageRole, part: unknown): boolean {
