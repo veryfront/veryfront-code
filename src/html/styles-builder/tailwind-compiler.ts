@@ -301,7 +301,9 @@ export async function regenerateCSSByHash(
   if (!isCSSContentHash(expectedHash)) return undefined;
   // Same gate as the render: minification is opt-in, so only ask for it when an
   // engine exists. Requesting it without one fails closed and 404s the asset.
-  const generationSession = acquireCSSGenerationSession(isCSSOptimizationAvailable());
+  // Resolved once: the session and the request below must agree on this value.
+  const minify = isCSSOptimizationAvailable();
+  const generationSession = acquireCSSGenerationSession(minify);
   const inFlightKey = `${hashString(generationSession.cacheIdentity)}:${expectedHash}`;
   const pending = inFlightRegeneration.get(inFlightKey);
   if (pending) return await pending;
@@ -318,7 +320,7 @@ export async function regenerateCSSByHash(
       const result = await generateTailwindCSS(
         inputs.stylesheet,
         inputs.candidates,
-        { minify: true, projectSlug },
+        { minify, projectSlug },
         { generationSession },
       );
       if (hashCSS(result.css) !== expectedHash) return undefined;

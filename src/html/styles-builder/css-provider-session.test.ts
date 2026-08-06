@@ -10,12 +10,15 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   acquireCSSGenerationSession,
+  cacheCSSAsync,
   clearCSSCache,
   generateTailwindCSS,
   getCompilerCacheStats,
   getProjectCSS,
+  hashCSS,
   invalidateCompiler,
   invalidateProjectCSS,
+  regenerateCSSByHash,
 } from "./tailwind-compiler.ts";
 
 interface ProcessorCounters {
@@ -194,5 +197,25 @@ describe("styles-builder CSS provider sessions", () => {
       Error,
       'Missing extension for contract "CSSOptimizationEngine"',
     );
+  });
+
+  it("regenerates a cached stylesheet unminified when no optimizer exists", async () => {
+    // The session and the generation request must agree on minify, or
+    // resolveGenerationSession rejects the pair. Gating only the session left
+    // the request pinned to true, so every no-engine regeneration threw a
+    // mismatch and 404'd the stylesheet.
+    installProcessor(createProcessor("no-optimizer-regeneration"));
+    const stylesheet = "sheet";
+    const candidates = ["alpha", "beta"];
+
+    const generated = await generateTailwindCSS(stylesheet, candidates, { minify: false });
+    const hash = hashCSS(generated.css);
+    await cacheCSSAsync(generated.css, hash, {
+      candidates,
+      stylesheet,
+      pipelineIdentity: generated.cacheIdentity,
+    });
+
+    assertEquals(await regenerateCSSByHash(hash, "vf-no-optimizer"), generated.css);
   });
 });
