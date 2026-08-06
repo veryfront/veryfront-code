@@ -3,8 +3,8 @@ import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __setCompiledBinaryForTests,
-  ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
   isIsolatedApiPreparationSupported,
+  ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
 } from "./isolation-capability.ts";
 
 afterEach(() => {
@@ -37,10 +37,8 @@ describe("isolation capability", () => {
   });
 
   it("states the real blocker, which is module linkage rather than transpilation", () => {
-    // The reason is user-facing and is asserted on by the loader, the handler
-    // and the compiled-binary e2e suite. It must keep naming the linkage, so a
-    // future reader does not re-derive the false "no transpiler" premise that
-    // sent the original investigation down a dead end.
+    // Must keep naming the linkage, so nobody re-derives the false
+    // "no transpiler" premise.
     assert(ISOLATED_API_PREPARATION_UNSUPPORTED_REASON.includes("_vf_"));
     assert(ISOLATED_API_PREPARATION_UNSUPPORTED_REASON.includes("data:"));
   });

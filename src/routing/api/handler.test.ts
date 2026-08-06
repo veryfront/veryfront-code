@@ -433,10 +433,7 @@ describe("APIRouteHandler", () => {
 
         assertEquals(response?.status, 200);
         assertEquals(await response?.text(), "hosted");
-        // The downgrade has to reach route execution too. route-executor.ts
-        // recomputes the isolation decision independently, so a handler-only
-        // fix 500s here with "Isolated API execution requires prepared route
-        // source".
+        // Must reach route execution too, not just the handler.
         assertEquals(hostLoads, 1);
         assertEquals(preparations, 0);
       });
@@ -473,8 +470,7 @@ describe("APIRouteHandler", () => {
             adapter,
             securityConfig: null,
             isLocalProject: false,
-            // A dedicated runtime carries the capability implicitly; the
-            // operator grant that would license the downgrade is still absent.
+            // Dedicated runtime capability, but no operator grant.
             allowHostProjectCodeExecution: true,
           },
         );

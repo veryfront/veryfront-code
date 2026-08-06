@@ -284,12 +284,12 @@ before source reads or custom not-found rendering.
 Defined invalid flags and pool limits are startup errors; they are not silently
 replaced with defaults.
 
-`WORKER_ISOLATION_API` is the only isolation flag any execution surface
-consults, and only API routes consult it (`routing/api/handler.ts` and
-`routing/api/route-executor.ts`). Agent streams and other shared-runtime
-execution surfaces are gated by `allowHostProjectCodeExecution` alone. On a
-shared runtime that has been granted host project execution, API routes
-therefore execute in the same host realm as those surfaces.
+`WORKER_ISOLATION_API` is consulted only by API route execution
+(`routing/api/handler.ts` and `routing/api/route-executor.ts`), which resolve it
+through the single `isHostRealmApiExecution` accessor. Data fetchers and SSR
+have their own flags. Agent streams are gated by `allowHostProjectCodeExecution`
+alone, so on a shared runtime granted host project execution, API routes execute
+in the same host realm as streams.
 
 A runtime that cannot honour a configured isolation flag never fakes it. A
 compiled binary cannot prepare isolated API route source
@@ -300,7 +300,7 @@ the operator has explicitly granted host project code execution through
 uses the host realm the operator already opted into; where that grant is absent,
 the flag stands and API ownership returns the typed
 `project-execution-unavailable` 503 naming it. The downgrade cannot grant
-execution on its own — every execution gate is a conjunction with
+execution on its own. Every execution gate is a conjunction with
 `allowHostProjectCodeExecution`, so the downgrade only ever lands API routes in
 the realm that grant already licenses for every other surface.
 

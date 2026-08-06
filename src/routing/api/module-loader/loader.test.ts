@@ -185,9 +185,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
           config: undefined,
         })
       );
-      // The reason must name the linkage, not a missing transpiler: the
-      // compiled binary transpiles this same source on every host-realm
-      // request. See security/sandbox/isolation-capability.ts.
+      // Names the linkage, not a missing transpiler.
       assertMatch(String((error as Error).message), /_vf_/);
       assertMatch(String((error as Error).message), /data:/);
     } finally {

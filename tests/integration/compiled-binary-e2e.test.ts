@@ -717,11 +717,8 @@ export function GET() {
     });
   });
 
-  // A compiled binary cannot prepare isolated API route source, so
-  // WORKER_ISOLATION_API=1 asks for a posture it cannot serve. Production ran
-  // exactly this combination and every project API route returned a masked 500.
-  // `deno compile` passing is not evidence for any of this; only a genuinely
-  // compiled binary is.
+  // Production ran exactly this flag combination and every project API route
+  // returned a masked 500.
   it("serves API routes when a compiled binary cannot honour WORKER_ISOLATION_API but host execution is granted", async () => {
     const projectDir = await createTestProject(
       "isolation-downgrade-test",

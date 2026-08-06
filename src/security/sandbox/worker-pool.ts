@@ -38,8 +38,8 @@ import { isWorkerGenerationInScope } from "./worker-generation.ts";
 import { buildWorkerPermissions } from "./worker-permissions.ts";
 import { isHostProjectExecutionOverrideEnabled } from "#veryfront/security/host-execution-policy.ts";
 import {
-  ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
   isIsolatedApiPreparationSupported,
+  ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
 } from "./isolation-capability.ts";
 import type {
   RenderSSRRequest,
@@ -1246,23 +1246,13 @@ let _ssrIsolation = false;
 /**
  * Resolve the host-owned isolation flags once per process.
  *
- * `WORKER_ISOLATION_API` asks for a posture this build may be unable to provide.
- * When it cannot, there is no configuration that serves traffic: every project
- * API route dead-ends in `prepareHandlerModule` and is masked as a 500. The flag
- * is downgraded in exactly one case — the operator has *already* granted
- * host-realm project execution via VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION, in
- * writing, at the host-owned entrypoint. That is a documented, explicit,
- * operator-granted precondition, and the downgrade cannot grant anything beyond
- * it: `useHostRealm` (routing/api/handler.ts) and `isolationRequired`
- * (routing/api/route-executor.ts) are both conjunctions with
- * `allowHostProjectCodeExecution`. Removing the isolation term never removes
- * that one.
- *
- * Without the grant the flag stands and the request fails closed — as a typed
- * `project-execution-unavailable` 503 from API ownership, not a masked 500.
- *
- * Remove the downgrade once isolated preparation works in a compiled binary; the
- * blocker is documented on `isIsolatedApiPreparationSupported`.
+ * A build that cannot honour `WORKER_ISOLATION_API` has no configuration that
+ * serves traffic: every API route dead-ends in `prepareHandlerModule`. The flag
+ * is downgraded in exactly one case — the operator already granted host-realm
+ * execution via VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION. The downgrade cannot
+ * grant more than that, since every execution gate is a conjunction with
+ * `allowHostProjectCodeExecution`. Without the grant the flag stands and API
+ * ownership fails closed with a typed 503.
  */
 function resolveFlags(): void {
   if (_flagsResolved) return;
@@ -1318,13 +1308,7 @@ export function isWorkerIsolationEnabled(): boolean {
  *
  * `routing/api/handler.ts` and both sites in `routing/api/route-executor.ts`
  * used to recompute this independently, which is why patching only the handler
- * moved the failure instead of removing it. Every API execution surface asks
- * here now.
- *
- * On a shared runtime that has been granted host project execution this returns
- * true, so API routes run in the same host realm as agent streams and every
- * other shared-runtime execution surface — none of which consult isolation at
- * all.
+ * moved the failure instead of removing it.
  */
 export function isHostRealmApiExecution(allowHostProjectCodeExecution: boolean): boolean {
   return allowHostProjectCodeExecution === true && !isWorkerIsolationEnabled();

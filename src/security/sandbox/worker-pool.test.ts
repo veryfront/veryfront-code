@@ -1521,8 +1521,7 @@ describe("Feature flag caching", () => {
       __setCompiledBinaryForTests(true);
       await __resetPoolForTests();
 
-      // Fails closed rather than silently downgrading. API ownership turns this
-      // into a typed 503; it must never become host-realm execution.
+      // Fails closed; must never become host-realm execution.
       assertEquals(isWorkerIsolationEnabled(), true);
     });
 

@@ -33,8 +33,8 @@ import {
   isWorkerIsolationEnabled,
 } from "#veryfront/security/sandbox/worker-pool.ts";
 import {
-  ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
   isIsolatedApiPreparationSupported,
+  ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
 } from "#veryfront/security/sandbox/isolation-capability.ts";
 import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
 import {
@@ -271,15 +271,11 @@ export class APIRouteHandler {
         }
         const useHostRealm = isHostRealmApiExecution(allowHostProjectCodeExecution);
 
-        // The isolated path is the only one left and this build cannot prepare
-        // an isolated module. Every continuation dead-ends inside loadRoute and
-        // is flattened to "Handler not found" below, which sends operators
-        // hunting a routing bug that does not exist. Name the flag, at the
-        // status code that means "not servable here, route it elsewhere".
-        //
-        // Gated on !useHostRealm rather than on the isolation flag so the
-        // dedicated-but-ungranted runtime — which skips the shared-runtime 503
-        // above because isSharedProjectRuntime is false — gets a typed answer too.
+        // Only the isolated path is left and this build cannot prepare a module
+        // for it, so every continuation dead-ends in loadRoute and is flattened
+        // to "Handler not found" below. Name the flag instead. Gated on
+        // !useHostRealm so a dedicated-but-ungranted runtime, which skips the
+        // shared-runtime 503 above, also gets a typed answer.
         if (!useHostRealm && !isIsolatedApiPreparationSupported()) {
           const isolationRequested = isWorkerIsolationEnabled();
           logger.error("API route unservable under the configured execution posture", {

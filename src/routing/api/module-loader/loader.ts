@@ -29,8 +29,8 @@ import {
 } from "#veryfront/security/sandbox/worker-types.ts";
 import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 import {
-  ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
   isIsolatedApiPreparationSupported,
+  ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
 } from "#veryfront/security/sandbox/isolation-capability.ts";
 import {
   createProjectSourceSnapshot,
@@ -98,10 +98,7 @@ export function prepareHandlerModule(options: LoadModuleOptions): Promise<Prepar
       const { projectDir, modulePath, adapter, config } = options;
       validateModulePath(modulePath, projectDir);
 
-      // Fail-closed backstop. API ownership reports this as a typed 503 before
-      // it reaches here; any other caller still gets a hard error rather than a
-      // prepared module the worker cannot link. See
-      // security/sandbox/isolation-capability.ts for why.
+      // Fail-closed backstop. API ownership reports a typed 503 before this.
       if (!isIsolatedApiPreparationSupported()) {
         throw toError(
           createError({

@@ -20,10 +20,7 @@ import { isAbsolute, join } from "#veryfront/compat/path/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import type { HandlerContext } from "#veryfront/types";
-import {
-  getWorkerPool,
-  isHostRealmApiExecution,
-} from "#veryfront/security/sandbox/worker-pool.ts";
+import { getWorkerPool, isHostRealmApiExecution } from "#veryfront/security/sandbox/worker-pool.ts";
 import {
   resolveWorkerGeneration,
   snapshotWorkerGenerationIdentity,
