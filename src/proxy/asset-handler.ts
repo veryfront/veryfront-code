@@ -51,7 +51,13 @@ const MAX_CACHED_ASSET_BYTES = 32 * 1024 * 1024;
  * never retries, which turns one shed asset into a dead page. Callers are
  * already bounded by their own deadline (`timeoutMs`) and the producer ceiling
  * (`MAX_UPSTREAM_TIMEOUT_MS`); a saturated proxy therefore shows up as latency
- * and finally an honest 504, never a phantom 503.
+ * and finally an honest 504.
+ *
+ * A 503 is still reachable, but only from the semaphore's own
+ * DEFAULT_PERMIT_SEMAPHORE_MAX_QUEUE_SIZE backstop. That threshold is two
+ * orders of magnitude above one page's module graph, so reaching it means a
+ * genuine flood rather than a project being shed for the size of the document
+ * this proxy just served it.
  */
 const MAX_CONCURRENT_COLD_LOADS = 4;
 
