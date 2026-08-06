@@ -215,7 +215,7 @@ describe("agent/conversation-run-events", () => {
     // a tool call that never finished.
     //
     // The stream handler synthesizes a terminal `tool-output-error` chunk for a
-    // provider-executed call the provider never resolved — chat-stream-handler
+    // provider-executed call the provider never resolved. Chat-stream-handler
     // tests cover that it is emitted. This covers the other half of the chain:
     // that chunk must encode to a TOOL_CALL_RESULT, because the durable lane the
     // runs panel reads is fed by teeing these chunks into the run mirror. Change

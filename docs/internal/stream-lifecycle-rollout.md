@@ -17,7 +17,7 @@ protocol version 1 until the Phase 5 Stream Delivery design ships end to end.
 | Phase 5 cutover                     | version 2                | separately approved delivery plan, server metadata smoke test, backend dedupe, byte backpressure, mixed-source replay | all Phase 5 gates pass                                                                                                                                                                      | stop version 2 creates; preserve existing versioned reads |
 
 The legacy fix for unresolved Anthropic `srvtoolu_` web_fetch calls lives only
-in the legacy reader — `processActiveStream()` shares none of it. Advancing to
+in the legacy reader. `processActiveStream()` shares none of it. Advancing to
 `active` before the reducer port reintroduces the incident: the card spins at
 `input-available` and persistence drops the part.
 

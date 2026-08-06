@@ -1396,6 +1396,9 @@ describe("agent/hosted-chat-execution-runtime", () => {
 
     assertEquals(terminalStates.length, 1);
     assertEquals(terminalStates[0]?.status, "failed");
+    // The status alone does not identify the cause, and a local tool left at
+    // `input-available` must fail for this reason rather than any other.
+    assertEquals(terminalStates[0]?.terminalErrorCode, "INCOMPLETE_TOOL_CALLS");
   });
 
   it("records stream errors before detached finalization fallback", async () => {

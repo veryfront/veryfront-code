@@ -156,6 +156,7 @@ export interface ChatStreamCallbacks {
   providerExecutedToolNames?: readonly string[];
   availableToolNames?: readonly string[];
   localToolInputIdleTimeoutMs?: number;
+  localToolCommitGraceMs?: number;
   streamIdleTimeoutMs?: number;
   streamLifecycleMode?: StreamLifecycleMode;
   streamLifecyclePolicy?: Partial<StreamLifecyclePolicy>;
@@ -571,7 +572,7 @@ export function processStreamInternal(
     const suppressedToolCallIds = new Set<string>();
     // Provider-executed calls whose input completed but whose result has not
     // arrived yet. While any is outstanding the local-tool commit grace must not
-    // truncate the stream — the provider result can arrive after a separate HTTP
+    // truncate the stream: the provider result can arrive after a separate HTTP
     // continuation.
     const pendingProviderExecutedToolCallIds = new Set<string>();
 
@@ -593,8 +594,8 @@ export function processStreamInternal(
      * Only call this where the tool call reaches `inputAvailable: true`. That
      * keeps the invariant `id ∈ pending ⟹ toolCalls.get(id).inputAvailable`, so
      * `finalizeUnresolvedProviderToolCalls` always drains the set. Tracking a
-     * call whose input never completed — or one already suppressed, which no
-     * later part will resolve — would leave an id nothing removes, disabling the
+     * call whose input never completed (or one already suppressed, which no
+     * later part will resolve) would leave an id nothing removes, disabling the
      * local-tool commit grace for the rest of the step.
      */
     const trackProviderExecutedToolCall = (
@@ -614,14 +615,14 @@ export function processStreamInternal(
      *
      * Without a terminal event the call stays `input-available` forever: the UI
      * card spins and persistence judges the part incomplete and drops it.
-     * Emitting an error is honest — there genuinely is no content.
+     * Emitting an error is honest: there genuinely is no content.
      *
      * The synthesized event is stream-only on purpose. Recording it in
      * `state.toolResults` would make the runtime believe the provider answered:
      * `shouldContinueAfterStreamStep()` would flip to true and bill another
      * model call per unresolved call, and the fabricated result would be
-     * persisted into model history. The runtime keeps its unchanged view — no
-     * result arrived — while the client still gets a terminal part.
+     * persisted into model history. The runtime keeps its unchanged view (no
+     * result arrived) while the client still gets a terminal part.
      */
     const finalizeUnresolvedProviderToolCalls = () => {
       if (pendingProviderExecutedToolCallIds.size === 0) {
@@ -856,12 +857,22 @@ export function processStreamInternal(
     // client even when the stream aborts or throws, so the finalizer runs in a
     // `finally`. It runs after the shadow compare so a synthesized event can
     // never perturb the legacy-vs-reducer snapshot the rollout gate reads.
+    const streamIterator = result.fullStream[Symbol.asyncIterator]();
+    let streamIteratorReturned = false;
+    /** Release the upstream iterator exactly once, whichever exit is taken. */
+    const returnStreamIteratorOnce = () => {
+      if (streamIteratorReturned) {
+        return;
+      }
+      streamIteratorReturned = true;
+      requestStreamIteratorReturn(streamIterator);
+    };
+
     try {
-      const streamIterator = result.fullStream[Symbol.asyncIterator]();
       while (true) {
         // A pending provider-executed call outranks the local commit grace: its
         // result can arrive on a later provider continuation request. This picks
-        // a longer timeout only — it must not change what a timeout *means*, so
+        // a longer timeout only. It must not change what a timeout *means*, so
         // the finish-reason classification below stays on the ungated flag.
         const shouldStopForCommittedLocalToolCallNow = shouldStopForCommittedLocalToolCall &&
           pendingProviderExecutedToolCallIds.size === 0;
@@ -884,7 +895,7 @@ export function processStreamInternal(
           ? await readNextStreamPartWithTimeout(
             streamIterator,
             state,
-            LOCAL_TOOL_COMMIT_GRACE_MS,
+            callbacks?.localToolCommitGraceMs ?? LOCAL_TOOL_COMMIT_GRACE_MS,
           )
           : shouldStopForIdleOutput
           ? await readNextStreamPartWithTimeout(
@@ -901,7 +912,7 @@ export function processStreamInternal(
           : await readNextStreamPart(streamIterator, state);
         if (next === "timeout") {
           state.finishReason ??= wouldTimeOutIdle ? "stop" : "tool-calls";
-          requestStreamIteratorReturn(streamIterator);
+          returnStreamIteratorOnce();
           break;
         }
         if (next.done) {
@@ -1181,7 +1192,13 @@ export function processStreamInternal(
               typedPart.toolName,
               typedPart.providerExecuted,
             );
-            pendingProviderExecutedToolCallIds.delete(typedPart.toolCallId);
+            // A preliminary result is not terminal: the provider is still
+            // working. Releasing the call here would re-arm the local commit
+            // grace and truncate the stream before the final result arrives,
+            // which is the failure this tracking exists to prevent.
+            if (typedPart.preliminary !== true) {
+              pendingProviderExecutedToolCallIds.delete(typedPart.toolCallId);
+            }
             ensureToolLifecycle({
               toolCallId: typedPart.toolCallId,
               toolName: typedPart.toolName,
@@ -1412,6 +1429,10 @@ export function processStreamInternal(
       }
     } finally {
       finalizeUnresolvedProviderToolCalls();
+      // `throwIfAborted` and `streamIterator.next()` can both throw past the
+      // loop, so the upstream iterator is released here rather than only on the
+      // timeout path.
+      returnStreamIteratorOnce();
     }
 
     setActiveSpanAttributes({

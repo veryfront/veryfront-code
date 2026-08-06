@@ -26,13 +26,13 @@ import {
   StreamLifecycleFailure,
 } from "#veryfront/agent/streaming/lifecycle/index.ts";
 import { shouldContinueAfterStreamStep } from "./tool-result-continuation.ts";
-import { createChatUiMessageStreamFromDataStream } from "../streaming/chat-ui-message-stream.ts";
+import { createChatUiMessageStreamFromDataStream } from "#veryfront/agent/streaming/chat-ui-message-stream.ts";
 import {
   hasIncompleteToolParts,
   isToolUiPart,
   toConversationPartsFromUiMessage,
-} from "../../chat/conversation.ts";
-import type { ChatUiMessage } from "../../chat/types.ts";
+} from "#veryfront/chat/conversation.ts";
+import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 
 afterEach(() => {
   _resetShimForTests();
@@ -2616,13 +2616,14 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
           result: { type: "web_fetch_result", url: "https://a.test" },
           providerExecuted: true,
         },
-        delayMs: 400,
+        delayMs: 200,
       },
       { chunk: { type: "finish", finishReason: "tool-calls", totalUsage: null } },
     ]);
 
     await processStream(result, state, controller, encoder, "t", {
       providerExecutedToolNames: ["web_fetch"],
+      localToolCommitGraceMs: 40,
     });
     result.cleanup();
 
@@ -2634,6 +2635,67 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
     }]);
   });
 
+  it("keeps a provider tool call pending across a preliminary result", async () => {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+
+    // A preliminary result is not terminal. Releasing the call on it re-arms the
+    // local commit grace, which truncates the stream before the final provider
+    // result arrives: the same failure this tracking exists to prevent.
+    const result = createDelayedResult([
+      {
+        chunk: {
+          type: "tool-input-start",
+          id: "srvtoolu_prelim",
+          toolName: "web_fetch",
+          providerExecuted: true,
+        },
+      },
+      {
+        chunk: {
+          type: "tool-input-delta",
+          id: "srvtoolu_prelim",
+          delta: '{"url":"https://a.test"}',
+        },
+      },
+      { chunk: { type: "tool-input-end", id: "srvtoolu_prelim" } },
+      { chunk: { type: "tool-input-start", id: "local-prelim", toolName: "list_skills" } },
+      { chunk: { type: "tool-input-delta", id: "local-prelim", delta: "{}" } },
+      { chunk: { type: "tool-input-end", id: "local-prelim" } },
+      {
+        chunk: {
+          type: "tool-result",
+          toolCallId: "srvtoolu_prelim",
+          toolName: "web_fetch",
+          result: { type: "web_fetch_result", url: "https://a.test", partial: true },
+          providerExecuted: true,
+          preliminary: true,
+        },
+      },
+      {
+        chunk: {
+          type: "tool-result",
+          toolCallId: "srvtoolu_prelim",
+          toolName: "web_fetch",
+          result: { type: "web_fetch_result", url: "https://a.test" },
+          providerExecuted: true,
+        },
+        delayMs: 200,
+      },
+      { chunk: { type: "finish", finishReason: "tool-calls", totalUsage: null } },
+    ]);
+
+    await processStream(result, state, controller, encoder, "t", {
+      providerExecutedToolNames: ["web_fetch"],
+      localToolCommitGraceMs: 40,
+    });
+    result.cleanup();
+
+    const outputs = events.filter((event) => event.type === "tool-output-available");
+    assertEquals(outputs.length, 2);
+    assertEquals(outputs[1]?.output, { type: "web_fetch_result", url: "https://a.test" });
+  });
+
   it("still truncates after a committed local tool call when no provider call is pending", async () => {
     const { controller, encoder } = createSSECollector();
     const state = createStreamState();
@@ -2642,11 +2704,12 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
       { chunk: { type: "tool-input-start", id: "local-2", toolName: "list_skills" } },
       { chunk: { type: "tool-input-delta", id: "local-2", delta: "{}" } },
       { chunk: { type: "tool-input-end", id: "local-2" } },
-      { chunk: { type: "finish", finishReason: "stop", totalUsage: null }, delayMs: 400 },
+      { chunk: { type: "finish", finishReason: "stop", totalUsage: null }, delayMs: 200 },
     ]);
 
     await processStream(result, state, controller, encoder, "t", {
       providerExecutedToolNames: ["web_fetch"],
+      localToolCommitGraceMs: 40,
     });
     result.cleanup();
 
@@ -2672,11 +2735,12 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
       { chunk: { type: "tool-input-start", id: "local-3", toolName: "list_skills" } },
       { chunk: { type: "tool-input-delta", id: "local-3", delta: "{}" } },
       { chunk: { type: "tool-input-end", id: "local-3" } },
-      { chunk: { type: "finish", finishReason: "stop", totalUsage: null }, delayMs: 400 },
+      { chunk: { type: "finish", finishReason: "stop", totalUsage: null }, delayMs: 200 },
     ]);
 
     await processStream(result, state, controller, encoder, "t", {
       providerExecutedToolNames: ["web_fetch"],
+      localToolCommitGraceMs: 40,
     });
     result.cleanup();
 
@@ -2689,7 +2753,7 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
 
     // The reported shape: a provider web_fetch that never resolves plus a
     // committed local tool. Holding the stream open must not turn the eventual
-    // timeout into "stop" — that is what strands the local tool unexecuted.
+    // timeout into "stop", which strands the local tool unexecuted.
     const result = createDelayedResult([
       {
         chunk: {
@@ -2709,6 +2773,7 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
 
     await processStream(result, state, controller, encoder, "t", {
       providerExecutedToolNames: ["web_fetch"],
+      localToolCommitGraceMs: 40,
       streamIdleTimeoutMs: 300,
     });
     result.cleanup();
@@ -2773,11 +2838,12 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
       { chunk: { type: "tool-input-start", id: "local-5", toolName: "list_skills" } },
       { chunk: { type: "tool-input-delta", id: "local-5", delta: "{}" } },
       { chunk: { type: "tool-input-end", id: "local-5" } },
-      { chunk: { type: "finish", finishReason: "stop", totalUsage: null }, delayMs: 400 },
+      { chunk: { type: "finish", finishReason: "stop", totalUsage: null }, delayMs: 200 },
     ]);
 
     await processStream(result, state, controller, encoder, "t", {
       providerExecutedToolNames: ["web_fetch"],
+      localToolCommitGraceMs: 40,
       availableToolNames: ["web_fetch", "list_skills"],
       streamIdleTimeoutMs: 1_000,
     });
@@ -2814,11 +2880,12 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
       { chunk: { type: "tool-input-start", id: "local-6", toolName: "list_skills" } },
       { chunk: { type: "tool-input-delta", id: "local-6", delta: "{}" } },
       { chunk: { type: "tool-input-end", id: "local-6" } },
-      { chunk: { type: "finish", finishReason: "stop", totalUsage: null }, delayMs: 400 },
+      { chunk: { type: "finish", finishReason: "stop", totalUsage: null }, delayMs: 200 },
     ]);
 
     await processStream(result, state, controller, encoder, "t", {
       providerExecutedToolNames: ["web_fetch"],
+      localToolCommitGraceMs: 40,
       streamIdleTimeoutMs: 1_000,
     });
     result.cleanup();
@@ -2863,7 +2930,7 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
     // Tripwire, not an endorsement. Both strands live below the
     // `processActiveStream()` early return, so `active` still reproduces the
     // reported incident. See the "Provider-executed tool finalization" row in
-    // docs/internal/stream-lifecycle-rollout.md — it blocks advancing past
+    // docs/internal/stream-lifecycle-rollout.md. It blocks advancing past
     // `shadow`. When the reducer port lands, this expectation flips.
     const parts = [
       {
