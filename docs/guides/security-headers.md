@@ -117,7 +117,7 @@ Read the policy your site is actually serving:
 curl -sS -D - -o /dev/null https://your-site.example/ | grep -i content-security-policy
 ```
 
-The origin you added should appear in the directive you added it to, alongside everything that was already there.
+Ensure the origin you added appears in the directive you added it to, alongside the existing sources.
 
 Then load the site with the browser console open. CSP violations name the directive that blocked the request, which maps directly onto the config key: a `style-src` violation is fixed with `styleSrc`, a `font-src` violation with `fontSrc`.
 
