@@ -147,8 +147,94 @@ describe("server/unhandled-rejection-guard", () => {
     target.dispatch("unhandledrejection", rejectionEvent(new Error("once")));
 
     assertEquals(logger.errors.length, 1);
-    assertEquals(second.installed, false);
+    assertEquals(target.listenerCount("unhandledrejection"), 1);
     first.dispose();
     second.dispose();
+  });
+
+  it("keeps guarding while a second server is still running", () => {
+    // Two servers in one process, the first stops first. Ownership by "whoever
+    // installed it" removed the only listener here and left the surviving
+    // server unguarded again.
+    const target = createFakeTarget();
+    const logger = createFakeLogger();
+    const first = installUnhandledRejectionGuard({ target, logger });
+    const second = installUnhandledRejectionGuard({ target, logger });
+
+    first.dispose();
+
+    assertEquals(target.listenerCount("unhandledrejection"), 1);
+    const event = rejectionEvent(new Error("after the first server stopped"));
+    target.dispatch("unhandledrejection", event);
+    assertEquals(event.prevented, true);
+    assertEquals(logger.errors.length, 1);
+
+    second.dispose();
+    assertEquals(target.listenerCount("unhandledrejection"), 0);
+  });
+
+  it("counts rejections across every holder of the guard", () => {
+    const target = createFakeTarget();
+    const first = installUnhandledRejectionGuard({ target, logger: createFakeLogger() });
+    const second = installUnhandledRejectionGuard({ target, logger: createFakeLogger() });
+
+    target.dispatch("unhandledrejection", rejectionEvent(new Error("one")));
+
+    // The count is a process-level metric, so both handles report it.
+    assertEquals(first.getRejectionCount(), 1);
+    assertEquals(second.getRejectionCount(), 1);
+    first.dispose();
+    second.dispose();
+  });
+
+  it("prevents the default before it formats or logs anything", () => {
+    // A reason whose toString throws must not defeat suppression: formatting
+    // runs after preventDefault, and diagnostics cannot escape the listener.
+    const target = createFakeTarget();
+    const logger = createFakeLogger();
+    installUnhandledRejectionGuard({ target, logger });
+
+    const hostile = {
+      toString(): string {
+        throw new Error("conversion failed");
+      },
+    };
+    const event = rejectionEvent(hostile);
+    target.dispatch("unhandledrejection", event);
+
+    assertEquals(event.prevented, true);
+  });
+
+  it("survives a logger that throws", () => {
+    const target = createFakeTarget();
+    installUnhandledRejectionGuard({
+      target,
+      logger: {
+        error(): void {
+          throw new Error("logging backend is down");
+        },
+      },
+    });
+
+    const event = rejectionEvent(new Error("still contained"));
+    target.dispatch("unhandledrejection", event);
+
+    assertEquals(event.prevented, true);
+  });
+
+  it("still counts a rejection whose diagnostics failed", () => {
+    const target = createFakeTarget();
+    const guard = installUnhandledRejectionGuard({
+      target,
+      logger: {
+        error(): void {
+          throw new Error("logging backend is down");
+        },
+      },
+    });
+
+    target.dispatch("unhandledrejection", rejectionEvent(new Error("counted")));
+
+    assertEquals(guard.getRejectionCount(), 1);
   });
 });

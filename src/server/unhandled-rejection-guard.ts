@@ -52,20 +52,38 @@ export interface UnhandledRejectionGuardOptions {
 
 export interface UnhandledRejectionGuardHandle {
   /**
-   * False when another guard already owns this target. A process needs one
-   * reporter, so a second server instance must not double-report.
+   * True while this handle holds a lease on an active guard. False only when the
+   * target cannot receive listeners at all.
    */
   readonly installed: boolean;
-  /** Rejections contained so far. Export as a metric and alert on its rate. */
+  /**
+   * Rejections contained on this target so far, across every holder. This is a
+   * process-level metric: export it and alert on its rate.
+   */
   getRejectionCount(): number;
-  /** Remove the listener. Safe to call more than once. */
+  /**
+   * Release this handle's lease. The listener is removed once the last holder
+   * releases it. Safe to call more than once.
+   */
   dispose(): void;
 }
 
 const EVENT_TYPE = "unhandledrejection";
 
-/** One owner per target, so two server instances cannot both report. */
-const guardedTargets = new WeakSet<GuardEventTarget>();
+/**
+ * One listener per target, shared by every holder.
+ *
+ * Leases rather than a single owner: with two servers in one process, ownership
+ * by whoever installed it meant the first server to stop removed the only
+ * listener and left the survivor unguarded.
+ */
+interface GuardLease {
+  listener: (event: unknown) => void;
+  holders: number;
+  rejectionCount: number;
+}
+
+const guardedTargets = new WeakMap<GuardEventTarget, GuardLease>();
 
 function describeReason(reason: unknown): { error: string; stack?: string } {
   if (reason instanceof Error) {
@@ -101,34 +119,58 @@ export function installUnhandledRejectionGuard(
   options: UnhandledRejectionGuardOptions = {},
 ): UnhandledRejectionGuardHandle {
   const target = options.target ?? resolveDefaultTarget();
-  if (!target || guardedTargets.has(target)) return disposedHandle;
+  if (!target) return disposedHandle;
 
   const logger = options.logger ?? guardLog;
-  let rejectionCount = 0;
-  let disposed = false;
+  let lease = guardedTargets.get(target);
 
-  const listener = (event: unknown): void => {
-    const rejection = event as UnhandledRejectionEventLike;
-    rejectionCount++;
-    logger.error("Contained an unhandled promise rejection", {
-      ...describeReason(rejection?.reason),
-      rejectionCount,
-    });
-    // Deno terminates the process unless the default is prevented.
-    rejection?.preventDefault?.();
-  };
+  if (lease) {
+    lease.holders++;
+  } else {
+    const created: GuardLease = {
+      holders: 1,
+      rejectionCount: 0,
+      listener: (event: unknown): void => {
+        const rejection = event as UnhandledRejectionEventLike;
+        // Suppress first. Deno terminates the process unless the default is
+        // prevented, and a reason with a throwing toString, or a logger that
+        // fails, must not be able to cost the process its containment.
+        try {
+          rejection?.preventDefault?.();
+        } catch {
+          // A target that cannot suppress leaves nothing to salvage; still
+          // report below so the rejection is not silent.
+        }
+        created.rejectionCount++;
+        try {
+          logger.error("Contained an unhandled promise rejection", {
+            ...describeReason(rejection?.reason),
+            rejectionCount: created.rejectionCount,
+          });
+        } catch {
+          // Diagnostics are best effort. The rejection is already contained and
+          // counted, and throwing here would resurface as another rejection.
+        }
+      },
+    };
+    target.addEventListener(EVENT_TYPE, created.listener);
+    guardedTargets.set(target, created);
+    lease = created;
+  }
 
-  target.addEventListener(EVENT_TYPE, listener);
-  guardedTargets.add(target);
+  const held = lease;
+  let released = false;
 
   return {
     installed: true,
-    getRejectionCount: () => rejectionCount,
+    getRejectionCount: () => held.rejectionCount,
     dispose: () => {
-      if (disposed) return;
-      disposed = true;
-      target.removeEventListener(EVENT_TYPE, listener);
-      guardedTargets.delete(target);
+      if (released) return;
+      released = true;
+      held.holders--;
+      if (held.holders > 0) return;
+      target.removeEventListener(EVENT_TYPE, held.listener);
+      if (guardedTargets.get(target) === held) guardedTargets.delete(target);
     },
   };
 }

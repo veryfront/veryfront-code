@@ -163,6 +163,17 @@ export interface StartProductionServerOptions extends ServerOptions {
   adapter?: RuntimeAdapter;
   /** Pre-computed bootstrap result to skip internal bootstrap (avoids double initialization) */
   bootstrapResult?: BootstrapResult;
+  /**
+   * Contain unhandled promise rejections instead of letting them terminate the
+   * process. Defaults to true.
+   *
+   * The hosted runtime serves many projects per process, where one project's
+   * dropped promise otherwise takes down every other project on the pod. Set
+   * this to false when embedding the server in a process you own and would
+   * rather have a rejection stay fatal, so a bug outside the server is not
+   * masked. Rejections are reported at error level either way.
+   */
+  unhandledRejectionGuard?: boolean;
 }
 
 /** Starts production server. */
@@ -198,8 +209,11 @@ export function startProductionServer(
       const ownsMemoryMonitoring = memoryMonitoringConfig.enabled;
       // Installed before bootstrap so a rejection during startup is contained
       // too. This process serves every project on the pod, so one dropped
-      // promise must not take the others down with it.
-      const rejectionGuard = installUnhandledRejectionGuard();
+      // promise must not take the others down with it. Embedders that own the
+      // process can opt out and keep rejections fatal.
+      const rejectionGuard = options.unhandledRejectionGuard === false
+        ? undefined
+        : installUnhandledRejectionGuard();
 
       try {
         // Use pre-computed bootstrap result if provided, otherwise bootstrap here
@@ -330,7 +344,7 @@ export function startProductionServer(
         const stop = async (): Promise<void> => {
           setServerInitialized(false);
           if (ownsMemoryMonitoring) stopMemoryMonitoring();
-          rejectionGuard.dispose();
+          rejectionGuard?.dispose();
 
           try {
             await server.stop();
@@ -342,7 +356,7 @@ export function startProductionServer(
         return { ready, stop };
       } catch (error) {
         if (ownsMemoryMonitoring) stopMemoryMonitoring();
-        rejectionGuard.dispose();
+        rejectionGuard?.dispose();
         throw error;
       }
     },
