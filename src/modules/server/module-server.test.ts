@@ -41,7 +41,10 @@ import {
   clearReactVersionCache,
   getDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
-import { DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV } from "#veryfront/transforms/esm/dependency-pinning-cohort.ts";
+import {
+  DEPENDENCY_PINNING_PROJECTS_ENV,
+  DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV,
+} from "#veryfront/transforms/esm/dependency-pinning-cohort.ts";
 import { buildImportMapJson, clearImportMapCache } from "../../html/utils.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
@@ -100,6 +103,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     // who is in it, so a test that sets one and leaks the other leaves a later
     // test on a cohort it never chose.
     deleteEnv(DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV);
+    deleteEnv(DEPENDENCY_PINNING_PROJECTS_ENV);
     deleteEnv("VERYFRONT_ENABLE_SERVER_TIMING");
     deleteEnv("VERYFRONT_CACHE_DIR");
     clearReleaseAssetManifestCache();
@@ -2898,6 +2902,54 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(response.status, 200);
       assertEquals(response.headers.get("content-type")?.includes("javascript"), true);
     } finally {
+      clearReactVersionCache();
+      clearImportMapCache();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("conflicts an allowlisted project that carries no pin key", async () => {
+    // Covers the allowlist arm of the cohort, which the rollout-percent tests
+    // do not reach: named explicitly, the project is in the cohort, and a
+    // request with no pin key is a conflict.
+    //
+    // This does NOT prove which identity the cohort check reads. Where the UUID
+    // and the path id disagree, other guards answer 409 with the identical body
+    // for their own reasons, so the response cannot distinguish them. That the
+    // check must read effectiveProjectId -- the same identity handed to
+    // createDependencyPinningSource below it -- is established by reading the
+    // code, not by this test.
+    const { serveModule } = await import("./module-server.ts");
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-cohort-id-" });
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      setEnv(DEPENDENCY_PINNING_PROJECTS_ENV, "pinned-uuid");
+      await Deno.writeTextFile(
+        `${projectDir}/package.json`,
+        JSON.stringify({ dependencies: { react: "19.2.4" } }),
+      );
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/Widget.tsx`,
+        ['"use client";', "export default function Widget() { return null; }"].join("\n"),
+      );
+
+      const response = await serveModule(
+        new Request("http://localhost:3000/_vf_modules/components/Widget.js"),
+        {
+          projectId: "test",
+          projectUUID: "pinned-uuid",
+          projectDir,
+          adapter: denoAdapter,
+          isLocalProject: true,
+          allowSSRModuleMode: true,
+        },
+      );
+
+      assertEquals(response.status, 409);
+      assertEquals(await response.text(), "Unknown dependency snapshot");
+    } finally {
+      deleteEnv(DEPENDENCY_PINNING_PROJECTS_ENV);
       clearReactVersionCache();
       clearImportMapCache();
       await Deno.remove(projectDir, { recursive: true });
