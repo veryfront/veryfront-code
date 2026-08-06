@@ -969,6 +969,52 @@ describe("chat starters scaffold a Markdown renderer", () => {
     }
   });
 
+  it("imports the parser at the exact version it installs", async () => {
+    for (const name of await chatTemplates()) {
+      const files = await getTemplate(name);
+      const renderer = files?.find((file) => file.path === "app/markdown-renderer.tsx");
+      assertExists(renderer, `${name} should scaffold app/markdown-renderer.tsx`);
+
+      const dependencies = getTemplateConfig(name)?.npmDependencies ?? {};
+      for (const dependency of ["react-markdown", "remark-gfm"]) {
+        // The module pipeline resolves browser imports from the specifier, not
+        // from package.json, so a bare specifier is an unpinned CDN fetch and
+        // the dev server warns about it on the first request. Carrying the
+        // version inline is what makes the scaffold reproducible.
+        const version = dependencies[dependency];
+        assertEquals(
+          renderer.content.includes(`${dependency}@${version}`),
+          true,
+          `${name} installs ${dependency}@${version} but does not import that version`,
+        );
+        assertEquals(
+          new RegExp(`from ['"]${dependency}['"]`).test(renderer.content),
+          false,
+          `${name} imports ${dependency} unpinned`,
+        );
+      }
+    }
+  });
+
+  it("resolves the pinned parser specifiers during consumer tsc", async () => {
+    for (const name of await chatTemplates()) {
+      const files = await getTemplate(name);
+      const tsconfig = files?.find((file) => file.path === "tsconfig.json");
+      assertExists(tsconfig, `${name} should declare consumer TypeScript options`);
+
+      // TypeScript cannot resolve `react-markdown@9.0.3` on its own, so without
+      // these aliases the scaffold opens with unresolved-module errors in the
+      // editor. The wildcard keeps them correct across a version bump.
+      for (const dependency of ["react-markdown", "remark-gfm"]) {
+        assertEquals(
+          tsconfig.content.includes(`"${dependency}@*"`),
+          true,
+          `${name} imports a pinned ${dependency} and must alias it for tsc`,
+        );
+      }
+    }
+  });
+
   it("allows the relative .tsx import during consumer tsc", async () => {
     for (const name of await chatTemplates()) {
       const files = await getTemplate(name);
