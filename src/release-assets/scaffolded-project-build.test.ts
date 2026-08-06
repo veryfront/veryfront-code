@@ -260,6 +260,29 @@ describe("release assets: scaffolded project build", () => {
       assertEquals(result.state, "ready");
       assertEquals(rec.states.map(({ state }) => state), []);
 
+      // Project pages are served with `script-src 'self' 'nonce-...'
+      // https://esm.sh` — no 'unsafe-eval'. A published JS asset containing
+      // `new Function` throws EvalError in the browser and kills hydration
+      // before first paint, leaving the page on its skeleton loaders.
+      //
+      // This asserts the shipped bytes, not the import graph, because the
+      // build succeeds either way: before the fix these scaffolds published
+      // platform/compat/dynamic-import.ts as its own chunk and every test here
+      // still passed.
+      const evalOffenders = rec.uploads
+        .filter((upload) => upload.contentType.includes("javascript"))
+        .filter((upload) => /\bnew Function\s*\(/.test(new TextDecoder().decode(upload.bytes)));
+      assertEquals(
+        evalOffenders.map((upload) => upload.hash),
+        [],
+        `${templateName} published JS assets containing new Function, which the page CSP ` +
+          `blocks at runtime: ${
+            evalOffenders
+              .map((upload) => new TextDecoder().decode(upload.bytes).slice(0, 120))
+              .join(" | ")
+          }`,
+      );
+
       const manifest = parseReleaseAssetManifest(rec.manifest);
       assertExists(manifest);
       assertEquals(
