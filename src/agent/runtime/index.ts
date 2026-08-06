@@ -74,15 +74,12 @@ import {
   shouldContinueAfterStreamStep,
 } from "./tool-result-continuation.ts";
 import {
-  applySkillActivationResult,
   enforceSkillPolicy,
   FORM_INPUT_TOOL_ID,
-  hasSubmittedFormInputResult,
-  hydrateActiveSkillStateFromMessages,
   LOAD_SKILL_TOOL_ID,
-  removeFormInputAfterSubmission,
   SUBMITTED_FORM_INPUT_CONTEXT_KEY,
 } from "./skill-policy-enforcement.ts";
+import { AgentLoopSkillState } from "./agent-loop-skill-state.ts";
 import { markRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
 import {
   getRuntimeAllowedRemoteTools,
@@ -1054,25 +1051,7 @@ export class AgentRuntime {
       }
 
       // Request-scoped skill policy (not class-level mutable state)
-      const hydratedSkillState = hydrateActiveSkillStateFromMessages(currentMessages);
-      let activeSkillId = hydratedSkillState.activeSkillId;
-      let activeSkillPolicy = hydratedSkillState.activeSkillPolicy;
-      let activeSkillToolAvailability = hydratedSkillState.activeSkillToolAvailability;
-      let activeSkillDelegationOverrides = hydratedSkillState.activeSkillDelegationOverrides;
-      const applySuccessfulSkillResult = (result: unknown): void => {
-        const next = applySkillActivationResult({
-          activeSkillId,
-          activeSkillPolicy,
-          activeSkillToolAvailability,
-          activeSkillDelegationOverrides,
-        }, result);
-        activeSkillId = next.activeSkillId;
-        activeSkillPolicy = next.activeSkillPolicy;
-        activeSkillToolAvailability = next.activeSkillToolAvailability;
-        activeSkillDelegationOverrides = next.activeSkillDelegationOverrides;
-      };
-      let hasSubmittedFormInputInLoop = hasSubmittedFormInputResult(currentMessages) ||
-        runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
+      const skillState = AgentLoopSkillState.hydrate(currentMessages, runtimeContext);
       const hasToolReplacements = toolReplacements !== undefined;
       const initialToolExposureCheckpoint = hasToolReplacements
         ? undefined
@@ -1126,17 +1105,17 @@ export class AgentRuntime {
         throwIfAborted(abortSignal);
         this.status = "thinking";
         addSpanEvent(loopSpan, "step_start", { step });
-        const stepRuntimeContext = hasSubmittedFormInputInLoop
+        const stepRuntimeContext = skillState.hasSubmittedFormInput
           ? markSubmittedFormInputRuntimeContext(currentRuntimeContext)
           : currentRuntimeContext;
 
         const preparedStep = await prepareAgentRuntimeStep({
           agentId: this.id,
-          activeSkillId: hasToolReplacements ? undefined : activeSkillId,
-          activeSkillPolicy: hasToolReplacements ? undefined : activeSkillPolicy,
+          activeSkillId: hasToolReplacements ? undefined : skillState.activeSkillId,
+          activeSkillPolicy: hasToolReplacements ? undefined : skillState.activeSkillPolicy,
           activeSkillToolAvailability: hasToolReplacements
             ? undefined
-            : activeSkillToolAvailability,
+            : skillState.activeSkillToolAvailability,
           allowedRemoteToolNames,
           config: runtimeStepConfig,
           effectiveModel,
@@ -1319,7 +1298,7 @@ export class AgentRuntime {
 
         this.status = "tool_execution";
         addSpanEvent(loopSpan, "tool_execution_start", { count: response.toolCalls.length });
-        const mustLoadSkillFirstForStep = !activeSkillPolicy &&
+        const mustLoadSkillFirstForStep = !skillState.activeSkillPolicy &&
           response.toolCalls.some((tc) => tc.toolName === LOAD_SKILL_TOOL_ID);
 
         for (const tc of response.toolCalls) {
@@ -1478,12 +1457,12 @@ export class AgentRuntime {
 
             const policyCheck = enforceSkillPolicy(
               tc.toolName,
-              activeSkillPolicy,
+              skillState.activeSkillPolicy,
               mustLoadSkillFirstForStep,
               {
-                activeSkillId,
-                hasSubmittedFormInput: hasSubmittedFormInputInLoop,
-                skillToolAvailability: activeSkillToolAvailability,
+                activeSkillId: skillState.activeSkillId,
+                hasSubmittedFormInput: skillState.hasSubmittedFormInput,
+                skillToolAvailability: skillState.activeSkillToolAvailability,
                 toolInput: tc.input,
               },
             );
@@ -1522,7 +1501,7 @@ export class AgentRuntime {
               toolCall.args = applySkillDelegationOverridesToToolInput(
                 tc.toolName,
                 toolCall.args,
-                hasToolReplacements ? undefined : activeSkillDelegationOverrides,
+                hasToolReplacements ? undefined : skillState.activeSkillDelegationOverrides,
               );
               const executionContext = {
                 toolCallId: tc.toolCallId,
@@ -1583,15 +1562,14 @@ export class AgentRuntime {
                 }
                 // Track skill policy from successful load_skill results
                 if (tc.toolName === LOAD_SKILL_TOOL_ID) {
-                  applySuccessfulSkillResult(result);
+                  skillState.applySuccessfulResult(result);
                 }
-                activeSkillPolicy = removeFormInputAfterSubmission(
+                const submittedFormInput = isSubmittedFormInputExecutionResult(
                   tc.toolName,
                   result,
-                  activeSkillPolicy,
                 );
-                if (isSubmittedFormInputExecutionResult(tc.toolName, result)) {
-                  hasSubmittedFormInputInLoop = true;
+                skillState.markFormInputSubmitted(tc.toolName, result, submittedFormInput);
+                if (submittedFormInput) {
                   currentRuntimeContext = markSubmittedFormInputRuntimeContext(
                     currentRuntimeContext,
                   );
@@ -1690,25 +1668,7 @@ export class AgentRuntime {
     }
 
     // Request-scoped skill policy (not class-level mutable state)
-    const hydratedSkillState = hydrateActiveSkillStateFromMessages(currentMessages);
-    let activeSkillId = hydratedSkillState.activeSkillId;
-    let activeSkillPolicy = hydratedSkillState.activeSkillPolicy;
-    let activeSkillToolAvailability = hydratedSkillState.activeSkillToolAvailability;
-    let activeSkillDelegationOverrides = hydratedSkillState.activeSkillDelegationOverrides;
-    const applySuccessfulSkillResult = (result: unknown): void => {
-      const next = applySkillActivationResult({
-        activeSkillId,
-        activeSkillPolicy,
-        activeSkillToolAvailability,
-        activeSkillDelegationOverrides,
-      }, result);
-      activeSkillId = next.activeSkillId;
-      activeSkillPolicy = next.activeSkillPolicy;
-      activeSkillToolAvailability = next.activeSkillToolAvailability;
-      activeSkillDelegationOverrides = next.activeSkillDelegationOverrides;
-    };
-    let hasSubmittedFormInputInLoop = hasSubmittedFormInputResult(currentMessages) ||
-      runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
+    const skillState = AgentLoopSkillState.hydrate(currentMessages, runtimeContext);
     let finalFinishReason: string | undefined;
     let latestAssistantText = "";
     const initialToolExposureCheckpoint = getRuntimeToolExposureCheckpoint(this.config);
@@ -1737,15 +1697,15 @@ export class AgentRuntime {
       throwIfAborted(abortSignal);
       sendSSE(controller, encoder, { type: "step-start" });
       const currentStepToolResults = new Map<string, ToolResultPart>();
-      const stepRuntimeContext = hasSubmittedFormInputInLoop
+      const stepRuntimeContext = skillState.hasSubmittedFormInput
         ? markSubmittedFormInputRuntimeContext(currentRuntimeContext)
         : currentRuntimeContext;
 
       const preparedStep = await prepareAgentRuntimeStep({
         agentId: this.id,
-        activeSkillId,
-        activeSkillPolicy,
-        activeSkillToolAvailability,
+        activeSkillId: skillState.activeSkillId,
+        activeSkillPolicy: skillState.activeSkillPolicy,
+        activeSkillToolAvailability: skillState.activeSkillToolAvailability,
         allowedRemoteToolNames,
         config: runtimeStepConfig,
         effectiveModel,
@@ -1923,7 +1883,7 @@ export class AgentRuntime {
 
       this.status = "tool_execution";
       const streamedToolCalls = Array.from(state.toolCalls.values());
-      const mustLoadSkillFirstForStep = !activeSkillPolicy &&
+      const mustLoadSkillFirstForStep = !skillState.activeSkillPolicy &&
         streamedToolCalls.some((tc) => tc.name === LOAD_SKILL_TOOL_ID);
 
       for (const tc of streamedToolCalls) {
@@ -1986,15 +1946,14 @@ export class AgentRuntime {
               agentWriteFinalResponseToolGuardEnabled = true;
             }
             if (tc.name === LOAD_SKILL_TOOL_ID) {
-              applySuccessfulSkillResult(matchingResult.output);
+              skillState.applySuccessfulResult(matchingResult.output);
             }
-            activeSkillPolicy = removeFormInputAfterSubmission(
+            const submittedFormInput = isSubmittedFormInputExecutionResult(
               tc.name,
               matchingResult.output,
-              activeSkillPolicy,
             );
-            if (isSubmittedFormInputExecutionResult(tc.name, matchingResult.output)) {
-              hasSubmittedFormInputInLoop = true;
+            skillState.markFormInputSubmitted(tc.name, matchingResult.output, submittedFormInput);
+            if (submittedFormInput) {
               currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
             }
           }
@@ -2012,15 +1971,14 @@ export class AgentRuntime {
               agentWriteFinalResponseToolGuardEnabled = true;
             }
             if (tc.name === LOAD_SKILL_TOOL_ID) {
-              applySuccessfulSkillResult(persistedResult.result);
+              skillState.applySuccessfulResult(persistedResult.result);
             }
-            activeSkillPolicy = removeFormInputAfterSubmission(
+            const submittedFormInput = isSubmittedFormInputExecutionResult(
               tc.name,
               persistedResult.result,
-              activeSkillPolicy,
             );
-            if (isSubmittedFormInputExecutionResult(tc.name, persistedResult.result)) {
-              hasSubmittedFormInputInLoop = true;
+            skillState.markFormInputSubmitted(tc.name, persistedResult.result, submittedFormInput);
+            if (submittedFormInput) {
               currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
             }
           }
@@ -2133,12 +2091,12 @@ export class AgentRuntime {
         }
         const policyCheck = enforceSkillPolicy(
           tc.name,
-          activeSkillPolicy,
+          skillState.activeSkillPolicy,
           mustLoadSkillFirstForStep,
           {
-            activeSkillId,
-            hasSubmittedFormInput: hasSubmittedFormInputInLoop,
-            skillToolAvailability: activeSkillToolAvailability,
+            activeSkillId: skillState.activeSkillId,
+            hasSubmittedFormInput: skillState.hasSubmittedFormInput,
+            skillToolAvailability: skillState.activeSkillToolAvailability,
             toolInput: toolCall.args,
           },
         );
@@ -2160,7 +2118,7 @@ export class AgentRuntime {
           toolCall.args = applySkillDelegationOverridesToToolInput(
             tc.name,
             toolCall.args,
-            activeSkillDelegationOverrides,
+            skillState.activeSkillDelegationOverrides,
           );
 
           callbacks?.onToolCall?.(toolCall);
@@ -2204,15 +2162,11 @@ export class AgentRuntime {
           if (resultError === undefined) {
             // Track skill policy from successful load_skill results
             if (tc.name === LOAD_SKILL_TOOL_ID) {
-              applySuccessfulSkillResult(result);
+              skillState.applySuccessfulResult(result);
             }
-            activeSkillPolicy = removeFormInputAfterSubmission(
-              tc.name,
-              result,
-              activeSkillPolicy,
-            );
-            if (isSubmittedFormInputExecutionResult(tc.name, result)) {
-              hasSubmittedFormInputInLoop = true;
+            const submittedFormInput = isSubmittedFormInputExecutionResult(tc.name, result);
+            skillState.markFormInputSubmitted(tc.name, result, submittedFormInput);
+            if (submittedFormInput) {
               currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
             }
             if (shouldHideProjectToolAfterAgentWriteSuccess(tc.name)) {
