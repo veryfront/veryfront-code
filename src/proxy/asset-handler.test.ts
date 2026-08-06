@@ -585,7 +585,7 @@ describe("proxy release asset handler", () => {
     );
   });
 
-  it("bounds aggregate cold loads, queued work, and aborts queued callers", async () => {
+  it("queues cold loads past the concurrency bound instead of shedding them", async () => {
     const gate = Promise.withResolvers<void>();
     const sources = Array.from(
       { length: 51 },
@@ -633,35 +633,35 @@ describe("proxy release asset handler", () => {
     gate.resolve();
     const responses = await Promise.all(pending);
     assertEquals((await replacement)?.status, 200);
+    // Every caller that stayed connected is served. Demand past the permit
+    // count waits its turn; it is never shed, because a shed asset is a dead
+    // page — browser `import()` does not retry.
     assertEquals(
       responses.filter((response) => response?.status === 200).length,
-      19,
+      49,
     );
     assertEquals(
       responses.filter((response) => response?.status === 503).length,
-      30,
+      0,
     );
     assertEquals(
       responses.filter((response) => response?.status === 499).length,
       1,
     );
-    assertEquals(
-      responses
-        .filter((response) => response?.status === 503)
-        .every((response) => response?.headers.get("Retry-After") === "1"),
-      true,
-    );
+    // Queueing must not widen the one bound that guards real memory.
     assertEquals(maxActive, 4);
-    assertEquals(calls, 20);
+    // One upstream load per distinct hash, minus the caller that disconnected
+    // while queued, plus the replacement.
+    assertEquals(calls, 50);
 
     assertEquals(
       (await handle(urls[49]!, { apiBaseUrl: API_BASE, fetchImpl }))?.status,
       200,
     );
-    assertEquals(calls, 21);
+    assertEquals(calls, 50);
   });
 
-  it("bounds same-hash followers while retaining one upstream load", async () => {
+  it("serves every same-hash follower from one upstream load", async () => {
     const source = "export const boundedFollowers = true;";
     const gate = Promise.withResolvers<void>();
     let calls = 0;
@@ -682,13 +682,16 @@ describe("proxy release asset handler", () => {
 
     gate.resolve();
     const responses = await Promise.all(pending);
+    // Followers of a load that already succeeded hold no resource of their
+    // own: the bytes are in memory and identical for all of them. Rejecting
+    // any of them would protect nothing.
     assertEquals(
       responses.filter((response) => response?.status === 200).length,
-      64,
+      80,
     );
     assertEquals(
       responses.filter((response) => response?.status === 503).length,
-      16,
+      0,
     );
     assertEquals(calls, 1);
   });
