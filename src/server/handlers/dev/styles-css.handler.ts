@@ -52,7 +52,7 @@ const MAX_DIAGNOSTIC_LENGTH = 2_000;
 /**
  * Neutralize the only sequence that can terminate a CSS comment (a star
  * followed by a slash). Diagnostic text is derived from project-controlled
- * input — a stylesheet's `@plugin` name reaches the message verbatim — so
+ * input (a stylesheet's `@plugin` name reaches the message verbatim), so
  * leaving that sequence intact would close the banner early and let the rest
  * of the message be parsed as CSS rules.
  */
@@ -298,7 +298,7 @@ export class StylesCSSHandler extends BaseHandler {
         );
       });
     } catch (error) {
-      // Ensure the handler never throws — an uncaught error causes the route registry
+      // Ensure the handler never throws: an uncaught error causes the route registry
       // to skip this handler silently and fall through to the 404 handler.
       logger.error("Unhandled error in CSS handler", {
         error: error instanceof Error ? error.message : String(error),
@@ -310,9 +310,9 @@ export class StylesCSSHandler extends BaseHandler {
       // completely unstyled and nothing in the browser says why. Route it
       // through the same visible diagnostic the compile path uses.
       //
-      // The message stays generic. Unlike the compile path — whose text comes
-      // from the project's own stylesheet and is the whole point of this route
-      // — this catch fires on infrastructure faults (adapter, filesystem,
+      // The message stays generic. The compile path's text comes from the
+      // project's own stylesheet and is the whole point of this route. This
+      // catch instead fires on infrastructure faults (adapter, filesystem,
       // network) whose messages carry server-side paths and internals, and a
       // preview URL is shareable. The detail is logged above instead.
       const responseBuilder = this.createResponseBuilder(ctx).withCache("no-cache");

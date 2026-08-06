@@ -5,7 +5,7 @@
  * `/_vf_styles/styles.css` serves the preview and dev shell (production goes
  * through the release manifest or `/_vf/css/<hash>.css`). Both of its error
  * paths answer 200 `text/css`, which is the only way the browser will render
- * the diagnostic — but the outer catch used to answer with a bare comment:
+ * the diagnostic. The outer catch, though, used to answer with a bare comment:
  * zero rules, no visible signal, indistinguishable from a project that simply
  * has no styles. The page rendered completely unstyled and nothing in the
  * browser said why.
@@ -241,7 +241,7 @@ describe("server/handlers/dev/styles-css error responses", () => {
 
   it("escapes a backslash so it cannot neutralize the escape added to a quote", () => {
     // The backslash must sit directly before a quote. Escaping the quote alone
-    // turns `\"` into `\\"` — an escaped backslash followed by a live quote,
+    // turns `\"` into `\\"`: an escaped backslash followed by a live quote,
     // which closes the string. Only escaping the backslash first prevents it.
     const css = renderCSSDiagnostic("HEADING", {
       title: "T",
