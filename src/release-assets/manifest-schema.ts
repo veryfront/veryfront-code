@@ -63,6 +63,28 @@ const MANIFEST_KEYS = new Set([
   "dependencyMode",
   "dependencies",
 ]);
+/**
+ * Key set of the v1 body still held in storage for every release published
+ * before the v2 move. v1 carried `fallback` and had no `dependencyMode`.
+ */
+const LEGACY_V1_MANIFEST_KEYS = new Set([
+  "schemaVersion",
+  "projectId",
+  "releaseId",
+  "releaseVersion",
+  "manifestVersion",
+  "builderVersion",
+  "sourceContentHash",
+  "createdAt",
+  "assetBasePath",
+  "modules",
+  "css",
+  "routes",
+  "dependencies",
+  "fallback",
+]);
+const LEGACY_V1_SCHEMA_VERSION = 1;
+
 const ASSET_ENTRY_KEYS = new Set(["contentHash", "size", "contentType"]);
 const CSS_ENTRY_KEYS = new Set([
   "contentHash",
@@ -431,7 +453,79 @@ export function readUntrustedOwnDataProperty(value: unknown, key: PropertyKey): 
   }
 }
 
+/**
+ * Parse an untrusted body, tolerating the v1 shape still held in storage.
+ *
+ * Consumption must read what was published, not only what the current builder
+ * emits: every release predating the v2 move stored a v1 body, and refusing
+ * those takes the whole release's browser modules offline. Production stays
+ * strict — `getReleaseAssetManifestSchema` is v2-only, so no new v1 can be
+ * written — while reads adapt the old shape and then apply the full v2
+ * validator to it. The adapter only reshapes; it never validates.
+ */
 function parseReleaseAssetManifestImpl(value: unknown): ReleaseAssetManifest | null {
+  const current = parseCurrentManifestBody(value);
+  if (current) return current;
+
+  const adapted = adaptLegacyV1ManifestBody(value);
+  return adapted ? parseCurrentManifestBody(adapted) : null;
+}
+
+/**
+ * Reshape a v1 body into the v2 shape, or null when it is not a v1 body.
+ *
+ * `fallback` is dropped (nothing reads it) and `dependencyMode` is reported as
+ * `source`, which is what v1's always-empty `dependencies` means. CSS is
+ * dropped entirely: a v1 entry carries no `cssPipelineIdentity` and a
+ * short-token `styleProfileHash`, and both are cache-correctness keys that
+ * cannot be recovered from the stored artifact. Reporting no manifest CSS
+ * routes styling back through the renderer's own pipeline, which is the
+ * documented per-entry fallback; fabricating the identities would risk serving
+ * the wrong stylesheet. Route CSS references are cleared with it so the
+ * reference check still resolves.
+ */
+function adaptLegacyV1ManifestBody(value: unknown): Record<string, unknown> | null {
+  const candidate = snapshotExactDataRecord(value, LEGACY_V1_MANIFEST_KEYS);
+  if (!candidate) return null;
+  if (candidate.schemaVersion !== LEGACY_V1_SCHEMA_VERSION) return null;
+
+  const routes = adaptLegacyV1Routes(candidate.routes);
+  if (!routes) return null;
+
+  return {
+    schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
+    projectId: candidate.projectId,
+    releaseId: candidate.releaseId,
+    releaseVersion: candidate.releaseVersion,
+    manifestVersion: candidate.manifestVersion,
+    builderVersion: candidate.builderVersion,
+    sourceContentHash: candidate.sourceContentHash,
+    createdAt: candidate.createdAt,
+    assetBasePath: candidate.assetBasePath,
+    modules: candidate.modules,
+    css: [],
+    routes,
+    dependencyMode: "source",
+    dependencies: candidate.dependencies,
+  };
+}
+
+/** Copy v1 route entries with their CSS closure cleared. */
+function adaptLegacyV1Routes(value: unknown): Record<string, unknown> | null {
+  if (!isPlainRecord(value)) return null;
+  const keys = Object.keys(value);
+  if (keys.length > MAX_ROUTE_ENTRIES) return null;
+
+  const routes: Record<string, unknown> = {};
+  for (const key of keys) {
+    const entry = readUntrustedOwnDataProperty(value, key);
+    if (!isPlainRecord(entry)) return null;
+    routes[key] = { modules: readUntrustedOwnDataProperty(entry, "modules"), css: [] };
+  }
+  return routes;
+}
+
+function parseCurrentManifestBody(value: unknown): ReleaseAssetManifest | null {
   const candidate = snapshotExactDataRecord(value, MANIFEST_KEYS);
   if (!candidate) return null;
   if (candidate.schemaVersion !== RELEASE_ASSET_MANIFEST_SCHEMA_VERSION) return null;
