@@ -54,10 +54,10 @@ const MAX_CACHED_ASSET_BYTES = 32 * 1024 * 1024;
  * and finally an honest 504.
  *
  * A 503 is still reachable, but only from the semaphore's own
- * DEFAULT_PERMIT_SEMAPHORE_MAX_QUEUE_SIZE backstop. That threshold is two
+ * `DEFAULT_PERMIT_SEMAPHORE_MAX_QUEUE_SIZE` backstop. That threshold is two
  * orders of magnitude above one page's module graph, so reaching it means a
  * genuine flood rather than a project being shed for the size of the document
- * this proxy just served it.
+ * this proxy just served.
  */
 const MAX_CONCURRENT_COLD_LOADS = 4;
 
