@@ -136,6 +136,43 @@ describe("BabelParseOnlyParser", () => {
       URL.revokeObjectURL(workerUrl);
     }
   });
+
+  it("parses TypeScript syntax under a .js file name", async () => {
+    // The hosted config loader cannot trust the extension. Its file endpoint is
+    // extension-tolerant, so a request for veryfront.config.js is answered with
+    // the project's veryfront.config.ts content, and the loader reports the
+    // candidate it asked for. Gating the TypeScript plugin on that name parsed
+    // TypeScript as JavaScript and rejected every TS config as a syntax error.
+    //
+    // Production 2026-08-06: `router: "pages" as const` in a customer's
+    // veryfront.config.ts returned HTTP 400 "Hosted configuration rejected
+    // (syntax-error: syntax-error)" and took their site down.
+    const source = [
+      "export default {",
+      '  router: "pages" as const,',
+      '  app: "components/app.tsx",',
+      "};",
+    ].join("\n");
+
+    for (const filePath of ["veryfront.config.js", "veryfront.config.mjs", "veryfront.config.ts"]) {
+      const ast = await parser.parse({ code: source, filePath });
+      assert(ast, `expected ${filePath} to parse TypeScript syntax`);
+    }
+  });
+
+  it("still parses plain JavaScript config sources", async () => {
+    const source = [
+      "export default {",
+      '  router: "pages",',
+      "  dev: { port: 3003 },",
+      "};",
+    ].join("\n");
+
+    for (const filePath of ["veryfront.config.js", "veryfront.config.ts"]) {
+      const ast = await parser.parse({ code: source, filePath });
+      assert(ast, `expected ${filePath} to parse plain JavaScript`);
+    }
+  });
 });
 
 function reachableNpmPackageNames(info: {
