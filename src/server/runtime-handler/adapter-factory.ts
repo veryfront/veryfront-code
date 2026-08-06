@@ -99,7 +99,7 @@ interface AdapterResolutionOptions {
  * never to a block that also performs other requests -- see the config load
  * below, where only the getHostedConfig call is treated this way.
  */
-function hasNotFoundStatus(error: unknown): boolean {
+export function hasNotFoundStatus(error: unknown): boolean {
   // Walks `cause`, because the 404 does not always arrive on the outermost
   // error. readHostedConfigSource lets a VeryfrontError through untouched but
   // wraps anything else in CONFIG_PARSE_ERROR, which buries the original status

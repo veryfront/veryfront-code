@@ -10,7 +10,8 @@
 
 import { rendererLogger } from "#veryfront/utils";
 import { getConfig, type VeryfrontConfig } from "#veryfront/config";
-import { getHostedConfig } from "#veryfront/config/loader.ts";
+import { evaluateHostedConfigSource, getHostedConfig } from "#veryfront/config/loader.ts";
+import { hasNotFoundStatus } from "#veryfront/server/runtime-handler/adapter-factory.ts";
 import { getEnvBoolean, getEnvString } from "#veryfront/compat/process.ts";
 import type { HandlerContext } from "../../handlers/types.ts";
 import { buildEnrichedContext } from "../../context/enriched-context.ts";
@@ -225,10 +226,25 @@ async function loadConfigForHandler(
   cacheKey: string | undefined,
 ): Promise<VeryfrontConfig> {
   if (shouldUseMultiProjectContext(ctx) && ctx.prepareHostedConfigContext && cacheKey) {
-    return await getHostedConfig(ctx.projectDir, ctx.adapter, {
-      cacheKey,
-      ...await ctx.prepareHostedConfigContext(),
-    });
+    try {
+      return await getHostedConfig(ctx.projectDir, ctx.adapter, {
+        cacheKey,
+        ...await ctx.prepareHostedConfigContext(),
+      });
+    } catch (error) {
+      // A release that published no config answers 404. The adapter factory
+      // already treats that as an ordinary project shape and falls through to
+      // defaults; this second load has to agree, or a project without a config
+      // clears that guard and dies here instead.
+      if (!hasNotFoundStatus(error)) throw error;
+      const hosted = await ctx.prepareHostedConfigContext();
+      return await evaluateHostedConfigSource({
+        cacheKey,
+        source: null,
+        environmentName: hosted.sourceContext.environmentName ?? "release",
+        environment: {},
+      });
+    }
   }
 
   return await getConfig(ctx.projectDir, ctx.adapter, { cacheKey });
