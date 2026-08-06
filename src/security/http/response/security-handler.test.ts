@@ -10,6 +10,11 @@ import {
   SECURITY_POLICY_RESPONSE_HEADER_NAMES,
 } from "./security-handler.ts";
 import type { SecurityConfig } from "./types.ts";
+import {
+  PLATFORM_ASSET_ORIGINS,
+  PLATFORM_IMAGE_ORIGINS,
+} from "#veryfront/security/http/platform-asset-origins.ts";
+import { ESM_CDN_BASE } from "#veryfront/utils/constants/cdn.ts";
 
 function createMockAdapter(
   envMap: Record<string, string> = {},
@@ -280,8 +285,23 @@ describe("security/http/response/security-handler", () => {
       );
     });
 
-    it("default CSP admits no remote hosts or broad network schemes", () => {
+    it("default CSP admits no remote hosts beyond the platform's own assets", () => {
+      // Narrowed from "no remote hosts at all". That stance could not hold: the
+      // renderer emits React from the ESM CDN and images from the platform image
+      // service into every document, so a host-free policy blocked the same
+      // response's own assets -- no hosted page hydrated and every optimized
+      // image was refused. The invariant that still matters is that nothing
+      // outside the platform's own origins gets in, and that the directives
+      // which grant no benefit from a remote host keep granting none.
       const csp = buildCSP(false, "nonce", null);
+      const permitted = new Set<string>(
+        PLATFORM_ASSET_ORIGINS.map((origin) => new URL(origin).hostname),
+      );
+      // Only these two carry a platform asset. Every other directive must be
+      // exactly host-free, checked by exclusion so a directive added to the
+      // policy later is covered here without anyone remembering to list it.
+      const mayCarryPlatformHosts = new Set(["script-src", "img-src"]);
+
       for (
         const directive of [
           "default-src",
@@ -296,15 +316,43 @@ describe("security/http/response/security-handler", () => {
           "frame-src",
         ]
       ) {
+        const hosts = parseDirectiveRemoteHosts(csp, directive);
+        if (mayCarryPlatformHosts.has(directive)) {
+          assertEquals(
+            hosts.filter((host) => !permitted.has(host)),
+            [],
+            `${directive} must not admit a host outside the platform allowlist`,
+          );
+          continue;
+        }
         assertEquals(
-          parseDirectiveRemoteHosts(csp, directive),
+          hosts,
           [],
-          `${directive} must not hardcode a remote host`,
+          `${directive} carries no platform asset and must stay host-free`,
         );
       }
+
       assertEquals(parseDirectiveSources(csp, "connect-src"), ["'self'"]);
-      assertEquals(parseDirectiveSources(csp, "img-src"), ["'self'", "data:"]);
       assertEquals(parseDirectiveSources(csp, "font-src"), ["'self'", "data:"]);
+    });
+
+    it("default CSP admits the platform assets the renderer emits", () => {
+      // The failure this pins: the renderer writes these origins into the
+      // document and the policy refused them, so React never loaded and every
+      // optimized image was blocked.
+      const csp = buildCSP(false, "nonce", null);
+      assertEquals(
+        parseDirectiveRemoteHosts(csp, "script-src"),
+        [new URL(ESM_CDN_BASE).hostname],
+      );
+      assertEquals(
+        parseDirectiveRemoteHosts(csp, "img-src"),
+        PLATFORM_IMAGE_ORIGINS.map((origin) => new URL(origin).hostname).sort(),
+      );
+      // Still same-origin and inline data first.
+      const imgSources = parseDirectiveSources(csp, "img-src");
+      assertEquals(imgSources.includes("'self'"), true);
+      assertEquals(imgSources.includes("data:"), true);
     });
 
     it("default CSP should allow same-origin frames", () => {
