@@ -22,7 +22,7 @@
  *
  * Minification is requested, not required. `CSSOptimizationEngine` ships only
  * in `@veryfront/ext-css-lightning`, which `first-party-defaults.ts` marks
- * `selection: "explicit"` — a scaffolded project has no optimiser, so a
+ * `selection: "explicit"`. A scaffolded project has no optimiser, so a
  * release that asks for minification and gets none is the normal case, not an
  * outage. `acquireCSSGenerationSession` degrades to unminified output and
  * records that in `cacheIdentity`, which travels into the manifest as

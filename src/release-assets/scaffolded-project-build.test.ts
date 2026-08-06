@@ -3,7 +3,7 @@
  * with the extension set it actually ships with.
  *
  * `npm create veryfront@latest` scaffolds a project that composes no
- * `CSSOptimizationEngine` — that contract lives only in
+ * `CSSOptimizationEngine`. That contract lives only in
  * `@veryfront/ext-css-lightning`, which `first-party-defaults.ts` marks
  * `selection: "explicit"`. CSS *optimisation* is optional; CSS *generation*
  * (`ext-css-tailwind`) and bundling (`ext-bundler-esbuild`) are builtin. A
@@ -12,7 +12,7 @@
  * stale minified entry in its place.
  *
  * This suite therefore composes only builtins a real install has, and asserts
- * before every build that no `CSSOptimizationEngine` is registered — so it
+ * before every build that no `CSSOptimizationEngine` is registered, so it
  * cannot quietly start testing a configuration no user runs. That is exactly
  * how the bug escaped: `css-processor-setup.ts` used to register a stub
  * optimiser for every importing suite, so `css-compile.test.ts` and
@@ -99,6 +99,35 @@ async function composeProductionExtensions(): Promise<void> {
 const fsAdapter = {
   fs: { readFile: (path: string): Promise<string> => readTextFile(path) },
 } as unknown as RuntimeAdapter;
+
+/**
+ * Utility class names this scaffold's own markup asks for.
+ *
+ * The compiled stylesheet must contain a rule the scaffold actually requested,
+ * not merely something a framework dependency contributed. A hard-coded list
+ * cannot express that: `ai-agent`, for instance, styles its shell with only
+ * `h-screen`, so a fixed set of utilities would silently pass on CSS that came
+ * from somewhere else. Reading the markup keeps the assertion tied to the
+ * template and lets templates change without weakening it.
+ *
+ * Deliberately plain tokens only. Variants (`hover:`), arbitrary values
+ * (`w-[3px]`) and slashes (`bg-black/50`) compile to escaped selectors, and
+ * matching those is a CSS-escaping exercise this check does not need.
+ */
+function scaffoldUtilityClasses(
+  files: ReadonlyArray<{ path: string; content: string }>,
+): string[] {
+  const found = new Set<string>();
+  for (const file of files) {
+    if (!/\.(tsx|jsx)$/.test(file.path)) continue;
+    for (const match of file.content.matchAll(/className="([^"]+)"/g)) {
+      for (const token of match[1]!.split(/\s+/)) {
+        if (/^[a-z][a-z0-9-]*$/.test(token)) found.add(token);
+      }
+    }
+  }
+  return [...found];
+}
 
 interface Recorded {
   uploads: Array<{ hash: string; contentType: string; bytes: Uint8Array }>;
@@ -244,9 +273,15 @@ describe("release assets: scaffolded project build", () => {
       assertExists(cssUpload, "expected a text/css asset upload");
       const css = new TextDecoder().decode(cssUpload.bytes);
       assert(css.length > 0, "published CSS must not be empty");
+      const utilities = scaffoldUtilityClasses(sources);
       assert(
-        /\.(min-h-screen|mx-auto|flex|font-bold)\b/.test(css),
-        `expected a compiled Tailwind utility in ${templateName} CSS`,
+        utilities.length > 0,
+        `${templateName} markup declares no plain utility classes to check`,
+      );
+      assert(
+        utilities.some((utility) => new RegExp(`\\.${utility}(?![\\w-])`).test(css)),
+        `expected a utility from ${templateName}'s own markup in the compiled CSS; ` +
+          `looked for ${utilities.slice(0, 12).join(", ")}`,
       );
       assertEquals(
         manifest.css[0]?.size,
