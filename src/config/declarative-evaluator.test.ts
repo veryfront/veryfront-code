@@ -113,8 +113,11 @@ export default {
 `;
 
     for (
-      const fileName of
-        ["veryfront.config.ts", "veryfront.config.js", "veryfront.config.mjs"] as const
+      const fileName of [
+        "veryfront.config.ts",
+        "veryfront.config.js",
+        "veryfront.config.mjs",
+      ] as const
     ) {
       const snapshot = await evaluateDeclarativeConfig({
         source,
