@@ -297,6 +297,11 @@ describe("security/http/response/security-handler", () => {
       const permitted = new Set<string>(
         PLATFORM_ASSET_ORIGINS.map((origin) => new URL(origin).hostname),
       );
+      // Only these two carry a platform asset. Every other directive must be
+      // exactly host-free, checked by exclusion so a directive added to the
+      // policy later is covered here without anyone remembering to list it.
+      const mayCarryPlatformHosts = new Set(["script-src", "img-src"]);
+
       for (
         const directive of [
           "default-src",
@@ -311,20 +316,24 @@ describe("security/http/response/security-handler", () => {
           "frame-src",
         ]
       ) {
-        const unexpected = parseDirectiveRemoteHosts(csp, directive)
-          .filter((host) => !permitted.has(host));
+        const hosts = parseDirectiveRemoteHosts(csp, directive);
+        if (mayCarryPlatformHosts.has(directive)) {
+          assertEquals(
+            hosts.filter((host) => !permitted.has(host)),
+            [],
+            `${directive} must not admit a host outside the platform allowlist`,
+          );
+          continue;
+        }
         assertEquals(
-          unexpected,
+          hosts,
           [],
-          `${directive} must not admit a host outside the platform allowlist`,
+          `${directive} carries no platform asset and must stay host-free`,
         );
       }
-      // These carry no platform asset, so they stay exactly as strict as before.
+
       assertEquals(parseDirectiveSources(csp, "connect-src"), ["'self'"]);
       assertEquals(parseDirectiveSources(csp, "font-src"), ["'self'", "data:"]);
-      assertEquals(parseDirectiveRemoteHosts(csp, "default-src"), []);
-      assertEquals(parseDirectiveRemoteHosts(csp, "connect-src"), []);
-      assertEquals(parseDirectiveRemoteHosts(csp, "frame-src"), []);
     });
 
     it("default CSP admits the platform assets the renderer emits", () => {
