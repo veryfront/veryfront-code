@@ -417,13 +417,18 @@ export function describeReadyReleaseAssetManifestRejection(
   const manifest = parseReleaseAssetManifest(body);
   if (!manifest) {
     const schemaVersion = readUntrustedOwnDataProperty(body, "schemaVersion");
+    // v1 is a supported read format, so a v1 body that fails to parse is
+    // malformed rather than skewed. Naming it a skew would send operators to
+    // upgrade the builder for what is actually a corrupt payload.
     if (
       isSafeIntegerInRange(schemaVersion, Number.MAX_SAFE_INTEGER) &&
-      schemaVersion !== RELEASE_ASSET_MANIFEST_SCHEMA_VERSION
+      schemaVersion !== RELEASE_ASSET_MANIFEST_SCHEMA_VERSION &&
+      schemaVersion !== LEGACY_V1_SCHEMA_VERSION
     ) {
       return `the release assets declare manifest schema version ${schemaVersion}, but this ` +
-        `build reads version ${RELEASE_ASSET_MANIFEST_SCHEMA_VERSION}. The assets were built ` +
-        `by a different framework version than the one running this deploy`;
+        `build reads versions ${LEGACY_V1_SCHEMA_VERSION} and ` +
+        `${RELEASE_ASSET_MANIFEST_SCHEMA_VERSION}. The assets were built by a different ` +
+        `framework version than the one running this deploy`;
     }
     return "the manifest body did not match the expected schema";
   }
@@ -516,7 +521,10 @@ function adaptLegacyV1Routes(value: unknown): Record<string, unknown> | null {
   const keys = Object.keys(value);
   if (keys.length > MAX_ROUTE_ENTRIES) return null;
 
-  const routes: Record<string, unknown> = {};
+  // Null-prototype: route keys are untrusted, and assigning a key of
+  // `__proto__` onto a plain object hits the prototype setter instead of
+  // creating an own property. `snapshotRoutes` uses the same guard.
+  const routes: Record<string, unknown> = Object.create(null);
   for (const key of keys) {
     const entry = readUntrustedOwnDataProperty(value, key);
     if (!isPlainRecord(entry)) return null;

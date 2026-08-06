@@ -130,6 +130,27 @@ describe("legacy v1 manifest consumption", () => {
     assertEquals(parseReleaseAssetManifest(danglingRoute), null);
   });
 
+  it("rejects a __proto__ route key instead of silently dropping it", () => {
+    // Route keys are untrusted. The adapter accumulates them on a
+    // null-prototype object so `__proto__` arrives at the validator as an
+    // ordinary own property and is rejected for not being a canonical route
+    // path. On a plain `{}` it would hit the prototype setter instead, which
+    // swallows the key and reshapes the accumulator -- a different route to
+    // the same rejection, but one that hides which key was at fault.
+    const hostile = legacyV1Manifest();
+    const routes: Record<string, unknown> = Object.create(null);
+    routes["/"] = { modules: ["pages/index.tsx"], css: [] };
+    routes["__proto__"] = { modules: ["pages/index.tsx"], css: [] };
+    hostile.routes = routes;
+
+    assertEquals(parseReleaseAssetManifest(hostile), null);
+    assertEquals(
+      Object.getPrototypeOf({}),
+      Object.prototype,
+      "Object.prototype was mutated while parsing",
+    );
+  });
+
   it("accepts a ready response carrying a v1 body", () => {
     const response = {
       state: "ready",
@@ -460,14 +481,27 @@ describe("describeReadyReleaseAssetManifestRejection", () => {
     // older schema. The previous message ("invalid or mismatched ready manifest.
     // Rebuild the release assets") sent operators to rebuild against the same
     // mismatched builder, which cannot succeed.
+    // v1 is readable now, so the skew this names is a version we cannot read
+    // at all -- assets from a framework newer than this deploy.
+    const reason = describeReadyReleaseAssetManifestRejection(
+      { state: "ready", manifest_version: 1, manifest: { schemaVersion: 3, releaseId: "r1" } },
+      "r1",
+    );
+
+    assertStringIncludes(reason, "schema version 3");
+    assertStringIncludes(reason, `versions 1 and ${RELEASE_ASSET_MANIFEST_SCHEMA_VERSION}`);
+    assertStringIncludes(reason, "different framework version");
+  });
+
+  it("does not call a malformed v1 body a version skew", () => {
+    // v1 is a supported read format. Reporting skew here would send operators
+    // to upgrade the builder for what is really a corrupt payload.
     const reason = describeReadyReleaseAssetManifestRejection(
       { state: "ready", manifest_version: 1, manifest: { schemaVersion: 1, releaseId: "r1" } },
       "r1",
     );
 
-    assertStringIncludes(reason, "schema version 1");
-    assertStringIncludes(reason, `version ${RELEASE_ASSET_MANIFEST_SCHEMA_VERSION}`);
-    assertStringIncludes(reason, "different framework version");
+    assertEquals(reason, "the manifest body did not match the expected schema");
   });
 
   it("distinguishes the other rejection paths", () => {
