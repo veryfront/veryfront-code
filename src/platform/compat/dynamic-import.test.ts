@@ -82,10 +82,14 @@ describe("platform/compat/dynamic-import", () => {
         const names = (match[2] ?? "").replace(/[{}]/g, "").split(",").map((n) => n.trim())
           .filter(Boolean);
         if (names.length > 0 && names.every((n) => n.startsWith("type "))) continue;
-        specifiers.push(match[3]);
+        const specifier = match[3];
+        if (specifier !== undefined) specifiers.push(specifier);
       }
       const bare = /(?:^|\n)\s*import\s*["']([^"']+)["']/g;
-      while ((match = bare.exec(source)) !== null) specifiers.push(match[1]);
+      while ((match = bare.exec(source)) !== null) {
+        const specifier = match[1];
+        if (specifier !== undefined) specifiers.push(specifier);
+      }
       return specifiers;
     }
 
