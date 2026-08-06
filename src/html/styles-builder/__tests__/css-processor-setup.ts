@@ -1,9 +1,23 @@
 /**
  * Shared test helper: activates the `@veryfront/ext-css-tailwind` extension so
  * core tests that exercise the Tailwind compile path can resolve the
- * `CSSProcessor` contract. Minified test paths also receive an explicit,
- * identity-bearing no-op CSSOptimizationEngine; neither provider is discovered
- * or auto-registered by production core.
+ * `CSSProcessor` contract. That extension is `builtin-deferred` in
+ * `first-party-defaults.ts`, so composing it here mirrors what a real install
+ * has.
+ *
+ * This helper deliberately registers NOTHING ELSE. It used to also register a
+ * no-op `CSSOptimizationEngine` whenever none was present, which quietly gave
+ * every importing suite a capability that no shipped install has:
+ * `ext-css-lightning` is `selection: "explicit", rootNpm: false`. The result
+ * was that `css-compile.test.ts` and `build-executor.test.ts` stayed green
+ * across 100+ steps while every single deploy failed with
+ * `Missing extension for contract "CSSOptimizationEngine"`.
+ *
+ * The rule this encodes: a fixture must compose the extension set the product
+ * actually ships. Over-composing turns a suite into a test of a configuration
+ * no user has. A test that needs an optimiser must install one explicitly with
+ * `installTestCSSOptimizationEngine` / `withTestCSSOptimizationEngine`, so the
+ * dependency is visible at the call site.
  *
  * Import this module (for side effects) from any test that exercises the
  * Tailwind compile path via `getCompiler` / `generateTailwindCSS` /
@@ -17,12 +31,7 @@
  * @module html/styles-builder/__tests__/css-processor-setup
  */
 
-import {
-  register as registerContract,
-  tryResolve as tryResolveContract,
-} from "#veryfront/extensions/contracts.ts";
-import { CSSOptimizationEngineName } from "#veryfront/extensions/css/index.ts";
-import { createTestCSSOptimizationEngine } from "../../../../tests/_helpers/css-optimization-engine.ts";
+import { register as registerContract } from "#veryfront/extensions/contracts.ts";
 import extTailwindFactory from "../../../../extensions/ext-css-tailwind/src/index.ts";
 
 const noopLogger = {
@@ -44,9 +53,6 @@ export async function registerTailwindExtension(): Promise<void> {
     },
   };
   await ext.setup?.(ctx as never);
-  if (tryResolveContract(CSSOptimizationEngineName) === undefined) {
-    registerContract(CSSOptimizationEngineName, createTestCSSOptimizationEngine());
-  }
 }
 
 await registerTailwindExtension();
