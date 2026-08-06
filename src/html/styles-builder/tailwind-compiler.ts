@@ -6,7 +6,7 @@
  * an explicit CSSOptimizationEngine owns minification.
  */
 
-import { resolve } from "#veryfront/extensions/contracts.ts";
+import { resolve, tryResolve } from "#veryfront/extensions/contracts.ts";
 import {
   captureCSSOptimizationEngine,
   type CSSOptimizationEngine,
@@ -123,6 +123,17 @@ function getCSSPipelineCacheIdentity(
     }`,
     "CSS pipeline identity",
   );
+}
+
+/**
+ * Whether a CSS optimization engine is available.
+ *
+ * Minification is opt-in: a project that never selected ext-css-lightning has no
+ * engine. Callers must consult this before requesting minify, because requesting
+ * it without an engine fails closed by design.
+ */
+export function isCSSOptimizationAvailable(): boolean {
+  return tryResolve<unknown>(CSSOptimizationEngineName) !== undefined;
 }
 
 /** Capture all output-affecting providers before the operation performs an await. */
@@ -288,7 +299,9 @@ export async function regenerateCSSByHash(
   projectSlug: string | undefined,
 ): Promise<string | undefined> {
   if (!isCSSContentHash(expectedHash)) return undefined;
-  const generationSession = acquireCSSGenerationSession(true);
+  // Same gate as the render: minification is opt-in, so only ask for it when an
+  // engine exists. Requesting it without one fails closed and 404s the asset.
+  const generationSession = acquireCSSGenerationSession(isCSSOptimizationAvailable());
   const inFlightKey = `${hashString(generationSession.cacheIdentity)}:${expectedHash}`;
   const pending = inFlightRegeneration.get(inFlightKey);
   if (pending) return await pending;
