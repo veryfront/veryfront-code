@@ -10,6 +10,7 @@ import { displayBuildSuccess } from "./stats-display.ts";
 import type { BuildOptions } from "./types.ts";
 import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 import { ensureBuiltinContentProcessor } from "../../shared/ensure-content-processor.ts";
+import { setupBuildCliExtensions } from "../../shared/build-extensions.ts";
 
 /** @internal */
 export async function runWithBundlerShutdown<T>(
@@ -58,7 +59,11 @@ export function buildCommand(options: BuildOptions): Promise<void> {
 
         const stats = await runWithBundlerShutdown(async () => {
           const adapter = await runtime.get();
-          await getConfig(options.projectDir, adapter);
+          const config = await getConfig(options.projectDir, adapter);
+          // Compose the project's extensions before anything that resolves a
+          // contract. Only server bootstrap used to do this, so the build ran
+          // with whatever one-off shims had been added and failed on the rest.
+          await setupBuildCliExtensions(options.projectDir, config);
           await ensureBuiltinContentProcessor();
 
           if (isJsonMode()) {
