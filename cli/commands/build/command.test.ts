@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { buildCommand, formatBuildOutputPath, runWithBundlerShutdown } from "./command.ts";
+import {
+  buildCommand,
+  formatBuildOutputPath,
+  releaseBuildExtensions,
+  runWithBundlerShutdown,
+} from "./command.ts";
 import type { BuildOptions } from "./types.ts";
 
 describe("commands/build/command", () => {
@@ -52,6 +57,33 @@ describe("commands/build/command", () => {
 
       assertEquals(error, buildError);
       assertEquals(stopped, true);
+    });
+  });
+
+  describe("releaseBuildExtensions", () => {
+    it("tears down the composed extensions", async () => {
+      let torndown = 0;
+      await releaseBuildExtensions({
+        teardownAll: () => {
+          torndown++;
+          return Promise.resolve();
+        },
+      });
+      assertEquals(torndown, 1);
+    });
+
+    it("does nothing when no extensions were composed", async () => {
+      // The build can fail before composition, so the release path runs with
+      // nothing to release and must not throw.
+      await releaseBuildExtensions(undefined);
+    });
+
+    it("does not let a teardown failure change the build outcome", async () => {
+      // The build has already produced its result. runWithBundlerShutdown sets
+      // the same precedent by preserving the build error over a shutdown one.
+      await releaseBuildExtensions({
+        teardownAll: () => Promise.reject(new Error("teardown exploded")),
+      });
     });
   });
 

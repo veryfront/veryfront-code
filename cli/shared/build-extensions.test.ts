@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { setupBuildCliExtensions } from "./build-extensions.ts";
 
@@ -19,7 +19,11 @@ function extensionNames(
 describe("cli/shared/build-extensions", () => {
   it("composes the project's configured extensions", async () => {
     let seen: { projectDir?: string; config?: unknown } = {};
-    const config = { extensions: [{ name: "ext-css-lightning" }] };
+    // A full Extension entry: ExtensionConfigEntry only admits an Extension or
+    // an explicit { name, enabled: false } disable.
+    const config = {
+      extensions: [{ name: "ext-css-lightning", version: "1.0.0", capabilities: [] }],
+    };
 
     await setupBuildCliExtensions("/projects/app", config, (options) => {
       seen = { projectDir: options.projectDir, config: options.config };
@@ -57,15 +61,22 @@ describe("cli/shared/build-extensions", () => {
     assertEquals(names.has("ext-content-mdx"), true);
   });
 
-  it("names the build in its logger so orchestration failures are attributable", async () => {
-    let logger: unknown;
+  it("hands orchestration a logger it can actually log through", async () => {
+    // Not "names the build": cliLogger.component() deliberately returns the
+    // same logger, because CLI output carries no structured component tag. So
+    // there is no attribution to assert on, only that orchestration receives
+    // something usable. `typeof x === "object"` alone would also accept null.
+    let logger: Record<string, unknown> | undefined;
 
     await setupBuildCliExtensions("/projects/app", {}, (options) => {
-      logger = options.logger;
+      logger = options.logger as unknown as Record<string, unknown>;
       return Promise.resolve(loaderStub);
     });
 
-    assertEquals(typeof logger, "object");
+    assertExists(logger);
+    for (const method of ["debug", "info", "warn", "error"] as const) {
+      assertEquals(typeof logger[method], "function", `logger.${method} must be callable`);
+    }
   });
 
   it("returns the composed loader to the caller", async () => {
