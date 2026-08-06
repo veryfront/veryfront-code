@@ -3,6 +3,10 @@ import { recordSecurityHeaders } from "#veryfront/observability";
 import { HOSTED_STUDIO_ORIGINS } from "#veryfront/security/http/studio-origin-policy.ts";
 import { isCorsPolicyResponseHeaderName } from "#veryfront/utils/cors-policy-limits.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import {
+  PLATFORM_IMAGE_ORIGINS,
+  PLATFORM_SCRIPT_ORIGINS,
+} from "#veryfront/security/http/platform-asset-origins.ts";
 import type { SecurityConfig } from "./types.ts";
 
 const logger = serverLogger.component("security-headers");
@@ -65,14 +69,16 @@ const VERYFRONT_FRAME_ANCESTORS = ["'self'", ...HOSTED_STUDIO_ORIGINS];
 /**
  * Build the dependency-free core production CSP.
  *
- * - Scripts: same-origin and nonce-authorized scripts only
+ * - Scripts: same-origin, nonce-authorized, plus the platform script origins
+ *   the renderer emits tags for (see platform-asset-origins).
  * - Styles: same-origin plus inline styles required by framework components.
  *   Do not include a nonce in style directives here: browsers ignore
  *   'unsafe-inline' when a nonce/hash is present, which breaks runtime-created
  *   style attributes and style elements.
  *   - style-src-attr: 'unsafe-inline' for modern browsers with directive-level
  *     style attribute support
- * - Images/fonts: same-origin plus inline data resources
+ * - Images: same-origin, inline data, plus the platform image origins the
+ *   renderer emits URLs for. Fonts: same-origin plus inline data only.
  * - Media: same-origin plus blob URLs used by browser media pipelines
  * - Workers: 'self' + blob: for browser libraries that create blob workers
  * - Connections: same-origin only. Development skips this default, so HMR is
@@ -94,11 +100,11 @@ function buildDefaultCSP(nonce: string, isVeryfrontDomain: boolean): string {
 
   return [
     `default-src 'self'`,
-    `script-src 'self' 'nonce-${nonce}'`,
+    `script-src 'self' 'nonce-${nonce}' ${PLATFORM_SCRIPT_ORIGINS.join(" ")}`,
     `style-src 'self' 'unsafe-inline'`,
     `style-src-elem 'self' 'unsafe-inline'`,
     `style-src-attr 'unsafe-inline'`,
-    `img-src 'self' data:`,
+    `img-src 'self' data: ${PLATFORM_IMAGE_ORIGINS.join(" ")}`,
     `font-src 'self' data:`,
     `connect-src 'self'`,
     `media-src 'self' blob:`,
