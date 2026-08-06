@@ -171,3 +171,39 @@ Deno.test("buildVeryfrontCloudRuntimeInstructions adapts hosted preparation inpu
   assertStringIncludes(dynamicMsg?.content ?? "", 'project_reference: "project-123"');
   assertStringIncludes(dynamicMsg?.content ?? "", "Runtime facts");
 });
+
+Deno.test("createVeryfrontCloudRuntimeSystemMessages defaults the static breakpoint to 5m", () => {
+  const [staticMsg] = createVeryfrontCloudRuntimeSystemMessages({ agent: createAgent() });
+
+  assertEquals(staticMsg?.providerOptions, {
+    anthropic: { cacheControl: { type: "ephemeral" } },
+  });
+});
+
+Deno.test("createVeryfrontCloudRuntimeSystemMessages extends the static breakpoint to 1h when requested", () => {
+  const [staticMsg] = createVeryfrontCloudRuntimeSystemMessages({
+    agent: createAgent(),
+    cacheTtl: "1h",
+  });
+
+  assertEquals(staticMsg?.providerOptions, {
+    anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+  });
+});
+
+Deno.test("buildVeryfrontCloudRuntimeInstructions forwards the 1h cache TTL option to Layer 0", () => {
+  const [staticMsg] = buildVeryfrontCloudRuntimeInstructions(
+    {
+      agentConfig: createAgent(),
+      projectId: null,
+      branchId: null,
+      instructions: "",
+      skills: [],
+    },
+    { cacheTtl: "1h" },
+  );
+
+  assertEquals(staticMsg?.providerOptions, {
+    anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+  });
+});
