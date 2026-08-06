@@ -64,6 +64,20 @@ describe("html/styles-builder/css-import-extraction", () => {
       );
     });
 
+    it("matches dynamic imports, which are real CSS imports", () => {
+      // Pinned deliberately. `import("./theme.css")` loads that stylesheet at
+      // runtime, so dropping it would leave the compiled stylesheet missing CSS
+      // the page uses. A dynamic specifier naming a file that does not exist is
+      // a broken reference, not a false positive -- same as a static one.
+      assertEquals(
+        extractCssImportSpecifiers('const load = () => import("./theme.css");'),
+        ["./theme.css"],
+      );
+      assertEquals(extractCssImportSpecifiers('await import("./a.css");'), ["./a.css"]);
+      // Still excluded, because that is a property access rather than an import.
+      assertEquals(extractCssImportSpecifiers('import.meta.resolve("./a.css");'), []);
+    });
+
     it("still finds real imports alongside non-code lookalikes", () => {
       const source = [
         '// import "./commented.css";',

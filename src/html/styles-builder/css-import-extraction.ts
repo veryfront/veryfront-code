@@ -25,9 +25,16 @@ import { isWithinDirectory, normalizePath } from "#veryfront/utils/path-utils.ts
 export const CSS_IMPORTING_SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
 
 /**
- * Static ESM import statements whose specifier ends in `.css`:
+ * ESM imports whose specifier ends in `.css`:
  *   import "./styles.css";
  *   import styles from "./button.module.css";
+ *   import("./theme.css")
+ *
+ * Dynamic imports are matched on purpose, despite this once being described as
+ * static-only. `import("./theme.css")` loads that stylesheet at runtime, so
+ * leaving it out means the compiled stylesheet is missing CSS the page actually
+ * uses. A dynamic specifier pointing at a file that does not exist is a broken
+ * reference, not a false positive -- exactly as a static one would be.
  * `[^'";]*` keeps the match from crossing statement boundaries, and `\bimport\b`
  * keeps identifiers that merely contain the word out of it -- without it,
  * `const important = "./styles.css"` reads as an import. That matters more here
