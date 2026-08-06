@@ -146,10 +146,17 @@ describe("legacy v1 manifest consumption", () => {
     hostile.routes = routes;
 
     assertEquals(parseReleaseAssetManifest(hostile, LEGACY), null);
+    // Pollution shows up as a property reachable from an unrelated object, not
+    // as a changed prototype identity, so probe for the injected value itself.
     assertEquals(
-      Object.getPrototypeOf({}),
-      Object.prototype,
-      "Object.prototype was mutated while parsing",
+      ({} as Record<string, unknown>).modules,
+      undefined,
+      "a route entry leaked onto Object.prototype while parsing",
+    );
+    assertEquals(
+      ({} as Record<string, unknown>).css,
+      undefined,
+      "a route entry leaked onto Object.prototype while parsing",
     );
   });
 

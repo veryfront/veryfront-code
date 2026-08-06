@@ -340,12 +340,13 @@ export interface ReleaseAssetManifestParseOptions {
   /**
    * Accept the v1 body still held for releases published before the v2 move.
    *
-   * Off by default, and deliberately opt-in per call site. Runtime reads must
-   * set it or every pre-v2 release loses its browser modules. Producer-side
-   * callers -- the build executor verifying what it just emitted, the CLI
-   * waiting on a deploy, a locally built bundle -- must not: there a v1 body
-   * means the builder and this framework are skewed, and accepting it would
-   * hide the skew instead of naming it.
+   * Off by default, and deliberately opt-in per call site.
+   *
+   * Runtime reads must set it, or every release published before the v2 move
+   * loses its browser modules. Producer-side callers must not: for the build
+   * executor verifying what it just emitted, the CLI waiting on a deploy, or a
+   * locally built bundle, a v1 body means the builder and this framework are
+   * skewed, and accepting it would hide that skew instead of naming it.
    *
    * @default false
    */
@@ -455,13 +456,13 @@ export function describeReadyReleaseAssetManifestRejection(
         : `version ${RELEASE_ASSET_MANIFEST_SCHEMA_VERSION}`;
       return `the release assets declare manifest schema version ${schemaVersion}, but this ` +
         `build reads ${readable}. The assets were built ` +
-        `by a different framework version than the one running this deploy`;
+        `by a different framework version than the one reading them`;
     }
     return "the manifest body did not match the expected schema";
   }
 
   if (manifest.releaseId !== expectedReleaseId) {
-    return "the manifest identifies a different release than the one being deployed";
+    return "the manifest identifies a different release than the one requested";
   }
   if (manifest.manifestVersion !== manifestVersion) {
     return "the envelope and manifest body disagree on the manifest version";
