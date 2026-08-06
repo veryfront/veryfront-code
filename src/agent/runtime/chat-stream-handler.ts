@@ -629,14 +629,20 @@ export function processStreamInternal(
         return;
       }
 
-      const resolvedToolCallIds = new Set(
-        state.toolResults.map((result) => result.toolCallId),
+      // A preliminary result is recorded like any other, so it must not count as
+      // proof the provider answered. Reading it as terminal here would skip the
+      // synthesized event and strand the call, which is the failure this whole
+      // finalizer exists to close.
+      const terminalToolCallIds = new Set(
+        state.toolResults
+          .filter((result) => result.preliminary !== true)
+          .map((result) => result.toolCallId),
       );
 
       for (const toolCall of state.toolCalls.values()) {
         if (!pendingProviderExecutedToolCallIds.has(toolCall.id)) continue;
         if (toolCall.providerExecuted !== true || toolCall.inputAvailable !== true) continue;
-        if (resolvedToolCallIds.has(toolCall.id)) continue;
+        if (terminalToolCallIds.has(toolCall.id)) continue;
         if (suppressedToolCallIds.has(toolCall.id)) continue;
 
         sendSSE(controller, encoder, {

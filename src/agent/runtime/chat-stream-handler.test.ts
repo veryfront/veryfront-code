@@ -2504,6 +2504,44 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
     assertEquals(terminalEvents[0]?.providerExecuted, true);
   });
 
+  it("finalizes a provider tool call that only produced a preliminary result", async () => {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+
+    // A preliminary result lands in `state.toolResults` like any other, so the
+    // finalizer must not read it as proof the provider answered. Otherwise a
+    // stream that ends after only a preliminary result emits no terminal part
+    // and the card is stranded exactly as it was before this fix.
+    const result = createMockResult([
+      {
+        type: "tool-input-start",
+        id: "srvtoolu_prelim_only",
+        toolName: "web_fetch",
+        providerExecuted: true,
+      },
+      { type: "tool-input-delta", id: "srvtoolu_prelim_only", delta: '{"url":"https://a.test"}' },
+      { type: "tool-input-end", id: "srvtoolu_prelim_only" },
+      {
+        type: "tool-result",
+        toolCallId: "srvtoolu_prelim_only",
+        toolName: "web_fetch",
+        result: { type: "web_fetch_result", url: "https://a.test", partial: true },
+        providerExecuted: true,
+        preliminary: true,
+      },
+      { type: "finish", finishReason: "stop", totalUsage: null },
+    ]);
+
+    await processStream(result, state, controller, encoder, "t", {
+      providerExecutedToolNames: ["web_fetch"],
+    });
+
+    const errorEvents = events.filter((event) => event.type === "tool-output-error");
+    assertEquals(errorEvents.length, 1);
+    assertEquals(errorEvents[0]?.toolCallId, "srvtoolu_prelim_only");
+    assertEquals(errorEvents[0]?.providerExecuted, true);
+  });
+
   it("keeps the synthesized terminal event out of the runtime continuation decision", async () => {
     const { events, controller, encoder } = createSSECollector();
     const state = createStreamState();
