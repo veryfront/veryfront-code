@@ -30,6 +30,7 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { markRequestProfilePhase, profilePhase } from "#veryfront/observability";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG, RELEASE_ASSET_MANIFEST_LIMITS } from "./constants.ts";
 import {
+  describeReadyReleaseAssetManifestRejection,
   parseReadyReleaseAssetManifestResponse,
   type ReleaseAssetManifest,
 } from "./manifest-schema.ts";
@@ -450,8 +451,22 @@ function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> 
         });
         return manifest;
       } else {
-        if (state === "ready") markManifestDecision("fetch_ready_invalid");
-        else markManifestDecision(`fetch_${manifestState}`);
+        if (state === "ready") {
+          markManifestDecision("fetch_ready_invalid");
+          // A manifest the publisher calls ready but this build cannot read is
+          // an operator problem, not a wait: browser modules are refused for
+          // the whole release until someone acts. Say why. Without this the
+          // only signal is a 503 and a timing mark, which cannot distinguish
+          // framework version skew from a corrupt payload.
+          logger.error("Release manifest is ready upstream but failed validation", {
+            releaseId,
+            reason: describeReadyReleaseAssetManifestRejection(result, releaseId),
+          });
+        } else {
+          markManifestDecision(`fetch_${manifestState}`);
+          // Any other state is the release legitimately not being ready yet.
+          logger.debug("Release manifest is not ready", { releaseId, state: manifestState });
+        }
         markManifestDecision("fetch_not_ready");
         evictReadyManifests(releaseId, active.token);
         cacheNonReadyManifest(releaseId, active.token);

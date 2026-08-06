@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   clearCachedReleaseAssetManifests,
@@ -74,6 +74,41 @@ describe("release asset manifest fetcher ownership", () => {
     clearCachedReleaseAssetManifests();
     await getReadyManifestForRenderAsync("release-1");
     assertEquals(calls, ["newer"]);
+  });
+
+  it("reports why a ready manifest was rejected instead of only refusing it", async () => {
+    // The failure this pins: assets built by a different framework version are
+    // published as `ready` and refused here, which takes a site's whole client
+    // bundle offline. Before this, the only operator-visible signal was a 503
+    // and a timing mark, so version skew and a corrupt payload looked alike.
+    Deno.env.set("VERYFRONT_RELEASE_ASSET_MANIFEST", "1");
+    const skewed = manifest("release-skew", 1);
+    registerManifestFetcherForRelease("release-skew", () =>
+      Promise.resolve({
+        state: "ready",
+        manifest_version: 1,
+        manifest: {
+          ...skewed,
+          schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION + 1,
+        },
+      }));
+
+    const originalError = console.error;
+    let logged = "";
+    console.error = (...values: unknown[]) => {
+      logged += values.map((value) => typeof value === "string" ? value : JSON.stringify(value))
+        .join(" ");
+    };
+
+    try {
+      assertEquals(await getReadyManifestForRenderAsync("release-skew"), null);
+    } finally {
+      console.error = originalError;
+    }
+
+    assertStringIncludes(logged, "release-skew");
+    assertStringIncludes(logged, "manifest schema version");
+    assertStringIncludes(logged, "built by a different framework version");
   });
 
   it("keeps cache identities distinct for delimiter-shaped release IDs", async () => {
