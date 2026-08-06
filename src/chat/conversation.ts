@@ -18,7 +18,7 @@ import {
   getToolPart,
   isProviderVisibleReasoningPart,
   isTextPart,
-} from "./tool-part-parsing.ts";
+} from "./message-part-parsing.ts";
 import {
   findProviderVisibleToolReplayMatches,
   isTransientToolState,
@@ -27,8 +27,7 @@ import type { ProviderVisibleToolReplayMatches } from "./tool-replay-reconciliat
 
 export { getStringField, isRecord, stringifyUnknown } from "./part-field-access.ts";
 export type { JsonValue } from "./part-field-access.ts";
-export { isReasoningPart, isTextPart } from "./tool-part-parsing.ts";
-export type { ReasoningPartLike, TextPartLike } from "./tool-part-parsing.ts";
+export { isReasoningPart, isTextPart } from "./message-part-parsing.ts";
 
 const PROVIDER_MODEL_MESSAGE_SOURCE_ID = Symbol.for("veryfront.providerModelMessageSourceId");
 const UPLOAD_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;

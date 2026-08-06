@@ -1,11 +1,10 @@
 /**
  * Interpreting one message part.
  *
- * The single owner of turning one raw or UI tool-call/tool-result part into a
- * normalized shape, so provider conversion and replay reconciliation read the
- * same interpretation of a part rather than each deriving their own. Also
- * owns the non-tool part predicates (text, reasoning, file/image) that both
- * of those callers need to classify provider-visible content.
+ * The single owner of turning one raw or UI message part — tool-call,
+ * tool-result, text, reasoning, or file/image — into a normalized shape, so
+ * provider conversion and replay reconciliation read the same interpretation
+ * of a part rather than each deriving their own.
  */
 import {
   getNonEmptyStringField,

@@ -1,9 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { buildToolResultOutput, getRawToolResultPart, getToolPart } from "./tool-part-parsing.ts";
+import {
+  buildToolResultOutput,
+  getRawToolResultPart,
+  getToolPart,
+} from "./message-part-parsing.ts";
 
-describe("tool-part-parsing", () => {
+describe("message-part-parsing", () => {
   it("derives the tool name from a tool- prefixed type", () => {
     const parsed = getToolPart({
       type: "tool-search",

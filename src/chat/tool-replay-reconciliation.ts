@@ -17,11 +17,14 @@ import {
   hasSelfContainedRawToolCallResult,
   isProviderVisibleReasoningPart,
   isTextPart,
-} from "./tool-part-parsing.ts";
+} from "./message-part-parsing.ts";
 import type { ChatUiMessageRole } from "./types.ts";
+// Must stay type-only: a value import here would create a real cycle with
+// conversation.ts (which imports this module), and lint:module-boundaries
+// never scans src/chat/ to catch a slip.
 import type { ChatProviderModelInputMessage } from "./conversation.ts";
 
-function isTransientToolState(state: string | undefined): boolean {
+export function isTransientToolState(state: string | undefined): boolean {
   return state === "pending" || state === "input-available" || state === "input-streaming" ||
     state === "streaming" || state === "approval-requested" || state === "approval-responded";
 }
@@ -289,5 +292,3 @@ export function findProviderVisibleToolReplayMatches(
     supersededToolResultParts,
   };
 }
-
-export { isTransientToolState };

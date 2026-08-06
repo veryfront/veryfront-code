@@ -63,10 +63,10 @@ batch-starting, or transient-but-preserved without mutating them. Provider
 conversion and message preparation both consult this module rather than
 re-deriving which occurrence wins.
 
-## Tool Part Interpretation
+## Message Part Interpretation
 
 The single owner of interpreting one message part — tool, text, reasoning, or
-file — into a normalized shape: `src/chat/tool-part-parsing.ts`. Provider
+file — into a normalized shape: `src/chat/message-part-parsing.ts`. Provider
 conversion and Tool Replay Reconciliation both read parts through it, so a
 change to how a part is recognized lands in one file.
 
