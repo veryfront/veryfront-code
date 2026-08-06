@@ -47,7 +47,6 @@ function makeCtx(files: Record<string, string> = {}): HandlerContext {
     projectDir: "/project",
     adapter: createMockAdapter(files),
     securityConfig: {},
-    cspUserHeader: null,
     config: {} as HandlerContext["config"],
     parsedDomain: { allowIframeEmbed: false } as HandlerContext["parsedDomain"],
   } as HandlerContext;

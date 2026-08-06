@@ -10,7 +10,6 @@ import { normalizeCORSConfig } from "../cors/validators.ts";
 type ResponseBuilderConstructor = new (config?: {
   securityConfig?: SecurityConfig | null;
   isDev?: boolean;
-  cspUserHeader?: string | null;
   adapter?: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter;
   isVeryfrontDomain?: boolean;
 }) => ResponseBuilderInstance;
@@ -43,7 +42,6 @@ function createBuilder(
     securityConfig?: SecurityConfig | null;
     corsConfig?: boolean | SyncCORSConfig;
     isDev?: boolean;
-    cspUserHeader?: string | null;
     adapter?: RuntimeAdapter;
     isVeryfrontDomain?: boolean;
     cache?: CacheStrategy;
@@ -128,7 +126,6 @@ export function preflight(
     securityConfig?: SecurityConfig | null;
     corsConfig?: boolean | SyncCORSConfig;
     isDev?: boolean;
-    cspUserHeader?: string | null;
     adapter?: RuntimeAdapter;
     isVeryfrontDomain?: boolean;
   },

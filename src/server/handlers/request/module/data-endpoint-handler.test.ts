@@ -60,7 +60,6 @@ function makeCtx(projectDir: string): HandlerContext {
     projectDir,
     adapter: createMockAdapter(),
     securityConfig: null,
-    cspUserHeader: null,
   };
 }
 

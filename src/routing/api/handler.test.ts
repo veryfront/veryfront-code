@@ -148,7 +148,6 @@ describe("APIRouteHandler", () => {
           projectDir: "/test/project",
           adapter,
           securityConfig: null,
-          cspUserHeader: null,
           isLocalProject: false,
           prepareHostedConfigContext: () =>
             Promise.reject(new Error("hosted config must not be evaluated")),
@@ -211,7 +210,6 @@ describe("APIRouteHandler", () => {
         projectDir: "/test/project",
         adapter,
         securityConfig: null,
-        cspUserHeader: null,
         isLocalProject: false,
       } satisfies HandlerContext;
 
@@ -287,7 +285,6 @@ describe("APIRouteHandler", () => {
           projectDir: "/test/project",
           adapter,
           securityConfig: null,
-          cspUserHeader: null,
           isLocalProject: true,
         },
       );
@@ -329,7 +326,6 @@ describe("APIRouteHandler", () => {
           projectDir: "/test/project",
           adapter,
           securityConfig: null,
-          cspUserHeader: null,
           isLocalProject: false,
           allowHostProjectCodeExecution: true,
         },
@@ -378,7 +374,6 @@ describe("APIRouteHandler", () => {
               projectDir: "/test/project",
               adapter,
               securityConfig: null,
-              cspUserHeader: null,
               isLocalProject: true,
             },
           ),
@@ -555,7 +550,6 @@ describe("APIRouteHandler", () => {
         projectDir: "/test/project",
         adapter,
         securityConfig: null,
-        cspUserHeader: null,
         isLocalProject: true,
       } satisfies HandlerContext;
       const responsePromise = handler.handle(
@@ -807,7 +801,6 @@ describe("APIRouteHandler", () => {
           projectDir: "/test/project",
           adapter,
           securityConfig: null,
-          cspUserHeader: null,
           isLocalProject: true,
         },
       };

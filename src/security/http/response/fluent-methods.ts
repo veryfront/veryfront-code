@@ -14,7 +14,6 @@ export interface FluentMethodsContext {
   securityConfig: SecurityConfig | null;
   isDev: boolean;
   nonce: string;
-  cspUserHeader: string | null;
   adapter: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter | undefined;
   isVeryfrontDomain: boolean;
 }
@@ -56,7 +55,6 @@ export function withSecurity<T extends FluentMethodsContext>(
     this.headers,
     this.isDev,
     this.nonce,
-    this.cspUserHeader,
     config ?? this.securityConfig,
     this.adapter,
     this.isVeryfrontDomain,

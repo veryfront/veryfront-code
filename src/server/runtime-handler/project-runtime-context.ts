@@ -89,7 +89,6 @@ export interface ResolveProjectRuntimeContextInput {
     proxyTrusted: boolean | undefined;
   };
   securityConfig: SecurityConfig | null;
-  cspUserHeader: string | null;
   debug: boolean | undefined;
   routeRegistry: RouteRegistry;
   moduleServerUrl: string | undefined;
@@ -327,7 +326,6 @@ export async function resolveProjectRuntimeContext(
     projectDir: adapterRes.projectDir,
     adapter: adapterRes.adapter,
     securityConfig: requestSecurity?.securityConfig ?? input.securityConfig,
-    cspUserHeader: requestSecurity?.cspUserHeader ?? input.cspUserHeader,
     debug: input.debug,
     config: adapterRes.config,
     parsedDomain: projectRes.parsedDomain,

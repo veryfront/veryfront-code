@@ -101,7 +101,6 @@ function makeCtx(adapter: RuntimeAdapter, overrides: Partial<HandlerContext> = {
     projectDir: "/project",
     adapter,
     securityConfig: null,
-    cspUserHeader: null,
     projectSlug: PROJECT_SLUG,
     ...overrides,
   };

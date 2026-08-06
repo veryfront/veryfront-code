@@ -16,7 +16,6 @@ function createMockCtx(): HandlerContext {
       },
     },
     securityConfig: null,
-    cspUserHeader: null,
     isLocalProject: true,
   } as unknown as HandlerContext;
 }

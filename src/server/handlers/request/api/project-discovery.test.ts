@@ -41,7 +41,6 @@ function createHandlerContext(
     },
     adapter: createMockAdapter(),
     securityConfig: null,
-    cspUserHeader: null,
     isLocalProject: true,
   } as HandlerContext;
 }

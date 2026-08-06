@@ -397,7 +397,6 @@ export function createVeryfrontHandler(
           projectDir,
           adapter,
           securityLoader.getSecurityConfig(),
-          securityLoader.getCspUserHeader(),
           isDebugEnabled(),
           config,
         );
@@ -557,7 +556,6 @@ export function createVeryfrontHandler(
                 projectDir,
                 adapter,
                 securityLoader.getSecurityConfig(),
-                securityLoader.getCspUserHeader(),
                 isDebugEnabled(),
                 config,
               ),
@@ -578,7 +576,6 @@ export function createVeryfrontHandler(
             allowHostProjectCodeExecution: opts.allowHostProjectCodeExecution,
             proxyTrust: { proxyTrusted },
             securityConfig: securityLoader.getSecurityConfig(),
-            cspUserHeader: securityLoader.getCspUserHeader(),
             debug: isDebugEnabled(),
             routeRegistry: registry,
             moduleServerUrl: opts.moduleServerUrl,

@@ -26,7 +26,6 @@ function createCtx(captured: { options?: Record<string, unknown> }): HandlerCont
       env: { get: () => undefined },
     },
     securityConfig: null,
-    cspUserHeader: null,
     projectSlug: "my-project",
     projectId: "project-123",
     proxyToken: "vf_proxy_token",

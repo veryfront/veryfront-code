@@ -23,7 +23,6 @@ function makeCtx(): HandlerContext {
     projectDir: "/tmp/test",
     adapter: {} as HandlerContext["adapter"],
     securityConfig: null,
-    cspUserHeader: null,
   };
 }
 

@@ -73,7 +73,6 @@ function createContext(
     projectDir: PROJECT_DIR,
     adapter,
     securityConfig: {},
-    cspUserHeader: null,
     config: { client: { moduleResolution: "self-hosted" } },
     parsedDomain: { allowIframeEmbed: false } as HandlerContext["parsedDomain"],
     ...overrides,

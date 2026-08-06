@@ -86,7 +86,6 @@ Deno.test("MarkdownPreviewHandler fails closed before shared source reads", asyn
       },
     },
     securityConfig: null,
-    cspUserHeader: null,
   } as unknown as HandlerContext;
 
   const result = await new MarkdownPreviewHandler().handle(
@@ -140,7 +139,6 @@ describe("MarkdownPreviewHandler host-execution capability", () => {
         },
       },
       securityConfig: null,
-      cspUserHeader: null,
       allowHostProjectCodeExecution: true,
     } as unknown as HandlerContext;
 

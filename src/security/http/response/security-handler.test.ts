@@ -13,6 +13,7 @@ import type { SecurityConfig } from "./types.ts";
 import {
   PLATFORM_ASSET_ORIGINS,
   PLATFORM_IMAGE_ORIGINS,
+  PLATFORM_SCRIPT_ORIGINS,
 } from "#veryfront/security/http/platform-asset-origins.ts";
 import { ESM_CDN_BASE } from "#veryfront/utils/constants/cdn.ts";
 
@@ -58,14 +59,12 @@ function applyHeaders(
   {
     isDev = false,
     nonce = "nonce",
-    cspUserHeader = null,
     config = null,
     adapter,
     isVeryfrontDomain,
   }: {
     isDev?: boolean;
     nonce?: string;
-    cspUserHeader?: string | null;
     config?: SecurityConfig | null;
     adapter?: RuntimeAdapter;
     isVeryfrontDomain?: boolean;
@@ -76,7 +75,6 @@ function applyHeaders(
     headers,
     isDev,
     nonce,
-    cspUserHeader,
     config,
     adapter,
     isVeryfrontDomain,
@@ -101,7 +99,7 @@ describe("security/http/response/security-handler", () => {
 
   describe("buildCSP", () => {
     it("should return default CSP in production when no CSP is configured", () => {
-      const result = buildCSP(false, "test-nonce", null);
+      const result = buildCSP(false, "test-nonce");
       assert(result.includes("default-src 'self'"), "should have default-src");
       assert(result.includes("'nonce-test-nonce'"), "should include nonce in script-src");
       assert(result.includes("object-src 'none'"), "should block objects");
@@ -109,8 +107,16 @@ describe("security/http/response/security-handler", () => {
       assert(result.includes("base-uri 'self'"), "should restrict base-uri");
     });
 
+    it("applies the floor to a project that configures nothing", () => {
+      // Enforcement is not opt-in: hosting means a project that never touches
+      // security config still gets a baseline.
+      const result = buildCSP(false, "n", null);
+      assert(result.includes("script-src"), "floor applies without any config");
+      assert(result.includes("object-src 'none'"));
+    });
+
     it("should return empty string in dev mode when no CSP is configured", () => {
-      const result = buildCSP(true, "test-nonce", null);
+      const result = buildCSP(true, "test-nonce");
       assertEquals(result, "");
     });
 
@@ -118,129 +124,128 @@ describe("security/http/response/security-handler", () => {
       const adapter = createMockAdapter({
         VERYFRONT_CSP: "default-src 'self' 'nonce-{NONCE}'",
       });
-      const result = buildCSP(false, "abc123", null, null, adapter);
+      const result = buildCSP(false, "abc123", null, adapter);
       assertEquals(result, "default-src 'self' 'nonce-abc123'");
     });
 
-    it("should use cspUserHeader when set", () => {
-      const result = buildCSP(false, "xyz", "script-src 'nonce-{NONCE}'");
-      assertEquals(result, "script-src 'nonce-xyz'");
-    });
-
-    it("should build CSP from config csp object", () => {
+    it("merges project sources into the floor instead of replacing it", () => {
+      // The Google Fonts case: adding a font origin must not cost the project
+      // its script policy, which is what replace-semantics used to do.
       const config: SecurityConfig = {
         csp: {
-          "default-src": "'self'",
-          "script-src": "'nonce-{NONCE}'",
+          styleSrc: ["https://fonts.googleapis.com"],
+          fontSrc: ["https://fonts.gstatic.com"],
         },
       };
-      const result = buildCSP(false, "n1", null, config);
-      assert(result.includes("default-src 'self'"));
-      assert(result.includes("script-src 'nonce-n1'"));
+      const result = buildCSP(false, "n1", config);
+
+      assertEquals(parseDirectiveRemoteHosts(result, "font-src"), ["fonts.gstatic.com"]);
+      assert(parseDirectiveSources(result, "font-src").includes("'self'"), "floor kept");
+      assert(
+        parseDirectiveRemoteHosts(result, "style-src").includes("fonts.googleapis.com"),
+        "style-src carries the stylesheet origin",
+      );
+      assert(result.includes("'nonce-n1'"), "script-src floor survives a font addition");
+      assert(result.includes("object-src 'none'"), "unrelated floor directives survive");
     });
 
-    it("should handle camelCase CSP directive keys", () => {
-      const config: SecurityConfig = {
-        csp: {
-          defaultSrc: "'self'",
-          scriptSrc: "'nonce-{NONCE}'",
-        },
-      };
-      const result = buildCSP(false, "n2", null, config);
-      assert(result.includes("default-src 'self'"));
-      assert(result.includes("script-src 'nonce-n2'"));
+    it("admits a stylesheet without a competing style-src-elem", () => {
+      // style-src-elem duplicated style-src exactly and took precedence for
+      // <link>, so a project's styleSrc addition silently failed to load it.
+      const result = buildCSP(false, "n", {
+        csp: { styleSrc: ["https://fonts.googleapis.com"] },
+      });
+      assert(!result.includes("style-src-elem"), "no shadowing directive is emitted");
     });
 
-    it("should handle array CSP directive values", () => {
-      const config: SecurityConfig = {
-        csp: {
-          "default-src": ["'self'", "https://cdn.example.com"],
-        },
-      };
-      const result = buildCSP(false, "n3", null, config);
-      const defaultSources = parseDirectiveSources(result, "default-src");
-      const defaultHosts = parseDirectiveRemoteHosts(result, "default-src");
-      assert(defaultSources.includes("'self'"));
-      assertEquals(defaultHosts, ["cdn.example.com"]);
+    it("should handle camelCase and kebab-case directive keys alike", () => {
+      const camel = buildCSP(false, "n2", { csp: { fontSrc: ["https://a.example"] } });
+      const kebab = buildCSP(false, "n2", { csp: { "font-src": ["https://a.example"] } });
+      assertEquals(camel, kebab);
     });
 
     it("should skip undefined CSP directive values", () => {
       const config: SecurityConfig = {
-        csp: {
-          "default-src": "'self'",
-          "script-src": undefined,
-        },
+        csp: { imgSrc: ["https://cdn.example.com"], scriptSrc: undefined },
       };
-      const result = buildCSP(false, "n4", null, config);
-      assertEquals(result, "default-src 'self'");
+      const result = buildCSP(false, "n4", config);
+      assert(
+        parseDirectiveRemoteHosts(result, "img-src").includes("cdn.example.com"),
+        "the configured origin is admitted",
+      );
+      assert(result.includes("'nonce-n4'"), "an undefined value leaves the floor intact");
     });
 
-    it("should prioritize env CSP over cspUserHeader", () => {
-      const adapter = createMockAdapter({ VERYFRONT_CSP: "env-csp" });
-      const result = buildCSP(false, "n5", "user-csp", null, adapter);
-      assertEquals(result, "env-csp");
+    it("collapses duplicate sources a project repeats from the floor", () => {
+      const result = buildCSP(false, "n", { csp: { fontSrc: ["'self'", "'self'"] } });
+      assertEquals(
+        parseDirectiveSources(result, "font-src").filter((s) => s === "'self'").length,
+        1,
+      );
     });
 
-    it("should prioritize env CSP over config and default", () => {
+    it("null drops the baseline sources but keeps the required ones", () => {
+      // This is how a project hardens past the floor. It must not be able to
+      // harden its way into a broken site.
+      const result = buildCSP(false, "n", { csp: { styleSrc: null } });
+      const sources = parseDirectiveSources(result, "style-src");
+      assertEquals(sources, ["'self'"], "'unsafe-inline' dropped, 'self' kept");
+      assert(result.includes("'nonce-n'"), "script-src is untouched by a style-src opt-out");
+    });
+
+    it("no project config can remove a required origin", () => {
+      // Required sources are what the renderer emits; a project that dropped
+      // them would only break its own site.
+      const attempts: (string[] | null)[] = [null, [], ["'none'"]];
+      for (const attempt of attempts) {
+        const result = buildCSP(false, "n", { csp: { scriptSrc: attempt } });
+        const sources = parseDirectiveSources(result, "script-src");
+        assert(sources.includes("'self'"), `'self' survives ${JSON.stringify(attempt)}`);
+        assert(sources.includes("'nonce-n'"), `nonce survives ${JSON.stringify(attempt)}`);
+        assert(
+          parseDirectiveRemoteHosts(result, "script-src").includes("esm.sh"),
+          `the ESM CDN survives ${JSON.stringify(attempt)}`,
+        );
+      }
+    });
+
+    it("a project source supersedes a floor of 'none'", () => {
+      const result = buildCSP(false, "n", { csp: { objectSrc: ["https://plugin.example"] } });
+      const sources = parseDirectiveSources(result, "object-src");
+      assert(!sources.includes("'none'"), "'none' is only meaningful alone");
+      assertEquals(parseDirectiveRemoteHosts(result, "object-src"), ["plugin.example"]);
+    });
+
+    it("should prioritize env CSP over project config", () => {
       const adapter = createMockAdapter({ VERYFRONT_CSP: "env-only" });
-      const config: SecurityConfig = { csp: { "default-src": "'none'" } };
-      const result = buildCSP(false, "n", "user-header", config, adapter);
+      const config: SecurityConfig = { csp: { fontSrc: ["https://a.example"] } };
+      const result = buildCSP(false, "n", config, adapter);
       assertEquals(result, "env-only", "env CSP has highest priority");
-    });
-
-    it("should prioritize cspUserHeader over config and default", () => {
-      const config: SecurityConfig = { csp: { "default-src": "'none'" } };
-      const result = buildCSP(false, "n", "user-header", config);
-      assertEquals(result, "user-header", "user header takes priority over config");
-    });
-
-    it("should use config CSP over default", () => {
-      const config: SecurityConfig = { csp: { "default-src": "'none'" } };
-      const result = buildCSP(false, "n", null, config);
-      assertEquals(result, "default-src 'none'", "config takes priority over default");
-      assert(!result.includes("object-src"), "default directives should not leak into config CSP");
-    });
-
-    it("should fall through to default when config csp has only undefined values", () => {
-      const config: SecurityConfig = {
-        csp: { "default-src": undefined, "script-src": undefined },
-      };
-      const result = buildCSP(false, "n", null, config);
-      assert(result.includes("default-src 'self'"), "should fall through to default CSP");
     });
 
     it("should ignore whitespace-only env CSP", () => {
       const adapter = createMockAdapter({ VERYFRONT_CSP: "   " });
-      const result = buildCSP(false, "n", null, null, adapter);
+      const result = buildCSP(false, "n", null, adapter);
       assert(
         result.includes("default-src 'self'"),
-        "whitespace env should fall through to default",
-      );
-    });
-
-    it("should ignore whitespace-only cspUserHeader", () => {
-      const result = buildCSP(false, "n", "   ");
-      assert(
-        result.includes("default-src 'self'"),
-        "whitespace header should fall through to default",
+        "whitespace env should fall through to the floor",
       );
     });
 
     it("should produce different CSPs for different nonces", () => {
-      const a = buildCSP(false, "nonce-aaa", null);
-      const b = buildCSP(false, "nonce-bbb", null);
+      const a = buildCSP(false, "nonce-aaa");
+      const b = buildCSP(false, "nonce-bbb");
       assert(a !== b, "different nonces should produce different CSPs");
       assert(a.includes("'nonce-nonce-aaa'"), "first nonce embedded");
       assert(b.includes("'nonce-nonce-bbb'"), "second nonce embedded");
     });
 
-    it("default CSP should contain all 15 directives", () => {
-      const result = buildCSP(false, "n", null);
+    it("default CSP should contain all 14 directives", () => {
+      const result = buildCSP(false, "n");
       const directives = [
         "default-src",
         "script-src",
         "style-src",
-        "style-src-elem",
         "style-src-attr",
         "img-src",
         "font-src",
@@ -259,13 +264,13 @@ describe("security/http/response/security-handler", () => {
     });
 
     it("default CSP should set frame-ancestors 'none' for non-veryfront domains", () => {
-      const result = buildCSP(false, "n", null, null, undefined, false);
+      const result = buildCSP(false, "n", null, undefined, false);
       const sources = parseDirectiveSources(result, "frame-ancestors");
       assertEquals(sources, ["'none'"], "frame-ancestors should be 'none' for customer apps");
     });
 
     it("default CSP should allow Studio embedding when isVeryfrontDomain is true", () => {
-      const result = buildCSP(false, "n", null, null, undefined, true);
+      const result = buildCSP(false, "n", null, undefined, true);
       const sources = parseDirectiveSources(result, "frame-ancestors");
       // Only explicit Studio hosts — no wildcards. Tenant project domains
       // (`{slug}.preview.veryfront.com` etc.) must NOT be able to embed
@@ -300,14 +305,15 @@ describe("security/http/response/security-handler", () => {
       // Only these two carry a platform asset. Every other directive must be
       // exactly host-free, checked by exclusion so a directive added to the
       // policy later is covered here without anyone remembering to list it.
-      const mayCarryPlatformHosts = new Set(["script-src", "img-src"]);
+      // connect-src carries the script origins so the browser may fetch the
+      // source maps those modules reference.
+      const mayCarryPlatformHosts = new Set(["script-src", "img-src", "connect-src"]);
 
       for (
         const directive of [
           "default-src",
           "script-src",
           "style-src",
-          "style-src-elem",
           "img-src",
           "font-src",
           "connect-src",
@@ -332,7 +338,10 @@ describe("security/http/response/security-handler", () => {
         );
       }
 
-      assertEquals(parseDirectiveSources(csp, "connect-src"), ["'self'"]);
+      assertEquals(
+        parseDirectiveSources(csp, "connect-src"),
+        ["'self'", ...PLATFORM_SCRIPT_ORIGINS],
+      );
       assertEquals(parseDirectiveSources(csp, "font-src"), ["'self'", "data:"]);
     });
 
@@ -385,19 +394,18 @@ describe("security/http/response/security-handler", () => {
 
     it("default CSP should allow inline style elements, blob workers, and blob media", () => {
       const csp = buildCSP(false, "my-nonce", null);
-      const styleElemSources = parseDirectiveSources(
-        csp,
-        "style-src-elem",
-      );
+      // style-src governs <style> and <link> because no style-src-elem is
+      // emitted to take precedence over it.
+      const styleElemSources = parseDirectiveSources(csp, "style-src");
       const mediaSources = parseDirectiveSources(csp, "media-src");
       const workerSources = parseDirectiveSources(csp, "worker-src");
       assert(
         styleElemSources.includes("'unsafe-inline'"),
-        "style-src-elem should allow runtime-created style tags",
+        "style-src should allow runtime-created style tags",
       );
       assert(
         !styleElemSources.some((source) => source.startsWith("'nonce-")),
-        "style-src-elem should not mix a nonce with unsafe-inline because browsers ignore unsafe-inline when nonce/hash sources are present",
+        "style-src should not mix a nonce with unsafe-inline because browsers ignore unsafe-inline when nonce/hash sources are present",
       );
       assertEquals(styleElemSources, ["'self'", "'unsafe-inline'"]);
       assert(
@@ -448,7 +456,7 @@ describe("security/http/response/security-handler", () => {
 
     it("dev mode should return empty even with config present but empty", () => {
       const config: SecurityConfig = { csp: {} };
-      const result = buildCSP(true, "n", null, config);
+      const result = buildCSP(true, "n", config);
       assertEquals(result, "", "dev mode should return empty CSP");
     });
   });
@@ -575,8 +583,9 @@ describe("security/http/response/security-handler", () => {
       assertEquals(headers.get("Cross-Origin-Resource-Policy"), "same-origin");
     });
 
-    it("should set CSP when cspUserHeader is provided", () => {
-      const headers = applyHeaders({ cspUserHeader: "default-src 'self'" });
+    it("should set CSP from an ops-level env override", () => {
+      const adapter = createMockAdapter({ VERYFRONT_CSP: "default-src 'self'" });
+      const headers = applyHeaders({ adapter });
       assertEquals(headers.get("Content-Security-Policy"), "default-src 'self'");
     });
 
@@ -613,7 +622,7 @@ describe("security/http/response/security-handler", () => {
         "Access-Control-Allow-Origin": "https://policy.example",
       });
 
-      applySecurityHeaders(headers, false, "nonce", null, config);
+      applySecurityHeaders(headers, false, "nonce", config);
 
       assertEquals(headers.get("X-Custom-Header"), "custom-value");
       assertEquals(
@@ -654,14 +663,14 @@ describe("security/http/response/security-handler", () => {
       assertEquals(headers.get("Referrer-Policy"), "no-referrer");
     });
 
-    it("should use explicit CSP config instead of default", () => {
+    it("should merge explicit CSP config into the floor", () => {
       const config: SecurityConfig = {
-        csp: { "default-src": "'none'" },
+        csp: { imgSrc: ["https://cdn.example.com"] },
       };
       const headers = applyHeaders({ config });
       assertEquals(
         headers.get("Content-Security-Policy"),
-        buildCSP(false, "nonce", null, config),
+        buildCSP(false, "nonce", config),
       );
     });
 
@@ -670,21 +679,25 @@ describe("security/http/response/security-handler", () => {
       const headers = applyHeaders({ adapter });
       assertEquals(
         headers.get("Content-Security-Policy"),
-        buildCSP(false, "nonce", null, null, adapter),
+        buildCSP(false, "nonce", null, adapter),
       );
     });
 
-    it("custom config with frame-src overrides default frame-src", () => {
+    it("custom config with frame-src extends the default frame-src", () => {
       const config: SecurityConfig = {
         csp: {
-          "default-src": "'self'",
-          "frame-src": "'self' https://www.youtube.com https://accounts.google.com",
+          frameSrc: ["https://www.youtube.com", "https://accounts.google.com"],
         },
       };
       const headers = applyHeaders({ config });
       assertEquals(
         headers.get("Content-Security-Policy"),
-        buildCSP(false, "nonce", null, config),
+        buildCSP(false, "nonce", config),
+      );
+      const csp = headers.get("Content-Security-Policy") ?? "";
+      assert(
+        parseDirectiveSources(csp, "frame-src").includes("'self'"),
+        "the floor's own frame-src survives the addition",
       );
     });
 
@@ -693,26 +706,19 @@ describe("security/http/response/security-handler", () => {
       const headers = applyHeaders({ config });
       assertEquals(
         headers.get("Content-Security-Policy"),
-        buildCSP(false, "nonce", null, config),
+        buildCSP(false, "nonce", config),
       );
     });
 
-    it("config CSP should completely replace default (no directive merging)", () => {
-      const config: SecurityConfig = {
-        csp: { "script-src": "'self'" },
-      };
+    it("project config takes effect at all", () => {
+      // Regression guard: project CSP once reached buildCSP by two routes and
+      // the earlier one shadowed the merge, so a correct merge could still be
+      // a no-op in production while every other assertion here passed.
+      const config: SecurityConfig = { csp: { connectSrc: ["https://api.example.com"] } };
       const headers = applyHeaders({ config });
-      assertEquals(
-        headers.get("Content-Security-Policy"),
-        buildCSP(false, "nonce", null, config),
-      );
-    });
-
-    it("cspUserHeader should completely replace default", () => {
-      const headers = applyHeaders({ cspUserHeader: "img-src 'none'" });
-      assertEquals(
-        headers.get("Content-Security-Policy"),
-        buildCSP(false, "nonce", "img-src 'none'"),
+      assert(
+        (headers.get("Content-Security-Policy") ?? "").includes("https://api.example.com"),
+        "a configured source must reach the served header",
       );
     });
   });

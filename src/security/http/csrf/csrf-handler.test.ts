@@ -10,7 +10,6 @@ function createCtx(csrf?: boolean | Record<string, unknown>): HandlerContext {
     projectDir: "/tmp/test",
     adapter: { env: { get: () => undefined } } as unknown as HandlerContext["adapter"],
     securityConfig: csrf !== undefined ? { csrf } : null,
-    cspUserHeader: null,
   };
 }
 

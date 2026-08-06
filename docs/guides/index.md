@@ -21,13 +21,14 @@ details, see [API reference](../api-reference/index.md).
 
 ## Build routes
 
-| Goal                                        | Guide                                       |
-| ------------------------------------------- | ------------------------------------------- |
-| Add pages, layouts, and dynamic routes      | [Pages and routing](./pages-and-routing.md) |
-| Load data for pages                         | [Data fetching](./data-fetching.md)         |
-| Add HTTP endpoints                          | [API routes](./api-routes.md)               |
-| Add CORS, auth checks, logging, or timeouts | [Middleware](./middleware.md)               |
-| Set page metadata and social previews       | [Head and SEO](./head-and-seo.md)           |
+| Goal                                            | Guide                                             |
+| ----------------------------------------------- | ------------------------------------------------- |
+| Add pages, layouts, and dynamic routes          | [Pages and routing](./pages-and-routing.md)       |
+| Load data for pages                             | [Data fetching](./data-fetching.md)               |
+| Add HTTP endpoints                              | [API routes](./api-routes.md)                     |
+| Add CORS, auth checks, logging, or timeouts     | [Middleware](./middleware.md)                     |
+| Allow Google Fonts or other third-party origins | [Security headers and CSP](./security-headers.md) |
+| Set page metadata and social previews           | [Head and SEO](./head-and-seo.md)                 |
 
 ## Add AI behavior
 

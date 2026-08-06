@@ -296,7 +296,6 @@ describe("extractRepositoryContext", () => {
       projectDir: "/path/to/project",
       adapter: {} as HandlerContext["adapter"],
       securityConfig: null,
-      cspUserHeader: null,
     };
   }
 

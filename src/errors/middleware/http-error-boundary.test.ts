@@ -22,7 +22,6 @@ function createMockContext(isLocalProject = false): HandlerContext {
     projectDir: "/test/project",
     adapter: {} as HandlerContext["adapter"],
     securityConfig: null,
-    cspUserHeader: null,
     isLocalProject,
   };
 }

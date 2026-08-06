@@ -85,7 +85,6 @@ export abstract class BaseHandler implements Handler {
     return new ResponseBuilder({
       securityConfig: ctx.securityConfig ?? undefined,
       isDev: isExplicitlyLocalProject(ctx),
-      cspUserHeader: ctx.cspUserHeader,
       adapter: ctx.adapter,
       nonce,
       isVeryfrontDomain: ctx.parsedDomain?.allowIframeEmbed ?? false,

@@ -19,7 +19,6 @@ describe("AuthHandler realm sanitization", () => {
     return {
       projectDir: "/tmp/auth-test",
       securityConfig: { auth: { basic } } as unknown as SecurityConfig,
-      cspUserHeader: null,
       adapter: {
         env: { get: () => "" },
       } as unknown as HandlerContext["adapter"],
@@ -155,7 +154,6 @@ describe("AuthHandler realm sanitization", () => {
         auth: { bearer: { token: "expected-token" } },
         cors: { origin: "https://client.example" },
       } as SecurityConfig,
-      cspUserHeader: null,
       adapter: {
         env: { get: () => "" },
       } as unknown as HandlerContext["adapter"],
@@ -190,7 +188,6 @@ describe("AuthHandler realm sanitization", () => {
     const ctx: HandlerContext = {
       projectDir: "/tmp/auth-test",
       securityConfig: null,
-      cspUserHeader: null,
       adapter: {
         env: { get: (name: string) => credentials[name] },
       } as unknown as HandlerContext["adapter"],
@@ -235,7 +232,6 @@ describe("AuthHandler realm sanitization", () => {
           const ctx: HandlerContext = {
             projectDir: "/tmp/auth-test",
             securityConfig: null,
-            cspUserHeader: null,
             adapter: {
               env: { get: (name: string) => credentials[name] },
             } as unknown as HandlerContext["adapter"],
@@ -308,7 +304,6 @@ describe("AuthHandler realm sanitization", () => {
       const ctx: HandlerContext = {
         projectDir: "/tmp/auth-test",
         securityConfig: null,
-        cspUserHeader: null,
         adapter: {
           env: {
             get: (name: string) => name === "VERYFRONT_BEARER_TOKEN" ? "required" : undefined,
@@ -345,7 +340,6 @@ describe("AuthHandler realm sanitization", () => {
     const ctx: HandlerContext = {
       projectDir: "/tmp/auth-test",
       securityConfig,
-      cspUserHeader: null,
       adapter: {
         env: { get: () => undefined },
       } as unknown as HandlerContext["adapter"],
@@ -375,7 +369,6 @@ describe("AuthHandler realm sanitization", () => {
     const ctx: HandlerContext = {
       projectDir: "/tmp/auth-test",
       securityConfig,
-      cspUserHeader: null,
       adapter: {
         env: { get: () => undefined },
       } as unknown as HandlerContext["adapter"],
@@ -402,7 +395,6 @@ describe("AuthHandler realm sanitization", () => {
     const ctx: HandlerContext = {
       projectDir: "/tmp/auth-test",
       securityConfig: { auth } as unknown as SecurityConfig,
-      cspUserHeader: null,
       adapter: {
         env: { get: () => undefined },
       } as unknown as HandlerContext["adapter"],
@@ -441,7 +433,6 @@ describe("AuthHandler realm sanitization", () => {
       const ctx: HandlerContext = {
         projectDir: "/tmp/auth-test",
         securityConfig: { auth } as unknown as SecurityConfig,
-        cspUserHeader: null,
         adapter: {
           env: { get: () => undefined },
         } as unknown as HandlerContext["adapter"],

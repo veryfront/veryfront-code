@@ -175,7 +175,6 @@ function makeRuntimeContextInput(
     isProxyMode: false,
     proxyTrust: { proxyTrusted: undefined },
     securityConfig: { allowedOrigins: ["*"] } as any,
-    cspUserHeader: "default-src 'self'",
     debug: true,
     routeRegistry: {} as any,
     moduleServerUrl: "https://modules.example.test",
@@ -858,12 +857,10 @@ describe("resolveProjectRuntimeContext", () => {
     const adapter = createMockAdapter();
     const routeRegistry = { execute: () => Promise.resolve(undefined) } as any;
     const securityConfig = { allowedOrigins: ["https://example.test"] } as any;
-    const cspUserHeader = "default-src 'self'";
     const input = makeRuntimeContextInput({
       adapter,
       routeRegistry,
       securityConfig,
-      cspUserHeader,
       envVarCache: {
         get: ({ environmentId, token, projectSlug, projectId }: ProjectEnvironmentScope) => {
           envLoadCount += 1;
@@ -891,7 +888,6 @@ describe("resolveProjectRuntimeContext", () => {
     const ctx = result.handlerContext;
     assertStrictEquals(ctx.adapter, adapter);
     assertStrictEquals(ctx.securityConfig, securityConfig);
-    assertStrictEquals(ctx.cspUserHeader, cspUserHeader);
     assertStrictEquals(ctx.routeRegistry, routeRegistry);
     assertEquals(ctx.projectDir, "/base/project");
     assertEquals(ctx.projectSlug, "remote-project");
@@ -1042,7 +1038,7 @@ describe("resolveProjectRuntimeContext", () => {
     assertEquals(ctx.securityConfig?.cors, {
       origin: ["https://client.example"],
     });
-    assertEquals(ctx.cspUserHeader, "default-src 'none'");
+    assertEquals(ctx.securityConfig?.csp, { defaultSrc: ["'none'"] });
 
     const authResult = await new AuthHandler().handle(
       new Request("http://localhost/page"),
@@ -1125,14 +1121,14 @@ describe("resolveProjectRuntimeContext", () => {
     assertEquals(betaSecurity?.cors, {
       origin: ["https://beta-project.client.example"],
     });
-    assertEquals(
-      alpha.handlerContext?.cspUserHeader,
-      "default-src https://alpha-project.assets.example",
-    );
-    assertEquals(
-      beta.handlerContext?.cspUserHeader,
-      "default-src https://beta-project.assets.example",
-    );
+    // CSP now travels on the request-scoped securityConfig rather than a
+    // parallel pre-serialized copy, so tenant isolation is asserted there.
+    assertEquals(alphaSecurity?.csp, {
+      defaultSrc: ["https://alpha-project.assets.example"],
+    });
+    assertEquals(betaSecurity?.csp, {
+      defaultSrc: ["https://beta-project.assets.example"],
+    });
     assertEquals(Object.isFrozen(alphaSecurity), true);
     assertEquals(Object.isFrozen(betaSecurity), true);
     assertEquals(alphaSecurity === betaSecurity, false);

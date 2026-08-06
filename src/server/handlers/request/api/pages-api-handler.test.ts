@@ -71,7 +71,6 @@ function createHandlerContext(
     projectDir: input.projectDir ?? "/project-dir",
     adapter: input.adapter,
     securityConfig: null,
-    cspUserHeader: null,
     projectSlug: input.projectSlug,
     projectId: input.projectSlug ? `${input.projectSlug}-id` : undefined,
     resolvedEnvironment: input.mode ?? "preview",
