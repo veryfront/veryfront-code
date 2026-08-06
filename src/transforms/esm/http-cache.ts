@@ -17,7 +17,7 @@ import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import { replaceSpecifiers } from "./lexer.ts";
 import { createBundleManifest, storeBundleManifest } from "./bundle-manifest.ts";
 import { HTTP_MODULE_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
-import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
+import { HTTP_MODULE_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 import { httpBundleCache } from "./http-cache-wrapper.ts";
 import { unbrand } from "./http-cache-types.ts";
 import { asLocalModuleCode, VeryfrontError } from "./http-cache-invariants.ts";
@@ -93,7 +93,8 @@ const SLOW_HTTP_FETCH_THRESHOLD_MS = 500;
 const HTTP_MODULE_FETCH_MAX_ATTEMPTS = 3;
 const HTTP_MODULE_FETCH_RETRY_DELAY_MS = 100;
 const HTTP_MODULE_FETCH_WAIT_GRACE_MS = 5_000;
-const HTTP_MODULE_FETCH_MAX_WAIT_MS = HTTP_FETCH_TIMEOUT_MS * HTTP_MODULE_FETCH_MAX_ATTEMPTS +
+const HTTP_MODULE_FETCH_MAX_WAIT_MS =
+  HTTP_MODULE_FETCH_TIMEOUT_MS * HTTP_MODULE_FETCH_MAX_ATTEMPTS +
   HTTP_MODULE_FETCH_RETRY_DELAY_MS *
     ((HTTP_MODULE_FETCH_MAX_ATTEMPTS - 1) * HTTP_MODULE_FETCH_MAX_ATTEMPTS / 2) +
   HTTP_MODULE_FETCH_WAIT_GRACE_MS;
@@ -207,7 +208,7 @@ async function fetchHttpModule(url: string): Promise<HttpModuleFetchResult> {
         ),
       {
         maxAttempts: HTTP_MODULE_FETCH_MAX_ATTEMPTS,
-        timeoutMs: HTTP_FETCH_TIMEOUT_MS,
+        timeoutMs: HTTP_MODULE_FETCH_TIMEOUT_MS,
         shouldRetry: (error) =>
           error instanceof HttpModuleBodyError
             ? false
