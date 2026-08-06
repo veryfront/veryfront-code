@@ -82,8 +82,13 @@ function clampDiagnostic(value: string): string {
  * Render a stylesheet that both explains the failure in the source and shows
  * it in the page. Every error path serves this: a stylesheet that failed to
  * build must never be mistaken for a project that simply has no styles.
+ *
+ * Exported for direct testing. The escaping contract cannot be fully driven
+ * through the handler: a `"` inside `@plugin "..."` closes the CSS string
+ * before it ever reaches a diagnostic, so the string-literal escape path has
+ * no end-to-end route and must be exercised here.
  */
-function renderCSSDiagnostic(
+export function renderCSSDiagnostic(
   heading: string,
   detail: { title: string; message: string; suggestion: string },
 ): string {
@@ -304,14 +309,20 @@ export class StylesCSSHandler extends BaseHandler {
       // from a project that legitimately has no styles, so the page renders
       // completely unstyled and nothing in the browser says why. Route it
       // through the same visible diagnostic the compile path uses.
+      //
+      // The message stays generic. Unlike the compile path — whose text comes
+      // from the project's own stylesheet and is the whole point of this route
+      // — this catch fires on infrastructure faults (adapter, filesystem,
+      // network) whose messages carry server-side paths and internals, and a
+      // preview URL is shareable. The detail is logged above instead.
       const responseBuilder = this.createResponseBuilder(ctx).withCache("no-cache");
       return this.respond(
         responseBuilder.withContentType(
           "text/css; charset=utf-8",
           renderCSSDiagnostic("STYLESHEET COULD NOT BE BUILT", {
             title: "CSS Handler Error",
-            message: error instanceof Error ? error.message : String(error),
-            suggestion: "Check the server logs for the full stack trace.",
+            message: "The stylesheet could not be built for this request.",
+            suggestion: "Check the server logs for this request's error and stack trace.",
           }),
           HTTP_OK,
         ),

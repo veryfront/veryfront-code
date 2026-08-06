@@ -28,7 +28,7 @@ import {
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { invalidatePreparedProjectCSS } from "#veryfront/html/styles-builder/prepared-project-css-cache.ts";
 import { invalidateProjectCandidateManifests } from "#veryfront/rendering/orchestrator/css-candidate-manifest.ts";
-import { StylesCSSHandler } from "./styles-css.handler.ts";
+import { renderCSSDiagnostic, StylesCSSHandler } from "./styles-css.handler.ts";
 
 const SLUG = "styles-css-error-project";
 const PAGE = {
@@ -85,18 +85,69 @@ async function serve(adapter: RuntimeAdapter): Promise<Response> {
   }
 }
 
-/** CSS text with every comment removed — what the browser would actually apply. */
+/**
+ * Scan CSS once, dropping comments and (optionally) blanking string literals.
+ *
+ * A regex cannot do this: the diagnostic deliberately echoes project-controlled
+ * text into a `content:` string, so a payload containing comment delimiters
+ * would make a naive stripper eat real rules and hide a regression.
+ */
+function scanCSS(css: string, blankStrings: boolean): string {
+  let out = "";
+  let index = 0;
+  let quote: string | null = null;
+
+  while (index < css.length) {
+    const char = css[index]!;
+
+    if (quote !== null) {
+      if (char === "\\") {
+        index += 2;
+        continue;
+      }
+      if (char === quote) {
+        quote = null;
+        out += blankStrings ? '""' : char;
+        index++;
+        continue;
+      }
+      if (!blankStrings) out += char;
+      index++;
+      continue;
+    }
+
+    if (char === "/" && css[index + 1] === "*") {
+      const end = css.indexOf("*/", index + 2);
+      index = end === -1 ? css.length : end + 2;
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      out += blankStrings ? "" : char;
+      index++;
+      continue;
+    }
+
+    out += char;
+    index++;
+  }
+
+  return out.trim();
+}
+
+/** CSS the browser would actually apply, comments removed. */
 function activeRules(css: string): string {
-  return css.replace(/\/\*[\s\S]*?\*\//g, "").trim();
+  return scanCSS(css, false);
 }
 
 /**
- * Applicable CSS with quoted strings blanked out. Diagnostic text is echoed
- * inside a `content:` string where it is inert, so only what survives *outside*
- * a string literal can actually take effect.
+ * Applicable CSS with string literals blanked. Diagnostic text is echoed inside
+ * a `content:` string where it is inert, so only what survives *outside* a
+ * string literal can take effect.
  */
 function effectiveCSS(css: string): string {
-  return activeRules(css).replace(/"(?:\\.|[^"\\])*"/g, '""');
+  return scanCSS(css, true);
 }
 
 describe("server/handlers/dev/styles-css error responses", () => {
@@ -119,7 +170,14 @@ describe("server/handlers/dev/styles-css error responses", () => {
     );
     assertStringIncludes(css, "body::before");
     assertStringIncludes(css, "CSS Error:");
-    assertStringIncludes(css, "source listing exploded");
+    // ...but the raw fault must not reach a shareable preview URL. This catch
+    // fires on infrastructure errors whose messages carry server internals;
+    // the detail belongs in the log, not the page.
+    assertEquals(
+      css.includes("source listing exploded"),
+      false,
+      "internal error text must not be disclosed in the served stylesheet",
+    );
   });
 
   it("shows a visible diagnostic when a stylesheet uses a non-allowlisted plugin", async () => {
@@ -162,5 +220,61 @@ describe("server/handlers/dev/styles-css error responses", () => {
     // what remains after the comment is exactly one declaration block.
     assertEquals(activeRules(css).startsWith("body::before"), true);
     assertEquals((effectiveCSS(css).match(/\{/g) ?? []).length, 1, "exactly one rule block");
+  });
+
+  it("escapes diagnostic text that would otherwise break out of the CSS string", () => {
+    // No end-to-end route reaches this: a `"` inside `@plugin "..."` closes the
+    // stylesheet's own string first, so the escape contract is pinned directly.
+    const css = renderCSSDiagnostic("HEADING", {
+      title: "T",
+      message: 'a";}body{display:none}{content:"',
+      suggestion: "s",
+    });
+
+    assertEquals(
+      effectiveCSS(css).includes("display:none"),
+      false,
+      "a quote in diagnostic text must not close the content string",
+    );
+    assertEquals((effectiveCSS(css).match(/\{/g) ?? []).length, 1, "exactly one rule block");
+  });
+
+  it("escapes a backslash so it cannot neutralize the escape added to a quote", () => {
+    // The backslash must sit directly before a quote. Escaping the quote alone
+    // turns `\"` into `\\"` — an escaped backslash followed by a live quote,
+    // which closes the string. Only escaping the backslash first prevents it.
+    const css = renderCSSDiagnostic("HEADING", {
+      title: "T",
+      message: 'a\\";}body{display:none}{content:"',
+      suggestion: "s",
+    });
+
+    assertEquals(
+      effectiveCSS(css).includes("display:none"),
+      false,
+      "a backslash must not neutralize the escape applied to the following quote",
+    );
+  });
+
+  it("keeps newlines and control characters out of the CSS string literal", () => {
+    const css = renderCSSDiagnostic("HEADING", {
+      title: "T",
+      message: "line\u0000one\u2028two",
+      suggestion: "s",
+    });
+    const content = /content: "([^"]*)"/.exec(css)?.[1] ?? "";
+
+    // deno-lint-ignore no-control-regex -- asserting control characters are absent.
+    assertEquals(/[\u0000-\u001f\u2028\u2029]/.test(content), false);
+  });
+
+  it("bounds diagnostic text so a pathological error cannot inline a huge stylesheet", () => {
+    const css = renderCSSDiagnostic("HEADING", {
+      title: "T",
+      message: "x".repeat(50_000),
+      suggestion: "s",
+    });
+
+    assert(css.length < 10_000, `diagnostic must stay bounded, got ${css.length}`);
   });
 });
