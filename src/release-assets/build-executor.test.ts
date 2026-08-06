@@ -2516,12 +2516,15 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
         },
       );
 
-      // Completing at all is half the assertion: an unresolvable specifier used
-      // to abort this with "Release asset coverage is incomplete".
-      await runReleaseAssetBuild(
+      const result = await runReleaseAssetBuild(
         baseInput(client, () => Promise.resolve("export default null;")),
         await tmp(),
       );
+
+      // Assert success explicitly. runReleaseAssetBuild returns a failed result
+      // rather than throwing, so awaiting it proves nothing on its own -- an
+      // earlier revision of this test said otherwise and was wrong.
+      assertEquals(result.success, true, specifier);
 
       // Used to fail the release. It no longer does, and that is the point: a
       // text match is not knowledge that the build needs the file. The same
