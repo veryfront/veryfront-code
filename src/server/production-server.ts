@@ -1,5 +1,5 @@
 import { serverLogger as logger } from "#veryfront/utils";
-import { installUnhandledRejectionGuard } from "./unhandled-rejection-guard.ts";
+import { installUnhandledRejectionGuard } from "#veryfront/server/unhandled-rejection-guard.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
