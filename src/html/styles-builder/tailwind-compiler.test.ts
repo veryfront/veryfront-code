@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "./__tests__/css-processor-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MAX_CSS_SELECTOR_TOKEN_CHARACTERS } from "#veryfront/utils/constants/css.ts";
 import {
@@ -98,16 +98,24 @@ describe("styles-builder/tailwind-compiler", () => {
       assertEquals(candidates.includes("bg-[var(--color)]"), true);
     });
 
-    it("rejects an overlong candidate as one token instead of extracting fragments", () => {
+    it("skips an overlong candidate without extracting fragments", () => {
       const admitted = "a".repeat(MAX_CSS_SELECTOR_TOKEN_CHARACTERS);
       const overlong = `${admitted}a`;
 
       assertEquals(extractCandidates(`class="${admitted}"`).includes(admitted), true);
-      assertThrows(
-        () => extractCandidates(`class="${overlong}"`),
-        TypeError,
-        `cannot exceed ${MAX_CSS_SELECTOR_TOKEN_CHARACTERS} characters`,
-      );
+
+      // This used to throw, and the throw reached generateHTMLShellParts, so a
+      // single oversized token took down stylesheet generation for the whole
+      // page and it rendered unstyled. Reproduced against a real project whose
+      // pages/index.mdx contains one.
+      //
+      // The original guarantee is kept -- no fragment of the run is emitted as
+      // a candidate -- and scanning continues, so real classes after it are
+      // still found. That last part is what makes skipping safe rather than
+      // merely quieter.
+      const candidates = extractCandidates(`class="${overlong}" mt-4`);
+      assertEquals(candidates.some((candidate) => candidate.startsWith("aa")), false);
+      assertEquals(candidates.includes("mt-4"), true);
     });
   });
 
