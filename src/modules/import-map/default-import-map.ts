@@ -18,6 +18,7 @@ function getVeryfrontSsrImportMap(): Record<string, string> {
   const router = coreReact;
   const context = coreReact;
   const fonts = `${base}/react/fonts/index.js${ssr}`;
+  const ui = `${base}/react/components/ui/index.js${ssr}`;
 
   const markdown = `${base}/markdown/index.js${ssr}`;
   const chat = `${base}/chat/index.js${ssr}`;
@@ -38,6 +39,7 @@ function getVeryfrontSsrImportMap(): Record<string, string> {
     "veryfront/router": router,
     "veryfront/context": context,
     "veryfront/fonts": fonts,
+    "veryfront/ui": ui,
     "veryfront/markdown": markdown,
     "veryfront/chat": chat,
     "veryfront/mdx": mdx,
