@@ -33,6 +33,54 @@ describe("html/styles-builder/css-import-extraction", () => {
       assertEquals(extractCssImportSpecifiers('import"./styles.css";'), ["./styles.css"]);
     });
 
+    it("ignores imports that are not code", () => {
+      // These are not ignored merely as a nicety. A release-asset build records
+      // any specifier it cannot resolve as a coverage gap, and gaps abort the
+      // build -- so a commented-out import to a since-deleted stylesheet would
+      // block that project's releases permanently.
+      assertEquals(extractCssImportSpecifiers('// import "./legacy.css";'), []);
+      assertEquals(extractCssImportSpecifiers('/* import "./legacy.css"; */'), []);
+      assertEquals(
+        extractCssImportSpecifiers('/*\n * import "./legacy.css";\n */'),
+        [],
+      );
+      assertEquals(extractCssImportSpecifiers('const t = `import "./legacy.css"`;'), []);
+      assertEquals(
+        extractCssImportSpecifiers('```tsx\nimport "./theme.css";\n```'),
+        [],
+      );
+    });
+
+    it("does not treat import.meta as an import statement", () => {
+      // `import` followed by a `.css` string later in the same statement used to
+      // match, because nothing required the keyword to begin a declaration.
+      assertEquals(
+        extractCssImportSpecifiers('console.log(import.meta.url, "./styles.css");'),
+        [],
+      );
+      assertEquals(
+        extractCssImportSpecifiers('const u = import.meta.resolve("./a.css");'),
+        [],
+      );
+    });
+
+    it("still finds real imports alongside non-code lookalikes", () => {
+      const source = [
+        '// import "./commented.css";',
+        'import "./real.css";',
+        'const sample = `import "./template.css"`;',
+        'import styles from "./mod.module.css";',
+      ].join("\n");
+      assertEquals(extractCssImportSpecifiers(source), ["./real.css", "./mod.module.css"]);
+    });
+
+    it("keeps a URL in a string from reading as a comment", () => {
+      assertEquals(
+        extractCssImportSpecifiers('const cdn = "https://x.dev";\nimport "./real.css";'),
+        ["./real.css"],
+      );
+    });
+
     it("does not match specifiers across statement boundaries", () => {
       const source = 'const a = 1; import { b } from "./b.ts"; const s = "x.css";';
       assertEquals(extractCssImportSpecifiers(source), []);

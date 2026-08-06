@@ -34,12 +34,38 @@ export const CSS_IMPORTING_SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", "
  * than it looks: release-asset builds turn a bogus specifier into a fatal
  * coverage gap, so a false positive fails the release.
  */
-const CSS_IMPORT_RE = /\bimport\b[^'";]*['"]([^'"]+\.css)['"]/g;
+const CSS_IMPORT_RE = /\bimport\b(?!\s*\.)[^'";]*['"]([^'"]+\.css)['"]/g;
+
+/**
+ * Blank out regions that look like code but are not.
+ *
+ * A specifier found here is not merely ignored downstream: the release-asset
+ * build records anything it cannot resolve as a coverage gap, and gaps abort
+ * the build. So a commented-out import to a since-deleted stylesheet would
+ * block a project's releases permanently. Fenced blocks come first because
+ * they are delimited by the same backticks as template literals.
+ *
+ * Replaced with equivalent-length blanks rather than removed so any offset a
+ * caller derives from the result still lines up with the original source.
+ */
+function blankNonCodeRegions(source: string): string {
+  const blank = (match: string) => match.replace(/[^\n]/g, " ");
+  return source
+    .replace(/```[\s\S]*?```/g, blank)
+    .replace(/\/\*[\s\S]*?\*\//g, blank)
+    // Leading `[^:]` keeps the `//` in a URL like https://example.com from
+    // being read as the start of a comment.
+    .replace(
+      /(^|[^:])(\/\/[^\n]*)/g,
+      (_m, prefix: string, comment: string) => prefix + blank(comment),
+    )
+    .replace(/`(?:[^`\\]|\\[\s\S])*`/g, blank);
+}
 
 /** Extract the raw specifiers of all static CSS imports in a source file. */
 export function extractCssImportSpecifiers(source: string): string[] {
   const specifiers: string[] = [];
-  for (const match of source.matchAll(CSS_IMPORT_RE)) {
+  for (const match of blankNonCodeRegions(source).matchAll(CSS_IMPORT_RE)) {
     if (match[1]) specifiers.push(match[1]);
   }
   return specifiers;
