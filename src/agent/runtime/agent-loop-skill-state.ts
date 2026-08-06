@@ -63,9 +63,9 @@ export class AgentLoopSkillState {
   /**
    * Narrow the active policy after a form_input tool result, and record the
    * flag when `submitted` reports the form was actually submitted. Callers
-   * pass `submitted` explicitly (each loop determines it from its own
-   * tool-result shape via `isSubmittedFormInputExecutionResult`) rather than
-   * this method recomputing it.
+   * compute `submitted` with a broader predicate than this method applies
+   * internally; they can disagree, so the flag cannot be recomputed without
+   * changing behavior.
    */
   markFormInputSubmitted(toolName: string, result: unknown, submitted: boolean): void {
     this.activeSkillPolicy = removeFormInputAfterSubmission(
