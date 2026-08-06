@@ -36,6 +36,11 @@ import {
 } from "./worker-egress-guard.ts";
 import { isWorkerGenerationInScope } from "./worker-generation.ts";
 import { buildWorkerPermissions } from "./worker-permissions.ts";
+import { isHostProjectExecutionOverrideEnabled } from "#veryfront/security/host-execution-policy.ts";
+import {
+  isIsolatedApiPreparationSupported,
+  ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
+} from "./isolation-capability.ts";
 import type {
   RenderSSRRequest,
   WorkerPoolConfig,
@@ -1238,15 +1243,55 @@ let _apiIsolation = false;
 let _dataIsolation = false;
 let _ssrIsolation = false;
 
+/**
+ * Resolve the host-owned isolation flags once per process.
+ *
+ * A build that cannot honour `WORKER_ISOLATION_API` has no configuration that
+ * serves traffic: every API route dead-ends in `prepareHandlerModule`. The flag
+ * is downgraded in exactly one case — the operator already granted host-realm
+ * execution via VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION. The downgrade cannot
+ * grant more than that, since every execution gate is a conjunction with
+ * `allowHostProjectCodeExecution`. Without the grant the flag stands and API
+ * ownership fails closed with a typed 503.
+ */
 function resolveFlags(): void {
   if (_flagsResolved) return;
   // Isolation is host-owned security policy. Project env overlays must never
   // enable or disable it for the framework process.
   const master = getHostEnvBoolean("WORKER_ISOLATION_ENABLED", false);
-  _apiIsolation = master && getHostEnvBoolean("WORKER_ISOLATION_API", false);
+  const apiRequested = master && getHostEnvBoolean("WORKER_ISOLATION_API", false);
   _dataIsolation = master && getHostEnvBoolean("WORKER_ISOLATION_DATA", false);
   _ssrIsolation = master && getHostEnvBoolean("WORKER_ISOLATION_SSR", false);
+
+  const preparationSupported = isIsolatedApiPreparationSupported();
+  const hostExecutionGranted = isHostProjectExecutionOverrideEnabled();
+  const downgraded = apiRequested && !preparationSupported && hostExecutionGranted;
+
+  _apiIsolation = apiRequested && !downgraded;
   _flagsResolved = true;
+
+  if (downgraded) {
+    logger.warn(
+      "WORKER_ISOLATION_API downgraded to host-realm execution under an explicit operator grant",
+      {
+        flag: "WORKER_ISOLATION_API",
+        requested: true,
+        effective: false,
+        reason: ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
+        grantedBy: "VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION",
+      },
+    );
+  } else if (apiRequested && !preparationSupported) {
+    logger.error(
+      "WORKER_ISOLATION_API cannot be honoured by this runtime and host project execution is not granted; project API routes will fail closed",
+      {
+        flag: "WORKER_ISOLATION_API",
+        requested: true,
+        effective: true,
+        reason: ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
+      },
+    );
+  }
 }
 
 /**
@@ -1256,6 +1301,17 @@ function resolveFlags(): void {
 export function isWorkerIsolationEnabled(): boolean {
   resolveFlags();
   return _apiIsolation;
+}
+
+/**
+ * The one place that decides which realm a project API route executes in.
+ *
+ * `routing/api/handler.ts` and both sites in `routing/api/route-executor.ts`
+ * used to recompute this independently, which is why patching only the handler
+ * moved the failure instead of removing it.
+ */
+export function isHostRealmApiExecution(allowHostProjectCodeExecution: boolean): boolean {
+  return allowHostProjectCodeExecution === true && !isWorkerIsolationEnabled();
 }
 
 /**

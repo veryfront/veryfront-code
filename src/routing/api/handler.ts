@@ -29,8 +29,13 @@ import type { HandlerContext } from "#veryfront/types";
 import type { PreparedWorkerModule } from "#veryfront/security/sandbox/worker-types.ts";
 import {
   evictWorkerScopeIfPresent,
+  isHostRealmApiExecution,
   isWorkerIsolationEnabled,
 } from "#veryfront/security/sandbox/worker-pool.ts";
+import {
+  isIsolatedApiPreparationSupported,
+  ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
+} from "#veryfront/security/sandbox/isolation-capability.ts";
 import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
 import {
   isHostProjectCodeExecutionAllowed,
@@ -264,7 +269,38 @@ export class APIRouteHandler {
             config: this.corsConfig ?? undefined,
           }) ?? unavailable;
         }
-        const useHostRealm = allowHostProjectCodeExecution && !isWorkerIsolationEnabled();
+        const useHostRealm = isHostRealmApiExecution(allowHostProjectCodeExecution);
+
+        // Only the isolated path is left and this build cannot prepare a module
+        // for it, so every continuation dead-ends in loadRoute and is flattened
+        // to "Handler not found" below. Name the flag instead. Gated on
+        // !useHostRealm so a dedicated-but-ungranted runtime, which skips the
+        // shared-runtime 503 above, also gets a typed answer.
+        if (!useHostRealm && !isIsolatedApiPreparationSupported()) {
+          const isolationRequested = isWorkerIsolationEnabled();
+          logger.error("API route unservable under the configured execution posture", {
+            pathname,
+            reason: ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
+            workerIsolationApi: isolationRequested,
+            allowHostProjectCodeExecution,
+          });
+          const unservable = createErrorResponseFromDefinition(
+            PROJECT_EXECUTION_UNAVAILABLE,
+            {
+              detail: isolationRequested
+                ? "WORKER_ISOLATION_API is set but this runtime cannot prepare isolated API route source"
+                : "Host project code execution is not granted and this runtime cannot prepare isolated API route source",
+              instance: pathname,
+            },
+          );
+          unservable.headers.set("cache-control", "no-store");
+          return await applyCORSHeaders({
+            request,
+            response: unservable,
+            config: this.corsConfig ?? undefined,
+          }) ?? unservable;
+        }
+
         const { route, errorMessage } = await this.loadRoute(match, useHostRealm);
         if (!route) {
           const msg = errorMessage ?? "Handler not found";

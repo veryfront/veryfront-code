@@ -17,6 +17,7 @@ import {
   rewriteNodeExternalImports,
   toCjsDestructureBindings,
 } from "./loader.ts";
+import { __setCompiledBinaryForTests } from "#veryfront/security/sandbox/isolation-capability.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { env, getEnv, setEnv } from "#veryfront/compat/process.ts";
@@ -167,6 +168,29 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals((globalThis as Record<string, unknown>)[marker], undefined);
     assertEquals(prepared.sha256.length, 64);
     assertMatch(prepared.source, /__vf_prepare_route_host_marker__/);
+  });
+
+  it("refuses to prepare an isolated handler when the runtime cannot link one", async () => {
+    const projectDir = await makeTempDir();
+    const modulePath = join(projectDir, "unlinkable-handler.ts");
+    await fs.writeTextFile(modulePath, `export const GET = () => new Response("ok");`);
+
+    __setCompiledBinaryForTests(true);
+    try {
+      const error = await assertRejects(() =>
+        prepareHandlerModule({
+          projectDir,
+          modulePath,
+          adapter,
+          config: undefined,
+        })
+      );
+      // Names the linkage, not a missing transpiler.
+      assertMatch(String((error as Error).message), /_vf_/);
+      assertMatch(String((error as Error).message), /data:/);
+    } finally {
+      __setCompiledBinaryForTests(undefined);
+    }
   });
 
   it("keeps an authenticated hosted empty remote-host policy fail-closed", async () => {
