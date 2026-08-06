@@ -346,6 +346,8 @@ export interface ReleaseAssetManifestParseOptions {
    * waiting on a deploy, a locally built bundle -- must not: there a v1 body
    * means the builder and this framework are skewed, and accepting it would
    * hide the skew instead of naming it.
+   *
+   * @default false
    */
   readonly acceptLegacyV1?: boolean;
 }
