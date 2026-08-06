@@ -39,7 +39,6 @@ function localContext(): HandlerContext {
   return {
     projectDir: "/project",
     securityConfig: null,
-    cspUserHeader: null,
     isLocalProject: true,
   } as HandlerContext;
 }

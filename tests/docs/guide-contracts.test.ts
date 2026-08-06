@@ -736,6 +736,17 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
     snippets: ["Sandbox.create", "executeCommand", "sandbox.close"],
   },
+  "guides/security-headers.md": {
+    references: [],
+    snippets: [
+      "security.csp",
+      "fonts.googleapis.com",
+      "fonts.gstatic.com",
+      "styleSrc",
+      "fontSrc",
+      "VERYFRONT_CSP",
+    ],
+  },
   "guides/skills.md": {
     references: [
       "../api-reference/veryfront/agent.md",

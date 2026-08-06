@@ -4,7 +4,7 @@ description: "The Content-Security-Policy Veryfront applies by default, and how 
 order: 11
 ---
 
-Every hosted Veryfront project is served with a Content-Security-Policy and a set of hardening headers. You do not switch them on — they apply in production whether or not you configure anything. What you do configure is the extra origins your own site needs.
+Every hosted Veryfront project is served with a Content-Security-Policy and a set of hardening headers. You do not switch them on; they apply in production whether or not you configure anything. What you do configure is the extra origins your own site needs.
 
 ## The default policy
 
@@ -38,7 +38,7 @@ Two directives are worth understanding:
 
 ## Adding an origin
 
-Set `security.csp` in `veryfront.config.ts`. Values are **added to** the defaults — you never restate them:
+Set `security.csp` in `veryfront.config.ts`. Values are **added to** the defaults, so you never restate them:
 
 ```ts
 export default {
@@ -53,7 +53,7 @@ export default {
 
 That is the complete Google Fonts setup: `fonts.googleapis.com` serves the stylesheet, `fonts.gstatic.com` serves the font files, and both directives keep everything they already had.
 
-Directive names may be camelCase (`fontSrc`) or the CSP spelling (`font-src`). Both work; camelCase matches the rest of your config. You do not need to repeat `'self'` — it is already there.
+Directive names may be camelCase (`fontSrc`) or the CSP spelling (`font-src`). Both work; camelCase matches the rest of your config. You do not need to repeat `'self'`; it is already there.
 
 A few more examples:
 
@@ -70,7 +70,7 @@ security: {
 }
 ```
 
-Misspelling a directive fails your build rather than silently doing nothing — browsers ignore unrecognized directive names, so `fontSource: [...]` would otherwise look configured and protect nothing.
+Misspelling a directive fails your build rather than silently doing nothing. Browsers ignore unrecognized directive names, so `fontSource: [...]` would otherwise look configured and protect nothing.
 
 ## What you cannot remove
 
@@ -93,7 +93,7 @@ security: {
 
 `null` removes the optional half of a directive and keeps the required half. It cannot lock you out of your own site.
 
-Before doing this, check what your components actually need. `'unsafe-inline'` is in the default `style-src` because many React component libraries — including Veryfront's own — create styles at runtime. Removing it is safe only if you are certain yours do not.
+Before doing this, check what your components actually need. `'unsafe-inline'` is in the default `style-src` because many React component libraries, including Veryfront's own, create styles at runtime. Removing it is safe only if you are certain yours do not.
 
 ## Replacing the policy entirely
 
@@ -103,16 +103,24 @@ Setting `VERYFRONT_CSP` in the environment replaces the whole policy, including 
 VERYFRONT_CSP="default-src 'self'; script-src 'self' 'nonce-{NONCE}'"
 ```
 
-`{NONCE}` is substituted with the per-response nonce. Omitting `https://esm.sh` from `script-src` will stop your pages hydrating, so this is an operations-level escape hatch for policies you intend to own completely — not the way to add an origin. Use `security.csp` for that.
+`{NONCE}` is substituted with the per-response nonce. Omitting `https://esm.sh` from `script-src` will stop your pages hydrating, so this is an operations-level escape hatch for policies you intend to own completely, not the way to add an origin. Use `security.csp` for that.
 
-## Checking your policy
+## Verify it worked
 
-Load your site and open the browser console. CSP violations name the directive that blocked the request, which maps directly onto the config key: a `style-src-elem` violation is fixed with `styleSrc`, a `font-src` violation with `fontSrc`.
+Read the policy your site is actually serving:
+
+```bash
+curl -sS -D - -o /dev/null https://your-site.example/ | grep -i content-security-policy
+```
+
+The origin you added should appear in the directive you added it to, alongside everything that was already there.
+
+Then load the site with the browser console open. CSP violations name the directive that blocked the request, which maps directly onto the config key: a `style-src` violation is fixed with `styleSrc`, a `font-src` violation with `fontSrc`.
 
 Preview deployments serve the same policy as production, so a CSP problem shows up on your preview URL before it reaches your live site.
 
 ## Related
 
-- [Configuration](./configuration.md) — the full `veryfront.config.ts` reference
-- [Middleware](./middleware.md) — CORS, rate limiting, and auth checks
-- [Deploying](./deploying.md) — preview and production environments
+- [Configuration](./configuration.md): the full `veryfront.config.ts` reference
+- [Middleware](./middleware.md): CORS, rate limiting, and auth checks
+- [Deploying](./deploying.md): preview and production environments
