@@ -7,7 +7,6 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { fromFileUrl } from "#veryfront/compat/path";
-import type { EvalRecord } from "veryfront/eval";
 
 import { getTemplate, getTemplateConfig, templateConfigs } from "./index.ts";
 import { STARTER_TEMPLATE_NAMES, type TemplateName } from "./types.ts";
@@ -179,59 +178,60 @@ describe("cli/templates", () => {
     ]);
   });
 
-  it("accepts sentence punctuation without accepting longer monetary values", async () => {
+  it("grades the starter's money answer with a rubric a reader can follow", async () => {
+    // The starter eval is the first eval most people ever read, so it has to be
+    // legible. It used to gate each amount with a hand-rolled lookaround regex
+    // (`(?<![-\d.\\])\\?\$33\.23(?!\d|\.\d)`) to reject near-misses like
+    // $33.2366 and $133.23. That was exact but unreadable, and copy-pasting it
+    // is the wrong lesson to teach. The rubric judge now carries the exactness
+    // requirement in prose instead.
     const { default: assistantEval } = await import(
       "./files/ai-agent/evals/assistant.eval.ts"
     );
-    const moneyMetrics = assistantEval.metrics.slice(0, 4);
-    assertEquals(moneyMetrics.map((metric) => metric.name), [
-      "answer.regex",
-      "answer.regex",
-      "answer.regex",
-      "answer.regex",
+
+    assertEquals(assistantEval.metrics.map((metric) => metric.name), [
+      "agent.calledTool",
+      "agent.noFailedTools",
+      "judge.rubric",
     ]);
-    const createRecord = (text: string): EvalRecord => ({
-      id: "calculator:1",
-      evalId: "eval:assistant",
-      exampleId: "calculator",
-      repetition: 1,
-      input: "Calculate the tip and split.",
-      output: { text },
-      reference: "$99.71 total; two people pay $33.24 and one pays $33.23.",
-      metadata: {},
-      trace: { events: [], toolCalls: [] },
-      usage: {},
-      durationMs: 1,
-      completed: true,
-    });
 
-    const validResults = await Promise.all(
-      moneyMetrics.map((metric) =>
-        metric.evaluate(
-          createRecord(
-            "The tip is $15.21. The total is $99.71. Two people pay $33.24, and one pays $33.23.",
-          ),
-        )
-      ),
+    const source = await Deno.readTextFile(
+      new URL("./files/ai-agent/evals/assistant.eval.ts", import.meta.url),
     );
-    assertEquals(validResults.map((result) => result.pass), [true, true, true, true]);
+    assertEquals(
+      source.includes("metrics.answer.regex"),
+      false,
+      "the starter eval should not teach hand-rolled regex assertions",
+    );
+    assertEquals(
+      source.includes("String.raw"),
+      false,
+      "the starter eval should not need raw strings to express an assertion",
+    );
 
-    const tipMetric = moneyMetrics[0];
-    assertExists(tipMetric);
-    for (const valid of ["$15.21.", String.raw`\$15.21`, "($15.21)", "**$15.21**"]) {
-      assertEquals((await tipMetric.evaluate(createRecord(valid))).pass, true);
+    // Dropping the regexes moved exactness onto the judge, so the rubric has to
+    // spell out both the amounts and that near-misses fail.
+    const rubricMetric = assistantEval.metrics.at(-1);
+    assertExists(rubricMetric);
+    const rubric = String(rubricMetric.config?.rubric ?? "");
+    for (const amount of ["$15.21", "$99.71", "$33.24", "$33.23"]) {
+      assertEquals(
+        rubric.includes(amount),
+        true,
+        `the rubric should name the expected ${amount}`,
+      );
     }
-    for (
-      const invalid of [
-        "-15.21",
-        "-$15.21",
-        String.raw`-\$15.21`,
-        "115.21",
-        "$15.210",
-        "$15.21.0",
-      ]
-    ) {
-      assertEquals((await tipMetric.evaluate(createRecord(invalid))).pass, false);
+    assertEquals(
+      /exact/i.test(rubric),
+      true,
+      "the rubric should require exact amounts now that no regex enforces it",
+    );
+    for (const nearMiss of ["$33.2366", "$133.23"]) {
+      assertEquals(
+        rubric.includes(nearMiss),
+        true,
+        `the rubric should show ${nearMiss} as a failing near-miss`,
+      );
     }
   });
 
