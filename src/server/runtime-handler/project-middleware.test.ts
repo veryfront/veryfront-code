@@ -98,7 +98,6 @@ function createContext(
     projectDir: "/app",
     adapter,
     securityConfig: null,
-    cspUserHeader: null,
     projectSlug: "trusted-project",
     projectId: "project-a",
     releaseId: "release-a",

@@ -13,7 +13,6 @@ function projectsContext(): HandlerContext {
     projectSlug: undefined,
     parsedDomain: { isVeryfrontDomain: true },
     securityConfig: null,
-    cspUserHeader: null,
   } as HandlerContext;
 }
 

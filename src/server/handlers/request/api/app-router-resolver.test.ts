@@ -35,7 +35,6 @@ function createMockCtx(opts: {
   return {
     projectDir: "/project",
     securityConfig: null,
-    cspUserHeader: null,
     adapter: {
       fs: {
         stat: async (path: string) => {

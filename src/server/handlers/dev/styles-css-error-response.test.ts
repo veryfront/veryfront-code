@@ -65,7 +65,6 @@ function makeCtx(adapter: RuntimeAdapter): HandlerContext {
     projectDir: "/project",
     adapter,
     securityConfig: null,
-    cspUserHeader: null,
     projectSlug: SLUG,
     config: { tailwind: { stylesheet: "globals.css" } },
   } as unknown as HandlerContext;

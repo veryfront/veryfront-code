@@ -188,7 +188,6 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
       projectDir,
       adapter,
       securityConfig: null,
-      cspUserHeader: null,
     };
 
     const req = new Request("http://localhost/__/health");

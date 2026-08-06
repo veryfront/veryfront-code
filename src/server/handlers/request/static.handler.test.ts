@@ -13,7 +13,6 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
       fs: {},
     },
     securityConfig: {},
-    cspUserHeader: null,
     isLocalProject: false,
     requestContext: {
       mode: "production",

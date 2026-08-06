@@ -96,7 +96,6 @@ export function createCtx(publicKeyPem?: string): HandlerContext {
       fs: {},
     },
     securityConfig: null,
-    cspUserHeader: null,
     projectSlug: "demo-project",
     projectId: "proj-1",
     isLocalProject: false,

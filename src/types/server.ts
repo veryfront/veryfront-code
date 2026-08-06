@@ -28,7 +28,12 @@ export interface SecurityConfig {
       maxAge?: number;
     };
   csrf?: boolean | import("../security/csrf/helpers.ts").CsrfConfig;
-  csp?: Partial<Record<string, string | string[]>>;
+  /**
+   * Extra CSP sources, merged into the platform baseline. `null` drops the
+   * baseline's optional sources for that directive while keeping the ones the
+   * renderer requires.
+   */
+  csp?: Partial<Record<string, string | string[] | null>>;
   coop?: "same-origin" | "same-origin-allow-popups" | "unsafe-none";
   corp?: "same-origin" | "same-site" | "cross-origin";
   coep?: "require-corp" | "unsafe-none";
@@ -43,7 +48,6 @@ export interface HandlerContext {
   adapter: RuntimeAdapter;
   moduleServerUrl?: string;
   securityConfig: SecurityConfig | null;
-  cspUserHeader: string | null;
   debug?: boolean;
   config?: VeryfrontConfig;
   /** Parsed domain info from request host header */

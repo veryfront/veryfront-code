@@ -30,6 +30,7 @@ import {
 } from "../../src/chat/index.ts";
 import { createUploadHandler, ragStore } from "../../src/embedding/index.ts";
 import { defineConfig } from "../../src/config/index.ts";
+import { buildCSP } from "../../src/security/http/response/security-handler.ts";
 import { datasets, evalAgent, metrics, runEval } from "../../src/eval/index.ts";
 import { metrics as projectMetrics } from "../../src/metrics/index.ts";
 import {
@@ -112,6 +113,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "sandbox.md",
   "schedule.md",
   "webhook.md",
+  "security-headers.md",
   "skills.md",
   "storybook-ui-workbench.md",
   "tasks.md",
@@ -293,6 +295,46 @@ describe("Guide: storybook-ui-workbench.md", () => {
       assertStringIncludes(guide, `deno task ${task}`);
       assertExists(denoJson.tasks?.[task], `deno.json task "${task}" should exist`);
     }
+  });
+});
+
+describe("Guide: security-headers.md", () => {
+  it("documents the policy the builder actually emits", async () => {
+    const guide = await readGuide("security-headers.md");
+    // The guide prints the default policy verbatim. Deriving the expectation
+    // from the builder means the page cannot drift from what is served.
+    for (const directive of buildCSP(false, "<generated>").split("; ")) {
+      assertStringIncludes(guide, directive);
+    }
+  });
+
+  it("documents a Google Fonts config that actually admits the fonts", async () => {
+    const guide = await readGuide("security-headers.md");
+    assertStringIncludes(guide, 'styleSrc: ["https://fonts.googleapis.com"]');
+    assertStringIncludes(guide, 'fontSrc: ["https://fonts.gstatic.com"]');
+
+    const csp = buildCSP(false, "n", {
+      csp: {
+        styleSrc: ["https://fonts.googleapis.com"],
+        fontSrc: ["https://fonts.gstatic.com"],
+      },
+    });
+    const directive = (name: string) =>
+      csp.split("; ").find((part) => part.startsWith(`${name} `)) ?? "";
+
+    assertStringIncludes(directive("style-src"), "https://fonts.googleapis.com");
+    assertStringIncludes(directive("font-src"), "https://fonts.gstatic.com");
+    // The guide promises the floor survives an addition.
+    assertStringIncludes(directive("script-src"), "'nonce-n'");
+    assert(!csp.includes("style-src-elem"), "no directive shadows the documented style-src");
+  });
+
+  it("documents a null opt-out that keeps the required sources", async () => {
+    const guide = await readGuide("security-headers.md");
+    assertStringIncludes(guide, "styleSrc: null");
+
+    const csp = buildCSP(false, "n", { csp: { styleSrc: null } });
+    assertStringIncludes(csp, "style-src 'self';");
   });
 });
 

@@ -9,6 +9,10 @@ import {
   MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS,
 } from "#veryfront/integrations/limits.ts";
 import { ALL_INTEGRATION_NAMES } from "#veryfront/integrations/schema.ts";
+import {
+  EXAMPLE_CSP_DIRECTIVES,
+  isCspDirectiveName,
+} from "#veryfront/security/http/csp-directives.ts";
 import type {
   SourceIntegrationPolicyConfig,
   SourceIntegrationRestriction,
@@ -514,7 +518,34 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
               "Configure either basic or bearer authentication, not both",
             )
             .optional(),
-          csp: v.record(v.string(), v.array(v.string())).optional(),
+          /**
+           * Extra CSP sources, merged into the platform's baseline policy.
+           *
+           * Additive: `{ fontSrc: ["https://fonts.gstatic.com"] }` keeps every
+           * default and adds that origin. `null` drops the platform's optional
+           * sources for one directive (e.g. `styleSrc: null` removes
+           * `'unsafe-inline'`) while keeping the ones the renderer requires.
+           */
+          csp: v
+            .record(v.string(), v.union([v.array(v.string()), v.null()]))
+            .superRefine((csp, ctx) => {
+              for (const key of Object.keys(csp)) {
+                if (isCspDirectiveName(key)) continue;
+                // Browsers ignore unknown directives silently, so a typo would
+                // otherwise read as configured and protect nothing.
+                ctx.addIssue({
+                  message: `Unknown Content-Security-Policy directive "${key}". ` +
+                    `Use a directive name such as ${
+                      EXAMPLE_CSP_DIRECTIVES.join(", ")
+                    } (camelCase or kebab-case).`,
+                  // Relative to the refined value, which is already
+                  // `security.csp`. Prefixing "csp" would report
+                  // `security.csp.csp.<key>`.
+                  path: [key],
+                });
+              }
+            })
+            .optional(),
           remoteHosts: v
             .array(v.string().max(MAX_REMOTE_HOST_URL_LENGTH).url())
             .max(MAX_REMOTE_HOST_COUNT)

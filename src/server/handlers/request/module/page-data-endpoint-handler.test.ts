@@ -116,7 +116,6 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
     config: {} as HandlerContext["config"],
     adapter: createMockAdapter(),
     securityConfig: null,
-    cspUserHeader: null,
     ...overrides,
   };
 }

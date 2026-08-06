@@ -7,7 +7,6 @@ import type { HandlerContext } from "../../types.ts";
 function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
   return {
     isLocalProject: false,
-    cspUserHeader: null,
     securityConfig: undefined,
     adapter: {
       name: "test",

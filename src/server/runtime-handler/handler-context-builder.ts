@@ -12,7 +12,6 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import type { SecurityConfig } from "#veryfront/types";
 
 /** CSP user header type (from SecurityConfigLoader, string or null) */
-type CspUserHeader = string | null;
 import type { ParsedDomain } from "../utils/domain-parser.ts";
 import type { HandlerContext } from "../handlers/types.ts";
 import type { RouteRegistry } from "#veryfront/routing/registry/index.ts";
@@ -27,7 +26,6 @@ export interface HandlerContextOptions {
   /** Security config */
   securityConfig: SecurityConfig | null;
   /** CSP user header */
-  cspUserHeader: CspUserHeader | null;
   /** Debug mode */
   debug: boolean | undefined;
   /** Veryfront config */
@@ -114,7 +112,6 @@ export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext
     adapter: opts.adapter,
     moduleServerUrl: opts.moduleServerUrl,
     securityConfig: opts.securityConfig,
-    cspUserHeader: opts.cspUserHeader,
     debug: opts.debug,
     config: opts.config,
     parsedDomain: opts.parsedDomain,
@@ -145,7 +142,6 @@ export function buildMinimalContext(
   projectDir: string,
   adapter: RuntimeAdapter,
   securityConfig: SecurityConfig | null,
-  cspUserHeader: CspUserHeader | null,
   debug: boolean | undefined,
   config: VeryfrontConfig | undefined,
 ): HandlerContext {
@@ -153,7 +149,6 @@ export function buildMinimalContext(
     projectDir,
     adapter,
     securityConfig,
-    cspUserHeader,
     debug,
     config,
   };

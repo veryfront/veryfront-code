@@ -12,7 +12,6 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
       env: { get: () => undefined },
     },
     securityConfig: {},
-    cspUserHeader: null,
     isLocalProject: false,
     config: {
       openapi: {

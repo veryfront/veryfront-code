@@ -63,7 +63,6 @@ describe(
           mode: "preview",
         },
         securityConfig: null,
-        cspUserHeader: null,
         config: {},
       } satisfies HandlerContext;
 

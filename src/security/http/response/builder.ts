@@ -12,7 +12,6 @@ export class ResponseBuilder implements FluentMethodsContext, ResponseMethodsCon
   securityConfig: SecurityConfig | null;
   isDev: boolean;
   nonce: string;
-  cspUserHeader: string | null;
   adapter: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter | undefined;
   isVeryfrontDomain: boolean;
 
@@ -20,7 +19,6 @@ export class ResponseBuilder implements FluentMethodsContext, ResponseMethodsCon
     this.securityConfig = config?.securityConfig ?? null;
     this.isDev = config?.isDev ?? false;
     this.nonce = config?.nonce ?? generateNonce();
-    this.cspUserHeader = config?.cspUserHeader ?? null;
     this.adapter = config?.adapter;
     this.isVeryfrontDomain = config?.isVeryfrontDomain ?? false;
   }

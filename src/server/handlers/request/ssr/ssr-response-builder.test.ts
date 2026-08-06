@@ -80,7 +80,6 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
     projectDir: "/tmp/test",
     adapter: createMockAdapter(),
     securityConfig: null,
-    cspUserHeader: null,
     ...overrides,
   };
 }

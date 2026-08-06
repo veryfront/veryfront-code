@@ -7,6 +7,7 @@ import {
   PLATFORM_IMAGE_ORIGINS,
   PLATFORM_SCRIPT_ORIGINS,
 } from "#veryfront/security/http/platform-asset-origins.ts";
+import { toCspDirectiveName } from "#veryfront/security/http/csp-directives.ts";
 import type { SecurityConfig } from "./types.ts";
 
 const logger = serverLogger.component("security-headers");
@@ -67,80 +68,168 @@ export function generateNonce(): string {
 const VERYFRONT_FRAME_ANCESTORS = ["'self'", ...HOSTED_STUDIO_ORIGINS];
 
 /**
- * Build the dependency-free core production CSP.
+ * The structural half of the platform floor: sources a project can never drop.
  *
- * - Scripts: same-origin, nonce-authorized, plus the platform script origins
- *   the renderer emits tags for (see platform-asset-origins).
- * - Styles: same-origin plus inline styles required by framework components.
- *   Do not include a nonce in style directives here: browsers ignore
- *   'unsafe-inline' when a nonce/hash is present, which breaks runtime-created
- *   style attributes and style elements.
- *   - style-src-attr: 'unsafe-inline' for modern browsers with directive-level
- *     style attribute support
- * - Images: same-origin, inline data, plus the platform image origins the
- *   renderer emits URLs for. Fonts: same-origin plus inline data only.
- * - Media: same-origin plus blob URLs used by browser media pipelines
- * - Workers: 'self' + blob: for browser libraries that create blob workers
- * - Connections: same-origin only. Development skips this default, so HMR is
- *   not widened into the production policy.
- * - Objects: 'none' (block Flash/plugins)
- * - Frames: 'self' (allows same-origin iframes; apps embedding external
- *   content must add those origins through an extension or explicit project
- *   `security.csp.frameSrc` configuration)
- * - Frame-ancestors: `'none'` for customer apps, or a Studio allowlist for
- *   veryfront-managed deployments. Supersedes X-Frame-Options in modern
- *   browsers and provides clickjacking protection even when X-Frame-Options
- *   can't be expressive enough (e.g. when Studio embedding is required).
- * - Base-uri/form-action: 'self' (prevent base tag hijack and form redirect)
+ * Every entry is here because the renderer writes that URL into the documents
+ * it serves — the ESM CDN for React imports, the platform image origins for
+ * optimized image URLs. A project that removed them would break only its own
+ * site, which is exactly what happened when the policy was `'self'`-only while
+ * the renderer emitted `esm.sh` and no hosted page hydrated.
+ *
+ * The rule this encodes: the floor contains what the platform emits, never a
+ * guess at what a project needs. Project-specific origins (fonts, analytics,
+ * embeds) belong in `security.csp`, which is merged on top.
+ *
+ * Notes on individual directives:
+ * - script-src carries the nonce. Style directives must not: browsers ignore
+ *   'unsafe-inline' when a nonce or hash is present, which would break the
+ *   runtime-created styles framework components rely on.
+ * - `style-src-elem` is deliberately absent. It would duplicate `style-src`
+ *   exactly, and because it takes precedence for `<link>` elements its only
+ *   live effect was to make a project's `styleSrc` addition silently fail to
+ *   admit a stylesheet.
+ * - connect-src includes the script origins so browsers may fetch the source
+ *   maps the CDN's own modules reference. The CDN is already trusted for code
+ *   execution via script-src, so this grants strictly less than it already has.
+ * - frame-ancestors is `'none'` for customer apps, or a Studio allowlist for
+ *   veryfront-managed domains so the Studio preview iframe works. It supersedes
+ *   X-Frame-Options in modern browsers.
+ * - object-src 'none' blocks plugins; base-uri and form-action prevent base tag
+ *   hijack and form redirection.
  */
-function buildDefaultCSP(nonce: string, isVeryfrontDomain: boolean): string {
-  const frameAncestors = isVeryfrontDomain
-    ? `frame-ancestors ${VERYFRONT_FRAME_ANCESTORS.join(" ")}`
-    : `frame-ancestors 'none'`;
-
-  return [
-    `default-src 'self'`,
-    `script-src 'self' 'nonce-${nonce}' ${PLATFORM_SCRIPT_ORIGINS.join(" ")}`,
-    `style-src 'self' 'unsafe-inline'`,
-    `style-src-elem 'self' 'unsafe-inline'`,
-    `style-src-attr 'unsafe-inline'`,
-    `img-src 'self' data: ${PLATFORM_IMAGE_ORIGINS.join(" ")}`,
-    `font-src 'self' data:`,
-    `connect-src 'self'`,
-    `media-src 'self' blob:`,
-    `worker-src 'self' blob:`,
-    `object-src 'none'`,
-    `frame-src 'self'`,
-    frameAncestors,
-    `base-uri 'self'`,
-    `form-action 'self'`,
-  ].join("; ");
+function requiredDirectives(
+  nonce: string,
+  isVeryfrontDomain: boolean,
+): Record<string, string[]> {
+  return {
+    "default-src": ["'self'"],
+    "script-src": ["'self'", `'nonce-${nonce}'`, ...PLATFORM_SCRIPT_ORIGINS],
+    "style-src": ["'self'"],
+    "style-src-attr": [],
+    "img-src": ["'self'", ...PLATFORM_IMAGE_ORIGINS],
+    "font-src": ["'self'"],
+    "connect-src": ["'self'", ...PLATFORM_SCRIPT_ORIGINS],
+    "media-src": ["'self'"],
+    "worker-src": ["'self'"],
+    "object-src": ["'none'"],
+    "frame-src": ["'self'"],
+    "frame-ancestors": isVeryfrontDomain ? [...VERYFRONT_FRAME_ANCESTORS] : ["'none'"],
+    "base-uri": ["'self'"],
+    "form-action": ["'self'"],
+  };
 }
 
-export function serializeCSPDirectives(
-  csp: SecurityConfig["csp"],
-  nonce?: string,
-): string | null {
-  if (!csp || typeof csp !== "object") return null;
+/**
+ * Convenience sources a project may drop with `null` when it knows it does not
+ * need them. Nothing here is structural, so removing any of it can only affect
+ * the project's own content — never the platform's.
+ */
+const BASELINE_DIRECTIVES: ReadonlyMap<string, readonly string[]> = new Map([
+  ["style-src", ["'unsafe-inline'"]],
+  ["style-src-attr", ["'unsafe-inline'"]],
+  ["img-src", ["data:"]],
+  ["font-src", ["data:"]],
+  ["media-src", ["blob:"]],
+  ["worker-src", ["blob:"]],
+]);
 
-  const pieces: string[] = [];
+/** Directives that carry no source list; emitting one with sources is invalid. */
+const VALUELESS_DIRECTIVES: ReadonlySet<string> = new Set([
+  "upgrade-insecure-requests",
+  "block-all-mixed-content",
+]);
 
-  for (const [key, value] of Object.entries(csp)) {
+/**
+ * `'none'` means "no sources" and is only meaningful alone. Any real source a
+ * project adds supersedes it, so a floor of `'none'` never blocks an addition.
+ */
+function normalizeSources(sources: readonly string[]): string[] {
+  const unique = [...new Set(sources)];
+  return unique.length > 1 ? unique.filter((source) => source !== "'none'") : unique;
+}
+
+/**
+ * Merge project sources into the platform floor.
+ *
+ * Project configuration is additive. `null` drops the baseline class for that
+ * directive but never the required class, which is how a project hardens past
+ * the floor without being able to break its own site.
+ */
+function mergeCspDirectives(
+  required: Record<string, string[]>,
+  projectCsp: SecurityConfig["csp"],
+  nonce: string,
+): Record<string, string[]> {
+  const project = new Map<string, readonly string[] | null>();
+  for (const [key, value] of Object.entries(projectCsp ?? {})) {
     if (value === undefined) continue;
-
-    const directive = key.replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`);
-    const sources = Array.isArray(value) ? value.join(" ") : String(value);
-    const serialized = `${directive} ${sources}`;
-    pieces.push(nonce ? serialized.replace(/{NONCE}/g, nonce) : serialized);
+    const name = toCspDirectiveName(key);
+    const sources = value === null
+      ? null
+      // `{NONCE}` is the same placeholder VERYFRONT_CSP uses, kept so both
+      // surfaces spell a nonce the same way.
+      : (Array.isArray(value) ? value : [String(value)])
+        .map((source) => source.replace(/\{NONCE\}/g, nonce));
+    // `fontSrc` and `font-src` name one directive, so both spellings
+    // contribute instead of the later key silently dropping the earlier one.
+    // An explicit `null` wins whichever side it is written on, which keeps the
+    // result independent of key order.
+    const existing = project.get(name);
+    if (existing === null) continue;
+    project.set(
+      name,
+      existing === undefined || sources === null ? sources : [...existing, ...sources],
+    );
   }
 
-  return pieces.length ? pieces.join("; ") : null;
+  // Keyed by Map rather than object literal: directive names originate in
+  // project config, and a key like `__proto__` or `constructor` must not reach
+  // Object.prototype in the builder that produces a security header.
+  const requiredByName = new Map(Object.entries(required));
+
+  const names = new Set([
+    ...requiredByName.keys(),
+    ...BASELINE_DIRECTIVES.keys(),
+    ...project.keys(),
+  ]);
+
+  const merged: Record<string, string[]> = Object.create(null);
+  for (const name of names) {
+    const configured = project.get(name);
+    const baseline = configured === null ? [] : BASELINE_DIRECTIVES.get(name) ?? [];
+    const additions = configured ?? [];
+    merged[name] = normalizeSources([
+      ...(requiredByName.get(name) ?? []),
+      ...baseline,
+      ...additions,
+    ]);
+  }
+
+  return merged;
 }
 
+function serializeDirectives(directives: Record<string, string[]>): string {
+  return Object.entries(directives)
+    .map(([name, sources]) => {
+      if (VALUELESS_DIRECTIVES.has(name)) return name;
+      // An empty source list is not valid syntax; `'none'` is how CSP says it.
+      return sources.length > 0 ? `${name} ${sources.join(" ")}` : `${name} 'none'`;
+    })
+    .join("; ");
+}
+
+/**
+ * Build the served policy: the platform floor with project sources merged in.
+ *
+ * The floor is enforced, not opt-in — hosting means a project that never
+ * configures anything still gets a baseline. Project configuration can only
+ * add to it, or drop the baseline class of a directive with `null`. Producing
+ * a policy that omits required sources needs `VERYFRONT_CSP`, an ops-level
+ * decision that is deliberately unreachable from project config.
+ */
 export function buildCSP(
   isDev: boolean,
   nonce: string,
-  cspUserHeader: string | null,
   config?: SecurityConfig | null,
   adapter?: RuntimeAdapter,
   isVeryfrontDomain?: boolean,
@@ -148,19 +237,13 @@ export function buildCSP(
   const envCsp = adapter?.env?.get?.("VERYFRONT_CSP");
   if (envCsp?.trim()) return envCsp.replace(/{NONCE}/g, nonce);
 
-  if (cspUserHeader?.trim()) return cspUserHeader.replace(/{NONCE}/g, nonce);
+  // Dev serves no policy at all, so HMR and dev tooling are never blocked and a
+  // development allowance can never widen the production policy.
+  if (isDev) return "";
 
-  const cfgCsp = config?.csp;
-  const serializedConfigCsp = serializeCSPDirectives(cfgCsp, nonce);
-  if (serializedConfigCsp) return serializedConfigCsp;
-
-  // No explicit CSP configured — apply a secure default in production.
-  // Dev mode skips the default to avoid blocking HMR and dev tooling.
-  if (!isDev) {
-    return buildDefaultCSP(nonce, isVeryfrontDomain ?? false);
-  }
-
-  return "";
+  return serializeDirectives(
+    mergeCspDirectives(requiredDirectives(nonce, isVeryfrontDomain ?? false), config?.csp, nonce),
+  );
 }
 
 export function getSecurityHeader(
@@ -180,7 +263,6 @@ export function applySecurityHeaders(
   headers: Headers,
   isDev: boolean,
   nonce: string,
-  cspUserHeader: string | null,
   config?: SecurityConfig | null,
   adapter?: RuntimeAdapter,
   isVeryfrontDomain?: boolean,
@@ -215,7 +297,7 @@ export function applySecurityHeaders(
   // safe response into an exploitable one; CSP is the active script policy.
   headers.set("X-XSS-Protection", getHeaderOverride("x-xss-protection") ?? "0");
 
-  const csp = buildCSP(isDev, nonce, cspUserHeader, config, adapter, isVeryfrontDomain);
+  const csp = buildCSP(isDev, nonce, config, adapter, isVeryfrontDomain);
   if (csp) headers.set("Content-Security-Policy", csp);
 
   if (!isDev) {

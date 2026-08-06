@@ -19,7 +19,6 @@ describe("server API app-router compatibility handler", () => {
         },
       },
       securityConfig: null,
-      cspUserHeader: null,
     } as unknown as HandlerContext;
 
     const response = await handleAppRouter(
@@ -51,7 +50,6 @@ describe("server API app-router compatibility handler", () => {
         },
       },
       securityConfig: null,
-      cspUserHeader: null,
       allowHostProjectCodeExecution: true,
     } as unknown as HandlerContext;
 

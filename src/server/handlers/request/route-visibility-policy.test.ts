@@ -9,7 +9,6 @@ function createContext(overrides: Partial<HandlerContext> = {}): HandlerContext 
     projectDir: "/test",
     adapter: {} as HandlerContext["adapter"],
     securityConfig: null,
-    cspUserHeader: null,
     ...overrides,
   };
 }

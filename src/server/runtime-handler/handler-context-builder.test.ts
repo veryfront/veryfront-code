@@ -12,7 +12,6 @@ function makeOpts(overrides: Partial<HandlerContextOptions> = {}): HandlerContex
     projectDir: "/tmp/project",
     adapter: {} as any,
     securityConfig: { allowedOrigins: ["*"] } as any,
-    cspUserHeader: "default-src 'self'",
     debug: true,
     config: { name: "test" } as any,
     parsedDomain: { slug: "my-project", branch: null, environment: "production" } as any,
@@ -46,7 +45,6 @@ describe("buildHandlerContext", () => {
     assertEquals(ctx.adapter, opts.adapter);
     assertEquals(ctx.moduleServerUrl, "https://modules.example.com");
     assertEquals(ctx.securityConfig, opts.securityConfig);
-    assertEquals(ctx.cspUserHeader, "default-src 'self'");
     assertEquals(ctx.debug, true);
     assertEquals(ctx.config, opts.config);
     assertEquals(ctx.parsedDomain, opts.parsedDomain);
@@ -155,7 +153,7 @@ describe("buildHandlerContext", () => {
 });
 
 describe("buildMinimalContext", () => {
-  it("returns only projectDir, adapter, securityConfig, cspUserHeader, debug, config", () => {
+  it("returns only projectDir, adapter, securityConfig, debug, config", () => {
     const adapter = {} as any;
     const securityConfig = { foo: "bar" } as any;
     const config = { name: "minimal" } as any;
@@ -164,7 +162,6 @@ describe("buildMinimalContext", () => {
       "/tmp/minimal",
       adapter,
       securityConfig,
-      "csp-header",
       false,
       config,
     );
@@ -172,7 +169,6 @@ describe("buildMinimalContext", () => {
     assertEquals(ctx.projectDir, "/tmp/minimal");
     assertEquals(ctx.adapter, adapter);
     assertEquals(ctx.securityConfig, securityConfig);
-    assertEquals(ctx.cspUserHeader, "csp-header");
     assertEquals(ctx.debug, false);
     assertEquals(ctx.config, config);
 

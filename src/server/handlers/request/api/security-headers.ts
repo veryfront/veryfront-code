@@ -15,7 +15,6 @@ export function buildCSP(ctx: HandlerContext): string {
   return coreBuildCSP(
     isDev(ctx),
     generateNonce(),
-    ctx.cspUserHeader ?? null,
     ctx.securityConfig,
     ctx.adapter,
   );
@@ -43,7 +42,6 @@ export function applySecurityHeadersWithNonce(
     headers,
     isDev(ctx),
     nonce,
-    ctx.cspUserHeader ?? null,
     ctx.securityConfig,
     ctx.adapter,
     ctx.parsedDomain?.allowIframeEmbed ?? false,

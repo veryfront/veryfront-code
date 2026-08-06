@@ -45,7 +45,6 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
     projectDir: "/tmp/test-project",
     adapter: createMockAdapter(),
     securityConfig: {},
-    cspUserHeader: null,
     config: { experimental: { rsc: true } } as HandlerContext["config"],
     parsedDomain: { allowIframeEmbed: false } as HandlerContext["parsedDomain"],
     ...overrides,
