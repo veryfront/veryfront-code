@@ -589,7 +589,9 @@ jobs:
     needs: [
       ci,
       tests,
-      coverage,
+      # coverage is deliberately absent: it is a quality metric, not a
+      # correctness gate, and an npm publish cannot be taken back. Every
+      # remaining entry can fail the release for a reason a user would feel.
       tests-binary-e2e,
       tests-npm-install-smoke,
       tests-sentry-runtime-packages,
