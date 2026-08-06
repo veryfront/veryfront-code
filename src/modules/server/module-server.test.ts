@@ -96,6 +96,10 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     deleteEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG);
     deleteEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
     deleteEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    // Paired with the flag above: the flag arms the rollout and this decides
+    // who is in it, so a test that sets one and leaks the other leaves a later
+    // test on a cohort it never chose.
+    deleteEnv(DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV);
     deleteEnv("VERYFRONT_ENABLE_SERVER_TIMING");
     deleteEnv("VERYFRONT_CACHE_DIR");
     clearReleaseAssetManifestCache();
@@ -2894,7 +2898,6 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(response.status, 200);
       assertEquals(response.headers.get("content-type")?.includes("javascript"), true);
     } finally {
-      deleteEnv(DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV);
       clearReactVersionCache();
       clearImportMapCache();
       await Deno.remove(projectDir, { recursive: true });
