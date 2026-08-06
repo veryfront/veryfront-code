@@ -32,6 +32,20 @@ describe("modules/import-map/default-import-map", () => {
       assert("veryfront/router" in imports, "should have 'veryfront/router' mapping");
       assert("veryfront/context" in imports, "should have 'veryfront/context' mapping");
       assert("veryfront/fonts" in imports, "should have 'veryfront/fonts' mapping");
+      assert("veryfront/ui" in imports, "should have 'veryfront/ui' mapping");
+    });
+
+    it("maps every React-bearing deno.json export so the specifier resolves", () => {
+      // veryfront/ui was exported from deno.json but named in no import map, so
+      // a project importing it shipped a bare specifier the browser could not
+      // resolve -- and the release build then counted the importing module as
+      // uncovered, which is fatal to the whole manifest.
+      const imports = getImports();
+
+      assertEquals(
+        imports["veryfront/ui"],
+        "/_vf_modules/_veryfront/react/components/ui/index.js?ssr=true",
+      );
     });
 
     it("should map veryfront/react to the browser public barrel", () => {

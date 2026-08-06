@@ -87,6 +87,7 @@ const PLATFORM_UTILITY_PATHS = {
   router: CORE_REACT_RUNTIME_PATH,
   context: CORE_REACT_RUNTIME_PATH,
   fonts: "/_vf_modules/_veryfront/react/fonts/index.js",
+  ui: "/_vf_modules/_veryfront/react/components/ui/index.js",
   // Client-side AI/chat modules - use local module server in dev for faster iteration
   // NOTE: These are NOT available in compiled binaries, so we use CDN URLs there instead
   chat: "/_vf_modules/_veryfront/chat/index.js",
@@ -101,6 +102,11 @@ const CORE_PLATFORM_UTILITIES: Record<string, string> = {
   "veryfront/router": PLATFORM_UTILITY_PATHS.router,
   "veryfront/context": PLATFORM_UTILITY_PATHS.context,
   "veryfront/fonts": PLATFORM_UTILITY_PATHS.fonts,
+  // deno.json has exported `veryfront/ui` for as long as the barrel has
+  // existed, but no import map named it, so the bare specifier reached the
+  // browser unresolved and the release build counted the importing module as
+  // uncovered. Anything a project can import must be resolvable here.
+  "veryfront/ui": PLATFORM_UTILITY_PATHS.ui,
   "veryfront/react/head": PLATFORM_UTILITY_PATHS.head,
   "veryfront/react/router": PLATFORM_UTILITY_PATHS.router,
   "veryfront/react/context": PLATFORM_UTILITY_PATHS.context,

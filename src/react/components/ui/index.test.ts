@@ -156,6 +156,7 @@ const expectedRuntimeExports = [
   "useAppShell",
   "useColorMode",
   "useColorModeOptional",
+  "useDocumentNonce",
   "useToast",
 ];
 

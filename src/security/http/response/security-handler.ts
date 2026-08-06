@@ -4,6 +4,8 @@ import { HOSTED_STUDIO_ORIGINS } from "#veryfront/security/http/studio-origin-po
 import { isCorsPolicyResponseHeaderName } from "#veryfront/utils/cors-policy-limits.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import {
+  PLATFORM_FONT_FILE_ORIGINS,
+  PLATFORM_FONT_STYLE_ORIGINS,
   PLATFORM_IMAGE_ORIGINS,
   PLATFORM_SCRIPT_ORIGINS,
 } from "#veryfront/security/http/platform-asset-origins.ts";
@@ -77,8 +79,10 @@ const VERYFRONT_FRAME_ANCESTORS = ["'self'", ...HOSTED_STUDIO_ORIGINS];
  * the renderer emitted `esm.sh` and no hosted page hydrated.
  *
  * The rule this encodes: the floor contains what the platform emits, never a
- * guess at what a project needs. Project-specific origins (fonts, analytics,
- * embeds) belong in `security.csp`, which is merged on top.
+ * guess at what a project needs. Project-specific origins (analytics, embeds)
+ * belong in `security.csp`, which is merged on top. Google Fonts is in the
+ * baseline rather than here because the platform does emit it -- but only via
+ * `veryfront/fonts`, so a project that never calls it may drop it.
  *
  * Notes on individual directives:
  * - script-src carries the nonce. Style directives must not: browsers ignore
@@ -125,10 +129,10 @@ function requiredDirectives(
  * the project's own content — never the platform's.
  */
 const BASELINE_DIRECTIVES: ReadonlyMap<string, readonly string[]> = new Map([
-  ["style-src", ["'unsafe-inline'"]],
+  ["style-src", ["'unsafe-inline'", ...PLATFORM_FONT_STYLE_ORIGINS]],
   ["style-src-attr", ["'unsafe-inline'"]],
   ["img-src", ["data:"]],
-  ["font-src", ["data:"]],
+  ["font-src", ["data:", ...PLATFORM_FONT_FILE_ORIGINS]],
   ["media-src", ["blob:"]],
   ["worker-src", ["blob:"]],
 ]);
