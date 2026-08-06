@@ -100,9 +100,23 @@ interface AdapterResolutionOptions {
  * below, where only the getHostedConfig call is treated this way.
  */
 function hasNotFoundStatus(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  const descriptor = Object.getOwnPropertyDescriptor(error, "status");
-  return descriptor !== undefined && descriptor.value === 404;
+  // Walks `cause`, because the 404 does not always arrive on the outermost
+  // error. readHostedConfigSource lets a VeryfrontError through untouched but
+  // wraps anything else in CONFIG_PARSE_ERROR, which buries the original status
+  // one level down. Reading only the top object made the fallback fire for one
+  // error shape and not the other, for the same underlying 404.
+  //
+  // Depth-bounded so a self-referential cause cannot spin.
+  let current: unknown = error;
+  for (let depth = 0; depth < 8; depth++) {
+    if (typeof current !== "object" || current === null) return false;
+    const status = Object.getOwnPropertyDescriptor(current, "status");
+    if (status !== undefined && status.value === 404) return true;
+    const cause = Object.getOwnPropertyDescriptor(current, "cause");
+    if (cause === undefined) return false;
+    current = cause.value;
+  }
+  return false;
 }
 
 function usesExactSourceConfig(opts: AdapterResolutionOptions): boolean {

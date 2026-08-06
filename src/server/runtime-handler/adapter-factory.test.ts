@@ -1071,6 +1071,45 @@ describe("adapter-factory", () => {
     assertEquals(result.config, undefined);
   });
 
+  it("uses defaults when the 404 arrives wrapped rather than at the top level", async () => {
+    // Same underlying 404, different error shape. readHostedConfigSource lets a
+    // VeryfrontError through untouched but wraps anything else in
+    // CONFIG_PARSE_ERROR, which buries the status one level down in `cause`.
+    // Reading only the outermost object made the fallback fire for one shape and
+    // not the other, so this project 404'd while an identical one did not.
+    const adapter = createMockAdapter({});
+    adapter.fs.readFile = () =>
+      Promise.reject(
+        Object.assign(new Error("API request failed: 404 Not Found"), { status: 404 }),
+      );
+
+    const result = await resolveAdapter({
+      req: await makeReq(),
+      projectDir: "/base/project",
+      adapter,
+      config: { router: "pages" } as never,
+      projectSlug: "noconfig",
+      projectId: "proj_noconfig",
+      proxyToken: "token",
+      releaseId: "rel_1",
+      proxyEnv: "preview",
+      branch: null,
+      environmentName: undefined,
+      parsedDomain: {
+        slug: "noconfig",
+        branch: null,
+        environment: null,
+        isVeryfrontDomain: true,
+        isDraft: false,
+        allowIframeEmbed: false,
+      },
+      isProxyMode: true,
+      prepareHostedConfigContext: preparePreviewHostedConfigContext,
+    });
+
+    assertEquals(result.config, undefined);
+  });
+
   it("still fails when a 404 comes from something other than the config read", async () => {
     // Only getHostedConfig's own 404 means "no config published". A 404 from the
     // snapshot refresh is a real failure and must not be read as absence.
