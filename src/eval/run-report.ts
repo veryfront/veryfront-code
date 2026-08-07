@@ -2,7 +2,7 @@ import { join, relative } from "#veryfront/compat/path";
 import { compareEvalReports } from "./baseline.ts";
 import type { DiscoveredEval } from "./discovery.ts";
 import { compareEvalModelReports, createEvalModelComparisonMarkdown } from "./model-comparison.ts";
-import { EVAL_REPORT_SCHEMA_VERSION } from "./report.ts";
+import { EVAL_REPORT_SCHEMA_VERSION, RECORD_INCOMPLETE_EXPLANATION } from "./report.ts";
 import { createEvalRunId } from "./run-id.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type {
@@ -587,7 +587,7 @@ function createJunitXml(report: EvalReport): string {
   for (const record of report.records) {
     const failures = blockingResults(record);
     const recordFailure = !record.completed || record.error
-      ? record.error ?? "Record did not complete."
+      ? record.error ?? RECORD_INCOMPLETE_EXPLANATION
       : undefined;
     const attrs = `classname="${xmlEscape(report.definitionId)}" name="${
       xmlEscape(testcaseName(record))

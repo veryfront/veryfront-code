@@ -20,6 +20,9 @@ import { computeHash } from "#veryfront/utils";
 /** Additive eval report contract version written by new reports and summary artifacts. */
 export const EVAL_REPORT_SCHEMA_VERSION = 2;
 
+/** Stand-in explanation when a record is incomplete but carries no error of its own. */
+export const RECORD_INCOMPLETE_EXPLANATION = "Record did not complete.";
+
 const USAGE_NUMERIC_KEYS = [
   "inputTokens",
   "outputTokens",
@@ -185,7 +188,7 @@ function createRecordFailure(record: EvalRecord): EvalGateFailureSummary | null 
     name: "record.error",
     family: "check",
     severity: "gate",
-    explanation: record.error ?? "Record did not complete.",
+    explanation: record.error ?? RECORD_INCOMPLETE_EXPLANATION,
   };
 }
 

@@ -72,9 +72,9 @@ const report = await runEval(definition, {
 | ----------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `compareEvalModelReports`           | Compare eval reports from multiple models using conservative promotion rules.                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/model-comparison.ts#L756) |
 | `compareEvalReports`                | Compare a current eval report against a saved baseline report.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/baseline.ts#L194)         |
-| `createEvalDatasetMetadata`         | Create stable dataset metadata for report consumers and CI artifacts.                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/report.ts#L71)            |
+| `createEvalDatasetMetadata`         | Create stable dataset metadata for report consumers and CI artifacts.                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/report.ts#L74)            |
 | `createEvalModelComparisonMarkdown` | Render a human-reviewable markdown summary for a model comparison report.                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/model-comparison.ts#L828) |
-| `createEvalReport`                  | Create a JSON-serializable eval report from executed records.                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/report.ts#L333)           |
+| `createEvalReport`                  | Create a JSON-serializable eval report from executed records.                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/report.ts#L336)           |
 | `createEvalRunId`                   | Create a timestamp-sortable eval run id with a collision-resistant suffix.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/run-id.ts#L8)             |
 | `createEvalRunProvenance`           | Build stable provenance metadata from explicit git/cloud inputs.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/provenance.ts#L140)       |
 | `createEvalSourceDocument`          | Create the normalized Eval document Studio can list, inspect, and edit.                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/studio.ts#L312)           |
@@ -87,7 +87,7 @@ const report = await runEval(definition, {
 | `isEvalDefinition`                  | Check whether a value is a normalized eval definition.                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/factory.ts#L119)          |
 | `resolveEvalRunProvenance`          | Resolve local or Cloud provenance for an eval run without failing the eval if git metadata is unavailable. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/provenance.ts#L255)       |
 | `runEval`                           | Execute an eval locally with injected target adapters.                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/runner.ts#L583)           |
-| `summarizeEvalRecords`              | Summarize eval records into pass/fail and metric aggregates.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/report.ts#L310)           |
+| `summarizeEvalRecords`              | Summarize eval records into pass/fail and metric aggregates.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/report.ts#L313)           |
 
 ### Types
 
