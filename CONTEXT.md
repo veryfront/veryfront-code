@@ -15,6 +15,19 @@ provider errors. The agent **runtime** layer starts streams and the **hosted**
 layer finishes them; both consult this module rather than re-deriving the
 interpretation, so provider behavior changes land in one file.
 
+## Agent Loop Skill State
+
+`src/agent/runtime/agent-loop-skill-state.ts` (`AgentLoopSkillState`) is the
+single owner of the request-scoped active-skill policy for one agent loop
+attempt: which skill is active, what it permits, and how that changes when a
+skill activates or a form input is submitted. Each loop owns its own instance.
+`hydrate` builds it once per attempt from replay history, and the loop mutates
+it in place as tool results arrive. It is never module-level and never shared
+across concurrent runs. `executeAgentLoop` and `executeAgentLoopStreaming` in
+`src/agent/runtime/index.ts` each construct one instance and consult it
+rather than maintaining their own copies of the same policy transitions, so
+a skill-policy fix lands once instead of being hand-applied to both loops.
+
 ## Stream Lifecycle
 
 The single owner of one provider stream attempt, from the first provider read
