@@ -284,7 +284,7 @@ function isCspEnforced(
 }
 
 /** Header name carrying the policy, per {@link isCspEnforced}. */
-export function cspHeaderName(
+function cspHeaderName(
   config?: SecurityConfig | null,
   adapter?: RuntimeAdapter,
   hasEnvOverride = false,
