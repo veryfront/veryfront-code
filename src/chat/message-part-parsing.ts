@@ -241,8 +241,8 @@ export function getFilePart(part: unknown): {
 
   const mediaType = getNonEmptyStringField(part, "mediaType") ??
     getNonEmptyStringField(part, "media_type");
-  const data = getNonEmptyStringField(part, "url");
-  if (!mediaType || !data) {
+  const url = getNonEmptyStringField(part, "url");
+  if (!mediaType || !url) {
     return null;
   }
 
@@ -255,8 +255,8 @@ export function getFilePart(part: unknown): {
   return {
     type: part.type === "image" ? "image" : "file",
     mediaType,
-    data,
-    url: data,
+    data: url,
+    url,
     ...(filename ? { filename } : {}),
     ...(uploadId ? { uploadId } : {}),
     ...(uploadPath ? { uploadPath } : {}),

@@ -5,11 +5,10 @@
  * parsing never hand-rolls its own record/string checks. Dependency-free apart
  * from JSON stringification: no chat, tool, or schema knowledge belongs here.
  */
-import { stringifyChatJson, toChatJsonValue } from "./json-value.ts";
+import { type ChatJsonValue, stringifyChatJson, toChatJsonValue } from "./json-value.ts";
 
-export type JsonValue = string | number | boolean | null | JsonValue[] | {
-  [key: string]: JsonValue;
-};
+/** JSON-compatible value. Re-exported from `json-value.ts` so both agree by construction. */
+export type JsonValue = ChatJsonValue;
 
 /** Check whether a value is a non-array object. */
 export function isRecord(value: unknown): value is Record<string, unknown> {

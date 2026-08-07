@@ -7,6 +7,7 @@ import {
   getStringField,
   isRecord,
   stringifyUnknown,
+  toJsonValue,
   toRecord,
 } from "./part-field-access.ts";
 
@@ -40,5 +41,16 @@ describe("part-field-access", () => {
     assertEquals(stringifyUnknown("already"), "already");
     assertEquals(stringifyUnknown(undefined), "undefined");
     assertEquals(stringifyUnknown(10n), "10");
+  });
+
+  it("stringifies records and arrays through the JSON fallback", () => {
+    assertEquals(stringifyUnknown({ a: 1 }), '{"a":1}');
+    assertEquals(stringifyUnknown([1, "b"]), '[1,"b"]');
+    assertEquals(stringifyUnknown(null), "null");
+  });
+
+  it("converts values into JSON-safe values", () => {
+    assertEquals(toJsonValue({ a: [1, "b"] }), { a: [1, "b"] });
+    assertEquals(toJsonValue(null), null);
   });
 });
