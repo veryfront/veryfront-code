@@ -6,7 +6,7 @@
  * request for the same status code: the module simply doesn't exist (a
  * cacheable miss), or the request was refused by an admission/protection
  * check (an uncacheable rejection). Those two cases must never share a
- * `Cache-Control` directive — a shared cache that reused a rejection across a
+ * `Cache-Control` directive. A shared cache that reused a rejection across a
  * differently-admitted request would leak an authorization decision across a
  * security boundary. Naming the two shapes here, instead of re-spelling the
  * header pair inline at each call site, is what keeps that difference from
@@ -38,7 +38,7 @@ function respond(
  * Ordinary module miss: nothing exists at this path.
  *
  * `no-cache` (revalidate before reuse) is safe here because the absence of a
- * resource is not a decision that varies by caller or credential — it is
+ * resource is not a decision that varies by caller or credential, so it is
  * fine to remember and re-check.
  */
 export function moduleNotFound(method: string, message = "Module not found"): Response {
@@ -53,8 +53,9 @@ export function moduleNotFound(method: string, message = "Module not found"): Re
  * is not allowed to see it (protected path, production release manifest
  * admission, server-only module boundary, rejected dependency, ...).
  *
- * MUST stay `no-store`. Unlike {@link moduleNotFound}, this response reflects
- * an authorization decision, not the absence of a resource — caching it would
+ * This must stay `no-store`. Unlike {@link moduleNotFound}, this response
+ * reflects an authorization decision, not the absence of a resource, and
+ * caching it would
  * risk serving (or hiding) that decision for a request it was never made for.
  * Do not change this to `no-cache` to "match" the not-found case; that is a
  * security regression, not a cleanup.
