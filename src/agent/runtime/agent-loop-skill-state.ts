@@ -13,12 +13,11 @@ import {
  * loop attempt: which skill is active, what it permits, and how that
  * changes when a skill activates or a form input is submitted.
  *
- * Mutable and held for the caller's lifetime — construct one per attempt via
- * `hydrate`, mutate it in place as tool results arrive, and never share an
- * instance across concurrent runs. There is deliberately no module-level or
- * static mutable state; `executeAgentLoop` and `executeAgentLoopStreaming`
- * each construct their own instance instead of maintaining separate copies
- * of the same policy transitions.
+ * Construct one instance per attempt via `hydrate`. Mutate it in place as tool
+ * results arrive. Never share an instance across concurrent runs. This module
+ * holds no module-level or static mutable state. `executeAgentLoop` and
+ * `executeAgentLoopStreaming` each construct their own instance instead of
+ * maintaining separate copies of the same policy transitions.
  */
 export class AgentLoopSkillState {
   activeSkillId: ActiveSkillState["activeSkillId"];
