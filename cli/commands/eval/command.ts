@@ -14,6 +14,7 @@ import {
 import type {
   DiscoveredEval,
   EvalAgentAdapterContext,
+  EvalGateFailureSummary,
   EvalMockTools,
   EvalModelComparisonMetricName,
   EvalModelComparisonOptions,
@@ -24,6 +25,7 @@ import type {
   EvalToolAdapterContext,
   EvalToolCall,
 } from "veryfront/eval";
+import { RECORD_INCOMPLETE_EXPLANATION } from "../../../src/eval/report.ts";
 import { orchestrateExtensions } from "veryfront/extensions";
 import {
   createEvalReportExporterRegistry,
@@ -834,6 +836,61 @@ function formatPercent(rate: number): string {
   return `${Math.round(rate * 100)}%`;
 }
 
+/** Reasons printed per metric before deferring the rest to the written report. */
+const MAX_PRINTED_REASONS = 3;
+
+/**
+ * Group gate failure explanations by the metric that produced them.
+ *
+ * A failing metric line states that something failed, and the explanation states why. The judge
+ * rubric is the clearest case: its verdict is the whole reason the eval failed, and reading it
+ * used to mean opening `summary.json`.
+ *
+ * `record.error` is dropped only when it carries the `RECORD_INCOMPLETE_EXPLANATION` stand-in and
+ * the record already reported a blocking failure. `isBlockingFailure` clears `completed` for both
+ * gate and budget severities (src/eval/runner.ts), so either one produces that stand-in, and
+ * printing it would restate the failure above it. A record error with text of its own, such as an
+ * adapter error, always prints: it is detail no other line carries.
+ */
+function groupGateFailureReasons(
+  failures: EvalGateFailureSummary[],
+): { byMetric: Map<string, string[]>; unattached: string[] } {
+  const derived = new Set(
+    failures.filter((failure) => failure.name !== "record.error").map((failure) =>
+      failure.recordId
+    ),
+  );
+  const byMetric = new Map<string, string[]>();
+  const unattached: string[] = [];
+
+  for (const failure of failures) {
+    if (!failure.explanation) continue;
+    if (
+      failure.name === "record.error" &&
+      failure.explanation === RECORD_INCOMPLETE_EXPLANATION &&
+      derived.has(failure.recordId)
+    ) continue;
+    const reason = `${failure.exampleId}: ${failure.explanation}`;
+    if (failure.name === "record.error") {
+      unattached.push(reason);
+      continue;
+    }
+    const existing = byMetric.get(failure.name);
+    if (existing) existing.push(reason);
+    else byMetric.set(failure.name, [reason]);
+  }
+
+  return { byMetric, unattached };
+}
+
+function printFailureReasons(reasons: string[]): void {
+  for (const reason of reasons.slice(0, MAX_PRINTED_REASONS)) {
+    printLine(`  ${dim(reason)}`);
+  }
+  const hidden = reasons.length - MAX_PRINTED_REASONS;
+  if (hidden > 0) printLine(`  ${dim(`and ${hidden} more, see the report`)}`);
+}
+
 function printReport(
   report: EvalReport,
   options: { name?: string; baseline?: EvalReportComparison } = {},
@@ -847,6 +904,8 @@ function printReport(
     })`,
   );
 
+  const reasons = groupGateFailureReasons(report.summary.gateFailures ?? []);
+
   if (report.summary.metrics.length > 0) printBlankLine();
   for (const metric of report.summary.metrics) {
     const total = metric.passed + metric.failed;
@@ -855,7 +914,9 @@ function printReport(
         formatPercent(metric.passRate)
       })`,
     );
+    printFailureReasons(reasons.byMetric.get(metric.name) ?? []);
   }
+  printFailureReasons(reasons.unattached);
 
   const { baseline } = options;
   const notes = (report.exports ?? []).length > 0 || baseline !== undefined;

@@ -1231,6 +1231,133 @@ describe("eval CLI command helpers", () => {
     }
   });
 
+  it("prints why a gated metric failed, without restating it as a record error", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-reasons-" });
+    const configHome = await Deno.makeTempDir({ prefix: "vf-eval-reasons-auth-" });
+    const fixtureAgent = {
+      id: "fixture",
+      config: {},
+      generate: async () => ({
+        text: "The split is $33.2366 each.",
+        messages: [],
+        status: "completed",
+        toolCalls: [],
+      } satisfies AgentResponse),
+    } as unknown as Agent;
+    const failing = evalAgent({
+      id: "eval:reasons",
+      target: "agent:fixture",
+      dataset: [{ id: "calculator", input: "split the bill" }],
+      metrics: [
+        metrics.judge.rubric({
+          rubric: "Every amount must be exact to the cent.",
+          judge: () =>
+            Promise.resolve({
+              score: 0.2,
+              pass: false,
+              explanation: "The answer states $33.2366, which is not exact to the cent.",
+            }),
+        }).gate({ min: 0.8 }),
+      ],
+    });
+    failing.source = { filePath: `${projectDir}/evals/reasons.eval.ts`, exportName: "default" };
+    const runtime = createProjectRuntimeDiscovery(normalizeSourceIntegrationPolicy({ allow: {} }));
+    runtime.agents.set(fixtureAgent.id, fixtureAgent);
+    runtime.evals.set(failing.id, failing);
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+
+      const output = await captureConsoleOutput(async () => {
+        await runEvalCommand(
+          {
+            id: "reasons",
+            list: false,
+            exporters: [],
+            debug: false,
+            candidateModels: [],
+            projectDir,
+            reportDir: `${projectDir}/report`,
+          },
+          { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
+        );
+      });
+
+      const printed = [...output.stdout].map((line) => stripAnsi(line));
+      assertEquals(
+        printed.some((line) =>
+          line ===
+            "    calculator: The answer states $33.2366, which is not exact to the cent."
+        ),
+        true,
+      );
+      // The runner flips `completed` off whenever a gate fails, so "Record did not complete."
+      // would only restate the judge verdict above it.
+      assertEquals(printed.some((line) => line.includes("Record did not complete")), false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("keeps a record error that carries detail of its own", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-adapter-" });
+    const configHome = await Deno.makeTempDir({ prefix: "vf-eval-adapter-auth-" });
+    const fixtureAgent = {
+      id: "boom",
+      config: {},
+      generate: () => Promise.reject(new Error("upstream refused the connection")),
+    } as unknown as Agent;
+    const failing = evalAgent({
+      id: "eval:adapter",
+      target: "agent:boom",
+      dataset: [{ id: "calculator", input: "split the bill" }],
+      metrics: [metrics.agent.calledTool("calculator").gate()],
+    });
+    failing.source = { filePath: `${projectDir}/evals/adapter.eval.ts`, exportName: "default" };
+    const runtime = createProjectRuntimeDiscovery(normalizeSourceIntegrationPolicy({ allow: {} }));
+    runtime.agents.set(fixtureAgent.id, fixtureAgent);
+    runtime.evals.set(failing.id, failing);
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+
+      const output = await captureConsoleOutput(async () => {
+        await runEvalCommand(
+          {
+            id: "adapter",
+            list: false,
+            exporters: [],
+            debug: false,
+            candidateModels: [],
+            projectDir,
+            reportDir: `${projectDir}/report`,
+          },
+          { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
+        );
+      });
+
+      // The gate fails too, so the record error is suppressed by the recordId rule alone.
+      // Its text is the only report of why the agent never answered, so it has to survive.
+      const printed = [...output.stdout].map((line) => stripAnsi(line));
+      assertEquals(
+        printed.some((line) => line.includes("upstream refused the connection")),
+        true,
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
   it("prints no report output under --quiet", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-quiet-" });
     const configHome = await Deno.makeTempDir({ prefix: "vf-eval-quiet-auth-" });
