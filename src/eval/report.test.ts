@@ -299,6 +299,52 @@ describe("eval/report", () => {
     });
   });
 
+  it("carries a metric label into its summary row", () => {
+    const summary = summarizeEvalRecords([
+      createRecord({
+        metrics: [{
+          name: "agent.calledTool",
+          family: "agent",
+          severity: "gate",
+          score: 1,
+          pass: true,
+          label: 'Agent called tool "calculator"',
+        }],
+      }),
+    ]);
+
+    assertEquals(summary.metrics[0]?.label, 'Agent called tool "calculator"');
+  });
+
+  it("drops the label when metrics sharing a summary row disagree on it", () => {
+    const summary = summarizeEvalRecords([
+      createRecord({
+        metrics: [
+          {
+            name: "agent.calledTool",
+            family: "agent",
+            severity: "gate",
+            score: 1,
+            pass: true,
+            label: 'Agent called tool "calculator"',
+          },
+          {
+            name: "agent.calledTool",
+            family: "agent",
+            severity: "gate",
+            score: 1,
+            pass: true,
+            label: 'Agent called tool "search"',
+          },
+        ],
+      }),
+    ]);
+
+    assertEquals(summary.metrics.length, 1);
+    assertEquals(summary.metrics[0]?.passed, 2);
+    assertEquals(summary.metrics[0]?.label, undefined);
+  });
+
   it("returns empty aggregate fields for an empty report", () => {
     assertEquals(summarizeEvalRecords([]), {
       records: 0,

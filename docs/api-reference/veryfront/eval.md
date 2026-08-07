@@ -74,7 +74,7 @@ const report = await runEval(definition, {
 | `compareEvalReports`                | Compare a current eval report against a saved baseline report.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/baseline.ts#L194)         |
 | `createEvalDatasetMetadata`         | Create stable dataset metadata for report consumers and CI artifacts.                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/report.ts#L71)            |
 | `createEvalModelComparisonMarkdown` | Render a human-reviewable markdown summary for a model comparison report.                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/model-comparison.ts#L828) |
-| `createEvalReport`                  | Create a JSON-serializable eval report from executed records.                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/report.ts#L326)           |
+| `createEvalReport`                  | Create a JSON-serializable eval report from executed records.                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/report.ts#L332)           |
 | `createEvalRunId`                   | Create a timestamp-sortable eval run id with a collision-resistant suffix.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/run-id.ts#L8)             |
 | `createEvalRunProvenance`           | Build stable provenance metadata from explicit git/cloud inputs.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/provenance.ts#L140)       |
 | `createEvalSourceDocument`          | Create the normalized Eval document Studio can list, inspect, and edit.                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/studio.ts#L312)           |
@@ -87,7 +87,7 @@ const report = await runEval(definition, {
 | `isEvalDefinition`                  | Check whether a value is a normalized eval definition.                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/factory.ts#L119)          |
 | `resolveEvalRunProvenance`          | Resolve local or Cloud provenance for an eval run without failing the eval if git metadata is unavailable. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/provenance.ts#L255)       |
 | `runEval`                           | Execute an eval locally with injected target adapters.                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/runner.ts#L583)           |
-| `summarizeEvalRecords`              | Summarize eval records into pass/fail and metric aggregates.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/report.ts#L303)           |
+| `summarizeEvalRecords`              | Summarize eval records into pass/fail and metric aggregates.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/report.ts#L309)           |
 
 ### Types
 
@@ -100,7 +100,7 @@ const report = await runEval(definition, {
 | `EvalAgentAdapterResult`              | Agent adapter result normalized into an eval record.                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L447)    |
 | `EvalAgentInput`                      | Input accepted by `evalAgent`.                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L406)    |
 | `EvalAnswerGroundednessMetricOptions` | Options for judge-backed answer grounding checks.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L231)    |
-| `EvalBudgetDeltaSummary`              | Numeric budget delta between a current eval report and a baseline report.         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L603)    |
+| `EvalBudgetDeltaSummary`              | Numeric budget delta between a current eval report and a baseline report.         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L608)    |
 | `EvalCheckContext`                    | Context passed to an eval definition's `check` callback.                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L357)    |
 | `EvalCitation`                        | Citation emitted by an answer and matched against retrieved or expected sources.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L258)    |
 | `EvalDataset`                         | Dataset loader used by an eval definition.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L131)    |
@@ -108,15 +108,15 @@ const report = await runEval(definition, {
 | `EvalDefinition`                      | First-class eval definition discovered from project source.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L387)    |
 | `EvalDiscoveryOptions`                | Options for project-local eval discovery.                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/discovery.ts#L42) |
 | `EvalDiscoveryResult`                 | Result returned by eval discovery.                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/discovery.ts#L54) |
-| `EvalDurationSummary`                 | Duration aggregate for an eval report.                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L524)    |
+| `EvalDurationSummary`                 | Duration aggregate for an eval report.                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L529)    |
 | `EvalEditableField`                   | Form-editable Eval source field name.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/studio.ts#L241)   |
 | `EvalExample`                         | Normalized dataset example used by eval runners and reports.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L110)    |
 | `EvalExampleInput`                    | Dataset example shape accepted by eval definitions.                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L118)    |
 | `EvalExpect`                          | Built-in expectation helpers available inside `check`.                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L347)    |
 | `EvalExpectation`                     | Fluent severity helpers for `check` expectations.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L340)    |
-| `EvalFailedExampleSummary`            | Per-example failure aggregate included in a report summary.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L571)    |
-| `EvalFlakeSummary`                    | Flake classification for repeated eval examples.                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L581)    |
-| `EvalGateFailureSummary`              | Blocking failure included in a report summary.                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L559)    |
+| `EvalFailedExampleSummary`            | Per-example failure aggregate included in a report summary.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L576)    |
+| `EvalFlakeSummary`                    | Flake classification for repeated eval examples.                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L586)    |
+| `EvalGateFailureSummary`              | Blocking failure included in a report summary.                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L564)    |
 | `EvalKnowledgeCitationMetricOptions`  | Options for citation precision and recall over retrieved knowledge.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L222)    |
 | `EvalKnowledgeExpectedSource`         | Expected knowledge source or passage for retrieval-quality metrics.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L192)    |
 | `EvalKnowledgeMrrMetricOptions`       | Options for mean reciprocal rank over retrieved knowledge.                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L214)    |
@@ -125,7 +125,7 @@ const report = await runEval(definition, {
 | `EvalLlmRubricJudgeOptions`           | Options for the built-in general-purpose LLM rubric judge.                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/judges.ts#L24)    |
 | `EvalMetric`                          | Metric contract used by eval definitions.                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L327)    |
 | `EvalMetricContext`                   | Optional runtime context passed to metric evaluators.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L322)    |
-| `EvalMetricDeltaSummary`              | Per-metric delta between a current eval report and a baseline report.             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L589)    |
+| `EvalMetricDeltaSummary`              | Per-metric delta between a current eval report and a baseline report.             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L594)    |
 | `EvalMetricFamily`                    | Metric family used for grouping report summaries.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L16)     |
 | `EvalMetricResult`                    | Result emitted by a metric or check assertion.                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L309)    |
 | `EvalMetricSummary`                   | Aggregate pass/fail summary for one metric.                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L513)    |
@@ -133,25 +133,25 @@ const report = await runEval(definition, {
 | `EvalMockTools`                       | Static or request-scoped mock tools for local `evalAgent` execution.              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L378)    |
 | `EvalMockToolsResolver`               | Request-scoped mock tool resolver for local `evalAgent` execution.                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L373)    |
 | `EvalMockToolsResolverContext`        | Context passed to an agent eval mock tool resolver.                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L366)    |
-| `EvalModelCandidateComparison`        | Candidate-vs-baseline comparison used to decide whether a model is promotable.    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L710)    |
-| `EvalModelComparison`                 | Aggregate report for comparing one baseline model against candidate models.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L733)    |
-| `EvalModelComparisonConstraint`       | Hard model comparison eligibility constraint.                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L769)    |
-| `EvalModelComparisonDecision`         | Conservative model comparison recommendation.                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L727)    |
-| `EvalModelComparisonMetricName`       | Metric names available to model comparison constraints and objectives.            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L747)    |
-| `EvalModelComparisonObjective`        | Weighted model comparison objective used to rank eligible candidates.             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L776)    |
-| `EvalModelComparisonOptions`          | Promotion thresholds for model comparison.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L782)    |
-| `EvalModelReportSummary`              | Per-model row in an eval model comparison report.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L679)    |
+| `EvalModelCandidateComparison`        | Candidate-vs-baseline comparison used to decide whether a model is promotable.    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L715)    |
+| `EvalModelComparison`                 | Aggregate report for comparing one baseline model against candidate models.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L738)    |
+| `EvalModelComparisonConstraint`       | Hard model comparison eligibility constraint.                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L774)    |
+| `EvalModelComparisonDecision`         | Conservative model comparison recommendation.                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L732)    |
+| `EvalModelComparisonMetricName`       | Metric names available to model comparison constraints and objectives.            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L752)    |
+| `EvalModelComparisonObjective`        | Weighted model comparison objective used to rank eligible candidates.             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L781)    |
+| `EvalModelComparisonOptions`          | Promotion thresholds for model comparison.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L787)    |
+| `EvalModelReportSummary`              | Per-model row in an eval model comparison report.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L684)    |
 | `EvalRecord`                          | One executed example and repetition inside an eval report.                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L287)    |
-| `EvalReport`                          | JSON-serializable report produced by `runEval`.                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L814)    |
-| `EvalReportComparison`                | Baseline comparison for a current eval report.                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L624)    |
-| `EvalReportComparisonPolicy`          | Regression policy for comparing a current eval report to a saved baseline.        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L615)    |
-| `EvalReportDatasetMetadata`           | Stable dataset identity attached to new eval reports when examples are available. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L671)    |
+| `EvalReport`                          | JSON-serializable report produced by `runEval`.                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L819)    |
+| `EvalReportComparison`                | Baseline comparison for a current eval report.                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L629)    |
+| `EvalReportComparisonPolicy`          | Regression policy for comparing a current eval report to a saved baseline.        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L620)    |
+| `EvalReportDatasetMetadata`           | Stable dataset identity attached to new eval reports when examples are available. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L676)    |
 | `EvalReportExportConfig`              | Export configuration for a completed eval report.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L504)    |
-| `EvalReportMetadata`                  | Additional report metadata that should not affect pass/fail semantics.            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L665)    |
-| `EvalReportSummary`                   | Aggregate pass/fail summary for one eval report.                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L793)    |
+| `EvalReportMetadata`                  | Additional report metadata that should not affect pass/fail semantics.            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L670)    |
+| `EvalReportSummary`                   | Aggregate pass/fail summary for one eval report.                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L798)    |
 | `EvalRetrievedContext`                | Retrieved context item captured for deterministic RAG metrics.                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L246)    |
 | `EvalRun`                             | V2-ready Eval run projection.                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/studio.ts#L249)   |
-| `EvalRunProvenance`                   | Runtime and source identity attached to an eval report.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L639)    |
+| `EvalRunProvenance`                   | Runtime and source identity attached to an eval report.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L644)    |
 | `EvalSeverity`                        | How a metric result affects the final eval result.                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L13)     |
 | `EvalSource`                          | Source location for a discovered eval definition.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L381)    |
 | `EvalSourceDocument`                  | Studio-editable Eval source document.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/studio.ts#L245)   |
@@ -170,7 +170,7 @@ const report = await runEval(definition, {
 | `EvalToolInputMatchMode`              | How expected tool input is compared to the captured tool input.                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L176)    |
 | `EvalTrace`                           | Trace metadata captured for one eval record.                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L281)    |
 | `EvalUsage`                           | Token and cost usage captured for one eval record.                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L148)    |
-| `EvalUsageSummary`                    | Usage totals for an eval report.                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L534)    |
+| `EvalUsageSummary`                    | Usage totals for an eval report.                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L539)    |
 | `RunEvalOptions`                      | Options for running an eval locally.                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L491)    |
 
 ### Constants
@@ -186,7 +186,7 @@ const report = await runEval(definition, {
 | `getEvalStudioCapabilitySchema` | Schema for Eval Studio capabilities.                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/studio.ts#L7)    |
 | `getEvalTargetKindSchema`       | Schema for an Eval target primitive kind.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/studio.ts#L12)   |
 | `judges`                        | Built-in judge factories for semantic eval metrics.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/judges.ts#L404)  |
-| `metrics`                       | Metric factories for deterministic answers, agent behavior, operations, and judges. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/metrics.ts#L762) |
+| `metrics`                       | Metric factories for deterministic answers, agent behavior, operations, and judges. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/metrics.ts#L766) |
 
 ## Deep imports
 
