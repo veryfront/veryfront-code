@@ -24,10 +24,16 @@ export function buildCurrentParts(
    * belong in the transcript at the position they streamed in.
    */
   closedReasoningBlocks?: readonly OrderedReasoning[],
+  /**
+   * Text blocks that closed and were then superseded by a later block reusing
+   * the same content id. No longer addressable, still part of the answer.
+   */
+  closedTextBlocks?: readonly TextBlock[],
 ): ChatMessagePart[] {
   const orderedParts: OrderedPart[] = [];
 
-  addTextParts(orderedParts, textBlocks);
+  addTextParts(orderedParts, textBlocks.values());
+  if (closedTextBlocks) addTextParts(orderedParts, closedTextBlocks);
   addReasoningParts(orderedParts, reasoningBlocks.values());
   if (closedReasoningBlocks) addReasoningParts(orderedParts, closedReasoningBlocks);
   addToolParts(orderedParts, toolCalls);
@@ -49,9 +55,9 @@ function addExtraParts(
 
 function addTextParts(
   orderedParts: OrderedPart[],
-  textBlocks: Map<string, TextBlock>,
+  textBlocks: Iterable<TextBlock>,
 ): void {
-  for (const { text, order, state } of textBlocks.values()) {
+  for (const { text, order, state } of textBlocks) {
     if (!text || order === null) continue;
 
     orderedParts.push({
@@ -66,6 +72,16 @@ function addReasoningParts(
   reasoningBlocks: Iterable<OrderedReasoning>,
 ): void {
   for (const { order, text, signature, redactedData, isComplete } of reasoningBlocks) {
+    // A span that closed without producing anything is not reasoning the reader
+    // can open — it renders as an empty "Thought process" disclosure. Providers
+    // open and close the span on steps that did no thinking, so this is common.
+    // A redacted or signed span carries meaning without visible text, so only
+    // the entirely empty ones are dropped, and only once they have closed: an
+    // open one is still the "thinking" affordance.
+    if (isComplete && !text && signature === undefined && redactedData === undefined) {
+      continue;
+    }
+
     orderedParts.push({
       order,
       part: {
