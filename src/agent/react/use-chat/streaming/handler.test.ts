@@ -590,7 +590,7 @@ describe("use-chat streaming handler", () => {
     ]);
   });
 
-  it("drops a reasoning span that closed without any content", async () => {
+  it("keeps a reasoning span that closed without content, for the renderer to drop", async () => {
     const rec = recorder();
 
     await handleStreamingResponse(
@@ -610,7 +610,12 @@ describe("use-chat streaming handler", () => {
       rec.callbacks,
     );
 
+    // Assembly stays faithful to the stream: AG-UI sent two reasoning messages,
+    // so the message carries two. Suppressing the empty one is a display
+    // decision, which the spec leaves to the consumer and `groupPartsInOrder`
+    // makes — there, it also covers conversations loaded back from storage.
     assertEquals(rec.messages[0]!.parts, [
+      { type: "reasoning", text: "", state: "done" },
       { type: "reasoning", text: "real thinking", state: "done" },
       { type: "text", text: "answer", state: "done" },
     ]);
