@@ -129,7 +129,7 @@ Use the selected skills.
   );
 });
 
-Deno.test("createRuntimeAgentSystemMessages inserts runtime blocks at marker", () => {
+Deno.test("createRuntimeAgentSystemMessages keeps the prompt static and moves runtime blocks to the dynamic tail", () => {
   const result = createRuntimeAgentSystemMessages({
     agent: {
       id: "support",
@@ -140,14 +140,18 @@ Deno.test("createRuntimeAgentSystemMessages inserts runtime blocks at marker", (
     runtimeBlocks: ['<project_context>\nproject_reference: "project-123"\n</project_context>'],
   });
 
-  assertEquals(result.length, 1);
+  assertEquals(result.length, 2);
+  // Layer 0 — the prompt (marker head + tail), no runtime blocks.
+  assertEquals(result[0]?.content, "Base instructions\n\nStatic policy");
+  // Dynamic tail — the runtime block, uncached.
   assertEquals(
-    result[0]?.content,
-    'Base instructions\n\n<project_context>\nproject_reference: "project-123"\n</project_context>\n\nStatic policy',
+    result[1]?.content,
+    '<project_context>\nproject_reference: "project-123"\n</project_context>',
   );
+  assertEquals(result[1]?.providerOptions, undefined);
 });
 
-Deno.test("createRuntimeAgentSystemMessages appends runtime blocks when marker is absent", () => {
+Deno.test("createRuntimeAgentSystemMessages combines runtime blocks and environment in the dynamic tail", () => {
   const result = createRuntimeAgentSystemMessages({
     agent: {
       id: "support",
@@ -160,11 +164,12 @@ Deno.test("createRuntimeAgentSystemMessages appends runtime blocks when marker i
   });
 
   assertEquals(result.length, 2);
-  assertEquals(result[0]?.content, "Base instructions\n\nDynamic context");
-  assertEquals(result[1], {
-    role: "system",
-    content: "<environment_context>\nBrowser timezone: UTC\n</environment_context>",
-  });
+  assertEquals(result[0]?.content, "Base instructions");
+  assertEquals(
+    result[1]?.content,
+    "Dynamic context\n\n<environment_context>\nBrowser timezone: UTC\n</environment_context>",
+  );
+  assertEquals(result[1]?.providerOptions, undefined);
 });
 
 Deno.test("parseRuntimeAgentMarkdownDefinition parses delegates frontmatter", () => {
