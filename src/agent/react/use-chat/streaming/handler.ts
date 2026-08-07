@@ -23,6 +23,8 @@ interface StreamingState {
   textBlocks: Map<string, TextBlock>;
   toolCalls: Map<string, OrderedToolCall>;
   reasoningBlocks: Map<string, OrderedReasoning>;
+  /** Closed reasoning spans whose wire id was reused by a later span. */
+  closedReasoningBlocks: OrderedReasoning[];
   steps: Map<number, OrderedStep>;
   messageParts: ChatMessagePart[];
   dataParts: OrderedMessagePart[];
@@ -38,6 +40,7 @@ function createStreamingState(): StreamingState {
     textBlocks: new Map(),
     toolCalls: new Map(),
     reasoningBlocks: new Map(),
+    closedReasoningBlocks: [],
     steps: new Map(),
     messageParts: [],
     dataParts: [],
@@ -64,6 +67,7 @@ export async function handleStreamingResponse(
       state.toolCalls,
       state.steps,
       state.dataParts,
+      state.closedReasoningBlocks,
     );
 
   let buffer = "";
@@ -127,6 +131,7 @@ export async function handleAgUiStreamingResponse(
       state.toolCalls,
       state.steps,
       state.dataParts,
+      state.closedReasoningBlocks,
     );
 
   const processDecodedEvents = (events: ChatStreamEvent[]) => {
@@ -392,6 +397,7 @@ function handleStart(
   state.textBlocks.clear();
   state.toolCalls.clear();
   state.reasoningBlocks.clear();
+  state.closedReasoningBlocks.length = 0;
   state.messageParts.length = 0;
   state.dataParts.length = 0;
   state.messageMetadata = {};
@@ -697,6 +703,25 @@ function handleReasoningStart(
   }
 
   const reasoningId = (parsed.id as string) || generateClientId("reasoning");
+  const existing = state.reasoningBlocks.get(reasoningId);
+
+  // A start for a span that is still open is a duplicate (a resumed stream
+  // replays it). Keep the accumulated text and, crucially, the order it was
+  // first assigned — re-creating the block here would move it below every part
+  // that streamed in the meantime.
+  if (existing && !existing.isComplete) {
+    emitUpdate(state, onUpdate, getBuildParts);
+    return;
+  }
+
+  // A start after that id has closed is a genuinely new span. Providers reuse
+  // per-step part ids (`reasoning-0` in every step), so the closed span is
+  // retired to keep its own text and position instead of being overwritten.
+  if (existing) {
+    state.closedReasoningBlocks.push(existing);
+    state.reasoningBlocks.delete(reasoningId);
+  }
+
   const reasoning: OrderedReasoning = {
     id: reasoningId,
     text: "",

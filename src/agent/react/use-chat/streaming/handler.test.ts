@@ -450,4 +450,89 @@ describe("use-chat streaming handler", () => {
       { type: "text", text: "split", state: "done" },
     ]);
   });
+
+  it("keeps a step-2 reasoning block after the step-1 tool calls when the provider reuses the reasoning id", async () => {
+    const rec = recorder();
+    const reasoningId = "msg-abc:reasoning:reasoning-0";
+
+    await handleAgUiStreamingResponse(
+      agUiSseStream([
+        { event: "RunStarted", data: { runId: "run-1", threadId: "t-1" } },
+        { event: "StepStarted", data: { stepName: "step-1" } },
+        { event: "ReasoningMessageStart", data: { messageId: reasoningId, role: "reasoning" } },
+        {
+          event: "ReasoningMessageContent",
+          data: { messageId: reasoningId, delta: "first thought" },
+        },
+        { event: "ReasoningMessageEnd", data: { messageId: reasoningId } },
+        { event: "ToolCallStart", data: { toolCallId: "call-1", toolCallName: "calculator" } },
+        { event: "ToolCallArgs", data: { toolCallId: "call-1", delta: '{"a":1}' } },
+        { event: "ToolCallEnd", data: { toolCallId: "call-1" } },
+        { event: "ToolCallResult", data: { toolCallId: "call-1", result: { result: 1 } } },
+        { event: "StepFinished", data: { stepName: "step-1" } },
+        { event: "StepStarted", data: { stepName: "step-2" } },
+        { event: "ReasoningMessageStart", data: { messageId: reasoningId, role: "reasoning" } },
+        {
+          event: "ReasoningMessageContent",
+          data: { messageId: reasoningId, delta: "second thought" },
+        },
+        { event: "ReasoningMessageEnd", data: { messageId: reasoningId } },
+        {
+          event: "TextMessageStart",
+          data: { messageId: "msg-abc", contentId: "text-0", role: "assistant" },
+        },
+        {
+          event: "TextMessageContent",
+          data: { messageId: "msg-abc", contentId: "text-0", delta: "answer" },
+        },
+        { event: "TextMessageEnd", data: { messageId: "msg-abc", contentId: "text-0" } },
+        { event: "RunFinished", data: {} },
+      ]),
+      rec.callbacks,
+    );
+
+    const parts = rec.messages[0]!.parts.filter((part) =>
+      part.type === "reasoning" || part.type.startsWith("tool-") || part.type === "text"
+    );
+
+    assertEquals(
+      parts.map((
+        part,
+      ) => (part.type === "reasoning"
+        ? `reasoning:${(part as { text: string }).text}`
+        : part.type)
+      ),
+      [
+        "reasoning:first thought",
+        "tool-calculator",
+        "reasoning:second thought",
+        "text",
+      ],
+    );
+  });
+
+  it("keeps text and position when a still-open reasoning span restarts", async () => {
+    const rec = recorder();
+
+    await handleStreamingResponse(
+      sseStream([
+        { type: "message-start", messageId: "msg-replay" },
+        { type: "reasoning-start", id: "r1" },
+        { type: "reasoning-delta", id: "r1", delta: "partial" },
+        { type: "reasoning-start", id: "r1" },
+        { type: "reasoning-delta", id: "r1", delta: " more" },
+        { type: "reasoning-end", id: "r1" },
+        { type: "text-start", id: "t1" },
+        { type: "text-delta", id: "t1", delta: "answer" },
+        { type: "text-end", id: "t1" },
+        { type: "message-finish" },
+      ]),
+      rec.callbacks,
+    );
+
+    assertEquals(rec.messages[0]!.parts, [
+      { type: "reasoning", text: "partial more", state: "done" },
+      { type: "text", text: "answer", state: "done" },
+    ]);
+  });
 });

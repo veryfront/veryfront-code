@@ -18,11 +18,18 @@ export function buildCurrentParts(
   toolCalls: Map<string, OrderedToolCall>,
   steps?: Map<number, OrderedStep>,
   extraParts?: OrderedMessagePart[],
+  /**
+   * Reasoning spans that closed and were then superseded by a later span
+   * reusing the same wire id. They are no longer addressable by id but still
+   * belong in the transcript at the position they streamed in.
+   */
+  closedReasoningBlocks?: readonly OrderedReasoning[],
 ): ChatMessagePart[] {
   const orderedParts: OrderedPart[] = [];
 
   addTextParts(orderedParts, textBlocks);
-  addReasoningParts(orderedParts, reasoningBlocks);
+  addReasoningParts(orderedParts, reasoningBlocks.values());
+  if (closedReasoningBlocks) addReasoningParts(orderedParts, closedReasoningBlocks);
   addToolParts(orderedParts, toolCalls);
   if (steps) addStepParts(orderedParts, steps);
   if (extraParts) addExtraParts(orderedParts, extraParts);
@@ -56,9 +63,9 @@ function addTextParts(
 
 function addReasoningParts(
   orderedParts: OrderedPart[],
-  reasoningBlocks: Map<string, OrderedReasoning>,
+  reasoningBlocks: Iterable<OrderedReasoning>,
 ): void {
-  for (const { order, text, signature, redactedData, isComplete } of reasoningBlocks.values()) {
+  for (const { order, text, signature, redactedData, isComplete } of reasoningBlocks) {
     orderedParts.push({
       order,
       part: {

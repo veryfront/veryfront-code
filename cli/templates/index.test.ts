@@ -969,6 +969,80 @@ describe("chat starters scaffold a Markdown renderer", () => {
     }
   });
 
+  const MARKDOWN_PARSERS = ["react-markdown", "remark-gfm"] as const;
+
+  /** Every module specifier the file imports from, in source order. */
+  function importSpecifiers(source: string): string[] {
+    // Static pattern: building one per package name from a variable is what
+    // the ReDoS lint flags, and it reads the file once per dependency anyway.
+    const specifiers: string[] = [];
+    for (const match of source.matchAll(/\bfrom\s+["']([^"']+)["']/g)) {
+      if (match[1]) specifiers.push(match[1]);
+    }
+    return specifiers;
+  }
+
+  /** The specifier the renderer imports `packageName` under, if any. */
+  function parserSpecifier(source: string, packageName: string): string | undefined {
+    return importSpecifiers(source).find((specifier) =>
+      specifier === packageName || specifier.startsWith(`${packageName}@`)
+    );
+  }
+
+  it("imports the parser at the exact version it installs", async () => {
+    for (const name of await chatTemplates()) {
+      const files = await getTemplate(name);
+      const renderer = files?.find((file) => file.path === "app/markdown-renderer.tsx");
+      assertExists(renderer, `${name} should scaffold app/markdown-renderer.tsx`);
+
+      const dependencies = getTemplateConfig(name)?.npmDependencies ?? {};
+      for (const dependency of MARKDOWN_PARSERS) {
+        // The module pipeline resolves browser imports from the specifier, not
+        // from package.json, so a bare specifier is an unpinned CDN fetch and
+        // the dev server warns about it on the first request. Carrying the
+        // version inline is what makes the scaffold reproducible.
+        //
+        // Compared against the whole specifier, not as a substring: `9.0.3` is
+        // a prefix of `9.0.31`, so a substring check would accept an import
+        // that installs one version and fetches another.
+        assertEquals(
+          parserSpecifier(renderer.content, dependency),
+          `${dependency}@${dependencies[dependency]}`,
+          `${name} must import ${dependency} at exactly the version it installs`,
+        );
+      }
+    }
+  });
+
+  it("aliases the pinned parser specifiers for consumer tsc", async () => {
+    for (const name of await chatTemplates()) {
+      const files = await getTemplate(name);
+      const tsconfig = files?.find((file) => file.path === "tsconfig.json");
+      assertExists(tsconfig, `${name} should declare consumer TypeScript options`);
+
+      // TypeScript cannot resolve `react-markdown@9.0.3` on its own, so without
+      // these aliases the scaffold opens with unresolved-module errors in the
+      // editor. The wildcard keeps them correct across a version bump.
+      //
+      // Read through `compilerOptions.paths` rather than scanning the file, so
+      // an alias parked in the wrong object, or one pointing at nothing, fails
+      // here instead of in the editor of whoever runs `npm create` next.
+      const parsed = JSON.parse(tsconfig.content) as {
+        compilerOptions?: { paths?: Record<string, unknown> };
+      };
+      const paths = parsed.compilerOptions?.paths;
+      assertExists(paths, `${name} should declare compilerOptions.paths`);
+
+      for (const dependency of MARKDOWN_PARSERS) {
+        assertEquals(
+          paths[`${dependency}@*`],
+          [`./node_modules/${dependency}`],
+          `${name} imports a pinned ${dependency} and must alias it to the installed package`,
+        );
+      }
+    }
+  });
+
   it("allows the relative .tsx import during consumer tsc", async () => {
     for (const name of await chatTemplates()) {
       const files = await getTemplate(name);

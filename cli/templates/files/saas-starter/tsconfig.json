@@ -12,6 +12,12 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "react-markdown@*": [
+        "./node_modules/react-markdown"
+      ],
+      "remark-gfm@*": [
+        "./node_modules/remark-gfm"
       ]
     }
   },
