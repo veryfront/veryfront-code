@@ -107,6 +107,60 @@ function makeCtx(adapter: RuntimeAdapter, overrides: Partial<HandlerContext> = {
 }
 
 describe("server/handlers/dev/styles-css.handler", () => {
+  it("carries the project @theme into the served stylesheet", async () => {
+    // Mechanism check A: the stylesheet IS at the single path the dev route
+    // reads. If the theme still does not reach the output, the loss is
+    // downstream of loadStylesheet rather than in path resolution.
+    const stub = mockTailwindFetch();
+    try {
+      const adapter = createHandlerAdapter(
+        [{ path: "pages/index.tsx", content: '<div className="bg-brand" />' }],
+        null,
+      );
+      adapter.fs.files.set(
+        "/project/globals.css",
+        '@import "tailwindcss";\n@theme { --color-brand: #123456; }',
+      );
+      const ctx = makeCtx(adapter);
+      const req = new Request("http://localhost/_vf_styles/styles.css");
+
+      const result = await new StylesCSSHandler().handle(req, ctx);
+      const body = await result.response!.text();
+
+      assertEquals(result.response!.status, 200);
+      assertEquals(body.includes("--color-brand"), true);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("finds a stylesheet at styles/globals.css like the production resolver", async () => {
+    // Mechanism check B: production's findStylesheetFromFiles searches
+    // globals.css, global.css, styles/globals.css and app/globals.css. The dev
+    // route reads exactly one hardcoded path.
+    const stub = mockTailwindFetch();
+    try {
+      const adapter = createHandlerAdapter(
+        [{ path: "pages/index.tsx", content: '<div className="bg-brand" />' }],
+        null,
+      );
+      adapter.fs.files.delete("/project/globals.css");
+      adapter.fs.files.set(
+        "/project/styles/globals.css",
+        '@import "tailwindcss";\n@theme { --color-brand: #123456; }',
+      );
+      const ctx = makeCtx(adapter);
+      const req = new Request("http://localhost/_vf_styles/styles.css");
+
+      const result = await new StylesCSSHandler().handle(req, ctx);
+      const body = await result.response!.text();
+
+      assertEquals(body.includes("--color-brand"), true);
+    } finally {
+      stub.restore();
+    }
+  });
+
   it("serves Tailwind-only development CSS without an optimization provider", async () => {
     const previousEngine = tryResolve<CSSOptimizationEngine>(CSSOptimizationEngineName);
     unregister(CSSOptimizationEngineName);
