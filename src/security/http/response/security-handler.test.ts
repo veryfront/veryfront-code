@@ -790,6 +790,52 @@ describe("security/http/response/security-handler", () => {
       assertEquals(headers.has("Content-Security-Policy-Report-Only"), false);
     });
 
+    it("ignores a project-supplied Content-Security-Policy in security.headers", () => {
+      // `security.headers` has no override path for CSP the way Referrer-Policy
+      // and X-Frame-Options do, so a value here would silently replace the
+      // merged platform floor rather than extend it.
+      const headers = applyHeaders({
+        config: {
+          csp: { imgSrc: ["https://cdn.example.com"] },
+          headers: { "Content-Security-Policy": "default-src *" },
+        },
+      });
+      assertEquals(
+        headers.get("Content-Security-Policy"),
+        buildCSP(false, "nonce", { csp: { imgSrc: ["https://cdn.example.com"] } }),
+      );
+    });
+
+    it("ignores a project-supplied report-only header, matching case-insensitively", () => {
+      // Header names are case-insensitive, and the report-only name is a live
+      // delivery mode now -- a project value here could flip which mode is
+      // served, not just what it contains.
+      const headers = applyHeaders({
+        config: { headers: { "content-security-policy-report-only": "default-src *" } },
+      });
+      assertEquals(
+        headers.get("Content-Security-Policy-Report-Only"),
+        buildCSP(false, "nonce", { headers: {} } as SecurityConfig),
+      );
+      assertEquals(headers.has("Content-Security-Policy"), false);
+    });
+
+    it("still honors the override paths that are meant to exist", () => {
+      // Guard against over-correcting: skipping CSP must not disturb the
+      // headers `security.headers` is legitimately allowed to set.
+      const headers = applyHeaders({
+        config: {
+          headers: {
+            "Content-Security-Policy": "default-src *",
+            "Referrer-Policy": "no-referrer",
+            "X-Custom": "kept",
+          },
+        },
+      });
+      assertEquals(headers.get("Referrer-Policy"), "no-referrer");
+      assertEquals(headers.get("X-Custom"), "kept");
+    });
+
     it("serves the same policy either way, differing only in enforcement", () => {
       // The report-only rollout must not weaken what is reported, or the
       // violations a project sees would not predict what enforcement will do.

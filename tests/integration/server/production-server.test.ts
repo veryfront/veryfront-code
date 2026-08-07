@@ -32,9 +32,10 @@ import { deleteEnv, getHostEnv, setEnv } from "../../../src/platform/compat/proc
 
 /**
  * Read the served policy from whichever header carries it. The platform floor
- * is served `-Report-Only` until a project declares `security.csp`, and these
- * fixtures declare none; the assertions below are about policy content and
- * nonce alignment, not about which mode it is served in.
+ * is served `-Report-Only` by default; a `security.csp` declaration,
+ * `VERYFRONT_CSP`, or `VERYFRONT_CSP_ENFORCE` selects enforced delivery
+ * instead. These fixtures declare none of those; the assertions below are about
+ * policy content and nonce alignment, not delivery mode.
  */
 function readCsp(headers: Headers): string | null {
   return headers.get("content-security-policy") ??

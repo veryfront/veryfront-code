@@ -46,6 +46,16 @@ export function isSecurityPolicyResponseHeaderName(name: string): boolean {
   return SECURITY_POLICY_RESPONSE_HEADER_NAME_SET.has(name.toLowerCase());
 }
 
+/** The two names the computed policy may be delivered under. */
+const CSP_RESPONSE_HEADER_NAMES: ReadonlySet<string> = new Set([
+  "content-security-policy",
+  "content-security-policy-report-only",
+]);
+
+function isCspResponseHeaderName(name: string): boolean {
+  return CSP_RESPONSE_HEADER_NAMES.has(name.toLowerCase());
+}
+
 /** HSTS max-age default: 1 year in seconds */
 const HSTS_MAX_AGE_SECONDS = 31_536_000;
 
@@ -382,10 +392,23 @@ export function applySecurityHeaders(
   const extraHeaders = config?.headers;
   if (extraHeaders) {
     let ignoredCorsPolicyHeader = false;
+    let ignoredCspHeader = false;
     for (const [key, value] of Object.entries(extraHeaders)) {
       if (value === undefined) continue;
       if (isCorsPolicyResponseHeaderName(key)) {
         ignoredCorsPolicyHeader = true;
+        continue;
+      }
+      // The policy is computed above and is not a project-settable header.
+      // Every other name here has a deliberate override path through
+      // `getHeaderOverride`; CSP has none, so a value arriving via
+      // `security.headers` would silently replace the merged platform floor --
+      // and, now that the floor may be delivered report-only, could also flip
+      // which mode is served. Header names are case-insensitive, so match that
+      // way. `isSecurityPolicyResponseHeaderName` is deliberately not reused:
+      // it covers headers this loop is still allowed to override.
+      if (isCspResponseHeaderName(key)) {
+        ignoredCspHeader = true;
         continue;
       }
       headers.set(key, value);
@@ -397,6 +420,11 @@ export function applySecurityHeaders(
       warnedReservedCorsHeaderConfigs.add(extraHeaders);
       logger.warn(
         "Ignored reserved Access-Control-* entries in security.headers; configure security.cors instead",
+      );
+    }
+    if (ignoredCspHeader) {
+      logger.warn(
+        "Ignored Content-Security-Policy entries in security.headers; configure security.csp instead",
       );
     }
   }
