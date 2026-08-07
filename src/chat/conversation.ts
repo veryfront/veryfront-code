@@ -4,7 +4,6 @@ import type {
   ChatToolResultPart,
   ChatUiMessage,
   ChatUiMessagePart,
-  ChatUiMessageRole,
   ProviderModelMessage,
 } from "./types.ts";
 import { getOptionalStringField, isRecord, toRecord } from "./part-field-access.ts";
@@ -24,6 +23,7 @@ import {
   isTransientToolState,
 } from "./tool-replay-reconciliation.ts";
 import type { ProviderVisibleToolReplayMatches } from "./tool-replay-reconciliation.ts";
+import type { ChatProviderModelInputMessage } from "./provider-input-types.ts";
 
 export { getStringField, isRecord, stringifyUnknown } from "./part-field-access.ts";
 export type { JsonValue } from "./part-field-access.ts";
@@ -227,31 +227,6 @@ type ProviderToolResultContent = {
       value: string;
     };
 };
-type RawToolCallMessagePart = Extract<MessagePart, { type: "tool_call" }>;
-type RawToolResultMessagePart = Extract<MessagePart, { type: "tool_result" }>;
-
-/** Stored tool-call replay part accepted by provider conversion. */
-export type ChatProviderModelInputToolCallPart = RawToolCallMessagePart;
-
-/** Stored tool-result replay part accepted by provider conversion. */
-export type ChatProviderModelInputToolResultPart = RawToolResultMessagePart & {
-  tool_name?: string;
-};
-
-/** Message part accepted by provider conversion. */
-export type ChatProviderModelInputPart =
-  | ChatUiMessagePart
-  | ChatProviderModelInputToolCallPart
-  | ChatProviderModelInputToolResultPart;
-
-/** Message accepted by provider conversion. */
-export interface ChatProviderModelInputMessage<TMessageMetadata = unknown> {
-  id: string;
-  role: ChatUiMessageRole;
-  parts: ChatProviderModelInputPart[];
-  metadata?: TMessageMetadata;
-}
-
 /** Shared UUID pattern value. */
 export const UUID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;

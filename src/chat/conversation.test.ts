@@ -5,7 +5,7 @@ import type {
   ChatProviderModelInputMessage,
   ChatProviderModelInputPart,
   ChatProviderModelInputToolResultPart,
-} from "#veryfront/chat/conversation";
+} from "./provider-input-types.ts";
 import type {
   ChatToolCallPart,
   ChatToolPartState,

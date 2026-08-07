@@ -5,7 +5,10 @@ import {
   findProviderVisibleToolReplayMatches,
   isTransientToolState,
 } from "./tool-replay-reconciliation.ts";
-import type { ChatProviderModelInputMessage, ChatProviderModelInputPart } from "./conversation.ts";
+import type {
+  ChatProviderModelInputMessage,
+  ChatProviderModelInputPart,
+} from "./provider-input-types.ts";
 
 function assistantMessage(
   parts: ChatProviderModelInputPart[],
