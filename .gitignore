@@ -100,3 +100,6 @@ benchmarks/apps/nextjs/node_modules/
 # Claude Octopus plugin state
 .claude-octopus/
 plan.md
+
+# SDD review tooling scratch workspace (implementation reports, generated review diffs)
+.superpowers/
