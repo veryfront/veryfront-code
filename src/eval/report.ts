@@ -284,8 +284,8 @@ function summarizeMetricResults(records: EvalRecord[]): EvalMetricSummary[] {
         ...(result.label !== undefined ? { label: result.label } : {}),
       };
 
-      // Two metrics of the same name share a summary row — `calledTool("a")` and `calledTool("b")`,
-      // say. No single label describes both, so drop it rather than credit the row to the first.
+      // Two metrics of the same name share a summary row, say `calledTool("a")` and
+      // `calledTool("b")`. No single label describes both, so drop it rather than credit the first.
       if (existing && existing.label !== result.label) delete existing.label;
 
       if (result.skipped) {

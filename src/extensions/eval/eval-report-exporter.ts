@@ -37,7 +37,10 @@ export interface EvalReportExportRedaction {
   includeCitations?: boolean;
   /** Include metric/check explanations. Defaults to false. */
   includeMetricExplanations?: boolean;
-  /** Include metric/check evidence payloads. Defaults to false. */
+  /**
+   * Include metric/check evidence payloads. Defaults to false. Metric labels restate the same
+   * configured parameters, so they follow this setting on both record and summary metrics.
+   */
   includeMetricEvidence?: boolean;
   /** Include dataset source paths. Defaults to false. */
   includeDatasetPath?: boolean;
@@ -173,7 +176,7 @@ function redactMetricResults(
     }
     if (!redaction.includeMetricEvidence) {
       delete redacted.evidence;
-      // The label spells out the metric's configured parameter — the asserted tool name, expected
+      // The label spells out the metric's configured parameter: the asserted tool name, expected
       // text, or regex. That is the same class of detail as `evidence`, so it leaves on the same
       // terms. CLI output is unaffected; this boundary only governs what reaches an exporter.
       delete redacted.label;

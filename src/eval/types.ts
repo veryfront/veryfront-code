@@ -31,6 +31,10 @@ export interface EvalReportExportRedaction {
   includeReferences?: boolean;
   includeTraces?: boolean;
   includeMetricExplanations?: boolean;
+  /**
+   * Include metric evidence payloads. Metric labels restate the same configured parameters, so
+   * they follow this setting on both record and summary metrics.
+   */
   includeMetricEvidence?: boolean;
   metadataAllowlist?: string[];
 }

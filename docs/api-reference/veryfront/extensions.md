@@ -651,22 +651,22 @@ import {
 
 | Name                               | Description                                                        | Source                                                                                                           |
 | ---------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `createEvalReportExporterRegistry` | Create an eval report exporter registry.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L324) |
-| `redactEvalReportForExport`        | Create an eval report copy with external-export redaction applied. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L244) |
+| `createEvalReportExporterRegistry` | Create an eval report exporter registry.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L327) |
+| `redactEvalReportForExport`        | Create an eval report copy with external-export redaction applied. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L247) |
 
 #### Types
 
 | Name                           | Description                                                                 | Source                                                                                                           |
 | ------------------------------ | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `EvalReportExportContext`      | Context passed to eval report exporters.                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L56)  |
-| `EvalReportExporter`           | Vendor or backend implementation that receives sanitized eval reports.      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L80)  |
-| `EvalReportExporterRegistry`   | Registry contract. Single impl created at bootstrap.                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L109) |
-| `EvalReportExportFailure`      | Failed exporter result. Failures are captured so later exporters still run. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L97)  |
-| `EvalReportExportReceipt`      | Optional receipt returned by a vendor exporter.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L73)  |
+| `EvalReportExportContext`      | Context passed to eval report exporters.                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L59)  |
+| `EvalReportExporter`           | Vendor or backend implementation that receives sanitized eval reports.      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L83)  |
+| `EvalReportExporterRegistry`   | Registry contract. Single impl created at bootstrap.                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L112) |
+| `EvalReportExportFailure`      | Failed exporter result. Failures are captured so later exporters still run. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L100) |
+| `EvalReportExportReceipt`      | Optional receipt returned by a vendor exporter.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L76)  |
 | `EvalReportExportRedaction`    | Redaction policy applied before reports leave the process.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L25)  |
-| `EvalReportExportResult`       | Result for one exporter invocation.                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L104) |
-| `EvalReportExportSuccess`      | Successful exporter result.                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L90)  |
-| `EvalReportExportTraceContext` | Trace correlation fields that connect eval exports to runtime spans.        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L49)  |
+| `EvalReportExportResult`       | Result for one exporter invocation.                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L107) |
+| `EvalReportExportSuccess`      | Successful exporter result.                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L93)  |
+| `EvalReportExportTraceContext` | Trace correlation fields that connect eval exports to runtime spans.        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L52)  |
 
 ### `veryfront/extensions/first-party-import`
 
