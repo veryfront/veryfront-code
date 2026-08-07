@@ -1323,6 +1323,9 @@ describe("resolveProjectRuntimeContext", () => {
   });
 
   it("keeps exact-source control-plane config undefined at the runtime-context boundary", async () => {
+    __resetLoggerConfigForTests();
+    const entries: LogEntry[] = [];
+    __registerLogRecordEmitter((entry) => entries.push(entry));
     let outerContextCalls = 0;
     const adapter = createExtendedMockAdapter({
       onRunWithContext: () => {
@@ -1362,6 +1365,14 @@ describe("resolveProjectRuntimeContext", () => {
     // A config-less control-plane request is the intended shape, so it must
     // stay distinguishable from a project whose config failed to resolve.
     assertEquals(result.adapter.configOutcome, "deferred");
+    // And it must stay silent. The exclusion is the whole reason the outcome
+    // is threaded through: without it this path would warn on every
+    // control-plane request and drown the signal it exists to carry.
+    assertEquals(
+      entries.filter((entry) => entry.message.includes("serving platform-default security headers"))
+        .length,
+      0,
+    );
   });
 
   it("records the security fallback when a proxied request resolves no project config", async () => {
