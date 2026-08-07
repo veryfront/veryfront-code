@@ -729,13 +729,6 @@ function dependencyUrlForSpecifier(
   return null;
 }
 
-export function releaseAssetDependencyUrlForSpecifier(
-  dependencyUrls: Map<string, string>,
-  specifier: string,
-): string | null {
-  return dependencyUrlForSpecifier(dependencyUrls, specifier);
-}
-
 function buildDependencyUrlMap(
   dependencies: Record<string, PreparedAsset>,
   dependencyModules?: Map<string, DependencyModule>,

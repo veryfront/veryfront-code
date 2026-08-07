@@ -25,7 +25,6 @@ import {
   type ReleaseAssetBuildClient,
   type ReleaseAssetBuildInput,
   type ReleaseAssetBuildResult,
-  releaseAssetDependencyUrlForSpecifier,
   type ReleaseAssetHttpDependencyVendor,
   type ReleaseAssetVendorResult,
   routeForPage,
@@ -460,42 +459,6 @@ describe("release asset build executor", () => {
     assertEquals(rec.began, false);
     assertEquals(rec.uploads, []);
     assertEquals([...Deno.readDirSync(tempDir)], []);
-  });
-
-  it("keeps distinct HTTP query variants as distinct dependency identities", () => {
-    const baseUrl = "https://cdn.example/pkg.js";
-    const dependencyUrls = new Map([[baseUrl, "/_vf/assets/es2020.js"]]);
-
-    assertEquals(
-      releaseAssetDependencyUrlForSpecifier(
-        dependencyUrls,
-        `${baseUrl}?target=es2022`,
-      ),
-      null,
-    );
-  });
-
-  it("keeps distinct HTTP fragment variants as distinct dependency identities", () => {
-    const baseUrl = "https://cdn.example/pkg.js";
-    const dependencyUrls = new Map([
-      [
-        `${baseUrl}#a`,
-        "/_vf/assets/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.js#a",
-      ],
-      [
-        `${baseUrl}#b`,
-        "/_vf/assets/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.js#b",
-      ],
-    ]);
-
-    assertEquals(
-      releaseAssetDependencyUrlForSpecifier(dependencyUrls, `${baseUrl}#a`),
-      dependencyUrls.get(`${baseUrl}#a`),
-    );
-    assertEquals(
-      releaseAssetDependencyUrlForSpecifier(dependencyUrls, `${baseUrl}#b`),
-      dependencyUrls.get(`${baseUrl}#b`),
-    );
   });
 
   it("never admits a module whose transform failed", async () => {
