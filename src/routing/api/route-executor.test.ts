@@ -132,8 +132,8 @@ async function isolatedRouteOptions(
   executionScopeId: string,
 ): Promise<ExecuteRouteOptions> {
   return {
-    modulePath: "/tmp/test/handler.ts",
-    projectDir: "/tmp/test",
+    modulePath: "/test/project/handler.ts",
+    projectDir: "/test/project",
     isLocalProject: false,
     preparedModule: await prepareModuleSource(source),
     executionScopeId,
@@ -147,8 +147,8 @@ async function preparedRouteOptions(
   return {
     executionScopeId,
     module: await prepareModuleSource(source),
-    modulePath: "/tmp/test/handler.ts",
-    projectDir: "/tmp/test",
+    modulePath: "/test/project/handler.ts",
+    projectDir: "/test/project",
     isLocalProject: false,
   };
 }
@@ -986,7 +986,7 @@ describe("routing/api/route-executor", () => {
         () =>
           executePreparedAppRoute(
             new Request("http://localhost/api/users/42", { method: "GET" }),
-            makeMatch("/api/users/[id]", "/tmp/test/handler.ts", { id: "42" }),
+            makeMatch("/api/users/[id]", "/test/project/handler.ts", { id: "42" }),
             "/api/users/42",
             options,
           ),
