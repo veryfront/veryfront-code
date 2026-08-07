@@ -1186,6 +1186,69 @@ describe("runtime-bridge", () => {
     }]);
   });
 
+  it("keeps providerExecuted on direct generate provider tool results", async () => {
+    // Mirrors what ext-llm-anthropic's buildAnthropicGenerateResult and
+    // ext-llm-openai's Responses normalizer actually return from doGenerate:
+    // server-side tool results always carry providerExecuted: true.
+    const model = createGenerateModel(
+      "anthropic",
+      "anthropic/test-direct-provider-executed-generate",
+      async () => ({
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "tool-web-3",
+            toolName: "web_search",
+            input: '{"query":"Veryfront"}',
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: "tool-web-3",
+            toolName: "web_search",
+            result: [{ url: "https://veryfront.com", title: "Veryfront" }],
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: "tool-web-4",
+            toolName: "web_fetch",
+            result: { message: "fetch blocked" },
+            isError: true,
+            providerExecuted: true,
+          },
+        ],
+        finishReason: { unified: "stop", raw: "stop" },
+        usage: {
+          inputTokens: { total: 6 },
+          outputTokens: { total: 9 },
+        },
+      }),
+    );
+
+    const result = await generateText({
+      model,
+      messages: [{ role: "user", content: "Research Veryfront" }],
+      temperature: 0,
+    });
+
+    assertEquals(result.toolResults, [
+      {
+        toolCallId: "tool-web-3",
+        toolName: "web_search",
+        result: [{ url: "https://veryfront.com", title: "Veryfront" }],
+        providerExecuted: true,
+      },
+      {
+        toolCallId: "tool-web-4",
+        toolName: "web_fetch",
+        result: { message: "fetch blocked" },
+        isError: true,
+        providerExecuted: true,
+      },
+    ]);
+  });
+
   it("uses the direct stream path for provider-native web_fetch", async () => {
     const model = createStreamModel(
       "anthropic",
