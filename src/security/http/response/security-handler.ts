@@ -14,6 +14,10 @@ import type { SecurityConfig } from "./types.ts";
 
 const logger = serverLogger.component("security-headers");
 const warnedReservedCorsHeaderConfigs = new WeakSet<object>();
+// Same suppression as above: applySecurityHeaders runs per response, so an
+// unguarded warning would repeat for every request a misconfigured project
+// serves.
+const warnedReservedCspHeaderConfigs = new WeakSet<object>();
 
 /**
  * Response headers whose values and omissions are owned by the centralized
@@ -422,7 +426,11 @@ export function applySecurityHeaders(
         "Ignored reserved Access-Control-* entries in security.headers; configure security.cors instead",
       );
     }
-    if (ignoredCspHeader) {
+    if (
+      ignoredCspHeader &&
+      !warnedReservedCspHeaderConfigs.has(extraHeaders)
+    ) {
+      warnedReservedCspHeaderConfigs.add(extraHeaders);
       logger.warn(
         "Ignored Content-Security-Policy entries in security.headers; configure security.csp instead",
       );

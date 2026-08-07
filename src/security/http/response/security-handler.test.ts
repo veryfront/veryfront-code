@@ -811,7 +811,7 @@ describe("security/http/response/security-handler", () => {
       // delivery mode now -- a project value here could flip which mode is
       // served, not just what it contains.
       const headers = applyHeaders({
-        config: { headers: { "content-security-policy-report-only": "default-src *" } },
+        config: { headers: { "Content-Security-Policy-Report-Only": "default-src *" } },
       });
       assertEquals(
         headers.get("Content-Security-Policy-Report-Only"),
