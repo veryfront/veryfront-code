@@ -604,14 +604,36 @@ describe("security/http/response/security-handler", () => {
   });
 
   describe("applySecurityHeaders", () => {
+    /**
+     * Read the policy whichever header carries it. The floor is served
+     * report-only until a project opts in, so tests asserting policy *content*
+     * must not also assert the enforcement mode -- that is covered separately.
+     */
+    const getCsp = (headers: Headers): string | null =>
+      headers.get("Content-Security-Policy") ??
+        headers.get("Content-Security-Policy-Report-Only");
+
     it("keeps the canonical policy-owned header list aligned with production output", () => {
       const headers = applyHeaders({
         adapter: createMockAdapter({ VERYFRONT_COEP: "require-corp" }),
       });
 
+      // Exactly one of the two CSP header names is emitted per response, so
+      // production output is a subset of the owned list rather than equal to it.
+      const emitted = [...headers.keys()].sort();
+      const owned = [...SECURITY_POLICY_RESPONSE_HEADER_NAMES];
+      for (const name of emitted) {
+        assert(owned.includes(name as typeof owned[number]), `${name} must be policy-owned`);
+      }
       assertEquals(
-        [...headers.keys()].sort(),
-        [...SECURITY_POLICY_RESPONSE_HEADER_NAMES].sort(),
+        emitted.filter((n) => n.startsWith("content-security-policy")).length,
+        1,
+        "exactly one CSP header, never both",
+      );
+      assertEquals(
+        owned.filter((n) => !n.startsWith("content-security-policy")).sort(),
+        emitted.filter((n) => !n.startsWith("content-security-policy")),
+        "every other owned header is emitted",
       );
     });
 
@@ -646,7 +668,7 @@ describe("security/http/response/security-handler", () => {
 
     it("should set CSP frame-ancestors with veryfront origins when isVeryfrontDomain is true (SEC-007)", () => {
       const headers = applyHeaders({ isVeryfrontDomain: true });
-      const csp = headers.get("Content-Security-Policy");
+      const csp = getCsp(headers);
       assert(csp !== null, "CSP header should be present");
       const frameAncestors = parseDirectiveSources(csp, "frame-ancestors");
       assertEquals(
@@ -662,7 +684,7 @@ describe("security/http/response/security-handler", () => {
 
     it("should set CSP frame-ancestors 'none' for non-veryfront domains (SEC-007)", () => {
       const headers = applyHeaders({ isVeryfrontDomain: false });
-      const csp = headers.get("Content-Security-Policy");
+      const csp = getCsp(headers);
       assert(csp !== null, "CSP header should be present");
       assert(
         csp.includes("frame-ancestors 'none'"),
@@ -707,12 +729,121 @@ describe("security/http/response/security-handler", () => {
 
     it("should set default CSP in production when no CSP config", () => {
       const headers = applyHeaders();
-      assertEquals(headers.get("Content-Security-Policy"), buildCSP(false, "nonce", null));
+      // Report-only: a project that configured nothing has not opted in.
+      assertEquals(
+        headers.get("Content-Security-Policy-Report-Only"),
+        buildCSP(false, "nonce", null),
+      );
+      assertEquals(headers.has("Content-Security-Policy"), false);
     });
 
     it("should not set CSP in dev mode when no CSP config", () => {
       const headers = applyHeaders({ isDev: true });
       assertEquals(headers.has("Content-Security-Policy"), false);
+      assertEquals(headers.has("Content-Security-Policy-Report-Only"), false);
+    });
+
+    it("enforces the policy once a project declares any csp config", () => {
+      // Declaring `security.csp` is the opt-in signal: the project has looked
+      // at its own policy, so the floor stops being advisory for it.
+      const headers = applyHeaders({ config: { csp: { imgSrc: ["https://cdn.example.com"] } } });
+      assertEquals(
+        headers.get("Content-Security-Policy"),
+        buildCSP(false, "nonce", {
+          csp: { imgSrc: ["https://cdn.example.com"] },
+        }),
+      );
+      assertEquals(headers.has("Content-Security-Policy-Report-Only"), false);
+    });
+
+    it("treats an empty csp object as an opt-in", () => {
+      // The project touched the key, which is the signal -- not how much it put
+      // in it. Reading emptiness as "unconfigured" would leave a project that
+      // deliberately accepted the floor stuck in report-only forever.
+      const headers = applyHeaders({ config: { csp: {} } });
+      assertEquals(headers.has("Content-Security-Policy"), true);
+      assertEquals(headers.has("Content-Security-Policy-Report-Only"), false);
+    });
+
+    it("reports rather than enforces for a project that configures other security keys", () => {
+      // `security.cors` is not a CSP opt-in. This is the shape that made the
+      // audit ambiguous: a `security` block exists, but no policy was tuned.
+      const headers = applyHeaders({ config: { cors: true } });
+      assertEquals(headers.has("Content-Security-Policy"), false);
+      assert(headers.get("Content-Security-Policy-Report-Only") !== null);
+    });
+
+    it("enforces for everyone once VERYFRONT_CSP_ENFORCE is set", () => {
+      // The ops lever that ends the staged rollout.
+      const adapter = createMockAdapter({ VERYFRONT_CSP_ENFORCE: "1" });
+      const headers = applyHeaders({ adapter });
+      assertEquals(headers.get("Content-Security-Policy"), buildCSP(false, "nonce", null, adapter));
+      assertEquals(headers.has("Content-Security-Policy-Report-Only"), false);
+    });
+
+    it("enforces an ops-level VERYFRONT_CSP override even without project opt-in", () => {
+      // Writing a whole policy by hand is already an explicit act; serving it
+      // report-only would make the override do nothing.
+      const adapter = createMockAdapter({ VERYFRONT_CSP: "default-src 'self'" });
+      const headers = applyHeaders({ adapter });
+      assertEquals(headers.get("Content-Security-Policy"), "default-src 'self'");
+      assertEquals(headers.has("Content-Security-Policy-Report-Only"), false);
+    });
+
+    it("ignores a project-supplied Content-Security-Policy in security.headers", () => {
+      // `security.headers` has no override path for CSP the way Referrer-Policy
+      // and X-Frame-Options do, so a value here would silently replace the
+      // merged platform floor rather than extend it.
+      const headers = applyHeaders({
+        config: {
+          csp: { imgSrc: ["https://cdn.example.com"] },
+          headers: { "Content-Security-Policy": "default-src *" },
+        },
+      });
+      assertEquals(
+        headers.get("Content-Security-Policy"),
+        buildCSP(false, "nonce", { csp: { imgSrc: ["https://cdn.example.com"] } }),
+      );
+    });
+
+    it("ignores a project-supplied report-only header, matching case-insensitively", () => {
+      // Header names are case-insensitive, and the report-only name is a live
+      // delivery mode now -- a project value here could flip which mode is
+      // served, not just what it contains.
+      const headers = applyHeaders({
+        config: { headers: { "Content-Security-Policy-Report-Only": "default-src *" } },
+      });
+      assertEquals(
+        headers.get("Content-Security-Policy-Report-Only"),
+        buildCSP(false, "nonce", { headers: {} } as SecurityConfig),
+      );
+      assertEquals(headers.has("Content-Security-Policy"), false);
+    });
+
+    it("still honors the override paths that are meant to exist", () => {
+      // Guard against over-correcting: skipping CSP must not disturb the
+      // headers `security.headers` is legitimately allowed to set.
+      const headers = applyHeaders({
+        config: {
+          headers: {
+            "Content-Security-Policy": "default-src *",
+            "Referrer-Policy": "no-referrer",
+            "X-Custom": "kept",
+          },
+        },
+      });
+      assertEquals(headers.get("Referrer-Policy"), "no-referrer");
+      assertEquals(headers.get("X-Custom"), "kept");
+    });
+
+    it("serves the same policy either way, differing only in enforcement", () => {
+      // The report-only rollout must not weaken what is reported, or the
+      // violations a project sees would not predict what enforcement will do.
+      const reported = applyHeaders().get("Content-Security-Policy-Report-Only");
+      const enforced = applyHeaders({
+        adapter: createMockAdapter({ VERYFRONT_CSP_ENFORCE: "1" }),
+      }).get("Content-Security-Policy");
+      assertEquals(reported, enforced);
     });
 
     it("should apply extra headers from config", () => {

@@ -30,6 +30,18 @@ import { invalidateProjectMiddlewareCache } from "../../../src/server/runtime-ha
 import { registerTailwindExtension } from "../../../src/html/styles-builder/__tests__/css-processor-setup.ts";
 import { deleteEnv, getHostEnv, setEnv } from "../../../src/platform/compat/process.ts";
 
+/**
+ * Read the served policy from whichever header carries it. The platform floor
+ * is served `-Report-Only` by default; a `security.csp` declaration,
+ * `VERYFRONT_CSP`, or `VERYFRONT_CSP_ENFORCE` selects enforced delivery
+ * instead. These fixtures declare none of those; the assertions below are about
+ * policy content and nonce alignment, not delivery mode.
+ */
+function readCsp(headers: Headers): string | null {
+  return headers.get("content-security-policy") ??
+    headers.get("content-security-policy-report-only");
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -222,7 +234,7 @@ describe(
             const html = await response.text();
 
             assertEquals(response.status, 200, "Should serve built App Router HTML");
-            const csp = response.headers.get("content-security-policy") ?? "";
+            const csp = readCsp(response.headers) ?? "";
             const nonceMatch = csp.match(/nonce-([^' ;]+)/);
             assertExists(nonceMatch, "CSP should include a nonce");
             const nonce = nonceMatch[1]!;
@@ -284,7 +296,7 @@ describe(
 
             const res = await fetch(`http://127.0.0.1:${server.port}/`);
             assertEquals(res.status, 200, "Should serve the page");
-            const csp = res.headers.get("content-security-policy");
+            const csp = readCsp(res.headers);
             assert(csp !== null, "CSP should be set by default in production");
             assert(
               csp!.includes("default-src 'self'"),
@@ -329,7 +341,7 @@ describe(
               "DENY",
               "Should prevent framing by default",
             );
-            const csp = response.headers.get("content-security-policy");
+            const csp = readCsp(response.headers);
             assert(csp !== null, "Default CSP should be set in production");
             assert(
               csp!.includes("default-src 'self'"),
@@ -417,7 +429,7 @@ describe(
             const html = await response.text();
 
             assertEquals(response.status, 200, "Should serve built Pages Router HTML");
-            const csp = response.headers.get("content-security-policy") ?? "";
+            const csp = readCsp(response.headers) ?? "";
             const nonceMatch = csp.match(/nonce-([^' ;]+)/);
             assertExists(nonceMatch, "CSP should include a nonce");
             const nonce = nonceMatch[1]!;
