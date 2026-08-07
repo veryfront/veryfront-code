@@ -37,6 +37,7 @@ import type {
   VeryfrontApiClient,
 } from "#veryfront/platform/adapters/veryfront-api-client/index.ts";
 import { extractProjectCandidates } from "./styles-candidate-scanner.ts";
+import { findStylesheetFromFiles } from "#veryfront/html/styles-builder/css-pregeneration.ts";
 import { extractProjectCssImports } from "./styles-css-import-scanner.ts";
 import { mergeImportedCSS } from "#veryfront/rendering/orchestrator/html-imported-css.ts";
 import { profilePhase } from "#veryfront/observability";
@@ -330,21 +331,70 @@ export class StylesCSSHandler extends BaseHandler {
     }
   }
 
+  /**
+   * Resolve the project stylesheet the same way the production pipeline does.
+   *
+   * Production calls `findStylesheetFromFiles` over the loaded source files,
+   * which accepts `globals.css`, `global.css`, `styles/globals.css` and
+   * `app/globals.css`. This route used to read a single hardcoded
+   * `<projectDir>/globals.css` through the filesystem adapter, so a project
+   * whose stylesheet sits anywhere else silently fell back to the provider
+   * default and lost its `@theme` tokens -- every `bg-<token>` utility the
+   * theme defines then fails to generate, and the preview renders unstyled
+   * while production is fine.
+   *
+   * Resolving from the same file list also removes the dependency on a
+   * path-shaped filesystem read, which is not how sources arrive when they are
+   * served from the control plane rather than local disk.
+   */
   private async loadStylesheet(ctx: HandlerContext): Promise<string | undefined> {
     const configuredPath = ctx.config?.tailwind?.stylesheet;
 
-    if (configuredPath) {
-      const filePath = joinPath(ctx.projectDir, configuredPath);
-      return ctx.adapter.fs.readFile(filePath);
+    const files = await this.getSourceFiles(ctx);
+    if (files) {
+      const fromFiles = findStylesheetFromFiles(files, configuredPath);
+      if (fromFiles) return fromFiles;
     }
 
-    const globalsPath = joinPath(ctx.projectDir, "globals.css");
+    // No source list available (or nothing matched): fall back to reading the
+    // configured path, then the conventional locations, directly.
+    const candidatePaths = configuredPath
+      ? [configuredPath]
+      : ["globals.css", "global.css", "styles/globals.css", "app/globals.css"];
+
+    for (const candidate of candidatePaths) {
+      try {
+        const contents = await ctx.adapter.fs.readFile(joinPath(ctx.projectDir, candidate));
+        if (contents) return contents;
+      } catch (_) {
+        /* try the next conventional location */
+      }
+    }
+
+    // Worth a warning rather than a debug line: the page still renders, but
+    // without the project's theme, which looks like a broken site.
+    logger.warn("No project stylesheet found; provider default will be used", {
+      projectDir: ctx.projectDir,
+      configuredPath: configuredPath ?? null,
+    });
+    return undefined;
+  }
+
+  private async getSourceFiles(
+    ctx: HandlerContext,
+  ): Promise<Array<{ path: string; content?: string }> | null> {
+    const wrappedFs = ctx.adapter.fs as { getUnderlyingAdapter?: () => unknown };
+    if (typeof wrappedFs.getUnderlyingAdapter !== "function") return null;
+
+    const fsAdapter = wrappedFs.getUnderlyingAdapter() as {
+      getAllSourceFiles?: () => Promise<Array<{ path: string; content?: string }>>;
+    };
+    if (typeof fsAdapter.getAllSourceFiles !== "function") return null;
+
     try {
-      return await ctx.adapter.fs.readFile(globalsPath);
+      return await fsAdapter.getAllSourceFiles();
     } catch (_) {
-      /* expected: globals.css may not exist */
-      logger.debug("No project stylesheet found; provider default will be used");
-      return undefined;
+      return null;
     }
   }
 
