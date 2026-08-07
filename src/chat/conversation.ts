@@ -7,7 +7,27 @@ import type {
   ChatUiMessageRole,
   ProviderModelMessage,
 } from "./types.ts";
-import { stringifyChatJson, toChatJsonValue } from "./json-value.ts";
+import { getOptionalStringField, isRecord, toRecord } from "./part-field-access.ts";
+import type { JsonValue } from "./part-field-access.ts";
+import {
+  buildRawToolCallResultOutput,
+  buildToolResultOutput,
+  getFilePart,
+  getRawToolCallPart,
+  getRawToolResultPart,
+  getToolPart,
+  isProviderVisibleReasoningPart,
+  isTextPart,
+} from "./message-part-parsing.ts";
+import {
+  findProviderVisibleToolReplayMatches,
+  isTransientToolState,
+} from "./tool-replay-reconciliation.ts";
+import type { ProviderVisibleToolReplayMatches } from "./tool-replay-reconciliation.ts";
+
+export { getStringField, isRecord, stringifyUnknown } from "./part-field-access.ts";
+export type { JsonValue } from "./part-field-access.ts";
+export { isReasoningPart, isTextPart } from "./message-part-parsing.ts";
 
 const PROVIDER_MODEL_MESSAGE_SOURCE_ID = Symbol.for("veryfront.providerModelMessageSourceId");
 const UPLOAD_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
@@ -191,23 +211,8 @@ export interface ToolResultLike {
   providerOptions?: unknown;
 }
 
-/** Text-like provider message part. */
-export interface TextPartLike {
-  type: "text";
-  text: string;
-}
-
-/** Reasoning-like provider message part. */
-export interface ReasoningPartLike {
-  type: "reasoning";
-  text?: string;
-  signature?: string;
-  redactedData?: string;
-}
-
 /** Chat UI tool part with a call ID and state. */
 type ToolUiPart = Extract<ChatUiMessagePart, { toolCallId: string; state: string }>;
-type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 type ProviderToolResultContent = {
   type: "tool-result";
   toolCallId: string;
@@ -290,52 +295,6 @@ export function mapToolState(sdkState: string): "streaming" | "pending" | "compl
     default:
       return "pending";
   }
-}
-
-/** Record shape for is. */
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Return string field. */
-export function getStringField(value: unknown, field: string, fallback: string): string {
-  if (!isRecord(value) || typeof value[field] !== "string") {
-    return fallback;
-  }
-
-  return value[field];
-}
-
-function getOptionalStringField(value: unknown, key: string): string | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
-
-  const field = value[key];
-  return typeof field === "string" ? field : undefined;
-}
-
-function getNonEmptyStringField(value: unknown, key: string): string | undefined {
-  const field = getOptionalStringField(value, key);
-  return field && field.length > 0 ? field : undefined;
-}
-
-function toRecord(value: unknown): Record<string, unknown> {
-  return isRecord(value) ? Object.fromEntries(Object.entries(value)) : {};
-}
-
-/** Stringify unknown helper. */
-export function stringifyUnknown(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (
-    typeof value === "bigint" ||
-    typeof value === "undefined" ||
-    typeof value === "function" ||
-    typeof value === "symbol"
-  ) {
-    return String(value);
-  }
-  return stringifyChatJson(value);
 }
 
 /** Check whether a chat part is a custom data part. */
@@ -634,26 +593,6 @@ export function isToolResultPart(value: unknown): value is ToolResultLike {
   );
 }
 
-/** Check whether a value is a text part. */
-export function isTextPart(value: unknown): value is TextPartLike {
-  return isRecord(value) && value.type === "text" && typeof value.text === "string";
-}
-
-/** Check whether a value is a reasoning part. */
-export function isReasoningPart(value: unknown): value is ReasoningPartLike {
-  return isRecord(value) && value.type === "reasoning" &&
-    (typeof value.text === "string" ||
-      typeof value.signature === "string" ||
-      typeof value.redactedData === "string");
-}
-
-function isProviderVisibleReasoningPart(value: unknown): value is ReasoningPartLike {
-  return isReasoningPart(value) &&
-    (getNonEmptyStringField(value, "text") !== undefined ||
-      getNonEmptyStringField(value, "signature") !== undefined ||
-      getNonEmptyStringField(value, "redactedData") !== undefined);
-}
-
 /** Message shape for extract text from. */
 export function extractTextFromMessage(message: ProviderModelMessage): string {
   if (!message || !message.content) return "";
@@ -675,164 +614,6 @@ export function extractTextFromMessage(message: ProviderModelMessage): string {
   }
 
   return "";
-}
-
-function toJsonValue(value: unknown): JsonValue {
-  return toChatJsonValue(value);
-}
-
-function getFilePart(part: unknown): {
-  type: "file" | "image";
-  mediaType: string;
-  data: string;
-  url: string;
-  filename?: string;
-  uploadId?: string;
-  uploadPath?: string;
-} | null {
-  if (!isRecord(part) || (part.type !== "file" && part.type !== "image")) {
-    return null;
-  }
-
-  const mediaType = getNonEmptyStringField(part, "mediaType") ??
-    getNonEmptyStringField(part, "media_type");
-  const data = getNonEmptyStringField(part, "url");
-  if (!mediaType || !data) {
-    return null;
-  }
-
-  const filename = getNonEmptyStringField(part, "filename");
-  const uploadId = getNonEmptyStringField(part, "uploadId") ??
-    getNonEmptyStringField(part, "upload_id");
-  const uploadPath = getNonEmptyStringField(part, "uploadPath") ??
-    getNonEmptyStringField(part, "upload_path");
-
-  return {
-    type: part.type === "image" ? "image" : "file",
-    mediaType,
-    data,
-    url: data,
-    ...(filename ? { filename } : {}),
-    ...(uploadId ? { uploadId } : {}),
-    ...(uploadPath ? { uploadPath } : {}),
-  };
-}
-
-function getToolPart(part: unknown): {
-  toolCallId: string;
-  toolName: string;
-  input: Record<string, unknown>;
-  state: string;
-  output?: unknown;
-  errorText?: string;
-} | null {
-  if (!isRecord(part) || typeof part.type !== "string") {
-    return null;
-  }
-
-  const type = part.type;
-  const toolCallId = getNonEmptyStringField(part, "toolCallId");
-  const state = getNonEmptyStringField(part, "state");
-  const explicitToolName = getNonEmptyStringField(part, "toolName") ??
-    getNonEmptyStringField(part, "name");
-  const derivedToolName =
-    type === "dynamic-tool" || type === "tool_call" || !type.startsWith("tool-")
-      ? undefined
-      : type.replace(/^tool-/, "");
-  const toolName = explicitToolName ?? derivedToolName;
-  if (!toolCallId || !state || !toolName) {
-    return null;
-  }
-
-  const errorText = getOptionalStringField(part, "errorText");
-  const output = Object.hasOwn(part, "output") ? part.output : undefined;
-
-  return {
-    toolCallId,
-    toolName,
-    input: toRecord(part.input),
-    state,
-    ...(output !== undefined ? { output } : {}),
-    ...(errorText !== undefined ? { errorText } : {}),
-  };
-}
-
-function getRawToolCallPart(part: unknown): {
-  toolCallId: string;
-  toolName: string;
-  input: Record<string, unknown>;
-  state?: string;
-  output?: unknown;
-  errorText?: string;
-} | null {
-  if (!isRecord(part) || part.type !== "tool_call") {
-    return null;
-  }
-
-  const toolCallId = getNonEmptyStringField(part, "toolCallId") ??
-    getNonEmptyStringField(part, "tool_call_id") ??
-    getNonEmptyStringField(part, "id");
-  const toolName = getNonEmptyStringField(part, "toolName") ??
-    getNonEmptyStringField(part, "tool_name") ??
-    getNonEmptyStringField(part, "name");
-
-  if (!toolCallId || !toolName) {
-    return null;
-  }
-
-  return {
-    toolCallId,
-    toolName,
-    input: toRecord(part.input),
-    ...(typeof part.state === "string" ? { state: part.state } : {}),
-    ...(Object.hasOwn(part, "output") ? { output: part.output } : {}),
-    ...(typeof part.errorText === "string" ? { errorText: part.errorText } : {}),
-  };
-}
-
-function getRawToolResultPart(part: unknown): {
-  toolCallId: string;
-  toolName?: string;
-  output:
-    | {
-      type: "json";
-      value: JsonValue;
-    }
-    | {
-      type: "error-text";
-      value: string;
-    };
-} | null {
-  if (!isRecord(part) || part.type !== "tool_result") {
-    return null;
-  }
-
-  const toolCallId = getNonEmptyStringField(part, "toolCallId") ??
-    getNonEmptyStringField(part, "tool_call_id") ??
-    getNonEmptyStringField(part, "id");
-  if (!toolCallId) {
-    return null;
-  }
-
-  const toolName = getNonEmptyStringField(part, "toolName") ??
-    getNonEmptyStringField(part, "tool_name") ??
-    getNonEmptyStringField(part, "name");
-  const isError = part.is_error === true || part.isError === true;
-  const output = isError
-    ? {
-      type: "error-text" as const,
-      value: stringifyUnknown(part.output ?? "Tool error"),
-    }
-    : {
-      type: "json" as const,
-      value: toJsonValue(part.output),
-    };
-
-  return {
-    toolCallId,
-    ...(toolName ? { toolName } : {}),
-    output,
-  };
 }
 
 function buildToolNameMap(parts: ReadonlyArray<unknown>): Map<string, string> {
@@ -877,80 +658,6 @@ function resolveRawToolResultPart(
   };
 }
 
-function buildToolResultOutput(toolPart: { state: string; output?: unknown; errorText?: string }):
-  | {
-    type: "json";
-    value: JsonValue;
-  }
-  | {
-    type: "error-text";
-    value: string;
-  }
-  | null {
-  if (toolPart.state === "output-available") {
-    return {
-      type: "json",
-      value: toJsonValue(toolPart.output),
-    };
-  }
-
-  if (
-    toolPart.state === "output-error" || toolPart.state === "output-denied" ||
-    toolPart.state === "error"
-  ) {
-    return {
-      type: "error-text",
-      value: toolPart.errorText ?? stringifyUnknown(toolPart.output ?? "Tool error"),
-    };
-  }
-
-  return null;
-}
-
-function isTransientToolState(state: string | undefined): boolean {
-  return state === "pending" || state === "input-available" || state === "input-streaming" ||
-    state === "streaming" || state === "approval-requested" || state === "approval-responded";
-}
-
-type ReplayToolCallPart = {
-  part: object;
-  toolCallId: string;
-  toolName: string;
-  transient: boolean;
-  selfContainedResult: boolean;
-};
-
-type PendingReplayToolCall = Omit<ReplayToolCallPart, "selfContainedResult"> & {
-  originMessageIndex: number;
-};
-
-function buildRawToolCallResultOutput(
-  rawToolCall: NonNullable<ReturnType<typeof getRawToolCallPart>>,
-): ReturnType<typeof buildToolResultOutput> {
-  if (!rawToolCall.state) {
-    return null;
-  }
-
-  return buildToolResultOutput({
-    state: rawToolCall.state,
-    ...(rawToolCall.output !== undefined ? { output: rawToolCall.output } : {}),
-    ...(rawToolCall.errorText !== undefined ? { errorText: rawToolCall.errorText } : {}),
-  });
-}
-
-function hasSelfContainedRawToolCallResult(
-  rawToolCall: NonNullable<ReturnType<typeof getRawToolCallPart>>,
-): boolean {
-  if (
-    rawToolCall.state === "error" && rawToolCall.output === undefined &&
-    rawToolCall.errorText === undefined
-  ) {
-    return false;
-  }
-
-  return buildRawToolCallResultOutput(rawToolCall) !== null;
-}
-
 function shouldSkipTransientToolCall(
   part: unknown,
   state: string | undefined,
@@ -958,258 +665,6 @@ function shouldSkipTransientToolCall(
 ): boolean {
   return isTransientToolState(state) &&
     (!isRecord(part) || !replayMatches.preservedTransientToolParts.has(part));
-}
-
-function getReplayToolCallPart(part: unknown, role: ChatUiMessageRole): ReplayToolCallPart | null {
-  if (role !== "assistant") {
-    return null;
-  }
-
-  if (!isRecord(part)) {
-    return null;
-  }
-
-  const toolPart = getToolPart(part);
-  if (toolPart) {
-    return {
-      part,
-      toolCallId: toolPart.toolCallId,
-      toolName: toolPart.toolName,
-      transient: isTransientToolState(toolPart.state),
-      selfContainedResult: buildToolResultOutput(toolPart) !== null,
-    };
-  }
-
-  const rawToolCall = getRawToolCallPart(part);
-  if (!rawToolCall) {
-    return null;
-  }
-
-  return {
-    part,
-    toolCallId: rawToolCall.toolCallId,
-    toolName: rawToolCall.toolName,
-    transient: isTransientToolState(rawToolCall.state),
-    selfContainedResult: hasSelfContainedRawToolCallResult(rawToolCall),
-  };
-}
-
-function getReplayToolResultPart(part: unknown, role: ChatUiMessageRole): {
-  part: object;
-  toolCallId: string;
-  toolName?: string;
-} | null {
-  if (role !== "assistant" && role !== "tool") {
-    return null;
-  }
-
-  if (!isRecord(part)) {
-    return null;
-  }
-
-  const rawToolResult = getRawToolResultPart(part);
-  if (rawToolResult) {
-    return {
-      part,
-      toolCallId: rawToolResult.toolCallId,
-      ...(rawToolResult.toolName ? { toolName: rawToolResult.toolName } : {}),
-    };
-  }
-
-  const toolPart = getToolPart(part);
-  if (role === "tool" && toolPart && buildToolResultOutput(toolPart)) {
-    return {
-      part,
-      toolCallId: toolPart.toolCallId,
-      toolName: toolPart.toolName,
-    };
-  }
-
-  return null;
-}
-
-function isProviderVisibleNonToolPart(role: ChatUiMessageRole, part: unknown): boolean {
-  if (role === "system") {
-    return isTextPart(part) && part.text.length > 0;
-  }
-
-  if (role === "user") {
-    return isTextPart(part) && part.text.length > 0 || getFilePart(part) !== null;
-  }
-
-  if (role === "assistant") {
-    return isTextPart(part) && part.text.length > 0 || isProviderVisibleReasoningPart(part) ||
-      getFilePart(part) !== null;
-  }
-
-  return false;
-}
-
-function isCompatibleToolResultName(
-  call: { toolName: string },
-  result: { toolName?: string },
-): boolean {
-  return !result.toolName || result.toolName === call.toolName;
-}
-
-function removePendingCallsThroughMatchedResult(
-  pendingCalls: PendingReplayToolCall[],
-  matchedIndex: number,
-  toolCallId: string,
-): void {
-  const priorUnmatchedCalls = pendingCalls.slice(0, matchedIndex).filter((pendingCall) =>
-    pendingCall.toolCallId !== toolCallId
-  );
-  pendingCalls.splice(0, matchedIndex + 1, ...priorUnmatchedCalls);
-}
-
-function removePendingCallsWithId(
-  pendingCalls: Array<{ toolCallId: string }>,
-  toolCallId: string,
-): void {
-  for (let index = pendingCalls.length - 1; index >= 0; index--) {
-    if (pendingCalls[index]?.toolCallId === toolCallId) {
-      pendingCalls.splice(index, 1);
-    }
-  }
-}
-
-function removePendingCallsFromEarlierMessages(
-  pendingCalls: Array<{ originMessageIndex: number }>,
-  messageIndex: number,
-): void {
-  for (let index = pendingCalls.length - 1; index >= 0; index--) {
-    if ((pendingCalls[index]?.originMessageIndex ?? messageIndex) < messageIndex) {
-      pendingCalls.splice(index, 1);
-    }
-  }
-}
-
-function hasPendingCallsFromEarlierMessages(
-  pendingCalls: Array<{ originMessageIndex: number }>,
-  messageIndex: number,
-): boolean {
-  return pendingCalls.some((pendingCall) => pendingCall.originMessageIndex < messageIndex);
-}
-
-/** Tool replay parts that are valid to expose to provider conversion. */
-export type ProviderVisibleToolReplayMatches = {
-  preservedTransientToolParts: WeakSet<object>;
-  matchedToolCallParts: WeakSet<object>;
-  matchedToolResultParts: WeakSet<object>;
-  matchedToolResultNames: WeakMap<object, string>;
-  toolCallPartsStartingNewBatch: WeakSet<object>;
-  supersededToolCallParts: WeakSet<object>;
-  supersededToolResultParts: WeakSet<object>;
-};
-
-/** Find adjacent replay call/result occurrences using part object identity. */
-export function findProviderVisibleToolReplayMatches(
-  messages: readonly ChatProviderModelInputMessage[],
-): ProviderVisibleToolReplayMatches {
-  const preservedTransientToolParts = new WeakSet<object>();
-  const matchedToolCallParts = new WeakSet<object>();
-  const matchedToolResultParts = new WeakSet<object>();
-  const matchedToolResultNames = new WeakMap<object, string>();
-  const toolCallPartsStartingNewBatch = new WeakSet<object>();
-  const supersededToolCallParts = new WeakSet<object>();
-  const supersededToolResultParts = new WeakSet<object>();
-  const matchedResultPartByCallPart = new WeakMap<object, object>();
-  const toolCallsById = new Map<string, ReplayToolCallPart[]>();
-  const pendingCalls: PendingReplayToolCall[] = [];
-
-  for (const [messageIndex, message] of messages.entries()) {
-    let pendingCountBeforeSameMessageVisibleContent: number | null = null;
-
-    for (const part of message.parts) {
-      const call = getReplayToolCallPart(part, message.role);
-      if (call) {
-        const callsWithId = toolCallsById.get(call.toolCallId) ?? [];
-        callsWithId.push(call);
-        toolCallsById.set(call.toolCallId, callsWithId);
-
-        if (hasPendingCallsFromEarlierMessages(pendingCalls, messageIndex)) {
-          toolCallPartsStartingNewBatch.add(call.part);
-        }
-        removePendingCallsFromEarlierMessages(pendingCalls, messageIndex);
-        if (pendingCountBeforeSameMessageVisibleContent !== null) {
-          pendingCalls.splice(0, pendingCountBeforeSameMessageVisibleContent);
-          pendingCountBeforeSameMessageVisibleContent = null;
-        }
-        removePendingCallsWithId(pendingCalls, call.toolCallId);
-        if (call.selfContainedResult) {
-          for (const priorCall of callsWithId) {
-            if (priorCall.part === call.part) {
-              continue;
-            }
-
-            supersededToolCallParts.add(priorCall.part);
-            const priorResultPart = matchedResultPartByCallPart.get(priorCall.part);
-            if (priorResultPart) {
-              supersededToolResultParts.add(priorResultPart);
-            }
-          }
-          continue;
-        }
-
-        pendingCalls.push({ ...call, originMessageIndex: messageIndex });
-        continue;
-      }
-
-      const result = getReplayToolResultPart(part, message.role);
-      if (result) {
-        const matchedIndex = pendingCalls.findLastIndex((pendingCall) =>
-          pendingCall.toolCallId === result.toolCallId &&
-          isCompatibleToolResultName(pendingCall, result)
-        );
-        if (matchedIndex >= 0) {
-          const matchedCall = pendingCalls[matchedIndex];
-          if (!matchedCall) {
-            continue;
-          }
-          if (matchedCall.transient) {
-            preservedTransientToolParts.add(matchedCall.part);
-          }
-          for (const priorCall of toolCallsById.get(matchedCall.toolCallId) ?? []) {
-            if (priorCall.part === matchedCall.part) {
-              continue;
-            }
-
-            supersededToolCallParts.add(priorCall.part);
-            const priorResultPart = matchedResultPartByCallPart.get(priorCall.part);
-            if (priorResultPart) {
-              supersededToolResultParts.add(priorResultPart);
-            }
-          }
-          matchedToolCallParts.add(matchedCall.part);
-          matchedToolResultParts.add(result.part);
-          matchedToolResultNames.set(result.part, matchedCall.toolName);
-          matchedResultPartByCallPart.set(matchedCall.part, result.part);
-          removePendingCallsThroughMatchedResult(pendingCalls, matchedIndex, result.toolCallId);
-        }
-        continue;
-      }
-
-      if (isProviderVisibleNonToolPart(message.role, part)) {
-        removePendingCallsFromEarlierMessages(pendingCalls, messageIndex);
-        pendingCountBeforeSameMessageVisibleContent ??= pendingCalls.length;
-      }
-    }
-
-    if (pendingCountBeforeSameMessageVisibleContent !== null) {
-      pendingCalls.splice(0, pendingCountBeforeSameMessageVisibleContent);
-    }
-  }
-
-  return {
-    preservedTransientToolParts,
-    matchedToolCallParts,
-    matchedToolResultParts,
-    matchedToolResultNames,
-    toolCallPartsStartingNewBatch,
-    supersededToolCallParts,
-    supersededToolResultParts,
-  };
 }
 
 function convertSystemMessage(message: ChatProviderModelInputMessage): ProviderModelMessage[] {
