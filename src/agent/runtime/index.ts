@@ -1430,27 +1430,11 @@ export class AgentRuntime {
               if (toolCall.error !== undefined) {
                 setOtelActiveSpanErrorStatus(toolCall.error);
               }
-              if (generatedToolResult.isError !== true) {
-                if (shouldHideProjectToolAfterAgentWriteSuccess(tc.toolName)) {
-                  agentWriteFinalResponseToolGuardEnabled = true;
-                }
-                if (tc.toolName === LOAD_SKILL_TOOL_ID) {
-                  skillState.applySuccessfulResult(generatedToolResult.result);
-                }
-                const submittedFormInput = isSubmittedFormInputExecutionResult(
-                  tc.toolName,
-                  generatedToolResult.result,
-                );
-                skillState.markFormInputSubmitted(
-                  tc.toolName,
-                  generatedToolResult.result,
-                  submittedFormInput,
-                );
-                if (submittedFormInput) {
-                  currentRuntimeContext = markSubmittedFormInputRuntimeContext(
-                    currentRuntimeContext,
-                  );
-                }
+              if (
+                generatedToolResult.isError !== true &&
+                shouldHideProjectToolAfterAgentWriteSuccess(tc.toolName)
+              ) {
+                agentWriteFinalResponseToolGuardEnabled = true;
               }
               setSpanAttributes(
                 toolSpan,
