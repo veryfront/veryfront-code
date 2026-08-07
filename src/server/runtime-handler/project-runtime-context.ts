@@ -1,3 +1,4 @@
+import { getBaseLogger } from "#veryfront/utils";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
@@ -16,6 +17,8 @@ import { resolveEnvironment } from "./environment-resolution.ts";
 import { buildHandlerContext } from "./handler-context-builder.ts";
 import { extractRequestHeaders, resolveProject } from "./project-resolution.ts";
 import { shouldSkipEnrichedContext } from "./request-utils.ts";
+
+const logger = getBaseLogger("SERVER").component("project-runtime-context");
 
 type ProxyTrustVerifier = (req: Request) => Promise<boolean>;
 
@@ -321,6 +324,32 @@ export async function resolveProjectRuntimeContext(
       productionDefaults: envRes.resolvedEnvironment === "production",
     })
     : undefined;
+
+  // Falling back here substitutes the process-wide security config for the
+  // project's, which serves a 200 whose CSP is the platform floor rather than
+  // the project's policy. The response looks correct, so nothing downstream
+  // can notice. Record it where the substitution happens, with the branch that
+  // produced the absent config, so an intermittent config-resolution failure
+  // is legible from logs instead of only from diffing served headers.
+  //
+  // `deferred` is excluded: those control-plane endpoints authenticate a
+  // signed operation envelope and expose no browser surface, so a config-less
+  // security context is their intended shape, not a degradation.
+  if (
+    input.isProxyMode && requestSecurity === undefined &&
+    adapterRes.configOutcome !== "deferred"
+  ) {
+    logger.warn("No project config for this request; serving platform-default security headers", {
+      projectSlug: projectRes.projectSlug,
+      projectId: projectRes.projectId,
+      configOutcome: adapterRes.configOutcome,
+      releaseId: envRes.releaseId ?? null,
+      branch: reqCtx.branch ?? null,
+      environmentName: projectRes.environmentName ?? null,
+      resolvedEnvironment: envRes.resolvedEnvironment ?? null,
+      pathname: input.url.pathname,
+    });
+  }
 
   const handlerContext = buildHandlerContext({
     projectDir: adapterRes.projectDir,

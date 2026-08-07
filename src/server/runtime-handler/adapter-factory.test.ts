@@ -1069,6 +1069,9 @@ describe("adapter-factory", () => {
 
     // Defaults, not the caller's config.
     assertEquals(result.config, undefined);
+    // Downstream substitutes the process-wide security config for an absent
+    // project config, so the reason it is absent has to survive the return.
+    assertEquals(result.configOutcome, "hosted-absent");
   });
 
   it("uses defaults when the 404 arrives wrapped rather than at the top level", async () => {
@@ -1108,6 +1111,7 @@ describe("adapter-factory", () => {
     });
 
     assertEquals(result.config, undefined);
+    assertEquals(result.configOutcome, "hosted-absent");
   });
 
   it("still fails when a 404 comes from something other than the config read", async () => {
