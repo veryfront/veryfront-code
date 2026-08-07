@@ -518,6 +518,11 @@ export interface EvalMetricSummary {
   failed: number;
   skipped: number;
   passRate: number;
+  /**
+   * Human-readable phrasing of the assertion, including its parameters. Absent when the metric had
+   * no known phrasing, or when results sharing this summary disagreed on it.
+   */
+  label?: string;
 }
 
 /** Duration aggregate for an eval report. */

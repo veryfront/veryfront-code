@@ -13,6 +13,7 @@ import type {
   EvalToolCallCountOptions,
   EvalToolCallMatchOptions,
 } from "./types.ts";
+import { formatEvalMetricLabel } from "./metric-labels.ts";
 import {
   evaluateCalledTool,
   evaluateNotCalledTool,
@@ -721,6 +722,7 @@ function createMetric(
   evaluator: MetricEvaluator,
   config?: Record<string, unknown>,
 ): EvalMetric {
+  const label = formatEvalMetricLabel(name, config);
   const metric = {
     name,
     family,
@@ -733,6 +735,8 @@ function createMetric(
         name,
         family,
         severity: "gate",
+        // An evaluator that phrased its own outcome knows more than the static label does.
+        ...(label !== undefined && result.label === undefined ? { label } : {}),
       };
     },
   };

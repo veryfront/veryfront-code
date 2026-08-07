@@ -39,6 +39,7 @@ import {
   runWithVeryfrontCloudContextAsync,
 } from "veryfront/provider";
 import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
+import { brand, dim } from "#cli/ui";
 import { cliLogger, exitProcess, VERSION } from "#cli/utils";
 import {
   discoverProjectAgentRuntime,
@@ -799,26 +800,65 @@ function getDiscoveredEvals(runtime: ProjectAgentRuntimeDiscovery): DiscoveredEv
   });
 }
 
-function printReport(report: EvalReport, baseline?: EvalReportComparison): void {
-  cliLogger.info(`Eval ${report.definitionId}`);
-  cliLogger.info(`Target: ${report.target}`);
-  cliLogger.info(
-    `Result: ${report.summary.passed}/${report.summary.records} passed (${
-      Math.round(report.summary.passRate * 100)
-    }%)`,
+/**
+ * Eval output is written straight to stdout rather than through `cliLogger`, because the logger
+ * stamps every line with its level glyph. Here the `●` is meaningful on its own: it marks the
+ * individual metric assertions, and nothing else, so a reader can find them without reading labels.
+ */
+function printLine(text: string): void {
+  console.log(`  ${text}`);
+}
+
+function printBlankLine(): void {
+  console.log("");
+}
+
+/** Width of "Target:", the longest header label, so the header values line up in one column. */
+const HEADER_LABEL_WIDTH = "Target:".length + 1;
+
+function printHeader(label: string, value: string): void {
+  printLine(`${`${label}:`.padEnd(HEADER_LABEL_WIDTH)}${value}`);
+}
+
+/** Written artifacts are follow-up detail for the results above them, so they are dimmed. */
+function printArtifact(label: string, path: string): void {
+  printLine(dim(`${label}: ${path}`));
+}
+
+function formatPercent(rate: number): string {
+  return `${Math.round(rate * 100)}%`;
+}
+
+function printReport(
+  report: EvalReport,
+  options: { name?: string; baseline?: EvalReportComparison } = {},
+): void {
+  printHeader("Eval", options.name ?? report.definitionId);
+  printHeader("Target", report.target);
+  printHeader(
+    "Result",
+    `${report.summary.passed}/${report.summary.records} passed (${
+      formatPercent(report.summary.passRate)
+    })`,
   );
 
+  if (report.summary.metrics.length > 0) printBlankLine();
   for (const metric of report.summary.metrics) {
-    cliLogger.info(
-      `  ${metric.name}: ${metric.passed}/${metric.passed + metric.failed} passed (${
-        Math.round(metric.passRate * 100)
-      }%)`,
+    const total = metric.passed + metric.failed;
+    printLine(
+      `${brand("●")} ${metric.label ?? metric.name}: ${metric.passed}/${total} passed (${
+        formatPercent(metric.passRate)
+      })`,
     );
   }
 
+  const { baseline } = options;
+  const notes = (report.exports ?? []).length > 0 || baseline !== undefined;
+  if (notes) printBlankLine();
+
   for (const result of report.exports ?? []) {
     if (result.ok) {
-      cliLogger.info(`Export ${result.exporterId}: ok`);
+      printLine(`Export ${result.exporterId}: ok`);
     } else {
       cliLogger.warn(`Export ${result.exporterId}: failed: ${result.error}`);
     }
@@ -826,7 +866,7 @@ function printReport(report: EvalReport, baseline?: EvalReportComparison): void 
 
   if (baseline) {
     const direction = baseline.passRateDelta >= 0 ? "+" : "";
-    cliLogger.info(
+    printLine(
       `Baseline: ${baseline.regressed ? "regressed" : "ok"} (${direction}${
         Math.round(baseline.passRateDelta * 100)
       } pp pass rate)`,
@@ -1278,20 +1318,18 @@ export async function runEvalCommand(
                 artifacts: outcome.artifacts,
               }));
             } else {
-              for (const child of outcome.outputHints.children ?? []) {
+              for (const [index, child] of (outcome.outputHints.children ?? []).entries()) {
+                if (index > 0) printBlankLine();
                 if (child.kind === "report") {
-                  printReport(child.report);
-                  cliLogger.info(`Report directory: ${child.reportDirectory}`);
+                  printReport(child.report, { name: child.name });
                 } else {
                   cliLogger.error(`Eval ${child.evalId}: ${child.error}`);
                 }
               }
-              cliLogger.info(
-                `Eval suite: ${outcome.suite.passed}/${outcome.suite.total} passed`,
-              );
-              cliLogger.info(`Report directory: ${outcome.outputHints.reportDirectory}`);
-              cliLogger.info(`Suite report: ${outcome.outputHints.reportMarkdown}`);
-              if (outcome.outputHints.junit) cliLogger.info(`JUnit: ${outcome.outputHints.junit}`);
+              printBlankLine();
+              printLine(`Eval suite: ${outcome.suite.passed}/${outcome.suite.total} passed`);
+              printArtifact("Report", outcome.outputHints.reportMarkdown);
+              if (outcome.outputHints.junit) printArtifact("JUnit", outcome.outputHints.junit);
             }
             return outcome.exitCode;
           },
@@ -1402,28 +1440,30 @@ export async function runEvalCommand(
                 artifacts: outcome.artifacts,
               }));
             } else {
-              for (const model of outcome.outputHints.models ?? []) {
-                cliLogger.info(`Model: ${model.model}`);
-                printReport(model.report);
+              for (const [index, model] of (outcome.outputHints.models ?? []).entries()) {
+                if (index > 0) printBlankLine();
+                printHeader("Model", model.model);
+                printReport(model.report, { name: evalItem.name });
               }
               const recommendation = outcome.comparison.recommendation;
-              cliLogger.info(
+              printBlankLine();
+              printLine(
                 `Recommendation: ${recommendation.decision}${
                   recommendation.model ? ` (${recommendation.model})` : ""
                 }`,
               );
               for (const reason of recommendation.reasons) {
-                cliLogger.info(`  - ${reason}`);
+                printLine(`  - ${reason}`);
               }
-              cliLogger.info(`Report directory: ${outcome.outputHints.reportDirectory}`);
+              printBlankLine();
               if (outcome.outputHints.comparisonJson) {
-                cliLogger.info(`Comparison: ${outcome.outputHints.comparisonJson}`);
+                printArtifact("Comparison", outcome.outputHints.comparisonJson);
               }
               if (outcome.outputHints.comparisonMarkdown) {
-                cliLogger.info(`Comparison markdown: ${outcome.outputHints.comparisonMarkdown}`);
+                printArtifact("Comparison markdown", outcome.outputHints.comparisonMarkdown);
               }
               if (outcome.outputHints.report) {
-                cliLogger.info(`Report: ${outcome.outputHints.report}`);
+                printArtifact("Report JSON", outcome.outputHints.report);
               }
             }
             return outcome.exitCode;
@@ -1486,13 +1526,16 @@ export async function runEvalCommand(
           artifacts: outcome.artifacts,
         }));
       } else {
-        printReport(outcome.report, outcome.baseline);
-        cliLogger.info(`Report directory: ${outcome.outputHints.reportDirectory}`);
-        cliLogger.info(`Report markdown: ${outcome.outputHints.reportMarkdown}`);
-        if (outcome.outputHints.report) cliLogger.info(`Report: ${outcome.outputHints.report}`);
-        if (outcome.outputHints.junit) cliLogger.info(`JUnit: ${outcome.outputHints.junit}`);
+        printReport(outcome.report, {
+          name: evalItem.name,
+          ...(outcome.baseline ? { baseline: outcome.baseline } : {}),
+        });
+        printBlankLine();
+        printArtifact("Report", outcome.outputHints.reportMarkdown);
+        if (outcome.outputHints.report) printArtifact("Report JSON", outcome.outputHints.report);
+        if (outcome.outputHints.junit) printArtifact("JUnit", outcome.outputHints.junit);
         if (outcome.outputHints.baselineWritten) {
-          cliLogger.info(`Baseline written: ${outcome.outputHints.baselineWritten}`);
+          printArtifact("Baseline written", outcome.outputHints.baselineWritten);
         }
       }
 

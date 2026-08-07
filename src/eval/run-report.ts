@@ -80,6 +80,8 @@ type EvalRunReportChildOutputHint =
   | {
     kind: "report";
     evalId: string;
+    /** Definition name, for CLI headers that read better than the generated eval id. */
+    name: string;
     reportDirectory: string;
     report: EvalReport;
   }
@@ -927,6 +929,7 @@ async function runEvalReportSuite(
       children.push({
         kind: "report",
         evalId: evalItem.id,
+        name: evalItem.name,
         reportDirectory: childArtifacts.directory,
         report,
       });

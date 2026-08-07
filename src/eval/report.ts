@@ -272,7 +272,8 @@ function summarizeMetricResults(records: EvalRecord[]): EvalMetricSummary[] {
   for (const record of records) {
     for (const result of allResults(record)) {
       const key = `${result.name}:${result.family}:${result.severity}`;
-      const summary = summaries.get(key) ?? {
+      const existing = summaries.get(key);
+      const summary = existing ?? {
         name: result.name,
         family: result.family,
         severity: result.severity,
@@ -280,7 +281,12 @@ function summarizeMetricResults(records: EvalRecord[]): EvalMetricSummary[] {
         failed: 0,
         skipped: 0,
         passRate: 0,
+        ...(result.label !== undefined ? { label: result.label } : {}),
       };
+
+      // Two metrics of the same name share a summary row — `calledTool("a")` and `calledTool("b")`,
+      // say. No single label describes both, so drop it rather than credit the row to the first.
+      if (existing && existing.label !== result.label) delete existing.label;
 
       if (result.skipped) {
         summary.skipped += 1;

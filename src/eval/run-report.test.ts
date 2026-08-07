@@ -846,6 +846,7 @@ describe("runEvalReport suite mode", () => {
       {
         kind: "report",
         evalId: "eval:alpha",
+        name: "Alpha",
         reportDirectory: "suite/001-alpha",
         report: {
           ...reportById.get("eval:alpha")!,
@@ -867,6 +868,7 @@ describe("runEvalReport suite mode", () => {
       {
         kind: "report",
         evalId: "eval:beta",
+        name: "Beta",
         reportDirectory: "suite/003-beta",
         report: {
           ...reportById.get("eval:beta")!,
@@ -883,6 +885,7 @@ describe("runEvalReport suite mode", () => {
       {
         kind: "report",
         evalId: "eval:gamma",
+        name: "Gamma",
         reportDirectory: "suite/004-gamma",
         report: {
           ...reportById.get("eval:gamma")!,

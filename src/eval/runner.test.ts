@@ -68,6 +68,7 @@ describe("eval/runner", () => {
         failed: 0,
         skipped: 0,
         passRate: 1,
+        label: "Answer matched the reference exactly",
       },
     ]);
   });
