@@ -36,6 +36,7 @@ function createReport(): EvalReport {
           failed: 0,
           skipped: 0,
           passRate: 1,
+          label: 'Answer contained "the private launch codename"',
         },
       ],
     },
@@ -85,6 +86,7 @@ function createReport(): EvalReport {
             pass: true,
             explanation: "The private answer matched.",
             evidence: { output: "The plan changed.", reference: "Plan update" },
+            label: 'Answer contained "the private launch codename"',
           },
         ],
         checks: [],
@@ -144,6 +146,10 @@ describe("EvalReportExporterRegistry", () => {
     assertEquals(exportedRecord.trace, { events: [], toolCalls: [] });
     assertEquals(exportedRecord.metrics?.[0]?.explanation, undefined);
     assertEquals(exportedRecord.metrics?.[0]?.evidence, undefined);
+    // The label spells out the metric's configured parameter, which is the same class of detail
+    // `evidence` carries, so it must not survive redaction either.
+    assertEquals(exportedRecord.metrics?.[0]?.label, undefined);
+    assertEquals(exportedReport.summary.metrics[0]?.label, undefined);
     assertEquals(exportedReport.dataset, {
       kind: "json",
       examples: 1,

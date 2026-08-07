@@ -43,11 +43,28 @@ describe("eval/metric-labels", () => {
   });
 
   it("elides a long parameter so a metric line stays on one row", () => {
-    const pattern = "a".repeat(60);
+    const long = "a".repeat(60);
+    const elided = `${"a".repeat(39)}…`;
 
     assertEquals(
-      formatEvalMetricLabel("answer.regex", { pattern }),
-      `Answer matched pattern ${"a".repeat(39)}…`,
+      formatEvalMetricLabel("answer.regex", { pattern: long }),
+      `Answer matched pattern ${elided}`,
+    );
+    assertEquals(
+      formatEvalMetricLabel("answer.contains", { text: long }),
+      `Answer contained "${elided}"`,
+    );
+    assertEquals(
+      formatEvalMetricLabel("agent.calledTool", { tool: long }),
+      `Agent called tool "${elided}"`,
+    );
+    assertEquals(
+      formatEvalMetricLabel("agent.notCalledTool", { tool: long }),
+      `Agent did not call tool "${elided}"`,
+    );
+    assertEquals(
+      formatEvalMetricLabel("agent.toolCallCount", { tool: long }),
+      `Agent call count for tool "${elided}" was in range`,
     );
   });
 

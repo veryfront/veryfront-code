@@ -60,16 +60,16 @@ export function formatEvalMetricLabel(
     }
     case "agent.calledTool": {
       const tool = readString(config, "tool");
-      return tool ? `Agent called tool "${tool}"` : "Agent called the expected tool";
+      return tool ? `Agent called tool "${elide(tool)}"` : "Agent called the expected tool";
     }
     case "agent.notCalledTool": {
       const tool = readString(config, "tool");
-      return tool ? `Agent did not call tool "${tool}"` : "Agent avoided the excluded tool";
+      return tool ? `Agent did not call tool "${elide(tool)}"` : "Agent avoided the excluded tool";
     }
     case "agent.toolCallCount": {
       const tool = readString(config, "tool");
       return tool
-        ? `Agent call count for tool "${tool}" was in range`
+        ? `Agent call count for tool "${elide(tool)}" was in range`
         : "Agent tool call count was in range";
     }
     case "knowledge.recallAtK": {

@@ -173,9 +173,28 @@ function redactMetricResults(
     }
     if (!redaction.includeMetricEvidence) {
       delete redacted.evidence;
+      // The label spells out the metric's configured parameter — the asserted tool name, expected
+      // text, or regex. That is the same class of detail as `evidence`, so it leaves on the same
+      // terms. CLI output is unaffected; this boundary only governs what reaches an exporter.
+      delete redacted.label;
     }
     return redacted;
   });
+}
+
+function redactMetricSummaries(
+  summary: EvalReport["summary"],
+  redaction: EvalReportExportRedaction,
+): EvalReport["summary"] {
+  if (redaction.includeMetricEvidence) return summary;
+  return {
+    ...summary,
+    metrics: summary.metrics.map((metric) => {
+      const redacted = { ...metric };
+      delete redacted.label;
+      return redacted;
+    }),
+  };
 }
 
 function cloneRedaction(
@@ -230,6 +249,7 @@ export function redactEvalReportForExport(
   return {
     ...cloned,
     ...(cloned.dataset ? { dataset: redactDatasetMetadata(cloned.dataset, redaction) } : {}),
+    summary: redactMetricSummaries(cloned.summary, redaction),
     records: cloned.records.map((record) => redactRecord(record, redaction)),
   };
 }
