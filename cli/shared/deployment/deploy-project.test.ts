@@ -1515,7 +1515,7 @@ describe("release asset manifest", () => {
       Error,
       // A legacy manifest is a framework version skew, so the message must say so:
       // "rebuild the assets" would rebuild against the same mismatched builder.
-      "declare manifest schema version 1, but this build reads version 2",
+      "declare manifest schema version 1, but this framework reads version 2",
     );
   });
 

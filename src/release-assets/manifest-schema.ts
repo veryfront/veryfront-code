@@ -335,7 +335,11 @@ export interface ReadyReleaseAssetManifestResponse {
 // Dependency-free consumption parser
 // ---------------------------------------------------------------------------
 
-/** Options shared by the dependency-free consumption parsers. */
+/**
+ * Options shared by the dependency-free consumption parsers. `acceptLegacyV1`
+ * defaults to `false`, so a v1 manifest body is rejected as a schema skew; set
+ * it to `true` only on read paths that must still adapt a readable v1 manifest.
+ */
 export interface ReleaseAssetManifestParseOptions {
   /**
    * Accept the v1 body still held for releases published before the v2 move.
@@ -455,7 +459,7 @@ export function describeReadyReleaseAssetManifestRejection(
         ? `versions ${LEGACY_V1_SCHEMA_VERSION} and ${RELEASE_ASSET_MANIFEST_SCHEMA_VERSION}`
         : `version ${RELEASE_ASSET_MANIFEST_SCHEMA_VERSION}`;
       return `the release assets declare manifest schema version ${schemaVersion}, but this ` +
-        `build reads ${readable}. The assets were built ` +
+        `framework reads ${readable}. The assets were built ` +
         `by a different framework version than the one reading them`;
     }
     return "the manifest body did not match the expected schema";
