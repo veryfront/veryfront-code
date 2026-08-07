@@ -109,37 +109,56 @@ describe("cli/templates", () => {
     assertEquals(calculator.includes("execute: async"), false);
     assertEquals(calculator.includes("execute: ({ operation, a, b }) =>"), true);
     assertEquals(
-      calculator.includes('v.enum(["add", "subtract", "multiply", "divide", "round"])'),
-      true,
-    );
-    assertEquals(
-      calculator.includes("const precision = Math.min(100, Math.max(0, Math.trunc(b)));"),
-      true,
-    );
-    assertEquals(
-      calculator.includes(
-        "const offset = Math.sign(a) * Number.EPSILON * Math.max(1, Math.abs(a));",
-      ),
-      true,
-    );
-    assertEquals(
-      calculator.includes("return { result: Number((a + offset).toFixed(precision)) };"),
+      calculator.includes('v.enum(["add", "subtract", "multiply", "divide", "split"])'),
       true,
     );
   });
 
-  it("rounds positive and negative half cents away from zero", async () => {
+  it("keeps one meaning for every calculator argument", async () => {
+    const calculator = await Deno.readTextFile(
+      new URL("./files/ai-agent/tools/calculator.ts", import.meta.url),
+    );
+
+    assertEquals(calculator.includes('"round"'), false);
+    assertEquals(calculator.includes("decimals"), false);
+  });
+
+  it("splits money into shares that add up to the total exactly", async () => {
     const { default: calculator } = await import(
       "./files/ai-agent/tools/calculator.ts"
     );
 
     assertEquals(
-      await calculator.execute({ operation: "round", a: 1.005, b: 2 }),
-      { result: 1.01 },
+      await calculator.execute({ operation: "split", a: 99.71, b: 3 }),
+      { result: [33.24, 33.24, 33.23] },
     );
-    assertEquals(
-      await calculator.execute({ operation: "round", a: -1.005, b: 2 }),
-      { result: -1.01 },
+
+    for (const [total, ways] of [[99.71, 3], [0.01, 3], [10, 4], [-99.71, 3]] as const) {
+      const { result } = await calculator.execute({ operation: "split", a: total, b: ways });
+      if (!Array.isArray(result)) throw new Error("split should return one share per part");
+      assertEquals(result.length, ways);
+      assertEquals(
+        Math.round(result.reduce((sum, share) => sum + share, 0) * 100),
+        Math.round(total * 100),
+        `shares for ${total} split ${ways} ways should add back to the total`,
+      );
+    }
+  });
+
+  it("refuses a split count it cannot allocate", async () => {
+    const { default: calculator } = await import(
+      "./files/ai-agent/tools/calculator.ts"
+    );
+
+    await assertRejects(
+      () => calculator.execute({ operation: "split", a: 10, b: 2 ** 32 }),
+      Error,
+      "Cannot split into more than 1000 shares",
+    );
+    await assertRejects(
+      () => calculator.execute({ operation: "split", a: 10, b: 0 }),
+      Error,
+      "Cannot divide by zero",
     );
   });
 
@@ -152,7 +171,7 @@ describe("cli/templates", () => {
     assertEquals(
       typeof assistant.config.system === "string" &&
         assistant.config.system.includes(
-          "Plan the calculation before calling the calculator, use the fewest calls needed, and answer immediately after you have the result.",
+          "Use the calculator tool for arithmetic instead of calculating mentally, and answer as soon as you have the result.",
         ),
       true,
     );
@@ -208,13 +227,6 @@ describe("cli/templates", () => {
       "the starter eval should not need raw strings to express an assertion",
     );
 
-    // The rubric names the amounts it grades, and nothing more. Two further
-    // clauses used to ride along: one rejecting near-misses like $33.2366 and
-    // $133.23, one demanding a brief explanation. Both failed the 0.8 gate on a
-    // fresh scaffold, because the assistant routinely shows the repeating
-    // division before rounding and writes at length about the remainder. A
-    // starter eval that fails on the first run teaches nothing about the user's
-    // own setup, so the rubric asks only for the arithmetic.
     const rubricMetric = assistantEval.metrics.at(-1);
     assertExists(rubricMetric);
     const rubric = String(rubricMetric.config?.rubric ?? "");
@@ -322,12 +334,12 @@ describe("cli/templates", () => {
     assertEquals(agent.includes('name: "Assistant"'), true);
     assertEquals(agent.includes('description: "Turn a rough idea into a clear next move."'), true);
     assertEquals(
-      agent.includes("Use the calculator tool for arithmetic instead of calculating mentally."),
+      agent.includes("Use the calculator tool for arithmetic instead of calculating mentally"),
       true,
     );
     assertEquals(
       agent.includes(
-        "For currency splits, make rounded shares add exactly to the total and explain any remainder.",
+        "For currency splits use the calculator's split operation, then state every share it returns.",
       ),
       true,
     );
