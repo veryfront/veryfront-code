@@ -190,8 +190,12 @@ describe("security/http/derived-csp-origins", () => {
       ).join("\n");
       const derived = origins(`${linkNoise}\n${assetHost}`);
       assertEquals(derived.length, 32);
+      // Exact membership, never substring containment: matching
+      // "https://cdn.example.com" inside a joined list would also pass for a
+      // hostile "https://cdn.example.com.evil.test". Same reason
+      // security-handler.test.ts asserts through a Set.
       assert(
-        derived.includes("https://cdn.example.com"),
+        new Set(derived).has("https://cdn.example.com"),
         "the recurring asset host must survive the cap",
       );
     });
