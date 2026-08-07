@@ -209,6 +209,19 @@ describe("security/http/derived-csp-origins", () => {
       assertEquals(origins(`${filler}https://late.example.com/x`), []);
     });
 
+    it("bounds multibyte content by the same character budget", () => {
+      // The budget is code units, not UTF-8 bytes: that is the unit the regex
+      // engine steps through, so the scanning cost is identical either way.
+      // A byte-denominated cap would read more naturally but would not track
+      // the cost it exists to bound.
+      const under = "€".repeat(400 * 1024);
+      assertEquals(origins(`${under}https://early.example.com/x`), [
+        "https://early.example.com",
+      ]);
+      const over = "€".repeat(600 * 1024);
+      assertEquals(origins(`${over}https://late.example.com/x`), []);
+    });
+
     it("freezes its result", () => {
       // Cached per release and shared across requests, so one consumer must not
       // be able to mutate another request's view of it.

@@ -56,8 +56,15 @@ export interface DerivationSourceFile {
  * Cap on how much of one file is scanned. A generated bundle or an inlined
  * data blob can be megabytes, and scanning it yields nothing a hand-written
  * source file would not.
+ *
+ * Measured in UTF-16 code units, matching `String.prototype.length`, because
+ * that is the unit the regex engine actually steps through -- 512K code units
+ * is the same amount of scanning whether they are ASCII or CJK. A UTF-8 byte
+ * cap would read as the more natural bound but would not correspond to the
+ * cost being bounded, and computing it means walking the string to decide how
+ * much of the string to walk.
  */
-const MAX_SCANNED_BYTES_PER_FILE = 512 * 1024;
+const MAX_SCANNED_CHARS_PER_FILE = 512 * 1024;
 
 /**
  * Upper bound on distinct origins, so a generated file cannot inflate the
@@ -108,8 +115,8 @@ function toCspOrigin(rawUrl: string): string | undefined {
 }
 
 function scanContent(content: string, into: Map<string, number>): void {
-  const scanned = content.length > MAX_SCANNED_BYTES_PER_FILE
-    ? content.slice(0, MAX_SCANNED_BYTES_PER_FILE)
+  const scanned = content.length > MAX_SCANNED_CHARS_PER_FILE
+    ? content.slice(0, MAX_SCANNED_CHARS_PER_FILE)
     : content;
 
   for (const match of scanned.matchAll(HTTPS_URL_PATTERN)) {
