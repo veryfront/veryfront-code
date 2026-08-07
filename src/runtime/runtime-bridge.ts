@@ -540,6 +540,7 @@ function isDirectToolResultPart(
   toolName: string;
   result: unknown;
   isError?: boolean;
+  providerExecuted?: boolean;
 } {
   return !!part &&
     typeof part === "object" &&
@@ -579,6 +580,7 @@ function buildDirectGenerateResult(
         toolName: part.toolName,
         result: part.result,
         ...(part.isError === true ? { isError: true } : {}),
+        ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
       });
     }
   }
