@@ -21,6 +21,8 @@ import type {
 
 interface StreamingState {
   textBlocks: Map<string, TextBlock>;
+  /** Closed text blocks whose content id was reused by a later block. */
+  closedTextBlocks: TextBlock[];
   toolCalls: Map<string, OrderedToolCall>;
   reasoningBlocks: Map<string, OrderedReasoning>;
   /** Closed reasoning spans whose wire id was reused by a later span. */
@@ -38,6 +40,7 @@ interface StreamingState {
 function createStreamingState(): StreamingState {
   return {
     textBlocks: new Map(),
+    closedTextBlocks: [],
     toolCalls: new Map(),
     reasoningBlocks: new Map(),
     closedReasoningBlocks: [],
@@ -68,6 +71,7 @@ export async function handleStreamingResponse(
       state.steps,
       state.dataParts,
       state.closedReasoningBlocks,
+      state.closedTextBlocks,
     );
 
   let buffer = "";
@@ -132,6 +136,7 @@ export async function handleAgUiStreamingResponse(
       state.steps,
       state.dataParts,
       state.closedReasoningBlocks,
+      state.closedTextBlocks,
     );
 
   const processDecodedEvents = (events: ChatStreamEvent[]) => {
@@ -395,6 +400,7 @@ function handleStart(
 ): void {
   state.messageId = typeof parsed.messageId === "string" ? parsed.messageId : "";
   state.textBlocks.clear();
+  state.closedTextBlocks.length = 0;
   state.toolCalls.clear();
   state.reasoningBlocks.clear();
   state.closedReasoningBlocks.length = 0;
@@ -428,6 +434,22 @@ function handleTextStart(parsed: Record<string, unknown>, state: StreamingState)
   if (!state.messageId) {
     state.messageId = getTextMessageId(parsed) ?? state.currentTextId;
   }
+
+  const existing = state.textBlocks.get(state.currentTextId);
+
+  // Same rule as reasoning spans, for the same reason: a start on a block that
+  // is still open is a replayed start, so the accumulated text and the order it
+  // already holds both survive. Re-creating it here would blank the answer and
+  // move it below everything that streamed in between.
+  if (existing && existing.state !== "done") return;
+
+  // A start after the block closed is a new answer under a reused id. Providers
+  // hand out per-step content ids, so step 2 can arrive as `text-0` again.
+  if (existing) {
+    state.closedTextBlocks.push(existing);
+    state.textBlocks.delete(state.currentTextId);
+  }
+
   state.textBlocks.set(state.currentTextId, { text: "", state: "streaming", order: null });
 }
 

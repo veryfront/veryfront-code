@@ -535,4 +535,106 @@ describe("use-chat streaming handler", () => {
       { type: "text", text: "answer", state: "done" },
     ]);
   });
+
+  it("keeps a step-2 answer after the step-1 text when the provider reuses the text id", async () => {
+    const rec = recorder();
+
+    await handleStreamingResponse(
+      sseStream([
+        { type: "message-start", messageId: "msg-text-reuse" },
+        { type: "text-start", id: "text-0" },
+        { type: "text-delta", id: "text-0", delta: "first answer" },
+        { type: "text-end", id: "text-0" },
+        { type: "tool-input-start", toolCallId: "call-1", toolName: "calculator" },
+        {
+          type: "tool-input-available",
+          toolCallId: "call-1",
+          toolName: "calculator",
+          input: { a: 1 },
+        },
+        { type: "tool-output-available", toolCallId: "call-1", output: { result: 1 } },
+        { type: "text-start", id: "text-0" },
+        { type: "text-delta", id: "text-0", delta: "second answer" },
+        { type: "text-end", id: "text-0" },
+        { type: "message-finish" },
+      ]),
+      rec.callbacks,
+    );
+
+    assertEquals(
+      rec.messages[0]!.parts.map((part) =>
+        part.type === "text" ? `text:${(part as { text: string }).text}` : part.type
+      ),
+      ["text:first answer", "tool-calculator", "text:second answer"],
+    );
+  });
+
+  it("keeps text and position when a still-open text block restarts", async () => {
+    const rec = recorder();
+
+    await handleStreamingResponse(
+      sseStream([
+        { type: "message-start", messageId: "msg-text-replay" },
+        { type: "text-start", id: "t1" },
+        { type: "text-delta", id: "t1", delta: "partial" },
+        { type: "text-start", id: "t1" },
+        { type: "text-delta", id: "t1", delta: " more" },
+        { type: "text-end", id: "t1" },
+        { type: "message-finish" },
+      ]),
+      rec.callbacks,
+    );
+
+    assertEquals(rec.messages[0]!.parts, [
+      { type: "text", text: "partial more", state: "done" },
+    ]);
+  });
+
+  it("drops a reasoning span that closed without any content", async () => {
+    const rec = recorder();
+
+    await handleStreamingResponse(
+      sseStream([
+        { type: "message-start", messageId: "msg-empty-reasoning" },
+        // A step that produced no reasoning still opens and closes the span.
+        { type: "reasoning-start", id: "reasoning-0" },
+        { type: "reasoning-end", id: "reasoning-0" },
+        { type: "reasoning-start", id: "reasoning-0" },
+        { type: "reasoning-delta", id: "reasoning-0", delta: "real thinking" },
+        { type: "reasoning-end", id: "reasoning-0" },
+        { type: "text-start", id: "t1" },
+        { type: "text-delta", id: "t1", delta: "answer" },
+        { type: "text-end", id: "t1" },
+        { type: "message-finish" },
+      ]),
+      rec.callbacks,
+    );
+
+    assertEquals(rec.messages[0]!.parts, [
+      { type: "reasoning", text: "real thinking", state: "done" },
+      { type: "text", text: "answer", state: "done" },
+    ]);
+  });
+
+  it("keeps a redacted reasoning span that carries no visible text", async () => {
+    const rec = recorder();
+
+    await handleStreamingResponse(
+      sseStream([
+        { type: "message-start", messageId: "msg-redacted" },
+        { type: "reasoning-start", id: "r1" },
+        { type: "reasoning-end", id: "r1", redactedData: "opaque" },
+        { type: "text-start", id: "t1" },
+        { type: "text-delta", id: "t1", delta: "answer" },
+        { type: "text-end", id: "t1" },
+        { type: "message-finish" },
+      ]),
+      rec.callbacks,
+    );
+
+    assertEquals(rec.messages[0]!.parts, [
+      { type: "reasoning", text: "", redactedData: "opaque", state: "done" },
+      { type: "text", text: "answer", state: "done" },
+    ]);
+  });
 });
