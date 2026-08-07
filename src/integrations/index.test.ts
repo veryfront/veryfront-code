@@ -2,7 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { connectors, icons } from "./_data.ts";
-import { EXPERIMENTAL_INTEGRATIONS_ENV, filterVisibleIntegrations } from "./feature-flags.ts";
+import {
+  EXPERIMENTAL_INTEGRATIONS_ENV,
+  filterVisibleIntegrations,
+  HOST_ADAPTER_INTEGRATIONS_ENV,
+} from "./feature-flags.ts";
 import { getConnector, getConnectorNames, getIcon, listConnectors } from "./index.ts";
 
 describe("integrations/index", () => {
@@ -43,6 +47,22 @@ describe("integrations/index", () => {
     assertEquals(getConnector("salesforce"), undefined);
     assertEquals(getIcon("salesforce"), undefined);
     assertEquals(getConnectorNames().includes("salesforce"), false);
+  });
+
+  it("publishes an adapter-only connector the host declares it drives", () => {
+    // This is the seam veryfront-api depends on: it ships its own Salesforce
+    // client, so it needs the connector definitions to resolve tool names and
+    // authorize calls. Without this the integration stays connectable but every
+    // tool call fails to resolve.
+    Deno.env.set(HOST_ADAPTER_INTEGRATIONS_ENV, "salesforce");
+    try {
+      assertEquals(getConnector("salesforce") !== undefined, true);
+      assertEquals(getConnectorNames().includes("salesforce"), true);
+      // Adapter-only and not declared by the host, so still absent.
+      assertEquals(getConnector("pipedrive"), undefined);
+    } finally {
+      Deno.env.delete(HOST_ADAPTER_INTEGRATIONS_ENV);
+    }
   });
 
   it("returns undefined for unknown connector lookups", () => {

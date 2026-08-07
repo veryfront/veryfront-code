@@ -5,8 +5,11 @@ import {
   DECLARED_INTEGRATION_NAMES,
   EXPERIMENTAL_INTEGRATIONS_ENV,
   filterVisibleIntegrations,
+  HOST_ADAPTER_INTEGRATIONS_ENV,
   INTEGRATIONS_REQUIRING_PROVIDER_ADAPTER,
+  isCatalogVisibleIntegration,
   isExperimentalIntegrationEnabled,
+  isHostAdapterIntegration,
   isSupportedIntegration,
   isVisibleIntegration,
   SUPPORTED_INTEGRATION_NAMES,
@@ -52,6 +55,44 @@ describe("integration feature flags", () => {
     assertEquals(isVisibleIntegration("salesforce"), false);
     assertEquals(isVisibleIntegration("stripe"), true);
     assertEquals(isVisibleIntegration("not-a-provider"), false);
+  });
+
+  it("keeps a host-declared adapter connector out of scaffolding visibility", () => {
+    // The scaffolding guard must not move: generated routes run on the generic
+    // runtime, which is exactly what cannot serve these connectors.
+    Deno.env.set(HOST_ADAPTER_INTEGRATIONS_ENV, "salesforce");
+    try {
+      assertEquals(isVisibleIntegration("salesforce"), false);
+      assertEquals(isExperimentalIntegrationEnabled("salesforce"), false);
+    } finally {
+      Deno.env.delete(HOST_ADAPTER_INTEGRATIONS_ENV);
+    }
+  });
+
+  it("exposes a host-declared adapter connector to catalog lookup", () => {
+    // A host naming a connector is asserting it ships the client itself, so it
+    // keeps the tool definitions it needs to drive it.
+    Deno.env.set(HOST_ADAPTER_INTEGRATIONS_ENV, "salesforce");
+    try {
+      assertEquals(isHostAdapterIntegration("salesforce"), true);
+      assertEquals(isCatalogVisibleIntegration("salesforce"), true);
+      // Not named, so still absent even though it is adapter-only too.
+      assertEquals(isCatalogVisibleIntegration("pipedrive"), false);
+    } finally {
+      Deno.env.delete(HOST_ADAPTER_INTEGRATIONS_ENV);
+    }
+  });
+
+  it("ignores blanket values for the host adapter declaration", () => {
+    for (const blanket of ["1", "true", "all", "*"]) {
+      Deno.env.set(HOST_ADAPTER_INTEGRATIONS_ENV, blanket);
+      try {
+        assertEquals(isHostAdapterIntegration("salesforce"), false, blanket);
+        assertEquals(isCatalogVisibleIntegration("salesforce"), false, blanket);
+      } finally {
+        Deno.env.delete(HOST_ADAPTER_INTEGRATIONS_ENV);
+      }
+    }
   });
 
   it("filters collections by integration id", () => {
