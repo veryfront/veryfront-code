@@ -292,8 +292,12 @@ When an agent uses a skill, the flow is:
    `execute_skill_script(...)` to run scripts from `scripts/`.
 4. Continue with normal tool calls under the active skill policy.
 
-The runtime enforces that non-skill tools cannot run before a successful
-`load_skill` when both are emitted in the same step.
+A step may batch `load_skill` with other tool calls. The runtime runs the calls
+in the order the model emitted them, so a successful `load_skill` activates its
+policy for the remaining calls in that same step: tools the skill allows still
+run, and tools it does not allow are rejected by the active skill policy. Calls
+emitted before `load_skill` run under whatever policy was already active, or
+unrestricted when no skill is loaded yet.
 
 ## Skill script execution
 

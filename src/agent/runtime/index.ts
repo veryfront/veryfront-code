@@ -1298,8 +1298,6 @@ export class AgentRuntime {
 
         this.status = "tool_execution";
         addSpanEvent(loopSpan, "tool_execution_start", { count: response.toolCalls.length });
-        const mustLoadSkillFirstForStep = !skillState.activeSkillPolicy &&
-          response.toolCalls.some((tc) => tc.toolName === LOAD_SKILL_TOOL_ID);
 
         for (const tc of response.toolCalls) {
           throwIfAborted(abortSignal);
@@ -1464,7 +1462,6 @@ export class AgentRuntime {
             const policyCheck = enforceSkillPolicy(
               tc.toolName,
               skillState.activeSkillPolicy,
-              mustLoadSkillFirstForStep,
               {
                 activeSkillId: skillState.activeSkillId,
                 hasSubmittedFormInput: skillState.hasSubmittedFormInput,
@@ -1889,8 +1886,6 @@ export class AgentRuntime {
 
       this.status = "tool_execution";
       const streamedToolCalls = Array.from(state.toolCalls.values());
-      const mustLoadSkillFirstForStep = !skillState.activeSkillPolicy &&
-        streamedToolCalls.some((tc) => tc.name === LOAD_SKILL_TOOL_ID);
 
       for (const tc of streamedToolCalls) {
         throwIfAborted(abortSignal);
@@ -2098,7 +2093,6 @@ export class AgentRuntime {
         const policyCheck = enforceSkillPolicy(
           tc.name,
           skillState.activeSkillPolicy,
-          mustLoadSkillFirstForStep,
           {
             activeSkillId: skillState.activeSkillId,
             hasSubmittedFormInput: skillState.hasSubmittedFormInput,

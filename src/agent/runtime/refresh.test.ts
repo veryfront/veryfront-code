@@ -146,9 +146,10 @@ function submittedFormWithActiveSkillMessages(): Message[] {
 }
 
 describe("agent runtime refresh hooks", () => {
-  it("requires universal load_skill to establish policy before parallel tool calls", async () => {
+  it("applies a universal load_skill policy to the rest of its own step", async () => {
     const rootPath = await Deno.makeTempDir();
     let writeExecutions = 0;
+    let deleteExecutions = 0;
     let callCount = 0;
     const model: ModelRuntime = {
       provider: "hosted",
@@ -172,9 +173,9 @@ describe("agent runtime refresh hooks", () => {
               },
               {
                 type: "tool-call",
-                toolCallId: "write-after-skill",
-                toolName: "write_report",
-                input: '{"path":"second-report.md"}',
+                toolCallId: "delete-after-skill",
+                toolName: "delete_report",
+                input: '{"path":"report.md"}',
               },
             ],
             finishReason: "tool-calls",
@@ -200,6 +201,15 @@ describe("agent runtime refresh hooks", () => {
         return { ok: true };
       },
     });
+    const deleteReport = tool({
+      id: "delete_report",
+      description: "Delete a report",
+      inputSchema: defineSchema((v) => v.object({ path: v.string() }))(),
+      execute: () => {
+        deleteExecutions++;
+        return { ok: true };
+      },
+    });
 
     try {
       await Deno.writeTextFile(
@@ -219,19 +229,26 @@ describe("agent runtime refresh hooks", () => {
         id: "universal-skill-policy-agent",
         model: "hosted/universal-skill-policy",
         system: "Use the matching skill.",
-        tools: { write_report: writeReport },
+        tools: { write_report: writeReport, delete_report: deleteReport },
         maxSteps: 2,
         resolveModelTransport: async () => ({ model }),
       });
 
       const response = await assistant.generate({ input: "Review this report" });
 
-      assertEquals(writeExecutions, 0);
+      assertEquals(writeExecutions, 1);
+      assertEquals(deleteExecutions, 0);
       assertEquals(
-        response.toolCalls.filter((call) => call.name === "write_report").map((call) =>
-          call.status
-        ),
-        ["error", "error"],
+        response.toolCalls.map((call) => [call.name, call.status]),
+        [
+          ["write_report", "completed"],
+          ["load_skill", "completed"],
+          ["delete_report", "error"],
+        ],
+      );
+      assertEquals(
+        response.toolCalls.at(-1)?.error?.includes("not allowed by the active skill policy"),
+        true,
       );
     } finally {
       skillRegistryInternal.clearAll();

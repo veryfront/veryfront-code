@@ -128,11 +128,6 @@ export type ActiveSkillState = {
   activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
 };
 
-function getSkillActivationRequiredError(toolName: string): string {
-  return `Tool "${toolName}" cannot run before load_skill succeeds in the same step. ` +
-    `Call "${LOAD_SKILL_TOOL_ID}" first to establish the active skill context.`;
-}
-
 export function hydrateActiveSkillStateFromMessages(
   messages: readonly Message[],
 ): ActiveSkillState {
@@ -434,13 +429,8 @@ export function isSkillBodyLoadRequest(toolName: string, input: unknown): boolea
 export function enforceSkillPolicy(
   toolName: string,
   activeSkillPolicy: string[] | undefined,
-  mustLoadSkillFirst: boolean,
   options: SkillPolicyOptions = {},
 ): SkillPolicyResult {
-  if (mustLoadSkillFirst && toolName !== LOAD_SKILL_TOOL_ID) {
-    return { allowed: false, error: getSkillActivationRequiredError(toolName) };
-  }
-
   if (
     options.hasSubmittedFormInput === true &&
     POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS.has(toolName)
