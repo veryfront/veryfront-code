@@ -47,6 +47,9 @@ function setGlobalIfMissing(name: string, value: unknown): void {
 
 export function setupSSRGlobals(): void {
   if (isSSRGlobalsActive()) return;
+  // Both defined means a real browser, which needs nothing from this module.
+  // Since the stub no longer installs `window`, this can no longer be
+  // satisfied by a previous call to this function.
   if (globalThis.window !== undefined && globalThis.document !== undefined) return;
 
   const windowStub = createWindowStub();
@@ -70,7 +73,21 @@ export function setupSSRGlobals(): void {
   }
   (windowStub.document as Record<string, unknown>).defaultView = windowStub;
 
-  setGlobal("window", windowStub);
+  // `window` is deliberately NOT installed as a global.
+  //
+  // `typeof window === "undefined"` is how the ecosystem asks "am I on the
+  // server", and a global stub answers "no". First-party code was given
+  // `isServerEnvironment()` to route around that, but a project's dependencies
+  // cannot call it: next-themes renders its anti-flash script with
+  // `nonce={typeof window === 'undefined' ? nonce : ''}`, took the browser
+  // branch under SSR, emitted `nonce=""`, and CSP blocked the script on every
+  // hosted page that used it.
+  //
+  // Everything the stub actually provides stays reachable. Libraries that need
+  // DOM constructors find them as bare globals below, and the ones that reach
+  // them through an element (Headless UI's focus manager reads
+  // `window.HTMLElement.prototype` via `ownerDocument.defaultView`) resolve
+  // through `document.defaultView`, wired to the stub just above.
   setGlobal("document", windowStub.document);
   setGlobal("navigator", windowStub.navigator);
   setGlobal("location", windowStub.location);

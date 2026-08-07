@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createDocumentStub,
@@ -314,7 +314,9 @@ describe("rendering/ssr-globals/dom-stubs", () => {
         setupSSRGlobals();
 
         const globalRecord = globalThis as Record<string, unknown>;
-        const windowStub = globalRecord.window as {
+        // Reached through the document, because SSR installs no `window`
+        // global -- see the "leaves `window` undefined" case below.
+        const windowStub = (globalRecord.document as { defaultView: unknown }).defaultView as {
           ResizeObserver: ObserverStubConstructor;
           IntersectionObserver: ObserverStubConstructor;
           MutationObserver: ObserverStubConstructor;
@@ -329,6 +331,48 @@ describe("rendering/ssr-globals/dom-stubs", () => {
           observer.disconnect();
           assertEquals(observer.takeRecords().length, 0);
         }
+      } finally {
+        resetSSRGlobalsState();
+        for (const name of globalNames) {
+          const descriptor = originalDescriptors.get(name);
+          if (descriptor) {
+            Object.defineProperty(globalThis, name, descriptor);
+          } else {
+            Reflect.deleteProperty(globalThis, name);
+          }
+        }
+      }
+    });
+
+    it("leaves `window` undefined so libraries can still detect the server", () => {
+      const originalDescriptors = new Map<PropertyKey, PropertyDescriptor | undefined>();
+      for (const name of globalNames) {
+        originalDescriptors.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+        Reflect.deleteProperty(globalThis, name);
+      }
+
+      try {
+        resetSSRGlobalsState();
+        setupSSRGlobals();
+
+        const globalRecord = globalThis as Record<string, unknown>;
+
+        // The contract third-party code relies on. A stubbed `window` made
+        // `typeof window === "undefined"` answer "browser" during SSR, which
+        // is how next-themes came to emit `nonce=""` on a nonce-based CSP.
+        assertEquals(typeof globalRecord.window, "undefined");
+
+        // Everything the stub exists to provide is still reachable.
+        assertExists(globalRecord.document);
+        assertEquals(typeof globalRecord.matchMedia, "function");
+        assertEquals(typeof globalRecord.HTMLElement, "function");
+
+        // Including for libraries that reach the window through an element,
+        // which is the access path the stub was written for.
+        const defaultView = (globalRecord.document as { defaultView: Record<string, unknown> })
+          .defaultView;
+        assertExists(defaultView);
+        assertEquals(defaultView.HTMLElement, globalRecord.HTMLElement);
       } finally {
         resetSSRGlobalsState();
         for (const name of globalNames) {
