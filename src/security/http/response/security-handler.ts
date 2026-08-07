@@ -23,6 +23,10 @@ const warnedReservedCorsHeaderConfigs = new WeakSet<object>();
 export const SECURITY_POLICY_RESPONSE_HEADER_NAMES = Object.freeze(
   [
     "content-security-policy",
+    // Owned for the same reason as the enforced header: the floor may be
+    // served report-only (see `cspHeaderName`), and a project-provided value
+    // must not survive into a response the platform is deciding the policy for.
+    "content-security-policy-report-only",
     "cross-origin-embedder-policy",
     "cross-origin-opener-policy",
     "cross-origin-resource-policy",
@@ -250,6 +254,46 @@ export function buildCSP(
   );
 }
 
+/**
+ * Whether the built policy is enforced or merely reported.
+ *
+ * The floor is a breaking change for any project that loads an asset the
+ * platform does not emit -- a stock-photo host, a video CDN, a social icon.
+ * Shipping it enforced blocked those assets on every such project at once,
+ * with no signal to the owner beyond a browser console, and no remedy that
+ * does not require republishing: `security.csp` lives in project config, and
+ * hosted projects serve config from their deployed release, so editing it
+ * changes nothing until the next publish.
+ *
+ * So the floor reports before it enforces. A project that has declared
+ * `security.csp` has demonstrably tuned its policy and gets the enforced
+ * header; everyone else gets `-Report-Only`, which surfaces the same
+ * violations without breaking the page. `VERYFRONT_CSP_ENFORCE` flips the
+ * default once adoption is high enough, and `VERYFRONT_CSP` (a full policy
+ * override) is always enforced because setting it is an explicit ops act.
+ */
+function isCspEnforced(
+  config: SecurityConfig | null | undefined,
+  adapter: RuntimeAdapter | undefined,
+  hasEnvOverride: boolean,
+): boolean {
+  if (hasEnvOverride) return true;
+  if (adapter?.env?.get?.("VERYFRONT_CSP_ENFORCE")?.trim()) return true;
+  // An empty `csp` object is still an opt-in: the project touched the key.
+  return config?.csp !== undefined && config.csp !== null;
+}
+
+/** Header name carrying the policy, per {@link isCspEnforced}. */
+export function cspHeaderName(
+  config?: SecurityConfig | null,
+  adapter?: RuntimeAdapter,
+  hasEnvOverride = false,
+): "Content-Security-Policy" | "Content-Security-Policy-Report-Only" {
+  return isCspEnforced(config, adapter, hasEnvOverride)
+    ? "Content-Security-Policy"
+    : "Content-Security-Policy-Report-Only";
+}
+
 export function getSecurityHeader(
   headerName: string,
   defaultValue: string,
@@ -302,7 +346,10 @@ export function applySecurityHeaders(
   headers.set("X-XSS-Protection", getHeaderOverride("x-xss-protection") ?? "0");
 
   const csp = buildCSP(isDev, nonce, config, adapter, isVeryfrontDomain);
-  if (csp) headers.set("Content-Security-Policy", csp);
+  if (csp) {
+    const hasEnvOverride = Boolean(adapter?.env?.get?.("VERYFRONT_CSP")?.trim());
+    headers.set(cspHeaderName(config, adapter, hasEnvOverride), csp);
+  }
 
   if (!isDev) {
     const hstsMaxAge = config?.hsts?.maxAge ?? HSTS_MAX_AGE_SECONDS;

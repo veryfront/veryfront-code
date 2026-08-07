@@ -32,7 +32,10 @@ describe("server/handlers/request/openapi-docs.handler", () => {
     const response = result.response!;
     const body = await response.text();
 
-    const csp = response.headers.get("content-security-policy") ?? "";
+    // Either header carries the policy: the floor is served report-only
+    // until a project opts in, and this asserts nonce alignment either way.
+    const csp = response.headers.get("content-security-policy") ??
+      response.headers.get("content-security-policy-report-only") ?? "";
     const nonceMatch = csp.match(/nonce-([^' ;]+)/);
 
     assertEquals(Boolean(nonceMatch), true);
