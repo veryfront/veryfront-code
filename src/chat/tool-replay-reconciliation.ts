@@ -19,10 +19,7 @@ import {
   isTextPart,
 } from "./message-part-parsing.ts";
 import type { ChatUiMessageRole } from "./types.ts";
-// Must stay type-only: a value import would create a cycle with
-// conversation.ts. deno check won't catch this (types erase), but
-// lint:module-boundaries will.
-import type { ChatProviderModelInputMessage } from "./conversation.ts";
+import type { ChatProviderModelInputMessage } from "./provider-input-types.ts";
 
 export function isTransientToolState(state: string | undefined): boolean {
   return state === "pending" || state === "input-available" || state === "input-streaming" ||

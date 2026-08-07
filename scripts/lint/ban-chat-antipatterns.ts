@@ -113,11 +113,13 @@ const FILE_SIZE_CEILINGS: Record<string, number> = {
   // real seams (part-field-access, message-part-parsing, tool-replay
   // reconciliation). Not React components, so this map does not subject them
   // to the antipattern ratchets above — it only pins their size.
-  "src/chat/conversation.ts": 1018,
+  "src/chat/conversation.ts": 557,
   "src/chat/message-prep.ts": 2016,
-  "src/chat/tool-replay-reconciliation.ts": 294,
+  "src/chat/tool-replay-reconciliation.ts": 291,
   "src/chat/message-part-parsing.ts": 264,
-  "src/chat/part-field-access.ts": 66,
+  "src/chat/part-field-access.ts": 65,
+  "src/chat/provider-input-types.ts": 34,
+  "src/chat/provider-message-conversion.ts": 447,
 };
 
 function checkFileSizes(): boolean {

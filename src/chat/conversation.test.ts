@@ -5,7 +5,7 @@ import type {
   ChatProviderModelInputMessage,
   ChatProviderModelInputPart,
   ChatProviderModelInputToolResultPart,
-} from "#veryfront/chat/conversation";
+} from "./provider-input-types.ts";
 import type {
   ChatToolCallPart,
   ChatToolPartState,
@@ -21,7 +21,6 @@ import {
   messageStatusSchema,
 } from "#veryfront/chat/compat";
 import {
-  convertUiMessagesToProviderModelMessages,
   extractTextFromMessage,
   extractUploadId,
   hasIncompleteToolParts,
@@ -34,6 +33,7 @@ import {
   stringifyUnknown,
   toConversationPartsFromUiMessage,
 } from "#veryfront/chat/conversation";
+import { convertUiMessagesToProviderModelMessages } from "./provider-message-conversion.ts";
 
 const GITHUB_PR_DIFF_INPUT = { owner: "veryfront", repo: "veryfront-code", pull_number: 3092 };
 const GITHUB_LIST_PRS_INPUT = { owner: "veryfront", repo: "veryfront-code" };

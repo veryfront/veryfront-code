@@ -90,3 +90,12 @@ live, durable, diagnostic, and usage Adapters (Phase 5, separately designed).
 Through Gate 4, hosted durable and AG-UI production projections still consume
 compatibility UI chunks, and production runs stay on stream protocol
 version 1.
+
+## Provider Message Conversion
+
+The single owner of turning a chat's replay history into the ordered message
+list a provider sees: `src/chat/provider-message-conversion.ts`. It asks Tool
+Replay Reconciliation which tool occurrences are authoritative, maps each role's
+parts into provider content, and settles into one `ProviderModelMessage[]`.
+Message preparation and the compatibility layer are callers; neither re-derives
+the mapping.
