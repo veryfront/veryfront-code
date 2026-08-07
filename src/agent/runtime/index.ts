@@ -1404,6 +1404,12 @@ export class AgentRuntime {
               return;
             }
 
+            // Provider-executed tools (web_search/web_fetch) return results without skill-state
+            // transitions. Unlike locally-executed paths, load_skill and form_input are client-side
+            // function tools that the runtime executes itself, so they never appear in
+            // response.toolResults. This branch mirrors the streaming loop's providerExecuted===true
+            // path, not the locally-executed ones. If provider-executed tools expand beyond web_*,
+            // the transitions (skillState.applySuccessfulResult, markFormInputSubmitted) would apply.
             if (generatedToolResult && !hasToolReplacements) {
               if (generatedToolResult.providerExecuted === true) {
                 await traceProviderExecutedTool({
