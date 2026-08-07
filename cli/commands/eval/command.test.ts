@@ -25,6 +25,7 @@ import {
 } from "../../../src/integrations/source-policy.ts";
 import { saveToken } from "../../auth/token-store.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
+import { setQuietMode } from "../../utils/index.ts";
 import { stripAnsi } from "../../ui/ansi.ts";
 import {
   applyGatewayBillingGroupFinalization,
@@ -1225,6 +1226,62 @@ describe("eval CLI command helpers", () => {
         'Answer contained "expected": 1/1 passed (100%)',
       ]);
     } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("prints no report output under --quiet", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-quiet-" });
+    const configHome = await Deno.makeTempDir({ prefix: "vf-eval-quiet-auth-" });
+    const fixtureAgent = {
+      id: "fixture",
+      config: {},
+      generate: async () => ({
+        text: "expected",
+        messages: [],
+        status: "completed",
+        toolCalls: [],
+      } satisfies AgentResponse),
+    } as unknown as Agent;
+    const quiet = evalAgent({
+      id: "eval:quiet",
+      target: "agent:fixture",
+      dataset: [{ id: "only", input: "only" }],
+      metrics: [metrics.answer.contains({ text: "expected" }).gate()],
+    });
+    quiet.source = { filePath: `${projectDir}/evals/quiet.eval.ts`, exportName: "default" };
+    const runtime = createProjectRuntimeDiscovery(normalizeSourceIntegrationPolicy({ allow: {} }));
+    runtime.agents.set(fixtureAgent.id, fixtureAgent);
+    runtime.evals.set(quiet.id, quiet);
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+      setQuietMode(true);
+
+      const output = await captureConsoleOutput(async () => {
+        await runEvalCommand(
+          {
+            id: "quiet",
+            list: false,
+            exporters: [],
+            debug: false,
+            candidateModels: [],
+            projectDir,
+            reportDir: `${projectDir}/report`,
+          },
+          { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
+        );
+      });
+
+      assertEquals(relevantEvalHumanLines(output), []);
+      assertEquals(evalMetricLines(output), []);
+    } finally {
+      setQuietMode(false);
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });
     }

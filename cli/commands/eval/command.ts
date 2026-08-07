@@ -40,7 +40,7 @@ import {
 } from "veryfront/provider";
 import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
 import { brand, dim } from "#cli/ui";
-import { cliLogger, exitProcess, VERSION } from "#cli/utils";
+import { cliLogger, exitProcess, isQuiet, VERSION } from "#cli/utils";
 import {
   discoverProjectAgentRuntime,
   type ProjectAgentRuntimeDiscovery,
@@ -804,12 +804,17 @@ function getDiscoveredEvals(runtime: ProjectAgentRuntimeDiscovery): DiscoveredEv
  * Eval output is written straight to stdout rather than through `cliLogger`, because the logger
  * stamps every line with its level glyph. Here the `●` is meaningful on its own: it marks the
  * individual metric assertions, and nothing else, so a reader can find them without reading labels.
+ *
+ * Bypassing the logger also bypasses its level, so `--quiet` is honored here instead. These lines
+ * are informational, and quiet mode raises the logger to WARN precisely to drop that tier.
  */
 function printLine(text: string): void {
+  if (isQuiet()) return;
   console.log(`  ${text}`);
 }
 
 function printBlankLine(): void {
+  if (isQuiet()) return;
   console.log("");
 }
 
