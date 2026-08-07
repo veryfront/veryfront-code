@@ -428,7 +428,10 @@ function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> 
         : "invalid";
       const manifestState = normalizeManifestState(state);
       const readyResponse = isUsableManifestState(state)
-        ? parseReadyReleaseAssetManifestResponse(result, releaseId)
+        // Runtime reads serve releases published before the v2 move, so they
+        // must accept the v1 body still in storage. Producer-side callers
+        // (build executor, CLI deploy wait) deliberately do not.
+        ? parseReadyReleaseAssetManifestResponse(result, releaseId, { acceptLegacyV1: true })
         : null;
       const manifest = readyResponse?.manifest ?? null;
 
@@ -465,7 +468,11 @@ function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> 
           // framework version skew from a corrupt payload.
           logger.error("Release manifest is ready upstream but failed validation", {
             releaseId,
-            reason: describeReadyReleaseAssetManifestRejection(result, releaseId),
+            // Same acceptance as the parse above, so the reason describes what
+            // this caller actually rejected.
+            reason: describeReadyReleaseAssetManifestRejection(result, releaseId, {
+              acceptLegacyV1: true,
+            }),
           });
         } else {
           markManifestDecision(`fetch_${manifestState}`);

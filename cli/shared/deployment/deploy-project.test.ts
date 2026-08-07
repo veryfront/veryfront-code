@@ -1533,7 +1533,7 @@ describe("release asset manifest", () => {
           polling,
         ),
       Error,
-      "identifies a different release than the one being deployed",
+      "identifies a different release than the one requested",
     );
   });
 
