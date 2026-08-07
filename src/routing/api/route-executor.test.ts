@@ -1,11 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __serializeRequestForTests,
   executeAppRoute as executeAppRouteRaw,
   executePagesRoute as executePagesRouteRaw,
+  executePreparedAppRoute,
+  executePreparedPagesRoute,
   type ExecuteRouteOptions,
+  type PreparedRouteExecutionOptions,
+  resolvePreparedRouteMethods,
 } from "./route-executor.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -128,11 +132,24 @@ async function isolatedRouteOptions(
   executionScopeId: string,
 ): Promise<ExecuteRouteOptions> {
   return {
-    modulePath: "/tmp/test/handler.ts",
-    projectDir: "/tmp/test",
+    modulePath: "/test/project/handler.ts",
+    projectDir: "/test/project",
     isLocalProject: false,
     preparedModule: await prepareModuleSource(source),
     executionScopeId,
+  };
+}
+
+async function preparedRouteOptions(
+  source: string,
+  executionScopeId: string,
+): Promise<PreparedRouteExecutionOptions> {
+  return {
+    executionScopeId,
+    module: await prepareModuleSource(source),
+    modulePath: "/test/project/handler.ts",
+    projectDir: "/test/project",
+    isLocalProject: false,
   };
 }
 
@@ -944,6 +961,152 @@ describe("routing/api/route-executor", () => {
 
       assertEquals(response.status, 204);
       assertEquals(response.body, null);
+    });
+  });
+
+  describe("executePreparedAppRoute() / executePreparedPagesRoute() / resolvePreparedRouteMethods()", () => {
+    afterEach(async () => {
+      Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      Deno.env.delete("WORKER_ISOLATION_API");
+      await __resetPoolForTests();
+    });
+
+    it("executes a prepared app route module in the worker and returns its response", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const options = await preparedRouteOptions(
+        "export function GET(_req, ctx) { return Response.json({ id: ctx.params.id }); }",
+        "prepared-app-happy",
+      );
+
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          executePreparedAppRoute(
+            new Request("http://localhost/api/users/42", { method: "GET" }),
+            makeMatch("/api/users/[id]", "/test/project/handler.ts", { id: "42" }),
+            "/api/users/42",
+            options,
+          ),
+      );
+
+      assertEquals(response.status, 200);
+      assertStringIncludes(response.headers.get("content-type") ?? "", "application/json");
+      assertEquals(await response.json(), { id: "42" });
+    });
+
+    it("returns a 500 error response when the prepared app route handler throws", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const options = await preparedRouteOptions(
+        "export function GET() { throw new Error('prepared app boom'); }",
+        "prepared-app-error",
+      );
+
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          executePreparedAppRoute(
+            new Request("http://localhost/api/test", { method: "GET" }),
+            makeMatch(),
+            "/api/test",
+            options,
+          ),
+      );
+
+      assertEquals(response.status, 500);
+    });
+
+    it("executes a prepared pages route module in the worker and returns its response", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const options = await preparedRouteOptions(
+        "export function GET(ctx) { return ctx.text('prepared pages ok'); }",
+        "prepared-pages-happy",
+      );
+
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          executePreparedPagesRoute(
+            new Request("http://localhost/api/test", { method: "GET" }),
+            makeMatch(),
+            "/api/test",
+            options,
+          ),
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(await response.text(), "prepared pages ok");
+    });
+
+    it("returns a 500 error response when the prepared pages route handler throws", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const options = await preparedRouteOptions(
+        "export function GET() { throw new Error('prepared pages boom'); }",
+        "prepared-pages-error",
+      );
+
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          executePreparedPagesRoute(
+            new Request("http://localhost/api/test", { method: "GET" }),
+            makeMatch(),
+            "/api/test",
+            options,
+          ),
+      );
+
+      assertEquals(response.status, 500);
+    });
+
+    it("resolves the exported HTTP methods for a prepared route", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const options = await preparedRouteOptions(
+        "export function GET() {} export function POST() {}",
+        "prepared-methods-happy",
+      );
+
+      const methods = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () => resolvePreparedRouteMethods(undefined, options),
+      );
+
+      assertEquals(methods, ["GET", "HEAD", "POST", "OPTIONS"]);
+    });
+
+    it("rejects when the prepared module has no callable route export", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const options = await preparedRouteOptions(
+        "export const notARouteHandler = 1;",
+        "prepared-methods-error",
+      );
+
+      await assertRejects(
+        () =>
+          runWithExactSourceIntegrationPolicy(
+            normalizeSourceIntegrationPolicy({ allow: {} }),
+            () => resolvePreparedRouteMethods(undefined, options),
+          ),
+        Error,
+        "Prepared API route module has no callable route export",
+      );
     });
   });
 });
