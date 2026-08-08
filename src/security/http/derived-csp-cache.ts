@@ -104,8 +104,13 @@ async function deriveOnce(
   try {
     files = await lookup.loadSourceFiles();
   } catch (error) {
-    logger.debug("Could not read sources for CSP derivation", {
+    // Warn, not debug. Every path out of this function is a silent `EMPTY`, so
+    // a derivation that never works looks exactly like a project that
+    // references no external origins. That is how this shipped doing nothing
+    // in production while reading as healthy.
+    logger.warn("CSP derivation could not read project sources", {
       projectScope: lookup.projectScope,
+      contentVersion: lookup.contentVersion,
       error: error instanceof Error ? error.message : String(error),
     });
     // Deliberately not remembered. See below.
@@ -126,17 +131,32 @@ async function deriveOnce(
   // So distinguish the two cases: files read and no origins found is immutable
   // for the content version and worth caching, while nothing read is a race and
   // must be retried.
-  if (!files || files.length === 0) return EMPTY;
+  if (!files || files.length === 0) {
+    logger.warn("CSP derivation read no project sources", {
+      projectScope: lookup.projectScope,
+      contentVersion: lookup.contentVersion,
+    });
+    return EMPTY;
+  }
 
   const derived = deriveCspOriginsFromSource(files);
   const count = derived["img-src"]?.length ?? 0;
-  if (count > 0) {
-    logger.debug("Derived CSP origins from project source", {
-      projectScope: lookup.projectScope,
-      contentVersion: lookup.contentVersion,
-      originCount: count,
-    });
-  }
+
+  // Logged once per content version, because that is exactly what the cache key
+  // is, so this cannot grow with traffic. Both outcomes are recorded: "read 40
+  // files, derived 0 origins" is the shape of a broken derivation, and it is
+  // indistinguishable from a correct one unless the file count is stated.
+  logger.info("Derived CSP origins from project source", {
+    projectScope: lookup.projectScope,
+    contentVersion: lookup.contentVersion,
+    fileCount: files.length,
+    filesWithContent: files.filter((file) =>
+      typeof file.content === "string" && file.content !== ""
+    )
+      .length,
+    originCount: count,
+  });
+
   return remember(key, derived);
 }
 
