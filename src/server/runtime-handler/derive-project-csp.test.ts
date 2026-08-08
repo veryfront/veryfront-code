@@ -3,7 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { deriveProjectCspOrigins } from "./project-runtime-context.ts";
 import { __clearDerivedCspCacheForTests } from "#veryfront/security/http/derived-csp-cache.ts";
-import type { RuntimeAdapter } from "#veryfront/types";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 const SOURCE = [{
   path: "pages/index.tsx",
