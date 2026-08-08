@@ -43,7 +43,7 @@ Three directives are worth understanding:
 
 The policy asks browsers to report what it blocks, to `/_vf/csp-report` on your own origin. Both spellings are sent because `report-to` is the current one and `report-uri` is still the only one several shipping browsers honour.
 
-You do not configure this and cannot switch it off. Reports are recorded with the violating document, the directive, the blocked URL and the status — with query strings removed, so identifiers in a URL do not reach a log. They are rate-limited, and the endpoint always answers `204`.
+You do not configure this and cannot switch it off. Reports are recorded with the violating document, the directive, the blocked URL and the status. Query strings are removed, so identifiers in a URL do not reach a log. They are rate-limited, and the endpoint always answers `204`.
 
 The endpoint is exempt from `security.auth` and `security.csrf`. A browser reports a violation without credentials and without a CSRF token, because a report is not a user action, so a protected project would otherwise report nothing at all. Exempting it discloses nothing: it reads no credentials, changes no state, and its response never varies.
 
