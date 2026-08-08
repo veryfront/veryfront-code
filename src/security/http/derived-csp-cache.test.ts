@@ -1,13 +1,49 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
-import { __clearDerivedCspCacheForTests, getDerivedCspOrigins } from "./derived-csp-cache.ts";
+import {
+  __clearDerivedCspCacheForTests,
+  getDerivedCspOrigins,
+  shouldWarnOnceForKey,
+} from "./derived-csp-cache.ts";
 
 const IMG = `<img src="https://cdn.example.com/a.png" />`;
 
 afterEach(() => __clearDerivedCspCacheForTests());
 
 describe("security/http/derived-csp-cache", () => {
+  it("reports an underivable content version once, not once per request", async () => {
+    // The failure paths deliberately do not cache, so the read is retried every
+    // request. Without a guard the diagnostic would be emitted every request
+    // too, on every pod, for as long as the failure lasts -- turning a
+    // one-line-per-release signal into log flooding.
+    const lookup = {
+      projectScope: "proj",
+      contentVersion: "release:persistent-failure",
+      loadSourceFiles: () => Promise.resolve([]),
+    };
+
+    for (let i = 0; i < 5; i += 1) await getDerivedCspOrigins(lookup);
+
+    // The guard is what the log is gated on, so ask it directly: after those
+    // calls the key must already be spent.
+    const key = `${lookup.projectScope}\u0000${lookup.contentVersion}`;
+    assertEquals(shouldWarnOnceForKey(key), false, "the key was reported during the calls above");
+  });
+
+  it("reports each content version separately", async () => {
+    assertEquals(shouldWarnOnceForKey("proj\u0000a"), true);
+    assertEquals(shouldWarnOnceForKey("proj\u0000a"), false, "same key stays spent");
+    assertEquals(shouldWarnOnceForKey("proj\u0000b"), true, "a new release is still worth a line");
+  });
+
+  it("bounds the set of reported keys", () => {
+    for (let i = 0; i < 260; i += 1) shouldWarnOnceForKey(`proj\u0000bounded-${i}`);
+    // The earliest key was evicted, so it would be reported again rather than
+    // being remembered for the life of the pod.
+    assertEquals(shouldWarnOnceForKey("proj\u0000bounded-0"), true);
+  });
+
   it("retries after a source read that came back empty", async () => {
     // `getAllSourceFiles` returns [] while its own file list is cold and warms
     // it asynchronously. Remembering that emptiness pinned a release to the

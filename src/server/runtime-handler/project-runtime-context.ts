@@ -562,7 +562,15 @@ async function deriveProjectCspOrigins(args: {
   branch: string | null | undefined;
   environmentName: string | undefined;
 }): Promise<SecurityConfig["derivedCsp"]> {
-  if (!isExtendedFSAdapter(args.adapter.fs) || !args.adapter.fs.runWithContext) return undefined;
+  // Each early return below is indistinguishable, from the served header, from
+  // a project that references no external origins. Naming which one fired is
+  // the difference between diagnosing this from logs and needing a live probe.
+  if (!isExtendedFSAdapter(args.adapter.fs) || !args.adapter.fs.runWithContext) {
+    logger.warn("CSP derivation skipped: adapter cannot run in a tenant context", {
+      projectSlug: args.projectSlug,
+    });
+    return undefined;
+  }
   const fs = args.adapter.fs;
 
   const run = async (): Promise<SecurityConfig["derivedCsp"]> => {
@@ -573,7 +581,13 @@ async function deriveProjectCspOrigins(args: {
         getSourceSnapshotVersion?: () => number;
       }
       : undefined;
-    if (!underlying || typeof underlying.getAllSourceFiles !== "function") return undefined;
+    if (!underlying || typeof underlying.getAllSourceFiles !== "function") {
+      logger.warn("CSP derivation skipped: adapter exposes no source listing", {
+        projectSlug: args.projectSlug,
+        hasUnderlying: Boolean(underlying),
+      });
+      return undefined;
+    }
 
     // Branch and environment content versions are stable while the content
     // under them changes, so the adapter's snapshot generation is what actually
@@ -610,8 +624,13 @@ async function deriveProjectCspOrigins(args: {
         environmentName: args.environmentName ?? null,
       },
     ) as SecurityConfig["derivedCsp"];
-  } catch {
-    // Never fail a response over a CSP nicety.
+  } catch (error) {
+    // Never fail a response over a CSP nicety, but do not swallow it either.
+    logger.warn("CSP derivation failed", {
+      projectSlug: args.projectSlug,
+      releaseId: args.releaseId,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return undefined;
   }
 }

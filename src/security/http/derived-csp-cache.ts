@@ -41,6 +41,30 @@ registerCache("derived-csp-origins", () => ({
   maxEntries: MAX_ENTRIES,
 }));
 
+/**
+ * Content versions already reported as underivable.
+ *
+ * The two failure paths deliberately do not `remember`, so the read is retried
+ * on the next request -- which means without this they would warn on every
+ * request for as long as the failure lasts, on every pod. The diagnostic is
+ * worth one line per content version, not one per request.
+ *
+ * Bounded like the cache, and for the same reason.
+ */
+const warned = new Set<string>();
+
+/** @returns whether this key's diagnostic has not been emitted yet */
+export function shouldWarnOnceForKey(key: string): boolean {
+  if (warned.has(key)) return false;
+  while (warned.size >= MAX_ENTRIES) {
+    const oldest = warned.values().next().value as string | undefined;
+    if (oldest === undefined) break;
+    warned.delete(oldest);
+  }
+  warned.add(key);
+  return true;
+}
+
 function remember(key: string, value: DerivedCspOrigins): DerivedCspOrigins {
   // Insertion-ordered eviction: the oldest content version is the one least
   // likely to still be serving traffic.
@@ -104,10 +128,17 @@ async function deriveOnce(
   try {
     files = await lookup.loadSourceFiles();
   } catch (error) {
-    logger.debug("Could not read sources for CSP derivation", {
-      projectScope: lookup.projectScope,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    // Warn, not debug. Every path out of this function is a silent `EMPTY`, so
+    // a derivation that never works looks exactly like a project that
+    // references no external origins. That is how this shipped doing nothing
+    // in production while reading as healthy.
+    if (shouldWarnOnceForKey(key)) {
+      logger.warn("CSP derivation could not read project sources", {
+        projectScope: lookup.projectScope,
+        contentVersion: lookup.contentVersion,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     // Deliberately not remembered. See below.
     return EMPTY;
   }
@@ -126,17 +157,34 @@ async function deriveOnce(
   // So distinguish the two cases: files read and no origins found is immutable
   // for the content version and worth caching, while nothing read is a race and
   // must be retried.
-  if (!files || files.length === 0) return EMPTY;
+  if (!files || files.length === 0) {
+    if (shouldWarnOnceForKey(key)) {
+      logger.warn("CSP derivation read no project sources", {
+        projectScope: lookup.projectScope,
+        contentVersion: lookup.contentVersion,
+      });
+    }
+    return EMPTY;
+  }
 
   const derived = deriveCspOriginsFromSource(files);
   const count = derived["img-src"]?.length ?? 0;
-  if (count > 0) {
-    logger.debug("Derived CSP origins from project source", {
-      projectScope: lookup.projectScope,
-      contentVersion: lookup.contentVersion,
-      originCount: count,
-    });
-  }
+
+  // Logged once per content version, because that is exactly what the cache key
+  // is, so this cannot grow with traffic. Both outcomes are recorded: "read 40
+  // files, derived 0 origins" is the shape of a broken derivation, and it is
+  // indistinguishable from a correct one unless the file count is stated.
+  logger.info("Derived CSP origins from project source", {
+    projectScope: lookup.projectScope,
+    contentVersion: lookup.contentVersion,
+    fileCount: files.length,
+    filesWithContent: files.filter((file) =>
+      typeof file.content === "string" && file.content !== ""
+    )
+      .length,
+    originCount: count,
+  });
+
   return remember(key, derived);
 }
 
@@ -144,4 +192,5 @@ async function deriveOnce(
 export function __clearDerivedCspCacheForTests(): void {
   cache.clear();
   inFlight.clear();
+  warned.clear();
 }
