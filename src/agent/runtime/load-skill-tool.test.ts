@@ -167,7 +167,6 @@ Deno.test("createRuntimeLoadSkillTool omits delegation advice when tool inventor
 
   assertEquals(result.nextStep.includes("invoke_agent"), false);
   assertEquals(result.nextStep.includes("multi-step or isolated work"), false);
-  assertEquals(result.delegationNote, undefined);
   assertEquals(result.overrideNote, undefined);
 });
 
@@ -480,133 +479,6 @@ Deno.test("createRuntimeLoadSkillTool normalizes .md aliases without a known ski
   }
 });
 
-Deno.test("createRuntimeLoadSkillTool falls back to builtin skills and filters allowed tools", async () => {
-  const tool = createRuntimeLoadSkillTool({
-    context: createProjectContext({
-      availableToolNames: ["read_file", "invoke_agent"],
-    }),
-    skillsDir: "/skills",
-    projectSkillLoader: createProjectSkillLoader({}),
-    builtinStore: createBuiltinStore({
-      skills: new Map([
-        [
-          "write",
-          `---
-allowed-tools:
-  - read_file
-  - write_file
-model: sonnet
-max-steps: 8
----
-Write carefully.`,
-        ],
-      ]),
-    }),
-  });
-
-  const result = expectLoadedSkillResponse(await tool.execute({ skillId: "write" }));
-
-  assertEquals(result.skillId, "write");
-  assertEquals(result.allowedTools, ["read_file"]);
-  assertEquals(result.delegationTools, ["read_file", "write_file"]);
-  assertEquals(result.unavailableCurrentRunTools, ["write_file"]);
-  assertEquals(result.model, "sonnet");
-  assertEquals(result.maxSteps, 8);
-});
-
-Deno.test("createRuntimeLoadSkillTool enforces an explicitly empty allowed-tools policy", async () => {
-  const tool = createRuntimeLoadSkillTool({
-    context: createProjectContext({
-      availableToolNames: ["read_file"],
-    }),
-    skillsDir: "/skills",
-    projectSkillLoader: createProjectSkillLoader({}),
-    builtinStore: createBuiltinStore({
-      skills: new Map([
-        [
-          "read-only",
-          `---
-allowed-tools: []
----
-Read without direct tools.`,
-        ],
-      ]),
-    }),
-  });
-
-  const result = expectLoadedSkillResponse(await tool.execute({ skillId: "read-only" }));
-
-  assertEquals(result.allowedTools, []);
-  assertEquals(result.delegationTools, []);
-  assertStringIncludes(result.note ?? "", "intentionally empty");
-});
-
-Deno.test("createRuntimeLoadSkillTool omits scoped delegates blocked by the effective policy", async () => {
-  const tool = createRuntimeLoadSkillTool({
-    context: createProjectContext({
-      availableToolNames: ["read_file", "agent_writer", "load_skill"],
-    }),
-    skillsDir: "/skills",
-    projectSkillLoader: createProjectSkillLoader({}),
-    builtinStore: createBuiltinStore({
-      skills: new Map([
-        [
-          "write",
-          `---
-allowed-tools:
-  - read_file
-  - write_file
-model: sonnet
-max-steps: 8
----
-Write carefully.`,
-        ],
-      ]),
-    }),
-  });
-
-  const result = expectLoadedSkillResponse(await tool.execute({ skillId: "write" }));
-
-  assertEquals(result.allowedTools, ["read_file"]);
-  assertEquals(result.unavailableCurrentRunTools, ["write_file"]);
-  assertEquals(result.nextStep.includes("agent_writer"), false);
-  assertEquals(result.delegationNote, undefined);
-  assertEquals(JSON.stringify(result).includes("invoke_agent"), false);
-  assertEquals(result.overrideNote, undefined);
-});
-
-Deno.test("createRuntimeLoadSkillTool names only delegates allowed by the effective policy", async () => {
-  const tool = createRuntimeLoadSkillTool({
-    context: createProjectContext({
-      availableToolNames: ["agent_admin", "agent_writer", "load_skill"],
-    }),
-    skillsDir: "/skills",
-    projectSkillLoader: createProjectSkillLoader({}),
-    builtinStore: createBuiltinStore({
-      skills: new Map([
-        [
-          "write",
-          `---
-allowed-tools:
-  - agent_writer
-  - write_file
----
-Write carefully.`,
-        ],
-      ]),
-    }),
-  });
-
-  const result = expectLoadedSkillResponse(await tool.execute({ skillId: "write" }));
-
-  assertEquals(result.allowedTools, ["agent_writer"]);
-  assertEquals(result.unavailableCurrentRunTools, ["write_file"]);
-  assertStringIncludes(result.nextStep, "`agent_writer`");
-  assertEquals(result.nextStep.includes("agent_admin"), false);
-  assertStringIncludes(result.delegationNote ?? "", "`agent_writer`");
-  assertEquals((result.delegationNote ?? "").includes("agent_admin"), false);
-});
-
 Deno.test("createRuntimeLoadSkillTool omits delegation advice without delegate tools", async () => {
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext({
@@ -630,10 +502,6 @@ Write carefully.`,
   });
 
   const result = expectLoadedSkillResponse(await tool.execute({ skillId: "write" }));
-
-  assertEquals(result.allowedTools, ["read_file"]);
-  assertEquals(result.unavailableCurrentRunTools, ["write_file"]);
-  assertEquals(result.delegationNote, undefined);
   assertEquals(result.nextStep.includes("multi-step or isolated work"), false);
   assertEquals(JSON.stringify(result).includes("invoke_agent"), false);
 });
@@ -672,9 +540,6 @@ Use form_input once, then produce the plan.`,
   assertStringIncludes(secondResult.instructions, 'Skill "write" is already loaded');
   assertStringIncludes(secondResult.instructions, "Do not call load_skill");
   assertStringIncludes(secondResult.instructions, "do not call form_input again");
-  assertEquals(secondResult.allowedTools, ["read_file"]);
-  assertEquals(secondResult.delegationTools, ["read_file", "write_file"]);
-  assertEquals(secondResult.unavailableCurrentRunTools, ["write_file"]);
   assertEquals(secondResult.maxSteps, 8);
   assertEquals(secondResult.references, ["references/write.md"]);
 });
@@ -1468,35 +1333,6 @@ Deno.test("cache record replacement invalidates private duplicate payload state"
   assertEquals(referenceReads, 2);
 });
 
-Deno.test("duplicate body loads use private trusted policy instead of mutable cache values", async () => {
-  const context = createProjectContext({
-    availableToolNames: ["read_file"],
-  });
-  const tool = createRuntimeLoadSkillTool({
-    context,
-    skillsDir: "/skills",
-    projectSkillLoader: createProjectSkillLoader({}),
-    builtinStore: createBuiltinStore({
-      skills: new Map([[
-        "writer",
-        "---\nallowed-tools:\n  - read_file\nmax-steps: 8\n---\n# Writer",
-      ]]),
-    }),
-  });
-
-  await tool.execute({ skillId: "writer" });
-  const [cached] = Object.values(context.loadedSkillResponses ?? {});
-  if (!cached) throw new Error("Expected a loaded skill cache entry");
-  assertEquals(Object.hasOwn(cached, "allowedTools"), false);
-  assertEquals(Object.hasOwn(cached, "maxSteps"), false);
-  cached.allowedTools = undefined;
-  cached.maxSteps = 999;
-
-  const duplicate = expectLoadedSkillResponse(await tool.execute({ skillId: "writer" }));
-  assertEquals(duplicate.allowedTools, ["read_file"]);
-  assertEquals(duplicate.maxSteps, 8);
-});
-
 Deno.test("public markers cannot fabricate current-scope duplicate payloads", async () => {
   const context = createProjectContext({
     loadedSkillResponses: {
@@ -1584,40 +1420,6 @@ Deno.test("public marker deletion cannot revoke current-scope private authorizat
   );
   assertEquals(bodyReads, 1);
   assertEquals(referenceReads, 1);
-});
-
-Deno.test("duplicate body policy is revalidated after in-place tool inventory narrowing", async () => {
-  const availableToolNames = ["read_file", "write_file"];
-  const context = createProjectContext({ availableToolNames });
-  let bodyReads = 0;
-  const tool = createRuntimeLoadSkillTool({
-    context,
-    skillsDir: "/skills",
-    projectSkillLoader: {
-      listProjectSkillReferences: () => Promise.resolve([]),
-      loadProjectSkill: () => {
-        bodyReads += 1;
-        return Promise.resolve({
-          instructions: "---\nallowed-tools:\n  - read_file\n  - write_file\n---\n# Writer",
-          references: [],
-        });
-      },
-      loadProjectSkillReference: () => Promise.resolve(null),
-    },
-    builtinStore: createBuiltinStore({}),
-  });
-
-  assertEquals(
-    expectLoadedSkillResponse(await tool.execute({ skillId: "writer" })).allowedTools,
-    ["read_file", "write_file"],
-  );
-  availableToolNames.splice(1, 1);
-
-  assertEquals(
-    expectLoadedSkillResponse(await tool.execute({ skillId: "writer" })).allowedTools,
-    ["read_file"],
-  );
-  assertEquals(bodyReads, 2);
 });
 
 Deno.test("in-place skill source path cycles invalidate private authorization", async () => {
@@ -2556,56 +2358,6 @@ Deno.test("createRuntimeLoadSkillTool reloads same skill after project context c
   assertEquals(secondResult.references, ["references/project-2.md"]);
 });
 
-Deno.test("createRuntimeLoadSkillTool preserves policy on a duplicate body load", async () => {
-  const context = createProjectContext({
-    availableToolNames: ["form_input", "studio_suggestions", "list_files", "create_file"],
-  });
-  const tool = createRuntimeLoadSkillTool({
-    context,
-    skillsDir: "/skills",
-    projectSkillLoader: createProjectSkillLoader({}),
-    builtinStore: createBuiltinStore({
-      skills: new Map([
-        [
-          "plan",
-          `---
-allowed-tools:
-  - form_input
-  - studio_suggestions
-  - list_files
-  - create_file
----
-# Plan
-
-Use one form, then write the plan.`,
-        ],
-      ]),
-    }),
-  });
-
-  const firstResult = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
-  const secondResult = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
-
-  assertEquals(firstResult.allowedTools, [
-    "form_input",
-    "studio_suggestions",
-    "list_files",
-    "create_file",
-  ]);
-  assertEquals(secondResult.allowedTools, [
-    "form_input",
-    "studio_suggestions",
-    "list_files",
-    "create_file",
-  ]);
-  assertEquals(secondResult.delegationTools, [
-    "form_input",
-    "studio_suggestions",
-    "list_files",
-    "create_file",
-  ]);
-});
-
 Deno.test("createRuntimeLoadSkillTool rejects reference files before the skill body is loaded", async () => {
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext(),
@@ -3449,7 +3201,7 @@ Deno.test("createRuntimeLoadSkillTool snapshots tool inventory without invoking 
 Deno.test("createRuntimeLoadSkillTool rejects message accessors without invoking them", async () => {
   let getterReads = 0;
   const messages = {};
-  Object.defineProperty(messages, "unavailableCurrentRunToolsDelegationNote", {
+  Object.defineProperty(messages, "referenceNote", {
     configurable: true,
     enumerable: true,
     get() {

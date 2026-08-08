@@ -42,7 +42,6 @@ describe("src/agent/runtime AgentLoopSkillState", () => {
       const state = AgentLoopSkillState.hydrate([], undefined);
 
       assertEquals(state.activeSkillId, undefined);
-      assertEquals(state.activeSkillPolicy, undefined);
       assertEquals(state.activeSkillToolAvailability, {
         hasActiveSkill: false,
         references: [],
@@ -66,7 +65,6 @@ describe("src/agent/runtime AgentLoopSkillState", () => {
       const state = AgentLoopSkillState.hydrate(messages, undefined);
 
       assertEquals(state.activeSkillId, "review");
-      assertEquals(state.activeSkillPolicy, ["Read"]);
       assertEquals(state.activeSkillToolAvailability, {
         hasActiveSkill: true,
         references: ["references/notes.md"],
@@ -111,7 +109,6 @@ describe("src/agent/runtime AgentLoopSkillState", () => {
       });
 
       assertEquals(state.activeSkillId, "deploy");
-      assertEquals(state.activeSkillPolicy, ["Bash"]);
       assertEquals(state.activeSkillToolAvailability, {
         hasActiveSkill: true,
         references: [],
@@ -141,7 +138,6 @@ describe("src/agent/runtime AgentLoopSkillState", () => {
       state.applySuccessfulResult({ error: "Missing reference" });
 
       assertEquals(state.activeSkillId, "review");
-      assertEquals(state.activeSkillPolicy, ["Read"]);
     });
   });
 
@@ -159,16 +155,9 @@ describe("src/agent/runtime AgentLoopSkillState", () => {
         ],
         undefined,
       );
-      assertEquals(state.activeSkillPolicy, ["Read", "form_input"]);
       assertEquals(state.hasSubmittedFormInput, false);
 
-      state.markFormInputSubmitted(
-        "form_input",
-        { submitted: true, values: { topic: "test" } },
-        true,
-      );
-
-      assertEquals(state.activeSkillPolicy, ["Read"]);
+      state.markFormInputSubmitted(true);
       assertEquals(state.hasSubmittedFormInput, true);
     });
 
@@ -186,13 +175,7 @@ describe("src/agent/runtime AgentLoopSkillState", () => {
         undefined,
       );
 
-      state.markFormInputSubmitted(
-        "form_input",
-        { submitted: false, values: {} },
-        false,
-      );
-
-      assertEquals(state.activeSkillPolicy, ["Read", "form_input"]);
+      state.markFormInputSubmitted(false);
       assertEquals(state.hasSubmittedFormInput, false);
     });
 
@@ -210,9 +193,7 @@ describe("src/agent/runtime AgentLoopSkillState", () => {
         undefined,
       );
 
-      state.markFormInputSubmitted("read_file", { content: "..." }, false);
-
-      assertEquals(state.activeSkillPolicy, ["Read", "form_input"]);
+      state.markFormInputSubmitted(false);
       assertEquals(state.hasSubmittedFormInput, false);
     });
   });
@@ -229,12 +210,11 @@ describe("src/agent/runtime AgentLoopSkillState", () => {
         references: [],
         scripts: [],
       });
-      first.markFormInputSubmitted("form_input", { submitted: true }, true);
+      first.markFormInputSubmitted(true);
 
       assertEquals(first.activeSkillId, "a");
       assertEquals(first.hasSubmittedFormInput, true);
       assertEquals(second.activeSkillId, undefined);
-      assertEquals(second.activeSkillPolicy, undefined);
       assertEquals(second.hasSubmittedFormInput, false);
     });
 
@@ -256,13 +236,11 @@ describe("src/agent/runtime AgentLoopSkillState", () => {
         references: [],
         scripts: [],
       });
-      runA.markFormInputSubmitted("form_input", { submitted: true }, true);
+      runA.markFormInputSubmitted(true);
 
       assertEquals(runA.activeSkillId, "run-a-skill");
-      assertEquals(runA.activeSkillPolicy, ["Read"]);
       assertEquals(runA.hasSubmittedFormInput, true);
       assertEquals(runB.activeSkillId, "run-b-skill");
-      assertEquals(runB.activeSkillPolicy, ["Write"]);
       assertEquals(runB.hasSubmittedFormInput, false);
     });
   });

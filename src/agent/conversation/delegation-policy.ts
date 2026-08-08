@@ -23,15 +23,12 @@ export const LOAD_SKILL_CONTINUE_SAME_TURN_NOW = "Continue the same turn now.";
 export const LOAD_SKILL_ROOT_OWNERSHIP = KEEP_ROOT_ASSISTANT_VISIBLE_OWNER;
 /** Shared load skill use allowed tools value. */
 export const LOAD_SKILL_USE_ALLOWED_TOOLS =
-  "For multi-step or isolated work, call invoke_agent; otherwise keep working directly with the allowed tools.";
+  "For multi-step or isolated work, call invoke_agent; otherwise keep working directly with the available tools.";
 /** Shared load skill delegation threshold value. */
 export const LOAD_SKILL_DELEGATION_THRESHOLD = DELEGATE_ONLY_WHEN_MATERIALLY_HELPFUL;
 /** Shared load skill override forwarding value. */
 export const LOAD_SKILL_OVERRIDE_FORWARDING =
   "Pass through any returned model, thinking, or maxSteps overrides to invoke_agent when delegating.";
-/** Shared load skill tool intersection value. */
-export const LOAD_SKILL_TOOL_INTERSECTION =
-  "If the current run exposes fewer tools than the loaded skill metadata, use only the tools that are actually available right now.";
 
 /** Builds root owned delegated findings instruction. */
 export function buildRootOwnedDelegatedFindingsInstruction(): string {

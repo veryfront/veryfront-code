@@ -18,7 +18,7 @@ that explains the work clearly.
 | [App](./app.md)                         | User-facing routes, APIs, data, and rendering.  |
 | [Agent](./agent.md)                     | Model reasoning, messages, tools, and output.   |
 | [Tool](./tool.md)                       | One callable capability.                        |
-| [Skill](./skill.md)                     | Reusable agent instructions and tool policy.    |
+| [Skill](./skill.md)                     | Reusable agent instructions and resources.      |
 | [Prompt](./prompt.md)                   | Reusable instruction templates.                 |
 | [Resource](./resource.md)               | Readable project data for MCP.                  |
 | [Eval](./eval.md)                       | Repeatable quality checks for agents.           |

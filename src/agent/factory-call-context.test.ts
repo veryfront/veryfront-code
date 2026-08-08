@@ -119,7 +119,7 @@ describe("agent/factory call context", () => {
     assertStringIncludes(prompt, "<available_skills>");
     assertStringIncludes(
       prompt,
-      '- {"skillId":"support-triage","description":"Triage incoming support requests","allowedTools":[]}',
+      '- {"skillId":"support-triage","description":"Triage incoming support requests"}',
     );
     assertEquals(prompt.includes("create_file"), false);
     assertStringIncludes(prompt, "execute_skill_script: Call with");
@@ -151,7 +151,7 @@ describe("agent/factory call context", () => {
 
     assertStringIncludes(
       prompt,
-      '- {"skillId":"support-triage","description":"Triage incoming support requests","allowedTools":["create_file"]}',
+      '- {"skillId":"support-triage","description":"Triage incoming support requests"}',
     );
   });
 });

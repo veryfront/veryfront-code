@@ -149,16 +149,17 @@ flowchart TD
 3. Prompt augmentation summarizes available skills for agent planning.
 4. Built-in skill tools load instructions, read reference files, and execute
    scripts.
-5. Allowed-tool policy filters callable tools while a skill is active.
+5. Skill tool availability gates `load_skill_reference` and
+   `execute_skill_script` on the files the active skill advertises.
 6. Path-safety helpers reject traversal and symlink escapes before reading
    skill files.
 7. Script execution selects local subprocess execution or cloud sandbox
    execution based on runtime credentials.
 
-Skills provide instruction packs and tool policy. They are not workflows,
+Skills provide instruction packs. They are not workflows,
 runs, or local tool definitions. Skills are configured through project
-discovery and `agent({ skills })`; parser, registry, tool, and policy helpers
-are available from the public `veryfront/skill` package subpath.
+discovery and `agent({ skills })`; parser, registry, and tool helpers are
+available from the public `veryfront/skill` package subpath.
 
 ## Boundaries
 

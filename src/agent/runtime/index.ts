@@ -184,11 +184,7 @@ function resolveRuntimeGenAiProviderName(modelId: string): string | undefined {
   }
 }
 
-export {
-  enforceSkillPolicy,
-  extractSkillPolicy,
-  type SkillPolicyResult,
-} from "./skill-policy-enforcement.ts";
+export { enforceSkillPolicy, type SkillPolicyResult } from "./skill-policy-enforcement.ts";
 
 import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, getModelMaxOutputTokens } from "./constants.ts";
 import { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
@@ -1112,7 +1108,6 @@ export class AgentRuntime {
         const preparedStep = await prepareAgentRuntimeStep({
           agentId: this.id,
           activeSkillId: hasToolReplacements ? undefined : skillState.activeSkillId,
-          activeSkillPolicy: hasToolReplacements ? undefined : skillState.activeSkillPolicy,
           activeSkillToolAvailability: hasToolReplacements
             ? undefined
             : skillState.activeSkillToolAvailability,
@@ -1461,7 +1456,6 @@ export class AgentRuntime {
 
             const policyCheck = enforceSkillPolicy(
               tc.toolName,
-              skillState.activeSkillPolicy,
               {
                 activeSkillId: skillState.activeSkillId,
                 hasSubmittedFormInput: skillState.hasSubmittedFormInput,
@@ -1571,7 +1565,7 @@ export class AgentRuntime {
                   tc.toolName,
                   result,
                 );
-                skillState.markFormInputSubmitted(tc.toolName, result, submittedFormInput);
+                skillState.markFormInputSubmitted(submittedFormInput);
                 if (submittedFormInput) {
                   currentRuntimeContext = markSubmittedFormInputRuntimeContext(
                     currentRuntimeContext,
@@ -1707,7 +1701,6 @@ export class AgentRuntime {
       const preparedStep = await prepareAgentRuntimeStep({
         agentId: this.id,
         activeSkillId: skillState.activeSkillId,
-        activeSkillPolicy: skillState.activeSkillPolicy,
         activeSkillToolAvailability: skillState.activeSkillToolAvailability,
         allowedRemoteToolNames,
         config: runtimeStepConfig,
@@ -1953,7 +1946,7 @@ export class AgentRuntime {
               tc.name,
               matchingResult.output,
             );
-            skillState.markFormInputSubmitted(tc.name, matchingResult.output, submittedFormInput);
+            skillState.markFormInputSubmitted(submittedFormInput);
             if (submittedFormInput) {
               currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
             }
@@ -1978,7 +1971,7 @@ export class AgentRuntime {
               tc.name,
               persistedResult.result,
             );
-            skillState.markFormInputSubmitted(tc.name, persistedResult.result, submittedFormInput);
+            skillState.markFormInputSubmitted(submittedFormInput);
             if (submittedFormInput) {
               currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
             }
@@ -2092,7 +2085,6 @@ export class AgentRuntime {
         }
         const policyCheck = enforceSkillPolicy(
           tc.name,
-          skillState.activeSkillPolicy,
           {
             activeSkillId: skillState.activeSkillId,
             hasSubmittedFormInput: skillState.hasSubmittedFormInput,
@@ -2165,7 +2157,7 @@ export class AgentRuntime {
               skillState.applySuccessfulResult(result);
             }
             const submittedFormInput = isSubmittedFormInputExecutionResult(tc.name, result);
-            skillState.markFormInputSubmitted(tc.name, result, submittedFormInput);
+            skillState.markFormInputSubmitted(submittedFormInput);
             if (submittedFormInput) {
               currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
             }

@@ -1,7 +1,6 @@
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isAbsolute } from "#veryfront/compat/path";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
-import { snapshotAllowedToolPatterns } from "./allowed-tools.ts";
 import { SKILL_ID_MAX_LENGTH, SKILL_ROOT_PATH_MAX_LENGTH } from "./limits.ts";
 import {
   isCanonicalAdapterRelativeSkillRoot,
@@ -199,9 +198,11 @@ function normalizeSkillMetadata(value: unknown): SkillMetadata {
   if (rawAllowedTools !== undefined && !arrayIsArray(rawAllowedTools)) {
     throw new NativeTypeError("Skill metadata allowedTools must be an array");
   }
+  // Recorded verbatim: `allowed-tools` is spec pre-approval metadata the runtime
+  // does not enforce, so entries are not validated against a pattern grammar.
   const allowedTools = rawAllowedTools === undefined
     ? undefined
-    : snapshotAllowedToolPatterns(rawAllowedTools as string[]);
+    : Object.freeze([...(rawAllowedTools as string[])]) as string[];
   const license = optionalBoundedString(
     ownDataValue(value, "license"),
     "Skill metadata license",

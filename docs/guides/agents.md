@@ -315,8 +315,11 @@ subprocesses.
 
 ## Skill safety model
 
-- `allowed-tools` in `SKILL.md` is enforced at planning time and execution time
-  (fail-closed).
+- `allowed-tools` in `SKILL.md` is **not** enforced. The Agent Skills
+  specification defines it as pre-approval metadata (tools an agent may run
+  without prompting), not an authorization boundary, so Veryfront records the
+  declaration and does not restrict the run. Narrow a run by configuring the
+  agent's tools, not by declaring `allowed-tools` in a skill.
 - Skill file reads are restricted to the skill root and allowed subdirectories:
   `references/`, `resources/`, `assets/`, and `scripts/`.
 - Symlinked paths are rejected for skill file access.

@@ -2,12 +2,10 @@ import type { Message } from "../types.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import { serverLogger } from "#veryfront/utils";
 import {
-  isToolAllowedBySkill,
+  isSkillToolAvailable,
   type SkillToolAvailability,
-  snapshotAllowedToolPatterns,
 } from "#veryfront/skill/allowed-tools.ts";
 import {
-  SKILL_ALLOWED_TOOL_MAX_PATTERNS,
   SKILL_DOCUMENT_MAX_CHARACTERS,
   SKILL_ID_MAX_LENGTH,
   SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
@@ -123,7 +121,6 @@ function isSkillActivationResult(result: unknown): result is Record<string, unkn
 
 export type ActiveSkillState = {
   activeSkillId: string | undefined;
-  activeSkillPolicy: string[] | undefined;
   activeSkillToolAvailability: SkillToolAvailability;
   activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
 };
@@ -133,7 +130,6 @@ export function hydrateActiveSkillStateFromMessages(
 ): ActiveSkillState {
   let state: ActiveSkillState = {
     activeSkillId: undefined,
-    activeSkillPolicy: undefined,
     activeSkillToolAvailability: INACTIVE_SKILL_TOOL_AVAILABILITY,
     activeSkillDelegationOverrides: undefined,
   };
@@ -152,41 +148,6 @@ export function extractSkillId(result: unknown): string | undefined {
   if (!isRecord(result)) return undefined;
   const skillId = readToolResultOwnDataProperty(result, "skillId");
   return typeof skillId === "string" ? skillId : undefined;
-}
-
-export function extractSkillPolicy(result: unknown): string[] | undefined {
-  if (!isRecord(result)) return undefined;
-  const field = readToolResultOwnDataProperty(result, "allowedTools");
-  if (field === undefined) return undefined;
-  const patternCount = getBoundedArrayLength(field, SKILL_ALLOWED_TOOL_MAX_PATTERNS);
-  if (field === UNREADABLE_TOOL_RESULT_PROPERTY || patternCount === null) {
-    logger.warn(
-      "load_skill returned invalid allowedTools; falling back to empty policy (no tools)",
-    );
-    return [];
-  }
-
-  const patterns: string[] = [];
-  for (let index = 0; index < patternCount; index += 1) {
-    const pattern = readToolResultOwnDataProperty(field, index);
-    if (typeof pattern !== "string") {
-      logger.warn(
-        "load_skill returned invalid allowedTools; falling back to empty policy (no tools)",
-      );
-      return [];
-    }
-    patterns.push(pattern);
-  }
-
-  try {
-    return snapshotAllowedToolPatterns(patterns);
-  } catch (error) {
-    logger.warn(
-      "load_skill returned invalid tool patterns; falling back to empty policy (no tools)",
-      { error },
-    );
-    return [];
-  }
 }
 
 function extractStringArrayField(
@@ -252,13 +213,12 @@ export function applySkillActivationResult(
   try {
     return {
       activeSkillId: extractSkillId(result),
-      activeSkillPolicy: extractSkillPolicy(result),
       activeSkillToolAvailability: extractSkillToolAvailability(result) ??
         INACTIVE_SKILL_TOOL_AVAILABILITY,
       activeSkillDelegationOverrides: extractSkillDelegationOverrides(result),
     };
   } catch (error) {
-    logger.warn("load_skill returned an unreadable activation result; preserving prior policy", {
+    logger.warn("load_skill returned an unreadable activation result; preserving prior state", {
       error,
     });
     return current;
@@ -357,31 +317,6 @@ export function filterToolsAfterSubmittedFormInput(
   });
 }
 
-export function removeFormInputAfterSubmission(
-  toolName: string,
-  result: unknown,
-  activeSkillPolicy: string[] | undefined,
-): string[] | undefined {
-  if (
-    toolName !== FORM_INPUT_TOOL_ID || !isSubmittedFormInputResult(result) ||
-    activeSkillPolicy === undefined
-  ) {
-    return activeSkillPolicy;
-  }
-
-  return narrowPolicyAfterSubmittedForm(activeSkillPolicy);
-}
-
-export function narrowPolicyAfterSubmittedForm(
-  activeSkillPolicy: string[] | undefined,
-): string[] | undefined {
-  if (activeSkillPolicy === undefined) return undefined;
-
-  return snapshotAllowedToolPatterns(
-    activeSkillPolicy.filter((allowedToolName) => allowedToolName !== FORM_INPUT_TOOL_ID),
-  );
-}
-
 export type SkillPolicyResult =
   | { allowed: true }
   | { allowed: false; error: string };
@@ -428,7 +363,6 @@ export function isSkillBodyLoadRequest(toolName: string, input: unknown): boolea
 
 export function enforceSkillPolicy(
   toolName: string,
-  activeSkillPolicy: string[] | undefined,
   options: SkillPolicyOptions = {},
 ): SkillPolicyResult {
   if (
@@ -454,14 +388,11 @@ export function enforceSkillPolicy(
     };
   }
 
-  if (
-    !isToolAllowedBySkill(toolName, activeSkillPolicy, options.skillToolAvailability)
-  ) {
+  if (!isSkillToolAvailable(toolName, options.skillToolAvailability)) {
     return {
       allowed: false,
-      error: `Tool "${toolName}" is not allowed by the active skill policy. Allowed: ${
-        activeSkillPolicy?.join(", ") ?? "none"
-      }`,
+      error:
+        `Tool "${toolName}" is unavailable because the active skill advertises no matching file.`,
     };
   }
 

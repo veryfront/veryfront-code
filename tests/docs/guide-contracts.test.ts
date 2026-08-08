@@ -495,7 +495,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "concepts/skill.md": {
     references: ["../guides/skills.md"],
-    snippets: ["agent instructions", "allowed-tools policy", "SKILL.md"],
+    snippets: ["agent instructions", "not an authorization boundary", "SKILL.md"],
   },
   "concepts/integration.md": {
     references: [

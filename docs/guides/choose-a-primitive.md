@@ -33,7 +33,7 @@ clear and prevents overlapping agents, workflows, runs, and integrations.
 | App route   | A browser, HTTP client, or webhook needs an entry point.                      | The work should outlive the request or be reused outside routing.             |
 | Agent       | The model must decide, explain, call tools, use memory, or stream a response. | The work is deterministic and can be a function, task, or workflow step.      |
 | Tool        | An agent needs a typed operation such as search, lookup, write, or transform. | The operation has multiple long-running states or human approval steps.       |
-| Skill       | An agent needs reusable instructions, references, scripts, and tool policy.   | The work is deterministic or needs durable process state.                     |
+| Skill       | An agent needs reusable instructions, references, scripts, and assets.        | The work is deterministic or needs durable process state.                     |
 | Prompt      | An assistant needs reusable instruction text.                                 | The project needs to execute code or read data.                               |
 | Resource    | An assistant needs readable project context.                                  | The operation changes state or starts work.                                   |
 | Eval        | You need repeatable agent quality checks, datasets, metrics, and reports.     | You need deterministic code assertions without model execution.               |

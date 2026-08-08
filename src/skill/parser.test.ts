@@ -398,16 +398,15 @@ Body`),
       }
     });
 
-    it("should reject invalid allowed-tools pattern", () => {
-      try {
-        validateSkillMetadata(
-          { name: "test", description: "desc", "allowed-tools": "Bash(git:*)" },
-          "test",
-        );
-        throw new Error("Should have thrown");
-      } catch (e) {
-        assertEquals((e as Error).message.includes("invalid allowed-tools pattern"), true);
-      }
+    it("should accept the spec's own Bash(git:*) example verbatim", () => {
+      // `allowed-tools` is pre-approval metadata in the Agent Skills spec, not
+      // an authorization boundary, so a spec-conformant declaration must parse
+      // rather than be rejected by a Veryfront-specific pattern grammar.
+      const result = validateSkillMetadata(
+        { name: "test", description: "desc", "allowed-tools": "Bash(git:*)" },
+        "test",
+      );
+      assertEquals(result.allowedTools, ["Bash(git:*)"]);
     });
 
     it("should accept prefix wildcard patterns", () => {

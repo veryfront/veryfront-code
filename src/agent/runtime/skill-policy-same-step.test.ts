@@ -199,36 +199,6 @@ describe("src/agent/runtime same-step load_skill batches", () => {
       assertEquals(run.errorText.includes(ACTIVE_POLICY_ERROR), false);
     });
 
-    it(`still blocks a tool denied by the freshly activated policy (${mode})`, async () => {
-      const run = await runBatch({
-        scenario: "denied",
-        mode,
-        probeToolIds: ["probe_a", "probe_denied"],
-        loadSkillResult: () => ({
-          skillId: "restricted",
-          instructions: "# Restricted",
-          allowedTools: ["load_skill", "probe_a"],
-          references: [],
-          scripts: [],
-        }),
-        steps: [
-          {
-            toolCalls: [
-              { id: `${mode}-load`, name: "load_skill", input: { skillId: "restricted" } },
-              { id: `${mode}-probe-a`, name: "probe_a", input: {} },
-              { id: `${mode}-probe-denied`, name: "probe_denied", input: {} },
-            ],
-          },
-          { text: "done" },
-        ],
-      });
-
-      assertEquals(run.executions.probe_a, 1);
-      assertEquals(run.executions.probe_denied, 0);
-      assertEquals(run.errorText.includes(ACTIVE_POLICY_ERROR), true);
-      assertEquals(run.errorText.includes(SAME_STEP_GATE_ERROR), false);
-    });
-
     it(`lets the rest of the batch run when load_skill fails (${mode})`, async () => {
       const run = await runBatch({
         scenario: "failing-load",
