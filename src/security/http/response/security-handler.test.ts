@@ -1,3 +1,4 @@
+import { CSP_REPORT_PATH } from "#veryfront/security/http/csp-report-endpoint.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
@@ -636,6 +637,30 @@ describe("security/http/response/security-handler", () => {
         emitted.filter((n) => !n.startsWith("content-security-policy")),
         "every other owned header is emitted",
       );
+    });
+
+    it("points the policy at a reporting group the response actually defines", () => {
+      // The failure mode this guards is silent: a `report-to` naming a group
+      // that `Reporting-Endpoints` does not define makes the browser send
+      // nothing at all, and the policy still looks correct in devtools.
+      const headers = applyHeaders();
+      const policy = headers.get("Content-Security-Policy") ??
+        headers.get("Content-Security-Policy-Report-Only") ?? "";
+
+      const group = /report-to ([^;]+)/.exec(policy)?.[1]?.trim();
+      assert(group, "policy must carry a report-to directive");
+
+      const endpoints = headers.get("Reporting-Endpoints") ?? "";
+      assert(
+        endpoints.includes(`${group}=`),
+        `Reporting-Endpoints (${endpoints}) must define the group named by report-to (${group})`,
+      );
+
+      // The deprecated spelling is still the only one some browsers honour, and
+      // it takes a path rather than a group name.
+      const reportUri = /report-uri ([^;]+)/.exec(policy)?.[1]?.trim();
+      assertEquals(reportUri, CSP_REPORT_PATH);
+      assert(endpoints.includes(`"${CSP_REPORT_PATH}"`), "both spellings must aim at one path");
     });
 
     it("should set X-Content-Type-Options", () => {

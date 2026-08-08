@@ -4,6 +4,10 @@ import { HOSTED_STUDIO_ORIGINS } from "#veryfront/security/http/studio-origin-po
 import { isCorsPolicyResponseHeaderName } from "#veryfront/utils/cors-policy-limits.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import {
+  CSP_REPORT_ENDPOINT_NAME,
+  CSP_REPORT_PATH,
+} from "#veryfront/security/http/csp-report-endpoint.ts";
+import {
   PLATFORM_FONT_FILE_ORIGINS,
   PLATFORM_FONT_STYLE_ORIGINS,
   PLATFORM_IMAGE_ORIGINS,
@@ -35,6 +39,9 @@ export const SECURITY_POLICY_RESPONSE_HEADER_NAMES = Object.freeze(
     "cross-origin-opener-policy",
     "cross-origin-resource-policy",
     "referrer-policy",
+    // Names where violation reports go. A project-provided value would send
+    // them somewhere else, or nowhere, and the policy would look healthy.
+    "reporting-endpoints",
     "strict-transport-security",
     "x-content-type-options",
     "x-frame-options",
@@ -42,13 +49,8 @@ export const SECURITY_POLICY_RESPONSE_HEADER_NAMES = Object.freeze(
   ] as const,
 );
 
-const SECURITY_POLICY_RESPONSE_HEADER_NAME_SET: ReadonlySet<string> = new Set(
-  SECURITY_POLICY_RESPONSE_HEADER_NAMES,
-);
-
-export function isSecurityPolicyResponseHeaderName(name: string): boolean {
-  return SECURITY_POLICY_RESPONSE_HEADER_NAME_SET.has(name.toLowerCase());
-}
+/** Response header defining the reporting groups the policy refers to. */
+const REPORTING_ENDPOINTS_HEADER = "reporting-endpoints";
 
 /** The two names the computed policy may be delivered under. */
 const CSP_RESPONSE_HEADER_NAMES: ReadonlySet<string> = new Set([
@@ -138,6 +140,10 @@ function requiredDirectives(
     "frame-ancestors": isVeryfrontDomain ? [...VERYFRONT_FRAME_ANCESTORS] : ["'none'"],
     "base-uri": ["'self'"],
     "form-action": ["'self'"],
+    // Both spellings: `report-to` is the current one, `report-uri` is
+    // deprecated but still the only one several shipping browsers honour.
+    "report-to": [CSP_REPORT_ENDPOINT_NAME],
+    "report-uri": [CSP_REPORT_PATH],
   };
 }
 
@@ -376,6 +382,12 @@ export function applySecurityHeaders(
   if (csp) {
     const hasEnvOverride = Boolean(adapter?.env?.get?.("VERYFRONT_CSP")?.trim());
     headers.set(cspHeaderName(config, adapter, hasEnvOverride), csp);
+    // Names the group the policy's `report-to` refers to. Without this header
+    // the directive names nothing and the browser sends no reports at all.
+    headers.set(
+      REPORTING_ENDPOINTS_HEADER,
+      `${CSP_REPORT_ENDPOINT_NAME}="${CSP_REPORT_PATH}"`,
+    );
   }
 
   if (!isDev) {
@@ -422,9 +434,9 @@ export function applySecurityHeaders(
       // `security.headers` would silently replace the merged platform floor --
       // and, now that the floor may be delivered report-only, could also flip
       // which mode is served. Header names are case-insensitive, so match that
-      // way. `isSecurityPolicyResponseHeaderName` is deliberately not reused:
-      // it covers headers this loop is still allowed to override.
-      if (isCspResponseHeaderName(key)) {
+      // way.
+      const headerName = key.toLowerCase();
+      if (isCspResponseHeaderName(headerName) || headerName === REPORTING_ENDPOINTS_HEADER) {
         ignoredCspHeader = true;
         continue;
       }

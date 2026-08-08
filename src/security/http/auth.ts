@@ -1,3 +1,4 @@
+import { isCspReportRequest } from "#veryfront/security/http/csp-report-endpoint.ts";
 import { BaseHandler } from "./base-handler.ts";
 import type {
   HandlerContext,
@@ -161,6 +162,13 @@ export class AuthHandler extends BaseHandler {
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (req.method.toUpperCase() === "OPTIONS") return Promise.resolve(this.continue());
+
+    // Same reasoning as the CSRF gate: a browser reports a violation without
+    // credentials, so a protected project would collect nothing. See
+    // `isCspReportRequest` for why exempting it discloses nothing.
+    if (isCspReportRequest(req.method, new URL(req.url).pathname)) {
+      return Promise.resolve(this.continue());
+    }
 
     const auth = this.resolveAuth(ctx);
     if (!auth) return Promise.resolve(this.continue());
