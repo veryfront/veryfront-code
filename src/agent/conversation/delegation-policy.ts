@@ -27,9 +27,6 @@ export const SYNTHESIZE_DELEGATED_FINDINGS_IN_ROOT_VOICE =
 export const LOAD_SKILL_CONTINUE_SAME_TURN_NOW = "Continue the same turn now.";
 /** Shared load skill root ownership value. */
 export const LOAD_SKILL_ROOT_OWNERSHIP = KEEP_ROOT_ASSISTANT_VISIBLE_OWNER;
-/** Shared load skill use allowed tools value. */
-export const LOAD_SKILL_USE_ALLOWED_TOOLS =
-  "For multi-step or isolated work, call invoke_agent; otherwise keep working directly with the available tools.";
 /** Shared load skill delegation threshold value. */
 export const LOAD_SKILL_DELEGATION_THRESHOLD = DELEGATE_ONLY_WHEN_MATERIALLY_HELPFUL;
 
