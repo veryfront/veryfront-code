@@ -9,8 +9,11 @@ import { agent } from "../index.ts";
 import type { AgentConfig } from "../types.ts";
 import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
 
-const SAME_STEP_GATE_ERROR = "cannot run before load_skill succeeds in the same step";
-const ACTIVE_POLICY_ERROR = "is not allowed by the active skill policy";
+// Asserting on message text would pin wording that no longer exists: the
+// same-step gate and the allowed-tools policy check are both gone, so their
+// literals can never appear and an `includes(...) === false` assertion passes
+// no matter what the runtime does. These assert that no tool error surfaced at
+// all, which catches any future blocking however it is phrased.
 
 type RuntimeMode = "generate" | "stream";
 
@@ -93,6 +96,7 @@ function scriptedModel(modelId: string, steps: readonly ScriptedStep[]): ModelRu
 type BatchRun = {
   /** Every surfaced tool error, joined; the transports report errors differently. */
   errorText: string;
+  toolErrorCount: number;
   executions: Record<string, number>;
 };
 
@@ -151,17 +155,25 @@ async function runBatch(options: {
 
     if (mode === "generate") {
       const response = await assistant.generate({ input: "Load the skill and work" });
+      const toolErrors = response.toolCalls
+        .filter((call) => call.status === "error")
+        .map((call) => call.error ?? "unknown error");
       return {
-        errorText: response.toolCalls
-          .map((call) => (call.status === "error" ? call.error ?? "unknown error" : ""))
-          .join("\n"),
+        errorText: toolErrors.join("\n"),
+        toolErrorCount: toolErrors.length,
         executions,
       };
     }
 
     const body = await (await assistant.stream({ input: "Load the skill and work" }))
       .toDataStreamResponse().text();
-    return { errorText: body, executions };
+    // `tool-output-error` is the stream's own event type for a failed tool
+    // call, so it stays true regardless of how a future error is worded.
+    return {
+      errorText: body,
+      toolErrorCount: body.split("tool-output-error").length - 1,
+      executions,
+    };
   } finally {
     for (const toolId of [loadSkillId, ...probeToolIds]) toolRegistry.delete(toolId);
   }
@@ -195,38 +207,8 @@ describe("src/agent/runtime same-step load_skill batches", () => {
 
       assertEquals(run.executions.probe_a, 1);
       assertEquals(run.executions.probe_b, 1);
-      assertEquals(run.errorText.includes(SAME_STEP_GATE_ERROR), false);
-      assertEquals(run.errorText.includes(ACTIVE_POLICY_ERROR), false);
-    });
-
-    it(`still blocks a tool denied by the freshly activated policy (${mode})`, async () => {
-      const run = await runBatch({
-        scenario: "denied",
-        mode,
-        probeToolIds: ["probe_a", "probe_denied"],
-        loadSkillResult: () => ({
-          skillId: "restricted",
-          instructions: "# Restricted",
-          allowedTools: ["load_skill", "probe_a"],
-          references: [],
-          scripts: [],
-        }),
-        steps: [
-          {
-            toolCalls: [
-              { id: `${mode}-load`, name: "load_skill", input: { skillId: "restricted" } },
-              { id: `${mode}-probe-a`, name: "probe_a", input: {} },
-              { id: `${mode}-probe-denied`, name: "probe_denied", input: {} },
-            ],
-          },
-          { text: "done" },
-        ],
-      });
-
-      assertEquals(run.executions.probe_a, 1);
-      assertEquals(run.executions.probe_denied, 0);
-      assertEquals(run.errorText.includes(ACTIVE_POLICY_ERROR), true);
-      assertEquals(run.errorText.includes(SAME_STEP_GATE_ERROR), false);
+      // No tool error at all: both probes ran and nothing blocked them.
+      assertEquals(run.toolErrorCount, 0, `unexpected tool error: ${run.errorText}`);
     });
 
     it(`lets the rest of the batch run when load_skill fails (${mode})`, async () => {
@@ -249,7 +231,9 @@ describe("src/agent/runtime same-step load_skill batches", () => {
       });
 
       assertEquals(run.executions.probe_a, 1);
-      assertEquals(run.errorText.includes(SAME_STEP_GATE_ERROR), false);
+      // Exactly one error, the deliberate load_skill failure. A probe blocked by
+      // a reintroduced gate would push this to two, whatever the message says.
+      assertEquals(run.toolErrorCount, 1, `unexpected tool errors: ${run.errorText}`);
     });
   }
 });

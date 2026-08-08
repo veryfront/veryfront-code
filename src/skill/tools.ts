@@ -482,8 +482,8 @@ function assertActiveSkillFileAvailable(
 export function createLoadSkillTool(options: SkillSelectorToolOptions = {}): Tool {
   return tool({
     id: "load_skill",
-    description: "Load a skill's full instructions. Returns the skill's markdown instructions, " +
-      "allowed tools policy, and lists of available reference files and scripts.",
+    description: "Load a skill's full instructions. Returns the skill's markdown instructions " +
+      "and lists of available reference files and scripts.",
     inputSchema: getLoadSkillInputSchema(),
     execute: async (input, context): Promise<SkillContent> => {
       const budget = createFileBudget(context);
@@ -538,7 +538,6 @@ export function createLoadSkillTool(options: SkillSelectorToolOptions = {}): Too
       return {
         skillId: skill.id,
         instructions: parsed.body,
-        ...(skill.metadata.allowedTools ? { allowedTools: skill.metadata.allowedTools } : {}),
         references: loadableReferences,
         scripts,
       };

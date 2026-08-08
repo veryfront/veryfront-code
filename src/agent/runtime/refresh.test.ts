@@ -1,11 +1,9 @@
-import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type ModelRuntime } from "#veryfront/provider";
 import { type RemoteToolSource, tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import { registerSkill } from "#veryfront/skill/registry.ts";
 import { agent } from "../index.ts";
 import type {
   AgentConfig,
@@ -146,116 +144,6 @@ function submittedFormWithActiveSkillMessages(): Message[] {
 }
 
 describe("agent runtime refresh hooks", () => {
-  it("applies a universal load_skill policy to the rest of its own step", async () => {
-    const rootPath = await Deno.makeTempDir();
-    let writeExecutions = 0;
-    let deleteExecutions = 0;
-    let callCount = 0;
-    const model: ModelRuntime = {
-      provider: "hosted",
-      modelId: "hosted/universal-skill-policy",
-      async doGenerate() {
-        callCount++;
-        if (callCount === 1) {
-          return {
-            content: [
-              {
-                type: "tool-call",
-                toolCallId: "write-before-skill",
-                toolName: "write_report",
-                input: '{"path":"report.md"}',
-              },
-              {
-                type: "tool-call",
-                toolCallId: "load-policy",
-                toolName: "load_skill",
-                input: '{"skillId":"read-only-review"}',
-              },
-              {
-                type: "tool-call",
-                toolCallId: "delete-after-skill",
-                toolName: "delete_report",
-                input: '{"path":"report.md"}',
-              },
-            ],
-            finishReason: "tool-calls",
-            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-          };
-        }
-        return {
-          content: [{ type: "text", text: "done" }],
-          finishReason: "stop",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
-      },
-      async doStream() {
-        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
-      },
-    };
-    const writeReport = tool({
-      id: "write_report",
-      description: "Write a report",
-      inputSchema: defineSchema((v) => v.object({ path: v.string() }))(),
-      execute: () => {
-        writeExecutions++;
-        return { ok: true };
-      },
-    });
-    const deleteReport = tool({
-      id: "delete_report",
-      description: "Delete a report",
-      inputSchema: defineSchema((v) => v.object({ path: v.string() }))(),
-      execute: () => {
-        deleteExecutions++;
-        return { ok: true };
-      },
-    });
-
-    try {
-      await Deno.writeTextFile(
-        `${rootPath}/SKILL.md`,
-        "---\nname: review\ndescription: Review one report\nallowed-tools: [write_report]\n---\nRead the input before deciding whether to write the report.\n",
-      );
-      registerSkill("read-only-review", {
-        id: "read-only-review",
-        metadata: {
-          name: "review",
-          description: "Review one report",
-          allowedTools: ["write_report"],
-        },
-        rootPath,
-      });
-      const assistant = eagerAgent({
-        id: "universal-skill-policy-agent",
-        model: "hosted/universal-skill-policy",
-        system: "Use the matching skill.",
-        tools: { write_report: writeReport, delete_report: deleteReport },
-        maxSteps: 2,
-        resolveModelTransport: async () => ({ model }),
-      });
-
-      const response = await assistant.generate({ input: "Review this report" });
-
-      assertEquals(writeExecutions, 1);
-      assertEquals(deleteExecutions, 0);
-      assertEquals(
-        response.toolCalls.map((call) => [call.name, call.status]),
-        [
-          ["write_report", "completed"],
-          ["load_skill", "completed"],
-          ["delete_report", "error"],
-        ],
-      );
-      assertEquals(
-        response.toolCalls.at(-1)?.error?.includes("not allowed by the active skill policy"),
-        true,
-      );
-    } finally {
-      skillRegistryInternal.clearAll();
-      await Deno.remove(rootPath, { recursive: true });
-    }
-  });
-
   it("continues suppressed unavailable tool calls with a user recovery turn after assistant text", async () => {
     const observedPrompts: Array<Array<{ role?: string; content?: unknown }>> = [];
     const observedRuntimeMessages: Message[][] = [];
@@ -2479,8 +2367,15 @@ describe("agent runtime refresh hooks", () => {
     });
     assertEquals(streamed.includes("stream done"), true);
     assertEquals(streamed.includes("Guide"), true);
-    assertEquals(generateToolNames, [["load_skill"], ["load_skill"]]);
-    assertEquals(streamToolNames, [["load_skill"], ["load_skill"]]);
+    // `read_secret` is no longer withheld: a skill's `allowed-tools` is spec
+    // pre-approval metadata, not an authorization boundary. `load_skill_reference`
+    // stays gated on the skill actually advertising a reference file.
+    const expectedToolNames = [
+      ["load_skill", "load_skill_reference", "read_secret"],
+      ["load_skill", "load_skill_reference", "read_secret"],
+    ];
+    assertEquals(generateToolNames, expectedToolNames);
+    assertEquals(streamToolNames, expectedToolNames);
   });
 
   it("generate and stream load advertised provider-safe root-owned project skills", async () => {

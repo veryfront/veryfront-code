@@ -75,12 +75,15 @@ Do work.`,
     const result = await tool.execute({ skillId: "my-skill" });
 
     assertEquals(result.skillId, "my-skill");
-    assertEquals(result.allowedTools, ["Read", "api:*"]);
+    // The response exposes instructions, references and scripts only.
+    // `allowed-tools` is pre-approval metadata the runtime does not act on, so
+    // returning it here would imply a policy the caller does not get.
+    assertEquals(Object.hasOwn(result, "allowedTools"), false);
     assertEquals(result.references, ["references/guide.md"]);
     assertEquals(result.scripts, ["scripts/lib/helper.ts", "scripts/run.sh"]);
   });
 
-  it("load_skill should omit allowedTools when the skill declares no policy", async () => {
+  it("load_skill omits allowedTools even when the skill declares it", async () => {
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/SKILL.md": `---
 name: my-skill

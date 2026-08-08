@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/skill/_test-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes, assertThrows } from "@std/assert";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import {
   createSkillDocumentParserProvider,
@@ -23,7 +23,6 @@ import {
   buildRuntimeSkillDefinition,
   buildStrictRuntimeLoadedSkillResponse,
   getRuntimeSkillFrontmatterSchema,
-  hasRuntimeSkillAllowedToolsPolicy,
   MAX_RUNTIME_SKILL_STEPS,
   normalizeRuntimeSkillReferencePath,
   normalizeStrictRuntimeSkillReferencePath,
@@ -802,15 +801,11 @@ Deno.test("strict directory catalog preserves omitted versus explicit-empty poli
   assertExists(noTools);
   assertEquals(unrestricted.allowedTools, []);
   assertEquals(noTools.allowedTools, []);
-  assertEquals(hasRuntimeSkillAllowedToolsPolicy(unrestricted), false);
-  assertEquals(hasRuntimeSkillAllowedToolsPolicy(noTools), true);
 
   const roundTrippedUnrestricted = JSON.parse(
     JSON.stringify(unrestricted),
   ) as typeof unrestricted;
   const roundTrippedNoTools = JSON.parse(JSON.stringify(noTools)) as typeof noTools;
-  assertEquals(hasRuntimeSkillAllowedToolsPolicy(roundTrippedUnrestricted), false);
-  assertEquals(hasRuntimeSkillAllowedToolsPolicy(roundTrippedNoTools), true);
 
   const prompt = buildStrictRuntimeAvailableSkillsPromptBlock([
     roundTrippedUnrestricted,
@@ -822,8 +817,9 @@ Deno.test("strict directory catalog preserves omitted versus explicit-empty poli
   const noToolsLine = prompt.split("\n").find((line) => line.includes('"skillId":"no-tools"'));
   assertExists(unrestrictedLine);
   assertExists(noToolsLine);
+  // `allowed-tools` is spec pre-approval metadata, never advertised to the model.
   assertEquals(unrestrictedLine.includes('"allowedTools"'), false);
-  assertStringIncludes(noToolsLine, '"allowedTools":[]');
+  assertEquals(noToolsLine.includes('"allowedTools"'), false);
 });
 
 Deno.test("parseStrictRuntimeSkillMetadata rejects ambiguous and invalid allowed-tools", () => {
@@ -833,9 +829,11 @@ Deno.test("parseStrictRuntimeSkillMetadata rejects ambiguous and invalid allowed
     ),
     null,
   );
+  // `Bash(git:*)` is the Agent Skills spec's own documented example; a
+  // spec-conformant skill must parse rather than be rejected by our grammar.
   assertEquals(
-    parseStrictRuntimeSkillMetadata("---\nallowed-tools: Bash(git:*)\n---\nBody"),
-    null,
+    parseStrictRuntimeSkillMetadata("---\nallowed-tools: Bash(git:*)\n---\nBody")?.allowedTools,
+    ["Bash(git:*)"],
   );
 
   const tooManyPatterns = Array.from(
@@ -945,9 +943,6 @@ Deno.test("generic runtime parser and path helpers fail closed", () => {
 });
 
 const loadedSkillMessages = {
-  allowedToolsNote: "Use only allowed tools.",
-  noCurrentRunToolsNote: "No direct tools are available.",
-  unavailableCurrentRunToolsDelegationNote: "Delegate unavailable tools.",
   overrideNote: "Forward overrides.",
   referenceNote: "Load references separately.",
 };
@@ -965,135 +960,6 @@ Deno.test("buildRuntimeLoadedSkillResponse includes basic response fields", () =
     instructions: "Plan carefully.",
     nextStep: "Continue after loading.",
   });
-});
-
-Deno.test("buildRuntimeLoadedSkillResponse filters allowed tools to current run surface", () => {
-  const response = buildRuntimeLoadedSkillResponse({
-    skillId: "write",
-    instructions: `---
-allowed-tools: read_file, write_file, shell
----
-Write carefully.`,
-    nextStep: "Continue after loading.",
-    messages: loadedSkillMessages,
-    availableToolNames: ["read_file", "write_file", "invoke_agent"],
-  });
-
-  assertEquals(response.allowedTools, ["read_file", "write_file"]);
-  assertEquals(response.delegationTools, ["read_file", "write_file", "shell"]);
-  assertEquals(response.unavailableCurrentRunTools, ["shell"]);
-  assertEquals(response.note, "Use only allowed tools.");
-  assertEquals(response.delegationNote, undefined);
-});
-
-Deno.test("buildStrictRuntimeLoadedSkillResponse intersects prefix policies by match semantics", () => {
-  const response = buildStrictRuntimeLoadedSkillResponse({
-    skillId: "api-reader",
-    instructions: "---\nallowed-tools: api:*\n---\nRead API data.",
-    nextStep: "Continue after loading.",
-    messages: loadedSkillMessages,
-    availableToolNames: ["api:list", "read_file"],
-  });
-
-  assertEquals(response.allowedTools, ["api:*"]);
-  assertEquals(response.unavailableCurrentRunTools, undefined);
-  assertEquals(response.note, "Use only allowed tools.");
-});
-
-Deno.test("buildRuntimeLoadedSkillResponse uses strict prefix policy matching", () => {
-  const response = buildRuntimeLoadedSkillResponse({
-    skillId: "api-reader",
-    instructions: "---\nallowed-tools: api:*\n---\nRead API data.",
-    nextStep: "Continue after loading.",
-    messages: loadedSkillMessages,
-    availableToolNames: ["api:list", "read_file"],
-  });
-
-  assertEquals(response.allowedTools, ["api:*"]);
-  assertEquals(response.unavailableCurrentRunTools, undefined);
-  assertEquals(response.note, "Use only allowed tools.");
-});
-
-Deno.test("buildRuntimeLoadedSkillResponse omits delegation note when no delegate tools are available", () => {
-  const response = buildRuntimeLoadedSkillResponse({
-    skillId: "write",
-    instructions: `---
-allowed-tools:
-  - shell
----
-Write carefully.`,
-    nextStep: "Continue after loading.",
-    messages: loadedSkillMessages,
-    availableToolNames: ["read_file"],
-  });
-
-  assertEquals(response.allowedTools, []);
-  assertEquals(response.delegationTools, ["shell"]);
-  assertEquals(response.unavailableCurrentRunTools, ["shell"]);
-  assertEquals(response.note, "No direct tools are available.");
-  assertEquals(response.delegationNote, undefined);
-});
-
-Deno.test("buildRuntimeLoadedSkillResponse treats an explicit empty tool surface as no tools", () => {
-  const response = buildRuntimeLoadedSkillResponse({
-    skillId: "research",
-    instructions: `---
-allowed-tools:
-  - read_file
-model: sonnet
-max-steps: 8
----
-Research carefully.`,
-    nextStep: "Continue after loading.",
-    messages: loadedSkillMessages,
-    availableToolNames: [],
-  });
-
-  assertEquals(response.allowedTools, []);
-  assertEquals(response.delegationTools, ["read_file"]);
-  assertEquals(response.unavailableCurrentRunTools, ["read_file"]);
-  assertEquals(response.note, "No direct tools are available.");
-  assertEquals(response.delegationNote, undefined);
-  assertEquals(response.model, "sonnet");
-  assertEquals(response.maxSteps, 8);
-  assertEquals(response.overrideNote, undefined);
-});
-
-Deno.test("buildRuntimeLoadedSkillResponse omits delegation notes for policy-blocked delegates", () => {
-  const response = buildRuntimeLoadedSkillResponse({
-    skillId: "write",
-    instructions: `---
-allowed-tools:
-  - shell
----
-Write carefully.`,
-    nextStep: "Continue after loading.",
-    messages: loadedSkillMessages,
-    availableToolNames: ["agent_writer", "read_file"],
-  });
-
-  assertEquals(response.allowedTools, []);
-  assertEquals(response.unavailableCurrentRunTools, ["shell"]);
-  assertEquals(response.delegationNote, undefined);
-});
-
-Deno.test("buildStrictRuntimeLoadedSkillResponse keeps delegation notes only for policy-allowed delegates", () => {
-  const response = buildStrictRuntimeLoadedSkillResponse({
-    skillId: "write",
-    instructions: `---
-allowed-tools:
-  - agent_writer
-  - shell
----
-Write carefully.`,
-    nextStep: "Continue after loading.",
-    messages: loadedSkillMessages,
-    availableToolNames: ["agent_writer", "agent_admin", "read_file"],
-  });
-
-  assertEquals(response.allowedTools, ["agent_writer"]);
-  assertEquals(response.unavailableCurrentRunTools, ["shell"]);
-  assertEquals(response.delegationNote, "Delegate unavailable tools.");
 });
 
 Deno.test("buildRuntimeLoadedSkillResponse omits override forwarding when inventory is unknown", () => {
@@ -1158,9 +1024,6 @@ Body`;
     skillId: "invalid",
     instructions,
     nextStep: "Continue after loading.",
-    allowedTools: [],
-    delegationTools: [],
-    note: "No direct tools are available.",
   });
   assertEquals(errors.length, 1);
 });
@@ -1183,38 +1046,7 @@ Body`;
     skillId: "invalid",
     instructions,
     nextStep: "Continue after loading.",
-    allowedTools: [],
-    delegationTools: [],
-    note: "No direct tools are available.",
   });
-});
-
-Deno.test("buildStrictRuntimeLoadedSkillResponse enforces an explicit empty allowed-tools policy", () => {
-  const response = buildStrictRuntimeLoadedSkillResponse({
-    skillId: "read-only",
-    instructions: "---\nallowed-tools: []\n---\nRead without tools.",
-    nextStep: "Continue after loading.",
-    messages: loadedSkillMessages,
-    availableToolNames: ["read_file"],
-  });
-
-  assertEquals(response.allowedTools, []);
-  assertEquals(response.delegationTools, []);
-  assertEquals(response.note, "No direct tools are available.");
-});
-
-Deno.test("buildRuntimeLoadedSkillResponse enforces an explicit empty allowed-tools policy", () => {
-  const response = buildRuntimeLoadedSkillResponse({
-    skillId: "read-only",
-    instructions: "---\nallowed-tools: []\n---\nRead without tools.",
-    nextStep: "Continue after loading.",
-    messages: loadedSkillMessages,
-    availableToolNames: ["read_file"],
-  });
-
-  assertEquals(response.allowedTools, []);
-  assertEquals(response.delegationTools, []);
-  assertEquals(response.note, "No direct tools are available.");
 });
 
 Deno.test("buildRuntimeLoadedSkillResponse bounds direct inputs", () => {
@@ -1465,7 +1297,6 @@ Deno.test("strict loaded responses snapshot array lengths by descriptor", () => 
   });
 
   assertEquals(response.references, ["references/guide.md"]);
-  assertEquals(response.allowedTools, ["read_file"]);
   assertEquals(referenceLengthReads, 0);
   assertEquals(toolLengthReads, 0);
 });

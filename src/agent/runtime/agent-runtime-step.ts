@@ -56,7 +56,6 @@ export type RuntimeStepStateResolver = (
 export interface PrepareAgentRuntimeStepInput {
   agentId: string;
   activeSkillId?: string | undefined;
-  activeSkillPolicy: string[] | undefined;
   activeSkillToolAvailability: SkillToolAvailability | undefined;
   allowedRemoteToolNames: string[] | undefined;
   config: AgentConfig;
@@ -144,12 +143,8 @@ export async function prepareAgentRuntimeStep(
     })
     : [];
 
-  if (input.activeSkillPolicy || input.activeSkillToolAvailability) {
-    tools = filterToolsForSkill(
-      tools,
-      input.activeSkillPolicy,
-      input.activeSkillToolAvailability,
-    );
+  if (input.activeSkillToolAvailability) {
+    tools = filterToolsForSkill(tools, input.activeSkillToolAvailability);
   }
   tools = filterToolsAfterSubmittedFormInput(
     tools,

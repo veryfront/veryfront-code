@@ -28,7 +28,6 @@ describe("agent/runtime-step", () => {
     const state = createToolExposureState(["get_release"]);
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: {
@@ -68,7 +67,6 @@ describe("agent/runtime-step", () => {
   it("keeps provider-native tools in prompt inventory but outside tool_search authorization", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: { model: "anthropic/claude-opus-4-6", system: "Base", tools: true } as AgentConfig,
@@ -98,7 +96,6 @@ describe("agent/runtime-step", () => {
     const shadowAbort = new AbortController();
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: { model: "auto", system: "Base", __vfToolLoadingMode: "eager" } as AgentConfig,
@@ -124,7 +121,6 @@ describe("agent/runtime-step", () => {
   it("does not let runtime context shadow trusted allowed skill ids", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: {
@@ -156,7 +152,7 @@ describe("agent/runtime-step", () => {
     assertEquals(prepared.runtimeContext, { allowedSkillIds: ["selected"], keep: true });
   });
 
-  it("resolves runtime state, merges tool context, and applies active skill policy", async () => {
+  it("resolves runtime state and merges tool context", async () => {
     const messages: Message[] = [{
       id: "msg_1",
       role: "user",
@@ -174,7 +170,6 @@ describe("agent/runtime-step", () => {
 
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: ["allowed_tool"],
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: ["remote_allowed"],
       config,
@@ -228,14 +223,15 @@ describe("agent/runtime-step", () => {
       traceId: "trace_1",
     });
     assertEquals(capturedContexts, [prepared.toolContext]);
-    assertEquals(prepared.tools.map((tool) => tool.name), ["allowed_tool"]);
+    // No skill policy narrows the tool set: `allowed-tools` is spec pre-approval
+    // metadata, not an authorization boundary.
+    assertEquals(prepared.tools.map((tool) => tool.name), ["allowed_tool", "blocked_tool"]);
   });
 
   it("passes active skill state to tool execution context", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
       activeSkillId: "support-escalation",
-      activeSkillPolicy: ["search_knowledge"],
       activeSkillToolAvailability: {
         hasActiveSkill: true,
         references: ["references/guide.md"],
@@ -272,7 +268,6 @@ describe("agent/runtime-step", () => {
   it("does not include skill tools for the explicit none selector", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: {
@@ -309,7 +304,6 @@ describe("agent/runtime-step", () => {
     };
     const prepared = await prepareAgentRuntimeStep({
       agentId: "root-agent",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: {
@@ -345,7 +339,6 @@ describe("agent/runtime-step", () => {
   it("does not load tools for runtimes that declare tool calling unsupported", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: { model: "local/test", system: "Local", tools: true } as AgentConfig,
@@ -372,7 +365,6 @@ describe("agent/runtime-step", () => {
     let loaded = false;
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: { model: "local/test", system: "Local", tools: true } as AgentConfig,
@@ -414,7 +406,6 @@ describe("agent/runtime-step", () => {
 
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: {
@@ -464,7 +455,6 @@ describe("agent/runtime-step", () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
       activeSkillId: "plan",
-      activeSkillPolicy: ["load_skill"],
       activeSkillToolAvailability: {
         hasActiveSkill: true,
         references: ["references/guide.md"],
@@ -509,7 +499,6 @@ describe("agent/runtime-step", () => {
   it("hides intake tools but keeps delegation tools when hosted context records submitted form input", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: {
@@ -571,7 +560,6 @@ describe("agent/runtime-step", () => {
 
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: {
@@ -609,7 +597,6 @@ describe("agent/runtime-step", () => {
   it("hides load_skill_reference when the active skill has no references", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: ["search_knowledge"],
       activeSkillToolAvailability: {
         hasActiveSkill: true,
         references: [],
@@ -650,7 +637,6 @@ describe("agent/runtime-step", () => {
   it("hides skill file tools before any skill is active", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: {
         hasActiveSkill: false,
         references: [],

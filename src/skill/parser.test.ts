@@ -398,16 +398,15 @@ Body`),
       }
     });
 
-    it("should reject invalid allowed-tools pattern", () => {
-      try {
-        validateSkillMetadata(
-          { name: "test", description: "desc", "allowed-tools": "Bash(git:*)" },
-          "test",
-        );
-        throw new Error("Should have thrown");
-      } catch (e) {
-        assertEquals((e as Error).message.includes("invalid allowed-tools pattern"), true);
-      }
+    it("should accept the spec's own Bash(git:*) example verbatim", () => {
+      // `allowed-tools` is pre-approval metadata in the Agent Skills spec, not
+      // an authorization boundary, so a spec-conformant declaration must parse
+      // rather than be rejected by a Veryfront-specific pattern grammar.
+      const result = validateSkillMetadata(
+        { name: "test", description: "desc", "allowed-tools": "Bash(git:*)" },
+        "test",
+      );
+      assertEquals(result.allowedTools, ["Bash(git:*)"]);
     });
 
     it("should accept prefix wildcard patterns", () => {
@@ -514,6 +513,36 @@ Body`),
 
       assertEquals(setterCalls, 0);
       assertEquals(allowedTools, ["Read"]);
+    });
+
+    it("accepts the specification's own allowed-tools example on the strict path", () => {
+      // The grammar this PR removes rejected `Bash(git:*)`, which is the example
+      // in the Agent Skills specification. The strict file path had no coverage
+      // for it, so conformance was only proven on the lenient path.
+      assertEquals(
+        validateSkillFileMetadata(
+          { name: "test", description: "desc", "allowed-tools": "Bash(git:*) Bash(jq:*) Read" },
+          "test",
+        ).allowedTools,
+        ["Bash(git:*)", "Bash(jq:*)", "Read"],
+      );
+    });
+
+    it("still rejects entries that are not bounded strings", () => {
+      // Not enforcing the field is not a reason to stop validating its shape:
+      // it is parsed from an untrusted skill file, stored, and surfaced.
+      assertThrows(() =>
+        validateSkillFileMetadata(
+          { name: "test", description: "desc", "allowed-tools": [42] },
+          "test",
+        )
+      );
+      assertThrows(() =>
+        validateSkillFileMetadata(
+          { name: "test", description: "desc", "allowed-tools": ["a".repeat(257)] },
+          "test",
+        )
+      );
     });
 
     it("retains strict file-boundary metadata validation", () => {

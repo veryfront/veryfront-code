@@ -9,11 +9,6 @@ import {
 } from "#veryfront/extensions/parser/skill-document-parser.ts";
 import { loadDefaultSkillDocumentParserProvider } from "#veryfront/extensions/parser/skill-defaults.ts";
 import {
-  matchesAllowedTool,
-  snapshotAllowedToolPatterns,
-  validateStrictAllowedToolPatterns,
-} from "#veryfront/skill/allowed-tools.ts";
-import {
   SKILL_ALLOWED_TOOL_MAX_PATTERNS,
   SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH,
   SKILL_DOCUMENT_MAX_CHARACTERS,
@@ -97,7 +92,24 @@ function normalizeStrictAllowedTools(value: string | string[]): string[] {
     throw new TypeError("Allowed-tools patterns must not be empty");
   }
 
-  return validateStrictAllowedToolPatterns(patterns.filter((entry) => entry.length > 0));
+  const kept = patterns.filter((entry) => entry.length > 0);
+  // Bounded but not grammar-checked: `allowed-tools` is spec pre-approval
+  // metadata the runtime never enforces, so any spec-conformant value must
+  // parse (including `Bash(git:*)`). Bounds still apply because the value
+  // comes from untrusted frontmatter.
+  if (kept.length > SKILL_ALLOWED_TOOL_MAX_PATTERNS) {
+    throw new RangeError(
+      `Allowed-tools accepts at most ${SKILL_ALLOWED_TOOL_MAX_PATTERNS} patterns`,
+    );
+  }
+  for (const entry of kept) {
+    if (entry.length > SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH) {
+      throw new RangeError(
+        `Allowed-tools patterns must be at most ${SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH} characters`,
+      );
+    }
+  }
+  return kept;
 }
 
 function normalizeStrictMetadata(value: unknown): Record<string, string> | undefined {
@@ -270,14 +282,12 @@ export type RuntimeSkillDefinition = {
   displayName?: string;
   description: string;
   instructions: string;
-  allowedTools: string[];
   /**
-   * Serializable discriminator used by strict runtime catalogs to distinguish
-   * an omitted policy from an explicitly empty deny-all policy. Legacy/public
-   * definitions may omit it; a non-empty allowedTools array still implies a
-   * declared policy.
+   * `allowed-tools` frontmatter, recorded verbatim. The Agent Skills spec
+   * defines this as pre-approval metadata, so the runtime carries it but never
+   * enforces it. See veryfront/veryfront-issue-inbox#406.
    */
-  allowedToolsDeclared?: boolean;
+  allowedTools?: string[];
   metadata?: Record<string, string>;
   model?: string;
   thinking?: false | number;
@@ -296,21 +306,6 @@ export type RuntimeSkillDefinition = {
    */
   sourcePath?: string;
 };
-
-/**
- * Catalog-policy check that preserves the legacy public definition contract.
- *
- * Non-empty arrays always describe a policy. Strict builders persist the
- * omitted-versus-empty distinction in an additive serializable discriminator;
- * legacy definitions without it retain their historical empty-array
- * interpretation until their instructions are loaded and parsed.
- */
-export function hasRuntimeSkillAllowedToolsPolicy(
-  definition: RuntimeSkillDefinition,
-): boolean {
-  if (definition.allowedTools.length > 0) return true;
-  return definition.allowedToolsDeclared === true;
-}
 
 /**
  * Whether a runtime skill definition is visible to the caller identified by
@@ -393,9 +388,6 @@ export function resolveRuntimeSkillSelectorForAgent(input: {
 
 /** Public API contract for runtime loaded skill response messages. */
 export type RuntimeLoadedSkillResponseMessages = {
-  allowedToolsNote: string;
-  noCurrentRunToolsNote: string;
-  unavailableCurrentRunToolsDelegationNote: string;
   overrideNote: string;
   referenceNote: string;
 };
@@ -434,40 +426,6 @@ export type RuntimeSkillMetadataParseOptions = {
 
 function canUseLegacyInvokeAgent(availableToolNameSet: ReadonlySet<string> | null): boolean {
   return availableToolNameSet?.has("invoke_agent") === true;
-}
-
-function isDelegationToolName(toolName: string): boolean {
-  return toolName === "invoke_agent" || toolName.startsWith("agent_");
-}
-
-function isToolAllowedByResolvedPolicy(
-  toolName: string,
-  declaredAllowedTools: readonly string[],
-  hasDeclaredAllowedTools: boolean,
-): boolean {
-  return !hasDeclaredAllowedTools ||
-    declaredAllowedTools.some((pattern) => matchesAllowedTool(toolName, pattern));
-}
-
-function hasAllowedAvailableDelegationTool(
-  availableToolNameSet: ReadonlySet<string> | null,
-  declaredAllowedTools: readonly string[],
-  hasDeclaredAllowedTools: boolean,
-): boolean {
-  if (availableToolNameSet === null) return false;
-  for (const toolName of availableToolNameSet) {
-    if (
-      isDelegationToolName(toolName) &&
-      isToolAllowedByResolvedPolicy(
-        toolName,
-        declaredAllowedTools,
-        hasDeclaredAllowedTools,
-      )
-    ) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function snapshotAvailableRuntimeToolNames(
@@ -922,9 +880,9 @@ function parseRuntimeSkillDirectoryDocument(
         ...source.document.metadata,
         name: metadata.name,
         description: metadata.description,
-        allowedTools: metadata.allowedTools === undefined
-          ? []
-          : snapshotAllowedToolPatterns(metadata.allowedTools),
+        allowedTools: Object.freeze(
+          metadata.allowedTools === undefined ? [] : [...metadata.allowedTools],
+        ) as string[],
         metadata: metadata.metadata === undefined
           ? undefined
           : Object.freeze({ ...metadata.metadata }),
@@ -980,8 +938,7 @@ function buildRuntimeSkillDefinitionFromDocument(
     ...(displayName === undefined ? {} : { displayName }),
     description: metadata.description ?? extractDescriptionFromMarkdown(body, input.id),
     instructions: input.content,
-    allowedTools: snapshotAllowedToolPatterns(metadata.allowedTools),
-    allowedToolsDeclared: parsed.allowedToolsDeclared,
+    allowedTools: Object.freeze([...metadata.allowedTools]) as string[],
     ...(metadataSnapshot === undefined ? {} : { metadata: metadataSnapshot }),
     ...(metadata.model ? { model: metadata.model } : {}),
     ...(metadata.thinking !== undefined ? { thinking: metadata.thinking } : {}),
@@ -1126,9 +1083,6 @@ type BuildRuntimeLoadedSkillResponseInput = {
 };
 
 const RUNTIME_LOADED_SKILL_MESSAGE_FIELDS = [
-  "allowedToolsNote",
-  "noCurrentRunToolsNote",
-  "unavailableCurrentRunToolsDelegationNote",
   "overrideNote",
   "referenceNote",
 ] as const satisfies readonly (keyof RuntimeLoadedSkillResponseMessages)[];
@@ -1243,60 +1197,18 @@ export function buildStrictRuntimeLoadedSkillResponse(
     skillDocumentParserProvider: snapshot.skillDocumentParserProvider,
   });
   const metadata = parsedSource?.document.metadata ?? null;
-  const invalidMetadata = parsedSource === null;
-  const declaredAllowedTools = metadata?.allowedTools ?? [];
   const availableToolNameSet = snapshotAvailableRuntimeToolNames(snapshot.availableToolNames);
-  const isAvailableAllowedToolPattern = (pattern: string): boolean => {
-    if (availableToolNameSet === null) return false;
-    for (const toolName of availableToolNameSet) {
-      if (matchesAllowedTool(toolName, pattern)) return true;
-    }
-    return false;
-  };
-  const currentRunAllowedTools = availableToolNameSet
-    ? declaredAllowedTools.filter(isAvailableAllowedToolPattern)
-    : declaredAllowedTools;
-  const unavailableCurrentRunTools = availableToolNameSet && declaredAllowedTools.length > 0
-    ? declaredAllowedTools.filter((pattern) => !isAvailableAllowedToolPattern(pattern))
-    : [];
   const hasOverrides = metadata?.model !== undefined || metadata?.thinking !== undefined ||
     metadata?.maxSteps !== undefined;
-  const hasDeclaredAllowedTools = invalidMetadata || parsedSource.allowedToolsDeclared;
 
   return {
     skillId: snapshot.skillId,
     instructions: snapshot.instructions,
     nextStep: snapshot.nextStep,
-    ...(hasDeclaredAllowedTools
-      ? {
-        allowedTools: currentRunAllowedTools,
-        note: currentRunAllowedTools.length > 0
-          ? snapshot.messages.allowedToolsNote
-          : snapshot.messages.noCurrentRunToolsNote,
-      }
-      : {}),
-    ...(hasDeclaredAllowedTools ? { delegationTools: declaredAllowedTools } : {}),
-    ...(unavailableCurrentRunTools.length > 0
-      ? {
-        unavailableCurrentRunTools,
-        ...(hasAllowedAvailableDelegationTool(
-            availableToolNameSet,
-            declaredAllowedTools,
-            hasDeclaredAllowedTools,
-          )
-          ? { delegationNote: snapshot.messages.unavailableCurrentRunToolsDelegationNote }
-          : {}),
-      }
-      : {}),
     ...(metadata?.model ? { model: metadata.model } : {}),
     ...(metadata?.thinking !== undefined ? { thinking: metadata.thinking } : {}),
     ...(metadata?.maxSteps !== undefined ? { maxSteps: metadata.maxSteps } : {}),
-    ...(hasOverrides && canUseLegacyInvokeAgent(availableToolNameSet) &&
-        isToolAllowedByResolvedPolicy(
-          "invoke_agent",
-          declaredAllowedTools,
-          hasDeclaredAllowedTools,
-        )
+    ...(hasOverrides && canUseLegacyInvokeAgent(availableToolNameSet)
       ? {
         overrideNote: snapshot.messages.overrideNote,
       }

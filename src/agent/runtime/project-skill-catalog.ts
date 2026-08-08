@@ -120,7 +120,7 @@ function getRetainedMetadataCharacters(definition: RuntimeSkillDefinition): numb
   ) {
     total += value?.length ?? 0;
   }
-  for (const value of definition.allowedTools) total += value.length;
+  for (const value of definition.allowedTools ?? []) total += value.length;
   for (const value of definition.references ?? []) total += value.length;
   for (const [key, value] of Object.entries(definition.metadata ?? {})) {
     total += key.length + value.length;
@@ -310,15 +310,6 @@ function snapshotBuiltinSkillDefinition(
   const metadata = rawMetadata === undefined
     ? undefined
     : snapshotBuiltinMetadata(rawMetadata, index);
-  const allowedToolsDeclared = readOwnDataProperty(
-    value,
-    "allowedToolsDeclared",
-    label,
-    false,
-  );
-  if (allowedToolsDeclared !== undefined && typeof allowedToolsDeclared !== "boolean") {
-    throw new TypeError(`${label}.allowedToolsDeclared must be a boolean`);
-  }
   const thinking = readOwnDataProperty(value, "thinking", label, false);
   if (
     thinking !== undefined &&
@@ -341,7 +332,6 @@ function snapshotBuiltinSkillDefinition(
     description: requireBuiltinString(value, "description", index, true)!,
     instructions: requireBuiltinString(value, "instructions", index, true)!,
     allowedTools: allowedTools as string[],
-    ...(allowedToolsDeclared === undefined ? {} : { allowedToolsDeclared }),
     ...(metadata === undefined ? {} : { metadata: metadata as Record<string, string> }),
     ...(thinking === undefined ? {} : { thinking: thinking as false | number }),
     ...(maxSteps === undefined ? {} : { maxSteps }),

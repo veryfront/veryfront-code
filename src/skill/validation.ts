@@ -1,8 +1,12 @@
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isAbsolute } from "#veryfront/compat/path";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
-import { snapshotAllowedToolPatterns } from "./allowed-tools.ts";
-import { SKILL_ID_MAX_LENGTH, SKILL_ROOT_PATH_MAX_LENGTH } from "./limits.ts";
+import {
+  SKILL_ALLOWED_TOOL_MAX_PATTERNS,
+  SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH,
+  SKILL_ID_MAX_LENGTH,
+  SKILL_ROOT_PATH_MAX_LENGTH,
+} from "./limits.ts";
 import {
   isCanonicalAdapterRelativeSkillRoot,
   isValidProviderSafeSkillId,
@@ -95,6 +99,34 @@ function optionalBoundedIdentity(
 ): string | undefined {
   if (value === undefined) return undefined;
   return requireBoundedIdentity(value, field, maxLength);
+}
+
+/**
+ * Validate `allowed-tools` entries as bounded strings.
+ *
+ * Bounds mirror the strict parser's, so a document rejected there is not
+ * silently accepted here.
+ */
+function normalizeAllowedToolEntries(raw: unknown[]): string[] {
+  if (raw.length > SKILL_ALLOWED_TOOL_MAX_PATTERNS) {
+    throw new NativeTypeError(
+      `Skill metadata allowedTools must not exceed ${SKILL_ALLOWED_TOOL_MAX_PATTERNS} entries`,
+    );
+  }
+  return raw.map((entry) => {
+    if (typeof entry !== "string") {
+      throw new NativeTypeError("Skill metadata allowedTools entries must be strings");
+    }
+    if (entry.length > SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH) {
+      throw new NativeTypeError(
+        `Skill metadata allowedTools entries must not exceed ${SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH} characters`,
+      );
+    }
+    if (hasControlCharacters(entry) || !isWellFormedUtf16(entry)) {
+      throw new NativeTypeError("Skill metadata allowedTools entries must be printable text");
+    }
+    return entry;
+  });
 }
 
 function optionalBoundedString(
@@ -199,9 +231,15 @@ function normalizeSkillMetadata(value: unknown): SkillMetadata {
   if (rawAllowedTools !== undefined && !arrayIsArray(rawAllowedTools)) {
     throw new NativeTypeError("Skill metadata allowedTools must be an array");
   }
+  // `allowed-tools` is spec pre-approval metadata the runtime does not enforce,
+  // so entries are recorded verbatim rather than matched against a pattern
+  // grammar. Not enforcing it is not a reason to stop validating its shape:
+  // this value is parsed from untrusted skill files, stored, and surfaced, so
+  // it still has to be strings within bounds. Dropping the grammar and dropping
+  // the type check are separate decisions, and only the first was intended.
   const allowedTools = rawAllowedTools === undefined
     ? undefined
-    : snapshotAllowedToolPatterns(rawAllowedTools as string[]);
+    : Object.freeze(normalizeAllowedToolEntries(rawAllowedTools)) as string[];
   const license = optionalBoundedString(
     ownDataValue(value, "license"),
     "Skill metadata license",
