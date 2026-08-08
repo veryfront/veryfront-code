@@ -42,6 +42,47 @@ describe("lifecycle AG-UI browser adapter", () => {
     );
   });
 
+  // Same defect as browser-encoder: providers restart part ids at `reasoning-0`
+  // every step, so composing the run-global id from the part id alone collides.
+  it("gives each reasoning span a distinct messageId when a provider reuses part ids", () => {
+    const adapter = createLifecycleAgUiBrowserAdapter({
+      messageId: "message-multistep",
+    });
+    const events = frames([
+      { event: { type: "step_start" } },
+      { event: { type: "reasoning_start", id: "reasoning-0" } },
+      { event: { type: "reasoning_content", id: "reasoning-0", delta: "step one" } },
+      { event: { type: "reasoning_end", id: "reasoning-0" } },
+      { event: { type: "step_finish" } },
+      { event: { type: "step_start" } },
+      { event: { type: "reasoning_start", id: "reasoning-0" } },
+      { event: { type: "reasoning_content", id: "reasoning-0", delta: "step two" } },
+      { event: { type: "reasoning_end", id: "reasoning-0" } },
+      { event: { type: "step_finish" } },
+    ]).flatMap((frame) => adapter.encode(frame));
+
+    const starts = events
+      .filter((entry) => entry.event === "ReasoningMessageStart")
+      .map((entry) => entry.payload.messageId as string);
+
+    assertEquals(starts.length, 2, "both reasoning spans should start");
+    assertEquals(
+      new Set(starts).size,
+      2,
+      `each reasoning span needs its own messageId, got ${JSON.stringify(starts)}`,
+    );
+
+    // Content and end must stay on the id their own span opened.
+    const perSpan = events
+      .filter((entry) => entry.event.startsWith("ReasoningMessage"))
+      .map((entry) => entry.payload.messageId as string);
+    assertEquals(
+      perSpan,
+      [starts[0], starts[0], starts[0], starts[1], starts[1], starts[1]],
+      "each span's start, content and end must share one messageId",
+    );
+  });
+
   it("projects a balanced canonical sequence with matched identities", () => {
     const adapter = createLifecycleAgUiBrowserAdapter({
       messageId: "message-1",

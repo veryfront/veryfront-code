@@ -118,7 +118,24 @@ export function createLifecycleAgUiBrowserAdapter(input: {
     return contentId;
   };
 
-  const reasoningMessageId = (id: string) => `${state.messageId}:reasoning:${id}`;
+  // A reasoning span is identified by its position in the run, not by the
+  // provider's part id. Providers restart part ids at `reasoning-0` on every
+  // step, so a part-id-derived id collides across every span of a multi-step
+  // run. Ordinals also match the scheme veryfront-api uses when it rebuilds
+  // these events for snapshots and terminal replay.
+  let nextReasoningSpanIndex = 0;
+  let activeReasoningMessageId: string | null = null;
+  const startReasoning = (): string => {
+    activeReasoningMessageId = `${state.messageId}:reasoning:${nextReasoningSpanIndex}`;
+    nextReasoningSpanIndex += 1;
+    return activeReasoningMessageId;
+  };
+  const continueReasoning = (): string => activeReasoningMessageId ?? startReasoning();
+  const endReasoning = (): string => {
+    const messageId = continueReasoning();
+    activeReasoningMessageId = null;
+    return messageId;
+  };
 
   const encodeSemantic = (
     event: Extract<StreamLifecycleFrame, { class: "semantic" }>["event"],
@@ -168,7 +185,7 @@ export function createLifecycleAgUiBrowserAdapter(input: {
         return [{
           event: "ReasoningMessageStart",
           payload: {
-            messageId: reasoningMessageId(event.id),
+            messageId: startReasoning(),
             role: "reasoning",
           },
         }];
@@ -177,14 +194,14 @@ export function createLifecycleAgUiBrowserAdapter(input: {
         return [{
           event: "ReasoningMessageContent",
           payload: {
-            messageId: reasoningMessageId(event.id),
+            messageId: continueReasoning(),
             delta: event.delta,
           },
         }];
       case "reasoning_end":
         return [{
           event: "ReasoningMessageEnd",
-          payload: { messageId: reasoningMessageId(event.id) },
+          payload: { messageId: endReasoning() },
         }];
       case "tool_input_start":
         state.sawVisibleOutput = true;
