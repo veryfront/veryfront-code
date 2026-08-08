@@ -883,7 +883,7 @@ describe("security/http/response/security-handler", () => {
       assertEquals(ctx.securityConfig.derivedCsp, undefined);
       const result = buildCSP(false, "n", ctx.securityConfig);
       assert(
-        !parseDirectiveSources(result, "script-src").includes("https://evil.example"),
+        !new Set(parseDirectiveSources(result, "script-src")).has("https://evil.example"),
         "a project-declared derived layer must not reach the policy",
       );
     });
