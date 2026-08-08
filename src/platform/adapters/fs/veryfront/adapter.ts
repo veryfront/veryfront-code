@@ -130,7 +130,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
   /** Resolves when file list initialization is complete (for coordinating reads) */
   private fileListReadyResolve: (() => void) | null = null;
   /** Single-flight background rewarm when the file list cache disappears */
-  private fileListWarmupPromise: Promise<void> | null = null;
+  // Resolves with the files it fetched, so a caller that waited does not have
+  // to depend on the cache write having succeeded -- writes are skipped
+  // entirely when caching is disabled, and can fail on a backend cache.
+  private fileListWarmupPromise: Promise<Array<{ path: string; content?: string }> | null> | null =
+    null;
   private fileListWarmupKey: string | null = null;
   /** Single-flight foreground refresh when a branch preview read misses a newly pushed file. */
   private branchMissRecoveryPromise: Promise<void> | null = null;
@@ -663,7 +667,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     const warmupContext = this.contentContext;
-    let warmupPromise: Promise<void> | null = null;
+    let warmupPromise: Promise<Array<{ path: string; content?: string }> | null> | null = null;
     warmupPromise = (async () => {
       try {
         const existing = await this.cache.getAsync<Array<{ path: string; content?: string }>>(
@@ -676,7 +680,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
             cacheKey: effectiveCacheKey,
             fileCount: existing.length,
           });
-          return;
+          return existing;
         }
 
         logger.debug("Starting file list warmup", {
@@ -704,12 +708,16 @@ export class VeryfrontFSAdapter implements FSAdapter {
           totalFiles: files.length,
           filesWithContent: files.filter((file) => file.content).length,
         });
+
+        return files;
       } catch (error) {
         logger.warn("File list warmup failed", {
           reason,
           cacheKey: effectiveCacheKey,
           error: error instanceof Error ? error.message : String(error),
         });
+
+        return null;
       } finally {
         if (warmupPromise && this.fileListWarmupPromise === warmupPromise) {
           this.fileListWarmupPromise = null;
@@ -720,7 +728,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     this.fileListWarmupPromise = warmupPromise;
     this.fileListWarmupKey = effectiveCacheKey;
-    this.readOps.setFileListReadyPromise(warmupPromise);
+    // That collaborator only needs completion, not the payload.
+    this.readOps.setFileListReadyPromise(warmupPromise.then(() => {}));
   }
 
   private markSourceSnapshotChanged(
@@ -1072,8 +1081,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
     // list was empty on every request for the life of the process. Wait for the
     // fetch this read just started, then look again.
     if (options.waitForWarmup && cacheKey && !files?.length && this.fileListWarmupPromise) {
-      await this.fileListWarmupPromise;
-      files = await this.cache.getAsync<{ path: string; content?: string }[]>(cacheKey);
+      // Take what the fetch returned rather than re-reading the cache: with
+      // caching disabled, or a failed backend write, the cache keeps nothing
+      // and correctness would depend on a write that never happened.
+      const fetched = await this.fileListWarmupPromise;
+      files = fetched?.length
+        ? fetched
+        : await this.cache.getAsync<{ path: string; content?: string }[]>(cacheKey);
     }
 
     if (!cacheKey || !files?.length) {
