@@ -64,6 +64,25 @@ async function settle(): Promise<void> {
 }
 
 /**
+ * Wait for a condition the copy handler reaches asynchronously.
+ *
+ * `settle` spends a fixed budget of one microtask and one macrotask, which is
+ * enough for the success path but not reliably for the failure path: a rejected
+ * `clipboard.writeText` falls back to `execCommand`, and only once that returns
+ * false does the failed state get set. That chain is several ticks long, so on
+ * a loaded machine the assertion could run against the pre-failure render. Poll
+ * for the state the test is actually about instead of guessing a tick count.
+ */
+async function waitFor(predicate: () => boolean, description: string): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    flushSync(() => {});
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error(`Timed out waiting for ${description}`);
+}
+
+/**
  * Unmount and drain the one-shot tasks the runtime leaves behind.
  *
  * The `execCommand` copy fallback selects a textarea, and jsdom queues that
@@ -351,7 +370,10 @@ describe("CodeBlock clipboard integration", () => {
       assert(button, "copy control renders");
 
       button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
-      await settle();
+      await waitFor(
+        () => button.dataset.failed === "true",
+        "both clipboard mechanisms to fail",
+      );
 
       assertEquals(button.dataset.copied, "false");
       assertEquals(button.dataset.failed, "true");
@@ -383,7 +405,10 @@ describe("CodeBlock clipboard integration", () => {
       assert(button, "copy control renders");
 
       button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
-      await settle();
+      await waitFor(
+        () => button.getAttribute("aria-label") === "Unable to copy code",
+        "the copy control to report failure",
+      );
 
       assertEquals(button.getAttribute("aria-label"), "Unable to copy code");
       assertEquals(
