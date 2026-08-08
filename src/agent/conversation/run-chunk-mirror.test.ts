@@ -3,7 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessageChunk } from "../../chat/protocol.ts";
 import type { ConversationRunEventQueueController } from "./durable.ts";
-import type { ConversationRunEvent } from "./run-events.ts";
+import { type ConversationRunEvent, ConversationRunEventEncoder } from "./run-events.ts";
 import {
   createConversationRunChunkMirror,
   createHostedConversationRunChunkMirror,
@@ -57,6 +57,8 @@ describe("agent/conversation-run-chunk-mirror", () => {
     const preparedTypes: string[] = [];
     const mirror = createConversationRunChunkMirror({
       queueController,
+      // Exact-event assertions: an unclocked encoder keeps them free of elapsedMs.
+      encoder: new ConversationRunEventEncoder(),
       immediateFlushEventCount: 99,
       flushDelayMs: 10_000,
       onChunkPrepared: ({ events }) => {
@@ -73,11 +75,39 @@ describe("agent/conversation-run-chunk-mirror", () => {
     mirror.dispose();
   });
 
+  // The other mirror tests pin an unclocked encoder so their exact-event
+  // assertions stay deterministic, which leaves the default unproven. This
+  // covers it: omitting `encoder` must yield durable events that carry elapsed.
+  it("installs a clock on the encoder it creates by default", async () => {
+    const queueController = createQueueController();
+    const prepared: ConversationRunEvent[] = [];
+    const mirror = createConversationRunChunkMirror({
+      queueController,
+      immediateFlushEventCount: 99,
+      flushDelayMs: 10_000,
+      onChunkPrepared: ({ events }) => {
+        prepared.push(...events);
+      },
+    });
+
+    await mirror.handleChunk({ type: "text-delta", id: "m1", delta: "hello" });
+
+    const elapsedMs = prepared[0]?.elapsedMs;
+    assertEquals(typeof elapsedMs, "number", "the default encoder must stamp elapsedMs");
+    assertEquals(
+      typeof elapsedMs === "number" && Number.isFinite(elapsedMs) && elapsedMs >= 0,
+      true,
+      `elapsed must be a finite, nonnegative reading, got ${String(elapsedMs)}`,
+    );
+    mirror.dispose();
+  });
+
   it("normalizes external events before enqueueing", async () => {
     const queueController = createQueueController();
     const prepared: ConversationRunEvent[][] = [];
     const mirror = createConversationRunChunkMirror({
       queueController,
+      encoder: new ConversationRunEventEncoder(),
       immediateFlushEventCount: 99,
       flushDelayMs: 10_000,
       onExternalEventsPrepared: ({ events }) => {
@@ -106,6 +136,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
     const preparedMarkers: string[] = [];
     const mirror = createConversationRunChunkMirror({
       queueController,
+      encoder: new ConversationRunEventEncoder(),
       immediateFlushEventCount: 99,
       flushDelayMs: 10_000,
       prepareChunkEvents: ({ defaultPrepare }) => {

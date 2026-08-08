@@ -1012,6 +1012,7 @@ export {
 export {
   type ConversationRunEvent,
   ConversationRunEventEncoder,
+  type ConversationRunEventEncoderOptions,
   ConversationRunEventSchema,
   conversationRunEventTypes,
   encodeConversationRunEvents,
