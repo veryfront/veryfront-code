@@ -27,6 +27,48 @@ describe("security/http/derived-csp-cache", () => {
     assertEquals(second, first);
   });
 
+  it("collapses concurrent misses into one derivation", async () => {
+    // A key is coldest right after a release, when every pod serves that
+    // content version for the first time and requests arrive together. Storing
+    // the value only after the await would let each of them scan the whole
+    // source set.
+    let loads = 0;
+    let release!: (files: Array<{ path: string; content?: string }>) => void;
+    const lookup = {
+      projectScope: "proj",
+      contentVersion: "release:r1",
+      loadSourceFiles: () => {
+        loads++;
+        return new Promise<Array<{ path: string; content?: string }>>((resolve) => {
+          release = resolve;
+        });
+      },
+    };
+
+    const first = getDerivedCspOrigins(lookup);
+    const second = getDerivedCspOrigins(lookup);
+    assertEquals(loads, 1, "the second caller must not start its own derivation");
+
+    release([{ path: "a.tsx", content: IMG }]);
+    const [a, b] = await Promise.all([first, second]);
+    assertEquals(loads, 1);
+    assertEquals(a["img-src"], ["https://cdn.example.com"]);
+    assertEquals(b, a);
+
+    // And the flight is cleared, so a later miss can still derive.
+    __clearDerivedCspCacheForTests();
+    let reloaded = 0;
+    await getDerivedCspOrigins({
+      projectScope: "proj",
+      contentVersion: "release:r1",
+      loadSourceFiles: () => {
+        reloaded++;
+        return Promise.resolve([{ path: "a.tsx", content: IMG }]);
+      },
+    });
+    assertEquals(reloaded, 1);
+  });
+
   it("re-derives when the content version moves", async () => {
     let loads = 0;
     const make = (contentVersion: string, host: string) => ({
