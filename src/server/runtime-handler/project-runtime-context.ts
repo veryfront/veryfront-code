@@ -9,6 +9,7 @@ import type { SecurityConfig } from "#veryfront/types";
 import { deriveSecurityContext } from "#veryfront/security/http/config.ts";
 import { getDerivedCspOrigins } from "#veryfront/security/http/derived-csp-cache.ts";
 import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
+import { isExtendedFSAdapter } from "#veryfront/platform/adapters/index.ts";
 import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { createRequestContext } from "../context/request-context.ts";
@@ -349,7 +350,11 @@ export async function resolveProjectRuntimeContext(
       projectId: projectRes.projectId,
       token: reqCtx.token,
       releaseId: envRes.releaseId,
-      branch: projectRes.parsedDomain?.branch ?? reqCtx.branch,
+      // Same precedence as the hosted config source context above. If the two
+      // disagree, derivation reads a different branch than the one that
+      // produced the config, and the origins describe content other than the
+      // page being served.
+      branch: reqCtx.branch ?? projectRes.parsedDomain?.branch,
       environmentName: projectRes.environmentName,
     })
     : undefined;
@@ -557,17 +562,8 @@ async function deriveProjectCspOrigins(args: {
   branch: string | null | undefined;
   environmentName: string | undefined;
 }): Promise<SecurityConfig["derivedCsp"]> {
-  const fs = args.adapter.fs as {
-    runWithContext?: (
-      slug: string,
-      token: string,
-      fn: () => Promise<unknown>,
-      projectId?: string,
-      options?: Record<string, unknown>,
-    ) => Promise<unknown>;
-    getUnderlyingAdapter?: () => unknown;
-  };
-  if (typeof fs.runWithContext !== "function") return undefined;
+  if (!isExtendedFSAdapter(args.adapter.fs) || !args.adapter.fs.runWithContext) return undefined;
+  const fs = args.adapter.fs;
 
   const run = async (): Promise<SecurityConfig["derivedCsp"]> => {
     const underlying = typeof fs.getUnderlyingAdapter === "function"
