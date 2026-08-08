@@ -24,10 +24,12 @@ object-src 'none';
 frame-src 'self';
 frame-ancestors 'none';
 base-uri 'self';
-form-action 'self'
+form-action 'self';
+report-to veryfront-csp;
+report-uri /_vf/csp-report
 ```
 
-Alongside it: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Strict-Transport-Security`, and `Cross-Origin-Opener-Policy` / `Cross-Origin-Resource-Policy` set to `same-origin`.
+Alongside it: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Strict-Transport-Security`, `Cross-Origin-Opener-Policy` / `Cross-Origin-Resource-Policy` set to `same-origin`, and `Reporting-Endpoints: veryfront-csp="/_vf/csp-report"`, which defines the group the two reporting directives name.
 
 Development serves no CSP at all, so HMR and dev tooling are never blocked and a local allowance can never widen your production policy.
 
@@ -36,6 +38,14 @@ Three directives are worth understanding:
 - **`script-src` includes `https://esm.sh`** because the renderer writes React imports from that CDN into every document. A fresh nonce is generated per response for the framework's own inline bootstrap.
 - **`style-src` and `font-src` include the Google Fonts origins** because `veryfront/fonts` writes those tags into the document itself. Google Fonts therefore works with no configuration. If your project never uses it, see [Tightening the policy](#tightening-the-policy).
 - **`frame-ancestors`** is `'none'` on your own domain. On `*.veryfront.com` addresses it instead allows the Studio origins, so the Studio preview iframe works.
+
+## Violation reports
+
+The policy asks browsers to report what it blocks, to `/_vf/csp-report` on your own origin. Both spellings are sent because `report-to` is the current one and `report-uri` is still the only one several shipping browsers honour.
+
+You do not configure this and cannot switch it off. Reports are recorded with the violating document, the directive, the blocked URL and the status — with query strings removed, so identifiers in a URL do not reach a log. They are rate-limited, and the endpoint always answers `204`.
+
+The endpoint is exempt from `security.auth` and `security.csrf`. A browser reports a violation without credentials and without a CSRF token, because a report is not a user action, so a protected project would otherwise report nothing at all. Exempting it discloses nothing: it reads no credentials, changes no state, and its response never varies.
 
 ## Adding an origin
 
