@@ -64,12 +64,13 @@ function encodeCustomDataEvent(
 export interface ConversationRunEventEncoderOptions {
   /**
    * Monotonic time source, in milliseconds. Supply one to stamp every encoded
-   * record with `elapsedMs` relative to this encoder's creation.
+   * record with `elapsedMs`, measured from this encoder's creation.
    *
-   * These records are what lands in `agent_run_event`, whose `created_at` is the
-   * row's insert time. Without a stamp taken here nothing downstream can say when
-   * an event happened, so durations describe the writer rather than the run.
-   * Omit it and nothing is stamped.
+   * A persisted event otherwise carries only the time it was stored, which
+   * tracks the writer rather than the run, so durations built from it do not
+   * describe what the agent did. This stamp is taken at the point the event is
+   * produced, which is the only place that observes it. Omit the clock and
+   * nothing is stamped.
    */
   nowMs?: () => number;
 }
@@ -85,9 +86,9 @@ export class ConversationRunEventEncoder {
   private readonly nowMs?: () => number;
   private readonly startedMs?: number;
 
-  // One encoder spans a whole run -- it carries stepCount and the active message
-  // across every step -- so elapsed measured from here is run-relative and needs
-  // no per-attempt anchor. `agent_run.started_at + elapsed_ms` gives wall clock.
+  // One encoder spans a whole run: it carries stepCount and the active message
+  // across every step, so elapsed measured from here is run-relative and needs no
+  // per-attempt anchor. Add it to the run's start time to get wall clock.
   constructor(options: ConversationRunEventEncoderOptions = {}) {
     if (options.nowMs) {
       this.nowMs = options.nowMs;
