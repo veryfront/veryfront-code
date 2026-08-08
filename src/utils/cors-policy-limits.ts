@@ -68,8 +68,15 @@ export function isValidCorsMaxAge(value: unknown): value is number {
     value <= MAX_CORS_MAX_AGE;
 }
 
-/** Whether a response header is reserved for the dedicated CORS policy layer. */
-export function isCorsPolicyResponseHeaderName(value: unknown): value is string {
+/**
+ * Whether a response header is reserved for the dedicated CORS policy layer.
+ *
+ * Returns a plain boolean rather than a `value is string` predicate: the
+ * narrowing that predicate implied was wrong in the negative branch, where it
+ * told the compiler a non-matching value was not a string at all, collapsing
+ * an ordinary header name to `never`.
+ */
+export function isCorsPolicyResponseHeaderName(value: unknown): boolean {
   return typeof value === "string" &&
     value.slice(0, CORS_POLICY_RESPONSE_HEADER_PREFIX.length).toLowerCase() ===
       CORS_POLICY_RESPONSE_HEADER_PREFIX;

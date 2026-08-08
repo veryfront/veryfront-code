@@ -44,6 +44,7 @@ import { DevFileHandler } from "../handlers/dev/files/index.ts";
 import { DebugContextHandler } from "../handlers/dev/debug-context.handler.ts";
 import { StylesCSSHandler } from "../handlers/dev/styles-css.handler.ts";
 import { StudioBridgeModulesHandler } from "../handlers/studio/bridge-modules.handler.ts";
+import { CspReportHandler } from "../handlers/request/csp-report.handler.ts";
 import { StaticHandler } from "../handlers/request/static.handler.ts";
 import { SnippetHandler } from "../handlers/request/snippet.handler.ts";
 import { LibModulesHandler } from "../handlers/request/lib-modules.handler.ts";
@@ -164,6 +165,7 @@ export const HANDLER_NAMES = [
   "CSSHandler",
   "DevFileHandler",
   "SnippetHandler",
+  "CspReportHandler",
   "StaticHandler",
   "LibModulesHandler",
   "RSCHandler",
@@ -236,6 +238,7 @@ const handlerFactories: Record<
   CSSHandler: () => new CSSHandler(),
   DevFileHandler: () => new DevFileHandler(),
   SnippetHandler: () => new SnippetHandler(),
+  CspReportHandler: () => new CspReportHandler(),
   StaticHandler: () => new StaticHandler(),
   LibModulesHandler: () => new LibModulesHandler(),
   RSCHandler: () => new RSCHandler(),
