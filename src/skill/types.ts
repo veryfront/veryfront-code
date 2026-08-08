@@ -306,7 +306,7 @@ export interface SkillScriptExecutor {
   execute(input: SkillScriptExecutorInput): Promise<SkillScriptResult>;
 }
 
-/** Active skill context for runtime policy tracking */
+/** Active skill context for runtime availability and delegation tracking */
 export interface ActiveSkillContext {
   skillId: string;
 }
