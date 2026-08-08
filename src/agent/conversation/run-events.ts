@@ -60,6 +60,20 @@ function encodeCustomDataEvent(
 }
 
 /** Implement conversation run event encoder. */
+/** Options accepted by the conversation run event encoder. */
+export interface ConversationRunEventEncoderOptions {
+  /**
+   * Monotonic time source, in milliseconds. Supply one to stamp every encoded
+   * record with `elapsedMs` relative to this encoder's creation.
+   *
+   * These records are what lands in `agent_run_event`, whose `created_at` is the
+   * row's insert time. Without a stamp taken here nothing downstream can say when
+   * an event happened, so durations describe the writer rather than the run.
+   * Omit it and nothing is stamped.
+   */
+  nowMs?: () => number;
+}
+
 export class ConversationRunEventEncoder {
   private readonly streamedToolInputs = new Set<string>();
   private readonly toolInputs = new Map<string, unknown>();
@@ -68,6 +82,18 @@ export class ConversationRunEventEncoder {
   private textContentIndex = 0;
   private activeStepName: string | null = null;
   private stepCount = 0;
+  private readonly nowMs?: () => number;
+  private readonly startedMs?: number;
+
+  // One encoder spans a whole run -- it carries stepCount and the active message
+  // across every step -- so elapsed measured from here is run-relative and needs
+  // no per-attempt anchor. `agent_run.started_at + elapsed_ms` gives wall clock.
+  constructor(options: ConversationRunEventEncoderOptions = {}) {
+    if (options.nowMs) {
+      this.nowMs = options.nowMs;
+      this.startedMs = options.nowMs();
+    }
+  }
 
   private nextStepName(): string {
     this.stepCount += 1;
@@ -128,6 +154,22 @@ export class ConversationRunEventEncoder {
   }
 
   encode(chunk: ChatStreamEvent): ConversationRunEvent[] {
+    return this.stampElapsed(this.encodeChunk(chunk));
+  }
+
+  // Stamped on the way out rather than in each case arm, so every emitted record
+  // is treated alike -- including the ones this encoder synthesises, such as the
+  // terminal result for a provider-executed call the provider never resolved.
+  private stampElapsed(events: ConversationRunEvent[]): ConversationRunEvent[] {
+    if (!this.nowMs || this.startedMs === undefined) {
+      return events;
+    }
+
+    const elapsedMs = Math.max(0, Math.round(this.nowMs() - this.startedMs));
+    return events.map((event) => ({ ...event, elapsedMs }));
+  }
+
+  private encodeChunk(chunk: ChatStreamEvent): ConversationRunEvent[] {
     switch (chunk.type) {
       case "start":
         this.activeMessageId = chunk.messageId ?? null;

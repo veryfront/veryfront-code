@@ -7,6 +7,7 @@ import {
   encodeConversationRunEvents,
   normalizeEncodedConversationRunEvents,
 } from "./run-events.ts";
+import { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "./run-event-normalization.ts";
 
 describe("agent/conversation-run-events", () => {
   it("captures active message ids from start events", () => {
@@ -261,5 +262,65 @@ describe("agent/conversation-run-events", () => {
     assertEquals(encoded[0]?.type, conversationRunEventTypes.textMessageStart);
     const normalized = normalizeEncodedConversationRunEvents(events as never);
     assertEquals(normalized.length > encoded.length, true);
+  });
+
+  // These records are what lands in `agent_run_event`. Its `created_at` is the
+  // row's insert time, so without a stamp taken here nothing downstream can say
+  // when an event actually happened, and durations describe the writer instead
+  // of the run.
+  it("stamps elapsedMs from the run's own clock when one is supplied", () => {
+    let now = 5_000;
+    const encoder = new ConversationRunEventEncoder({ nowMs: () => now });
+    encoder.encode({ type: "start", messageId: "msg-clock" });
+
+    now = 5_400;
+    const first = encoder.encode({ type: "text-delta", id: "text:0", delta: "hi" });
+
+    now = 12_000;
+    const later = encoder.encode({ type: "text-end", id: "text:0" });
+
+    assertEquals(first[0]?.elapsedMs, 400, "elapsed is relative to encoder creation");
+    assertEquals(later[0]?.elapsedMs, 7000, "a later event carries a later elapsed");
+  });
+
+  it("omits elapsedMs entirely when no clock is supplied", () => {
+    const encoder = new ConversationRunEventEncoder();
+    encoder.encode({ type: "start", messageId: "msg-no-clock" });
+    const encoded = encoder.encode({ type: "text-delta", id: "text:0", delta: "hi" });
+
+    assertEquals(
+      Object.hasOwn(encoded[0] ?? {}, "elapsedMs"),
+      false,
+      "an unclocked encoder must emit exactly what it emitted before",
+    );
+  });
+
+  // Normalization splits oversized events and rewrites others. A stamp that does
+  // not survive it never reaches the API, which is the gap that made the first
+  // attempt at this change inert.
+  it("carries elapsedMs through normalization onto every split part", () => {
+    let now = 0;
+    const encoder = new ConversationRunEventEncoder({ nowMs: () => now });
+    now = 250;
+    const events = [
+      { type: "start", messageId: "msg-normalized" },
+      { type: "text-start", id: "text:0" },
+      {
+        type: "text-delta",
+        id: "text:0",
+        delta: "x".repeat(MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES + 4096),
+      },
+    ];
+    const normalized = normalizeEncodedConversationRunEvents(events as never, encoder);
+
+    const contentParts = normalized.filter(
+      (event) => event.type === conversationRunEventTypes.textMessageContent,
+    );
+    assertEquals(contentParts.length > 1, true, "the oversized delta should split");
+    assertEquals(
+      contentParts.every((event) => event.elapsedMs === 250),
+      true,
+      "every split part keeps the elapsed of the event it came from",
+    );
   });
 });
