@@ -1340,14 +1340,16 @@ function buildRuntimeLoadSkillDescription(options: RuntimeLoadSkillToolOptions):
     return options.description;
   }
 
-  const knownIds = getKnownRuntimeSkillIds(options);
-  if (knownIds === null) {
-    return RUNTIME_LOAD_SKILL_DESCRIPTION;
-  }
+  // Validate the skill inventory (bounds + data-property/proxy safety) at
+  // construction, as before — the IDs are no longer listed in the description,
+  // but the guardrails this call enforces must still run.
+  getKnownRuntimeSkillIds(options);
 
-  const available = knownIds.join(", ") || "none";
-
-  return `${RUNTIME_LOAD_SKILL_DESCRIPTION} Available skill IDs: ${available}. Do not invent skill IDs. Only call load_skill with one of these IDs.`;
+  // Static, project-independent: the per-project ID list lives in the
+  // <available_skills> context block, not in the tool definition. Keeping skill
+  // IDs out of the description (and the advertised input schema) lets the tools
+  // array join the shared cache prefix. See RFC 0001 (layered context).
+  return `${RUNTIME_LOAD_SKILL_DESCRIPTION} Skill IDs are listed in the <available_skills> context block; do not invent IDs.`;
 }
 
 function snapshotRuntimeSkillIdInventory(
@@ -2237,8 +2239,15 @@ export function createRuntimeLoadSkillTool(
     description: buildRuntimeLoadSkillDescription(options),
     inputSchema: runtimeLoadSkillToolInputSchema,
     get inputSchemaJson() {
+      // Keep refreshing the private reference-authorization scope on schema
+      // access (its side effect is relied upon), but advertise the STATIC
+      // schema so the tool definition is byte-identical across projects
+      // (shared cache prefix — RFC 0001). The per-project dynamic schema is
+      // still used for `.parse()` validation at execution, so all runtime
+      // enforcement (valid IDs, reload/body rules) is preserved; the model
+      // just no longer sees the per-project enum.
       refreshPrivateAuthorityScope();
-      return zodToJsonSchema(buildRuntimeLoadSkillInputSchema(options, authorizationStore));
+      return zodToJsonSchema(runtimeLoadSkillToolInputSchema);
     },
     execute,
   };
