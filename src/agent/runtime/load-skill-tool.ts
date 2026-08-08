@@ -6,7 +6,6 @@ import { zodToJsonSchema } from "#veryfront/tool/schema/zod-json-schema.ts";
 import {
   LOAD_SKILL_CONTINUE_SAME_TURN,
   LOAD_SKILL_DELEGATION_THRESHOLD,
-  LOAD_SKILL_OVERRIDE_FORWARDING,
   LOAD_SKILL_ROOT_OWNERSHIP,
 } from "../conversation/delegation-policy.ts";
 import {
@@ -19,8 +18,6 @@ import {
   type SkillOperationBudget,
 } from "#veryfront/skill/operation-budget.ts";
 import {
-  SKILL_ALLOWED_TOOL_MAX_PATTERNS,
-  SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH,
   SKILL_DOCUMENT_MAX_CHARACTERS,
   SKILL_FILE_OPERATION_TIMEOUT_MS,
   SKILL_ID_MAX_LENGTH,
@@ -39,7 +36,6 @@ import {
   buildStrictRuntimeLoadedSkillResponse,
   normalizeStrictRuntimeSkillReferencePath,
   type RuntimeLoadedSkillResponse,
-  type RuntimeLoadedSkillResponseMessages,
   type RuntimeSkillMetadataLogger,
 } from "./skill-metadata.ts";
 import type { ResolvedSkillSelectorPolicy } from "#veryfront/skill/selector.ts";
@@ -64,53 +60,9 @@ function isRuntimeLoadSkillArray(value: unknown): boolean {
   }
 }
 
-/** Fail-closed continuation note used when no delegation tool is known available. */
-export const RUNTIME_LOAD_SKILL_CONTINUATION_NOTE =
-  `IMPORTANT: load_skill only loads instructions. It does not perform the task or finish the turn. ${LOAD_SKILL_CONTINUE_SAME_TURN} ${LOAD_SKILL_ROOT_OWNERSHIP}`;
-
 /** Shared runtime load skill description value. */
 export const RUNTIME_LOAD_SKILL_DESCRIPTION =
   `Load the full instructions for a skill. Use this when you need detailed guidance for a specific task type. load_skill does not perform the task by itself. ${LOAD_SKILL_CONTINUE_SAME_TURN} ${LOAD_SKILL_ROOT_OWNERSHIP} ${LOAD_SKILL_DELEGATION_THRESHOLD} First call load_skill with only skillId. Use the optional \`file\` parameter only after the skill is loaded and only for a reference file listed by that loaded skill.`;
-
-const DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES: RuntimeLoadedSkillResponseMessages = {
-  overrideNote: LOAD_SKILL_OVERRIDE_FORWARDING,
-  referenceNote:
-    "After this skill is loaded, use load_skill with the `file` parameter only for one of these listed reference files.",
-};
-
-function getAvailableScopedDelegateToolNames(availableToolNames?: readonly string[]): string[] {
-  return (availableToolNames ?? [])
-    .filter((toolName) => toolName.startsWith("agent_"))
-    .sort();
-}
-
-function buildRuntimeLoadSkillDelegationAdvice(availableToolNames?: readonly string[]): string {
-  if (availableToolNames === undefined) {
-    return `For multi-step or isolated work, call invoke_agent; otherwise keep working directly with the available tools. ${LOAD_SKILL_DELEGATION_THRESHOLD} ${LOAD_SKILL_OVERRIDE_FORWARDING}`;
-  }
-
-  const scopedDelegateToolNames = getAvailableScopedDelegateToolNames(availableToolNames);
-  if (scopedDelegateToolNames.length > 0) {
-    const tools = scopedDelegateToolNames.map((toolName) => `\`${toolName}\``).join(", ");
-    return `For multi-step or isolated work, use only these available scoped delegation tools: ${tools}; otherwise keep working directly with the available tools. ${LOAD_SKILL_DELEGATION_THRESHOLD}`;
-  }
-
-  if (availableToolNames.includes("invoke_agent")) {
-    return `For multi-step or isolated work, call the available legacy invoke_agent tool; otherwise keep working directly with the available tools. ${LOAD_SKILL_DELEGATION_THRESHOLD} ${LOAD_SKILL_OVERRIDE_FORWARDING}`;
-  }
-
-  return "";
-}
-
-function buildRuntimeLoadSkillContinuationNote(availableToolNames?: readonly string[]): string {
-  const delegationAdvice = buildRuntimeLoadSkillDelegationAdvice(availableToolNames);
-  return [
-    "IMPORTANT: load_skill only loads instructions. It does not perform the task or finish the turn.",
-    LOAD_SKILL_CONTINUE_SAME_TURN,
-    LOAD_SKILL_ROOT_OWNERSHIP,
-    delegationAdvice,
-  ].filter((part) => part.length > 0).join(" ");
-}
 
 function rememberBoundedRecordValue<T>(
   record: Record<string, T>,
@@ -258,7 +210,6 @@ function compactLoadedSkillResponse(
   return {
     ...copy,
     instructions: "",
-    nextStep: "",
   };
 }
 
@@ -268,7 +219,6 @@ function buildPublicLoadedSkillMarker(
   return {
     skillId: response.skillId,
     instructions: "",
-    nextStep: "",
     ...(response.references === undefined ? {} : { references: [...response.references] }),
   };
 }
@@ -278,13 +228,6 @@ function copyLoadedSkillResponse(
 ): RuntimeLoadedSkillResponse {
   return {
     ...response,
-    ...(response.allowedTools === undefined ? {} : { allowedTools: [...response.allowedTools] }),
-    ...(response.delegationTools === undefined
-      ? {}
-      : { delegationTools: [...response.delegationTools] }),
-    ...(response.unavailableCurrentRunTools === undefined
-      ? {}
-      : { unavailableCurrentRunTools: [...response.unavailableCurrentRunTools] }),
     ...(response.references === undefined ? {} : { references: [...response.references] }),
   };
 }
@@ -356,7 +299,6 @@ export type RuntimeLoadSkillBuiltinStore = {
 };
 
 /** Public API contract for runtime load skill tool messages. */
-export type RuntimeLoadSkillToolMessages = Partial<RuntimeLoadedSkillResponseMessages>;
 
 /** Options accepted by runtime load skill tool. */
 export type RuntimeLoadSkillToolOptions = {
@@ -366,8 +308,6 @@ export type RuntimeLoadSkillToolOptions = {
   builtinSkillIds?: readonly string[];
   builtinStore?: RuntimeLoadSkillBuiltinStore;
   description?: string;
-  nextStep?: string;
-  messages?: RuntimeLoadSkillToolMessages;
   logger?: RuntimeSkillMetadataLogger;
   skillDocumentParserProvider?: SkillDocumentParserProvider;
 };
@@ -461,20 +401,6 @@ function assertLoadedSkillInstructions(instructions: string): void {
   }
 }
 
-function assertRuntimeResponseMetadata(response: RuntimeLoadedSkillResponse): void {
-  const tools = response.delegationTools ?? [];
-  if (tools.length > SKILL_ALLOWED_TOOL_MAX_PATTERNS) {
-    throw new RangeError(
-      `Skill allowed-tools may contain at most ${SKILL_ALLOWED_TOOL_MAX_PATTERNS} entries`,
-    );
-  }
-  if (tools.some((entry) => entry.length > SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH)) {
-    throw new RangeError(
-      `Skill allowed-tool patterns may contain at most ${SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH} characters`,
-    );
-  }
-}
-
 function readRuntimeLoadSkillDataProperty(
   value: unknown,
   key: PropertyKey,
@@ -517,29 +443,6 @@ function snapshotRuntimeLoadSkillAvailableToolNames(
   });
 }
 
-function snapshotRuntimeLoadSkillResponseMessages(
-  messages: unknown,
-): { messages: RuntimeLoadedSkillResponseMessages } {
-  if (messages !== undefined && (!messages || typeof messages !== "object")) {
-    throw new TypeError("Runtime load skill messages must be an object");
-  }
-  const overrideNote = messages === undefined
-    ? undefined
-    : readRuntimeLoadSkillDataProperty(messages, "overrideNote", "Runtime load skill messages");
-  const referenceNote = messages === undefined
-    ? undefined
-    : readRuntimeLoadSkillDataProperty(messages, "referenceNote", "Runtime load skill messages");
-
-  return {
-    messages: {
-      overrideNote: (overrideNote as string | undefined) ??
-        DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES.overrideNote,
-      referenceNote: (referenceNote as string | undefined) ??
-        DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES.referenceNote,
-    },
-  };
-}
-
 function buildLoadedSkillResponse(input: {
   options: RuntimeLoadSkillToolOptions;
   skillId: string;
@@ -547,23 +450,6 @@ function buildLoadedSkillResponse(input: {
   references?: readonly string[];
 }): RuntimeLoadedSkillResponse {
   assertLoadedSkillInstructions(input.instructions);
-  const configuredNextStep = readRuntimeLoadSkillDataProperty(
-    input.options,
-    "nextStep",
-    "Runtime load skill options",
-  ) as string | undefined;
-  const messagesInput = readRuntimeLoadSkillDataProperty(
-    input.options,
-    "messages",
-    "Runtime load skill options",
-  );
-  const availableToolNames = snapshotRuntimeLoadSkillAvailableToolNames(
-    readRuntimeLoadSkillDataProperty(
-      input.options.context,
-      "availableToolNames",
-      "Runtime load skill context",
-    ),
-  );
   const logger = readRuntimeLoadSkillDataProperty(
     input.options,
     "logger",
@@ -574,22 +460,13 @@ function buildLoadedSkillResponse(input: {
     "skillDocumentParserProvider",
     "Runtime load skill options",
   ) as SkillDocumentParserProvider | undefined;
-  const { messages: responseMessages } = snapshotRuntimeLoadSkillResponseMessages(messagesInput);
-  // Fail closed on an unknown tool inventory: an undefined list must not be
-  // read as "every delegate tool is present".
-  const nextStep = configuredNextStep ??
-    buildRuntimeLoadSkillContinuationNote(availableToolNames ?? []);
   const response = buildStrictRuntimeLoadedSkillResponse({
     skillId: input.skillId,
     instructions: input.instructions,
-    nextStep,
-    messages: responseMessages,
     references: input.references,
-    availableToolNames,
     logger,
     skillDocumentParserProvider,
   });
-  assertRuntimeResponseMetadata(response);
   return response;
 }
 
@@ -603,8 +480,6 @@ function buildAlreadyLoadedSkillResponse(
       `Skill "${skillId}" is already loaded in this turn. Do not call load_skill for "${skillId}" again. ` +
       "Continue from the existing user request and any submitted tool results, then produce the next useful response now. " +
       "If a form_input result already exists, treat it as final for this turn and do not call form_input again.",
-    nextStep:
-      "Continue now. Do not reload this skill or restart intake; use the existing context and finish the current turn.",
   };
 }
 

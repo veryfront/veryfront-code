@@ -16,7 +16,6 @@ import {
   SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
   SKILL_PATH_SEGMENT_MAX_LENGTH,
   SKILL_RELATIVE_PATH_MAX_LENGTH,
-  SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES,
   SKILL_SUBDIR_MAX_ENTRIES,
 } from "#veryfront/skill/limits.ts";
 import {
@@ -386,28 +385,20 @@ export function resolveRuntimeSkillSelectorForAgent(input: {
   return snapshot;
 }
 
-/** Public API contract for runtime loaded skill response messages. */
-export type RuntimeLoadedSkillResponseMessages = {
-  overrideNote: string;
-  referenceNote: string;
-};
-
 /** Response payload for runtime loaded skill. */
 export type RuntimeLoadedSkillResponse = {
+  /** Which skill was loaded. Echoed so the caller can correlate the result. */
   skillId: string;
+  /** The skill's markdown body. The only instruction content in this result. */
   instructions: string;
-  nextStep: string;
-  allowedTools?: string[];
-  note?: string;
-  delegationTools?: string[];
-  unavailableCurrentRunTools?: string[];
-  delegationNote?: string;
-  model?: string;
-  thinking?: false | number;
-  maxSteps?: number;
-  overrideNote?: string;
+  /** Reference files this skill advertises, loadable via load_skill's `file` parameter. */
   references?: string[];
-  referenceNote?: string;
+  /** Model override the skill declares, for the caller to forward when delegating. */
+  model?: string;
+  /** Thinking-token override the skill declares, for the caller to forward when delegating. */
+  thinking?: false | number;
+  /** Step-budget override the skill declares, for the caller to forward when delegating. */
+  maxSteps?: number;
 };
 
 /** Public API contract for runtime skill metadata logger. */
@@ -423,57 +414,6 @@ export type RuntimeSkillMetadataParseOptions = {
   /** Accept the provider-safe name grammar used by owner-scoped catalog ids. */
   providerSafeName?: boolean;
 };
-
-function canUseLegacyInvokeAgent(availableToolNameSet: ReadonlySet<string> | null): boolean {
-  return availableToolNameSet?.has("invoke_agent") === true;
-}
-
-function snapshotAvailableRuntimeToolNames(
-  value: readonly string[] | undefined,
-): ReadonlySet<string> | null {
-  if (value === undefined) return null;
-  if (!ArrayIsArray(value)) {
-    throw new TypeError("Runtime availableToolNames must be an array");
-  }
-  let lengthDescriptor: PropertyDescriptor | undefined;
-  try {
-    lengthDescriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
-      value,
-      "length",
-    ]) as PropertyDescriptor | undefined;
-  } catch {
-    throw new TypeError("Runtime availableToolNames length must be a data property");
-  }
-  const length = isOwnDataPropertyDescriptor(lengthDescriptor) ? lengthDescriptor.value : undefined;
-  if (!Number.isSafeInteger(length) || length < 0) {
-    throw new TypeError("Runtime availableToolNames length must be a data property");
-  }
-  if (length > SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES) {
-    throw new RangeError(
-      `Runtime availableToolNames accepts at most ${SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES} entries`,
-    );
-  }
-
-  const snapshot = new Set<string>();
-  for (let index = 0; index < length; index += 1) {
-    const descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
-      value,
-      index,
-    ]) as PropertyDescriptor | undefined;
-    if (
-      !isOwnDataPropertyDescriptor(descriptor) ||
-      typeof descriptor.value !== "string" ||
-      descriptor.value.length === 0 ||
-      descriptor.value.length > SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH ||
-      !isWellFormedUtf16(descriptor.value) ||
-      hasControlCharacters(descriptor.value)
-    ) {
-      throw new TypeError(`Runtime available tool name ${index} is invalid`);
-    }
-    snapshot.add(descriptor.value);
-  }
-  return snapshot;
-}
 
 /** Public API contract for parsed runtime skill document. */
 export type ParsedRuntimeSkillDocument = {
@@ -1074,43 +1014,10 @@ export function normalizeRuntimeSkillReferencePath(path: string): string | null 
 type BuildRuntimeLoadedSkillResponseInput = {
   skillId: string;
   instructions: string;
-  nextStep: string;
-  messages: RuntimeLoadedSkillResponseMessages;
   references?: readonly string[];
-  availableToolNames?: readonly string[];
   logger?: RuntimeSkillMetadataLogger;
   skillDocumentParserProvider?: SkillDocumentParserProvider;
 };
-
-const RUNTIME_LOADED_SKILL_MESSAGE_FIELDS = [
-  "overrideNote",
-  "referenceNote",
-] as const satisfies readonly (keyof RuntimeLoadedSkillResponseMessages)[];
-
-function requireBoundedRuntimeLoadedSkillText(value: unknown, label: string): string {
-  if (typeof value !== "string") {
-    throw new TypeError(`Runtime loaded skill ${label} must be a string`);
-  }
-  if (value.length > SKILL_DOCUMENT_MAX_CHARACTERS) {
-    throw new RangeError(
-      `Runtime loaded skill ${label} must be at most ${SKILL_DOCUMENT_MAX_CHARACTERS} characters`,
-    );
-  }
-  return value;
-}
-
-function snapshotRuntimeLoadedSkillResponseMessages(
-  input: unknown,
-): RuntimeLoadedSkillResponseMessages {
-  const snapshot = {} as RuntimeLoadedSkillResponseMessages;
-  for (const field of RUNTIME_LOADED_SKILL_MESSAGE_FIELDS) {
-    snapshot[field] = requireBoundedRuntimeLoadedSkillText(
-      readOwnDataInputProperty(input, field, "Runtime loaded skill messages", true),
-      `messages.${field}`,
-    );
-  }
-  return Object.freeze(snapshot);
-}
 
 function snapshotRuntimeLoadedSkillResponseInput(
   input: BuildRuntimeLoadedSkillResponseInput,
@@ -1128,32 +1035,9 @@ function snapshotRuntimeLoadedSkillResponseInput(
       "Runtime loaded skill response",
       true,
     ) as string,
-    nextStep: requireBoundedRuntimeLoadedSkillText(
-      readOwnDataInputProperty(
-        input,
-        "nextStep",
-        "Runtime loaded skill response",
-        true,
-      ),
-      "nextStep",
-    ),
-    messages: snapshotRuntimeLoadedSkillResponseMessages(
-      readOwnDataInputProperty(
-        input,
-        "messages",
-        "Runtime loaded skill response",
-        true,
-      ),
-    ),
     references: readOwnDataInputProperty(
       input,
       "references",
-      "Runtime loaded skill response",
-      false,
-    ) as readonly string[] | undefined,
-    availableToolNames: readOwnDataInputProperty(
-      input,
-      "availableToolNames",
       "Runtime loaded skill response",
       false,
     ) as readonly string[] | undefined,
@@ -1197,28 +1081,14 @@ export function buildStrictRuntimeLoadedSkillResponse(
     skillDocumentParserProvider: snapshot.skillDocumentParserProvider,
   });
   const metadata = parsedSource?.document.metadata ?? null;
-  const availableToolNameSet = snapshotAvailableRuntimeToolNames(snapshot.availableToolNames);
-  const hasOverrides = metadata?.model !== undefined || metadata?.thinking !== undefined ||
-    metadata?.maxSteps !== undefined;
 
   return {
     skillId: snapshot.skillId,
     instructions: snapshot.instructions,
-    nextStep: snapshot.nextStep,
     ...(metadata?.model ? { model: metadata.model } : {}),
     ...(metadata?.thinking !== undefined ? { thinking: metadata.thinking } : {}),
     ...(metadata?.maxSteps !== undefined ? { maxSteps: metadata.maxSteps } : {}),
-    ...(hasOverrides && canUseLegacyInvokeAgent(availableToolNameSet)
-      ? {
-        overrideNote: snapshot.messages.overrideNote,
-      }
-      : {}),
-    ...(references && references.length > 0
-      ? {
-        references: [...references],
-        referenceNote: snapshot.messages.referenceNote,
-      }
-      : {}),
+    ...(references && references.length > 0 ? { references: [...references] } : {}),
   };
 }
 
