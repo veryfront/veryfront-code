@@ -39,7 +39,7 @@ export const LOAD_SKILL_CONTINUE_SAME_TURN = "Continue the same turn after calli
  * overrides would name fields its `load_skill` never produces.
  */
 export const LOAD_SKILL_OVERRIDE_FORWARDING =
-  "Pass through any returned model, thinking, or maxSteps overrides to invoke_agent when delegating.";
+  "Pass through any returned model, thinking, or maxSteps overrides to the available delegation tool when delegating.";
 
 /**
  * The behavioural contract every `load_skill` tool description must state,

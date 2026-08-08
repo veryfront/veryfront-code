@@ -737,4 +737,13 @@ describe("load_skill orchestration contract", () => {
       false,
     );
   });
+
+  it("does not hardcode a specific delegation tool name", () => {
+    // Regression: some runs expose only scoped delegate tools (`agent_<id>`)
+    // and no `invoke_agent` at all. Prose that hardcodes `invoke_agent` would
+    // name a tool that isn't present on those runs. See
+    // veryfront/veryfront-issue-inbox for the report on PR #3475.
+    assertEquals(LOAD_SKILL_OVERRIDE_FORWARDING.includes("invoke_agent"), false);
+    assertStringIncludes(LOAD_SKILL_OVERRIDE_FORWARDING, "the available delegation tool");
+  });
 });
