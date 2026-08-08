@@ -8,6 +8,86 @@ const IMG = `<img src="https://cdn.example.com/a.png" />`;
 afterEach(() => __clearDerivedCspCacheForTests());
 
 describe("security/http/derived-csp-cache", () => {
+  it("retries after a source read that came back empty", async () => {
+    // `getAllSourceFiles` returns [] while its own file list is cold and warms
+    // it asynchronously. Remembering that emptiness pinned a release to the
+    // bare floor for the life of the pod: every pod is cold on the first
+    // request after a release, so hosted production projects derived nothing
+    // at all, and the warm list that arrived a moment later was never read.
+    let call = 0;
+    const loadSourceFiles = () => {
+      call += 1;
+      return Promise.resolve(
+        call === 1
+          ? []
+          : [{ path: "pages/index.tsx", content: '<img src="https://cdn.example.com/a.png" />' }],
+      );
+    };
+
+    const cold = await getDerivedCspOrigins({
+      projectScope: "acme",
+      contentVersion: "rel-1@0",
+      loadSourceFiles,
+    });
+    assertEquals(cold["img-src"], undefined, "a cold read yields nothing");
+
+    const warm = await getDerivedCspOrigins({
+      projectScope: "acme",
+      contentVersion: "rel-1@0",
+      loadSourceFiles,
+    });
+    assertEquals(
+      warm["img-src"],
+      ["https://cdn.example.com"],
+      "same key must re-derive once readable",
+    );
+    assertEquals(call, 2);
+  });
+
+  it("does not retry once files were read, even if they yield no origins", async () => {
+    // The other half: a release whose source genuinely references no external
+    // origin is immutable for that content version, so it is cached and the
+    // source is not read again.
+    let call = 0;
+    const loadSourceFiles = () => {
+      call += 1;
+      return Promise.resolve([{ path: "pages/index.tsx", content: "export default () => null;" }]);
+    };
+
+    for (let i = 0; i < 3; i += 1) {
+      await getDerivedCspOrigins({
+        projectScope: "acme",
+        contentVersion: "rel-2@0",
+        loadSourceFiles,
+      });
+    }
+    assertEquals(call, 1, "an answered derivation is computed once");
+  });
+
+  it("retries after the source read throws", async () => {
+    let call = 0;
+    const loadSourceFiles = () => {
+      call += 1;
+      if (call === 1) return Promise.reject(new Error("adapter not ready"));
+      return Promise.resolve([{
+        path: "a.tsx",
+        content: '<img src="https://cdn.example.com/a.png" />',
+      }]);
+    };
+
+    await getDerivedCspOrigins({
+      projectScope: "acme",
+      contentVersion: "rel-3@0",
+      loadSourceFiles,
+    });
+    const warm = await getDerivedCspOrigins({
+      projectScope: "acme",
+      contentVersion: "rel-3@0",
+      loadSourceFiles,
+    });
+    assertEquals(warm["img-src"], ["https://cdn.example.com"]);
+  });
+
   it("derives once per content version", async () => {
     // Derivation reads every file a release pins. Doing that per response would
     // be absurd; doing it once per immutable content version is exactly right.
@@ -128,7 +208,17 @@ describe("security/http/derived-csp-cache", () => {
     assertEquals(absent, {});
   });
 
-  it("caches the empty result too, so a broken adapter is not retried per request", async () => {
+  it("retries a failed read rather than caching the failure", async () => {
+    // This deliberately reverses an earlier decision. Caching the empty result
+    // did avoid re-reading for a broken adapter, but it could not tell a broken
+    // adapter from a cold one, and the cold case is the common one: every pod
+    // is cold for a content version on the first request after a release, and
+    // `getAllSourceFiles` answers [] until its own file list warms up. The
+    // saving was paid for by the feature not working in production at all.
+    //
+    // The cost this reintroduces is small by construction: the empty path is a
+    // cache lookup that schedules a warmup, not a source read, and concurrent
+    // callers still collapse onto one attempt through the in-flight map.
     let loads = 0;
     const lookup = {
       projectScope: "proj",
@@ -140,7 +230,7 @@ describe("security/http/derived-csp-cache", () => {
     };
     await getDerivedCspOrigins(lookup);
     await getDerivedCspOrigins(lookup);
-    assertEquals(loads, 1);
+    assertEquals(loads, 2);
   });
 
   it("stays bounded as content versions accumulate", async () => {

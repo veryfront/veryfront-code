@@ -108,10 +108,25 @@ async function deriveOnce(
       projectScope: lookup.projectScope,
       error: error instanceof Error ? error.message : String(error),
     });
-    return remember(key, EMPTY);
+    // Deliberately not remembered. See below.
+    return EMPTY;
   }
 
-  if (!files || files.length === 0) return remember(key, EMPTY);
+  // An empty read is not an answer, and caching it is the difference between
+  // this feature working and doing nothing at all.
+  //
+  // `getAllSourceFiles` returns [] whenever its own file list is cold, warming
+  // it asynchronously afterwards. Every pod is cold for a content version on
+  // the first request after a release, so remembering that emptiness pinned the
+  // release to the bare floor for the life of the pod -- the warm file list
+  // that arrived a moment later was never consulted again. Hosted production
+  // projects, the ones this exists for, saw derivation do nothing at all, while
+  // preview appeared to work whenever its file list happened to be warm.
+  //
+  // So distinguish the two cases: files read and no origins found is immutable
+  // for the content version and worth caching, while nothing read is a race and
+  // must be retried.
+  if (!files || files.length === 0) return EMPTY;
 
   const derived = deriveCspOriginsFromSource(files);
   const count = derived["img-src"]?.length ?? 0;
