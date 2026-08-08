@@ -179,6 +179,18 @@ export function parseProjectDomain(host: string): ParsedDomain {
 }
 
 /**
+ * Whether the host is a hosted veryfront domain (veryfront.com / veryfront.org)
+ * rather than one of the local development domains.
+ *
+ * The two differ in what a project-less host means. Locally it means "no project
+ * chosen yet" and the project chooser answers; hosted it means the domain names
+ * no project at all and nothing can answer.
+ */
+export function isHostedVeryfrontDomain(host: string): boolean {
+  return new RegExp(`^(?:.+\\.)?(${PROD_DOMAINS})$`, "i").test(stripPort(host));
+}
+
+/**
  * Check if a domain is a valid veryfront domain (includes veryfront.me and lvh.me for local dev)
  */
 export function isVeryfrontDomain(host: string): boolean {
