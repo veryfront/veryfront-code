@@ -38,7 +38,11 @@ export interface AgUiBrowserEncoderState {
   activeTextContentId: string | null;
   textContentIndex: number;
   reasoningMessageId: string | null;
-  reasoningSpanIndex: number;
+  /**
+   * How many reasoning spans have opened in this run. Optional so a state
+   * object built before this counter existed stays valid; absent reads as 0.
+   */
+  reasoningSpanIndex?: number;
   activeStepName: string | null;
   stepCount: number;
   streamedToolInputIds: Set<string>;
@@ -103,7 +107,8 @@ function getMessageId(state: AgUiBrowserEncoderState, event: AgUiRuntimeStreamEv
 // events for snapshots and terminal replay, so one span keeps one id whichever
 // path renders it.
 function openReasoningMessageId(state: AgUiBrowserEncoderState): string {
-  const index = state.reasoningSpanIndex++;
+  const index = state.reasoningSpanIndex ?? 0;
+  state.reasoningSpanIndex = index + 1;
   state.reasoningMessageId = state.messageId
     ? `${state.messageId}:reasoning:${index}`
     : `reasoning:${index}`;

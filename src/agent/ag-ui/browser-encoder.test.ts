@@ -723,9 +723,8 @@ describe("buildAgUiBrowserFinalizeResponse", () => {
   });
 
   // Providers restart part ids at `reasoning-0` in every step, so composing the
-  // AG-UI id from the part id alone collides across a multi-step run. Observed
-  // in production run 2f7ae3d4, where all five reasoning blocks shared
-  // `msg-2ba40c86...:reasoning:reasoning-0`.
+  // AG-UI id from the part id alone collides across a multi-step run: every
+  // reasoning block in the run comes out as `<messageId>:reasoning:reasoning-0`.
   it("gives each reasoning span a distinct messageId when a provider reuses part ids", () => {
     const state = createAgUiBrowserEncoderState();
     mapRuntimeStreamEventToAgUiBrowserEvents(state, {
