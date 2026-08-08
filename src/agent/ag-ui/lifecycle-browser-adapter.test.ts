@@ -266,4 +266,28 @@ describe("lifecycle AG-UI browser adapter", () => {
       payload: { code: "STREAM_CANCELLED", message: "Stream was cancelled" },
     }]);
   });
+
+  it("drops a reasoning end that closes no open span", () => {
+    const adapter = createLifecycleAgUiBrowserAdapter({
+      messageId: "message-unmatched-end",
+    });
+    const events = frames([
+      { event: { type: "reasoning_end", id: "reasoning-0" } },
+    ]).flatMap((frame) => adapter.encode(frame));
+
+    assertEquals(
+      events.filter((entry) => entry.event === "ReasoningMessageEnd"),
+      [],
+      "an end with no span open must not emit a ReasoningMessageEnd",
+    );
+
+    // The dropped end must not consume an ordinal: the next real span is still 0.
+    const started = frames([
+      { event: { type: "reasoning_start", id: "reasoning-0" } },
+    ]).flatMap((frame) => adapter.encode(frame));
+    assertEquals(started, [{
+      event: "ReasoningMessageStart",
+      payload: { messageId: "message-unmatched-end:reasoning:0", role: "reasoning" },
+    }]);
+  });
 });

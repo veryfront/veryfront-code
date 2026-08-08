@@ -131,8 +131,11 @@ export function createLifecycleAgUiBrowserAdapter(input: {
     return activeReasoningMessageId;
   };
   const continueReasoning = (): string => activeReasoningMessageId ?? startReasoning();
-  const endReasoning = (): string => {
-    const messageId = continueReasoning();
+  // An end with no span open has nothing to close, so it reports null rather
+  // than opening one: a ReasoningMessageEnd with no matching start would burn
+  // a span ordinal and shift every later span's id.
+  const endReasoning = (): string | null => {
+    const messageId = activeReasoningMessageId;
     activeReasoningMessageId = null;
     return messageId;
   };
@@ -198,11 +201,13 @@ export function createLifecycleAgUiBrowserAdapter(input: {
             delta: event.delta,
           },
         }];
-      case "reasoning_end":
-        return [{
+      case "reasoning_end": {
+        const messageId = endReasoning();
+        return messageId === null ? [] : [{
           event: "ReasoningMessageEnd",
-          payload: { messageId: endReasoning() },
+          payload: { messageId },
         }];
+      }
       case "tool_input_start":
         state.sawVisibleOutput = true;
         return [{

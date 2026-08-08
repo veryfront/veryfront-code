@@ -737,11 +737,11 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
       return events;
     }
 
-    case "reasoning-end": {
-      const reasoningEvent = createReasoningEvent(state, event, "ReasoningMessageEnd");
-      state.reasoningMessageId = null;
-      return [reasoningEvent];
-    }
+    case "reasoning-end":
+      // An end with no span open has nothing to close. Emitting one anyway
+      // would send a ReasoningMessageEnd with no matching start and burn a
+      // span ordinal, shifting every later span's id.
+      return closeOpenReasoningEvent(state);
 
     case "tool-input-start": {
       const events = [

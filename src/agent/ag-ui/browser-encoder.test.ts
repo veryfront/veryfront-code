@@ -804,4 +804,28 @@ describe("buildAgUiBrowserFinalizeResponse", () => {
       "the two spans must not share a messageId",
     );
   });
+
+  it("drops a reasoning end that closes no open span", () => {
+    const state = createAgUiBrowserEncoderState();
+    mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+      type: "message-start",
+      messageId: "assistant-unmatched-end",
+    });
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, { type: "reasoning-end", id: "reasoning-0" }),
+      [],
+      "an end with no span open must not emit a ReasoningMessageEnd",
+    );
+
+    // The dropped end must not consume an ordinal: the next real span is still 0.
+    const started = mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+      type: "reasoning-start",
+      id: "reasoning-0",
+    });
+    assertEquals(started, [{
+      event: "ReasoningMessageStart",
+      payload: { messageId: "assistant-unmatched-end:reasoning:0", role: "reasoning" },
+    }]);
+  });
 });
