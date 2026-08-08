@@ -290,4 +290,29 @@ describe("lifecycle AG-UI browser adapter", () => {
       payload: { messageId: "message-unmatched-end:reasoning:0", role: "reasoning" },
     }]);
   });
+
+  it("opens a reasoning span visibly when a delta arrives with none open", () => {
+    const adapter = createLifecycleAgUiBrowserAdapter({
+      messageId: "message-orphan-delta",
+    });
+    const events = frames([
+      { event: { type: "reasoning_content", id: "reasoning-0", delta: "thinking" } },
+      { event: { type: "reasoning_end", id: "reasoning-0" } },
+    ]).flatMap((frame) => adapter.encode(frame));
+
+    assertEquals(events, [
+      {
+        event: "ReasoningMessageStart",
+        payload: { messageId: "message-orphan-delta:reasoning:0", role: "reasoning" },
+      },
+      {
+        event: "ReasoningMessageContent",
+        payload: { messageId: "message-orphan-delta:reasoning:0", delta: "thinking" },
+      },
+      {
+        event: "ReasoningMessageEnd",
+        payload: { messageId: "message-orphan-delta:reasoning:0" },
+      },
+    ]);
+  });
 });

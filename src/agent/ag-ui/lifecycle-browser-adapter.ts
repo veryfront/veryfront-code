@@ -192,15 +192,27 @@ export function createLifecycleAgUiBrowserAdapter(input: {
             role: "reasoning",
           },
         }];
-      case "reasoning_content":
+      case "reasoning_content": {
         state.sawVisibleOutput = true;
-        return [{
+        // A delta with no span open still opens one, so emit its start too.
+        // Consumers key on ReasoningMessageStart to create the block and drop
+        // content for a messageId they never saw begin. Matches browser-encoder.
+        const events: AgUiBrowserEncodedEvent[] = [];
+        if (activeReasoningMessageId === null) {
+          events.push({
+            event: "ReasoningMessageStart",
+            payload: { messageId: startReasoning(), role: "reasoning" },
+          });
+        }
+        events.push({
           event: "ReasoningMessageContent",
           payload: {
             messageId: continueReasoning(),
             delta: event.delta,
           },
-        }];
+        });
+        return events;
+      }
       case "reasoning_end": {
         const messageId = endReasoning();
         return messageId === null ? [] : [{
