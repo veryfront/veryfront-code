@@ -1,0 +1,132 @@
+/**
+ * Per-release cache for {@link deriveCspOriginsFromSource}.
+ *
+ * Derivation reads every source file a release pins, which is far too much work
+ * to repeat per response but exactly the right amount to do once per release:
+ * the input is immutable for a given content version, so the result is too.
+ *
+ * @module security/http/derived-csp-cache
+ */
+
+import { registerCache } from "#veryfront/utils/memory/index.ts";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import {
+  type DerivationSourceFile,
+  deriveCspOriginsFromSource,
+  type DerivedCspOrigins,
+} from "./derived-csp-origins.ts";
+
+const logger = serverLogger.component("derived-csp");
+
+/** Bounded so a fleet of projects cannot grow this without limit. */
+const MAX_ENTRIES = 200;
+
+const EMPTY: DerivedCspOrigins = Object.freeze({});
+
+const cache = new Map<string, DerivedCspOrigins>();
+
+/**
+ * Derivations currently running, keyed exactly as the resolved cache is.
+ *
+ * A key is coldest immediately after a release, when every pod serves that
+ * content version for the first time. Without this, each concurrent request for
+ * the same key reads and scans the whole source set; with it the first caller
+ * does the work and the rest await its result.
+ */
+const inFlight = new Map<string, Promise<DerivedCspOrigins>>();
+
+registerCache("derived-csp-origins", () => ({
+  name: "derived-csp-origins",
+  entries: cache.size,
+  maxEntries: MAX_ENTRIES,
+}));
+
+function remember(key: string, value: DerivedCspOrigins): DerivedCspOrigins {
+  // Insertion-ordered eviction: the oldest content version is the one least
+  // likely to still be serving traffic.
+  while (cache.size >= MAX_ENTRIES) {
+    const oldest = cache.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+  cache.set(key, value);
+  return value;
+}
+
+export interface DerivedCspLookup {
+  /** Project scope, so two projects on one pod cannot share an entry. */
+  readonly projectScope: string;
+  /**
+   * Content version, as `resolveStyleContentVersion` spells it. A branch
+   * version is stable while its content changes, which is why the caller passes
+   * a snapshot identity rather than a branch name where one is available.
+   */
+  readonly contentVersion: string;
+  /** Reads the release's source files. Called only on a miss. */
+  readonly loadSourceFiles: () => Promise<readonly DerivationSourceFile[] | null>;
+}
+
+/**
+ * Derived origins for a content version, computing them at most once.
+ *
+ * Failure is not fatal: a project whose sources cannot be read gets an empty
+ * derivation, which leaves it exactly where it was before this existed -- the
+ * platform floor plus whatever `security.csp` declares.
+ */
+export function getDerivedCspOrigins(
+  lookup: DerivedCspLookup,
+): Promise<DerivedCspOrigins> {
+  // NUL separates the two components because neither can contain one, so no
+  // scope/version pair can collide with another by concatenation. Written as an
+  // escape rather than a raw byte: a literal NUL in the source makes the file
+  // binary to grep and friends.
+  const key = `${lookup.projectScope}\u0000${lookup.contentVersion}`;
+  const cached = cache.get(key);
+  if (cached) return Promise.resolve(cached);
+
+  const pending = inFlight.get(key);
+  if (pending) return pending;
+
+  const derivation = deriveOnce(key, lookup);
+  inFlight.set(key, derivation);
+  return derivation.finally(() => {
+    // Clear only our own entry: after an eviction a later call may already have
+    // started a fresh derivation under the same key.
+    if (inFlight.get(key) === derivation) inFlight.delete(key);
+  });
+}
+
+async function deriveOnce(
+  key: string,
+  lookup: DerivedCspLookup,
+): Promise<DerivedCspOrigins> {
+  let files: readonly DerivationSourceFile[] | null;
+  try {
+    files = await lookup.loadSourceFiles();
+  } catch (error) {
+    logger.debug("Could not read sources for CSP derivation", {
+      projectScope: lookup.projectScope,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return remember(key, EMPTY);
+  }
+
+  if (!files || files.length === 0) return remember(key, EMPTY);
+
+  const derived = deriveCspOriginsFromSource(files);
+  const count = derived["img-src"]?.length ?? 0;
+  if (count > 0) {
+    logger.debug("Derived CSP origins from project source", {
+      projectScope: lookup.projectScope,
+      contentVersion: lookup.contentVersion,
+      originCount: count,
+    });
+  }
+  return remember(key, derived);
+}
+
+/** @internal Test seam. */
+export function __clearDerivedCspCacheForTests(): void {
+  cache.clear();
+  inFlight.clear();
+}

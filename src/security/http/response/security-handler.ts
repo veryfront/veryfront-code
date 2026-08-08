@@ -181,6 +181,7 @@ function mergeCspDirectives(
   required: Record<string, string[]>,
   projectCsp: SecurityConfig["csp"],
   nonce: string,
+  derived?: SecurityConfig["derivedCsp"],
 ): Record<string, string[]> {
   const project = new Map<string, readonly string[] | null>();
   for (const [key, value] of Object.entries(projectCsp ?? {})) {
@@ -212,6 +213,7 @@ function mergeCspDirectives(
   const names = new Set([
     ...requiredByName.keys(),
     ...BASELINE_DIRECTIVES.keys(),
+    ...Object.keys(derived ?? {}),
     ...project.keys(),
   ]);
 
@@ -219,10 +221,16 @@ function mergeCspDirectives(
   for (const name of names) {
     const configured = project.get(name);
     const baseline = configured === null ? [] : BASELINE_DIRECTIVES.get(name) ?? [];
+    // Derived origins sit above the floor and below project config, and follow
+    // the baseline's `null` semantics: a project that explicitly drops a
+    // directive means it, and static analysis must not put back what the
+    // project just said it does not want.
+    const derivedForName = configured === null ? [] : derived?.[name as never] ?? [];
     const additions = configured ?? [];
     merged[name] = normalizeSources([
       ...(requiredByName.get(name) ?? []),
       ...baseline,
+      ...derivedForName,
       ...additions,
     ]);
   }
@@ -264,7 +272,12 @@ export function buildCSP(
   if (isDev) return "";
 
   return serializeDirectives(
-    mergeCspDirectives(requiredDirectives(nonce, isVeryfrontDomain ?? false), config?.csp, nonce),
+    mergeCspDirectives(
+      requiredDirectives(nonce, isVeryfrontDomain ?? false),
+      config?.csp,
+      nonce,
+      config?.derivedCsp,
+    ),
   );
 }
 

@@ -7,6 +7,10 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import type { SecurityConfig } from "#veryfront/types";
 import { deriveSecurityContext } from "#veryfront/security/http/config.ts";
+import { getDerivedCspOrigins } from "#veryfront/security/http/derived-csp-cache.ts";
+import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
+import { isExtendedFSAdapter } from "#veryfront/platform/adapters/index.ts";
+import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { createRequestContext } from "../context/request-context.ts";
 import type { HandlerContext } from "../handlers/types.ts";
@@ -319,9 +323,54 @@ export async function resolveProjectRuntimeContext(
   // deliberately config-less control-plane path config-less: those endpoints
   // authenticate their signed operation envelope and do not expose an
   // application/browser surface.
+  // Origins the project's own source references, so a project that never wrote
+  // a `security.csp` still loads its own images, video and fonts. Only passive
+  // directives are derived; see security/http/derived-csp-origins.ts for why
+  // script-src is not.
+  //
+  // Runs inside runWithContext, not after it. MultiProjectFSAdapter resolves
+  // the tenant from AsyncLocalStorage, and outside that context it either
+  // throws -- swallowed by getAllSourceFiles into an empty list that would then
+  // be cached forever -- or falls back to a default adapter, which would derive
+  // one project's origins from another's source.
+  //
+  // Derived for config-less projects too. Those are the ones this exists for:
+  // a project with no veryfront.config.* is exactly the project that never
+  // declared a policy, and gating on config would leave it on the bare floor.
+  //
+  // Excluded on the deferred path. Those control-plane endpoints authenticate a
+  // signed operation envelope, expose no browser surface, and deliberately read
+  // no outer source -- deriving there would both serve nothing and break that
+  // guarantee.
+  const derivedCsp = input.isProxyMode && projectRes.projectSlug && reqCtx.token &&
+      adapterRes.configOutcome !== "deferred"
+    ? await deriveProjectCspOrigins({
+      adapter: adapterRes.adapter,
+      projectSlug: projectRes.projectSlug,
+      projectId: projectRes.projectId,
+      token: reqCtx.token,
+      releaseId: envRes.releaseId,
+      // Same precedence as the hosted config source context above. If the two
+      // disagree, derivation reads a different branch than the one that
+      // produced the config, and the origins describe content other than the
+      // page being served.
+      branch: reqCtx.branch ?? projectRes.parsedDomain?.branch,
+      environmentName: projectRes.environmentName,
+    })
+    : undefined;
+
   const requestSecurity = input.isProxyMode && adapterRes.config !== undefined
     ? deriveSecurityContext(adapterRes.config, {
       productionDefaults: envRes.resolvedEnvironment === "production",
+      derivedCsp,
+    })
+    // A hosted project with no config file still gets its own security context
+    // rather than the process-wide one: defaults plus whatever its source
+    // implies. `deferred` control-plane requests keep the config-less shape.
+    : input.isProxyMode && projectRes.projectSlug && adapterRes.configOutcome === "hosted-absent"
+    ? deriveSecurityContext(undefined, {
+      productionDefaults: envRes.resolvedEnvironment === "production",
+      derivedCsp,
     })
     : undefined;
 
@@ -494,4 +543,75 @@ function createProxyGuard(
       headers: { "Content-Type": "application/json" },
     }),
   };
+}
+
+/**
+ * Derive a project's passive CSP origins inside its own adapter context.
+ *
+ * The source read and the snapshot identity are both taken under
+ * `runWithContext`, because the multi-project adapter selects the tenant from
+ * AsyncLocalStorage and silently yields nothing -- or the wrong project --
+ * without it.
+ */
+async function deriveProjectCspOrigins(args: {
+  adapter: RuntimeAdapter;
+  projectSlug: string;
+  projectId: string | undefined;
+  token: string;
+  releaseId: string | undefined;
+  branch: string | null | undefined;
+  environmentName: string | undefined;
+}): Promise<SecurityConfig["derivedCsp"]> {
+  if (!isExtendedFSAdapter(args.adapter.fs) || !args.adapter.fs.runWithContext) return undefined;
+  const fs = args.adapter.fs;
+
+  const run = async (): Promise<SecurityConfig["derivedCsp"]> => {
+    const underlying = typeof fs.getUnderlyingAdapter === "function"
+      ? fs.getUnderlyingAdapter() as {
+        getAllSourceFiles?: () => Promise<Array<{ path: string; content?: string }>>;
+        getContentContext?: () => ResolvedContentContext | null;
+        getSourceSnapshotVersion?: () => number;
+      }
+      : undefined;
+    if (!underlying || typeof underlying.getAllSourceFiles !== "function") return undefined;
+
+    // Branch and environment content versions are stable while the content
+    // under them changes, so the adapter's snapshot generation is what actually
+    // moves when a preview is pushed to. Without it a preview would serve a
+    // derivation from before the push until the entry is evicted.
+    const snapshot = typeof underlying.getSourceSnapshotVersion === "function"
+      ? underlying.getSourceSnapshotVersion()
+      : 0;
+    const contentVersion = `${
+      resolveStyleContentVersion(underlying.getContentContext?.() ?? null, {
+        releaseId: args.releaseId,
+        branch: args.branch,
+        environmentName: args.environmentName,
+      })
+    }@${snapshot}`;
+
+    return await getDerivedCspOrigins({
+      projectScope: args.projectSlug,
+      contentVersion,
+      loadSourceFiles: () => underlying.getAllSourceFiles!(),
+    });
+  };
+
+  try {
+    return await fs.runWithContext(
+      args.projectSlug,
+      args.token,
+      run as () => Promise<unknown>,
+      args.projectId,
+      {
+        productionMode: Boolean(args.releaseId),
+        releaseId: args.releaseId ?? null,
+        branch: args.branch ?? null,
+        environmentName: args.environmentName ?? null,
+      },
+    ) as SecurityConfig["derivedCsp"];
+  } catch {
+    // Never fail a response over a CSP nicety.
+    return undefined;
+  }
 }
