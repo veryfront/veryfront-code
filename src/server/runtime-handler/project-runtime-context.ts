@@ -553,7 +553,15 @@ function createProxyGuard(
  * AsyncLocalStorage and silently yields nothing -- or the wrong project --
  * without it.
  */
-async function deriveProjectCspOrigins(args: {
+/**
+ * Derive a project's CSP origins from the source its release pins.
+ *
+ * Exported because this seam had no test at all: the extractor was covered and
+ * the header merge was covered, but nothing exercised the part that actually
+ * reads an adapter -- which is where it was broken in production for every
+ * hosted project while both neighbours stayed green.
+ */
+export async function deriveProjectCspOrigins(args: {
   adapter: RuntimeAdapter;
   projectSlug: string;
   projectId: string | undefined;
@@ -566,14 +574,30 @@ async function deriveProjectCspOrigins(args: {
   const fs = args.adapter.fs;
 
   const run = async (): Promise<SecurityConfig["derivedCsp"]> => {
+    // Read through the same door the config load uses. `getAllSourceFiles`
+    // needs a content context, and `ensureSourceSnapshotFresh` is what
+    // establishes one -- it awaits `ensureInitialized` before deciding whether
+    // a refresh is due. Without it the adapter answers with an empty list and,
+    // because its warmup is itself gated on being initialized, never fills in
+    // afterwards. That is not a cold cache that warms a moment later; it never
+    // warms, which is why hosted production projects derived nothing on every
+    // request while preview, whose adapter was already initialized by then,
+    // looked correct.
+    await fs.ensureSourceSnapshotFresh?.("csp-derivation");
+
     const underlying = typeof fs.getUnderlyingAdapter === "function"
       ? fs.getUnderlyingAdapter() as {
         getAllSourceFiles?: () => Promise<Array<{ path: string; content?: string }>>;
         getContentContext?: () => ResolvedContentContext | null;
         getSourceSnapshotVersion?: () => number;
+        ensureSourceSnapshotFresh?: (reason?: string) => Promise<void>;
       }
       : undefined;
     if (!underlying || typeof underlying.getAllSourceFiles !== "function") return undefined;
+
+    // The wrapper may delegate without exposing the hook, so ask the adapter
+    // that actually owns the file list too.
+    await underlying.ensureSourceSnapshotFresh?.("csp-derivation");
 
     // Branch and environment content versions are stable while the content
     // under them changes, so the adapter's snapshot generation is what actually
