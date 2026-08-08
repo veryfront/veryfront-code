@@ -29,17 +29,26 @@ export const DELEGATE_ONLY_WHEN_MATERIALLY_HELPFUL =
 /** Loading a skill is not doing the work; the turn continues. */
 export const LOAD_SKILL_CONTINUE_SAME_TURN = "Continue the same turn after calling it.";
 
-/** A skill's model/thinking/maxSteps only take effect if the caller forwards them. */
+/**
+ * A skill's model/thinking/maxSteps only take effect if the caller forwards
+ * them.
+ *
+ * Deliberately NOT part of the shared clauses: only the hosted loader returns
+ * those fields. `createLoadSkillTool` returns `{ skillId, instructions,
+ * references, scripts }`, so telling a factory-built agent to forward returned
+ * overrides would name fields its `load_skill` never produces.
+ */
 export const LOAD_SKILL_OVERRIDE_FORWARDING =
   "Pass through any returned model, thinking, or maxSteps overrides to invoke_agent when delegating.";
 
 /**
  * The behavioural contract every `load_skill` tool description must state,
  * appended after that tool's own mechanics.
+ *
+ * Only clauses that hold for *both* loaders belong here.
  */
 export const LOAD_SKILL_POLICY_CLAUSES = [
   LOAD_SKILL_CONTINUE_SAME_TURN,
   KEEP_ROOT_ASSISTANT_VISIBLE_OWNER,
   DELEGATE_ONLY_WHEN_MATERIALLY_HELPFUL,
-  LOAD_SKILL_OVERRIDE_FORWARDING,
 ].join(" ");

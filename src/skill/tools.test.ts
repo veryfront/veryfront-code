@@ -15,7 +15,7 @@ import {
   createLoadSkillTool,
 } from "./tools.ts";
 import type { Skill, SkillScriptResult } from "./types.ts";
-import { LOAD_SKILL_POLICY_CLAUSES } from "./load-skill-policy.ts";
+import { LOAD_SKILL_OVERRIDE_FORWARDING, LOAD_SKILL_POLICY_CLAUSES } from "./load-skill-policy.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSkillTestAdapter } from "./testing.ts";
 import { LocalScriptExecutor } from "./executor.ts";
@@ -726,5 +726,15 @@ describe("load_skill orchestration contract", () => {
 
     assertStringIncludes(factoryDescription, LOAD_SKILL_POLICY_CLAUSES);
     assertStringIncludes(RUNTIME_LOAD_SKILL_DESCRIPTION, LOAD_SKILL_POLICY_CLAUSES);
+  });
+
+  it("promises override forwarding only from the loader that returns overrides", () => {
+    // createLoadSkillTool returns { skillId, instructions, references, scripts }.
+    // Telling a factory-built agent to forward returned model/thinking/maxSteps
+    // would name fields its load_skill never produces.
+    assertEquals(
+      (createLoadSkillTool().description ?? "").includes(LOAD_SKILL_OVERRIDE_FORWARDING),
+      false,
+    );
   });
 });
