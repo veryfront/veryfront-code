@@ -25,49 +25,71 @@ const logger = serverLogger.component("csp-report");
 
 /**
  * Reports come from browsers, unauthenticated, and anyone can post whatever
- * they like to this path. Nothing here is trusted: the body is size-capped
- * before parsing, every logged field is truncated, and the response is always
- * 204 so a hostile poster learns nothing about what was accepted.
+ * they like to this path. Nothing here is trusted: the body is read against a
+ * byte budget rather than buffered whole, every logged field is truncated, and
+ * the response is always 204 so a hostile poster learns nothing about what was
+ * accepted.
  */
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_FIELD_LENGTH = 512;
 const MAX_REPORTS_PER_REQUEST = 16;
 
 /**
- * A busy project can emit violations on every page view. Logging each one
- * would let a single misconfigured site drown the log stream, so keep a
- * per-process ceiling per window and record how many were dropped.
+ * A busy project can emit violations on every page view. Logging each one would
+ * let a single misconfigured site drown the log stream, so each handler keeps a
+ * ceiling per window and records how many it dropped.
  */
 const LOG_WINDOW_MS = 60_000;
 const MAX_LOGGED_PER_WINDOW = 100;
 
-let windowStartedAt = 0;
-let loggedInWindow = 0;
-let droppedInWindow = 0;
+/**
+ * Read at most `maxBytes` from the body.
+ *
+ * `req.text()` would buffer the whole body first and only then let us measure
+ * it, which makes the cap advisory: a request with no `content-length`, or a
+ * dishonest one, is already in memory by the time it is rejected. Counting
+ * bytes off the stream is the only version of this limit that holds.
+ *
+ * @returns the decoded body, or undefined if it was empty, oversized or unreadable
+ */
+async function readBoundedBody(req: Request, maxBytes: number): Promise<string | undefined> {
+  if (!req.body) return undefined;
 
-/** Exposed for tests; a fresh process starts with an empty window anyway. */
-export function resetCspReportRateLimit(): void {
-  windowStartedAt = 0;
-  loggedInWindow = 0;
-  droppedInWindow = 0;
-}
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
 
-function admitToLog(now: number): { admitted: boolean; dropped: number } {
-  if (now - windowStartedAt >= LOG_WINDOW_MS) {
-    const dropped = droppedInWindow;
-    windowStartedAt = now;
-    loggedInWindow = 0;
-    droppedInWindow = 0;
-    if (dropped > 0) return { admitted: true, dropped };
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        return undefined;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return undefined;
   }
 
-  if (loggedInWindow >= MAX_LOGGED_PER_WINDOW) {
-    droppedInWindow += 1;
-    return { admitted: false, dropped: 0 };
+  if (total === 0) return undefined;
+
+  const joined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.byteLength;
   }
 
-  loggedInWindow += 1;
-  return { admitted: true, dropped: 0 };
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(joined);
+  } catch {
+    return undefined;
+  }
 }
 
 function truncate(value: unknown): string | undefined {
@@ -106,9 +128,11 @@ function normalizeReports(payload: unknown): NormalizedViolation[] {
   });
 
   if (Array.isArray(payload)) {
+    // Filter before taking the first N: a batch may carry other report types,
+    // and slicing first would discard violations queued behind them.
     return payload
-      .slice(0, MAX_REPORTS_PER_REQUEST)
       .filter((entry) => readRecord(entry)?.type === "csp-violation")
+      .slice(0, MAX_REPORTS_PER_REQUEST)
       .map((entry) => fromBody(readRecord(readRecord(entry)?.body) ?? {}));
   }
 
@@ -126,6 +150,33 @@ export class CspReportHandler extends BaseHandler {
     patterns: [{ pattern: CSP_REPORT_PATH, exact: true, method: "POST" }],
   };
 
+  // Instance state rather than module state: one handler is built per registry,
+  // so production behaviour is the same, and each test gets a fresh window
+  // without the handler having to export a reset hook it does not otherwise need.
+  #windowStartedAt = 0;
+  #loggedInWindow = 0;
+  #droppedInWindow = 0;
+
+  /** Whether this report may be logged, and what the previous window swallowed. */
+  #admitToLog(now: number): { admitted: boolean; dropped: number } {
+    let dropped = 0;
+
+    if (now - this.#windowStartedAt >= LOG_WINDOW_MS) {
+      dropped = this.#droppedInWindow;
+      this.#windowStartedAt = now;
+      this.#loggedInWindow = 0;
+      this.#droppedInWindow = 0;
+    }
+
+    if (this.#loggedInWindow >= MAX_LOGGED_PER_WINDOW) {
+      this.#droppedInWindow += 1;
+      return { admitted: false, dropped: 0 };
+    }
+
+    this.#loggedInWindow += 1;
+    return { admitted: true, dropped };
+  }
+
   override async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (!this.shouldHandle(req, ctx)) return this.continue();
     if (req.method !== "POST") return this.continue();
@@ -134,13 +185,16 @@ export class CspReportHandler extends BaseHandler {
     // do with an error, and a hostile poster should learn nothing from one.
     const accepted = this.respond(new Response(null, { status: HTTP_NO_CONTENT }));
 
-    const declaredLength = Number(req.headers.get("content-length") ?? "0");
+    // Cheap rejection when the sender declares an oversized body. The stream
+    // read below is what actually enforces the limit.
+    const declaredLength = Number(req.headers.get("content-length"));
     if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) return accepted;
+
+    const raw = await readBoundedBody(req, MAX_BODY_BYTES);
+    if (raw === undefined) return accepted;
 
     let payload: unknown;
     try {
-      const raw = await req.text();
-      if (raw.length === 0 || raw.length > MAX_BODY_BYTES) return accepted;
       payload = JSON.parse(raw);
     } catch {
       return accepted;
@@ -149,7 +203,7 @@ export class CspReportHandler extends BaseHandler {
     const violations = normalizeReports(payload);
     if (violations.length === 0) return accepted;
 
-    const { admitted, dropped } = admitToLog(Date.now());
+    const { admitted, dropped } = this.#admitToLog(Date.now());
     if (!admitted) return accepted;
 
     for (const violation of violations) {

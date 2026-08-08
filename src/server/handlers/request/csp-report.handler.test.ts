@@ -1,6 +1,6 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "@std/testing/bdd";
-import { CspReportHandler, resetCspReportRateLimit } from "./csp-report.handler.ts";
+import { CspReportHandler } from "./csp-report.handler.ts";
 import { CSP_REPORT_PATH } from "#veryfront/security/http/csp-report-endpoint.ts";
 import type { HandlerContext } from "../types.ts";
 
@@ -15,7 +15,6 @@ function post(body: unknown, init: RequestInit = {}): Request {
 }
 
 async function statusOf(req: Request): Promise<number | undefined> {
-  resetCspReportRateLimit();
   const result = await new CspReportHandler().handle(req, ctx);
   return result.response?.status;
 }
@@ -56,13 +55,42 @@ describe("server/handlers/request/csp-report", () => {
     }
   });
 
-  it("drops an oversized body without parsing it", async () => {
+  it("stops reading an oversized body instead of buffering it whole", async () => {
+    // The cap has to hold without a truthful content-length, or it is advisory:
+    // a streamed body with no declared length would already be in memory by the
+    // time a length check could reject it. Count what the handler actually
+    // pulled off the stream.
+    let bytesPulled = 0;
+    const chunk = new TextEncoder().encode("x".repeat(8 * 1024));
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        bytesPulled += chunk.byteLength;
+        // Far past the 64 KiB cap; a handler that drains this reads all of it.
+        if (bytesPulled > 4 * 1024 * 1024) return controller.close();
+        controller.enqueue(chunk);
+      },
+    });
+
+    const req = new Request(`https://acme.veryfront.com${CSP_REPORT_PATH}`, {
+      method: "POST",
+      body,
+      // @ts-expect-error duplex is required for a streaming body and is not in the DOM types
+      duplex: "half",
+    });
+
+    assertEquals((await new CspReportHandler().handle(req, ctx)).response?.status, 204);
+    assert(
+      bytesPulled <= 128 * 1024,
+      `handler pulled ${bytesPulled} bytes; the cap should have stopped it near 64 KiB`,
+    );
+  });
+
+  it("rejects an oversized body declared up front", async () => {
     const huge = JSON.stringify({ "csp-report": { "document-uri": "x".repeat(200_000) } });
     assertEquals(await statusOf(post(huge)), 204);
   });
 
   it("does not claim requests that are not a POST to its path", async () => {
-    resetCspReportRateLimit();
     const handler = new CspReportHandler();
 
     const wrongMethod = await handler.handle(
@@ -81,7 +109,6 @@ describe("server/handlers/request/csp-report", () => {
   it("keeps answering 204 past the log ceiling", async () => {
     // The ceiling bounds how much a single misconfigured project can write to
     // the log. It must not turn into backpressure on the browser.
-    resetCspReportRateLimit();
     const handler = new CspReportHandler();
     const report = { "csp-report": { "document-uri": "https://acme.veryfront.com/" } };
 
