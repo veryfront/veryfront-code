@@ -41,6 +41,7 @@
  * @module security/http/csrf/csrf-handler
  */
 
+import { isCspReportRequest } from "#veryfront/security/http/csp-report-endpoint.ts";
 import { BaseHandler } from "../base-handler.ts";
 import { validateCsrf } from "../../csrf/helpers.ts";
 import type {
@@ -72,6 +73,11 @@ export class CsrfHandler extends BaseHandler {
     if (CSRF_SAFE_METHODS.has(method)) return this.continue();
 
     const { pathname } = new URL(req.url);
+
+    // A CSP violation report is not a user action and carries no token. See
+    // `isCspReportRequest`; relying on a project to add it to `excludePaths`
+    // would make reporting another thing a project has to configure first.
+    if (isCspReportRequest(method, pathname)) return this.continue();
 
     // Check exclude paths
     if (typeof csrfConfig === "object" && csrfConfig.excludePaths?.length) {

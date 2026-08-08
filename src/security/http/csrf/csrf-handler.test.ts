@@ -4,6 +4,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { CsrfHandler } from "./csrf-handler.ts";
 import { generateCsrfToken } from "../../csrf/helpers.ts";
 import type { HandlerContext } from "#veryfront/types";
+import { CSP_REPORT_PATH } from "#veryfront/security/http/csp-report-endpoint.ts";
 
 function createCtx(csrf?: boolean | Record<string, unknown>): HandlerContext {
   return {
@@ -29,6 +30,35 @@ describe("security/http/csrf/csrf-handler", () => {
         true,
       );
       assertEquals(example.includes('searchParams.set("pins"'), false);
+    });
+  });
+
+  describe("platform CSP report endpoint", () => {
+    it("passes a browser report through even with CSRF enabled", async () => {
+      // A violation report is not a user action: the browser sends no token, so
+      // a project enabling CSRF would advertise a reporting endpoint that
+      // silently collects nothing.
+      const result = await handler.handle(
+        new Request(`https://acme.veryfront.com${CSP_REPORT_PATH}`, {
+          method: "POST",
+          body: '{"csp-report":{}}',
+        }),
+        createCtx(true),
+      );
+
+      assertEquals(result.response, undefined);
+    });
+
+    it("still rejects a token-less POST to any other path", async () => {
+      const result = await handler.handle(
+        new Request("https://acme.veryfront.com/_vf/csp-report-other", {
+          method: "POST",
+          body: "{}",
+        }),
+        createCtx(true),
+      );
+
+      assertEquals(result.response?.status, 403);
     });
   });
 

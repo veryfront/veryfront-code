@@ -20,6 +20,7 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import { HTTP_NO_CONTENT, PRIORITY_HIGH } from "#veryfront/utils/constants/index.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { CSP_REPORT_PATH } from "#veryfront/security/http/csp-report-endpoint.ts";
+import { isRequestBodyTooLargeError, readBodyWithLimit } from "#veryfront/security/index.ts";
 
 const logger = serverLogger.component("csp-report");
 
@@ -42,67 +43,39 @@ const MAX_REPORTS_PER_REQUEST = 16;
 const LOG_WINDOW_MS = 60_000;
 const MAX_LOGGED_PER_WINDOW = 100;
 
+/** Control characters a poster could use to forge extra log records (CWE-117). */
+// deno-lint-ignore no-control-regex -- intentionally matching control chars to strip them
+const LOG_CONTROL_CHARS = /[\x00-\x1f\x7f-\x9f]/g;
+
+function readField(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const stripped = value.replace(LOG_CONTROL_CHARS, "");
+  if (stripped.length === 0) return undefined;
+  return stripped.length > MAX_FIELD_LENGTH ? `${stripped.slice(0, MAX_FIELD_LENGTH)}…` : stripped;
+}
+
 /**
- * Read at most `maxBytes` from the body.
- *
- * `req.text()` would buffer the whole body first and only then let us measure
- * it, which makes the cap advisory: a request with no `content-length`, or a
- * dishonest one, is already in memory by the time it is rejected. Counting
- * bytes off the stream is the only version of this limit that holds.
- *
- * @returns the decoded body, or undefined if it was empty, oversized or unreadable
+ * Same as {@link readField}, minus the query string. A violating URL carries
+ * whatever the page was called with, which can include session identifiers and
+ * personal data; the origin and path are what identify the violation.
  */
-async function readBoundedBody(req: Request, maxBytes: number): Promise<string | undefined> {
-  if (!req.body) return undefined;
-
-  const reader = req.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-
-      total += value.byteLength;
-      if (total > maxBytes) {
-        await reader.cancel();
-        return undefined;
-      }
-      chunks.push(value);
-    }
-  } catch {
-    return undefined;
-  }
-
-  if (total === 0) return undefined;
-
-  const joined = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    joined.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(joined);
-  } catch {
-    return undefined;
-  }
+function readUri(value: unknown): string | undefined {
+  const field = readField(value);
+  if (field === undefined) return undefined;
+  const cut = field.search(/[?#]/);
+  return cut === -1 ? field : field.slice(0, cut);
 }
 
-function truncate(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.length === 0) return undefined;
-  return value.length > MAX_FIELD_LENGTH ? `${value.slice(0, MAX_FIELD_LENGTH)}…` : value;
-}
-
-interface NormalizedViolation {
+export interface NormalizedViolation {
   documentUri?: string;
   effectiveDirective?: string;
   blockedUri?: string;
   disposition?: string;
   statusCode?: number;
+}
+
+function readStatusCode(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function readRecord(value: unknown): Record<string, unknown> | undefined {
@@ -117,14 +90,19 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
  * Reporting API's `application/reports+json` array. Normalize to one shape so
  * the log has a single schema regardless of which browser sent it.
  */
-function normalizeReports(payload: unknown): NormalizedViolation[] {
+export function normalizeReports(payload: unknown): NormalizedViolation[] {
   const fromBody = (body: Record<string, unknown>): NormalizedViolation => ({
-    documentUri: truncate(body["document-uri"] ?? body.documentURL),
-    // `violated-directive` is the deprecated spelling; prefer the current one.
-    effectiveDirective: truncate(body["effective-directive"] ?? body["violated-directive"]),
-    blockedUri: truncate(body["blocked-uri"] ?? body.blockedURL),
-    disposition: truncate(body.disposition),
-    statusCode: typeof body["status-code"] === "number" ? body["status-code"] : undefined,
+    // Each field has a legacy hyphenated spelling and a Reporting API
+    // camel-case one, and `violated-directive` is deprecated in favour of
+    // `effective-directive`. Reading only one spelling silently loses the
+    // directive and status, which is the data the rollout decision needs.
+    documentUri: readUri(body["document-uri"] ?? body.documentURL),
+    effectiveDirective: readField(
+      body["effective-directive"] ?? body.effectiveDirective ?? body["violated-directive"],
+    ),
+    blockedUri: readUri(body["blocked-uri"] ?? body.blockedURL),
+    disposition: readField(body.disposition),
+    statusCode: readStatusCode(body["status-code"] ?? body.statusCode),
   });
 
   if (Array.isArray(payload)) {
@@ -143,6 +121,48 @@ function normalizeReports(payload: unknown): NormalizedViolation[] {
   return legacy ? [fromBody(legacy)] : [];
 }
 
+/**
+ * Per-window budget for log records.
+ *
+ * Charged per record rather than per request: one admission covering a whole
+ * batch would let a sender post {@link MAX_REPORTS_PER_REQUEST} violations at a
+ * time and write 16x the ceiling. The endpoint is unauthenticated, so this bound
+ * is the only thing protecting the log stream.
+ *
+ * Separate from the handler so the arithmetic can be tested as arithmetic,
+ * rather than by intercepting log output.
+ */
+export function createLogWindow(
+  maxPerWindow: number = MAX_LOGGED_PER_WINDOW,
+  windowMs: number = LOG_WINDOW_MS,
+): {
+  /** @returns how many of `lines` may be written, and what the previous window swallowed */
+  reserve: (now: number, lines: number) => { allowed: number; dropped: number };
+} {
+  let startedAt = 0;
+  let logged = 0;
+  let droppedInWindow = 0;
+
+  return {
+    reserve(now: number, lines: number) {
+      let dropped = 0;
+
+      if (now - startedAt >= windowMs) {
+        dropped = droppedInWindow;
+        startedAt = now;
+        logged = 0;
+        droppedInWindow = 0;
+      }
+
+      const allowed = Math.min(lines, Math.max(0, maxPerWindow - logged));
+      logged += allowed;
+      droppedInWindow += lines - allowed;
+
+      return { allowed, dropped };
+    },
+  };
+}
+
 export class CspReportHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "CspReportHandler",
@@ -153,29 +173,7 @@ export class CspReportHandler extends BaseHandler {
   // Instance state rather than module state: one handler is built per registry,
   // so production behaviour is the same, and each test gets a fresh window
   // without the handler having to export a reset hook it does not otherwise need.
-  #windowStartedAt = 0;
-  #loggedInWindow = 0;
-  #droppedInWindow = 0;
-
-  /** Whether this report may be logged, and what the previous window swallowed. */
-  #admitToLog(now: number): { admitted: boolean; dropped: number } {
-    let dropped = 0;
-
-    if (now - this.#windowStartedAt >= LOG_WINDOW_MS) {
-      dropped = this.#droppedInWindow;
-      this.#windowStartedAt = now;
-      this.#loggedInWindow = 0;
-      this.#droppedInWindow = 0;
-    }
-
-    if (this.#loggedInWindow >= MAX_LOGGED_PER_WINDOW) {
-      this.#droppedInWindow += 1;
-      return { admitted: false, dropped: 0 };
-    }
-
-    this.#loggedInWindow += 1;
-    return { admitted: true, dropped };
-  }
+  #logWindow = createLogWindow();
 
   override async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (!this.shouldHandle(req, ctx)) return this.continue();
@@ -185,13 +183,19 @@ export class CspReportHandler extends BaseHandler {
     // do with an error, and a hostile poster should learn nothing from one.
     const accepted = this.respond(new Response(null, { status: HTTP_NO_CONTENT }));
 
-    // Cheap rejection when the sender declares an oversized body. The stream
-    // read below is what actually enforces the limit.
-    const declaredLength = Number(req.headers.get("content-length"));
-    if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) return accepted;
-
-    const raw = await readBoundedBody(req, MAX_BODY_BYTES);
-    if (raw === undefined) return accepted;
+    let raw: string;
+    try {
+      // Shared reader: Content-Length is an early hint only, the streamed byte
+      // count is authoritative, and tiny transport chunks are coalesced so
+      // chunk metadata cannot grow independently of the limit.
+      raw = await readBodyWithLimit(req, MAX_BODY_BYTES);
+    } catch (error) {
+      if (!isRequestBodyTooLargeError(error)) {
+        logger.debug("Unreadable CSP report body", { projectSlug: ctx.projectSlug });
+      }
+      return accepted;
+    }
+    if (raw.length === 0) return accepted;
 
     let payload: unknown;
     try {
@@ -203,10 +207,10 @@ export class CspReportHandler extends BaseHandler {
     const violations = normalizeReports(payload);
     if (violations.length === 0) return accepted;
 
-    const { admitted, dropped } = this.#admitToLog(Date.now());
-    if (!admitted) return accepted;
+    const { allowed, dropped } = this.#logWindow.reserve(Date.now(), violations.length);
+    if (allowed === 0) return accepted;
 
-    for (const violation of violations) {
+    for (const violation of violations.slice(0, allowed)) {
       logger.warn("CSP violation reported", {
         projectSlug: ctx.projectSlug,
         ...violation,
