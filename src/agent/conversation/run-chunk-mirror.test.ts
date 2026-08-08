@@ -3,7 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessageChunk } from "../../chat/protocol.ts";
 import type { ConversationRunEventQueueController } from "./durable.ts";
-import type { ConversationRunEvent } from "./run-events.ts";
+import { type ConversationRunEvent, ConversationRunEventEncoder } from "./run-events.ts";
 import {
   createConversationRunChunkMirror,
   createHostedConversationRunChunkMirror,
@@ -57,6 +57,8 @@ describe("agent/conversation-run-chunk-mirror", () => {
     const preparedTypes: string[] = [];
     const mirror = createConversationRunChunkMirror({
       queueController,
+      // Exact-event assertions: an unclocked encoder keeps them free of elapsedMs.
+      encoder: new ConversationRunEventEncoder(),
       immediateFlushEventCount: 99,
       flushDelayMs: 10_000,
       onChunkPrepared: ({ events }) => {
@@ -78,6 +80,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
     const prepared: ConversationRunEvent[][] = [];
     const mirror = createConversationRunChunkMirror({
       queueController,
+      encoder: new ConversationRunEventEncoder(),
       immediateFlushEventCount: 99,
       flushDelayMs: 10_000,
       onExternalEventsPrepared: ({ events }) => {
@@ -106,6 +109,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
     const preparedMarkers: string[] = [];
     const mirror = createConversationRunChunkMirror({
       queueController,
+      encoder: new ConversationRunEventEncoder(),
       immediateFlushEventCount: 99,
       flushDelayMs: 10_000,
       prepareChunkEvents: ({ defaultPrepare }) => {
