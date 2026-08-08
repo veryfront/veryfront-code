@@ -737,4 +737,21 @@ describe("load_skill orchestration contract", () => {
       false,
     );
   });
+
+  it("states override forwarding conditionally, because it only works for invoke_agent", () => {
+    // Some runs expose only scoped delegate tools (`agent_<id>`) and no
+    // `invoke_agent`. Naming `invoke_agent` unconditionally points at a tool
+    // that is absent; generalising to "the available delegation tool" is worse,
+    // because scoped delegates CANNOT carry overrides — `AgentToolInput` is
+    // `{ input: string }`, and applySkillDelegationOverridesToToolInput returns
+    // its input unchanged for any tool other than invoke_agent.
+    //
+    // So the clause must be conditional: a no-op when invoke_agent is absent,
+    // accurate when it is present. veryfront/veryfront-issue-inbox#411.
+    assertStringIncludes(LOAD_SKILL_OVERRIDE_FORWARDING, "If invoke_agent is available");
+    assertEquals(
+      LOAD_SKILL_OVERRIDE_FORWARDING.includes("the available delegation tool"),
+      false,
+    );
+  });
 });
