@@ -3,11 +3,19 @@ import { buildRootOwnedChildRunResultHint } from "../child-run/result-summary.ts
 import { isRecord } from "../../chat/conversation.ts";
 import type { ChatSystemMessage } from "../../chat/types.ts";
 
-/** Shared keep root assistant visible owner value. */
-export const KEEP_ROOT_ASSISTANT_VISIBLE_OWNER = "Keep the root assistant visibly owning the work.";
-/** Shared delegate only when materially helpful value. */
-export const DELEGATE_ONLY_WHEN_MATERIALLY_HELPFUL =
-  "Delegate only when isolation, parallelism, or a different tool/model budget materially helps.";
+// Defined in src/skill so both load_skill tools can share them; src/agent may
+// import from src/skill but not the reverse.
+export {
+  DELEGATE_ONLY_WHEN_MATERIALLY_HELPFUL,
+  KEEP_ROOT_ASSISTANT_VISIBLE_OWNER,
+  LOAD_SKILL_CONTINUE_SAME_TURN,
+  LOAD_SKILL_OVERRIDE_FORWARDING,
+  LOAD_SKILL_POLICY_CLAUSES,
+} from "#veryfront/skill/load-skill-policy.ts";
+import {
+  DELEGATE_ONLY_WHEN_MATERIALLY_HELPFUL,
+  KEEP_ROOT_ASSISTANT_VISIBLE_OWNER,
+} from "#veryfront/skill/load-skill-policy.ts";
 /** Shared no delegation narration unless asked value. */
 export const NO_DELEGATION_NARRATION_UNLESS_ASKED =
   "Do not mention child agents, delegation, or tool/process narration unless the user explicitly asks about them.";
@@ -15,8 +23,6 @@ export const NO_DELEGATION_NARRATION_UNLESS_ASKED =
 export const SYNTHESIZE_DELEGATED_FINDINGS_IN_ROOT_VOICE =
   "After delegated work returns, synthesize the findings in the root assistant voice.";
 
-/** Shared load skill continue same turn value. */
-export const LOAD_SKILL_CONTINUE_SAME_TURN = "Continue the same turn after calling it.";
 /** Shared load skill continue same turn now value. */
 export const LOAD_SKILL_CONTINUE_SAME_TURN_NOW = "Continue the same turn now.";
 /** Shared load skill root ownership value. */
@@ -26,9 +32,6 @@ export const LOAD_SKILL_USE_ALLOWED_TOOLS =
   "For multi-step or isolated work, call invoke_agent; otherwise keep working directly with the available tools.";
 /** Shared load skill delegation threshold value. */
 export const LOAD_SKILL_DELEGATION_THRESHOLD = DELEGATE_ONLY_WHEN_MATERIALLY_HELPFUL;
-/** Shared load skill override forwarding value. */
-export const LOAD_SKILL_OVERRIDE_FORWARDING =
-  "Pass through any returned model, thinking, or maxSteps overrides to invoke_agent when delegating.";
 
 /** Builds root owned delegated findings instruction. */
 export function buildRootOwnedDelegatedFindingsInstruction(): string {

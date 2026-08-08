@@ -1,7 +1,12 @@
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "./_test-setup.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { registerSkill } from "./registry.ts";
 import {
@@ -10,6 +15,7 @@ import {
   createLoadSkillTool,
 } from "./tools.ts";
 import type { Skill, SkillScriptResult } from "./types.ts";
+import { LOAD_SKILL_OVERRIDE_FORWARDING, LOAD_SKILL_POLICY_CLAUSES } from "./load-skill-policy.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSkillTestAdapter } from "./testing.ts";
 import { LocalScriptExecutor } from "./executor.ts";
@@ -703,5 +709,32 @@ Do work.`,
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }
+  });
+});
+
+describe("load_skill orchestration contract", () => {
+  it("is stated by both the factory and hosted load_skill tools", async () => {
+    // Regression for the blocker found reviewing the <available_skills> trim.
+    // Two tools expose load_skill: this one, which the `agent()` factory
+    // registers, and the hosted `createRuntimeLoadSkillTool`. The skills block
+    // no longer carries orchestration policy, so a tool whose description
+    // omits it would leave that agent with the policy in no prompt at all.
+    const { RUNTIME_LOAD_SKILL_DESCRIPTION } = await import(
+      "#veryfront/agent/runtime/load-skill-tool.ts"
+    );
+    const factoryDescription = createLoadSkillTool().description ?? "";
+
+    assertStringIncludes(factoryDescription, LOAD_SKILL_POLICY_CLAUSES);
+    assertStringIncludes(RUNTIME_LOAD_SKILL_DESCRIPTION, LOAD_SKILL_POLICY_CLAUSES);
+  });
+
+  it("promises override forwarding only from the loader that returns overrides", () => {
+    // createLoadSkillTool returns { skillId, instructions, references, scripts }.
+    // Telling a factory-built agent to forward returned model/thinking/maxSteps
+    // would name fields its load_skill never produces.
+    assertEquals(
+      (createLoadSkillTool().description ?? "").includes(LOAD_SKILL_OVERRIDE_FORWARDING),
+      false,
+    );
   });
 });

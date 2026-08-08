@@ -435,7 +435,6 @@ description: Excluded skill
     assertEquals(prompt.includes("create_release"), false);
     assertEquals(prompt.includes("load_skill_reference"), false);
     assertEquals(prompt.includes("execute_skill_script"), false);
-    assertStringIncludes(prompt, "- load_skill: Call with");
   });
 
   it("rejects inline local tools in the reserved integration namespace", () => {
