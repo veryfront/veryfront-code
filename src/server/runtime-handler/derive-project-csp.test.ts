@@ -35,7 +35,8 @@ function createHostedAdapter(options: { requireInitialization: boolean }) {
       return Promise.resolve(SOURCE);
     },
     getContentContext: () => null,
-    getSourceSnapshotVersion: () => 7,
+    // Async, like MultiProjectFSAdapter's.
+    getSourceSnapshotVersion: () => Promise.resolve(7),
   };
 
   const fs = {
@@ -91,6 +92,49 @@ describe("server/runtime-handler/deriveProjectCspOrigins", () => {
     });
 
     assertEquals(derived?.["img-src"], ["https://images.unsplash.com"]);
+  });
+
+  it("re-derives when the snapshot moves under a fixed release", async () => {
+    // The wrapper's `getSourceSnapshotVersion` is async, and template-stringifying
+    // it wrote the literal "[object Promise]" into every key. Two releases would
+    // still differ by their id prefix, so only a moving snapshot under one fixed
+    // identity can see this: with the promise stringified, both calls share a key
+    // and the second is served from cache instead of re-reading the source.
+    __clearDerivedCspCacheForTests();
+
+    let snapshot = 1;
+    let reads = 0;
+    let source = SOURCE;
+    const underlying = {
+      ensureSourceSnapshotFresh: () => Promise.resolve(),
+      getAllSourceFiles: () => {
+        reads += 1;
+        return Promise.resolve(source);
+      },
+      getContentContext: () => null,
+      getSourceSnapshotVersion: () => Promise.resolve(snapshot),
+    };
+    const adapter = {
+      fs: {
+        isVeryfrontAdapter: true,
+        isMultiProjectMode: true,
+        getUnderlyingAdapter: () => underlying,
+        ensureSourceSnapshotFresh: () => Promise.resolve(),
+        runWithContext: (_s: string, _t: string, run: () => Promise<unknown>) => run(),
+      },
+    } as unknown as RuntimeAdapter;
+
+    const first = await deriveProjectCspOrigins({ ...PRODUCTION, adapter });
+    assertEquals(first?.["img-src"], ["https://images.unsplash.com"]);
+    assertEquals(reads, 1);
+
+    // Same release, new content pushed under it.
+    snapshot = 2;
+    source = [{ path: "pages/index.tsx", content: '<img src="https://cdn.example.com/a.png" />' }];
+
+    const second = await deriveProjectCspOrigins({ ...PRODUCTION, adapter });
+    assertEquals(reads, 2, "a moved snapshot must not be served from the previous key");
+    assertEquals(second?.["img-src"], ["https://cdn.example.com"]);
   });
 
   it("returns nothing rather than throwing when the adapter cannot host a tenant", async () => {
