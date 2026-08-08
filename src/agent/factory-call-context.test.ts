@@ -122,7 +122,6 @@ describe("agent/factory call context", () => {
       '- {"skillId":"support-triage","description":"Triage incoming support requests"}',
     );
     assertEquals(prompt.includes("create_file"), false);
-    assertStringIncludes(prompt, "execute_skill_script: Call with");
   });
 
   it("preserves skill tool metadata when the direct factory selects that tool", async () => {

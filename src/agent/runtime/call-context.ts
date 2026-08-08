@@ -60,10 +60,6 @@ export type BuildAgentCallContextInput = {
   extraBlocks?: readonly string[];
   /** Skills the agent may load during the call. */
   skills?: readonly RuntimeSkillDefinition[];
-  /** Tool names actually available in this run, used to scope delegation guidance. */
-  availableToolNames?: readonly string[];
-  /** Include the skill tool call signatures in the skills block. */
-  includeSkillToolUsage?: boolean;
   /** Host-supplied environment facts. */
   environmentContext?: string;
 };
@@ -167,14 +163,7 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
 
   if (input.skills?.length && !hasBlock(input.instructions, AVAILABLE_SKILLS_BLOCK_NAME)) {
     staticParts.push(
-      buildRuntimeAvailableSkillsPromptBlock(input.skills, {
-        ...(input.availableToolNames === undefined
-          ? {}
-          : { availableToolNames: input.availableToolNames }),
-        ...(input.includeSkillToolUsage === undefined
-          ? {}
-          : { includeSkillToolUsage: input.includeSkillToolUsage }),
-      }),
+      buildRuntimeAvailableSkillsPromptBlock(input.skills),
     );
   }
 
