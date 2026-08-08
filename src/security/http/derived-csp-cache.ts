@@ -41,6 +41,30 @@ registerCache("derived-csp-origins", () => ({
   maxEntries: MAX_ENTRIES,
 }));
 
+/**
+ * Content versions already reported as underivable.
+ *
+ * The two failure paths deliberately do not `remember`, so the read is retried
+ * on the next request -- which means without this they would warn on every
+ * request for as long as the failure lasts, on every pod. The diagnostic is
+ * worth one line per content version, not one per request.
+ *
+ * Bounded like the cache, and for the same reason.
+ */
+const warned = new Set<string>();
+
+/** @returns whether this key's diagnostic has not been emitted yet */
+export function shouldWarnOnceForKey(key: string): boolean {
+  if (warned.has(key)) return false;
+  while (warned.size >= MAX_ENTRIES) {
+    const oldest = warned.values().next().value as string | undefined;
+    if (oldest === undefined) break;
+    warned.delete(oldest);
+  }
+  warned.add(key);
+  return true;
+}
+
 function remember(key: string, value: DerivedCspOrigins): DerivedCspOrigins {
   // Insertion-ordered eviction: the oldest content version is the one least
   // likely to still be serving traffic.
@@ -108,11 +132,13 @@ async function deriveOnce(
     // a derivation that never works looks exactly like a project that
     // references no external origins. That is how this shipped doing nothing
     // in production while reading as healthy.
-    logger.warn("CSP derivation could not read project sources", {
-      projectScope: lookup.projectScope,
-      contentVersion: lookup.contentVersion,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    if (shouldWarnOnceForKey(key)) {
+      logger.warn("CSP derivation could not read project sources", {
+        projectScope: lookup.projectScope,
+        contentVersion: lookup.contentVersion,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     // Deliberately not remembered. See below.
     return EMPTY;
   }
@@ -132,10 +158,12 @@ async function deriveOnce(
   // for the content version and worth caching, while nothing read is a race and
   // must be retried.
   if (!files || files.length === 0) {
-    logger.warn("CSP derivation read no project sources", {
-      projectScope: lookup.projectScope,
-      contentVersion: lookup.contentVersion,
-    });
+    if (shouldWarnOnceForKey(key)) {
+      logger.warn("CSP derivation read no project sources", {
+        projectScope: lookup.projectScope,
+        contentVersion: lookup.contentVersion,
+      });
+    }
     return EMPTY;
   }
 
@@ -164,4 +192,5 @@ async function deriveOnce(
 export function __clearDerivedCspCacheForTests(): void {
   cache.clear();
   inFlight.clear();
+  warned.clear();
 }
