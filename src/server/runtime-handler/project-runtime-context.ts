@@ -7,6 +7,8 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import type { SecurityConfig } from "#veryfront/types";
 import { deriveSecurityContext } from "#veryfront/security/http/config.ts";
+import { getDerivedCspOrigins } from "#veryfront/security/http/derived-csp-cache.ts";
+import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { createRequestContext } from "../context/request-context.ts";
 import type { HandlerContext } from "../handlers/types.ts";
@@ -319,9 +321,28 @@ export async function resolveProjectRuntimeContext(
   // deliberately config-less control-plane path config-less: those endpoints
   // authenticate their signed operation envelope and do not expose an
   // application/browser surface.
+  // Origins the project's own source references, so a project that never wrote
+  // a `security.csp` still loads its own images, video and fonts. Derived from
+  // the release's pinned sources rather than live content, and computed once
+  // per content version -- a script injected at runtime cannot extend a list
+  // taken from an immutable release. Only passive directives are derived; see
+  // security/http/derived-csp-origins.ts for why script-src is not.
+  const derivedCsp = input.isProxyMode && adapterRes.config !== undefined
+    ? await getDerivedCspOrigins({
+      projectScope: projectRes.projectSlug ?? adapterRes.projectDir,
+      contentVersion: resolveStyleContentVersion(getContentContext(adapterRes.adapter), {
+        releaseId: envRes.releaseId,
+        branch: projectRes.parsedDomain?.branch,
+        environmentName: projectRes.environmentName,
+      }),
+      loadSourceFiles: () => readAllSourceFiles(adapterRes.adapter),
+    })
+    : undefined;
+
   const requestSecurity = input.isProxyMode && adapterRes.config !== undefined
     ? deriveSecurityContext(adapterRes.config, {
       productionDefaults: envRes.resolvedEnvironment === "production",
+      derivedCsp,
     })
     : undefined;
 
@@ -494,4 +515,36 @@ function createProxyGuard(
       headers: { "Content-Type": "application/json" },
     }),
   };
+}
+
+/**
+ * Reach the underlying veryfront filesystem adapter's source list.
+ *
+ * Mirrors how the stylesheet route resolves project sources: the request-level
+ * adapter is a wrapper, and only the adapter beneath it can enumerate the
+ * release's files. Returns null whenever that is not available -- a local
+ * project, a stub adapter in tests -- which callers treat as "derive nothing".
+ */
+async function readAllSourceFiles(
+  adapter: RuntimeAdapter,
+): Promise<Array<{ path: string; content?: string }> | null> {
+  const wrapped = adapter.fs as { getUnderlyingAdapter?: () => unknown };
+  if (typeof wrapped.getUnderlyingAdapter !== "function") return null;
+  const fsAdapter = wrapped.getUnderlyingAdapter() as {
+    getAllSourceFiles?: () => Promise<Array<{ path: string; content?: string }>>;
+  };
+  if (typeof fsAdapter.getAllSourceFiles !== "function") return null;
+  return await fsAdapter.getAllSourceFiles();
+}
+
+/** The adapter's resolved content context, when it exposes one. */
+function getContentContext(adapter: RuntimeAdapter) {
+  const wrapped = adapter.fs as { getUnderlyingAdapter?: () => unknown };
+  if (typeof wrapped.getUnderlyingAdapter !== "function") return null;
+  const fsAdapter = wrapped.getUnderlyingAdapter() as {
+    getContentContext?: () =>
+      | import("#veryfront/platform/adapters/fs/veryfront/types.ts").ResolvedContentContext
+      | null;
+  };
+  return typeof fsAdapter.getContentContext === "function" ? fsAdapter.getContentContext() : null;
 }

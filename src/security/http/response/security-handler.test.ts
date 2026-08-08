@@ -10,6 +10,7 @@ import {
   SECURITY_POLICY_RESPONSE_HEADER_NAMES,
 } from "./security-handler.ts";
 import type { SecurityConfig } from "./types.ts";
+import { deriveSecurityContext } from "../config.ts";
 import {
   PLATFORM_ASSET_ORIGINS,
   PLATFORM_FONT_FILE_ORIGINS,
@@ -834,6 +835,65 @@ describe("security/http/response/security-handler", () => {
       });
       assertEquals(headers.get("Referrer-Policy"), "no-referrer");
       assertEquals(headers.get("X-Custom"), "kept");
+    });
+
+    it("merges derived origins between the floor and project config", () => {
+      const result = buildCSP(false, "n", {
+        derivedCsp: { "img-src": ["https://cdn.derived.example"] },
+        csp: { imgSrc: ["https://cdn.configured.example"] },
+      } as SecurityConfig);
+      const sources = parseDirectiveSources(result, "img-src");
+      assertAllows(sources, "https://cdn.derived.example", "derived origin is admitted");
+      assertAllows(sources, "https://cdn.configured.example", "configured origin still applies");
+      assert(sources.includes("'self'"), "the floor survives");
+    });
+
+    it("admits derived origins with no project csp at all", () => {
+      // The whole point: a project that configures nothing still loads the
+      // assets its own source references.
+      const result = buildCSP(false, "n", {
+        derivedCsp: { "img-src": ["https://cdn.derived.example"] },
+      } as SecurityConfig);
+      assertAllows(
+        parseDirectiveSources(result, "img-src"),
+        "https://cdn.derived.example",
+        "derivation alone is enough",
+      );
+    });
+
+    it("lets an explicit null still drop a directive to the floor", () => {
+      // A project that says it wants nothing extra means it. Static analysis
+      // must not put back what was just explicitly removed.
+      const result = buildCSP(false, "n", {
+        derivedCsp: { "font-src": ["https://fonts.derived.example"] },
+        csp: { fontSrc: null },
+      } as SecurityConfig);
+      assertEquals(parseDirectiveRemoteHosts(result, "font-src"), []);
+      assert(parseDirectiveSources(result, "font-src").includes("'self'"), "floor survives");
+    });
+
+    it("never lets a project author its own derived layer", () => {
+      // SecurityConfig has an index signature, so `security.derivedCsp` in a
+      // project config would otherwise be copied through and become a second,
+      // unaudited way to widen the policy.
+      const ctx = deriveSecurityContext(
+        { security: { derivedCsp: { "script-src": ["https://evil.example"] } } } as never,
+        { productionDefaults: true },
+      );
+      assertEquals(ctx.securityConfig.derivedCsp, undefined);
+      const result = buildCSP(false, "n", ctx.securityConfig);
+      assert(
+        !parseDirectiveSources(result, "script-src").includes("https://evil.example"),
+        "a project-declared derived layer must not reach the policy",
+      );
+    });
+
+    it("replaces rather than merges a project-declared derived layer", () => {
+      const ctx = deriveSecurityContext(
+        { security: { derivedCsp: { "img-src": ["https://evil.example"] } } } as never,
+        { productionDefaults: true, derivedCsp: { "img-src": ["https://cdn.real.example"] } },
+      );
+      assertEquals(ctx.securityConfig.derivedCsp, { "img-src": ["https://cdn.real.example"] });
     });
 
     it("serves the same policy either way, differing only in enforcement", () => {
