@@ -738,12 +738,20 @@ describe("load_skill orchestration contract", () => {
     );
   });
 
-  it("does not hardcode a specific delegation tool name", () => {
-    // Regression: some runs expose only scoped delegate tools (`agent_<id>`)
-    // and no `invoke_agent` at all. Prose that hardcodes `invoke_agent` would
-    // name a tool that isn't present on those runs. See
-    // veryfront/veryfront-issue-inbox for the report on PR #3475.
-    assertEquals(LOAD_SKILL_OVERRIDE_FORWARDING.includes("invoke_agent"), false);
-    assertStringIncludes(LOAD_SKILL_OVERRIDE_FORWARDING, "the available delegation tool");
+  it("states override forwarding conditionally, because it only works for invoke_agent", () => {
+    // Some runs expose only scoped delegate tools (`agent_<id>`) and no
+    // `invoke_agent`. Naming `invoke_agent` unconditionally points at a tool
+    // that is absent; generalising to "the available delegation tool" is worse,
+    // because scoped delegates CANNOT carry overrides — `AgentToolInput` is
+    // `{ input: string }`, and applySkillDelegationOverridesToToolInput returns
+    // its input unchanged for any tool other than invoke_agent.
+    //
+    // So the clause must be conditional: a no-op when invoke_agent is absent,
+    // accurate when it is present. veryfront/veryfront-issue-inbox#411.
+    assertStringIncludes(LOAD_SKILL_OVERRIDE_FORWARDING, "If invoke_agent is available");
+    assertEquals(
+      LOAD_SKILL_OVERRIDE_FORWARDING.includes("the available delegation tool"),
+      false,
+    );
   });
 });

@@ -37,9 +37,17 @@ export const LOAD_SKILL_CONTINUE_SAME_TURN = "Continue the same turn after calli
  * those fields. `createLoadSkillTool` returns `{ skillId, instructions,
  * references, scripts }`, so telling a factory-built agent to forward returned
  * overrides would name fields its `load_skill` never produces.
+ *
+ * The `invoke_agent` condition is load-bearing, not incidental. Overrides are
+ * applied only to that tool (`applySkillDelegationOverridesToToolInput` returns
+ * its input unchanged for any other tool name), and scoped `agent_<id>`
+ * delegates accept only `{ input }` (`AgentToolInput`), so they cannot carry
+ * model/thinking/maxSteps at all. Phrasing the clause conditionally keeps it
+ * accurate on runs where `invoke_agent` is absent, without needing a dynamic
+ * description.
  */
 export const LOAD_SKILL_OVERRIDE_FORWARDING =
-  "Pass through any returned model, thinking, or maxSteps overrides to the available delegation tool when delegating.";
+  "If invoke_agent is available, pass through any returned model, thinking, or maxSteps overrides when delegating to it.";
 
 /**
  * The behavioural contract every `load_skill` tool description must state,
