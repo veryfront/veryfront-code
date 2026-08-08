@@ -1608,6 +1608,37 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("returns 404 for an environment root that names no project", async () => {
+      // staging.veryfront.com parses as an environment root: a veryfront domain
+      // with slug null. It used to be forwarded with x-project-slug: "", which
+      // the runtime answers 502 "Missing project context" — a config gap
+      // reported as an upstream failure. It is the same condition a custom
+      // domain answers 404 for.
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/auth/token") return createTokenResponse();
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        for (const host of ["staging.veryfront.com", "preview.veryfront.com"]) {
+          const ctx = await handler.processRequest(
+            new Request(`http://${host}/page`, { headers: { host } }),
+          );
+
+          assertEquals(ctx.projectSlug, undefined);
+          assertEquals(ctx.error?.status, 404);
+          assertEquals(ctx.error?.message, `No project configured for domain: ${host}`);
+        }
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
     it("returns 404 error when custom domain not found", async () => {
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);

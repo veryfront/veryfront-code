@@ -815,17 +815,16 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       }, logger);
 
     if (!projectSlug && parsedDomain.isVeryfrontDomain) {
-      return {
-        token: undefined,
-        projectSlug: undefined,
-        projectId: undefined,
-        environment: "preview",
-        contentSourceId: "no-project",
-        localPath: undefined,
-        host,
-        parsedDomain,
-        isLocalProject: false,
-      };
+      // An environment root (staging.veryfront.com) or a bare dev domain names no
+      // project. Forwarding it sends x-project-slug: "" to the runtime, which
+      // answers 502 "Missing project context" — a config gap reported as an
+      // upstream failure. A custom domain in the same state already answers 404,
+      // so answer the same way here.
+      logger?.info("No project for veryfront domain", { host });
+      return createProxyErrorContext(base, {
+        status: 404,
+        message: `No project configured for domain: ${host}`,
+      });
     }
 
     const localPath = projectSlug ? await localProjectResolver.find(projectSlug) : undefined;
