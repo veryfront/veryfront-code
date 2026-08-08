@@ -270,7 +270,7 @@ describe("internal-agents/ag-ui-sse", () => {
       mapRuntimeEventToAgUi(state, { type: "reasoning-start", id: "reasoning-1" }),
       [{
         event: "ReasoningMessageStart",
-        payload: { messageId: "assistant-3:reasoning:reasoning-1", role: "reasoning" },
+        payload: { messageId: "assistant-3:reasoning:0", role: "reasoning" },
       }],
     );
     assertEquals(
@@ -281,14 +281,14 @@ describe("internal-agents/ag-ui-sse", () => {
       }),
       [{
         event: "ReasoningMessageContent",
-        payload: { messageId: "assistant-3:reasoning:reasoning-1", delta: "thinking..." },
+        payload: { messageId: "assistant-3:reasoning:0", delta: "thinking..." },
       }],
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "reasoning-end", id: "reasoning-1" }),
       [{
         event: "ReasoningMessageEnd",
-        payload: { messageId: "assistant-3:reasoning:reasoning-1" },
+        payload: { messageId: "assistant-3:reasoning:0" },
       }],
     );
   });

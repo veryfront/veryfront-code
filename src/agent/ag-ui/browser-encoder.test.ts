@@ -26,7 +26,7 @@ describe("agent/ag-ui-browser-encoder", () => {
       }),
       [{
         event: "ReasoningMessageStart",
-        payload: { messageId: "assistant-1:reasoning:reasoning-1", role: "reasoning" },
+        payload: { messageId: "assistant-1:reasoning:0", role: "reasoning" },
       }],
     );
     assertEquals(
@@ -37,14 +37,14 @@ describe("agent/ag-ui-browser-encoder", () => {
       }),
       [{
         event: "ReasoningMessageContent",
-        payload: { messageId: "assistant-1:reasoning:reasoning-1", delta: "Thinking" },
+        payload: { messageId: "assistant-1:reasoning:0", delta: "Thinking" },
       }],
     );
     assertEquals(
       mapRuntimeStreamEventToAgUiBrowserEvents(state, { type: "reasoning-end", id: "reasoning-1" }),
       [{
         event: "ReasoningMessageEnd",
-        payload: { messageId: "assistant-1:reasoning:reasoning-1" },
+        payload: { messageId: "assistant-1:reasoning:0" },
       }],
     );
     assertEquals(
@@ -286,7 +286,7 @@ describe("agent/ag-ui-browser-encoder", () => {
       [{
         event: "ReasoningMessageStart",
         payload: {
-          messageId: "assistant-orphan-reasoning:reasoning:reasoning-orphan",
+          messageId: "assistant-orphan-reasoning:reasoning:0",
           role: "reasoning",
         },
       }],
@@ -300,7 +300,7 @@ describe("agent/ag-ui-browser-encoder", () => {
       [{
         event: "ReasoningMessageContent",
         payload: {
-          messageId: "assistant-orphan-reasoning:reasoning:reasoning-orphan",
+          messageId: "assistant-orphan-reasoning:reasoning:0",
           delta: "I should gather one more source before calling the tool.",
         },
       }],
@@ -315,7 +315,7 @@ describe("agent/ag-ui-browser-encoder", () => {
         {
           event: "ReasoningMessageEnd",
           payload: {
-            messageId: "assistant-orphan-reasoning:reasoning:reasoning-orphan",
+            messageId: "assistant-orphan-reasoning:reasoning:0",
           },
         },
         {
@@ -346,7 +346,7 @@ describe("agent/ag-ui-browser-encoder", () => {
       }),
       [{
         event: "ReasoningMessageStart",
-        payload: { messageId: "assistant-3:reasoning:reasoning-1", role: "reasoning" },
+        payload: { messageId: "assistant-3:reasoning:0", role: "reasoning" },
       }],
     );
     assertEquals(
@@ -357,7 +357,7 @@ describe("agent/ag-ui-browser-encoder", () => {
       }),
       [{
         event: "ReasoningMessageContent",
-        payload: { messageId: "assistant-3:reasoning:reasoning-1", delta: "thinking" },
+        payload: { messageId: "assistant-3:reasoning:0", delta: "thinking" },
       }],
     );
     assertEquals(
@@ -369,7 +369,7 @@ describe("agent/ag-ui-browser-encoder", () => {
       [
         {
           event: "ReasoningMessageEnd",
-          payload: { messageId: "assistant-3:reasoning:reasoning-1" },
+          payload: { messageId: "assistant-3:reasoning:0" },
         },
         {
           event: "ToolCallStart",
@@ -567,7 +567,7 @@ describe("agent/ag-ui-browser-encoder", () => {
       [
         {
           event: "ReasoningMessageEnd",
-          payload: { messageId: "assistant-4:reasoning:reasoning-2" },
+          payload: { messageId: "assistant-4:reasoning:0" },
         },
         {
           event: "RunFinished",
@@ -720,5 +720,112 @@ describe("buildAgUiBrowserFinalizeResponse", () => {
         },
       },
     );
+  });
+
+  // Providers restart part ids at `reasoning-0` in every step, so composing the
+  // AG-UI id from the part id alone collides across a multi-step run: every
+  // reasoning block in the run comes out as `<messageId>:reasoning:reasoning-0`.
+  it("gives each reasoning span a distinct messageId when a provider reuses part ids", () => {
+    const state = createAgUiBrowserEncoderState();
+    mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+      type: "message-start",
+      messageId: "assistant-multistep",
+    });
+
+    const startedMessageIds: string[] = [];
+    for (const stepName of ["step-1", "step-2", "step-3"]) {
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, { type: "start-step", stepName });
+
+      const started = mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "reasoning-start",
+        id: "reasoning-0",
+      });
+      const startEvent = started.find((entry) => entry.event === "ReasoningMessageStart");
+      startedMessageIds.push(startEvent?.payload.messageId as string);
+
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "reasoning-delta",
+        id: "reasoning-0",
+        delta: `thinking in ${stepName}`,
+      });
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "reasoning-end",
+        id: "reasoning-0",
+      });
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, { type: "finish-step", stepName });
+    }
+
+    assertEquals(
+      new Set(startedMessageIds).size,
+      startedMessageIds.length,
+      `each reasoning span needs its own messageId, got ${JSON.stringify(startedMessageIds)}`,
+    );
+  });
+
+  it("keeps delta and end on the messageId opened by their reasoning span", () => {
+    const state = createAgUiBrowserEncoderState();
+    mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+      type: "message-start",
+      messageId: "assistant-span-identity",
+    });
+
+    const collected: { first: string[]; second: string[] } = { first: [], second: [] };
+    for (const slot of ["first", "second"] as const) {
+      const ids = collected[slot];
+      for (
+        const event of [
+          { type: "reasoning-start", id: "reasoning-0" },
+          { type: "reasoning-delta", id: "reasoning-0", delta: "a" },
+          { type: "reasoning-delta", id: "reasoning-0", delta: "b" },
+          { type: "reasoning-end", id: "reasoning-0" },
+        ]
+      ) {
+        for (const encoded of mapRuntimeStreamEventToAgUiBrowserEvents(state, event)) {
+          if (encoded.event.startsWith("ReasoningMessage")) {
+            ids.push(encoded.payload.messageId as string);
+          }
+        }
+      }
+    }
+
+    assertEquals(
+      new Set(collected.first).size,
+      1,
+      `first span must use one messageId throughout, got ${JSON.stringify(collected.first)}`,
+    );
+    assertEquals(
+      new Set(collected.second).size,
+      1,
+      `second span must use one messageId throughout, got ${JSON.stringify(collected.second)}`,
+    );
+    assertEquals(
+      collected.first[0] === collected.second[0],
+      false,
+      "the two spans must not share a messageId",
+    );
+  });
+
+  it("drops a reasoning end that closes no open span", () => {
+    const state = createAgUiBrowserEncoderState();
+    mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+      type: "message-start",
+      messageId: "assistant-unmatched-end",
+    });
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, { type: "reasoning-end", id: "reasoning-0" }),
+      [],
+      "an end with no span open must not emit a ReasoningMessageEnd",
+    );
+
+    // The dropped end must not consume an ordinal: the next real span is still 0.
+    const started = mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+      type: "reasoning-start",
+      id: "reasoning-0",
+    });
+    assertEquals(started, [{
+      event: "ReasoningMessageStart",
+      payload: { messageId: "assistant-unmatched-end:reasoning:0", role: "reasoning" },
+    }]);
   });
 });

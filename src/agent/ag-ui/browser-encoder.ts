@@ -38,6 +38,11 @@ export interface AgUiBrowserEncoderState {
   activeTextContentId: string | null;
   textContentIndex: number;
   reasoningMessageId: string | null;
+  /**
+   * How many reasoning spans have opened in this run. Optional so a state
+   * object built before this counter existed stays valid; absent reads as 0.
+   */
+  reasoningSpanIndex?: number;
   activeStepName: string | null;
   stepCount: number;
   streamedToolInputIds: Set<string>;
@@ -60,6 +65,7 @@ export function createAgUiBrowserEncoderState(): AgUiBrowserEncoderState {
     activeTextContentId: null,
     textContentIndex: 0,
     reasoningMessageId: null,
+    reasoningSpanIndex: 0,
     activeStepName: null,
     stepCount: 0,
     streamedToolInputIds: new Set<string>(),
@@ -94,24 +100,32 @@ function getMessageId(state: AgUiBrowserEncoderState, event: AgUiRuntimeStreamEv
   return state.messageId;
 }
 
+// A reasoning span is identified by its position in the run, not by the
+// provider's part id. Providers restart part ids at `reasoning-0` on every step,
+// so a part-id-derived id collides across every span of a multi-step run.
+// Ordinals also match the scheme veryfront-api uses when it rebuilds these
+// events for snapshots and terminal replay, so one span keeps one id whichever
+// path renders it.
+function openReasoningMessageId(state: AgUiBrowserEncoderState): string {
+  const index = state.reasoningSpanIndex ?? 0;
+  state.reasoningSpanIndex = index + 1;
+  state.reasoningMessageId = state.messageId
+    ? `${state.messageId}:reasoning:${index}`
+    : `reasoning:${index}`;
+  return state.reasoningMessageId;
+}
+
 function getReasoningMessageId(
   state: AgUiBrowserEncoderState,
-  event: AgUiRuntimeStreamEvent,
+  intent: "open" | "continue",
 ): string {
-  if (typeof event.id === "string" && event.id.length > 0) {
-    state.reasoningMessageId = state.messageId
-      ? `${state.messageId}:reasoning:${event.id}`
-      : event.id;
+  // Deltas and ends belong to the span that is already open, whatever part id
+  // they carry. Only a start — or a delta with nothing open — begins a new one.
+  if (intent === "continue" && state.reasoningMessageId !== null) {
     return state.reasoningMessageId;
   }
 
-  if (!state.reasoningMessageId) {
-    state.reasoningMessageId = state.messageId
-      ? `${state.messageId}:reasoning:${crypto.randomUUID()}`
-      : crypto.randomUUID();
-  }
-
-  return state.reasoningMessageId;
+  return openReasoningMessageId(state);
 }
 
 function getTextMessageIdentity(
@@ -563,7 +577,10 @@ function createReasoningEvent(
   event: AgUiRuntimeStreamEvent,
   type: "ReasoningMessageStart" | "ReasoningMessageContent" | "ReasoningMessageEnd",
 ): AgUiBrowserEncodedEvent {
-  const messageId = getReasoningMessageId(state, event);
+  const messageId = getReasoningMessageId(
+    state,
+    type === "ReasoningMessageStart" ? "open" : "continue",
+  );
   return {
     event: type,
     payload: type === "ReasoningMessageStart"
@@ -720,11 +737,11 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
       return events;
     }
 
-    case "reasoning-end": {
-      const reasoningEvent = createReasoningEvent(state, event, "ReasoningMessageEnd");
-      state.reasoningMessageId = null;
-      return [reasoningEvent];
-    }
+    case "reasoning-end":
+      // An end with no span open has nothing to close. Emitting one anyway
+      // would send a ReasoningMessageEnd with no matching start and burn a
+      // span ordinal, shifting every later span's id.
+      return closeOpenReasoningEvent(state);
 
     case "tool-input-start": {
       const events = [
