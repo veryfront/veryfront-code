@@ -77,7 +77,7 @@ validateSkillMetadata(parsed.frontmatter, "review");
 
 | Name                       | Description                                                              | Source                                                                                           |
 | -------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| `ActiveSkillContext`       | Active skill context for runtime policy tracking                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L310)          |
+| `ActiveSkillContext`       | Active skill context for runtime availability and delegation tracking    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L310)          |
 | `AgentCapabilityScope`     | Caller scope used for owner-aware capability resolution.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L59)        |
 | `ParsedSkillContent`       | Result of splitting and decoding one bounded `SKILL.md` document.        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/document-parser.ts#L48) |
 | `Skill`                    | Registered skill instance                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L203)          |
