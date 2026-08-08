@@ -6,8 +6,8 @@
  * `execute_skill_script` needs a script. Ordinary tools are never gated here.
  *
  * A skill's `allowed-tools` frontmatter is deliberately *not* enforced. The
- * Agent Skills specification defines that field as pre-approval — tools the
- * agent may run without prompting — not as an authorization boundary. See
+ * Agent Skills specification defines that field as pre-approval: tools the
+ * agent may run without prompting, not an authorization boundary. See
  * veryfront/veryfront-issue-inbox#406.
  *
  * @module

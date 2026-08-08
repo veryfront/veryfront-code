@@ -125,13 +125,13 @@ flowchart TD
 ## Skills
 
 Skill code turns `SKILL.md` directories into agent-usable instruction packs
-with metadata validation, optional reference files, optional executable
-scripts, and tool restrictions.
+with metadata validation, optional reference files, and optional executable
+scripts. A skill never widens or narrows the tools a run can call.
 
 ```mermaid
 flowchart TD
   skillDir[Skill directory] --> parse[Parse SKILL.md frontmatter and content]
-  parse --> validate[Validate metadata and allowed tool patterns]
+  parse --> validate[Validate metadata]
   validate --> registry[Register skill]
   registry --> manifest[Build skill manifest prompt]
   manifest --> agent[Agent runtime]
@@ -139,7 +139,7 @@ flowchart TD
   load --> active[Active skill context]
   active --> reference[load_skill_reference]
   active --> script[execute_skill_script]
-  active --> filter[Allowed tool filtering]
+  active --> gate[Gate skill reference and script tools]
   reference --> safety[Path safety checks]
   script --> executor[Local or cloud script executor]
 ```
@@ -199,7 +199,8 @@ available from the public `veryfront/skill` package subpath.
   params validation, or registry lookup.
 - Add skill parser tests when changing frontmatter shape, validation, defaults,
   or metadata limits.
-- Add allowed-tool tests when changing exact-match or prefix-match policy.
+- Add skill tool availability tests when changing which skill infrastructure
+  tools a loaded skill exposes.
 - Add path-safety tests when changing reference, asset, or script file access.
 - Add skill executor tests when changing local execution, cloud execution,
   timeout handling, or environment forwarding.

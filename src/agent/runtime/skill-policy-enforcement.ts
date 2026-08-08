@@ -389,10 +389,16 @@ export function enforceSkillPolicy(
   }
 
   if (!isSkillToolAvailable(toolName, options.skillToolAvailability)) {
+    // The two cases need different remedies and the model acts on this text: with
+    // no skill loaded it should call load_skill, while a loaded skill that
+    // advertises no matching file cannot be fixed by retrying.
+    const hasActiveSkill =
+      readToolResultOwnDataProperty(options.skillToolAvailability, "hasActiveSkill") === true;
     return {
       allowed: false,
-      error:
-        `Tool "${toolName}" is unavailable because the active skill advertises no matching file.`,
+      error: hasActiveSkill
+        ? `Tool "${toolName}" is unavailable because the active skill advertises no matching file.`
+        : `Tool "${toolName}" is unavailable because no skill is loaded. Call load_skill first.`,
     };
   }
 

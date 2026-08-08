@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/skill/_test-setup.ts";
-import { assertEquals, assertExists, assertThrows } from "@std/assert";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import {
   createSkillDocumentParserProvider,

@@ -538,7 +538,6 @@ export function createLoadSkillTool(options: SkillSelectorToolOptions = {}): Too
       return {
         skillId: skill.id,
         instructions: parsed.body,
-        ...(skill.metadata.allowedTools ? { allowedTools: skill.metadata.allowedTools } : {}),
         references: loadableReferences,
         scripts,
       };

@@ -191,8 +191,8 @@ Provider-native tools are added later during model tool conversion. For
 example, `web_search` is selected from the allowed name list, converted into an
 Anthropic provider tool, and marked as provider-executed in stream handling.
 Runtime skill tools are local platform tools. Local and project runtimes expose
-the three-tool skill surface, filter it by the active skill policy, and execute
-it through Veryfront. Hosted chat exposes its request-scoped `load_skill` tool
+the three-tool skill surface, gate it by what the loaded skill advertises, and
+execute it through Veryfront. Hosted chat exposes its request-scoped `load_skill` tool
 instead.
 
 `executeConfiguredTool` resolves in this order:
