@@ -595,9 +595,11 @@ export async function deriveProjectCspOrigins(args: {
 
     const underlying = typeof fs.getUnderlyingAdapter === "function"
       ? fs.getUnderlyingAdapter() as {
-        getAllSourceFiles?: () => Promise<Array<{ path: string; content?: string }>>;
+        getAllSourceFiles?: (
+          options?: { waitForWarmup?: boolean },
+        ) => Promise<Array<{ path: string; content?: string }>>;
         getContentContext?: () => ResolvedContentContext | null;
-        getSourceSnapshotVersion?: () => number;
+        getSourceSnapshotVersion?: () => number | Promise<number | undefined>;
         ensureSourceSnapshotFresh?: (reason?: string) => Promise<void>;
       }
       : undefined;
@@ -617,8 +619,11 @@ export async function deriveProjectCspOrigins(args: {
     // under them changes, so the adapter's snapshot generation is what actually
     // moves when a preview is pushed to. Without it a preview would serve a
     // derivation from before the push until the entry is evicted.
+    // Awaited: the multi-project wrapper's version of this is async, and
+    // template-stringifying the promise put the literal "[object Promise]" in
+    // every key, collapsing all snapshots to one value.
     const snapshot = typeof underlying.getSourceSnapshotVersion === "function"
-      ? underlying.getSourceSnapshotVersion()
+      ? await underlying.getSourceSnapshotVersion()
       : 0;
     const contentVersion = `${
       resolveStyleContentVersion(underlying.getContentContext?.() ?? null, {
@@ -631,7 +636,9 @@ export async function deriveProjectCspOrigins(args: {
     return await getDerivedCspOrigins({
       projectScope: args.projectSlug,
       contentVersion,
-      loadSourceFiles: () => underlying.getAllSourceFiles!(),
+      // Nothing else populates the file list for a release-backed context, so
+      // this read must wait for the fetch rather than answer empty forever.
+      loadSourceFiles: () => underlying.getAllSourceFiles!({ waitForWarmup: true }),
     });
   };
 

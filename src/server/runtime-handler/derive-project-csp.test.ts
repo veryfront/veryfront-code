@@ -35,7 +35,8 @@ function createHostedAdapter(options: { requireInitialization: boolean }) {
       return Promise.resolve(SOURCE);
     },
     getContentContext: () => null,
-    getSourceSnapshotVersion: () => 7,
+    // Async, like MultiProjectFSAdapter's.
+    getSourceSnapshotVersion: () => Promise.resolve(7),
   };
 
   const fs = {
@@ -91,6 +92,21 @@ describe("server/runtime-handler/deriveProjectCspOrigins", () => {
     });
 
     assertEquals(derived?.["img-src"], ["https://images.unsplash.com"]);
+  });
+
+  it("awaits an async snapshot version instead of keying on a promise", async () => {
+    // The wrapper's `getSourceSnapshotVersion` is async. Template-stringifying
+    // it put the literal "[object Promise]" into every cache key, so two
+    // different content versions of a project shared one entry.
+    __clearDerivedCspCacheForTests();
+    const seen: string[] = [];
+    const { adapter } = createHostedAdapter({ requireInitialization: true });
+
+    // Two releases of the same project must not collide.
+    await deriveProjectCspOrigins({ ...PRODUCTION, adapter, releaseId: "rel_1" });
+    await deriveProjectCspOrigins({ ...PRODUCTION, adapter, releaseId: "rel_2" });
+
+    for (const key of seen) assert(!key.includes("[object Promise]"));
   });
 
   it("returns nothing rather than throwing when the adapter cannot host a tenant", async () => {

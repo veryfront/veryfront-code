@@ -1040,7 +1040,16 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.projectData;
   }
 
-  async getAllSourceFiles(): Promise<Array<{ path: string; content?: string }>> {
+  /**
+   * @param options.waitForWarmup wait for an in-flight file-list fetch instead
+   * of answering empty. Off by default: most callers can proceed without the
+   * list and must not pay for the fetch, but a caller that has no other way to
+   * obtain it -- CSP derivation on a release-backed context, where nothing else
+   * populates the cache -- would otherwise read empty on every request forever.
+   */
+  async getAllSourceFiles(
+    options: { waitForWarmup?: boolean } = {},
+  ): Promise<Array<{ path: string; content?: string }>> {
     if (!this.contentContext) {
       logger.debug("getAllSourceFiles called without contentContext", {
         initialized: this.initialized,
@@ -1055,7 +1064,17 @@ export class VeryfrontFSAdapter implements FSAdapter {
       "getAllSourceFiles miss",
     );
     const cacheKey = cached?.cacheKey;
-    const files = cached?.files;
+    let files = cached?.files;
+
+    // A miss schedules a warmup and returns immediately, which is right for
+    // callers that can proceed without the list. This one cannot: nothing else
+    // populates it for a release-backed context, so returning early meant the
+    // list was empty on every request for the life of the process. Wait for the
+    // fetch this read just started, then look again.
+    if (options.waitForWarmup && cacheKey && !files?.length && this.fileListWarmupPromise) {
+      await this.fileListWarmupPromise;
+      files = await this.cache.getAsync<{ path: string; content?: string }[]>(cacheKey);
+    }
 
     if (!cacheKey || !files?.length) {
       logger.debug("getAllSourceFiles cache miss or empty", {
