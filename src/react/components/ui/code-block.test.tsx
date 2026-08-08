@@ -71,15 +71,27 @@ async function settle(): Promise<void> {
  * `clipboard.writeText` falls back to `execCommand`, and only once that returns
  * false does the failed state get set. That chain is several ticks long, so on
  * a loaded machine the assertion could run against the pre-failure render. Poll
- * for the state the test is actually about instead of guessing a tick count.
+ * for the state the test is actually about, against a wall-clock deadline
+ * rather than an iteration count: under load each poll costs more, so a fixed
+ * number of attempts is an arbitrary proxy for how long the test is willing to
+ * wait.
  */
+const WAIT_FOR_TIMEOUT_MS = 2_000;
+
 async function waitFor(predicate: () => boolean, description: string): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  const deadline = Date.now() + WAIT_FOR_TIMEOUT_MS;
+
+  for (;;) {
     flushSync(() => {});
     if (predicate()) return;
+    // Checked after the predicate, so a state that lands exactly on the
+    // deadline still counts, and before the sleep, so a failed final check
+    // does not pay for a tick it will never use.
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out after ${WAIT_FOR_TIMEOUT_MS}ms waiting for ${description}`);
+    }
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
-  throw new Error(`Timed out waiting for ${description}`);
 }
 
 /**
