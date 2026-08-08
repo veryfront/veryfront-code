@@ -9,10 +9,17 @@ import {
 } from "@std/assert";
 import {
   createRuntimeLoadSkillTool,
+  RUNTIME_LOAD_SKILL_DESCRIPTION,
   type RuntimeLoadSkillBuiltinStore,
   type RuntimeLoadSkillToolContext,
   type RuntimeLoadSkillToolOptions,
 } from "./load-skill-tool.ts";
+import {
+  LOAD_SKILL_CONTINUE_SAME_TURN,
+  LOAD_SKILL_DELEGATION_THRESHOLD,
+  LOAD_SKILL_OVERRIDE_FORWARDING,
+  LOAD_SKILL_ROOT_OWNERSHIP,
+} from "../conversation/delegation-policy.ts";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import {
   SKILL_DOCUMENT_MAX_CHARACTERS,
@@ -3093,4 +3100,22 @@ Deno.test("createRuntimeLoadSkillTool snapshots tool inventory without invoking 
 
   expectLoadedSkillResponse(await tool.execute({ skillId: "writer" }));
   assertEquals(iteratorCalls, 0);
+});
+
+Deno.test("load_skill tool description carries the orchestration policy the result no longer does", () => {
+  // Regression for the gap Codex found on veryfront/veryfront-code#3473.
+  // buildAgentCallContext (call-context.ts) skips the generated
+  // <available_skills> block when an agent authors its own, so the system
+  // prompt cannot be relied on to carry this policy. The tool description is
+  // always sent, which makes it the trusted layer that must hold it.
+  for (
+    const clause of [
+      LOAD_SKILL_CONTINUE_SAME_TURN,
+      LOAD_SKILL_ROOT_OWNERSHIP,
+      LOAD_SKILL_DELEGATION_THRESHOLD,
+      LOAD_SKILL_OVERRIDE_FORWARDING,
+    ]
+  ) {
+    assertStringIncludes(RUNTIME_LOAD_SKILL_DESCRIPTION, clause);
+  }
 });

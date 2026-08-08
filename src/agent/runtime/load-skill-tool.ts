@@ -6,6 +6,7 @@ import { zodToJsonSchema } from "#veryfront/tool/schema/zod-json-schema.ts";
 import {
   LOAD_SKILL_CONTINUE_SAME_TURN,
   LOAD_SKILL_DELEGATION_THRESHOLD,
+  LOAD_SKILL_OVERRIDE_FORWARDING,
   LOAD_SKILL_ROOT_OWNERSHIP,
 } from "../conversation/delegation-policy.ts";
 import {
@@ -62,7 +63,7 @@ function isRuntimeLoadSkillArray(value: unknown): boolean {
 
 /** Shared runtime load skill description value. */
 export const RUNTIME_LOAD_SKILL_DESCRIPTION =
-  `Load the full instructions for a skill. Use this when you need detailed guidance for a specific task type. load_skill does not perform the task by itself. ${LOAD_SKILL_CONTINUE_SAME_TURN} ${LOAD_SKILL_ROOT_OWNERSHIP} ${LOAD_SKILL_DELEGATION_THRESHOLD} First call load_skill with only skillId. Use the optional \`file\` parameter only after the skill is loaded and only for a reference file listed by that loaded skill.`;
+  `Load the full instructions for a skill. Use this when you need detailed guidance for a specific task type. load_skill does not perform the task by itself. ${LOAD_SKILL_CONTINUE_SAME_TURN} ${LOAD_SKILL_ROOT_OWNERSHIP} ${LOAD_SKILL_DELEGATION_THRESHOLD} ${LOAD_SKILL_OVERRIDE_FORWARDING} First call load_skill with only skillId. Use the optional \`file\` parameter only after the skill is loaded and only for a reference file listed by that loaded skill.`;
 
 function rememberBoundedRecordValue<T>(
   record: Record<string, T>,
