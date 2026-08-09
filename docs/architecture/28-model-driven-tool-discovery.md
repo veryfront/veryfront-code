@@ -31,19 +31,23 @@ The contract lives in `src/agent/runtime/tool-exposure.ts`.
 
 ### Loading mode
 
-`prepareHostedChatRuntimeToolAssembly` resolves a `RuntimeToolLoadingMode`:
-
-```ts
-const toolLoadingMode: RuntimeToolLoadingMode = input.allowedToolNames === null
-  ? "deferred"
-  : "eager";
-```
+`prepareHostedChatRuntimeToolAssembly` resolves a `RuntimeToolLoadingMode` from
+`input.allowedToolNames`: an explicit `null` (no binding) selects `deferred`, and
+any set selects `eager`. The mode selection is a source excerpt, not a copyable
+example. Read it in
+[`chat-runtime-tool-assembly.ts`](../../src/agent/hosted/chat-runtime-tool-assembly.ts).
 
 - **deferred**: the agent has no explicit `tools` binding. The model initially
-  sees only the bootstrap tools (`form_input`, `load_skill`) plus `tool_search`.
+  sees only `tool_search` plus whichever bootstrap tools (`form_input`,
+  `load_skill`) the run actually authorizes. Bootstrap tools are filtered
+  against the authorized set, so a run that authorizes neither exposes
+  `tool_search` alone. That is why the measurement below reports one initially
+  exposed tool.
 - **eager**: the agent declares a binding. The bound set is exposed directly and
-  `selectProviderCompatibleToolNames` still applies. A binding is small by
-  construction and is honored before the cut.
+  `selectProviderCompatibleToolNames` still applies, so a binding larger than
+  the provider cap is still truncated in alphabetical order after local tools
+  are pinned. Bindings are normally well under the cap, but nothing enforces
+  that. The guarantee below is specific to deferred mode.
 
 ### Why the cap no longer truncates
 
@@ -88,8 +92,10 @@ mechanism.
 Exposure state is persisted as a private durable checkpoint event,
 `AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT`, carrying a versioned
 `ToolExposureCheckpoint`. `restoreToolExposureState` rehydrates it, so a resumed
-run keeps the tools it had already loaded and never silently downgrades
-capability mid-conversation.
+run keeps the schemas it had already loaded instead of starting from an empty
+set. Restoration returns exposure, not authorization: execution still re-checks
+`isRemoteToolNameAllowed`, so a tool whose permissions changed between steps
+becomes unavailable at call time even though its schema was restored.
 
 The checkpoint is versioned: v1 names were lexicographically sorted, v2
 preserves oldest-to-newest recency.

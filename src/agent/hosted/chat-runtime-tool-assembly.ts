@@ -120,7 +120,7 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
    * sources. Deprecated: no framework path populates this. It is retained
    * because `PrepareHostedChatRuntimeToolAssemblyInput` is public API.
    *
-   * @deprecated Prefer `tool_search` deferred loading. See
+   * @deprecated Use `tool_search` deferred loading. See
    * `docs/architecture/28-model-driven-tool-discovery.md`.
    */
   toolDiscoveryContext?: RuntimeToolDiscoveryContext;

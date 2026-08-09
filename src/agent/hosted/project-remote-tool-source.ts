@@ -67,10 +67,14 @@ export type CreateHostedProjectRemoteToolSourceInput = {
   getActiveBranchId?: () => string | null | undefined;
   allowedToolNames?: ReadonlySet<string> | null;
   /**
-   * Narrower execution gate for the remote tool catalog. When present, only
-   * tools in this Set can be listed or executed, overriding `allowedToolNames`.
-   * The Set is held by reference, so growing it exposes tools without
-   * re-creating the catalog.
+   * Narrower execution gate for the remote tool catalog. When set, only tools
+   * in this Set can be listed or executed, overriding `allowedToolNames`. The
+   * Set is held by reference, so growing it exposes tools without re-creating
+   * the catalog.
+   *
+   * `null` is not a fallback: it overrides `allowedToolNames` and disables name
+   * filtering entirely. Omit the property to keep `allowedToolNames` as the
+   * gate.
    *
    * @deprecated No framework path supplies this. It is retained because
    * `CreateHostedProjectRemoteToolSourceInput` is public API, and dropping it
@@ -98,8 +102,9 @@ function resolveActiveBranchId(
 export function createHostedProjectRemoteToolSource(
   input: CreateHostedProjectRemoteToolSourceInput,
 ): RemoteToolSource {
-  // `activatedRemoteToolNames` is the narrower gate when supplied: only tools
-  // in that Set can be listed or executed. Falls back to `allowedToolNames`.
+  // `activatedRemoteToolNames` is the gate whenever the property is present,
+  // including when it is `null`, which disables name filtering entirely. Only
+  // an omitted property falls back to `allowedToolNames`.
   const catalogAllowedToolNames = input.activatedRemoteToolNames !== undefined
     ? input.activatedRemoteToolNames
     : input.allowedToolNames;

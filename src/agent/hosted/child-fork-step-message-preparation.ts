@@ -37,7 +37,7 @@ export type PrepareHostedChildForkRuntimeStepMessagesInput = {
    * `pinnedToolNames` and returned as `forkToolNames`, letting a caller refresh
    * the exposed tool set per step without mutating its own fixed array.
    *
-   * @deprecated Prefer `tool_search` deferred loading. See
+   * @deprecated Use `tool_search` deferred loading. See
    * `docs/architecture/28-model-driven-tool-discovery.md`.
    */
   getActivatedToolNames?: () => readonly string[];
