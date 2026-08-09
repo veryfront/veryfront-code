@@ -170,7 +170,12 @@ function parseNamedEnvironmentIdentity(
         detail: "Project environment lookup returned an invalid environment entry",
       });
     }
-    const rawActiveReleaseId = (entry as { active_release_id?: unknown }).active_release_id;
+    // The environments endpoint carries the active release nested under the
+    // environment's deployment. `active_release_id` is read first so a flat
+    // response keeps working, but the nested path is what production returns.
+    const deployment = (entry as { deployment?: { release?: { id?: unknown } } | null }).deployment;
+    const rawActiveReleaseId = (entry as { active_release_id?: unknown }).active_release_id ??
+      deployment?.release?.id;
     if (
       rawActiveReleaseId !== undefined &&
       rawActiveReleaseId !== null &&
