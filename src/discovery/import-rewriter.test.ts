@@ -9,6 +9,7 @@ describe("discovery/import-rewriter", () => {
   it("rewrites veryfront public imports for Deno temp module imports", () => {
     const transformed = rewriteForDeno(
       [
+        'import { createValidatedHandler } from "veryfront";',
         'import { defineSchema } from "veryfront/schemas";',
         'import { tool } from "veryfront/tool";',
         'import { projectKnowledge } from "veryfront/knowledge";',
@@ -19,6 +20,7 @@ describe("discovery/import-rewriter", () => {
       "/project/workflows",
     );
 
+    assertStringIncludes(transformed, import.meta.resolve("veryfront"));
     assertStringIncludes(transformed, import.meta.resolve("veryfront/schemas"));
     assertStringIncludes(transformed, import.meta.resolve("veryfront/tool"));
     assertStringIncludes(transformed, import.meta.resolve("veryfront/knowledge"));
@@ -31,6 +33,7 @@ describe("discovery/import-rewriter", () => {
   it("rewrites supported veryfront public imports to globals in compiled Deno binaries", () => {
     const transformed = rewriteForDeno(
       [
+        'import { createValidatedHandler } from "veryfront";',
         'import { defineSchema } from "veryfront/schemas";',
         'import { tool } from "veryfront/tool";',
         'import { projectKnowledge } from "veryfront/knowledge";',
@@ -42,6 +45,10 @@ describe("discovery/import-rewriter", () => {
       { compiled: true },
     );
 
+    assertStringIncludes(
+      transformed,
+      'const { createValidatedHandler } = globalThis.__VERYFRONT_MODULES__["veryfront"]',
+    );
     assertStringIncludes(
       transformed,
       'const { defineSchema } = globalThis.__VERYFRONT_MODULES__["veryfront/schemas"]',
