@@ -139,6 +139,111 @@ describe("agent/hosted-child-lifecycle", () => {
     }
   });
 
+  it("keeps the bare cancelled message for a genuine abort", async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+    const abortError = new Error("The operation was aborted");
+    abortError.name = "AbortError";
+
+    const result = await runHostedChildExecutionLifecycle({
+      adapter: {},
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      abortSignal: abortController.signal,
+      execute: () => {
+        throw abortError;
+      },
+      getExecutionSnapshot: () => null,
+    });
+
+    assertEquals(result.status, "cancelled", "an abort is still a cancellation");
+    assertEquals(
+      result.terminalState.terminalErrorMessage,
+      "Child run cancelled",
+      "a real abort carries no extra cause",
+    );
+  });
+
+  it("preserves the real cause when an error merely coincides with an abort", async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+
+    const result = await runHostedChildExecutionLifecycle({
+      adapter: {},
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      abortSignal: abortController.signal,
+      execute: () => {
+        throw new Error("upstream connection reset");
+      },
+      getExecutionSnapshot: () => null,
+    });
+
+    assertEquals(
+      result.status,
+      "cancelled",
+      "a torn-down run still reports cancelled, not failed",
+    );
+    assertEquals(
+      result.terminalState.terminalErrorCode,
+      "CANCELLED",
+      "the contractual code is unchanged",
+    );
+    assertEquals(
+      result.terminalState.terminalErrorMessage,
+      "Child run cancelled: upstream connection reset",
+      "the underlying cause survives instead of being overwritten",
+    );
+  });
+
+  it("strips credentials from a coincident cause before persisting it", async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+
+    const result = await runHostedChildExecutionLifecycle({
+      adapter: {},
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      abortSignal: abortController.signal,
+      execute: () => {
+        throw new Error("fetch failed for https://user:hunter2@api.example.com/v1/run");
+      },
+      getExecutionSnapshot: () => null,
+    });
+
+    const message = result.terminalState.terminalErrorMessage ?? "";
+    assertEquals(
+      message.includes("hunter2"),
+      false,
+      "url credentials must not reach the durable run record",
+    );
+    assertEquals(
+      message.startsWith("Child run cancelled: "),
+      true,
+      "the sanitized cause is still carried",
+    );
+  });
+
+  it("bounds a bulk coincident cause to an excerpt", async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+
+    const result = await runHostedChildExecutionLifecycle({
+      adapter: {},
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      abortSignal: abortController.signal,
+      execute: () => {
+        throw new Error("x".repeat(5_000));
+      },
+      getExecutionSnapshot: () => null,
+    });
+
+    const message = result.terminalState.terminalErrorMessage ?? "";
+    assertEquals(
+      message.length < 250,
+      true,
+      "a provider response body must not be persisted whole",
+    );
+    assertEquals(message.endsWith("..."), true, "truncation is visible in the message");
+  });
+
   it("reports terminal hook errors through onLifecycleError for failure states", async () => {
     const lifecycleErrors: unknown[] = [];
     const adapter: HostedChildLifecycleAdapter = {

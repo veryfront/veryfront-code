@@ -4,6 +4,7 @@ import {
   type ChildRunExecutionSnapshot,
   getChildRunSnapshotUsage,
 } from "../child-run/execution-snapshot.ts";
+import { sanitizeUrlCredentials } from "#veryfront/utils";
 import { resolveKnownProviderTerminalError } from "../streaming/stream-outcome.ts";
 import { isChildRunAbortError } from "../child-run/execution-support.ts";
 import {
@@ -279,6 +280,39 @@ function wrapSkippableTerminalPersistence(
   };
 }
 
+const CANCELLED_TERMINAL_MESSAGE = "Child run cancelled";
+const MAX_CANCELLED_CAUSE_LENGTH = 200;
+
+/**
+ * A run torn down mid-flight reports `cancelled`, but the error that surfaced is
+ * not always the abort itself — an aborted signal makes any error in flight look
+ * like a cancellation. Keep the cancelled status and append the real cause, so a
+ * failure that merely coincided with teardown is still diagnosable.
+ *
+ * The cause reaches a durable run record, so it is sanitized and bounded before
+ * it is carried: credential-bearing URLs are stripped, and a bulk payload such as
+ * a provider response body is cut to an excerpt rather than persisted whole. Same
+ * treatment `sanitizeDiscoveryErrorMessage` applies to surfaced error text.
+ *
+ * Only the code is contractual here; `shouldBlockHostedChildSameTurnRetry`
+ * matches on `terminalErrorCode` precisely because the message is not.
+ */
+function resolveCancelledTerminalMessage(error: unknown): string {
+  if (isChildRunAbortError(error)) {
+    return CANCELLED_TERMINAL_MESSAGE;
+  }
+
+  const sanitized = sanitizeUrlCredentials(error instanceof Error ? error.message : String(error));
+  if (sanitized.length === 0) {
+    return CANCELLED_TERMINAL_MESSAGE;
+  }
+
+  const cause = sanitized.length <= MAX_CANCELLED_CAUSE_LENGTH
+    ? sanitized
+    : `${sanitized.slice(0, MAX_CANCELLED_CAUSE_LENGTH - 3)}...`;
+  return `${CANCELLED_TERMINAL_MESSAGE}: ${cause}`;
+}
+
 function resolveHostedChildExecutionErrorState(
   error: unknown,
   input: {
@@ -313,7 +347,7 @@ function resolveHostedChildExecutionErrorState(
     return {
       status: "cancelled",
       terminalErrorCode: "CANCELLED",
-      terminalErrorMessage: "Child run cancelled",
+      terminalErrorMessage: resolveCancelledTerminalMessage(error),
       usage: toHostedChildLifecycleUsage(getChildRunSnapshotUsage(input.getExecutionSnapshot())),
     };
   }
