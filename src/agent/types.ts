@@ -168,8 +168,8 @@ export interface AgentConfig {
     branchId?: string | null;
   };
   /**
-   * Host-supplied environment facts rendered as an `<environment_context>`
-   * block — the same surface the hosted chat runtime fills from Studio.
+   * Host-supplied environment facts rendered as an `<environment_context>` block for browser display context.
+   * It cannot replace the server-authored `<runtime_context>` UTC snapshot added to every run.
    */
   environmentContext?: string;
   /**

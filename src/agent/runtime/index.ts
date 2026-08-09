@@ -103,6 +103,12 @@ import {
   hasRuntimeToolInventory,
   withRuntimeToolInventory,
 } from "./tool-inventory.ts";
+import {
+  type AgentRunRuntimeContext,
+  captureAgentRunRuntimeContext,
+  withAgentRunRuntimeContext,
+  withAgentRunRuntimeContextMetadata,
+} from "./run-runtime-context.ts";
 
 // Re-export from submodules
 export { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
@@ -790,6 +796,7 @@ export class AgentRuntime {
     },
   ): Promise<AgentResponse> {
     throwIfAborted(abortSignal);
+    const runRuntimeContext = captureAgentRunRuntimeContext();
     const transport = await this.resolveModelTransport(context, modelOverride, "generate");
     const requestedModel = transport.requestedModel;
     const resolvedModelString = transport.resolvedModelString;
@@ -800,6 +807,8 @@ export class AgentRuntime {
       setSpanAttributes(span, {
         "agent.id": this.id,
         "agent.model": resolvedModelString,
+        "run.started_at_utc": runRuntimeContext.runStartedAtUtc,
+        "run.current_date_utc": runRuntimeContext.currentDateUtc,
       });
 
       const inputMessages = normalizeInput(input);
@@ -827,6 +836,7 @@ export class AgentRuntime {
               projectId: tryGetCacheKeyContext()?.projectId,
             },
             context,
+            runRuntimeContext,
             supportsToolCalling,
             resolvedModelString,
             transport.languageModel,
@@ -861,6 +871,11 @@ export class AgentRuntime {
     maxOutputTokensOverride?: number,
     abortSignal?: AbortSignal,
   ): Promise<ReadableStream<Uint8Array>> {
+    const runRuntimeContext = captureAgentRunRuntimeContext();
+    setOtelActiveSpanAttributes({
+      "run.started_at_utc": runRuntimeContext.runStartedAtUtc,
+      "run.current_date_utc": runRuntimeContext.currentDateUtc,
+    });
     const transport = await this.resolveModelTransport(context, modelOverride, "stream");
     const requestedModel = transport.requestedModel;
     const resolvedModelString = transport.resolvedModelString;
@@ -941,6 +956,7 @@ export class AgentRuntime {
             data: {
               inferenceMode: isLocal ? "server-local" : "cloud",
               model: resolvedModelString,
+              runtimeContext: runRuntimeContext,
             },
           });
           inFlight = chain.execute(
@@ -955,6 +971,7 @@ export class AgentRuntime {
                 textPartId,
                 toolContext,
                 context,
+                runRuntimeContext,
                 supportsToolCalling,
                 resolvedModelString,
                 languageModel,
@@ -1021,6 +1038,7 @@ export class AgentRuntime {
     messages: Message[],
     toolContextBase: ToolExecutionContext | undefined,
     runtimeContext: Record<string, unknown> | undefined,
+    runRuntimeContext: AgentRunRuntimeContext,
     supportsToolCalling: boolean,
     modelString?: string,
     resolvedModel?: ModelRuntime,
@@ -1170,9 +1188,13 @@ export class AgentRuntime {
             "model.id": effectiveModel,
             "messages.count": currentMessages.length,
           });
+          const providerSystemPrompt = withAgentRunRuntimeContext(
+            currentSystemPrompt,
+            runRuntimeContext,
+          );
           const result = await generateText({
             model: languageModel,
-            system: currentSystemPrompt,
+            system: providerSystemPrompt,
             messages: convertToTextGenerationRuntimeRequestMessages(currentMessages),
             tools: runtimeTools,
             experimental_repairToolCall: repairToolCall,
@@ -1287,7 +1309,10 @@ export class AgentRuntime {
             toolCalls,
             status: this.status,
             usage: totalUsage,
-            metadata: response.finishReason ? { finishReason: response.finishReason } : undefined,
+            metadata: withAgentRunRuntimeContextMetadata(
+              runRuntimeContext,
+              response.finishReason ? { finishReason: response.finishReason } : undefined,
+            ),
           };
         }
 
@@ -1618,7 +1643,9 @@ export class AgentRuntime {
         toolCalls,
         status: this.status,
         usage: totalUsage,
-        metadata: { warning: `Max steps (${maxSteps}) reached` },
+        metadata: withAgentRunRuntimeContextMetadata(runRuntimeContext, {
+          warning: `Max steps (${maxSteps}) reached`,
+        }),
       };
     });
   }
@@ -1641,6 +1668,7 @@ export class AgentRuntime {
     textPartId: string | undefined,
     toolContextBase: Record<string, unknown> | undefined,
     runtimeContext: Record<string, unknown> | undefined,
+    runRuntimeContext: AgentRunRuntimeContext,
     supportsToolCalling: boolean,
     modelString?: string,
     resolvedModel?: ModelRuntime,
@@ -1758,10 +1786,14 @@ export class AgentRuntime {
       );
       const maxOutputTokens = this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride);
       const genAiProviderName = resolveRuntimeGenAiProviderName(effectiveModel);
+      const providerSystemPrompt = withAgentRunRuntimeContext(
+        currentSystemPrompt,
+        runRuntimeContext,
+      );
       const streamSource = createRuntimeStreamSource((streamSignal) =>
         streamText({
           model: languageModel,
-          system: currentSystemPrompt,
+          system: providerSystemPrompt,
           messages: convertToTextGenerationRuntimeRequestMessages(
             currentMessages,
           ),
@@ -2236,7 +2268,10 @@ export class AgentRuntime {
       toolCalls,
       status: "completed",
       usage: totalUsage,
-      metadata: finalFinishReason ? { finishReason: finalFinishReason } : undefined,
+      metadata: withAgentRunRuntimeContextMetadata(
+        runRuntimeContext,
+        finalFinishReason ? { finishReason: finalFinishReason } : undefined,
+      ),
     };
   }
 

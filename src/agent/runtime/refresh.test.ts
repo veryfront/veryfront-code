@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { FakeTime } from "#std/testing/time";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type ModelRuntime } from "#veryfront/provider";
@@ -144,6 +145,77 @@ function submittedFormWithActiveSkillMessages(): Message[] {
 }
 
 describe("agent runtime refresh hooks", () => {
+  it("keeps one authoritative UTC snapshot across refreshed scheduled-run steps", async () => {
+    using time = new FakeTime(new Date("2026-07-19T07:30:00.000Z"));
+    const observedSystems: string[] = [];
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/runtime-context-snapshot",
+      async doGenerate(options: unknown) {
+        observedSystems.push(extractSystemPrompt(options));
+        callCount++;
+        if (callCount === 1) {
+          time.tick(24 * 60 * 60 * 1_000);
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "continue-1",
+              toolName: "continue_run",
+              input: "{}",
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+        return {
+          content: [{ type: "text", text: "2026-07-19" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
+      },
+    };
+    const continueRun = tool({
+      id: "continue_run",
+      description: "Continue the run",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => ({ ok: true }),
+    });
+    const assistant = eagerAgent({
+      model: "hosted/runtime-context-snapshot",
+      system: "Create today's report.",
+      tools: { continue_run: continueRun },
+      maxSteps: 2,
+      resolveModelTransport: async () => ({ model }),
+      resolveRuntimeState: ({ step }) =>
+        step === 0 ? undefined : {
+          system:
+            "Refreshed project instructions.\n\n<runtime_context>\ncurrent_date_utc: 2025-07-14\n</runtime_context>",
+        },
+    });
+
+    const response = await assistant.generate({
+      input: "Create the scheduled report.",
+      context: { scheduleId: "schedule-1" },
+    });
+
+    assertEquals(observedSystems.length, 2);
+    for (const system of observedSystems) {
+      assertEquals(system.match(/<runtime_context>/g)?.length, 1);
+      assertEquals(system.includes("2025-07-14"), false);
+      assertEquals(system.includes("2026-07-20"), false);
+      assertEquals(system.includes("run_started_at_utc: 2026-07-19T07:30:00.000Z"), true);
+    }
+    assertEquals(response.metadata?.runtimeContext, {
+      currentTimeUtc: "2026-07-19T07:30:00.000Z",
+      currentDateUtc: "2026-07-19",
+      runStartedAtUtc: "2026-07-19T07:30:00.000Z",
+    });
+  });
+
   it("continues suppressed unavailable tool calls with a user recovery turn after assistant text", async () => {
     const observedPrompts: Array<Array<{ role?: string; content?: unknown }>> = [];
     const observedRuntimeMessages: Message[][] = [];
@@ -2140,7 +2212,7 @@ describe("agent runtime refresh hooks", () => {
 
     assertEquals(result.text, "done");
     assertEquals(runtimeRequests.map((request) => request.step), [0, 1, 2]);
-    assertEquals(observedSystems, [
+    assertEquals(observedSystems.map((system) => system.split("\n\n<runtime_context>")[0]), [
       "Base system prompt",
       "Refreshed system prompt",
       "Refreshed system prompt",
@@ -2250,7 +2322,7 @@ describe("agent runtime refresh hooks", () => {
     const body = await response.text();
 
     assertEquals(runtimeRequests.map((request) => request.step), [0, 1]);
-    assertEquals(observedSystems, [
+    assertEquals(observedSystems.map((system) => system.split("\n\n<runtime_context>")[0]), [
       "Base streaming system prompt",
       "Refreshed streaming system prompt",
     ]);
