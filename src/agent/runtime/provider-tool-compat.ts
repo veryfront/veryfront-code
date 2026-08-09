@@ -28,6 +28,14 @@ const PERMISSIVE_TOOL_INPUT_SCHEMA: JsonSchema = {
   properties: {},
   additionalProperties: true,
 };
+
+function createPermissiveToolInputSchema(): JsonSchema {
+  return {
+    ...PERMISSIVE_TOOL_INPUT_SCHEMA,
+    properties: {},
+  };
+}
+
 const PROVIDER_TOOL_PROPERTY_KEY_PATTERN = /^[a-zA-Z0-9_.-]{1,64}$/;
 
 const GOOGLE_UNSUPPORTED_SCHEMA_KEYS = new Set([
@@ -471,7 +479,7 @@ function sanitizeAnthropicSchemaRoot(
   seenRefs: ReadonlySet<string> = new Set(),
 ): Record<string, unknown> {
   if (!isPlainRecord(schema)) {
-    return { ...PERMISSIVE_TOOL_INPUT_SCHEMA };
+    return createPermissiveToolInputSchema();
   }
 
   if (typeof schema.$ref === "string" && !seenRefs.has(schema.$ref)) {
@@ -524,7 +532,7 @@ function sanitizeAnthropicSchemaRoot(
  */
 export function normalizeProviderToolInputSchema(schema: JsonSchema): JsonSchema {
   if (!isPlainRecord(schema) || Object.keys(schema).length === 0) {
-    return { ...PERMISSIVE_TOOL_INPUT_SCHEMA };
+    return createPermissiveToolInputSchema();
   }
 
   if (Object.hasOwn(schema, "type")) {

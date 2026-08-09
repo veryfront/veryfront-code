@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import {
   getProviderToolProfile,
+  normalizeProviderToolInputSchema,
   sanitizeProviderToolSchema,
   selectProviderCompatibleToolNames,
   selectProviderCompatibleTools,
@@ -26,6 +27,27 @@ function containsKey(value: unknown, key: string): boolean {
 }
 
 describe("provider-tool-compat", () => {
+  it("returns independent permissive fallback schemas", () => {
+    for (
+      const createFallback of [
+        () => normalizeProviderToolInputSchema(null as never),
+        () =>
+          sanitizeProviderToolSchema(null as never, {
+            model: "anthropic/claude-opus-4-6",
+          }),
+      ]
+    ) {
+      const first = createFallback();
+      (first.properties as Record<string, unknown>).injected = { type: "string" };
+
+      assertEquals(createFallback(), {
+        type: "object",
+        properties: {},
+        additionalProperties: true,
+      });
+    }
+  });
+
   it("caps OpenAI-compatible tool names while preserving required tools first", () => {
     const requiredToolNames = ["form_input", "invoke_agent", "load_skill", "sleep"];
     const remoteToolNames = Array.from({ length: 150 }, (_, index) => `remote_${index}`);
