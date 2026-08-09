@@ -357,4 +357,37 @@ describe("provider-tool-compat", () => {
       assertEquals(sanitized.required, keyword === "allOf" ? ["shared", "extra"] : undefined);
     }
   });
+
+  it("preserves local reference constraints when flattening Anthropic compositions", () => {
+    const sanitized = sanitizeProviderToolSchema(
+      {
+        anyOf: [
+          {
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+          },
+          { $ref: "#/$defs/defaultQuery" },
+        ],
+        $defs: {
+          defaultQuery: {
+            type: "object",
+            properties: { fallback: { type: "boolean" } },
+            required: ["fallback"],
+          },
+        },
+      } as never,
+      { model: "anthropic/claude-opus-4-6" },
+    );
+
+    assertEquals(Object.keys(sanitized.properties ?? {}), ["query", "fallback"]);
+    assertEquals(sanitized.required, undefined);
+    assertEquals(sanitized.$defs, {
+      defaultQuery: {
+        type: "object",
+        properties: { fallback: { type: "boolean" } },
+        required: ["fallback"],
+      },
+    });
+  });
 });

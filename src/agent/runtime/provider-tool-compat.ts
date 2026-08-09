@@ -465,9 +465,27 @@ function mergeAnthropicObjectSchemas(
   };
 }
 
-function sanitizeAnthropicSchemaRoot(schema: unknown): Record<string, unknown> {
+function sanitizeAnthropicSchemaRoot(
+  schema: unknown,
+  rootSchema: unknown = schema,
+  seenRefs: ReadonlySet<string> = new Set(),
+): Record<string, unknown> {
   if (!isPlainRecord(schema)) {
     return { ...PERMISSIVE_TOOL_INPUT_SCHEMA };
+  }
+
+  if (typeof schema.$ref === "string" && !seenRefs.has(schema.$ref)) {
+    const resolved = resolveLocalJsonPointer(rootSchema, schema.$ref);
+    if (isPlainRecord(resolved) && resolved !== schema) {
+      const nextSeenRefs = new Set(seenRefs);
+      nextSeenRefs.add(schema.$ref);
+      const { $ref: _ref, ...siblings } = schema;
+      return sanitizeAnthropicSchemaRoot(
+        { ...resolved, ...siblings },
+        rootSchema,
+        nextSeenRefs,
+      );
+    }
   }
 
   const {
@@ -486,7 +504,9 @@ function sanitizeAnthropicSchemaRoot(schema: unknown): Record<string, unknown> {
     ] as const
   ) {
     if (!Array.isArray(rawBranches) || rawBranches.length === 0) continue;
-    const branches = rawBranches.map((branch) => sanitizeAnthropicSchemaRoot(branch));
+    const branches = rawBranches.map((branch) =>
+      sanitizeAnthropicSchemaRoot(branch, rootSchema, seenRefs)
+    );
     const composed = mergeAnthropicObjectSchemas(branches, keyword);
     sanitized = {
       ...sanitized,
