@@ -5,6 +5,9 @@
  * In Node.js: Uses node:test
  * In Bun: Uses bun:test
  *
+ * Deno test runs whose dependencies mutate environment variables before they
+ * import this module must use `--preload=veryfront/testing/bdd`.
+ *
  * @module
  */
 
@@ -508,10 +511,34 @@ function captureDenoSuiteEnvChanges(
   }
 }
 
+function captureDenoSuiteCleanupChanges(
+  suite: DenoSuiteEnvOverlay,
+  parentValues: EnvOverlayStore,
+  initialValues: EnvOverlayStore,
+  values: EnvOverlayStore,
+): void {
+  for (const key of new Set([...initialValues.keys(), ...values.keys()])) {
+    if (
+      suite.values.has(key) ||
+      !parentValues.has(key) ||
+      initialValues.get(key) === values.get(key)
+    ) {
+      continue;
+    }
+
+    const value = values.get(key) ?? null;
+    if (suite.parent) {
+      suite.parent.values.set(key, value);
+    } else {
+      getDenoRootEnvOverlay()?.set(key, value);
+    }
+  }
+}
+
 function runWithDenoSuiteEnvOverlay<T>(
   suite: DenoSuiteEnvOverlay,
   fn: () => T,
-  persistChanges: boolean,
+  captureMode: "suite" | "cleanup",
 ): T {
   const storage = getEnvOverlayStorage();
   if (!storage?.run) return fn();
@@ -519,8 +546,13 @@ function runWithDenoSuiteEnvOverlay<T>(
   const parentValues = materializeDenoSuiteEnvOverlay(suite.parent);
   const values = new Map(parentValues);
   applyEnvOverlayValues(values, suite.values);
+  const initialValues = new Map(values);
   const capture = () => {
-    if (persistChanges) captureDenoSuiteEnvChanges(suite, parentValues, values);
+    if (captureMode === "suite") {
+      captureDenoSuiteEnvChanges(suite, parentValues, values);
+    } else {
+      captureDenoSuiteCleanupChanges(suite, parentValues, initialValues, values);
+    }
   };
 
   return storage.run(values, () => {
@@ -557,7 +589,7 @@ function withDenoSuiteEnvOverlay(testFn: () => void): () => void {
     const previousSuite = currentDenoSuiteEnvOverlay;
     currentDenoSuiteEnvOverlay = suite;
     try {
-      runWithDenoSuiteEnvOverlay(suite, testFn, true);
+      runWithDenoSuiteEnvOverlay(suite, testFn, "suite");
     } finally {
       currentDenoSuiteEnvOverlay = previousSuite;
     }
@@ -715,7 +747,7 @@ export function beforeAll(fn: HookFn): void {
     denoBdd.beforeAll(
       suite
         ? (...args: Parameters<HookFn>) =>
-          runWithDenoSuiteEnvOverlay(suite, () => fn(...args), true)
+          runWithDenoSuiteEnvOverlay(suite, () => fn(...args), "suite")
         : withEnvOverlay(fn),
     );
     return;
@@ -730,7 +762,7 @@ export function afterAll(fn: HookFn): void {
     denoBdd.afterAll(
       suite
         ? (...args: Parameters<HookFn>) =>
-          runWithDenoSuiteEnvOverlay(suite, () => fn(...args), false)
+          runWithDenoSuiteEnvOverlay(suite, () => fn(...args), "cleanup")
         : withEnvOverlay(fn),
     );
     return;

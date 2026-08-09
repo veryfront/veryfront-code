@@ -15,6 +15,7 @@ import { assertEquals } from "./assert.ts";
 import { afterAll, beforeAll, describe, it } from "./bdd.ts";
 
 const MODULE_ENV_KEY = `VF_TEST_BDD_MODULE_ENV_${Deno.pid}`;
+const PRELOAD_ENV_KEY = `VF_TEST_BDD_PRELOAD_ENV_${Deno.pid}`;
 const SUITE_ENV_KEY = `VF_TEST_BDD_SUITE_ENV_${Deno.pid}`;
 const READY_DIR = join(tmpdir(), `veryfront-test-env-exclusion-${Deno.pid}`);
 const PEER_WAIT_MS = 2_000;
@@ -59,14 +60,24 @@ export function registerEnvIsolationProbe(label: "a" | "b"): void {
 
     afterAll(async () => {
       Deno.env.delete(MODULE_ENV_KEY);
+      Deno.env.delete(PRELOAD_ENV_KEY);
       Deno.env.delete(SUITE_ENV_KEY);
       await cleanupProbe(label);
     });
 
     it("keeps module and suite environment values inside this test file", async () => {
       assertEquals(Deno.env.get(MODULE_ENV_KEY), label);
+      assertEquals(Deno.env.get(PRELOAD_ENV_KEY), label);
       assertEquals(Deno.env.get(SUITE_ENV_KEY), label);
       await Deno.writeTextFile(join(READY_DIR, `checked-${label}`), label);
+    });
+  });
+
+  describe(`testing/BDD file environment cleanup (${label})`, () => {
+    it("does not expose cleaned module environment values to a later suite", () => {
+      assertEquals(Deno.env.get(MODULE_ENV_KEY), undefined);
+      assertEquals(Deno.env.get(PRELOAD_ENV_KEY), undefined);
+      assertEquals(Deno.env.get(SUITE_ENV_KEY), undefined);
     });
   });
 }

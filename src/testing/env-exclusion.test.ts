@@ -20,7 +20,14 @@ const FIXTURES = [
 describe("testing/BDD cross-file environment isolation", () => {
   it("keeps module and suite environment values inside each test file", async () => {
     const output = await new Deno.Command(Deno.execPath(), {
-      args: ["test", "--no-check", "--allow-all", "--parallel", ...FIXTURES],
+      args: [
+        "test",
+        "--preload=src/testing/preload.ts",
+        "--no-check",
+        "--allow-all",
+        "--parallel",
+        ...FIXTURES,
+      ],
       cwd: PROJECT_ROOT,
       stdout: "piped",
       stderr: "piped",
