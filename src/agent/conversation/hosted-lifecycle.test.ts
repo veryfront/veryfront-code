@@ -6,6 +6,7 @@ import {
   createConversationHostedLifecycleAdapter,
   createConversationHostedStreamLifecycleAdapter,
 } from "./hosted-lifecycle.ts";
+import { ConversationRunEventEncoder } from "./run-events.ts";
 
 const API_URL = "https://api.example.com";
 const AUTH_TOKEN = "token-123";
@@ -87,6 +88,8 @@ describe("agent/conversation-hosted-lifecycle", () => {
 
   it("maps public chat stream events directly into conversation-run appends", async () => {
     const adapter = createConversationHostedStreamLifecycleAdapter({
+      // Exact-payload assertion: an unclocked encoder keeps it free of elapsedMs.
+      encoder: new ConversationRunEventEncoder(),
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       startRun: async () => ({
@@ -138,6 +141,71 @@ describe("agent/conversation-hosted-lifecycle", () => {
         },
       ],
     });
+  });
+
+  // One encoder must span the whole run. It carries stepCount and the active
+  // message across chunks, and its creation is the anchor elapsedMs is measured
+  // from. Building a fresh encoder per chunk resets both: every step collapses
+  // to step-1 and no event can carry a meaningful elapsed. Observed in
+  // production, where a multi-step scheduled run persisted step-1 four times.
+  it("keeps one encoder across chunks so step names advance and elapsed accrues", async () => {
+    const adapter = createConversationHostedStreamLifecycleAdapter({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      startRun: async () => ({
+        runId: "run_root_stream_2",
+        conversationId: CONVERSATION_ID,
+        messageId: MESSAGE_ID,
+        latestEventId: 1,
+        latestExternalEventSequence: 2,
+        status: "running",
+      }),
+      resolveFinalizeInput: () => ({ model: "gpt-5.4", provider: "openai" }),
+    });
+    const fetchCalls = stubFetchSequence(
+      jsonResponse({
+        latest_event_id: 3,
+        latest_external_event_sequence: 4,
+        appended_count: 1,
+        run: {
+          run_id: "run_root_stream_2",
+          conversation_id: CONVERSATION_ID,
+          latest_event_id: 3,
+          latest_external_event_sequence: 4,
+        },
+      }),
+      jsonResponse({
+        latest_event_id: 5,
+        latest_external_event_sequence: 6,
+        appended_count: 1,
+        run: {
+          run_id: "run_root_stream_2",
+          conversation_id: CONVERSATION_ID,
+          latest_event_id: 5,
+          latest_external_event_sequence: 6,
+        },
+      }),
+    );
+
+    const run = await adapter.startRun({ abortSignal: new AbortController().signal });
+    await adapter.appendEvents?.(run, { type: "start-step" });
+    await adapter.appendEvents?.(run, { type: "start-step" });
+
+    const stepNames = fetchCalls.map((call) =>
+      JSON.parse(String(call[1]?.body)).events[0].stepName
+    );
+    assertEquals(
+      stepNames,
+      ["step-1", "step-2"],
+      `a second chunk must continue the run's step count, got ${JSON.stringify(stepNames)}`,
+    );
+
+    const elapsed = fetchCalls.map((call) => JSON.parse(String(call[1]?.body)).events[0].elapsedMs);
+    assertEquals(
+      elapsed.every((value) => typeof value === "number"),
+      true,
+      `every persisted event must carry elapsedMs, got ${JSON.stringify(elapsed)}`,
+    );
   });
 
   it("finalizes and cancels conversation-backed root runs with host-supplied model metadata", async () => {
