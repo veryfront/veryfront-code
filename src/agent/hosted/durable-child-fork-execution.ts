@@ -2,6 +2,7 @@ import type {
   ChildRunExecutionResult,
   ChildRunExecutionSnapshot,
 } from "../child-run/execution-snapshot.ts";
+import { defineSchema } from "#veryfront/schemas";
 import { resolveKnownProviderTerminalError } from "../streaming/stream-outcome.ts";
 import {
   buildChildRunResultSummary,
@@ -79,6 +80,43 @@ export type HostedDurableChildInvokeResult = {
   terminalErrorCode: string | null;
   terminalErrorMessage: string | null;
 };
+
+/**
+ * Runtime shape of what the hosted durable delegation writes as an
+ * `invoke_agent` tool result.
+ *
+ * Declared so the envelope is a published contract rather than whatever the
+ * builders happen to emit. veryfront-api reads these envelopes back out of
+ * conversation history, and until veryfront/veryfront-issue-inbox#416 nothing
+ * asserted the two sides agreed — the producer matched no branch of the reader's
+ * schema, and the mismatch only surfaced as degraded replays.
+ *
+ * Kept deliberately permissive about *extra* run telemetry it does not name:
+ * this pins the fields consumers depend on, and tightening it into a closed
+ * shape would turn any additive change here into a cross-repo deploy-order
+ * problem. See veryfront/veryfront-issue-inbox#423.
+ */
+export const getHostedDurableChildInvokeResultSchema = defineSchema((v) =>
+  v.object({
+    ok: v.boolean(),
+    status: v.enum(["completed", "failed"]),
+    text: v.string().optional(),
+    error: v.string().optional(),
+    summary: v.object({ text: v.string() }).passthrough().optional(),
+    steps: v.number().optional(),
+    toolCalls: v.array(v.unknown()).optional(),
+    toolResults: v.array(v.unknown()).optional(),
+    usage: v.record(v.string(), v.unknown()).optional(),
+    durationMs: v.number().optional(),
+    childConversationId: v.string().nullable().optional(),
+    childRunId: v.string().nullable().optional(),
+    childMessageId: v.string().nullable().optional(),
+    sourceTargetKind: v.string().nullable().optional(),
+    runtimeTargetKind: v.string().nullable().optional(),
+    terminalErrorCode: v.string().nullable(),
+    terminalErrorMessage: v.string().nullable(),
+  }).passthrough()
+);
 
 /** Input payload for build hosted durable child invoke failure result. */
 export type BuildHostedDurableChildInvokeFailureResultInput = {

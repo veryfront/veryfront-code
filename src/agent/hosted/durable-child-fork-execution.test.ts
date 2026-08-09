@@ -14,6 +14,7 @@ import {
   createHostedDurableChildInvokeTraceRecorder,
   executeHostedDurableChildFork,
   executeHostedLocalChildInvoke,
+  getHostedDurableChildInvokeResultSchema,
   HostedChildRunFinalizationError,
   type HostedDurableChildSetupFailure,
   type HostedDurableChildSuccess,
@@ -1472,5 +1473,94 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       assertEquals(result.failure.childRunId, null);
       assertEquals(result.failure.terminalErrorMessage, "bootstrap failed");
     }
+  });
+});
+
+describe("agent/hosted/durable-child-fork-execution result contract", () => {
+  // veryfront-api reads these envelopes back out of conversation history. Until
+  // veryfront/veryfront-issue-inbox#416 nothing asserted the producer matched a
+  // declared shape, and the mismatch surfaced only as degraded replays.
+  const targets: ConversationRunTargets = {
+    sourceTargetKind: "project",
+    runtimeTargetKind: "main_branch",
+    targetBranchId: null,
+  };
+  const identifiers = {
+    childConversationId: "9bb28814-9f6c-4893-bf91-2b29a832346f",
+    childRunId: "run_dc075263-4b91-462d-9638-9f5fc56537b1",
+    childMessageId: "b641646b-b92b-4406-8df9-60d7a325b45e",
+    latestEventId: 1,
+    latestExternalEventSequence: 0,
+  };
+
+  function assertConforms(result: unknown, label: string) {
+    const parsed = getHostedDurableChildInvokeResultSchema().safeParse(result);
+    assertEquals(
+      parsed.success,
+      true,
+      `${label} must match the published invoke_agent result contract: ${
+        parsed.success ? "" : JSON.stringify(parsed.error)
+      }`,
+    );
+  }
+
+  it("a successful child result matches the published contract", () => {
+    const localResult: ChildRunExecutionResult = {
+      success: true,
+      description: "Search docs",
+      summary: buildChildRunResultSummary("Child answer."),
+      steps: 2,
+      toolCalls: [],
+      toolResults: [],
+      usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 },
+      durationMs: 1234,
+    };
+
+    assertConforms(
+      buildHostedDurableChildInvokeSuccessResult({
+        result: localResult,
+        snapshot: buildChildRunExecutionSnapshot(localResult),
+        identifiers,
+        targets,
+      }),
+      "the success envelope",
+    );
+  });
+
+  it("a failed child result matches the published contract", () => {
+    assertConforms(
+      buildHostedDurableChildInvokeFailureResult({
+        terminalErrorCode: "INVOKE_AGENT_FAILED",
+        terminalErrorMessage: "provider rejected the request",
+        targets,
+        childConversationId: identifiers.childConversationId,
+        childRunId: identifiers.childRunId,
+        childMessageId: identifiers.childMessageId,
+      }),
+      "the failure envelope",
+    );
+  });
+
+  it("a terminal failure result matches the published contract", () => {
+    assertConforms(
+      buildHostedDurableChildInvokeTerminalFailureResult({
+        status: "failed",
+        terminalErrorCode: "DURABLE_CHILD_FAILED",
+        terminalErrorMessage: "child run failed remotely",
+        targets,
+        identifiers,
+      }),
+      "the terminal failure envelope",
+    );
+  });
+
+  it("a setup failure with no identifiers matches the published contract", () => {
+    assertConforms(
+      buildHostedDurableChildInvokeFailureResult({
+        terminalErrorCode: "INVOKE_AGENT_SETUP_FAILED",
+        terminalErrorMessage: "bootstrap failed before the child existed",
+      }),
+      "the setup failure envelope",
+    );
   });
 });
