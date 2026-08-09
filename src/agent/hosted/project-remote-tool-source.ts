@@ -17,7 +17,7 @@ import {
 } from "../service/mcp-server-config.ts";
 import type { AgentMcpToolPolicy } from "../types.ts";
 import { wrapRemoteToolSourceWithMcpPolicy } from "../mcp-tool-policy.ts";
-import { CONFIG_INVALID, PERMISSION_DENIED } from "#veryfront/errors";
+import { CONFIG_INVALID, PERMISSION_DENIED, VeryfrontError } from "#veryfront/errors";
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
 import {
@@ -41,12 +41,23 @@ const REMOTE_TOOL_CATALOG_MAX_BACKOFF_MS = 30_000;
 
 interface LastSuccessfulRemoteToolCatalog {
   readonly projectId: string | null;
+  readonly authToken: string | null;
   readonly definitions: ToolDefinition[];
 }
 
 function getRemoteToolCatalogProjectId(context: ToolExecutionContext | undefined): string | null {
   const projectId = context?.projectId;
   return typeof projectId === "string" && projectId.trim().length > 0 ? projectId.trim() : null;
+}
+
+function getRemoteToolCatalogAuthToken(context: ToolExecutionContext | undefined): string | null {
+  const authToken = context?.authToken;
+  return typeof authToken === "string" && authToken.length > 0 ? authToken : null;
+}
+
+function isTransientRemoteToolCatalogError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "TimeoutError") return true;
+  return error instanceof VeryfrontError && error.slug === "timeout-error";
 }
 
 /** Keep one source's last successful catalog available during transient refresh failures. */
@@ -60,7 +71,9 @@ function createRunResilientRemoteToolSource(source: RemoteToolSource): RemoteToo
     async listTools(context) {
       context?.abortSignal?.throwIfAborted();
       const projectId = getRemoteToolCatalogProjectId(context);
-      const matchingCatalog = lastSuccessfulCatalog?.projectId === projectId
+      const authToken = getRemoteToolCatalogAuthToken(context);
+      const matchingCatalog = lastSuccessfulCatalog?.projectId === projectId &&
+          lastSuccessfulCatalog.authToken === authToken
         ? lastSuccessfulCatalog
         : undefined;
       if (matchingCatalog && Date.now() < retryAfter) {
@@ -70,13 +83,13 @@ function createRunResilientRemoteToolSource(source: RemoteToolSource): RemoteToo
       try {
         const definitions = await source.listTools(context);
         context?.abortSignal?.throwIfAborted();
-        lastSuccessfulCatalog = { projectId, definitions: [...definitions] };
+        lastSuccessfulCatalog = { projectId, authToken, definitions: [...definitions] };
         consecutiveFailures = 0;
         retryAfter = 0;
         return definitions;
       } catch (error) {
         context?.abortSignal?.throwIfAborted();
-        if (!matchingCatalog) throw error;
+        if (!matchingCatalog || !isTransientRemoteToolCatalogError(error)) throw error;
 
         consecutiveFailures++;
         const backoffMs = Math.min(
