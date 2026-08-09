@@ -10,7 +10,9 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   executeRemoteIntegrationTool,
   getRemoteIntegrationToolDefinitions,
+  getRemoteIntegrationToolDiscovery,
   isRemoteIntegrationTool,
+  runWithRemoteIntegrationToolDiscoveryScope,
 } from "./remote-tools.ts";
 
 const ENV_KEYS = [
@@ -74,6 +76,59 @@ describe("integrations/remote-tools", () => {
     }, async () => await getRemoteIntegrationToolDefinitions());
 
     assertEquals(definitions, []);
+  });
+
+  it("memoizes a typed empty integration catalog for the current run", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    let fetchCalls = 0;
+    const results = await withMockFetch(async () => {
+      fetchCalls++;
+      return Response.json({ tools: [] });
+    }, () =>
+      runWithRemoteIntegrationToolDiscoveryScope(async () => [
+        await getRemoteIntegrationToolDiscovery(),
+        await getRemoteIntegrationToolDiscovery(),
+      ]));
+
+    assertEquals(fetchCalls, 1);
+    assertEquals(results, [
+      { status: "ok", tools: [] },
+      { status: "ok", tools: [] },
+    ]);
+  });
+
+  it("caches a transient failure for the current run and retries the next run", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    let fetchCalls = 0;
+    const outcome = await withMockFetch(async () => {
+      fetchCalls++;
+      return fetchCalls === 1
+        ? new Response(undefined, { status: 503, statusText: "Service Unavailable" })
+        : Response.json({ tools: [] });
+    }, async () => ({
+      currentRun: await runWithRemoteIntegrationToolDiscoveryScope(async () => [
+        await getRemoteIntegrationToolDiscovery(),
+        await getRemoteIntegrationToolDiscovery(),
+      ]),
+      nextRun: await runWithRemoteIntegrationToolDiscoveryScope(() =>
+        getRemoteIntegrationToolDiscovery()
+      ),
+    }));
+
+    assertEquals(fetchCalls, 2);
+    assertEquals(outcome.currentRun, [
+      { status: "unavailable", reason: "request_failed" },
+      { status: "unavailable", reason: "request_failed" },
+    ]);
+    assertEquals(outcome.nextRun, { status: "ok", tools: [] });
   });
 
   it("prefers the request-scoped token and normalizes empty input schemas", async () => {

@@ -11,6 +11,7 @@
 
 import { getApiBaseUrlEnv, getApiTokenEnv } from "#veryfront/config/env.ts";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { AsyncLocalStorage } from "#veryfront/platform/compat/async-context.ts";
 import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import {
   isIntegrationToolAllowedBySourcePolicy,
@@ -65,6 +66,34 @@ interface RemoteIntegrationExecutionContext {
   readonly abortSignal: AbortSignal | undefined;
 }
 
+/** Result of listing the integration tools available to the current run. */
+export type RemoteIntegrationToolDiscoveryResult =
+  | { readonly status: "ok"; readonly tools: ToolDefinition[] }
+  | { readonly status: "unavailable"; readonly reason: "request_failed" };
+
+type RemoteIntegrationToolCatalogResult =
+  | { readonly status: "ok"; readonly tools: RemoteToolDefinition[] }
+  | { readonly status: "unavailable"; readonly reason: "request_failed" };
+
+interface RemoteIntegrationToolDiscoveryCacheEntry {
+  readonly baseUrl: string;
+  readonly token: string;
+  readonly projectSlug: string | undefined;
+  readonly result: Promise<RemoteIntegrationToolCatalogResult>;
+}
+
+interface RemoteIntegrationToolDiscoveryScope {
+  entry?: RemoteIntegrationToolDiscoveryCacheEntry;
+}
+
+const remoteIntegrationToolDiscoveryStorage = new AsyncLocalStorage<
+  RemoteIntegrationToolDiscoveryScope
+>();
+const requestIntegrationToolDiscoveryScopes = new WeakMap<
+  object,
+  RemoteIntegrationToolDiscoveryScope
+>();
+
 const utf8Encoder = new TextEncoder();
 const EMPTY_REMOTE_INTEGRATION_CONTEXT: RemoteIntegrationExecutionContext = Object.freeze({
   hasExplicitCredential: false,
@@ -74,6 +103,30 @@ const EMPTY_REMOTE_INTEGRATION_CONTEXT: RemoteIntegrationExecutionContext = Obje
   agentId: undefined,
   abortSignal: undefined,
 });
+
+/** Run a callback with one integration-tool discovery result shared by all continuations. */
+export function runWithRemoteIntegrationToolDiscoveryScope<T>(
+  callback: () => Promise<T>,
+): Promise<T> {
+  return remoteIntegrationToolDiscoveryStorage.run({}, callback);
+}
+
+function getRemoteIntegrationToolDiscoveryScope():
+  | RemoteIntegrationToolDiscoveryScope
+  | undefined {
+  const runScope = remoteIntegrationToolDiscoveryStorage.getStore();
+  if (runScope) return runScope;
+
+  const requestContext = getCurrentRequestContext();
+  if (!requestContext) return undefined;
+
+  let requestScope = requestIntegrationToolDiscoveryScopes.get(requestContext);
+  if (!requestScope) {
+    requestScope = {};
+    requestIntegrationToolDiscoveryScopes.set(requestContext, requestScope);
+  }
+  return requestScope;
+}
 
 function snapshotToolExecutionContext(
   context: ToolExecutionContext | undefined,
@@ -526,6 +579,57 @@ async function fetchToolList(
   }
 }
 
+async function discoverRemoteIntegrationToolCatalog(
+  baseUrl: string,
+  token: string,
+  context: RemoteIntegrationExecutionContext,
+): Promise<RemoteIntegrationToolCatalogResult> {
+  try {
+    return {
+      status: "ok",
+      tools: await fetchToolList(baseUrl, token, context),
+    };
+  } catch (err) {
+    context.abortSignal?.throwIfAborted();
+    logger.error("Failed to fetch remote integration tool definitions", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return { status: "unavailable", reason: "request_failed" };
+  }
+}
+
+function getRemoteIntegrationToolCatalog(
+  baseUrl: string,
+  token: string,
+  projectSlug: string | undefined,
+  context: RemoteIntegrationExecutionContext,
+): Promise<RemoteIntegrationToolCatalogResult> {
+  const scope = getRemoteIntegrationToolDiscoveryScope();
+  const cached = scope?.entry;
+  if (
+    cached?.baseUrl === baseUrl &&
+    cached.token === token &&
+    cached.projectSlug === projectSlug
+  ) {
+    return cached.result;
+  }
+
+  const result = discoverRemoteIntegrationToolCatalog(baseUrl, token, context);
+  if (scope) {
+    const entry: RemoteIntegrationToolDiscoveryCacheEntry = {
+      baseUrl,
+      token,
+      projectSlug,
+      result,
+    };
+    scope.entry = entry;
+    void result.catch(() => {
+      if (scope.entry === entry) scope.entry = undefined;
+    });
+  }
+  return result;
+}
+
 async function callRemoteTool(
   baseUrl: string,
   token: string,
@@ -606,46 +710,68 @@ async function callRemoteTool(
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch integration tool definitions for the current request context.
- * Returns ToolDefinition[] that the agent runtime merges into the model's
- * available tools. Returns empty array if no API config or no tools.
+ * Discover integration tools for the current request context.
  *
- * Called per agent loop iteration — results are scoped to the current
- * project's authorized integration tools via the per-request API token.
- * Caller cancellation is propagated; remote failures and malformed or
- * over-limit catalogs fail closed to an empty list.
+ * A successful empty catalog returns `status: "ok"`. Request, protocol, and
+ * response failures return `status: "unavailable"` so callers do not mistake
+ * a failed lookup for a project with no integration tools. The agent runtime
+ * memoizes both outcomes for the current run. Direct callers inside a
+ * Veryfront request receive the same request-scoped behavior.
  */
-export async function getRemoteIntegrationToolDefinitions(
+export async function getRemoteIntegrationToolDiscovery(
   context?: ToolExecutionContext,
-): Promise<
-  ToolDefinition[]
-> {
+): Promise<RemoteIntegrationToolDiscoveryResult> {
   const requestContext = snapshotToolExecutionContext(context, false);
   requestContext.abortSignal?.throwIfAborted();
   const baseUrl = getApiBaseUrlEnv();
   const token = resolveRequestToken(requestContext);
-  if (!baseUrl || !token) return [];
+  if (!baseUrl || !token) return { status: "ok", tools: [] };
 
   try {
-    const remoteDefs = await fetchToolList(baseUrl, token, requestContext);
+    const projectSlug = resolveRequestProjectSlug(requestContext);
+    const catalog = await getRemoteIntegrationToolCatalog(
+      baseUrl,
+      token,
+      projectSlug,
+      requestContext,
+    );
+    if (catalog.status === "unavailable") return catalog;
+
     const sourceIntegrationPolicy = getActiveSourceIntegrationPolicy();
-    return remoteDefs.filter((def) =>
-      sourceIntegrationPolicy === undefined ||
-      isIntegrationToolAllowedBySourcePolicy(def.name, sourceIntegrationPolicy)
-    ).map((def) => ({
-      name: def.name,
-      description: def.description,
-      parameters: def.inputSchema && Object.keys(def.inputSchema).length > 0
-        ? def.inputSchema
-        : { type: "object", properties: {} },
-    }));
+    return {
+      status: "ok",
+      tools: catalog.tools.filter((def) =>
+        sourceIntegrationPolicy === undefined ||
+        isIntegrationToolAllowedBySourcePolicy(def.name, sourceIntegrationPolicy)
+      ).map((def) => ({
+        name: def.name,
+        description: def.description,
+        parameters: def.inputSchema && Object.keys(def.inputSchema).length > 0
+          ? def.inputSchema
+          : { type: "object", properties: {} },
+      })),
+    };
   } catch (err) {
     requestContext.abortSignal?.throwIfAborted();
     logger.error("Failed to fetch remote integration tool definitions", {
       error: err instanceof Error ? err.message : String(err),
     });
-    return [];
+    return { status: "unavailable", reason: "request_failed" };
   }
+}
+
+/**
+ * Fetch integration tool definitions for the current request context.
+ *
+ * This compatibility helper returns an empty array for unavailable catalogs.
+ * Use `getRemoteIntegrationToolDiscovery` when the caller must distinguish a
+ * successful empty catalog from a discovery failure.
+ */
+export async function getRemoteIntegrationToolDefinitions(
+  context?: ToolExecutionContext,
+): Promise<ToolDefinition[]> {
+  const discovery = await getRemoteIntegrationToolDiscovery(context);
+  return discovery.status === "ok" ? discovery.tools : [];
 }
 
 /**
