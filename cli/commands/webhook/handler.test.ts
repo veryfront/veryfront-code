@@ -10,17 +10,13 @@ import { clearProjectAgentRuntimeRegistries } from "#veryfront/agent/project/age
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { VeryfrontError } from "veryfront/errors";
+import { withCwd } from "#veryfront/testing/cwd.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
 import { handleWebhookCommand, toWebhookAgentOptions } from "./handler.ts";
 
-// Derived from the module URL rather than load-time Deno.cwd(): under
-// `deno test --parallel` this module can be evaluated while a sibling test
-// file is chdir'd into a soon-to-be-deleted temp directory.
-const originalCwd = new URL("../../../", import.meta.url);
 const originalExit = Deno.exit;
 const originalConsoleLog = console.log;
-let cwdCommandTail: Promise<void> = Promise.resolve();
 
 class ExitSentinel extends Error {
   constructor(readonly code: number) {
@@ -50,34 +46,20 @@ async function runCommand(args: ParsedArgs): Promise<{
   return { exitCode, output };
 }
 
-async function runCommandInProjectCwd(
+function runCommandInProjectCwd(
   projectDir: string,
   args: ParsedArgs,
 ): Promise<{
   exitCode: number | undefined;
   output: string[];
 }> {
-  const previousTail = cwdCommandTail.catch(() => {});
-  let release!: () => void;
-  cwdCommandTail = previousTail.then(() =>
-    new Promise<void>((resolve) => {
-      release = resolve;
-    })
-  );
-  await previousTail;
-
-  try {
-    Deno.chdir(projectDir);
-    return await runCommand(args);
-  } finally {
-    Deno.chdir(originalCwd);
-    release();
-  }
+  return withCwd(projectDir, () => runCommand(args));
 }
 
 describe("webhook command", () => {
   afterEach(() => {
-    Deno.chdir(originalCwd);
+    // No chdir here: withCwd already handed the directory back, and reaching
+    // for it outside a turn would yank it from whichever test file holds it now.
     // deno-lint-ignore no-explicit-any
     (Deno as any).exit = originalExit;
     console.log = originalConsoleLog;
@@ -142,7 +124,6 @@ describe("webhook command", () => {
         },
       });
     } finally {
-      Deno.chdir(originalCwd);
       await Deno.remove(projectDir, { recursive: true });
     }
   });
@@ -224,7 +205,6 @@ describe("webhook command", () => {
         },
       });
     } finally {
-      Deno.chdir(originalCwd);
       await Deno.remove(projectDir, { recursive: true });
     }
   });

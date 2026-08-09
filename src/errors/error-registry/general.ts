@@ -99,6 +99,16 @@ export const PROJECT_SOURCE_EMPTY = defineError({
   suggestion: "Add project files or run 'veryfront init'",
 });
 
+/** A scope that owns the process working directory was opened inside another one. */
+export const NESTED_CWD_SCOPE = defineError({
+  slug: "nested-cwd-scope",
+  category: "GENERAL",
+  status: 500,
+  title: "Working directory scope nested inside another",
+  suggestion:
+    "Do the inner work directly in the outer scope's callback instead of opening a second one",
+});
+
 // =============================================================================
 // Registry exports
 // =============================================================================
@@ -121,4 +131,5 @@ export const GENERAL_REGISTRY = {
   "security-violation": SECURITY_VIOLATION,
   "input-validation-failed": INPUT_VALIDATION_FAILED,
   "project-source-empty": PROJECT_SOURCE_EMPTY,
+  "nested-cwd-scope": NESTED_CWD_SCOPE,
 } as const;

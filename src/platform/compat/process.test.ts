@@ -7,6 +7,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { withCwd } from "#veryfront/testing/cwd.ts";
 import { runWithProjectEnv } from "../../server/project-env/storage.ts";
 import {
   chdir,
@@ -356,19 +357,30 @@ describe("Process Compat", () => {
   });
 
   describe("chdir", () => {
-    it("should change and restore directory", () => {
-      const original = cwd();
-
+    it("should change and restore directory", async () => {
+      // Takes the shared turn first. The directory belongs to the process, so
+      // moving it while another test file is resolving a relative path is the
+      // race `withCwd` exists to prevent -- and reading `cwd()` to restore from
+      // is only meaningful once this test owns it.
+      const base = await Deno.makeTempDir({ prefix: "vf-compat-chdir-" });
       try {
-        chdir("/tmp");
-        const newDir = cwd();
-        // On macOS /tmp is a symlink to /private/tmp
-        assertEquals(newDir === "/tmp" || newDir === "/private/tmp", true);
-      } finally {
-        chdir(original);
-      }
+        await withCwd(base, () => {
+          const original = cwd();
 
-      assertEquals(cwd(), original);
+          try {
+            chdir("/tmp");
+            const newDir = cwd();
+            // On macOS /tmp is a symlink to /private/tmp
+            assertEquals(newDir === "/tmp" || newDir === "/private/tmp", true);
+          } finally {
+            chdir(original);
+          }
+
+          assertEquals(cwd(), original);
+        });
+      } finally {
+        await Deno.remove(base, { recursive: true });
+      }
     });
   });
 
