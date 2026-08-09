@@ -959,11 +959,8 @@ export class AgentRuntime {
             },
           });
           sendSSE(controller, encoder, {
-            type: "data",
-            data: {
-              name: "veryfront.runtime_context",
-              value: runRuntimeContext,
-            },
+            type: "data-veryfront.runtime_context",
+            data: runRuntimeContext,
           });
           inFlight = chain.execute(
             agentContext,

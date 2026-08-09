@@ -143,7 +143,7 @@ describe("agent/factory call context", () => {
       prompt.indexOf("<environment_context>") < prompt.indexOf("<runtime_context>"),
       true,
     );
-    assertStringIncludes(streamBody, '"name":"veryfront.runtime_context"');
+    assertStringIncludes(streamBody, '"type":"data-veryfront.runtime_context"');
     assertStringIncludes(streamBody, '"runStartedAtUtc":"2026-07-19T07:30:00.000Z"');
   });
 

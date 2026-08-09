@@ -1,7 +1,8 @@
 import { createRuntimePromptBlock } from "./prompt-block.ts";
 
-const RUNTIME_CONTEXT_OPEN_TAG = "<runtime_context>";
-const RUNTIME_CONTEXT_CLOSE_TAG = "</runtime_context>";
+const RUNTIME_CONTEXT_OPEN_TAG_PATTERN = /<runtime_context(?:\s[^>]*)?>/;
+const RUNTIME_CONTEXT_CLOSE_TAG_PATTERN = /<\/runtime_context\s*>/;
+const RUNTIME_CONTEXT_CLOSE_TAG_PATTERN_GLOBAL = /<\/runtime_context\s*>/g;
 
 /** Server-authored UTC facts captured once for one agent run. */
 export type AgentRunRuntimeContext = Readonly<{
@@ -22,22 +23,27 @@ export function captureAgentRunRuntimeContext(now = new Date()): AgentRunRuntime
 
 function removeReservedRuntimeContextBlocks(instructions: string): string {
   let result = instructions;
-  let openIndex = result.indexOf(RUNTIME_CONTEXT_OPEN_TAG);
+  let openIndex = result.search(RUNTIME_CONTEXT_OPEN_TAG_PATTERN);
 
   while (openIndex >= 0) {
-    const closeIndex = result.indexOf(RUNTIME_CONTEXT_CLOSE_TAG, openIndex);
-    if (closeIndex < 0) {
-      result = result.slice(0, openIndex) +
-        result.slice(openIndex + RUNTIME_CONTEXT_OPEN_TAG.length);
+    const openingTag = result.slice(openIndex).match(RUNTIME_CONTEXT_OPEN_TAG_PATTERN)?.[0];
+    if (!openingTag) break;
+    const contentStart = openIndex + openingTag.length;
+    const closeOffset = result.slice(contentStart).search(RUNTIME_CONTEXT_CLOSE_TAG_PATTERN);
+    if (closeOffset < 0) {
+      result = result.slice(0, openIndex);
       break;
     }
 
+    const closeIndex = contentStart + closeOffset;
+    const closingTag = result.slice(closeIndex).match(RUNTIME_CONTEXT_CLOSE_TAG_PATTERN)?.[0];
+    if (!closingTag) break;
     result = result.slice(0, openIndex) +
-      result.slice(closeIndex + RUNTIME_CONTEXT_CLOSE_TAG.length);
-    openIndex = result.indexOf(RUNTIME_CONTEXT_OPEN_TAG);
+      result.slice(closeIndex + closingTag.length);
+    openIndex = result.search(RUNTIME_CONTEXT_OPEN_TAG_PATTERN);
   }
 
-  return result.replaceAll(RUNTIME_CONTEXT_CLOSE_TAG, "").trim();
+  return result.replaceAll(RUNTIME_CONTEXT_CLOSE_TAG_PATTERN_GLOBAL, "").trim();
 }
 
 /** Render the authoritative UTC snapshot as a reserved system block. */

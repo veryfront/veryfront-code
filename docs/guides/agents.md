@@ -385,6 +385,8 @@ event named `veryfront.runtime_context` for durable replay and diagnostics.
 The `system` property accepts a string, a function, or an async function:
 
 ```ts
+import { agent } from "veryfront/agent";
+
 export default agent({
   id: "assistant",
   system: async () => {

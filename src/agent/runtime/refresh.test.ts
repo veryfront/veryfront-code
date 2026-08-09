@@ -2239,6 +2239,7 @@ describe("agent runtime refresh hooks", () => {
   });
 
   it("refreshes the streaming system prompt between hosted run steps", async () => {
+    using time = new FakeTime(new Date("2026-07-19T07:30:00.000Z"));
     const runtimeRequests: RuntimeStateRequest[] = [];
     const observedSystems: string[] = [];
     let callCount = 0;
@@ -2292,7 +2293,10 @@ describe("agent runtime refresh hooks", () => {
       id: "switch_project",
       description: "Switch the active project context",
       inputSchema: defineSchema((v) => v.object({ projectId: v.string() }))(),
-      execute: async ({ projectId }) => ({ projectId }),
+      execute: async ({ projectId }) => {
+        time.tick(24 * 60 * 60 * 1_000);
+        return { projectId };
+      },
     });
 
     const assistant = eagerAgent({
@@ -2326,6 +2330,14 @@ describe("agent runtime refresh hooks", () => {
       "Base streaming system prompt",
       "Refreshed streaming system prompt",
     ]);
+    for (const system of observedSystems) {
+      assertEquals(system.match(/<runtime_context>/g)?.length, 1);
+      assertEquals(
+        system.includes("run_started_at_utc: 2026-07-19T07:30:00.000Z"),
+        true,
+      );
+      assertEquals(system.includes("2026-07-20"), false);
+    }
     assertEquals(body.includes("stream done"), true);
   });
 
