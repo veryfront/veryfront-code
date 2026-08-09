@@ -39,6 +39,25 @@ Three directives are worth understanding:
 - **`style-src` and `font-src` include the Google Fonts origins** because `veryfront/fonts` writes those tags into the document itself. Google Fonts therefore works with no configuration. If your project never uses it, see [Tightening the policy](#tightening-the-policy).
 - **`frame-ancestors`** is `'none'` on your own domain. On `*.veryfront.com` addresses it instead allows the Studio origins, so the Studio preview iframe works.
 
+## What is enforced
+
+The policy above is served as `Content-Security-Policy-Report-Only`: browsers report what it would have blocked, and block nothing.
+
+Two directives are served enforced by default, in a second `Content-Security-Policy` header:
+
+- `object-src 'none'` blocks `<object>`, `<embed>` and `<applet>`.
+- `base-uri 'self'` blocks a `<base>` element pointing at another origin.
+
+Both close injection routes, and neither can be widened: they are required directives, so `security.csp` cannot add sources to them or drop them.
+
+The exception is `VERYFRONT_CSP`. Setting that environment variable replaces the policy wholesale and serves it enforced on its own, so neither the reported floor nor this pair is added alongside it. Writing a whole policy by hand is an explicit act, and Veryfront does not second-guess it.
+
+**Every directive you give a value in `security.csp` is enforced too**, including `form-action` and `frame-ancestors`. Listing your image origins means you have thought about images, so `img-src` binds with your sources in it. Directives you never mentioned keep reporting, and so does one written as `undefined`, which counts as unconfigured rather than as a declaration. Adding one origin does not bind the rest of your policy, because deciding to allow a CDN and deciding to bind script execution across your site are different decisions.
+
+One consequence worth knowing: CSP resolves a missing directive by falling back to a broader one, so enforcing `script-src` would otherwise also constrain workers and frames. Veryfront emits those alongside it, with the same sources the reported policy gives them, so declaring one directive never tightens another behind your back.
+
+To bind a directive, configure it. To see what binding it would cost first, read the reports.
+
 ## Violation reports
 
 The policy asks browsers to report what it blocks, to `/_vf/csp-report` on your own origin. Both spellings are sent because `report-to` is the current one and `report-uri` is still the only one several shipping browsers honour.
