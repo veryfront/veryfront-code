@@ -15,11 +15,22 @@
  * @module testing/cwd
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
+
 /** Tail of the queue. Each caller awaits the previous one before it chdirs. */
 let queue: Promise<void> = Promise.resolve();
 
-/** Whether a caller currently holds the directory. */
-let held = false;
+/**
+ * Marks the execution context of a running callback.
+ *
+ * A global "someone holds it" flag cannot tell a nested call from an
+ * independent one that simply arrived while a callback was awaiting -- and
+ * rejecting the latter is worse than the deadlock it was meant to prevent,
+ * because queueing is exactly what an independent caller should do. Async
+ * context distinguishes them: only code running inside a callback sees the
+ * store.
+ */
+const insideCallback = new AsyncLocalStorage<true>();
 
 /**
  * Run `fn` with the process working directory set to `dir`.
@@ -36,7 +47,7 @@ export function withCwd<T>(dir: string, fn: () => Promise<T> | T): Promise<T> {
   // which waits for the outer call, which waits for this one. Reentrancy is
   // not the answer either -- the inner chdir would move the directory out from
   // under the outer caller, which is the exact hazard this exists to prevent.
-  if (held) {
+  if (insideCallback.getStore()) {
     return Promise.reject(
       new Error(
         "withCwd cannot be nested: the inner call would move the directory the outer call is using.",
@@ -46,12 +57,10 @@ export function withCwd<T>(dir: string, fn: () => Promise<T> | T): Promise<T> {
 
   const run = queue.then(async () => {
     const previous = Deno.cwd();
-    held = true;
     try {
       Deno.chdir(dir);
-      return await fn();
+      return await insideCallback.run(true, fn);
     } finally {
-      held = false;
       Deno.chdir(previous);
     }
   });
