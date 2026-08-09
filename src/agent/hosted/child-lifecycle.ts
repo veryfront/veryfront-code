@@ -129,6 +129,25 @@ class HostedChildExecutionFailure extends Error {
   }
 }
 
+/**
+ * Terminal error code for a child whose work finished but whose terminal state
+ * could not be persisted. Distinct from an execution failure code on purpose:
+ * the child produced its result, the run record did not survive it.
+ */
+export const HOSTED_CHILD_FINALIZATION_FAILED_CODE = "CHILD_FINALIZATION_FAILED";
+
+function buildFinalizationFailureState(
+  completedState: HostedChildLifecycleTerminalState,
+  error: unknown,
+): HostedChildLifecycleTerminalState {
+  return {
+    status: "failed",
+    usage: completedState.usage,
+    terminalErrorCode: HOSTED_CHILD_FINALIZATION_FAILED_CODE,
+    terminalErrorMessage: error instanceof Error ? error.message : String(error),
+  };
+}
+
 async function dispatchTerminalState(
   adapter: HostedChildLifecycleAdapter,
   terminalState: HostedChildLifecycleTerminalState,
@@ -180,7 +199,28 @@ export async function runHostedChildLifecycle<TResult>(
     ? await options.resolveCompletedState(result)
     : { status: "completed" as const };
 
-  await dispatchTerminalState(options.adapter, terminalState);
+  try {
+    await dispatchTerminalState(options.adapter, terminalState);
+  } catch (lifecycleError) {
+    // Same guard the failure path above uses. Without a handler the error still
+    // propagates, which is the long-standing contract for this function.
+    if (!options.onLifecycleError) {
+      throw lifecycleError;
+    }
+
+    await options.onLifecycleError(lifecycleError);
+
+    // Deliberately not re-dispatched: the adapter has already rejected this
+    // run's terminal state, so dispatching `failed` on top would write a second
+    // terminal state. Reporting through the return value keeps a persistence
+    // failure distinguishable from an execution failure, which the caller's
+    // `executionFailedCode` would not.
+    return {
+      status: "failed",
+      error: lifecycleError,
+      terminalState: buildFinalizationFailureState(terminalState, lifecycleError),
+    };
+  }
 
   return {
     status: "completed",
