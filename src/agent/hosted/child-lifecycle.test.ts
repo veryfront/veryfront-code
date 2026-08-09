@@ -232,6 +232,7 @@ describe("agent/hosted-child-lifecycle", () => {
 
   it("keeps the finalization outcome when onLifecycleError itself throws", async () => {
     const calls: string[] = [];
+    let lifecycleErrorCalls = 0;
     const adapter: HostedChildLifecycleAdapter = {
       completed: () => {
         calls.push("completed");
@@ -251,13 +252,15 @@ describe("agent/hosted-child-lifecycle", () => {
         terminalErrorMessage: "boom",
       }),
       onLifecycleError: () => {
+        lifecycleErrorCalls += 1;
         throw new Error("reporting failed");
       },
     });
 
-    // A failing observability callback must not relabel the outcome or trigger
-    // a second terminal dispatch.
+    // A failing observability callback must not relabel the outcome, trigger a
+    // second terminal dispatch, or be reported more than once.
     assertEquals(calls, ["completed"]);
+    assertEquals(lifecycleErrorCalls, 1);
     assertEquals(result.status, "failed");
     assertEquals(
       result.terminalState.terminalErrorCode,
