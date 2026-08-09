@@ -107,6 +107,7 @@ throw INVALID_WIDGET.create({ detail: "The widget id is malformed." });
 | `MIDDLEWARE_ERROR`                     |                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/runtime.ts#L51)     |
 | `MODULE_ERROR_CATALOG`                 |                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/module-errors.ts#L4)       |
 | `MODULE_NOT_FOUND`                     |                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L3)       |
+| `NESTED_CWD_SCOPE`                     | A scope that owns the process working directory was opened inside another one.                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L103)    |
 | `NETWORK_ERROR`                        |                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/server.ts#L83)      |
 | `NOT_SUPPORTED`                        |                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L68)     |
 | `ORCHESTRATION_ERROR`                  |                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/agent.ts#L35)       |
@@ -253,21 +254,22 @@ import {
 
 #### Components
 
-| Name                      | Description                                                       | Source                                                                                                    |
-| ------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `AUTHENTICATION_REQUIRED` |                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L11)  |
-| `FILE_NOT_FOUND`          |                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L27)  |
-| `GENERAL_REGISTRY`        | Registry fragment for GENERAL errors (slug → definition).         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L111) |
-| `INITIALIZATION_ERROR`    |                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L60)  |
-| `INPUT_VALIDATION_FAILED` | HTTP request input validation failures (replaces ValidationError) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L86)  |
-| `INVALID_ARGUMENT`        |                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L43)  |
-| `NOT_SUPPORTED`           |                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L68)  |
-| `PERMISSION_DENIED`       |                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L19)  |
-| `PROJECT_SOURCE_EMPTY`    |                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L94)  |
-| `RESOURCE_NOT_FOUND`      |                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L35)  |
-| `SECURITY_VIOLATION`      | Path traversal / secure-fs violations (replaces SecurityError)    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L77)  |
-| `TIMEOUT_ERROR`           |                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L52)  |
-| `UNKNOWN_ERROR`           |                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L3)   |
+| Name                      | Description                                                                    | Source                                                                                                    |
+| ------------------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `AUTHENTICATION_REQUIRED` |                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L11)  |
+| `FILE_NOT_FOUND`          |                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L27)  |
+| `GENERAL_REGISTRY`        | Registry fragment for GENERAL errors (slug → definition).                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L121) |
+| `INITIALIZATION_ERROR`    |                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L60)  |
+| `INPUT_VALIDATION_FAILED` | HTTP request input validation failures (replaces ValidationError)              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L86)  |
+| `INVALID_ARGUMENT`        |                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L43)  |
+| `NESTED_CWD_SCOPE`        | A scope that owns the process working directory was opened inside another one. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L103) |
+| `NOT_SUPPORTED`           |                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L68)  |
+| `PERMISSION_DENIED`       |                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L19)  |
+| `PROJECT_SOURCE_EMPTY`    |                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L94)  |
+| `RESOURCE_NOT_FOUND`      |                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L35)  |
+| `SECURITY_VIOLATION`      | Path traversal / secure-fs violations (replaces SecurityError)                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L77)  |
+| `TIMEOUT_ERROR`           |                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L52)  |
+| `UNKNOWN_ERROR`           |                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L3)   |
 
 ### `veryfront/errors/module`
 
