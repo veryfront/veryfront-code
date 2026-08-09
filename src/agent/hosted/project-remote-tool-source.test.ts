@@ -277,9 +277,10 @@ describe("hosted project remote tool catalog resilience", () => {
         id: "veryfront-mcp",
         async listTools() {
           listCalls++;
-          if (listCalls > 1) {
+          if (listCalls === 2) {
             throw PERMISSION_DENIED.create({ detail: "Catalog access denied" });
           }
+          if (listCalls === 3) throw new DOMException("Timed out", "TimeoutError");
           return [projectFileTool("update_file")];
         },
         async executeTool() {
@@ -293,6 +294,7 @@ describe("hosted project remote tool catalog resilience", () => {
     const error = await assertRejects(() => source.listTools(), VeryfrontError);
     assertInstanceOf(error, VeryfrontError);
     assertEquals(error.slug, "permission-denied");
+    await assertRejects(() => source.listTools(), DOMException, "Timed out");
   });
 
   it("does not retain a catalog after a validation failure", async () => {
@@ -302,9 +304,10 @@ describe("hosted project remote tool catalog resilience", () => {
         id: "veryfront-mcp",
         async listTools() {
           listCalls++;
-          if (listCalls > 1) {
+          if (listCalls === 2) {
             throw NETWORK_ERROR.create({ detail: "Malformed remote tool catalog" });
           }
+          if (listCalls === 3) throw new DOMException("Timed out", "TimeoutError");
           return [projectFileTool("update_file")];
         },
         async executeTool() {
@@ -318,6 +321,7 @@ describe("hosted project remote tool catalog resilience", () => {
     const error = await assertRejects(() => source.listTools(), VeryfrontError);
     assertInstanceOf(error, VeryfrontError);
     assertEquals(error.slug, "network-error");
+    await assertRejects(() => source.listTools(), DOMException, "Timed out");
   });
 });
 

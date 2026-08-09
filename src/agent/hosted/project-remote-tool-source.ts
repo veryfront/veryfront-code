@@ -89,7 +89,15 @@ function createRunResilientRemoteToolSource(source: RemoteToolSource): RemoteToo
         return definitions;
       } catch (error) {
         context?.abortSignal?.throwIfAborted();
-        if (!matchingCatalog || !isTransientRemoteToolCatalogError(error)) throw error;
+        if (!isTransientRemoteToolCatalogError(error)) {
+          if (matchingCatalog) {
+            lastSuccessfulCatalog = undefined;
+            consecutiveFailures = 0;
+            retryAfter = 0;
+          }
+          throw error;
+        }
+        if (!matchingCatalog) throw error;
 
         consecutiveFailures++;
         const backoffMs = Math.min(
