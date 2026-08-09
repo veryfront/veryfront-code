@@ -112,8 +112,14 @@ describe("script-handlers", () => {
     it("does not ship server-only error definitions to the browser", async () => {
       const adapter = createMockAdapter();
       const response = await handleClientScript(adapter);
+      const body = await response.text();
 
-      assertEquals(embeddedNonGeneralSlugs(await response.text()), []);
+      // Checked before the scan, because both a failure response and an empty
+      // one carry no slugs and would satisfy the assertion without the bundle
+      // ever having been examined.
+      assertEquals(response.ok, true);
+      assertEquals(body.length > 0, true);
+      assertEquals(embeddedNonGeneralSlugs(body), []);
     });
   });
 
@@ -138,8 +144,13 @@ describe("script-handlers", () => {
     it("does not ship server-only error definitions to the browser", async () => {
       const adapter = createMockAdapter();
       const response = await handleDomScript(adapter);
+      const body = await response.text();
 
-      assertEquals(embeddedNonGeneralSlugs(await response.text()), []);
+      // See the client-script case: an unsuccessful or empty response would
+      // pass the slug scan without proving anything about the bundle.
+      assertEquals(response.ok, true);
+      assertEquals(body.length > 0, true);
+      assertEquals(embeddedNonGeneralSlugs(body), []);
     });
   });
 });
