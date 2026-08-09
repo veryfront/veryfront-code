@@ -10,6 +10,7 @@ import { clearProjectAgentRuntimeRegistries } from "../../../src/agent/project/a
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { VeryfrontError } from "veryfront/errors";
+import { withCwd } from "#veryfront/testing/cwd.ts";
 import type { CreateScheduleRunFromSourceResult, Run, VeryfrontRunsClient } from "veryfront/runs";
 import { setJsonMode } from "../../shared/json-output.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
@@ -22,10 +23,6 @@ import {
   waitForRemoteScheduleRun,
 } from "./handler.ts";
 
-// Derived from the module URL rather than load-time Deno.cwd(): under
-// `deno test --parallel` this module can be evaluated while a sibling test
-// file is chdir'd into a soon-to-be-deleted temp directory.
-const originalCwd = new URL("../../../", import.meta.url);
 const originalExit = Deno.exit;
 const originalFetch = globalThis.fetch;
 const originalConsoleLog = console.log;
@@ -128,7 +125,8 @@ function restoreEnvironment(): void {
 
 describe("schedule command", () => {
   afterEach(() => {
-    Deno.chdir(originalCwd);
+    // No chdir here: withCwd already handed the directory back, and reaching
+    // for it outside a turn would yank it from whichever test file holds it now.
     // deno-lint-ignore no-explicit-any
     (Deno as any).exit = originalExit;
     globalThis.fetch = originalFetch;
@@ -192,7 +190,6 @@ describe("schedule command", () => {
       Deno.env.delete("VERYFRONT_PROJECT_SLUG");
       Deno.env.set("XDG_CONFIG_HOME", configHome);
       _resetEnvironmentConfig();
-      Deno.chdir(projectDir);
       setJsonMode(true);
       console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
       globalThis.fetch = (async (
@@ -215,16 +212,19 @@ describe("schedule command", () => {
       };
 
       let exitCode: number | undefined;
-      try {
-        await handleScheduleCommand({
-          _: ["schedule", "run", "process-job-submissions"],
-          remote: true,
-          json: true,
-        } as ParsedArgs);
-      } catch (error) {
-        if (!(error instanceof ExitSentinel)) throw error;
-        exitCode = error.code;
-      }
+      // Held only for the command, which resolves veryfront.json from the cwd.
+      await withCwd(projectDir, async () => {
+        try {
+          await handleScheduleCommand({
+            _: ["schedule", "run", "process-job-submissions"],
+            remote: true,
+            json: true,
+          } as ParsedArgs);
+        } catch (error) {
+          if (!(error instanceof ExitSentinel)) throw error;
+          exitCode = error.code;
+        }
+      });
 
       assertEquals(exitCode, 0);
       assertEquals(requests.map((request) => request.url), [
@@ -263,7 +263,6 @@ describe("schedule command", () => {
         },
       });
     } finally {
-      Deno.chdir(originalCwd);
       await stopEsbuild();
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });
@@ -319,7 +318,6 @@ describe("schedule command", () => {
         ].join("\n"),
       );
 
-      Deno.chdir(projectDir);
       setJsonMode(true);
       console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
       // deno-lint-ignore no-explicit-any
@@ -328,22 +326,25 @@ describe("schedule command", () => {
       };
 
       let exitCode: number | undefined;
-      try {
-        await handleScheduleCommand({
-          _: ["schedule", "run", "timed-task"],
-          json: true,
-        } as ParsedArgs);
-      } catch (error) {
-        if (!(error instanceof ExitSentinel)) throw error;
-        exitCode = error.code;
-      }
+      // Held only for the command, which discovers schedules/ and tasks/
+      // relative to the cwd.
+      await withCwd(projectDir, async () => {
+        try {
+          await handleScheduleCommand({
+            _: ["schedule", "run", "timed-task"],
+            json: true,
+          } as ParsedArgs);
+        } catch (error) {
+          if (!(error instanceof ExitSentinel)) throw error;
+          exitCode = error.code;
+        }
+      });
 
       assertEquals(exitCode, 0);
       assertEquals(JSON.parse(output.at(-1) ?? "{}").data.output, {
         signalPresent: true,
       });
     } finally {
-      Deno.chdir(originalCwd);
       await stopEsbuild();
       await Deno.remove(projectDir, { recursive: true });
     }
