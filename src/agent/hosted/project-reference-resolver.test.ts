@@ -30,7 +30,10 @@ Deno.test("resolveHostedProjectReference returns a matching normalized API ident
     (input, init) => {
       requests.push({
         url: String(input),
-        authorization: new Headers(init?.headers).get("authorization"),
+        // `init` is a union of RequestInit variants; narrow before reading headers.
+        authorization: new Headers(
+          init && "headers" in init ? init.headers as HeadersInit | undefined : undefined,
+        ).get("authorization"),
       });
       return Promise.resolve(
         Response.json({
