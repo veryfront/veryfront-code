@@ -171,8 +171,15 @@ describe("agent provider transport hooks", () => {
     }
 
     assertEquals(contexts.length, 2);
-    assertEquals(normalizeRunRuntimeContext(contexts[0]), normalizeRunRuntimeContext(contexts[1]));
-    assertEquals(normalizeRunRuntimeContext(contexts[0]), {
+    const cloudContext = contexts[0];
+    const localContext = contexts[1];
+    assertExists(cloudContext);
+    assertExists(localContext);
+    assertEquals(
+      normalizeRunRuntimeContext(cloudContext),
+      normalizeRunRuntimeContext(localContext),
+    );
+    assertEquals(normalizeRunRuntimeContext(cloudContext), {
       type: "AGENT_RUN_MODEL_CALL_CONTEXT",
       messages: [
         {
