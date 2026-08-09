@@ -48,7 +48,7 @@ export const deployHelp: CommandHelp = {
     "Creates or links a project when veryfront.json is not present",
     "Promotes main when --branch is omitted",
     "Pushes main before the first deploy when no verified push exists",
-    "With --project, promotes only: the working directory is never pushed, so this directory's push receipt must already name that project",
+    "With --project, promotes only: the working directory is never pushed, so the selected project directory's push receipt must already name that project",
     "Creates a new release from the resolved branch",
     "Verifies the target environment points to the created deployment before succeeding",
   ],

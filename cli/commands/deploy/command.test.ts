@@ -20,6 +20,10 @@ import { deployCommand } from "./command.ts";
 import { parseCliArgs } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
+// Never touched: the fake executor records the request without reading it.
+// Named rather than inlined so it cannot be mistaken for a real checkout.
+const UNRELATED_PROJECT_DIR = "fixtures/unrelated-checkout";
+
 async function captureConsole<T>(fn: () => Promise<T>): Promise<{ result: T; output: string[] }> {
   const output: string[] = [];
   const originalLog = console.log;
@@ -288,7 +292,7 @@ describe("deploy --project", () => {
     const { output } = await captureConsole(() =>
       deployCommand({
         ...parsed.data,
-        projectDir: "/tmp/an-unrelated-checkout",
+        projectDir: UNRELATED_PROJECT_DIR,
         dryRun: true,
         deployProject: fakeDeployment,
       })

@@ -27,6 +27,9 @@ function boundedDeployProject(): DeployProject {
 
 const PROJECT_ID = "550e8400-e29b-41d4-a716-446655440000";
 const ENVIRONMENT_ID = "660e8400-e29b-41d4-a716-446655440000";
+/** A project this directory never pushed, resolvable so only the receipt refuses. */
+const OTHER_PROJECT_SLUG = "other-project";
+const OTHER_PROJECT_ID = "770e8400-e29b-41d4-a716-446655440000";
 const RELEASE_ID = "770e8400-e29b-41d4-a716-446655440000";
 const DEPLOYMENT_ID = "880e8400-e29b-41d4-a716-446655440000";
 const PUSHED_SOURCE = "export const value = 1;\n";
@@ -128,6 +131,26 @@ function createDeployFetchHandler(options: {
     }
     if (request.method === "GET" && url.pathname === "/api/projects/my-project") {
       return Response.json({ id: PROJECT_ID, slug: "my-project" });
+    }
+    // Resolves cleanly on purpose. Without it a test naming another project
+    // fails on this lookup, which looks like the refusal it was written to
+    // prove and is not.
+    if (request.method === "GET" && url.pathname === `/api/projects/${OTHER_PROJECT_SLUG}`) {
+      return Response.json({ id: OTHER_PROJECT_ID, slug: OTHER_PROJECT_SLUG });
+    }
+    if (
+      request.method === "GET" &&
+      url.pathname === `/api/projects/${OTHER_PROJECT_ID}/environments`
+    ) {
+      return Response.json({
+        data: [{
+          id: ENVIRONMENT_ID,
+          name: "production",
+          project_id: OTHER_PROJECT_ID,
+          protected: false,
+          domains: [],
+        }],
+      });
     }
     if (request.method === "GET" && url.pathname === "/api/projects/my-project/files") {
       return Response.json({ data: [], page_info: {} });
@@ -661,17 +684,20 @@ it("refuses to deploy a project this directory did not push", async () => {
     await withMockFetch(
       createDeployFetchHandler({ requests, sourceDigest, uploadedPaths }),
       () =>
-        assertRejects(() =>
-          deployCommand({
-            projectSlug: "other-project",
-            projectDir,
-            branch: "main",
-            env: "production",
-            dryRun: false,
-            force: false,
-            quiet: true,
-            deployProject: boundedDeployProject(),
-          })
+        assertRejects(
+          () =>
+            deployCommand({
+              projectSlug: OTHER_PROJECT_SLUG,
+              projectDir,
+              branch: "main",
+              env: "production",
+              dryRun: false,
+              force: false,
+              quiet: true,
+              deployProject: boundedDeployProject(),
+            }),
+          Error,
+          "The latest push targeted a different project.",
         ),
     );
 
