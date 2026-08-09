@@ -21,6 +21,8 @@ export interface CreateAgUiRuntimeEventEncoderOptions {
   initialMetadata?: Partial<AgUiBrowserRunFinishedMetadata>;
   /** Clock for `elapsedMs`; forwarded to the encoder state. */
   nowMs?: (() => number) | null;
+  /** Wall clock for `emittedAt`; forwarded to the encoder state. */
+  epochMs?: (() => number) | null;
 }
 
 /** Create AG-UI runtime event encoder. */
@@ -28,7 +30,10 @@ export function createAgUiRuntimeEventEncoder(
   options: CreateAgUiRuntimeEventEncoderOptions = {},
 ): AgUiRuntimeEventEncoder {
   const state = createAgUiBrowserEncoderState(
-    options.nowMs === undefined ? {} : { nowMs: options.nowMs },
+    {
+      ...(options.nowMs === undefined ? {} : { nowMs: options.nowMs }),
+      ...(options.epochMs === undefined ? {} : { epochMs: options.epochMs }),
+    },
   );
   const toolInputs = new Map<string, unknown>();
 

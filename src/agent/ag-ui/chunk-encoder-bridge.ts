@@ -20,6 +20,8 @@ export interface CreateAgUiChunkEncoderBridgeOptions<TChunk> {
   getRuntimeEvents: (chunk: TChunk) => readonly AgUiRuntimeStreamEvent[];
   /** Clock for `elapsedMs`; forwarded to the encoder state. */
   nowMs?: (() => number) | null;
+  /** Wall clock for `emittedAt`; forwarded to the encoder state. */
+  epochMs?: (() => number) | null;
 }
 
 /** Create AG-UI chunk encoder bridge. */
@@ -27,7 +29,10 @@ export function createAgUiChunkEncoderBridge<TChunk>(
   options: CreateAgUiChunkEncoderBridgeOptions<TChunk>,
 ): AgUiChunkEncoderBridge<TChunk> {
   const state = createAgUiBrowserEncoderState(
-    options.nowMs === undefined ? {} : { nowMs: options.nowMs },
+    {
+      ...(options.nowMs === undefined ? {} : { nowMs: options.nowMs }),
+      ...(options.epochMs === undefined ? {} : { epochMs: options.epochMs }),
+    },
   );
 
   return {

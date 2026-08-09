@@ -22,6 +22,8 @@ export type AgUiChatUiChunkBrowserEncoder = Pick<
 export interface CreateAgUiChatUiChunkBrowserEncoderOptions {
   /** Clock for `elapsedMs`; forwarded to the encoder state. */
   nowMs?: (() => number) | null;
+  /** Wall clock for `emittedAt`; forwarded to the encoder state. */
+  epochMs?: (() => number) | null;
   modelId?: string;
   resolveProvider?: (modelId: string) => string | undefined;
 }
@@ -267,6 +269,7 @@ export function createAgUiChatUiChunkBrowserEncoder(
     getMetadataFromChunk: (chunk) => getAgUiChatUiMessageChunkMetadata(chunk, options),
     getRuntimeEvents: (chunk) => [normalizeChatUiMessageChunkToAgUiRuntimeEvent(chunk)],
     ...(options.nowMs === undefined ? {} : { nowMs: options.nowMs }),
+    ...(options.epochMs === undefined ? {} : { epochMs: options.epochMs }),
   });
 }
 

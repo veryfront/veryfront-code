@@ -21,6 +21,8 @@ export interface AgUiBrowserChunkEncoder<TChunk> {
 export interface CreateAgUiBrowserChunkEncoderOptions<TChunk> {
   /** Clock for `elapsedMs`; forwarded to the encoder state. */
   nowMs?: (() => number) | null;
+  /** Wall clock for `emittedAt`; forwarded to the encoder state. */
+  epochMs?: (() => number) | null;
   getRuntimeEvents: (chunk: TChunk) => readonly AgUiRuntimeStreamEvent[];
   getMetadataFromChunk?: (
     chunk: TChunk,
@@ -99,6 +101,7 @@ export function createAgUiBrowserChunkEncoder<TChunk>(
   const runtimeEventEncoder: AgUiRuntimeEventEncoder = createAgUiRuntimeEventEncoder({
     initialMetadata: options.initialMetadata,
     ...(options.nowMs === undefined ? {} : { nowMs: options.nowMs }),
+    ...(options.epochMs === undefined ? {} : { epochMs: options.epochMs }),
   });
 
   return {

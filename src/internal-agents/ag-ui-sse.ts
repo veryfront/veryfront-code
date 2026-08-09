@@ -30,26 +30,33 @@ export function createStreamTransformState(
 
 function buildAgUiEventPayloadSchemas(): Record<string, Schema<Record<string, unknown>>> {
   const v = resolveSchemaValidator();
-  // Every encoded event carries a run-relative `elapsedMs` (see browser-encoder).
-  // These payload schemas are an allow-list and `parse` returns only what they
-  // declare, so a field missing from one is silently dropped before it reaches
-  // the wire -- which is exactly how `elapsedMs` went missing after it was
-  // stamped. Declaring it here once keeps that from recurring per event type.
-  const withElapsed = (
+  // Every encoded event carries timing from the browser-encoder: a run-relative
+  // `elapsedMs` and an absolute `emittedAt` in epoch milliseconds. These payload
+  // schemas are an allow-list and `parse` returns only what they declare, so a
+  // field missing from one is silently dropped before it reaches the wire --
+  // which is exactly how `elapsedMs` went missing through two releases after it
+  // was already being stamped. Declaring timing here once keeps that from
+  // recurring per event type, and means adding a timing field is one edit here
+  // plus one in the encoder, never a per-schema sweep.
+  const withTiming = (
     shape: Record<string, unknown>,
   ): Schema<Record<string, unknown>> =>
     // deno-lint-ignore no-explicit-any
-    (v.object({ ...shape, elapsedMs: v.number().optional() } as any) as unknown) as Schema<
+    (v.object({
+      ...shape,
+      elapsedMs: v.number().optional(),
+      emittedAt: v.number().optional(),
+    } as any) as unknown) as Schema<
       Record<string, unknown>
     >;
   const schemas: Record<string, Schema<Record<string, unknown>>> = {
-    RunStarted: withElapsed({
+    RunStarted: withTiming({
       runId: v.string().min(1),
       threadId: v.string().min(1),
       agentId: v.string().min(1),
     }),
-    StateSnapshot: withElapsed({ snapshot: v.record(v.string(), v.unknown()) }),
-    MessagesSnapshot: withElapsed({
+    StateSnapshot: withTiming({ snapshot: v.record(v.string(), v.unknown()) }),
+    MessagesSnapshot: withTiming({
       messages: v.array(v.object({
         id: v.string().min(1),
         role: v.enum(["user", "assistant", "system", "tool"]),
@@ -58,39 +65,39 @@ function buildAgUiEventPayloadSchemas(): Record<string, Schema<Record<string, un
         createdAt: v.string().optional(),
       })),
     }),
-    TextMessageStart: withElapsed({
+    TextMessageStart: withTiming({
       messageId: v.string().min(1),
       contentId: v.string().min(1),
       role: v.literal("assistant"),
     }),
-    TextMessageContent: withElapsed({
+    TextMessageContent: withTiming({
       messageId: v.string().min(1),
       contentId: v.string().min(1),
       delta: v.string(),
     }),
-    TextMessageEnd: withElapsed({
+    TextMessageEnd: withTiming({
       messageId: v.string().min(1),
       contentId: v.string().min(1),
     }),
-    ReasoningMessageStart: withElapsed({
+    ReasoningMessageStart: withTiming({
       messageId: v.string().min(1),
       role: v.literal("reasoning"),
     }),
-    ReasoningMessageContent: withElapsed({ messageId: v.string().min(1), delta: v.string() }),
-    ReasoningMessageEnd: withElapsed({ messageId: v.string().min(1) }),
-    StepStarted: withElapsed({ stepName: v.string().min(1) }),
-    StepFinished: withElapsed({ stepName: v.string().min(1) }),
-    ToolCallStart: withElapsed({ toolCallId: v.string().min(1), toolCallName: v.string().min(1) }),
-    ToolCallArgs: withElapsed({ toolCallId: v.string().min(1), delta: v.string() }),
-    ToolCallEnd: withElapsed({ toolCallId: v.string().min(1) }),
-    ToolCallResult: withElapsed({
+    ReasoningMessageContent: withTiming({ messageId: v.string().min(1), delta: v.string() }),
+    ReasoningMessageEnd: withTiming({ messageId: v.string().min(1) }),
+    StepStarted: withTiming({ stepName: v.string().min(1) }),
+    StepFinished: withTiming({ stepName: v.string().min(1) }),
+    ToolCallStart: withTiming({ toolCallId: v.string().min(1), toolCallName: v.string().min(1) }),
+    ToolCallArgs: withTiming({ toolCallId: v.string().min(1), delta: v.string() }),
+    ToolCallEnd: withTiming({ toolCallId: v.string().min(1) }),
+    ToolCallResult: withTiming({
       toolCallId: v.string().min(1),
       result: v.unknown(),
       isError: v.boolean().optional(),
     }),
-    Custom: withElapsed({ name: v.string().min(1), value: v.unknown() }),
-    RunError: withElapsed({ code: v.string().min(1).optional(), message: v.string().min(1) }),
-    RunFinished: withElapsed({
+    Custom: withTiming({ name: v.string().min(1), value: v.unknown() }),
+    RunError: withTiming({ code: v.string().min(1).optional(), message: v.string().min(1) }),
+    RunFinished: withTiming({
       metadata: v.object({
         provider: v.string().optional(),
         model: v.string().optional(),
