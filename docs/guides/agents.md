@@ -378,7 +378,7 @@ the run, including long-running, scheduled, API-started, and browser-originated
 runs. Browser environment context can add a display timezone, but it does not
 replace the UTC snapshot. Non-streaming results expose the exact values at
 `result.metadata?.runtimeContext`; streaming runs emit them in the initial data
-event for diagnostics.
+event named `veryfront.runtime_context` for durable replay and diagnostics.
 
 ## Dynamic system prompts
 

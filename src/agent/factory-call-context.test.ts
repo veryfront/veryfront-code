@@ -40,6 +40,7 @@ async function captureFactorySystemPrompt(
   config: Omit<AgentConfig, "model" | "resolveModelTransport">,
   context?: Record<string, unknown>,
   mode: "generate" | "stream" = "generate",
+  observeStreamBody?: (body: string) => void,
 ): Promise<string> {
   let observed = "";
   const model: ModelRuntime = {
@@ -72,7 +73,7 @@ async function captureFactorySystemPrompt(
       input: "Where does this project live?",
       context,
     })).toDataStreamResponse();
-    await response.text();
+    observeStreamBody?.(await response.text());
   } else {
     await assistant.generate({ input: "Where does this project live?", context });
   }
@@ -120,6 +121,7 @@ describe("agent/factory call context", () => {
 
   it("keeps browser display context without letting it replace server UTC", async () => {
     using _time = new FakeTime(new Date("2026-07-19T07:30:00.000Z"));
+    let streamBody = "";
     const prompt = await captureFactorySystemPrompt(
       {
         id: "browser-agent",
@@ -130,6 +132,9 @@ describe("agent/factory call context", () => {
       },
       undefined,
       "stream",
+      (body) => {
+        streamBody = body;
+      },
     );
 
     assertStringIncludes(prompt, "Browser timezone: America/Los_Angeles");
@@ -138,6 +143,8 @@ describe("agent/factory call context", () => {
       prompt.indexOf("<environment_context>") < prompt.indexOf("<runtime_context>"),
       true,
     );
+    assertStringIncludes(streamBody, '"name":"veryfront.runtime_context"');
+    assertStringIncludes(streamBody, '"runStartedAtUtc":"2026-07-19T07:30:00.000Z"');
   });
 
   it("preserves a plain agent's authored prompt before runtime context", async () => {

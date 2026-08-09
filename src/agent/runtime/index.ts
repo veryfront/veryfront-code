@@ -956,7 +956,13 @@ export class AgentRuntime {
             data: {
               inferenceMode: isLocal ? "server-local" : "cloud",
               model: resolvedModelString,
-              runtimeContext: runRuntimeContext,
+            },
+          });
+          sendSSE(controller, encoder, {
+            type: "data",
+            data: {
+              name: "veryfront.runtime_context",
+              value: runRuntimeContext,
             },
           });
           inFlight = chain.execute(
