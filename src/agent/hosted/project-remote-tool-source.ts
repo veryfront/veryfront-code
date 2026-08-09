@@ -7,6 +7,7 @@ import {
   type ProjectScopedRemoteToolOptions,
   type RemoteMCPToolSourceConfig,
   type RemoteToolSource,
+  type ToolDefinition,
   type ToolExecutionContext,
 } from "#veryfront/tool";
 import {
@@ -32,6 +33,68 @@ import {
   type ProjectSteeringPaths,
 } from "../project/steering-mutation.ts";
 import { filterVeryfrontApiToolDefinitionsWithAccessProfile } from "./veryfront-api-tool-access.ts";
+import { serverLogger } from "#veryfront/utils";
+
+const logger = serverLogger.component("agent");
+const REMOTE_TOOL_CATALOG_INITIAL_BACKOFF_MS = 1_000;
+const REMOTE_TOOL_CATALOG_MAX_BACKOFF_MS = 30_000;
+
+interface LastSuccessfulRemoteToolCatalog {
+  readonly projectId: string | null;
+  readonly definitions: ToolDefinition[];
+}
+
+function getRemoteToolCatalogProjectId(context: ToolExecutionContext | undefined): string | null {
+  const projectId = context?.projectId;
+  return typeof projectId === "string" && projectId.trim().length > 0 ? projectId.trim() : null;
+}
+
+/** Keep one source's last successful catalog available during transient refresh failures. */
+function createRunResilientRemoteToolSource(source: RemoteToolSource): RemoteToolSource {
+  let lastSuccessfulCatalog: LastSuccessfulRemoteToolCatalog | undefined;
+  let consecutiveFailures = 0;
+  let retryAfter = 0;
+
+  return {
+    id: source.id,
+    async listTools(context) {
+      context?.abortSignal?.throwIfAborted();
+      const projectId = getRemoteToolCatalogProjectId(context);
+      const matchingCatalog = lastSuccessfulCatalog?.projectId === projectId
+        ? lastSuccessfulCatalog
+        : undefined;
+      if (matchingCatalog && Date.now() < retryAfter) {
+        return [...matchingCatalog.definitions];
+      }
+
+      try {
+        const definitions = await source.listTools(context);
+        context?.abortSignal?.throwIfAborted();
+        lastSuccessfulCatalog = { projectId, definitions: [...definitions] };
+        consecutiveFailures = 0;
+        retryAfter = 0;
+        return definitions;
+      } catch (error) {
+        context?.abortSignal?.throwIfAborted();
+        if (!matchingCatalog) throw error;
+
+        consecutiveFailures++;
+        const backoffMs = Math.min(
+          REMOTE_TOOL_CATALOG_INITIAL_BACKOFF_MS * 2 ** (consecutiveFailures - 1),
+          REMOTE_TOOL_CATALOG_MAX_BACKOFF_MS,
+        );
+        retryAfter = Date.now() + backoffMs;
+        logger.warn("Remote tool discovery failed; using the last successful catalog", {
+          sourceId: source.id,
+          retryAfterMs: backoffMs,
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
+        return [...matchingCatalog.definitions];
+      }
+    },
+    executeTool: (toolName, args, context) => source.executeTool(toolName, args, context),
+  };
+}
 
 /** Handler for hosted project remote tool source mutation. */
 export type HostedProjectRemoteToolSourceMutationHandler = (
@@ -98,7 +161,11 @@ function resolveActiveBranchId(
   return getActiveBranchId?.() ?? null;
 }
 
-/** Create hosted project remote tool source. */
+/**
+ * Create a project-scoped remote tool source. The source retains its last
+ * successful catalog for the active project during transient discovery
+ * failures and retries refreshes with bounded backoff.
+ */
 export function createHostedProjectRemoteToolSource(
   input: CreateHostedProjectRemoteToolSourceInput,
 ): RemoteToolSource {
@@ -108,8 +175,9 @@ export function createHostedProjectRemoteToolSource(
   const catalogAllowedToolNames = input.activatedRemoteToolNames !== undefined
     ? input.activatedRemoteToolNames
     : input.allowedToolNames;
+  const resilientSource = createRunResilientRemoteToolSource(input.source);
   const toolCatalog = createProjectScopedRemoteToolCatalog({
-    source: input.source,
+    source: resilientSource,
     defaultProjectId: input.defaultProjectId,
     allowedToolNames: catalogAllowedToolNames,
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,

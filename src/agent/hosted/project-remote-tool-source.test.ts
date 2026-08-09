@@ -151,6 +151,90 @@ Deno.test("createHostedProjectRemoteToolSource scopes tool listings and hydrates
   ]);
 });
 
+Deno.test("createHostedProjectRemoteToolSource retains file tools after a catalog timeout", async () => {
+  let listCalls = 0;
+  const executeCalls: Array<{ toolName: string; args: unknown }> = [];
+  const source = createHostedProjectRemoteToolSource({
+    source: {
+      id: "veryfront-mcp",
+      async listTools() {
+        listCalls++;
+        if (listCalls > 1) {
+          throw new DOMException(
+            "Chat stream idle timeout after 120000ms during response_pending",
+            "TimeoutError",
+          );
+        }
+        return [
+          projectFileTool("create_file"),
+          projectFileTool("get_file"),
+          projectFileTool("update_file"),
+        ];
+      },
+      async executeTool(toolName, args) {
+        executeCalls.push({ toolName, args });
+        return { success: true, version: 2 };
+      },
+    },
+    defaultProjectId: "project-1",
+  });
+
+  assertEquals((await source.listTools()).map((tool) => tool.name), [
+    "create_file",
+    "get_file",
+    "update_file",
+  ]);
+  assertEquals((await source.listTools()).map((tool) => tool.name), [
+    "create_file",
+    "get_file",
+    "update_file",
+  ]);
+  assertEquals(
+    await source.executeTool("update_file", {
+      path: "plans/inbox-agent.md",
+      content: "Refined plan",
+    }),
+    { success: true, version: 2 },
+  );
+  assertEquals(listCalls, 2);
+  assertEquals(executeCalls, [{
+    toolName: "update_file",
+    args: {
+      path: "plans/inbox-agent.md",
+      content: "Refined plan",
+      project_reference: "project-1",
+    },
+  }]);
+});
+
+Deno.test("createHostedProjectRemoteToolSource does not reuse a catalog after a project switch", async () => {
+  let projectId = "project-1";
+  let listCalls = 0;
+  const source = createHostedProjectRemoteToolSource({
+    source: {
+      id: "veryfront-mcp",
+      async listTools() {
+        listCalls++;
+        if (listCalls > 1) throw new DOMException("Timed out", "TimeoutError");
+        return [projectFileTool("update_file")];
+      },
+      async executeTool() {
+        return { success: true };
+      },
+    },
+    defaultProjectId: () => projectId,
+  });
+
+  assertEquals((await source.listTools()).map((tool) => tool.name), ["update_file"]);
+  projectId = "project-2";
+
+  await assertRejects(
+    () => source.listTools(),
+    DOMException,
+    "Timed out",
+  );
+});
+
 Deno.test("createHostedProjectRemoteToolSource replaces model-supplied project references", async () => {
   let executedArgs: unknown;
   const source = createHostedProjectRemoteToolSource({
