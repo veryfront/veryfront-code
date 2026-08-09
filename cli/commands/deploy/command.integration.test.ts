@@ -707,6 +707,50 @@ it("refuses to deploy a project this directory did not push", async () => {
   });
 });
 
+it("refuses the same mismatch in a dry run as in an apply", async () => {
+  // A dry run is read in order to trust the apply that follows. Naming a
+  // project makes the source already-pushed, which used to skip the receipt
+  // check here -- so the dry run reported a deploy the identical apply refused.
+  const projectDir = await Deno.makeTempDir();
+  await withDeployEnv(projectDir, async ({ sourceDigest }) => {
+    await writePushReceipt(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      commitSha: `${"3".repeat(40)}`,
+      sourceDigest,
+      clean: true,
+      pushedAt: "2026-07-10T09:20:00.000Z",
+    });
+
+    const requests: string[] = [];
+    const uploadedPaths: string[] = [];
+
+    await withMockFetch(
+      createDeployFetchHandler({ requests, sourceDigest, uploadedPaths }),
+      () =>
+        assertRejects(
+          () =>
+            deployCommand({
+              projectSlug: OTHER_PROJECT_SLUG,
+              projectDir,
+              branch: "main",
+              env: "production",
+              dryRun: true,
+              force: false,
+              quiet: true,
+              deployProject: boundedDeployProject(),
+            }),
+          Error,
+          "The latest push targeted a different project.",
+        ),
+    );
+
+    assertEquals(uploadedPaths, [], "a dry run must not upload either");
+  });
+});
+
 it("fails on a stale verified push receipt instead of replacing it", async () => {
   const projectDir = await Deno.makeTempDir();
   await withDeployEnv(projectDir, async ({ sourceDigest }) => {
