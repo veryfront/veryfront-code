@@ -92,10 +92,10 @@ type ForkRuntimeStepPreparation = {
   messages: AgentMessage[];
   system: string;
   /**
-   * When present (returned by a step preparer that reads from the live
-   * activated-tool context), this overrides `input.forkToolNames` for the
-   * current step so newly activated remote tool schemas are exposed to the
-   * provider without mutating the run-level fixed array.
+   * When a step preparer returns this, it overrides `input.forkToolNames` for
+   * the current step, letting a preparer vary the exposed tool set per step
+   * without mutating the run-level fixed array. Absent for every preparer that
+   * exposes a fixed set.
    */
   forkToolNames?: readonly string[];
 };
@@ -514,8 +514,7 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
           });
           const state = createForkRuntimeStreamMappingState({ logger: input.logger });
           const streamedStepState = createStreamedStepState();
-          // If the step preparer returned a live forkToolNames (pinned ∪ activated),
-          // use it for this step so newly activated tool schemas reach the provider.
+          // A step preparer may override the exposed tool set for this step.
           // Spread into a mutable array: RunAgentRuntimeForkStepInput.forkToolNames
           // is typed as string[] (mutable) while prepared.forkToolNames is readonly.
           const effectiveForkToolNames: string[] = [
