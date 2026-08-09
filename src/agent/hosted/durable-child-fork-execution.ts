@@ -82,24 +82,22 @@ export type HostedDurableChildInvokeResult = {
 };
 
 /**
- * Runtime shape of what the hosted durable delegation writes as an
- * `invoke_agent` tool result.
+ * Published contract for the `invoke_agent` tool result this module writes.
  *
- * Declared so the envelope is a published contract rather than whatever the
- * builders happen to emit. veryfront-api reads these envelopes back out of
- * conversation history, and until veryfront/veryfront-issue-inbox#416 nothing
- * asserted the two sides agreed — the producer matched no branch of the reader's
- * schema, and the mismatch only surfaced as degraded replays.
+ * Split by status rather than flattened: a `completed` envelope must carry the
+ * child identifiers, because a consumer reading it back has no other way to
+ * locate the child run. A terminal envelope may omit them, since a setup failure
+ * can happen before the child exists. Flattening the two would let a completed
+ * result lose an identifier while conformance tests stayed green.
  *
- * Kept deliberately permissive about *extra* run telemetry it does not name:
- * this pins the fields consumers depend on, and tightening it into a closed
- * shape would turn any additive change here into a cross-repo deploy-order
- * problem. See veryfront/veryfront-issue-inbox#423.
+ * Deliberately permissive about extra run telemetry it does not name: this pins
+ * the fields consumers depend on, and closing the shape would make any additive
+ * change here a cross-repo deploy-order problem.
+ * See veryfront/veryfront-issue-inbox#423.
  */
-export const getHostedDurableChildInvokeResultSchema = defineSchema((v) =>
-  v.object({
+export const getHostedDurableChildInvokeResultSchema = defineSchema((v) => {
+  const base = v.object({
     ok: v.boolean(),
-    status: v.enum(["completed", "failed"]),
     text: v.string().optional(),
     error: v.string().optional(),
     summary: v.object({ text: v.string() }).passthrough().optional(),
@@ -108,15 +106,27 @@ export const getHostedDurableChildInvokeResultSchema = defineSchema((v) =>
     toolResults: v.array(v.unknown()).optional(),
     usage: v.record(v.string(), v.unknown()).optional(),
     durationMs: v.number().optional(),
-    childConversationId: v.string().nullable().optional(),
-    childRunId: v.string().nullable().optional(),
-    childMessageId: v.string().nullable().optional(),
     sourceTargetKind: v.string().nullable().optional(),
     runtimeTargetKind: v.string().nullable().optional(),
     terminalErrorCode: v.string().nullable(),
     terminalErrorMessage: v.string().nullable(),
-  }).passthrough()
-);
+  });
+
+  return v.discriminatedUnion("status", [
+    base.extend({
+      status: v.literal("completed"),
+      childConversationId: v.string(),
+      childRunId: v.string(),
+      childMessageId: v.string(),
+    }).passthrough(),
+    base.extend({
+      status: v.literal("failed"),
+      childConversationId: v.string().nullable().optional(),
+      childRunId: v.string().nullable().optional(),
+      childMessageId: v.string().nullable().optional(),
+    }).passthrough(),
+  ]);
+});
 
 /** Input payload for build hosted durable child invoke failure result. */
 export type BuildHostedDurableChildInvokeFailureResultInput = {

@@ -1477,9 +1477,9 @@ describe("agent/hosted-durable-child-fork-execution", () => {
 });
 
 describe("agent/hosted/durable-child-fork-execution result contract", () => {
-  // veryfront-api reads these envelopes back out of conversation history. Until
-  // veryfront/veryfront-issue-inbox#416 nothing asserted the producer matched a
-  // declared shape, and the mismatch surfaced only as degraded replays.
+  // Consumers read these envelopes back out of conversation history, so the
+  // builders must keep matching the published contract.
+  // See veryfront/veryfront-issue-inbox#423.
   const targets: ConversationRunTargets = {
     sourceTargetKind: "project",
     runtimeTargetKind: "main_branch",
@@ -1561,6 +1561,33 @@ describe("agent/hosted/durable-child-fork-execution result contract", () => {
         terminalErrorMessage: "bootstrap failed before the child existed",
       }),
       "the setup failure envelope",
+    );
+  });
+
+  it("rejects a completed envelope that lost a child identifier", () => {
+    const localResult: ChildRunExecutionResult = {
+      success: true,
+      description: "Search docs",
+      summary: buildChildRunResultSummary("Child answer."),
+      steps: 1,
+      toolCalls: [],
+      toolResults: [],
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      durationMs: 5,
+    };
+    const complete = buildHostedDurableChildInvokeSuccessResult({
+      result: localResult,
+      snapshot: buildChildRunExecutionSnapshot(localResult),
+      identifiers,
+      targets,
+    }) as Record<string, unknown>;
+    const { childRunId: _dropped, ...missingIdentifier } = complete;
+
+    assertEquals(
+      getHostedDurableChildInvokeResultSchema().safeParse(missingIdentifier).success,
+      false,
+      "a completed result without childRunId cannot be located by a consumer, so the " +
+        "contract must reject it rather than let the drift through",
     );
   });
 });
