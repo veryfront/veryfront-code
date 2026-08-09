@@ -8,10 +8,10 @@
  * and it says nothing about files that are Deno-only by *subject* rather than
  * by which API they happen to call.
  *
- * The pairs below are both. They assert properties of `deno test --parallel`
- * itself: test files sharing one process must not share a working directory or
- * environment mutations. Node and Bun give each file its own process, so there
- * is no shared-state property there to assert even if the APIs existed.
+ * The pair below is both. It asserts a property of `deno test --parallel`
+ * itself: that test files sharing one process do not share a working directory.
+ * Node and Bun give each file its own process, so there is no property there to
+ * assert even if the APIs existed.
  *
  * Kept here rather than duplicated in each runner so the two cannot drift, and
  * so it can be tested -- see ./runtime-test-filters.test.ts.
@@ -22,5 +22,4 @@
 /** Glob patterns for tests that must not run outside Deno. */
 export const DENO_ONLY_TESTS = [
   "src/testing/cwd-exclusion-*.test.ts",
-  "src/testing/env-exclusion-*.test.ts",
 ];

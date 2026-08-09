@@ -3,9 +3,9 @@
  * else in.
  *
  * Both halves matter. A filter that excludes too little lets
- * the cross-file exclusion probes run on runtimes that do not share Deno's
- * process state model. A filter that excludes too much silently shrinks the
- * suite, which nothing else would notice.
+ * `src/testing/cwd-exclusion-*.test.ts` run on a runtime without `Deno.chdir`,
+ * which is the regression this list was added for. A filter that excludes too
+ * much silently shrinks the suite, which nothing else would notice.
  *
  * The list is easy to break by accident: renaming those files, or moving them
  * out of `src/testing/`, leaves a pattern matching nothing and the runner fails
@@ -24,11 +24,9 @@ import { filterTestFiles } from "./test-file-utils.mjs";
 const DENO_ONLY_FILES = [
   "src/testing/cwd-exclusion-a.test.ts",
   "src/testing/cwd-exclusion-b.test.ts",
-  "src/testing/env-exclusion-a.test.ts",
-  "src/testing/env-exclusion-b.test.ts",
 ];
 
-/** Ordinary tests, including neighbours of the excluded pairs. */
+/** Ordinary tests, including neighbours of the excluded pair. */
 const ELIGIBLE_FILES = [
   "src/testing/cwd.test.ts",
   "src/testing/isolation.test.ts",
@@ -40,7 +38,7 @@ describe("runtime test filters", () => {
   it("excludes the Deno-only tests from non-Deno runners", () => {
     const kept = filterTestFiles(DENO_ONLY_FILES, { exclude: DENO_ONLY_TESTS });
 
-    assertEquals(kept, [], "these probes only apply to parallel Deno test files");
+    assertEquals(kept, [], "these cannot run without Deno.chdir");
   });
 
   it("keeps every other test eligible", () => {
