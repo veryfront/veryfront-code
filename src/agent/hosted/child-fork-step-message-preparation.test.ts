@@ -137,3 +137,55 @@ Deno.test("prepareHostedChildForkRuntimeStepMessages falls back to current instr
   assertEquals(prepared.system, "Current instructions");
   assertEquals(prepared.messages, []);
 });
+
+Deno.test("prepareHostedChildForkRuntimeStepMessages returns live forkToolNames when getActivatedToolNames provided", () => {
+  const activated = new Set(["read_file", "write_file"]);
+  const pinned = ["load_skill", "search_tools", "load_tools"];
+
+  const prepared = prepareHostedChildForkRuntimeStepMessages({
+    messages: [],
+    buildInstructions: () => "Instructions",
+    forkToolNames: pinned, // static pinned names
+    pinnedToolNames: pinned,
+    getActivatedToolNames: () => [...activated],
+  });
+
+  // forkToolNames in result = pinned ∪ activated, sorted
+  assertEquals(prepared.forkToolNames?.sort(), [
+    "load_skill",
+    "load_tools",
+    "read_file",
+    "search_tools",
+    "write_file",
+  ]);
+});
+
+Deno.test("prepareHostedChildForkRuntimeStepMessages omits forkToolNames when no activated getter provided", () => {
+  const prepared = prepareHostedChildForkRuntimeStepMessages({
+    messages: [],
+    buildInstructions: () => "Instructions",
+    forkToolNames: ["load_skill"],
+  });
+
+  // No getter provided — caller should keep using its own fixed forkToolNames
+  assertEquals(prepared.forkToolNames, undefined);
+});
+
+Deno.test("prepareHostedChildForkRuntimeStepMessages deduplicates pinned and activated names", () => {
+  const activated = new Set(["load_skill", "new_tool"]); // load_skill is also pinned
+  const pinned = ["load_skill", "search_tools"];
+
+  const prepared = prepareHostedChildForkRuntimeStepMessages({
+    messages: [],
+    buildInstructions: () => "Instructions",
+    forkToolNames: pinned,
+    pinnedToolNames: pinned,
+    getActivatedToolNames: () => [...activated],
+  });
+
+  // load_skill must appear only once
+  const names = prepared.forkToolNames ?? [];
+  const loadSkillCount = names.filter((n) => n === "load_skill").length;
+  assertEquals(loadSkillCount, 1);
+  assertEquals(names.sort(), ["load_skill", "new_tool", "search_tools"]);
+});

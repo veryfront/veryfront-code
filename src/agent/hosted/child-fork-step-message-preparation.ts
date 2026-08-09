@@ -24,12 +24,35 @@ export type PrepareHostedChildForkRuntimeStepMessagesInput = {
   buildInstructions: () => string;
   forkToolNames: readonly string[];
   resolveSystem?: HostedChildForkRuntimeStepSystemResolver;
+  /**
+   * Tool names that are always present. Required when `getActivatedToolNames`
+   * is supplied.
+   *
+   * @deprecated No framework path supplies this. Retained because
+   * `PrepareHostedChildForkRuntimeStepMessagesInput` is public API.
+   */
+  pinnedToolNames?: readonly string[];
+  /**
+   * Returns the currently activated tool names. The result is merged with
+   * `pinnedToolNames` and returned as `forkToolNames`, letting a caller refresh
+   * the exposed tool set per step without mutating its own fixed array.
+   *
+   * @deprecated Prefer `tool_search` deferred loading. See
+   * `docs/architecture/28-model-driven-tool-discovery.md`.
+   */
+  getActivatedToolNames?: () => readonly string[];
 };
 
 /** Public API contract for hosted child fork runtime step messages. */
 export type HostedChildForkRuntimeStepMessages = {
   messages: AgentMessage[];
   system: string;
+  /**
+   * The live `pinned + activated` set for this step. Present only when
+   * `getActivatedToolNames` was supplied; callers otherwise keep their own
+   * fixed `forkToolNames`.
+   */
+  forkToolNames?: readonly string[];
 };
 
 function convertAgentRuntimePartToChildForkMessagePart(
@@ -116,8 +139,18 @@ export function prepareHostedChildForkRuntimeStepMessages(
     compactedMessages,
   });
 
+  const liveForkToolNames = input.getActivatedToolNames
+    ? [
+      ...new Set([
+        ...(input.pinnedToolNames ?? []),
+        ...input.getActivatedToolNames(),
+      ]),
+    ].sort()
+    : undefined;
+
   return {
     messages: convertCompactedProviderMessagesToChildForkRuntimeMessages(compactedMessages),
     system: typeof resolvedSystem === "string" ? resolvedSystem : currentInstructions,
+    ...(liveForkToolNames !== undefined ? { forkToolNames: liveForkToolNames } : {}),
   };
 }
