@@ -140,7 +140,100 @@ describe("agent/hosted/durable-run-event-sink", () => {
       DurableRunEventPersistenceError,
       "Run event append request exceeds the supported payload size",
     );
-    assertEquals(oversizedTarget.appended, []);
+
+    // The gate still refuses the dispatch, but the attempt is now on the record.
+    assertEquals(
+      oversizedTarget.appended.length,
+      1,
+      "a truncated record is persisted for audit before the gate throws",
+    );
+    const persisted = oversizedTarget.appended[0][0] as unknown as Record<string, unknown>;
+    assertEquals(
+      getPrivateRunEventAppendRequestByteLength(persisted) <=
+        MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+      true,
+      "the persisted record fits the append budget",
+    );
+    assertEquals(persisted.truncated, true, "the record declares that it was reduced");
+    assertEquals(
+      typeof persisted.originalByteLength,
+      "number",
+      "the record carries the size it was reduced from",
+    );
+  });
+
+  it("keeps the mirror usable after an oversized context is refused", async () => {
+    const target = mirror();
+    const sink = createDurableRunEventSink({ mirror: target.result });
+
+    await assertRejects(
+      async () =>
+        await sink(
+          createModelCallContextEventWithText(MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES),
+        ),
+      DurableRunEventPersistenceError,
+    );
+    assertEquals(target.isDisposed(), false, "one oversized context must not disable the mirror");
+
+    await sink(createModelCallContextEventWithText(16));
+    assertEquals(
+      target.appended.length,
+      2,
+      "later events in the same run still persist",
+    );
+  });
+
+  it("explains the refusal in terms an operator can act on", async () => {
+    const target = mirror();
+    const error = await assertRejects(
+      async () =>
+        await createDurableRunEventSink({ mirror: target.result })(
+          createModelCallContextEventWithText(MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES),
+        ),
+      DurableRunEventPersistenceError,
+    );
+
+    const message = error.message;
+    assertEquals(message.includes("MiB"), true, "the message states the size and the limit");
+    assertEquals(
+      message.includes("was not dispatched"),
+      true,
+      "the message says the model call did not happen",
+    );
+    assertEquals(
+      message.includes("truncated record was persisted"),
+      true,
+      "the message points at the audit record that was written",
+    );
+  });
+
+  it("guarantees a fit when message count alone exceeds the budget", async () => {
+    const target = mirror();
+    const event = {
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      messages: Array.from({ length: 120_000 }, () => ({
+        role: "user",
+        content: [{ type: "text", text: "y".repeat(80) }],
+      })),
+    } as unknown as Parameters<ReturnType<typeof createDurableRunEventSink>>[0];
+
+    await assertRejects(
+      async () => await createDurableRunEventSink({ mirror: target.result })(event),
+      DurableRunEventPersistenceError,
+    );
+
+    const persisted = target.appended[0][0] as unknown as Record<string, unknown>;
+    assertEquals(
+      getPrivateRunEventAppendRequestByteLength(persisted) <=
+        MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+      true,
+      "clamping text cannot help here, so messages must be dropped until it fits",
+    );
+    assertEquals(
+      (persisted.omittedMessageCount as number) > 0,
+      true,
+      "the record says how many messages were dropped",
+    );
   });
 
   it("serializes concurrent events that share a durable mirror", async () => {
@@ -260,8 +353,16 @@ describe("agent/hosted/durable-run-event-sink", () => {
       DurableRunEventPersistenceError,
       "Run event append request exceeds the supported payload size",
     );
-    assertEquals(oversized.appended, []);
+    // The fail-closed contract that matters: the model is never called when the
+    // context could not be recorded faithfully. Only the audit record changed —
+    // a truncated one is now written before the refusal.
     assertEquals(dispatches, 0);
+    assertEquals(oversized.appended.length, 1);
+    assertEquals(
+      (oversized.appended[0][0] as unknown as Record<string, unknown>).truncated,
+      true,
+    );
+    assertEquals(oversized.isDisposed(), false);
   });
 
   it("rejects caller aborts without a reason as AbortError", async () => {
