@@ -376,6 +376,45 @@ describe("internal-agents/ag-ui-sse", () => {
     );
   });
 
+  it("carries elapsedMs through to the wire without widening the allow-list", () => {
+    // These payload schemas are an allow-list and `parse` returns only what
+    // they declare, so a stamped field missing from a schema is dropped
+    // silently between the encoder and the wire. That is how elapsedMs went
+    // missing through two releases after it was already being stamped, so
+    // both halves are pinned: the field survives, and nothing else does.
+    const stamped = new TextDecoder().decode(
+      formatAgUiEvent("StepStarted", { stepName: "step-1", elapsedMs: 42 }),
+    );
+    assertEquals(
+      stamped.includes('"elapsedMs":42'),
+      true,
+      `elapsedMs must reach the wire, got ${JSON.stringify(stamped)}`,
+    );
+
+    const leaked = new TextDecoder().decode(
+      formatAgUiEvent("StepStarted", { stepName: "step-1", unexpected: "x" }),
+    );
+    assertEquals(
+      leaked.includes("unexpected"),
+      false,
+      `the allow-list must still drop undeclared fields, got ${JSON.stringify(leaked)}`,
+    );
+  });
+
+  it("stamps elapsedMs end to end from the runtime encoder root", () => {
+    const state = createStreamTransformState();
+    mapRuntimeEventToAgUi(state, { type: "message-start", messageId: "assistant-1" });
+    const events = mapRuntimeEventToAgUi(state, { type: "start-step" });
+    const frame = new TextDecoder().decode(
+      formatAgUiEvent(events[0]!.event, events[0]!.payload),
+    );
+    assertEquals(
+      /"elapsedMs":\d+/.test(frame),
+      true,
+      `the production encoder root must emit elapsedMs, got ${JSON.stringify(frame)}`,
+    );
+  });
+
   it("accepts extension event tokens without weakening SSE framing", () => {
     const payload = formatAgUiEvent("Done.custom-v1", { ok: true });
 
