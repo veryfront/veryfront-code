@@ -318,14 +318,73 @@ const ALWAYS_ENFORCED_DIRECTIVES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Directives that inherit from another when absent.
+ *
+ * CSP resolves a missing directive by walking a fallback chain, so a policy
+ * containing `script-src` but not `worker-src` does not leave workers
+ * unconstrained -- it constrains them *by* `script-src`. Emitting a subset of
+ * directives is therefore not the same as emitting those directives alone, and
+ * a companion policy that omitted the descendants would silently tighten them:
+ * a project declaring only `scriptSrc` would find its `blob:` workers blocked
+ * by an enforced `script-src` that never mentioned them, while the reported
+ * `worker-src` said they were fine.
+ *
+ * Keyed by the directive that would absorb the others.
+ */
+const CSP_FALLBACK_DEPENDENTS: ReadonlyMap<string, readonly string[]> = new Map([
+  ["script-src", ["script-src-elem", "script-src-attr", "child-src", "worker-src", "frame-src"]],
+  ["child-src", ["worker-src", "frame-src"]],
+  ["style-src", ["style-src-elem", "style-src-attr"]],
+  ["default-src", [
+    "script-src",
+    "script-src-elem",
+    "script-src-attr",
+    "style-src",
+    "style-src-elem",
+    "style-src-attr",
+    "img-src",
+    "font-src",
+    "connect-src",
+    "media-src",
+    "object-src",
+    "manifest-src",
+    "child-src",
+    "worker-src",
+    "frame-src",
+  ]],
+]);
+
+/** Every directive that must travel with `names` so none is tightened by fallback. */
+function withFallbackDependents(names: Iterable<string>): Set<string> {
+  const closed = new Set(names);
+  // Fixed point: `default-src` pulls in `script-src`, which pulls in its own.
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const name of [...closed]) {
+      for (const dependent of CSP_FALLBACK_DEPENDENTS.get(name) ?? []) {
+        if (!closed.has(dependent)) {
+          closed.add(dependent);
+          changed = true;
+        }
+      }
+    }
+  }
+  return closed;
+}
+
+/**
  * The enforced companion to the reported floor.
  *
  * Carries the always-enforced directives plus every directive the project
- * declared. Declaring one is taken as meaning it -- a project that lists its
- * image origins wants `img-src` to hold -- while the directives it never
- * mentioned keep reporting rather than binding. That is the difference between
- * honouring a project's configuration and inferring, from one image origin,
- * that it also wants `script-src` bound across the site.
+ * declared, and then whatever those would otherwise absorb through CSP's
+ * fallback chain. Declaring a directive is taken as meaning it -- a project
+ * that lists its image origins wants `img-src` to hold -- while directives it
+ * never mentioned keep reporting rather than binding. That is the difference
+ * between honouring a project's configuration and inferring, from one image
+ * origin, that it also wants `script-src` bound across the site.
+ *
+ * Values come from the same merged policy the reported header carries, so a
+ * directive pulled in by fallback is enforced exactly as it was reported.
  *
  * @returns the enforced policy, or "" when the full policy already binds
  */
@@ -338,10 +397,14 @@ export function buildEnforcedCSP(
 ): string {
   if (isDev || isCspEnforced(hasEnvOverride)) return "";
 
-  const declared = new Set(
-    Object.keys(config?.csp ?? {}).map((key) => toCspDirectiveName(key)),
-  );
-  const binding = new Set([...ALWAYS_ENFORCED_DIRECTIVES, ...declared]);
+  // `undefined` means absent, exactly as the merge treats it. Without this a
+  // project writing `scriptSrc: undefined` would enforce the merged
+  // `script-src` it never configured.
+  const declared = Object.entries(config?.csp ?? {})
+    .filter(([, value]) => value !== undefined)
+    .map(([key]) => toCspDirectiveName(key));
+
+  const binding = withFallbackDependents([...ALWAYS_ENFORCED_DIRECTIVES, ...declared]);
 
   const full = mergeCspDirectives(
     requiredDirectives(nonce, isVeryfrontDomain ?? false),

@@ -43,9 +43,16 @@ Three directives are worth understanding:
 
 The policy above is served as `Content-Security-Policy-Report-Only`: browsers report what it would have blocked, and block nothing.
 
-Two directives are served enforced, in a second `Content-Security-Policy` header, for every project: `object-src 'none'` and `base-uri 'self'`. Both close injection routes that no ordinary site uses, so they cost you nothing and hold from the start.
+Two directives are served enforced, in a second `Content-Security-Policy` header, for every project:
 
-Anything you declare in `security.csp` is enforced too. Listing your image origins means you have thought about images, so `img-src` binds with your sources in it. Directives you never mentioned keep reporting. Adding one origin does not bind the rest of your policy, because deciding to allow a CDN and deciding to bind script execution across your site are different decisions.
+- `object-src 'none'` blocks `<object>`, `<embed>` and `<applet>`.
+- `base-uri 'self'` blocks a `<base>` element pointing at another origin.
+
+Both close injection routes, and neither can be widened: they are required directives, so `security.csp` cannot add sources to them or drop them.
+
+**Anything you declare in `security.csp` is enforced too**, including `form-action` and `frame-ancestors`. Listing your image origins means you have thought about images, so `img-src` binds with your sources in it. Directives you never mentioned keep reporting. Adding one origin does not bind the rest of your policy, because deciding to allow a CDN and deciding to bind script execution across your site are different decisions.
+
+One consequence worth knowing: CSP resolves a missing directive by falling back to a broader one, so enforcing `script-src` would otherwise also constrain workers and frames. Veryfront emits those alongside it, with the same sources the reported policy gives them, so declaring one directive never tightens another behind your back.
 
 To bind a directive, configure it. To see what binding it would cost first, read the reports.
 

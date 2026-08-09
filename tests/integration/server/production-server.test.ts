@@ -37,9 +37,16 @@ import { deleteEnv, getHostEnv, setEnv } from "../../../src/platform/compat/proc
  * instead. These fixtures declare none of those; the assertions below are about
  * policy content and nonce alignment, not delivery mode.
  */
+/**
+ * The complete policy, whichever header carries it.
+ *
+ * Both are served: the reported header carries the whole policy, and the
+ * enforced one carries only the directives that bind. Callers here assert on
+ * policy content, so the reported header is the one they want.
+ */
 function readCsp(headers: Headers): string | null {
-  return headers.get("content-security-policy") ??
-    headers.get("content-security-policy-report-only");
+  return headers.get("content-security-policy-report-only") ??
+    headers.get("content-security-policy");
 }
 
 function escapeRegExp(value: string): string {

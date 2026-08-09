@@ -790,6 +790,37 @@ describe("security/http/response/security-handler", () => {
       assertStringIncludes(headers.get("Content-Security-Policy-Report-Only") ?? "", "script-src");
     });
 
+    it("does not tighten a directive that would fall back to an enforced one", () => {
+      // CSP resolves a missing directive through a fallback chain, so a policy
+      // with `script-src` and no `worker-src` constrains workers *by*
+      // `script-src`. Omitting the descendants would block the `blob:` workers
+      // the reported `worker-src` explicitly allows.
+      const headers = applyHeaders({ config: { csp: { scriptSrc: ["https://cdn.example.com"] } } });
+      const enforced = headers.get("Content-Security-Policy") ?? "";
+      const reported = headers.get("Content-Security-Policy-Report-Only") ?? "";
+
+      const directive = (policy: string, name: string) =>
+        policy.split("; ").find((part) => part.startsWith(`${name} `)) ?? "";
+
+      for (const name of ["worker-src", "frame-src"]) {
+        assertEquals(
+          directive(enforced, name),
+          directive(reported, name),
+          `${name} must bind as it was reported, not as script-src`,
+        );
+      }
+      assertStringIncludes(directive(enforced, "worker-src"), "blob:");
+    });
+
+    it("treats an undefined directive value as unconfigured", () => {
+      // The merge skips `undefined`; the enforced set must agree, or a project
+      // writing `scriptSrc: undefined` binds a script-src it never configured.
+      const enforced = applyHeaders({ config: { csp: { scriptSrc: undefined } } }).get(
+        "Content-Security-Policy",
+      ) ?? "";
+      assertEquals(enforced, "object-src 'none'; base-uri 'self'");
+    });
+
     it("binds only the always-enforced pair for an empty csp object", () => {
       // Touching the key says nothing about which directives the project means.
       const enforced = applyHeaders({ config: { csp: {} } }).get("Content-Security-Policy") ?? "";
