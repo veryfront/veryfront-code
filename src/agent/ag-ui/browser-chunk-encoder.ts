@@ -1,3 +1,4 @@
+import { type AgUiBrowserEncoderStateOptions } from "./browser-encoder.ts";
 import type {
   AgUiBrowserEncodedEvent,
   AgUiBrowserEncoderState,
@@ -19,10 +20,12 @@ export interface AgUiBrowserChunkEncoder<TChunk> {
 
 /** Options accepted by create AG-UI browser chunk encoder. */
 export interface CreateAgUiBrowserChunkEncoderOptions<TChunk> {
-  /** Clock for `elapsedMs`; forwarded to the encoder state. */
-  nowMs?: (() => number) | null;
-  /** Wall clock for `emittedAt`; forwarded to the encoder state. */
-  epochMs?: (() => number) | null;
+  /**
+   * Timing clocks forwarded verbatim to the encoder state. A single object so
+   * that adding a clock is one edit in `AgUiBrowserEncoderStateOptions`, not a
+   * sweep through every wrapper that happens to sit in between.
+   */
+  timing?: AgUiBrowserEncoderStateOptions;
   getRuntimeEvents: (chunk: TChunk) => readonly AgUiRuntimeStreamEvent[];
   getMetadataFromChunk?: (
     chunk: TChunk,
@@ -100,8 +103,7 @@ export function createAgUiBrowserChunkEncoder<TChunk>(
 ): AgUiBrowserChunkEncoder<TChunk> {
   const runtimeEventEncoder: AgUiRuntimeEventEncoder = createAgUiRuntimeEventEncoder({
     initialMetadata: options.initialMetadata,
-    ...(options.nowMs === undefined ? {} : { nowMs: options.nowMs }),
-    ...(options.epochMs === undefined ? {} : { epochMs: options.epochMs }),
+    ...(options.timing === undefined ? {} : { timing: options.timing }),
   });
 
   return {

@@ -10,8 +10,7 @@ describe("agent/ag-ui-browser-chunk-encoder", () => {
       usage?: { inputTokens?: number; outputTokens?: number };
       finishReason?: string;
     }>({
-      nowMs: null,
-      epochMs: null,
+      timing: { nowMs: null, epochMs: null },
       getRuntimeEvents: (chunk) => [
         { type: "message-start", messageId: chunk.id },
         { type: "text-delta", id: chunk.id, delta: "hello" },
@@ -63,8 +62,7 @@ describe("agent/ag-ui-browser-chunk-encoder", () => {
       input?: unknown;
       output?: unknown;
     }>({
-      nowMs: null,
-      epochMs: null,
+      timing: { nowMs: null, epochMs: null },
       getRuntimeEvents: (chunk) =>
         chunk.kind === "input"
           ? [{
