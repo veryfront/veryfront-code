@@ -126,6 +126,57 @@ describe("ProductionEnvironmentResolver", () => {
     );
   });
 
+  // The API returns the active release nested under `deployment.release.id`, not
+  // as a top-level `active_release_id`. Reading only the flat key resolved every
+  // lookup to null, so every release-bound run was denied with "Signed release
+  // identity does not match the environment active release" while the signed
+  // release and the deployed release were in fact identical.
+  it("binds a named environment to the release nested under its deployment", async () => {
+    globalThis.fetch = (() =>
+      Promise.resolve(Response.json({
+        data: [{
+          id: "env-staging",
+          name: "staging",
+          deployment: {
+            id: "deployment-1",
+            release: { id: "release-staging-42", deploy_status: "deployed" },
+          },
+        }],
+      }))) as typeof fetch;
+
+    const resolver = new ProjectEnvironmentIdentityResolver();
+    assertEquals(
+      await resolver.resolveNamedForActiveRelease({
+        ...scope(),
+        environmentName: "staging",
+        expectedEnvironmentId: "env-staging",
+        expectedReleaseId: "release-staging-42",
+      }),
+      "env-staging",
+    );
+  });
+
+  it("still denies a nested release that does not match the signed identity", async () => {
+    globalThis.fetch = (() =>
+      Promise.resolve(Response.json({
+        data: [{
+          id: "env-staging",
+          name: "staging",
+          deployment: { release: { id: "release-other" } },
+        }],
+      }))) as typeof fetch;
+
+    const error = await assertRejects(() =>
+      new ProjectEnvironmentIdentityResolver().resolveNamedForActiveRelease({
+        ...scope(),
+        environmentName: "staging",
+        expectedEnvironmentId: "env-staging",
+        expectedReleaseId: "release-staging-42",
+      })
+    );
+    assertEquals((error as { slug?: string }).slug, "permission-denied");
+  });
+
   it("fails closed when active release metadata is missing or does not match", async () => {
     const activeReleaseIds: unknown[] = [undefined, null, "release-other"];
     globalThis.fetch = (() =>
