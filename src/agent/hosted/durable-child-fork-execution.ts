@@ -2,6 +2,7 @@ import type {
   ChildRunExecutionResult,
   ChildRunExecutionSnapshot,
 } from "../child-run/execution-snapshot.ts";
+import { defineSchema } from "#veryfront/schemas";
 import { resolveKnownProviderTerminalError } from "../streaming/stream-outcome.ts";
 import {
   buildChildRunResultSummary,
@@ -79,6 +80,53 @@ export type HostedDurableChildInvokeResult = {
   terminalErrorCode: string | null;
   terminalErrorMessage: string | null;
 };
+
+/**
+ * Published contract for the `invoke_agent` tool result this module writes.
+ *
+ * Split by status rather than flattened: a `completed` envelope must carry the
+ * child identifiers, because a consumer reading it back has no other way to
+ * locate the child run. A terminal envelope may omit them, since a setup failure
+ * can happen before the child exists. Flattening the two would let a completed
+ * result lose an identifier while conformance tests stayed green.
+ *
+ * Deliberately permissive about extra run telemetry it does not name: this pins
+ * the fields consumers depend on, and closing the shape would make any additive
+ * change here a cross-repo deploy-order problem.
+ * See veryfront/veryfront-issue-inbox#423.
+ */
+export const getHostedDurableChildInvokeResultSchema = defineSchema((v) => {
+  const base = v.object({
+    ok: v.boolean(),
+    text: v.string().optional(),
+    error: v.string().optional(),
+    summary: v.object({ text: v.string() }).passthrough().optional(),
+    steps: v.number().optional(),
+    toolCalls: v.array(v.unknown()).optional(),
+    toolResults: v.array(v.unknown()).optional(),
+    usage: v.record(v.string(), v.unknown()).optional(),
+    durationMs: v.number().optional(),
+    sourceTargetKind: v.string().nullable().optional(),
+    runtimeTargetKind: v.string().nullable().optional(),
+    terminalErrorCode: v.string().nullable(),
+    terminalErrorMessage: v.string().nullable(),
+  });
+
+  return v.discriminatedUnion("status", [
+    base.extend({
+      status: v.literal("completed"),
+      childConversationId: v.string(),
+      childRunId: v.string(),
+      childMessageId: v.string(),
+    }).passthrough(),
+    base.extend({
+      status: v.literal("failed"),
+      childConversationId: v.string().nullable().optional(),
+      childRunId: v.string().nullable().optional(),
+      childMessageId: v.string().nullable().optional(),
+    }).passthrough(),
+  ]);
+});
 
 /** Input payload for build hosted durable child invoke failure result. */
 export type BuildHostedDurableChildInvokeFailureResultInput = {

@@ -958,6 +958,7 @@ export {
   type ExecuteHostedDurableChildForkInput,
   executeHostedLocalChildInvoke,
   type ExecuteHostedLocalChildInvokeInput,
+  getHostedDurableChildInvokeResultSchema,
   type HostedDurableChildBootstrapCallbacks,
   type HostedDurableChildBootstrapContext,
   type HostedDurableChildExecutionOptions,
