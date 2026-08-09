@@ -17,7 +17,12 @@ import type { DeployResult } from "../../shared/deployment/result.ts";
 import { stripAnsi } from "../../ui/ansi.ts";
 import { DeployArgsSchema, parseDeployArgs } from "./index.ts";
 import { deployCommand } from "./command.ts";
+import { parseCliArgs } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
+
+// Never touched: the fake executor records the request without reading it.
+// Named rather than inlined so it cannot be mistaken for a real checkout.
+const UNRELATED_PROJECT_DIR = "fixtures/unrelated-checkout";
 
 async function captureConsole<T>(fn: () => Promise<T>): Promise<{ result: T; output: string[] }> {
   const output: string[] = [];
@@ -249,6 +254,65 @@ describe("parseDeployArgs", () => {
     if (!result.success) return;
 
     assertEquals(result.data.force, true);
+  });
+});
+
+describe("deploy --project", () => {
+  it("targets the named project and never pushes the working directory", async () => {
+    const observedRequests: DeployProjectRequest[] = [];
+    const fakeDeployment: DeployProject = {
+      execute(request) {
+        observedRequests.push(request);
+        return Promise.resolve({
+          kind: "dry-run",
+          plan: {
+            branch: request.branch ?? "main",
+            projectId: "project-codersociety",
+            // The control plane answers for the requested project; a run that
+            // ignored --project would ask about the working directory instead.
+            projectSlug: request.projectSlug ?? "veryfront-code",
+            environment: request.environment,
+            environmentId: "environment-production",
+            controlPlane: "https://control.example.test/api",
+            plannedActions: request.source.kind === "ensure-pushed"
+              ? ["push-source", "create-release", "deploy"]
+              : ["create-release", "deploy"],
+          },
+        });
+      },
+    };
+
+    const parsed = parseDeployArgs(
+      parseCliArgs(["deploy", "--project", "codersociety", "--environment", "production"]),
+    );
+    assertEquals(parsed.success, true);
+    if (!parsed.success) return;
+    assertEquals(parsed.data.projectSlug, "codersociety");
+
+    const { output } = await captureConsole(() =>
+      deployCommand({
+        ...parsed.data,
+        projectDir: UNRELATED_PROJECT_DIR,
+        dryRun: true,
+        deployProject: fakeDeployment,
+      })
+    );
+
+    assertEquals(observedRequests.length, 1);
+    const [request] = observedRequests;
+    assertEquals(request?.projectSlug, "codersociety");
+    assertEquals(request?.source, { kind: "already-pushed" });
+
+    const humanOutput = stripAnsi(output.join("\n"));
+    assertEquals(humanOutput.includes("for project codersociety"), true);
+    assertEquals(humanOutput.includes("push source"), false);
+  });
+
+  it("parses -p as the project slug", () => {
+    const parsed = parseDeployArgs(parseCliArgs(["deploy", "-p", "codersociety"]));
+    assertEquals(parsed.success, true);
+    if (!parsed.success) return;
+    assertEquals(parsed.data.projectSlug, "codersociety");
   });
 });
 

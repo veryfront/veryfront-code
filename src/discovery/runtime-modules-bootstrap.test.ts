@@ -11,6 +11,11 @@ describe("compiled discovery runtime modules", () => {
 
     assertEquals(Object.keys(modules).sort(), [...DISCOVERY_GLOBAL_VERYFRONT_MODULES].sort());
     assertEquals(
+      typeof (modules.veryfront as { createValidatedHandler?: unknown })
+        .createValidatedHandler,
+      "function",
+    );
+    assertEquals(
       typeof (modules["veryfront/agent"] as { agent?: unknown }).agent,
       "function",
     );

@@ -3,8 +3,11 @@ import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import type { AgentConfig, Message } from "../types.ts";
-import type { AgentRuntimeStepState } from "./agent-runtime-step.ts";
-import { prepareAgentRuntimeStep } from "./agent-runtime-step.ts";
+import type { AgentRuntimeStepState, RuntimeStepToolLoader } from "./agent-runtime-step.ts";
+import {
+  prepareAgentRuntimeStep,
+  withIntegrationToolDiscoveryStatus,
+} from "./agent-runtime-step.ts";
 import { createToolExposureState } from "./tool-exposure.ts";
 
 function toolDefinition(name: string): ToolDefinition {
@@ -89,6 +92,152 @@ describe("agent/runtime-step", () => {
 
     assertEquals(prepared.systemPrompt.includes("- web_search"), true);
     assertEquals(prepared.toolExposurePlan.authorized.map((tool) => tool.name), ["create_release"]);
+  });
+
+  it("preserves a typed empty integration catalog without adding a warning", async () => {
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "auto", system: "Base", tools: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async (_toolsConfig, options) => {
+        options?.onIntegrationToolDiscovery?.({ status: "ok", tools: [] });
+        return [];
+      },
+      supportsToolCalling: true,
+      messages: [],
+      mode: "generate",
+      remoteToolSources: undefined,
+      resolveRuntimeState: async () => ({ systemPrompt: "Base" }),
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+    });
+
+    assertEquals(prepared.integrationToolDiscovery, { status: "ok", tools: [] });
+    const systemPrompt = withIntegrationToolDiscoveryStatus(
+      prepared.systemPrompt,
+      prepared.integrationToolDiscovery,
+    );
+    assertEquals(systemPrompt, "Base");
+  });
+
+  it("tells the model once when integration discovery is unavailable", async () => {
+    const getAvailableTools: RuntimeStepToolLoader = async (_toolsConfig, options) => {
+      options?.onIntegrationToolDiscovery?.({
+        status: "unavailable",
+        reason: "request_failed",
+      });
+      return [];
+    };
+    const input = {
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "auto", system: "Base", tools: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools,
+      supportsToolCalling: true,
+      messages: [],
+      mode: "generate" as const,
+      remoteToolSources: undefined,
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+    };
+
+    const first = await prepareAgentRuntimeStep({
+      ...input,
+      resolveRuntimeState: async () => ({ systemPrompt: "Base" }),
+    });
+    const firstSystemPrompt = withIntegrationToolDiscoveryStatus(
+      first.systemPrompt,
+      first.integrationToolDiscovery,
+    );
+    const second = await prepareAgentRuntimeStep({
+      ...input,
+      systemPrompt: firstSystemPrompt,
+      resolveRuntimeState: async () => ({ systemPrompt: firstSystemPrompt }),
+    });
+    const secondSystemPrompt = withIntegrationToolDiscoveryStatus(
+      second.systemPrompt,
+      second.integrationToolDiscovery,
+    );
+
+    assertEquals(second.integrationToolDiscovery, {
+      status: "unavailable",
+      reason: "request_failed",
+    });
+    assertEquals(
+      secondSystemPrompt.includes(
+        "You must not treat this failure as an empty integration catalog",
+      ),
+      true,
+    );
+    assertEquals(
+      secondSystemPrompt.split("Integration tool discovery status:").length - 1,
+      1,
+    );
+  });
+
+  it("replaces an integration discovery status block before prompt suffix content", () => {
+    const unavailable = {
+      status: "unavailable" as const,
+      reason: "request_failed" as const,
+    };
+    const firstSystemPrompt = withIntegrationToolDiscoveryStatus("Base", unavailable);
+    const secondSystemPrompt = withIntegrationToolDiscoveryStatus(
+      `${firstSystemPrompt}\n\nSuffix`,
+      unavailable,
+    );
+
+    assertEquals(
+      secondSystemPrompt.split("Integration tool discovery status:").length - 1,
+      1,
+    );
+    assertEquals(secondSystemPrompt.startsWith("Base\n\nSuffix\n\n"), true);
+  });
+
+  it("does not report unavailable discovery when forwarded integration tools remain usable", async () => {
+    const forwardedTool = toolDefinition("gmail__list_emails");
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: [forwardedTool.name],
+      config: { model: "auto", system: "Base", tools: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: [forwardedTool],
+      getAvailableTools: async (_toolsConfig, options) => {
+        options?.onIntegrationToolDiscovery?.({
+          status: "unavailable",
+          reason: "request_failed",
+        });
+        return [forwardedTool];
+      },
+      supportsToolCalling: true,
+      messages: [],
+      mode: "generate",
+      remoteToolSources: undefined,
+      resolveRuntimeState: async () => ({ systemPrompt: "Base" }),
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+    });
+
+    assertEquals(prepared.integrationToolDiscovery, {
+      status: "ok",
+      tools: [forwardedTool],
+    });
+    assertEquals(
+      withIntegrationToolDiscoveryStatus(
+        prepared.systemPrompt,
+        prepared.integrationToolDiscovery,
+      ),
+      "Base",
+    );
   });
 
   it("does not let runtime context shadow the trusted abort signal", async () => {

@@ -180,6 +180,54 @@ describe("model-tool-converter", () => {
     });
   });
 
+  it("removes top-level composition from a 198-tool Anthropic child set", () => {
+    const tools: ToolDefinition[] = [
+      ...Array.from({ length: 197 }, (_, index) => ({
+        name: `child_tool_${index}`,
+        description: `Child tool ${index}`,
+        parameters: { type: "object" as const, properties: {} },
+      })),
+      {
+        name: "load_skill",
+        description: "Load a skill body or one of its advertised references",
+        parameters: {
+          anyOf: [
+            {
+              type: "object",
+              properties: {
+                skillId: { type: "string", enum: ["unloaded"] },
+                file: { type: "string" },
+              },
+              required: ["skillId"],
+            },
+            {
+              type: "object",
+              properties: {
+                skillId: { type: "string", enum: ["loaded"] },
+                file: { type: "string" },
+              },
+              required: ["skillId", "file"],
+            },
+          ],
+        } as never,
+      },
+    ];
+
+    const result = convertToolsToRuntimeTools(tools, {
+      model: "veryfront-cloud/anthropic/claude-opus-4-6",
+    });
+    const schema = getRuntimeToolSchema(result?.load_skill) as Record<string, unknown>;
+    const properties = schema.properties as Record<string, Record<string, unknown>>;
+
+    assertEquals(Object.keys(result ?? {}).length, 198);
+    assertEquals(schema.type, "object");
+    assertEquals(Object.hasOwn(schema, "anyOf"), false);
+    assertEquals(Object.hasOwn(schema, "oneOf"), false);
+    assertEquals(Object.hasOwn(schema, "allOf"), false);
+    assertEquals(Object.keys(properties), ["skillId", "file"]);
+    assertEquals(schema.required, ["skillId"]);
+  });
+
   it("adds provider-native web_search for anthropic models when explicitly configured", () => {
     const result = convertToolsToRuntimeTools([], {
       model: "anthropic/claude-sonnet-4-6",

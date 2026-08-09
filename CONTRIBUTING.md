@@ -175,7 +175,9 @@ deno task typecheck
    ```bash
    deno task test
    deno task typecheck
-   deno task lint
+   deno task lint      # deno lint only
+   deno task lint:ci   # everything the ci (lint) job runs, including the
+                       # generated API reference staleness check
    ```
 
 4. **Commit changes**

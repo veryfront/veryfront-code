@@ -419,10 +419,29 @@ jobs:
       step.name === "Run ${{ matrix.check }}"
     );
     assert(ciRunStep, "ci matrix job must run the requested check");
-    assertStringIncludes(
+    // Contributors can only reproduce this shard before pushing while the case
+    // body is nothing but the task name; anything inlined here is a check that
+    // exists only in CI, and the first sighting of it is a red run.
+    assertMatch(
       String(ciRunStep.run),
+      /^\s*lint\) deno task lint:ci ;;$/m,
+      "the lint shard must delegate to the lint:ci task",
+    );
+
+    const tasks = asRecord(
+      asRecord(JSON.parse(await Deno.readTextFile("deno.json")), "deno.json")
+        .tasks,
+      "deno.json tasks",
+    );
+    assertStringIncludes(
+      String(tasks["lint:ci"]),
       "--allow-read --allow-write scripts/ci/setup-deno-workflow.test.ts",
       "required lint shard must allow temporary workflow fixtures",
+    );
+    assertStringIncludes(
+      String(tasks["lint:ci"]),
+      "deno task docs:api-reference:check",
+      "the lint shard owns the generated API reference staleness check",
     );
 
     const coverageShards = asRecord(

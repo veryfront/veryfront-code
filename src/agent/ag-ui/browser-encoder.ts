@@ -55,6 +55,14 @@ export interface AgUiBrowserEncoderState {
    */
   nowMs?: () => number;
   startedMs?: number;
+  /**
+   * Wall clock for `emittedAt`, in epoch milliseconds. Separate from `nowMs`
+   * because the two answer different questions and fail differently:
+   * `elapsedMs` is monotonic and safe for durations inside one run, while
+   * `emittedAt` is comparable across events, runs and services but can move
+   * backwards if the host clock is adjusted.
+   */
+  epochMs?: () => number;
 }
 
 /** Options for create AG-UI browser encoder state. */
@@ -64,6 +72,11 @@ export interface AgUiBrowserEncoderStateOptions {
    * to omit the stamp, which keeps exact-payload assertions deterministic.
    */
   nowMs?: (() => number) | null;
+  /**
+   * Wall clock used to stamp `emittedAt`, in epoch milliseconds. Defaults to
+   * `Date.now`. Pass null to omit the stamp.
+   */
+  epochMs?: (() => number) | null;
 }
 
 /** Event emitted for AG-UI browser encoded. */
@@ -80,8 +93,10 @@ export function createAgUiBrowserEncoderState(
   // roots, so an opt-in clock only has to be forgotten once to lose elapsedMs
   // for every run -- which is exactly what happened twice before.
   const nowMs = options.nowMs === null ? undefined : options.nowMs ?? (() => performance.now());
+  const epochMs = options.epochMs === null ? undefined : options.epochMs ?? (() => Date.now());
   return {
     ...(nowMs ? { nowMs, startedMs: nowMs() } : {}),
+    ...(epochMs ? { epochMs } : {}),
     messageId: null,
     textOpen: false,
     activeTextContentId: null,
@@ -666,19 +681,36 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
   state: AgUiBrowserEncoderState,
   event: AgUiRuntimeStreamEvent,
 ): AgUiBrowserEncodedEvent[] {
-  return stampElapsed(state, mapRuntimeStreamEventToAgUiBrowserEventsUnstamped(state, event));
+  return stampTiming(state, mapRuntimeStreamEventToAgUiBrowserEventsUnstamped(state, event));
 }
 
-function stampElapsed(
+function stampTiming(
   state: AgUiBrowserEncoderState,
   events: AgUiBrowserEncodedEvent[],
 ): AgUiBrowserEncodedEvent[] {
-  if (!state.nowMs || state.startedMs === undefined) {
+  if (events.length === 0) {
     return events;
   }
 
-  const elapsedMs = Math.max(0, Math.round(state.nowMs() - state.startedMs));
-  return events.map((entry) => ({ ...entry, payload: { ...entry.payload, elapsedMs } }));
+  // `elapsedMs` is anchored to this encoder's construction, so reading it
+  // correctly requires knowing which encoder produced it. `emittedAt` carries
+  // no anchor and means the same thing everywhere, which is what makes it the
+  // durable one: it supports durations between any two events, lines up with
+  // wall-clock traces and logs, and turns ingest lag into `created_at -
+  // emittedAt`. Both are stamped because wall clocks can step backwards and
+  // the monotonic reading cannot.
+  const timing: Record<string, number> = {};
+  if (state.nowMs && state.startedMs !== undefined) {
+    timing.elapsedMs = Math.max(0, Math.round(state.nowMs() - state.startedMs));
+  }
+  if (state.epochMs) {
+    timing.emittedAt = Math.round(state.epochMs());
+  }
+  if (Object.keys(timing).length === 0) {
+    return events;
+  }
+
+  return events.map((entry) => ({ ...entry, payload: { ...entry.payload, ...timing } }));
 }
 
 function mapRuntimeStreamEventToAgUiBrowserEventsUnstamped(
@@ -920,7 +952,7 @@ export function finalizeAgUiBrowserEvents(
   state: AgUiBrowserEncoderState,
   response: AgentResponse | null,
 ): AgUiBrowserEncodedEvent[] {
-  return stampElapsed(state, finalizeAgUiBrowserEventsUnstamped(state, response));
+  return stampTiming(state, finalizeAgUiBrowserEventsUnstamped(state, response));
 }
 
 function finalizeAgUiBrowserEventsUnstamped(

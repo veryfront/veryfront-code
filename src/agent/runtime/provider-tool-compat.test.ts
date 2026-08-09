@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import {
   getProviderToolProfile,
+  normalizeProviderToolInputSchema,
   sanitizeProviderToolSchema,
   selectProviderCompatibleToolNames,
   selectProviderCompatibleTools,
@@ -26,6 +27,27 @@ function containsKey(value: unknown, key: string): boolean {
 }
 
 describe("provider-tool-compat", () => {
+  it("returns independent permissive fallback schemas", () => {
+    for (
+      const createFallback of [
+        () => normalizeProviderToolInputSchema(null as never),
+        () =>
+          sanitizeProviderToolSchema(null as never, {
+            model: "anthropic/claude-opus-4-6",
+          }),
+      ]
+    ) {
+      const first = createFallback();
+      (first.properties as Record<string, unknown>).injected = { type: "string" };
+
+      assertEquals(createFallback(), {
+        type: "object",
+        properties: {},
+        additionalProperties: true,
+      });
+    }
+  });
+
   it("caps OpenAI-compatible tool names while preserving required tools first", () => {
     const requiredToolNames = ["form_input", "invoke_agent", "load_skill", "sleep"];
     const remoteToolNames = Array.from({ length: 150 }, (_, index) => `remote_${index}`);
@@ -327,5 +349,67 @@ describe("provider-tool-compat", () => {
       (sanitized.properties?.["nested-object"] as { required?: unknown[] }).required,
       ["fine"],
     );
+  });
+
+  it("removes every unsupported Anthropic root composition keyword", () => {
+    for (const keyword of ["allOf", "anyOf", "oneOf"] as const) {
+      const sanitized = sanitizeProviderToolSchema(
+        {
+          [keyword]: [
+            {
+              type: "object",
+              properties: { shared: { type: "string" } },
+              required: ["shared"],
+            },
+            {
+              type: "object",
+              properties: { extra: { type: "number" } },
+              required: ["extra"],
+            },
+          ],
+        } as never,
+        { model: "anthropic/claude-opus-4-6" },
+      );
+
+      assertEquals(sanitized.type, "object");
+      assertEquals(Object.hasOwn(sanitized, "allOf"), false);
+      assertEquals(Object.hasOwn(sanitized, "anyOf"), false);
+      assertEquals(Object.hasOwn(sanitized, "oneOf"), false);
+      assertEquals(Object.keys(sanitized.properties ?? {}), ["shared", "extra"]);
+      assertEquals(sanitized.required, keyword === "allOf" ? ["shared", "extra"] : undefined);
+    }
+  });
+
+  it("preserves local reference constraints when flattening Anthropic compositions", () => {
+    const sanitized = sanitizeProviderToolSchema(
+      {
+        anyOf: [
+          {
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+          },
+          { $ref: "#/$defs/defaultQuery" },
+        ],
+        $defs: {
+          defaultQuery: {
+            type: "object",
+            properties: { fallback: { type: "boolean" } },
+            required: ["fallback"],
+          },
+        },
+      } as never,
+      { model: "anthropic/claude-opus-4-6" },
+    );
+
+    assertEquals(Object.keys(sanitized.properties ?? {}), ["query", "fallback"]);
+    assertEquals(sanitized.required, undefined);
+    assertEquals(sanitized.$defs, {
+      defaultQuery: {
+        type: "object",
+        properties: { fallback: { type: "boolean" } },
+        required: ["fallback"],
+      },
+    });
   });
 });

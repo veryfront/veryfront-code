@@ -96,7 +96,11 @@ import {
   applySourceIntegrationPolicy,
   type SourceIntegrationPolicyManifest,
 } from "#veryfront/integrations/source-policy.ts";
-import { prepareAgentRuntimeStep } from "./agent-runtime-step.ts";
+import { runWithRemoteIntegrationToolDiscoveryScope } from "#veryfront/integrations/remote-tools.ts";
+import {
+  prepareAgentRuntimeStep,
+  withIntegrationToolDiscoveryStatus,
+} from "./agent-runtime-step.ts";
 import { buildStreamedAssistantMessage } from "./streamed-assistant-message.ts";
 import {
   flattenSystemInstructions,
@@ -828,28 +832,30 @@ export class AgentRuntime {
       return chain.execute(
         agentContext,
         () =>
-          this.executeAgentLoop(
-            systemPrompt,
-            messages,
-            {
-              agentId: this.id,
-              projectId: tryGetCacheKeyContext()?.projectId,
-            },
-            context,
-            runRuntimeContext,
-            supportsToolCalling,
-            resolvedModelString,
-            transport.languageModel,
-            transport.headers,
-            transport.providerOptions,
-            transport.reasoning,
-            maxOutputTokensOverride,
-            requestedModel,
-            this.createGenerateReplacementTools(
-              options?.toolReplacements,
-              options?.retainSkillLoaderTools,
-            ),
-            abortSignal,
+          runWithRemoteIntegrationToolDiscoveryScope(() =>
+            this.executeAgentLoop(
+              systemPrompt,
+              messages,
+              {
+                agentId: this.id,
+                projectId: tryGetCacheKeyContext()?.projectId,
+              },
+              context,
+              runRuntimeContext,
+              supportsToolCalling,
+              resolvedModelString,
+              transport.languageModel,
+              transport.headers,
+              transport.providerOptions,
+              transport.reasoning,
+              maxOutputTokensOverride,
+              requestedModel,
+              this.createGenerateReplacementTools(
+                options?.toolReplacements,
+                options?.retainSkillLoaderTools,
+              ),
+              abortSignal,
+            )
           ),
       );
     });
@@ -965,25 +971,27 @@ export class AgentRuntime {
           inFlight = chain.execute(
             agentContext,
             () =>
-              this.executeAgentLoopStreaming(
-                systemPrompt,
-                memoryMessages,
-                controller,
-                encoder,
-                callbacks,
-                textPartId,
-                toolContext,
-                context,
-                runRuntimeContext,
-                supportsToolCalling,
-                resolvedModelString,
-                languageModel,
-                transport.headers,
-                transport.providerOptions,
-                transport.reasoning,
-                maxOutputTokensOverride,
-                streamAbortSignal,
-                requestedModel,
+              runWithRemoteIntegrationToolDiscoveryScope(() =>
+                this.executeAgentLoopStreaming(
+                  systemPrompt,
+                  memoryMessages,
+                  controller,
+                  encoder,
+                  callbacks,
+                  textPartId,
+                  toolContext,
+                  context,
+                  runRuntimeContext,
+                  supportsToolCalling,
+                  resolvedModelString,
+                  languageModel,
+                  transport.headers,
+                  transport.providerOptions,
+                  transport.reasoning,
+                  maxOutputTokensOverride,
+                  streamAbortSignal,
+                  requestedModel,
+                )
               ),
           );
           const response = await inFlight;
@@ -1185,7 +1193,10 @@ export class AgentRuntime {
           model: effectiveModel,
           providerTools: stepProviderTools,
         });
-        currentSystemPrompt = synchronizeRuntimeToolInventory(currentSystemPrompt, runtimeTools);
+        currentSystemPrompt = withIntegrationToolDiscoveryStatus(
+          synchronizeRuntimeToolInventory(currentSystemPrompt, runtimeTools),
+          preparedStep.integrationToolDiscovery,
+        );
         const response = await withSpan("agent.generate_text", async (span) => {
           setSpanAttributes(span, {
             "model.id": effectiveModel,
@@ -1780,7 +1791,10 @@ export class AgentRuntime {
         model: effectiveModel,
         providerTools: stepProviderTools,
       });
-      currentSystemPrompt = synchronizeRuntimeToolInventory(currentSystemPrompt, runtimeTools);
+      currentSystemPrompt = withIntegrationToolDiscoveryStatus(
+        synchronizeRuntimeToolInventory(currentSystemPrompt, runtimeTools),
+        preparedStep.integrationToolDiscovery,
+      );
       const runtimeToolNames = Object.keys(runtimeTools ?? {}).sort();
 
       const temperature = this.resolveTemperature(

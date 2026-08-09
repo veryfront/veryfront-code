@@ -7,6 +7,7 @@
  * import {
  *   getConnector,
  *   getIcon,
+ *   getRemoteIntegrationToolDiscovery,
  *   getRemoteIntegrationToolDefinitions,
  *   listConnectors,
  * } from "veryfront/integrations";
@@ -14,6 +15,7 @@
  * const connectors = listConnectors();
  * const slack = getConnector("slack");
  * const slackIcon = getIcon("slack"); // raw SVG string
+ * const discovery = await getRemoteIntegrationToolDiscovery();
  * const runtimeTools = await getRemoteIntegrationToolDefinitions();
  * ```
  */
@@ -71,6 +73,8 @@ export function getIcon(name: IntegrationName | string): string | undefined {
 export {
   executeRemoteIntegrationTool,
   getRemoteIntegrationToolDefinitions,
+  getRemoteIntegrationToolDiscovery,
   isRemoteIntegrationTool,
 } from "./remote-tools.ts";
+export type { RemoteIntegrationToolDiscoveryResult } from "./remote-tools.ts";
 export type { IntegrationConnector, IntegrationTool } from "./types.ts";
