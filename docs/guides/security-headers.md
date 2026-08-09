@@ -43,14 +43,16 @@ Three directives are worth understanding:
 
 The policy above is served as `Content-Security-Policy-Report-Only`: browsers report what it would have blocked, and block nothing.
 
-Two directives are served enforced, in a second `Content-Security-Policy` header, for every project:
+Two directives are served enforced by default, in a second `Content-Security-Policy` header:
 
 - `object-src 'none'` blocks `<object>`, `<embed>` and `<applet>`.
 - `base-uri 'self'` blocks a `<base>` element pointing at another origin.
 
 Both close injection routes, and neither can be widened: they are required directives, so `security.csp` cannot add sources to them or drop them.
 
-**Anything you declare in `security.csp` is enforced too**, including `form-action` and `frame-ancestors`. Listing your image origins means you have thought about images, so `img-src` binds with your sources in it. Directives you never mentioned keep reporting. Adding one origin does not bind the rest of your policy, because deciding to allow a CDN and deciding to bind script execution across your site are different decisions.
+The exception is `VERYFRONT_CSP`. Setting that environment variable replaces the policy wholesale and serves it enforced on its own, so neither the reported floor nor this pair is added alongside it. Writing a whole policy by hand is an explicit act, and Veryfront does not second-guess it.
+
+**Every directive you give a value in `security.csp` is enforced too**, including `form-action` and `frame-ancestors`. Listing your image origins means you have thought about images, so `img-src` binds with your sources in it. Directives you never mentioned keep reporting, and so does one written as `undefined`, which counts as unconfigured rather than as a declaration. Adding one origin does not bind the rest of your policy, because deciding to allow a CDN and deciding to bind script execution across your site are different decisions.
 
 One consequence worth knowing: CSP resolves a missing directive by falling back to a broader one, so enforcing `script-src` would otherwise also constrain workers and frames. Veryfront emits those alongside it, with the same sources the reported policy gives them, so declaring one directive never tightens another behind your back.
 
