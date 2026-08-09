@@ -10,7 +10,7 @@ import {
 
 describe("agent/ag-ui-browser-encoder", () => {
   it("maps text, reasoning, step, and tool lifecycle events into browser AG-UI payloads", () => {
-    const state = createAgUiBrowserEncoderState();
+    const state = createAgUiBrowserEncoderState({ nowMs: null });
 
     assertEquals(
       mapRuntimeStreamEventToAgUiBrowserEvents(state, {
@@ -116,8 +116,51 @@ describe("agent/ag-ui-browser-encoder", () => {
     );
   });
 
+  it("stamps run-relative elapsedMs on encoded events by default", () => {
+    let now = 1_000;
+    const state = createAgUiBrowserEncoderState({ nowMs: () => now });
+
+    mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+      type: "message-start",
+      messageId: "assistant-1",
+    });
+    now = 1_025;
+    const first = mapRuntimeStreamEventToAgUiBrowserEvents(state, { type: "start-step" });
+    now = 1_400;
+    const second = mapRuntimeStreamEventToAgUiBrowserEvents(state, { type: "finish-step" });
+
+    assertEquals(first[0]?.payload.elapsedMs, 25, "elapsed is measured from state creation");
+    assertEquals(second[0]?.payload.elapsedMs, 400, "elapsed accrues across events");
+    assertEquals(
+      first[0]?.payload.stepName,
+      "step-1",
+      "stamping must not disturb the existing payload",
+    );
+  });
+
+  it("clocks the state unless a caller explicitly opts out", () => {
+    // Three production composition roots build this state. An opt-in clock only
+    // has to be missed at one of them to lose elapsedMs for every hosted run,
+    // so the default itself is the thing worth pinning.
+    const clocked = createAgUiBrowserEncoderState();
+    const events = mapRuntimeStreamEventToAgUiBrowserEvents(clocked, { type: "start-step" });
+    assertEquals(
+      typeof events[0]?.payload.elapsedMs,
+      "number",
+      "the default state must stamp elapsedMs",
+    );
+
+    const optedOut = createAgUiBrowserEncoderState({ nowMs: null });
+    const bare = mapRuntimeStreamEventToAgUiBrowserEvents(optedOut, { type: "start-step" });
+    assertEquals(
+      "elapsedMs" in (bare[0]?.payload ?? {}),
+      false,
+      "an explicit opt-out must leave payloads untouched",
+    );
+  });
+
   it("maps custom data events and tool fallback error events", () => {
-    const state = createAgUiBrowserEncoderState();
+    const state = createAgUiBrowserEncoderState({ nowMs: null });
 
     assertEquals(
       mapRuntimeStreamEventToAgUiBrowserEvents(state, {
@@ -177,7 +220,7 @@ describe("agent/ag-ui-browser-encoder", () => {
   });
 
   it("marks provider-executed tools complete when the provider owns execution", () => {
-    const state = createAgUiBrowserEncoderState();
+    const state = createAgUiBrowserEncoderState({ nowMs: null });
 
     assertEquals(
       mapRuntimeStreamEventToAgUiBrowserEvents(state, {
@@ -220,7 +263,7 @@ describe("agent/ag-ui-browser-encoder", () => {
   });
 
   it("closes open text before orphan tool-input-delta is forwarded", () => {
-    const state = createAgUiBrowserEncoderState();
+    const state = createAgUiBrowserEncoderState({ nowMs: null });
 
     assertEquals(
       mapRuntimeStreamEventToAgUiBrowserEvents(state, {
@@ -269,7 +312,7 @@ describe("agent/ag-ui-browser-encoder", () => {
   });
 
   it("closes open reasoning before orphan tool-input-delta is forwarded", () => {
-    const state = createAgUiBrowserEncoderState();
+    const state = createAgUiBrowserEncoderState({ nowMs: null });
 
     assertEquals(
       mapRuntimeStreamEventToAgUiBrowserEvents(state, {
@@ -330,7 +373,7 @@ describe("agent/ag-ui-browser-encoder", () => {
   });
 
   it("closes reasoning when non-reasoning events interrupt it", () => {
-    const state = createAgUiBrowserEncoderState();
+    const state = createAgUiBrowserEncoderState({ nowMs: null });
 
     assertEquals(
       mapRuntimeStreamEventToAgUiBrowserEvents(state, {
@@ -380,7 +423,7 @@ describe("agent/ag-ui-browser-encoder", () => {
   });
 
   it("preserves text block identity as contentId under the assistant message", () => {
-    const state = createAgUiBrowserEncoderState();
+    const state = createAgUiBrowserEncoderState({ nowMs: null });
 
     assertEquals(
       mapRuntimeStreamEventToAgUiBrowserEvents(state, {
@@ -423,7 +466,7 @@ describe("agent/ag-ui-browser-encoder", () => {
   });
 
   it("starts a new AG-UI text block when the runtime text block id changes", () => {
-    const state = createAgUiBrowserEncoderState();
+    const state = createAgUiBrowserEncoderState({ nowMs: null });
     mapRuntimeStreamEventToAgUiBrowserEvents(state, {
       type: "message-start",
       messageId: "assistant-1",
@@ -458,7 +501,7 @@ describe("agent/ag-ui-browser-encoder", () => {
   });
 
   it("finalizes metadata and emits terminal errors for empty output", () => {
-    const visibleState = createAgUiBrowserEncoderState();
+    const visibleState = createAgUiBrowserEncoderState({ nowMs: null });
     mapRuntimeStreamEventToAgUiBrowserEvents(visibleState, {
       type: "message-start",
       messageId: "assistant-2",
@@ -534,7 +577,7 @@ describe("agent/ag-ui-browser-encoder", () => {
       ],
     );
 
-    const reasoningState = createAgUiBrowserEncoderState();
+    const reasoningState = createAgUiBrowserEncoderState({ nowMs: null });
     mapRuntimeStreamEventToAgUiBrowserEvents(reasoningState, {
       type: "message-start",
       messageId: "assistant-4",
@@ -583,7 +626,7 @@ describe("agent/ag-ui-browser-encoder", () => {
       ],
     );
 
-    const emptyState = createAgUiBrowserEncoderState();
+    const emptyState = createAgUiBrowserEncoderState({ nowMs: null });
     assertEquals(
       finalizeAgUiBrowserEvents(emptyState, null),
       [{
@@ -597,7 +640,7 @@ describe("agent/ag-ui-browser-encoder", () => {
   });
 
   it("does not treat step lifecycle events as assistant-visible output", () => {
-    const state = createAgUiBrowserEncoderState();
+    const state = createAgUiBrowserEncoderState({ nowMs: null });
 
     assertEquals(
       mapRuntimeStreamEventToAgUiBrowserEvents(state, { type: "step-start" }),
@@ -726,7 +769,7 @@ describe("buildAgUiBrowserFinalizeResponse", () => {
   // AG-UI id from the part id alone collides across a multi-step run: every
   // reasoning block in the run comes out as `<messageId>:reasoning:reasoning-0`.
   it("gives each reasoning span a distinct messageId when a provider reuses part ids", () => {
-    const state = createAgUiBrowserEncoderState();
+    const state = createAgUiBrowserEncoderState({ nowMs: null });
     mapRuntimeStreamEventToAgUiBrowserEvents(state, {
       type: "message-start",
       messageId: "assistant-multistep",
@@ -763,7 +806,7 @@ describe("buildAgUiBrowserFinalizeResponse", () => {
   });
 
   it("keeps delta and end on the messageId opened by their reasoning span", () => {
-    const state = createAgUiBrowserEncoderState();
+    const state = createAgUiBrowserEncoderState({ nowMs: null });
     mapRuntimeStreamEventToAgUiBrowserEvents(state, {
       type: "message-start",
       messageId: "assistant-span-identity",
@@ -806,7 +849,7 @@ describe("buildAgUiBrowserFinalizeResponse", () => {
   });
 
   it("drops a reasoning end that closes no open span", () => {
-    const state = createAgUiBrowserEncoderState();
+    const state = createAgUiBrowserEncoderState({ nowMs: null });
     mapRuntimeStreamEventToAgUiBrowserEvents(state, {
       type: "message-start",
       messageId: "assistant-unmatched-end",
