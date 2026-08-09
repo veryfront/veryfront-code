@@ -173,13 +173,70 @@ describe("agent/runtime-step", () => {
     });
     assertEquals(
       secondSystemPrompt.includes(
-        "Do not treat this failure as an empty integration catalog",
+        "You must not treat this failure as an empty integration catalog",
       ),
       true,
     );
     assertEquals(
       secondSystemPrompt.split("Integration tool discovery status:").length - 1,
       1,
+    );
+  });
+
+  it("replaces an integration discovery status block before prompt suffix content", () => {
+    const unavailable = {
+      status: "unavailable" as const,
+      reason: "request_failed" as const,
+    };
+    const firstSystemPrompt = withIntegrationToolDiscoveryStatus("Base", unavailable);
+    const secondSystemPrompt = withIntegrationToolDiscoveryStatus(
+      `${firstSystemPrompt}\n\nSuffix`,
+      unavailable,
+    );
+
+    assertEquals(
+      secondSystemPrompt.split("Integration tool discovery status:").length - 1,
+      1,
+    );
+    assertEquals(secondSystemPrompt.startsWith("Base\n\nSuffix\n\n"), true);
+  });
+
+  it("does not report unavailable discovery when forwarded integration tools remain usable", async () => {
+    const forwardedTool = toolDefinition("gmail__list_emails");
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: [forwardedTool.name],
+      config: { model: "auto", system: "Base", tools: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: [forwardedTool],
+      getAvailableTools: async (_toolsConfig, options) => {
+        options?.onIntegrationToolDiscovery?.({
+          status: "unavailable",
+          reason: "request_failed",
+        });
+        return [forwardedTool];
+      },
+      supportsToolCalling: true,
+      messages: [],
+      mode: "generate",
+      remoteToolSources: undefined,
+      resolveRuntimeState: async () => ({ systemPrompt: "Base" }),
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+    });
+
+    assertEquals(prepared.integrationToolDiscovery, {
+      status: "ok",
+      tools: [forwardedTool],
+    });
+    assertEquals(
+      withIntegrationToolDiscoveryStatus(
+        prepared.systemPrompt,
+        prepared.integrationToolDiscovery,
+      ),
+      "Base",
     );
   });
 

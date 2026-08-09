@@ -94,12 +94,23 @@ const INTEGRATION_TOOL_DISCOVERY_STATUS_HEADER = "Integration tool discovery sta
 const INTEGRATION_TOOL_DISCOVERY_STATUS_FOOTER = "End integration tool discovery status.";
 
 function removeIntegrationToolDiscoveryStatus(systemPrompt: string): string {
-  const headerIndex = systemPrompt.lastIndexOf(INTEGRATION_TOOL_DISCOVERY_STATUS_HEADER);
-  if (headerIndex < 0) return systemPrompt;
+  let result = systemPrompt;
+  while (true) {
+    const headerIndex = result.indexOf(INTEGRATION_TOOL_DISCOVERY_STATUS_HEADER);
+    if (headerIndex < 0) return result;
+    const footerIndex = result.indexOf(
+      INTEGRATION_TOOL_DISCOVERY_STATUS_FOOTER,
+      headerIndex + INTEGRATION_TOOL_DISCOVERY_STATUS_HEADER.length,
+    );
+    if (footerIndex < 0) return result;
 
-  const statusBlock = systemPrompt.slice(headerIndex);
-  if (!statusBlock.endsWith(INTEGRATION_TOOL_DISCOVERY_STATUS_FOOTER)) return systemPrompt;
-  return systemPrompt.slice(0, headerIndex).trimEnd();
+    result = [
+      result.slice(0, headerIndex).trimEnd(),
+      result.slice(
+        footerIndex + INTEGRATION_TOOL_DISCOVERY_STATUS_FOOTER.length,
+      ).trimStart(),
+    ].filter(Boolean).join("\n\n");
+  }
 }
 
 export function withIntegrationToolDiscoveryStatus(
@@ -110,7 +121,7 @@ export function withIntegrationToolDiscoveryStatus(
   let message: string | undefined;
   if (discovery?.status === "unavailable") {
     message =
-      "Integration tools could not be listed for this run. Do not treat this failure as an empty integration catalog. If the user needs an integration tool, explain that discovery is temporarily unavailable and ask them to retry.";
+      "Integration tool discovery is temporarily unavailable for this run. You must not treat this failure as an empty integration catalog. If the user needs an integration tool, explain that discovery is temporarily unavailable and ask the user to retry.";
   }
 
   if (!message) return basePrompt;
@@ -194,6 +205,18 @@ export async function prepareAgentRuntimeStep(
   const excludedToolNames = input.excludedToolNames;
   if (excludedToolNames !== undefined) {
     tools = tools.filter((tool) => !excludedToolNames.has(tool.name));
+  }
+  if (
+    integrationToolDiscovery?.status === "unavailable" &&
+    input.forwardedRemoteToolDefinitions?.length
+  ) {
+    const forwardedToolNames = new Set(
+      input.forwardedRemoteToolDefinitions.map((tool) => tool.name),
+    );
+    const usableForwardedTools = tools.filter((tool) => forwardedToolNames.has(tool.name));
+    if (usableForwardedTools.length > 0) {
+      integrationToolDiscovery = { status: "ok", tools: usableForwardedTools };
+    }
   }
   const toolExposureState = input.toolExposureState ?? createToolExposureState();
   if (input.toolExposureCheckpoint) {
