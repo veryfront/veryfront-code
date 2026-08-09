@@ -288,41 +288,80 @@ export function buildCSP(
 }
 
 /**
- * Whether the built policy is enforced or merely reported.
+ * Whether the whole policy is enforced.
  *
- * The floor is a breaking change for any project that loads an asset the
- * platform does not emit -- a stock-photo host, a video CDN, a social icon.
- * Shipping it enforced blocked those assets on every such project at once,
- * with no signal to the owner beyond a browser console, and no remedy that
- * does not require republishing: `security.csp` lives in project config, and
- * hosted projects serve config from their deployed release, so editing it
- * changes nothing until the next publish.
- *
- * So the floor reports before it enforces. A project that has declared
- * `security.csp` has demonstrably tuned its policy and gets the enforced
- * header; everyone else gets `-Report-Only`, which surfaces the same
- * violations without breaking the page. `VERYFRONT_CSP_ENFORCE` flips the
- * default once adoption is high enough, and `VERYFRONT_CSP` (a full policy
- * override) is always enforced because setting it is an explicit ops act.
+ * Only `VERYFRONT_CSP`, a full policy override, binds everything: setting it is
+ * an explicit ops act. Otherwise enforcement is per directive -- see
+ * {@link buildEnforcedCSP}.
  */
-function isCspEnforced(
-  config: SecurityConfig | null | undefined,
-  adapter: RuntimeAdapter | undefined,
-  hasEnvOverride: boolean,
-): boolean {
-  if (hasEnvOverride) return true;
-  if (adapter?.env?.get?.("VERYFRONT_CSP_ENFORCE")?.trim()) return true;
-  // An empty `csp` object is still an opt-in: the project touched the key.
-  return config?.csp !== undefined && config.csp !== null;
+function isCspEnforced(hasEnvOverride: boolean): boolean {
+  return hasEnvOverride;
+}
+
+/**
+ * Directives enforced for every project, whatever it configured.
+ *
+ * A report-only policy protects nothing, so the two directives safe to bind
+ * unconditionally are bound unconditionally. Both close real injection vectors
+ * and neither has a use a project would notice losing: `object-src 'none'`
+ * blocks `<object>`/`<embed>` payloads, and `base-uri 'self'` blocks a `<base>`
+ * tag rewriting every relative URL on the page.
+ *
+ * Deliberately excluded, because each breaks working sites: `form-action`
+ * (projects post forms to HubSpot and the like), `frame-ancestors` (projects
+ * are legitimately embedded), and `script-src` with the asset directives, which
+ * are the reason the floor reports rather than binds.
+ */
+const ALWAYS_ENFORCED_DIRECTIVES: ReadonlySet<string> = new Set([
+  "object-src",
+  "base-uri",
+]);
+
+/**
+ * The enforced companion to the reported floor.
+ *
+ * Carries the always-enforced directives plus every directive the project
+ * declared. Declaring one is taken as meaning it -- a project that lists its
+ * image origins wants `img-src` to hold -- while the directives it never
+ * mentioned keep reporting rather than binding. That is the difference between
+ * honouring a project's configuration and inferring, from one image origin,
+ * that it also wants `script-src` bound across the site.
+ *
+ * @returns the enforced policy, or "" when the full policy already binds
+ */
+export function buildEnforcedCSP(
+  isDev: boolean,
+  nonce: string,
+  config?: SecurityConfig | null,
+  isVeryfrontDomain?: boolean,
+  hasEnvOverride = false,
+): string {
+  if (isDev || isCspEnforced(hasEnvOverride)) return "";
+
+  const declared = new Set(
+    Object.keys(config?.csp ?? {}).map((key) => toCspDirectiveName(key)),
+  );
+  const binding = new Set([...ALWAYS_ENFORCED_DIRECTIVES, ...declared]);
+
+  const full = mergeCspDirectives(
+    requiredDirectives(nonce, isVeryfrontDomain ?? false),
+    config?.csp,
+    nonce,
+    config?.derivedCsp,
+  );
+
+  const enforced = Object.fromEntries(
+    Object.entries(full).filter(([name]) => binding.has(name)),
+  );
+
+  return Object.keys(enforced).length > 0 ? serializeDirectives(enforced) : "";
 }
 
 /** Header name carrying the policy, per {@link isCspEnforced}. */
 function cspHeaderName(
-  config?: SecurityConfig | null,
-  adapter?: RuntimeAdapter,
   hasEnvOverride = false,
 ): "Content-Security-Policy" | "Content-Security-Policy-Report-Only" {
-  return isCspEnforced(config, adapter, hasEnvOverride)
+  return isCspEnforced(hasEnvOverride)
     ? "Content-Security-Policy"
     : "Content-Security-Policy-Report-Only";
 }
@@ -381,7 +420,15 @@ export function applySecurityHeaders(
   const csp = buildCSP(isDev, nonce, config, adapter, isVeryfrontDomain);
   if (csp) {
     const hasEnvOverride = Boolean(adapter?.env?.get?.("VERYFRONT_CSP")?.trim());
-    headers.set(cspHeaderName(config, adapter, hasEnvOverride), csp);
+    const headerName = cspHeaderName(hasEnvOverride);
+    headers.set(headerName, csp);
+
+    // A report-only floor protects nothing on its own, so the directives that
+    // are safe to bind for everyone are served enforced beside it.
+    if (headerName === "Content-Security-Policy-Report-Only") {
+      const enforced = buildEnforcedCSP(isDev, nonce, config, isVeryfrontDomain, hasEnvOverride);
+      if (enforced) headers.set("Content-Security-Policy", enforced);
+    }
     // Names the group the policy's `report-to` refers to. Without this header
     // the directive names nothing and the browser sends no reports at all.
     headers.set(

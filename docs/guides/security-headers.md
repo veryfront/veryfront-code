@@ -39,6 +39,16 @@ Three directives are worth understanding:
 - **`style-src` and `font-src` include the Google Fonts origins** because `veryfront/fonts` writes those tags into the document itself. Google Fonts therefore works with no configuration. If your project never uses it, see [Tightening the policy](#tightening-the-policy).
 - **`frame-ancestors`** is `'none'` on your own domain. On `*.veryfront.com` addresses it instead allows the Studio origins, so the Studio preview iframe works.
 
+## What is enforced
+
+The policy above is served as `Content-Security-Policy-Report-Only`: browsers report what it would have blocked, and block nothing.
+
+Two directives are served enforced, in a second `Content-Security-Policy` header, for every project: `object-src 'none'` and `base-uri 'self'`. Both close injection routes that no ordinary site uses, so they cost you nothing and hold from the start.
+
+Anything you declare in `security.csp` is enforced too. Listing your image origins means you have thought about images, so `img-src` binds with your sources in it. Directives you never mentioned keep reporting. Adding one origin does not bind the rest of your policy, because deciding to allow a CDN and deciding to bind script execution across your site are different decisions.
+
+To bind a directive, configure it. To see what binding it would cost first, read the reports.
+
 ## Violation reports
 
 The policy asks browsers to report what it blocks, to `/_vf/csp-report` on your own origin. Both spellings are sent because `report-to` is the current one and `report-uri` is still the only one several shipping browsers honour.

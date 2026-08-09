@@ -34,8 +34,10 @@ describe("server/handlers/request/openapi-docs.handler", () => {
 
     // Either header carries the policy: the floor is served report-only
     // until a project opts in, and this asserts nonce alignment either way.
-    const csp = response.headers.get("content-security-policy") ??
-      response.headers.get("content-security-policy-report-only") ?? "";
+    const csp = // Reported first: the enforced header carries only the directives that
+      // bind, and the nonce lives in the reported `script-src`.
+      response.headers.get("content-security-policy-report-only") ??
+        response.headers.get("content-security-policy") ?? "";
     const nonceMatch = csp.match(/nonce-([^' ;]+)/);
 
     assertEquals(Boolean(nonceMatch), true);
