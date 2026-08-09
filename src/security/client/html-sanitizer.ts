@@ -7,7 +7,10 @@
  * - validateTrustedHtml() provides defense-in-depth for server HTML
  */
 
-import { SECURITY_VIOLATION } from "#veryfront/errors/error-registry.ts";
+// Imported from the leaf category module, not error-registry.ts: that barrel
+// composes ERROR_REGISTRY out of every category, and the composition keeps all
+// 106 definitions alive in the RSC client bundle this file is part of.
+import { SECURITY_VIOLATION } from "#veryfront/errors/error-registry/general.ts";
 
 /**
  * Patterns that RSC should never generate.

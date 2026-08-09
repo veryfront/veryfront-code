@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleClientScript, handleDomScript } from "./script-handlers.ts";
+import { ERROR_REGISTRY } from "#veryfront/errors/error-registry.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 /**
@@ -45,6 +46,19 @@ function createMockAdapter(
     },
     serve: () => Promise.resolve({ close: () => Promise.resolve() } as any),
   } as unknown as RuntimeAdapter;
+}
+
+/**
+ * Definitions a browser can never reach that the served bundle carries anyway.
+ * A `port-in-use` or `release-build-timeout` in there means an import found its
+ * way back to the composed registry, at which point the bundle holds all of it
+ * and every future registry entry is paid for on every RSC page load.
+ */
+function embeddedNonGeneralSlugs(bundle: string): string[] {
+  return Object.values(ERROR_REGISTRY)
+    .filter((definition) => definition.category !== "GENERAL")
+    .map((definition) => definition.slug)
+    .filter((slug) => bundle.includes(`"${slug}"`));
 }
 
 describe("script-handlers", () => {
@@ -94,6 +108,13 @@ describe("script-handlers", () => {
 
       assertEquals(body.includes('new Function("specifier"'), false);
     });
+
+    it("does not ship server-only error definitions to the browser", async () => {
+      const adapter = createMockAdapter();
+      const response = await handleClientScript(adapter);
+
+      assertEquals(embeddedNonGeneralSlugs(await response.text()), []);
+    });
   });
 
   describe("handleDomScript", () => {
@@ -112,6 +133,13 @@ describe("script-handlers", () => {
       const response = await handleDomScript(adapter);
       const contentType = response.headers.get("content-type");
       assertStringIncludes(contentType ?? "", "javascript");
+    });
+
+    it("does not ship server-only error definitions to the browser", async () => {
+      const adapter = createMockAdapter();
+      const response = await handleDomScript(adapter);
+
+      assertEquals(embeddedNonGeneralSlugs(await response.text()), []);
     });
   });
 });
