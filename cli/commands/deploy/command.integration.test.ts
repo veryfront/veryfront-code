@@ -605,6 +605,82 @@ it("bootstraps exactly one quiet push when no verified push receipt exists", asy
   });
 });
 
+it("never uploads the working directory when deploy names a project", async () => {
+  const projectDir = await Deno.makeTempDir();
+  await withDeployEnv(projectDir, async ({ sourceDigest }) => {
+    const requests: string[] = [];
+    const uploadedPaths: string[] = [];
+
+    await withMockFetch(
+      createDeployFetchHandler({ requests, sourceDigest, uploadedPaths }),
+      () =>
+        assertRejects(
+          () =>
+            deployCommand({
+              projectSlug: "my-project",
+              projectDir,
+              branch: "main",
+              env: "production",
+              dryRun: false,
+              force: false,
+              quiet: true,
+              deployProject: boundedDeployProject(),
+            }),
+          Error,
+          'No verified push found for branch "main"',
+        ),
+    );
+
+    assertEquals(uploadedPaths, []);
+    assertEquals(requests.some((request) => request.startsWith("PUT ")), false);
+    assertEquals(requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`), false);
+  });
+});
+
+it("refuses to deploy a project this directory did not push", async () => {
+  // The incident this flag exists for: standing in one project's directory and
+  // naming another. The receipt here is valid -- for `my-project` -- so nothing
+  // but the slug mismatch can stop the deploy, and nothing may be uploaded on
+  // the way to stopping it.
+  const projectDir = await Deno.makeTempDir();
+  await withDeployEnv(projectDir, async ({ sourceDigest }) => {
+    await writePushReceipt(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      commitSha: `${"2".repeat(40)}`,
+      sourceDigest,
+      clean: true,
+      pushedAt: "2026-07-10T09:20:00.000Z",
+    });
+
+    const requests: string[] = [];
+    const uploadedPaths: string[] = [];
+
+    await withMockFetch(
+      createDeployFetchHandler({ requests, sourceDigest, uploadedPaths }),
+      () =>
+        assertRejects(() =>
+          deployCommand({
+            projectSlug: "other-project",
+            projectDir,
+            branch: "main",
+            env: "production",
+            dryRun: false,
+            force: false,
+            quiet: true,
+            deployProject: boundedDeployProject(),
+          })
+        ),
+    );
+
+    assertEquals(uploadedPaths, [], "a named project must never receive this directory");
+    assertEquals(requests.some((request) => request.startsWith("PUT ")), false);
+    assertEquals(requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`), false);
+  });
+});
+
 it("fails on a stale verified push receipt instead of replacing it", async () => {
   const projectDir = await Deno.makeTempDir();
   await withDeployEnv(projectDir, async ({ sourceDigest }) => {
