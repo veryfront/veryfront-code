@@ -210,6 +210,19 @@ describe("agent/ag-ui-browser-encoder", () => {
     );
     assertEquals(
       mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "data-veryfront.runtime_context",
+        data: { runStartedAtUtc: "2026-07-19T07:30:00.000Z" },
+      }),
+      [{
+        event: "Custom",
+        payload: {
+          name: "veryfront.runtime_context",
+          value: { runStartedAtUtc: "2026-07-19T07:30:00.000Z" },
+        },
+      }],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
         type: "data-tool-call-status",
         data: { toolCallId: "tool-1", status: "pending_input" },
       }),

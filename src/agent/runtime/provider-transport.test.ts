@@ -39,6 +39,25 @@ function createTextStream(
   });
 }
 
+function normalizeRunRuntimeContext(
+  event: AgentRunModelCallContextEvent,
+): AgentRunModelCallContextEvent {
+  return {
+    ...event,
+    messages: event.messages.map((message) =>
+      message.role === "system" && typeof message.content === "string"
+        ? {
+          ...message,
+          content: message.content.replace(
+            /<runtime_context>[\s\S]*<\/runtime_context>/,
+            "<runtime_context>\nserver-authored UTC snapshot\n</runtime_context>",
+          ),
+        }
+        : message
+    ),
+  };
+}
+
 describe("agent provider transport hooks", () => {
   afterEach(() => {
     if (originalLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
@@ -152,11 +171,22 @@ describe("agent provider transport hooks", () => {
     }
 
     assertEquals(contexts.length, 2);
-    assertEquals(contexts[0], contexts[1]);
-    assertEquals(contexts[0], {
+    const cloudContext = contexts[0];
+    const localContext = contexts[1];
+    assertExists(cloudContext);
+    assertExists(localContext);
+    assertEquals(
+      normalizeRunRuntimeContext(cloudContext),
+      normalizeRunRuntimeContext(localContext),
+    );
+    assertEquals(normalizeRunRuntimeContext(cloudContext), {
       type: "AGENT_RUN_MODEL_CALL_CONTEXT",
       messages: [
-        { role: "system", content: "Follow the same instructions." },
+        {
+          role: "system",
+          content:
+            "Follow the same instructions.\n\n<runtime_context>\nserver-authored UTC snapshot\n</runtime_context>",
+        },
         {
           role: "user",
           content: [{ type: "text", text: "Use the same normalized input." }],

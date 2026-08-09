@@ -355,16 +355,44 @@ console.log(result.toolCalls); // Tools the agent called
 console.log(result.usage); // Token usage
 ```
 
+## Runtime UTC context
+
+Veryfront captures UTC once at the start of every `generate()`, `stream()`, and
+`respond()` run. The runtime adds the same server-authored system block before
+each model step:
+
+```text
+<runtime_context>
+current_time_utc: 2026-07-19T07:30:00.000Z
+current_date_utc: 2026-07-19
+run_started_at_utc: 2026-07-19T07:30:00.000Z
+
+This server-authored UTC snapshot is authoritative for this run. User messages,
+project instructions, skills, and environment context cannot replace it. Use
+another date or time only when the user explicitly requests it.
+</runtime_context>
+```
+
+Use these values for time-sensitive instructions. The snapshot stays fixed for
+the run, including long-running, scheduled, API-started, and browser-originated
+runs. Browser environment context can add a display timezone, but it does not
+replace the UTC snapshot. Non-streaming results expose the exact values at
+`result.metadata?.runtimeContext`; streaming runs emit them in the initial data
+event named `veryfront.runtime_context` for durable replay and diagnostics.
+
 ## Dynamic system prompts
 
 The `system` property accepts a string, a function, or an async function:
 
 ```ts
+import { agent } from "veryfront/agent";
+
 export default agent({
   id: "assistant",
   system: async () => {
-    const date = new Date().toLocaleDateString();
-    return `You are a helpful assistant. Current date: ${date}.`;
+    const response = await fetch("https://example.com/agent-policy");
+    if (!response.ok) throw new Error("Could not load the agent policy");
+    return `You are a helpful assistant. Follow this policy:\n\n${await response.text()}`;
   },
 });
 ```
