@@ -230,6 +230,42 @@ describe("agent/hosted-child-lifecycle", () => {
     );
   });
 
+  it("keeps the finalization outcome when onLifecycleError itself throws", async () => {
+    const calls: string[] = [];
+    const adapter: HostedChildLifecycleAdapter = {
+      completed: () => {
+        calls.push("completed");
+        throw new Error("persist failed");
+      },
+      failed: () => {
+        calls.push("failed");
+      },
+    };
+
+    const result = await runHostedChildLifecycle({
+      adapter,
+      execute: async () => "ok",
+      resolveErrorState: () => ({
+        status: "failed",
+        terminalErrorCode: "STREAM_ERROR",
+        terminalErrorMessage: "boom",
+      }),
+      onLifecycleError: () => {
+        throw new Error("reporting failed");
+      },
+    });
+
+    // A failing observability callback must not relabel the outcome or trigger
+    // a second terminal dispatch.
+    assertEquals(calls, ["completed"]);
+    assertEquals(result.status, "failed");
+    assertEquals(
+      result.terminalState.terminalErrorCode,
+      HOSTED_CHILD_FINALIZATION_FAILED_CODE,
+    );
+    assertEquals(result.terminalState.terminalErrorMessage, "persist failed");
+  });
+
   it("keeps completion usage on a finalization failure", async () => {
     const adapter: HostedChildLifecycleAdapter = {
       completed: () => {

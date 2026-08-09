@@ -208,7 +208,14 @@ export async function runHostedChildLifecycle<TResult>(
       throw lifecycleError;
     }
 
-    await options.onLifecycleError(lifecycleError);
+    try {
+      await options.onLifecycleError(lifecycleError);
+    } catch {
+      // An observability callback must not change the outcome. Letting it throw
+      // here would reach the outer catch, which relabels with executionFailedCode
+      // and dispatches `failed` — the double dispatch this guard exists to stop.
+      // Same reasoning as durable-child-fork-execution.ts:884-888.
+    }
 
     // Deliberately not re-dispatched: the adapter has already rejected this
     // run's terminal state, so dispatching `failed` on top would write a second
