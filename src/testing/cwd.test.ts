@@ -1,14 +1,44 @@
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertNotEquals,
+  assertRejects,
+} from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { withCwd } from "./cwd.ts";
 
+/**
+ * The working directory, or `null` when it cannot be read.
+ *
+ * Outside a `withCwd` turn the directory belongs to whoever holds it, and a
+ * holder that has already removed its own temp directory makes `Deno.cwd()`
+ * throw `NotFound`. Unreadable is still an answer here: it cannot be this
+ * test's directory, because this test's directory still exists.
+ */
+function currentDirOrUnreadable(): string | null {
+  try {
+    return Deno.cwd();
+  } catch {
+    return null;
+  }
+}
+
 describe("testing/cwd", () => {
-  it("restores the previous directory", async () => {
-    const before = Deno.cwd();
+  it("enters the requested directory and does not park the process in it", async () => {
     const temp = await Deno.makeTempDir();
+    const entered = await Deno.realPath(temp);
     try {
-      await withCwd(temp, () => assert(Deno.cwd() !== before));
-      assertEquals(Deno.cwd(), before);
+      let inside = "";
+      await withCwd(temp, () => {
+        inside = Deno.cwd();
+      });
+
+      assertEquals(inside, entered, "the callback runs in the directory it asked for");
+      // Deliberately not compared against a `Deno.cwd()` captured before the
+      // call: reading the directory outside a turn is the unsafe move this
+      // helper exists to remove, since a sibling test file may own it then.
+      assertNotEquals(currentDirOrUnreadable(), entered, "the turn is handed back");
     } finally {
       await Deno.remove(temp, { recursive: true });
     }
@@ -69,11 +99,13 @@ describe("testing/cwd", () => {
     // named error.
     const temp = await Deno.makeTempDir();
     try {
-      await assertRejects(
+      const error = await assertRejects(
         () => withCwd(temp, () => withCwd(temp, () => {})),
-        Error,
-        "cannot be nested",
+        VeryfrontError,
       );
+      assertInstanceOf(error, VeryfrontError);
+      // The slug is the contract; the message is free to be reworded.
+      assertEquals(error.slug, "nested-cwd-scope");
       // The queue still works afterwards.
       await withCwd(temp, () => assertEquals(typeof Deno.cwd(), "string"));
     } finally {
