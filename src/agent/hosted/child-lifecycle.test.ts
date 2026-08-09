@@ -194,6 +194,56 @@ describe("agent/hosted-child-lifecycle", () => {
     );
   });
 
+  it("strips credentials from a coincident cause before persisting it", async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+
+    const result = await runHostedChildExecutionLifecycle({
+      adapter: {},
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      abortSignal: abortController.signal,
+      execute: () => {
+        throw new Error("fetch failed for https://user:hunter2@api.example.com/v1/run");
+      },
+      getExecutionSnapshot: () => null,
+    });
+
+    const message = result.terminalState.terminalErrorMessage ?? "";
+    assertEquals(
+      message.includes("hunter2"),
+      false,
+      "url credentials must not reach the durable run record",
+    );
+    assertEquals(
+      message.startsWith("Child run cancelled: "),
+      true,
+      "the sanitized cause is still carried",
+    );
+  });
+
+  it("bounds a bulk coincident cause to an excerpt", async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+
+    const result = await runHostedChildExecutionLifecycle({
+      adapter: {},
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      abortSignal: abortController.signal,
+      execute: () => {
+        throw new Error("x".repeat(5_000));
+      },
+      getExecutionSnapshot: () => null,
+    });
+
+    const message = result.terminalState.terminalErrorMessage ?? "";
+    assertEquals(
+      message.length < 250,
+      true,
+      "a provider response body must not be persisted whole",
+    );
+    assertEquals(message.endsWith("..."), true, "truncation is visible in the message");
+  });
+
   it("reports terminal hook errors through onLifecycleError for failure states", async () => {
     const lifecycleErrors: unknown[] = [];
     const adapter: HostedChildLifecycleAdapter = {
