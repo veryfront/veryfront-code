@@ -268,8 +268,11 @@ export async function prepareHostedChatRuntimeToolAssembly<
     agentId: input.taskContext.agentId,
     localTools: authorizedLocalTools,
   });
+  const normalizedAllowedToolNames = normalizeHostedRuntimeAllowedToolNames(
+    ownerScopedAllowedToolNames,
+  );
   const allowedToolNames = resolveHostedRuntimeAllowedToolNames({
-    allowedToolNames: ownerScopedAllowedToolNames,
+    allowedToolNames: normalizedAllowedToolNames,
     localToolNames: Object.keys(authorizedLocalTools),
     availableSkillIds: input.taskContext.availableSkillIds,
     includeRuntimeEssentialToolsWhenEmpty: input.includeRuntimeEssentialToolsWhenEmpty,
@@ -359,7 +362,7 @@ export async function prepareHostedChatRuntimeToolAssembly<
     input.sourceIntegrationPolicy,
   );
   const localToolNames = Object.keys(localHostTools);
-  const toolLoadingMode: RuntimeToolLoadingMode = input.allowedToolNames === null
+  const toolLoadingMode: RuntimeToolLoadingMode = normalizedAllowedToolNames === null
     ? "deferred"
     : "eager";
   const authorizedToolNames = [
