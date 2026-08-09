@@ -748,6 +748,10 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     getConnector: "Look up connector config by name from registry",
     getConnectorNames: "Return readonly array of all connector names",
     getIcon: "Return SVG icon string for integration by name",
+    getRemoteIntegrationToolDiscovery:
+      "List integration tools with a typed available or unavailable status",
+    getRemoteIntegrationToolDefinitions:
+      "List integration tool definitions, returning an empty list when discovery is unavailable",
     listConnectors: "Return readonly array of all connectors",
     registerIntegrationMCP:
       "Register integration tools into the MCP tool registry",
@@ -758,6 +762,8 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     IntegrationMCPConfig: "Configuration for registering integrations into MCP",
     IntegrationName: "Union type of valid integration name literals",
     IntegrationPrompt: "Predefined prompt template for integration use",
+    RemoteIntegrationToolDiscoveryResult:
+      "Typed integration tool catalog status for the current run",
     IntegrationTool: "Integration tool with endpoint execution spec",
     IntegrationToolMeta: "Tool metadata: name, description, write requirements",
     OAuthConfig: "OAuth/API key authentication type and parameters",
