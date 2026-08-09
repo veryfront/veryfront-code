@@ -1,3 +1,4 @@
+import * as veryfrontMod from "#veryfront";
 import * as agentMod from "#veryfront/agent";
 import * as toolMod from "#veryfront/tool";
 import * as platformMod from "#veryfront/platform";
@@ -15,6 +16,7 @@ import * as chatUploadsMod from "#veryfront/chat/uploads";
 import { registerDiscoveryRuntimeModules } from "./runtime-modules.ts";
 
 registerDiscoveryRuntimeModules({
+  "veryfront": veryfrontMod,
   "veryfront/agent": agentMod,
   "veryfront/tool": toolMod,
   "veryfront/platform": platformMod,

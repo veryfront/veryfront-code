@@ -16,6 +16,7 @@ import {
 } from "#veryfront/transforms/import-rewriter/package-resolution.ts";
 
 export const DISCOVERY_GLOBAL_VERYFRONT_MODULES = [
+  "veryfront",
   "veryfront/agent",
   "veryfront/tool",
   "veryfront/platform",
