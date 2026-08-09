@@ -18,13 +18,17 @@ export interface AgUiChunkEncoderBridge<TChunk> {
 /** Options accepted by create AG-UI chunk encoder bridge. */
 export interface CreateAgUiChunkEncoderBridgeOptions<TChunk> {
   getRuntimeEvents: (chunk: TChunk) => readonly AgUiRuntimeStreamEvent[];
+  /** Clock for `elapsedMs`; forwarded to the encoder state. */
+  nowMs?: (() => number) | null;
 }
 
 /** Create AG-UI chunk encoder bridge. */
 export function createAgUiChunkEncoderBridge<TChunk>(
   options: CreateAgUiChunkEncoderBridgeOptions<TChunk>,
 ): AgUiChunkEncoderBridge<TChunk> {
-  const state = createAgUiBrowserEncoderState();
+  const state = createAgUiBrowserEncoderState(
+    options.nowMs === undefined ? {} : { nowMs: options.nowMs },
+  );
 
   return {
     state,

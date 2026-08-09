@@ -20,6 +20,8 @@ export type AgUiChatUiChunkBrowserEncoder = Pick<
 
 /** Options accepted by create AG-UI chat UI chunk browser encoder. */
 export interface CreateAgUiChatUiChunkBrowserEncoderOptions {
+  /** Clock for `elapsedMs`; forwarded to the encoder state. */
+  nowMs?: (() => number) | null;
   modelId?: string;
   resolveProvider?: (modelId: string) => string | undefined;
 }
@@ -264,6 +266,7 @@ export function createAgUiChatUiChunkBrowserEncoder(
     },
     getMetadataFromChunk: (chunk) => getAgUiChatUiMessageChunkMetadata(chunk, options),
     getRuntimeEvents: (chunk) => [normalizeChatUiMessageChunkToAgUiRuntimeEvent(chunk)],
+    ...(options.nowMs === undefined ? {} : { nowMs: options.nowMs }),
   });
 }
 

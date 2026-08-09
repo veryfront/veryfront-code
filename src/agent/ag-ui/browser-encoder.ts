@@ -49,6 +49,21 @@ export interface AgUiBrowserEncoderState {
   sawVisibleOutput: boolean;
   sawTerminalError: boolean;
   metadata: AgUiBrowserRunFinishedMetadata;
+  /**
+   * Clock for `elapsedMs`, and the run-relative anchor it measures from. Absent
+   * only when a caller opts out; see `createAgUiBrowserEncoderState`.
+   */
+  nowMs?: () => number;
+  startedMs?: number;
+}
+
+/** Options for create AG-UI browser encoder state. */
+export interface AgUiBrowserEncoderStateOptions {
+  /**
+   * Clock used to stamp `elapsedMs`. Defaults to `performance.now`. Pass null
+   * to omit the stamp, which keeps exact-payload assertions deterministic.
+   */
+  nowMs?: (() => number) | null;
 }
 
 /** Event emitted for AG-UI browser encoded. */
@@ -58,8 +73,15 @@ export interface AgUiBrowserEncodedEvent {
 }
 
 /** State for create AG-UI browser encoder. */
-export function createAgUiBrowserEncoderState(): AgUiBrowserEncoderState {
+export function createAgUiBrowserEncoderState(
+  options: AgUiBrowserEncoderStateOptions = {},
+): AgUiBrowserEncoderState {
+  // Clocked by default. This state is built at three separate composition
+  // roots, so an opt-in clock only has to be forgotten once to lose elapsedMs
+  // for every run -- which is exactly what happened twice before.
+  const nowMs = options.nowMs === null ? undefined : options.nowMs ?? (() => performance.now());
   return {
+    ...(nowMs ? { nowMs, startedMs: nowMs() } : {}),
     messageId: null,
     textOpen: false,
     activeTextContentId: null,
@@ -644,6 +666,25 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
   state: AgUiBrowserEncoderState,
   event: AgUiRuntimeStreamEvent,
 ): AgUiBrowserEncodedEvent[] {
+  return stampElapsed(state, mapRuntimeStreamEventToAgUiBrowserEventsUnstamped(state, event));
+}
+
+function stampElapsed(
+  state: AgUiBrowserEncoderState,
+  events: AgUiBrowserEncodedEvent[],
+): AgUiBrowserEncodedEvent[] {
+  if (!state.nowMs || state.startedMs === undefined) {
+    return events;
+  }
+
+  const elapsedMs = Math.max(0, Math.round(state.nowMs() - state.startedMs));
+  return events.map((entry) => ({ ...entry, payload: { ...entry.payload, elapsedMs } }));
+}
+
+function mapRuntimeStreamEventToAgUiBrowserEventsUnstamped(
+  state: AgUiBrowserEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiBrowserEncodedEvent[] {
   if (event.type.startsWith("data-")) {
     const name = event.type.slice("data-".length);
     if (name.length === 0) {
@@ -876,6 +917,13 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
 
 /** Finalize AG-UI browser events helper. */
 export function finalizeAgUiBrowserEvents(
+  state: AgUiBrowserEncoderState,
+  response: AgentResponse | null,
+): AgUiBrowserEncodedEvent[] {
+  return stampElapsed(state, finalizeAgUiBrowserEventsUnstamped(state, response));
+}
+
+function finalizeAgUiBrowserEventsUnstamped(
   state: AgUiBrowserEncoderState,
   response: AgentResponse | null,
 ): AgUiBrowserEncodedEvent[] {
