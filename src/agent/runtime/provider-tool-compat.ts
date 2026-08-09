@@ -385,6 +385,118 @@ function sanitizeMoonshotSchemaValue(
   return sanitized;
 }
 
+type AnthropicCompositionKeyword = "allOf" | "anyOf";
+
+function getSchemaRequiredNames(schema: Record<string, unknown>): string[] {
+  return Array.isArray(schema.required)
+    ? schema.required.filter((name): name is string => typeof name === "string")
+    : [];
+}
+
+function getMergedRequiredNames(
+  schemas: readonly Record<string, unknown>[],
+  keyword: AnthropicCompositionKeyword,
+): string[] {
+  if (schemas.length === 0) return [];
+  const requiredBySchema = schemas.map(getSchemaRequiredNames);
+  if (keyword === "allOf") {
+    return [...new Set(requiredBySchema.flat())];
+  }
+
+  return requiredBySchema[0]?.filter((name) =>
+    requiredBySchema.slice(1).every((required) => required.includes(name))
+  ) ?? [];
+}
+
+function getMergedPropertySchema(
+  schemas: readonly unknown[],
+  keyword: AnthropicCompositionKeyword,
+): unknown {
+  if (schemas.length === 1) return schemas[0];
+  const [first, ...rest] = schemas;
+  const serializedFirst = JSON.stringify(first);
+  if (rest.every((schema) => JSON.stringify(schema) === serializedFirst)) {
+    return first;
+  }
+  return { [keyword]: schemas };
+}
+
+function mergeAnthropicObjectSchemas(
+  schemas: readonly Record<string, unknown>[],
+  keyword: AnthropicCompositionKeyword,
+): Record<string, unknown> {
+  const mergedProperties = new Map<string, unknown[]>();
+  for (const schema of schemas) {
+    if (!isPlainRecord(schema.properties)) continue;
+    for (const [name, propertySchema] of Object.entries(schema.properties)) {
+      const variants = mergedProperties.get(name) ?? [];
+      variants.push(propertySchema);
+      mergedProperties.set(name, variants);
+    }
+  }
+
+  const properties = Object.fromEntries(
+    [...mergedProperties].map(([name, variants]) => [
+      name,
+      getMergedPropertySchema(variants, keyword),
+    ]),
+  );
+  const required = getMergedRequiredNames(schemas, keyword);
+  const additionalProperties = schemas.length > 0 &&
+      schemas.every((schema) => schema.additionalProperties === false)
+    ? false
+    : undefined;
+  const defs = Object.assign(
+    {},
+    ...schemas.flatMap((schema) => isPlainRecord(schema.$defs) ? [schema.$defs] : []),
+  );
+  const definitions = Object.assign(
+    {},
+    ...schemas.flatMap((schema) => isPlainRecord(schema.definitions) ? [schema.definitions] : []),
+  );
+
+  return {
+    type: "object",
+    ...(Object.keys(properties).length > 0 ? { properties } : {}),
+    ...(required.length > 0 ? { required } : {}),
+    ...(additionalProperties === false ? { additionalProperties } : {}),
+    ...(Object.keys(defs).length > 0 ? { $defs: defs } : {}),
+    ...(Object.keys(definitions).length > 0 ? { definitions } : {}),
+  };
+}
+
+function sanitizeAnthropicSchemaRoot(schema: unknown): Record<string, unknown> {
+  if (!isPlainRecord(schema)) {
+    return { ...PERMISSIVE_TOOL_INPUT_SCHEMA };
+  }
+
+  const {
+    allOf: rawAllOf,
+    anyOf: rawAnyOf,
+    oneOf: rawOneOf,
+    ...root
+  } = schema;
+  let sanitized: Record<string, unknown> = { ...root, type: "object" };
+
+  for (
+    const [rawBranches, keyword] of [
+      [rawAllOf, "allOf"],
+      [rawAnyOf, "anyOf"],
+      [rawOneOf, "anyOf"],
+    ] as const
+  ) {
+    if (!Array.isArray(rawBranches) || rawBranches.length === 0) continue;
+    const branches = rawBranches.map((branch) => sanitizeAnthropicSchemaRoot(branch));
+    const composed = mergeAnthropicObjectSchemas(branches, keyword);
+    sanitized = {
+      ...sanitized,
+      ...mergeAnthropicObjectSchemas([sanitized, composed], "allOf"),
+    };
+  }
+
+  return sanitized;
+}
+
 /**
  * Normalize a provider tool input schema so every function tool has a
  * provider-safe JSON Schema object at the root. Remote/MCP tools can omit the
@@ -421,6 +533,10 @@ export function sanitizeProviderToolSchema(
 
   if (profile.provider === "moonshot") {
     return sanitizeMoonshotSchemaValue(propertyKeySafeSchema) as JsonSchema;
+  }
+
+  if (profile.provider === "anthropic") {
+    return sanitizeAnthropicSchemaRoot(propertyKeySafeSchema) as JsonSchema;
   }
 
   return propertyKeySafeSchema as JsonSchema;

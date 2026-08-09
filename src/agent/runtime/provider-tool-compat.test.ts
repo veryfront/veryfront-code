@@ -328,4 +328,33 @@ describe("provider-tool-compat", () => {
       ["fine"],
     );
   });
+
+  it("removes every unsupported Anthropic root composition keyword", () => {
+    for (const keyword of ["allOf", "anyOf", "oneOf"] as const) {
+      const sanitized = sanitizeProviderToolSchema(
+        {
+          [keyword]: [
+            {
+              type: "object",
+              properties: { shared: { type: "string" } },
+              required: ["shared"],
+            },
+            {
+              type: "object",
+              properties: { extra: { type: "number" } },
+              required: ["extra"],
+            },
+          ],
+        } as never,
+        { model: "anthropic/claude-opus-4-6" },
+      );
+
+      assertEquals(sanitized.type, "object");
+      assertEquals(Object.hasOwn(sanitized, "allOf"), false);
+      assertEquals(Object.hasOwn(sanitized, "anyOf"), false);
+      assertEquals(Object.hasOwn(sanitized, "oneOf"), false);
+      assertEquals(Object.keys(sanitized.properties ?? {}), ["shared", "extra"]);
+      assertEquals(sanitized.required, keyword === "allOf" ? ["shared", "extra"] : undefined);
+    }
+  });
 });
