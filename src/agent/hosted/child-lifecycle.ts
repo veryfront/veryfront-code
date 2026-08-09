@@ -279,6 +279,26 @@ function wrapSkippableTerminalPersistence(
   };
 }
 
+const CANCELLED_TERMINAL_MESSAGE = "Child run cancelled";
+
+/**
+ * A run torn down mid-flight reports `cancelled`, but the error that surfaced is
+ * not always the abort itself — an aborted signal makes any error in flight look
+ * like a cancellation. Keep the cancelled status and append the real cause, so a
+ * failure that merely coincided with teardown is still diagnosable.
+ *
+ * Only the code is contractual here; `shouldBlockHostedChildSameTurnRetry`
+ * matches on `terminalErrorCode` precisely because the message is not.
+ */
+function resolveCancelledTerminalMessage(error: unknown): string {
+  if (isChildRunAbortError(error)) {
+    return CANCELLED_TERMINAL_MESSAGE;
+  }
+
+  const cause = error instanceof Error ? error.message : String(error);
+  return cause.length > 0 ? `${CANCELLED_TERMINAL_MESSAGE}: ${cause}` : CANCELLED_TERMINAL_MESSAGE;
+}
+
 function resolveHostedChildExecutionErrorState(
   error: unknown,
   input: {
@@ -313,7 +333,7 @@ function resolveHostedChildExecutionErrorState(
     return {
       status: "cancelled",
       terminalErrorCode: "CANCELLED",
-      terminalErrorMessage: "Child run cancelled",
+      terminalErrorMessage: resolveCancelledTerminalMessage(error),
       usage: toHostedChildLifecycleUsage(getChildRunSnapshotUsage(input.getExecutionSnapshot())),
     };
   }
