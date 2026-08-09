@@ -281,7 +281,32 @@ function wrapSkippableTerminalPersistence(
 }
 
 const CANCELLED_TERMINAL_MESSAGE = "Child run cancelled";
+/** An incidental cause on a cancelled run: enough to identify it, not the whole story. */
 const MAX_CANCELLED_CAUSE_LENGTH = 200;
+/**
+ * A failed run's message is the primary explanation a user reads to find out why
+ * their agent failed, so it keeps far more room than an incidental cause. Real
+ * provider validation errors survive intact; only bulk payloads are cut.
+ */
+const MAX_FAILURE_MESSAGE_LENGTH = 4_000;
+
+/**
+ * Bound and sanitize error text on its way to a durable run record.
+ *
+ * `terminalErrorMessage` is persisted by `finalizeConversationAgentRun`, and
+ * AGENTS.md:96-101 bars sensitive values in error messages — naming provider
+ * response bodies and raw prompts explicitly. Credential-bearing URLs are
+ * stripped and the text is cut to an excerpt, the same treatment
+ * `sanitizeDiscoveryErrorMessage` applies to surfaced error text.
+ *
+ * Applied to every branch rather than only the ones known to carry external
+ * text, so "everything written to terminalErrorMessage is sanitized and bounded"
+ * holds as an invariant instead of a case-by-case argument.
+ */
+function boundTerminalErrorText(value: string, maxLength: number): string {
+  const sanitized = sanitizeUrlCredentials(value);
+  return sanitized.length <= maxLength ? sanitized : `${sanitized.slice(0, maxLength - 3)}...`;
+}
 
 /**
  * A run torn down mid-flight reports `cancelled`, but the error that surfaced is
@@ -302,15 +327,13 @@ function resolveCancelledTerminalMessage(error: unknown): string {
     return CANCELLED_TERMINAL_MESSAGE;
   }
 
-  const sanitized = sanitizeUrlCredentials(error instanceof Error ? error.message : String(error));
-  if (sanitized.length === 0) {
-    return CANCELLED_TERMINAL_MESSAGE;
-  }
-
-  const cause = sanitized.length <= MAX_CANCELLED_CAUSE_LENGTH
-    ? sanitized
-    : `${sanitized.slice(0, MAX_CANCELLED_CAUSE_LENGTH - 3)}...`;
-  return `${CANCELLED_TERMINAL_MESSAGE}: ${cause}`;
+  const cause = boundTerminalErrorText(
+    error instanceof Error ? error.message : String(error),
+    MAX_CANCELLED_CAUSE_LENGTH,
+  );
+  return cause.length === 0
+    ? CANCELLED_TERMINAL_MESSAGE
+    : `${CANCELLED_TERMINAL_MESSAGE}: ${cause}`;
 }
 
 function resolveHostedChildExecutionErrorState(
@@ -329,7 +352,7 @@ function resolveHostedChildExecutionErrorState(
     return {
       status: error.status,
       terminalErrorCode: resolveHostedChildTerminalErrorCode(error.status),
-      terminalErrorMessage: error.message,
+      terminalErrorMessage: boundTerminalErrorText(error.message, MAX_FAILURE_MESSAGE_LENGTH),
     };
   }
 
@@ -338,7 +361,10 @@ function resolveHostedChildExecutionErrorState(
     return {
       status: "failed",
       terminalErrorCode: providerError?.code ?? input.executionFailedCode,
-      terminalErrorMessage: providerError?.message ?? error.message,
+      terminalErrorMessage: boundTerminalErrorText(
+        providerError?.message ?? error.message,
+        MAX_FAILURE_MESSAGE_LENGTH,
+      ),
       usage: toHostedChildLifecycleUsage(error.usage),
     };
   }
@@ -355,7 +381,10 @@ function resolveHostedChildExecutionErrorState(
   return {
     status: "failed",
     terminalErrorCode: input.executionFailedCode,
-    terminalErrorMessage: error instanceof Error ? error.message : String(error),
+    terminalErrorMessage: boundTerminalErrorText(
+      error instanceof Error ? error.message : String(error),
+      MAX_FAILURE_MESSAGE_LENGTH,
+    ),
     usage: toHostedChildLifecycleUsage(getChildRunSnapshotUsage(input.getExecutionSnapshot())),
   };
 }
