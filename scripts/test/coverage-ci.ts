@@ -74,7 +74,7 @@ export function buildDenoTestCommandArgs(
 ): string[] {
   return [
     "test",
-    "--preload=src/schemas/_test-setup.ts",
+    "--preload=src/testing/preload.ts",
     "--no-check",
     "--parallel",
     "--allow-all",
