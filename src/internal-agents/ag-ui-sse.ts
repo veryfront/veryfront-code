@@ -30,14 +30,26 @@ export function createStreamTransformState(
 
 function buildAgUiEventPayloadSchemas(): Record<string, Schema<Record<string, unknown>>> {
   const v = resolveSchemaValidator();
+  // Every encoded event carries a run-relative `elapsedMs` (see browser-encoder).
+  // These payload schemas are an allow-list and `parse` returns only what they
+  // declare, so a field missing from one is silently dropped before it reaches
+  // the wire -- which is exactly how `elapsedMs` went missing after it was
+  // stamped. Declaring it here once keeps that from recurring per event type.
+  const withElapsed = (
+    shape: Record<string, unknown>,
+  ): Schema<Record<string, unknown>> =>
+    // deno-lint-ignore no-explicit-any
+    (v.object({ ...shape, elapsedMs: v.number().optional() } as any) as unknown) as Schema<
+      Record<string, unknown>
+    >;
   const schemas: Record<string, Schema<Record<string, unknown>>> = {
-    RunStarted: v.object({
+    RunStarted: withElapsed({
       runId: v.string().min(1),
       threadId: v.string().min(1),
       agentId: v.string().min(1),
     }),
-    StateSnapshot: v.object({ snapshot: v.record(v.string(), v.unknown()) }),
-    MessagesSnapshot: v.object({
+    StateSnapshot: withElapsed({ snapshot: v.record(v.string(), v.unknown()) }),
+    MessagesSnapshot: withElapsed({
       messages: v.array(v.object({
         id: v.string().min(1),
         role: v.enum(["user", "assistant", "system", "tool"]),
@@ -46,36 +58,39 @@ function buildAgUiEventPayloadSchemas(): Record<string, Schema<Record<string, un
         createdAt: v.string().optional(),
       })),
     }),
-    TextMessageStart: v.object({
+    TextMessageStart: withElapsed({
       messageId: v.string().min(1),
       contentId: v.string().min(1),
       role: v.literal("assistant"),
     }),
-    TextMessageContent: v.object({
+    TextMessageContent: withElapsed({
       messageId: v.string().min(1),
       contentId: v.string().min(1),
       delta: v.string(),
     }),
-    TextMessageEnd: v.object({
+    TextMessageEnd: withElapsed({
       messageId: v.string().min(1),
       contentId: v.string().min(1),
     }),
-    ReasoningMessageStart: v.object({ messageId: v.string().min(1), role: v.literal("reasoning") }),
-    ReasoningMessageContent: v.object({ messageId: v.string().min(1), delta: v.string() }),
-    ReasoningMessageEnd: v.object({ messageId: v.string().min(1) }),
-    StepStarted: v.object({ stepName: v.string().min(1) }),
-    StepFinished: v.object({ stepName: v.string().min(1) }),
-    ToolCallStart: v.object({ toolCallId: v.string().min(1), toolCallName: v.string().min(1) }),
-    ToolCallArgs: v.object({ toolCallId: v.string().min(1), delta: v.string() }),
-    ToolCallEnd: v.object({ toolCallId: v.string().min(1) }),
-    ToolCallResult: v.object({
+    ReasoningMessageStart: withElapsed({
+      messageId: v.string().min(1),
+      role: v.literal("reasoning"),
+    }),
+    ReasoningMessageContent: withElapsed({ messageId: v.string().min(1), delta: v.string() }),
+    ReasoningMessageEnd: withElapsed({ messageId: v.string().min(1) }),
+    StepStarted: withElapsed({ stepName: v.string().min(1) }),
+    StepFinished: withElapsed({ stepName: v.string().min(1) }),
+    ToolCallStart: withElapsed({ toolCallId: v.string().min(1), toolCallName: v.string().min(1) }),
+    ToolCallArgs: withElapsed({ toolCallId: v.string().min(1), delta: v.string() }),
+    ToolCallEnd: withElapsed({ toolCallId: v.string().min(1) }),
+    ToolCallResult: withElapsed({
       toolCallId: v.string().min(1),
       result: v.unknown(),
       isError: v.boolean().optional(),
     }),
-    Custom: v.object({ name: v.string().min(1), value: v.unknown() }),
-    RunError: v.object({ code: v.string().min(1).optional(), message: v.string().min(1) }),
-    RunFinished: v.object({
+    Custom: withElapsed({ name: v.string().min(1), value: v.unknown() }),
+    RunError: withElapsed({ code: v.string().min(1).optional(), message: v.string().min(1) }),
+    RunFinished: withElapsed({
       metadata: v.object({
         provider: v.string().optional(),
         model: v.string().optional(),
