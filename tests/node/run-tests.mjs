@@ -44,7 +44,16 @@ const includePatterns = (process.env.NODE_TEST_INCLUDE || process.env.VF_TEST_IN
   .map((value) => value.trim())
   .filter(Boolean);
 // Exclude Deno-specific test files that use Deno.test directly
-const denoOnlyTests = ["src/issues/**", "src/cache/backend.test.ts"];
+// The exclusion heuristic below reads each test file's own source for `Deno.`,
+// which misses a file whose Deno usage lives in the helper it imports. The
+// cwd-exclusion pair asserts a property of `deno test --parallel` itself --
+// that test files sharing one process do not share a working directory -- so it
+// is Deno-only by subject, not merely by API.
+const denoOnlyTests = [
+  "src/issues/**",
+  "src/cache/backend.test.ts",
+  "src/testing/cwd-exclusion-*.test.ts",
+];
 const runtimeIncompatibleTests = [
   "src/proxy/handler.test.ts",
   "src/proxy/oauth-client.test.ts",

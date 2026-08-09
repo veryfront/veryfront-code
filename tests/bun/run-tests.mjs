@@ -45,6 +45,11 @@ const includePatterns = (process.env.BUN_TEST_INCLUDE || process.env.VF_TEST_INC
   .map((value) => value.trim())
   .filter(Boolean);
 const runtimeIncompatibleTests = [
+  // Asserts a property of `deno test --parallel` itself -- that test files
+  // sharing one process do not share a working directory. The heuristic below
+  // misses it because its Deno usage lives in the helper it imports rather
+  // than in the test file's own source.
+  "src/testing/cwd-exclusion-*.test.ts",
   "src/config/env.test.ts",
   "src/proxy/handler.test.ts",
   "src/proxy/oauth-client.test.ts",
