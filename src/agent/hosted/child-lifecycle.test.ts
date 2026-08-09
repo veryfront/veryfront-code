@@ -244,6 +244,69 @@ describe("agent/hosted-child-lifecycle", () => {
     assertEquals(message.endsWith("..."), true, "truncation is visible in the message");
   });
 
+  it("strips credentials from a failed run's message", async () => {
+    const result = await runHostedChildExecutionLifecycle({
+      adapter: {},
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      execute: () => {
+        throw new Error("post to https://svc:hunter2@api.example.com/v1/chat failed");
+      },
+      getExecutionSnapshot: () => null,
+    });
+
+    const message = result.terminalState.terminalErrorMessage ?? "";
+    assertEquals(result.status, "failed", "the run still reports failed");
+    assertEquals(
+      message.includes("hunter2"),
+      false,
+      "url credentials must not reach the durable run record",
+    );
+    assertEquals(
+      message.includes("api.example.com"),
+      true,
+      "the actionable part of the message survives",
+    );
+  });
+
+  it("keeps a realistic provider error intact", async () => {
+    const providerError = "Invalid request: messages[3].content must be a string, got object. " +
+      "See https://docs.example.com/errors#invalid-request for details.";
+
+    const result = await runHostedChildExecutionLifecycle({
+      adapter: {},
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      execute: () => {
+        throw new Error(providerError);
+      },
+      getExecutionSnapshot: () => null,
+    });
+
+    assertEquals(
+      result.terminalState.terminalErrorMessage,
+      providerError,
+      "a normal provider error is not truncated — this is what a user reads to debug",
+    );
+  });
+
+  it("cuts a bulk payload out of a failed run's message", async () => {
+    const result = await runHostedChildExecutionLifecycle({
+      adapter: {},
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      execute: () => {
+        throw new Error("z".repeat(60_000));
+      },
+      getExecutionSnapshot: () => null,
+    });
+
+    const message = result.terminalState.terminalErrorMessage ?? "";
+    assertEquals(
+      message.length <= 4_000,
+      true,
+      "a response body must not be persisted whole",
+    );
+    assertEquals(message.endsWith("..."), true, "truncation is visible in the message");
+  });
+
   it("reports terminal hook errors through onLifecycleError for failure states", async () => {
     const lifecycleErrors: unknown[] = [];
     const adapter: HostedChildLifecycleAdapter = {
