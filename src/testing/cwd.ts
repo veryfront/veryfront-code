@@ -18,6 +18,9 @@
 /** Tail of the queue. Each caller awaits the previous one before it chdirs. */
 let queue: Promise<void> = Promise.resolve();
 
+/** Whether a caller currently holds the directory. */
+let held = false;
+
 /**
  * Run `fn` with the process working directory set to `dir`.
  *
@@ -29,12 +32,26 @@ let queue: Promise<void> = Promise.resolve();
  * @returns whatever `fn` returns
  */
 export function withCwd<T>(dir: string, fn: () => Promise<T> | T): Promise<T> {
+  // Fail fast rather than enqueue: a nested call would wait for the queue,
+  // which waits for the outer call, which waits for this one. Reentrancy is
+  // not the answer either -- the inner chdir would move the directory out from
+  // under the outer caller, which is the exact hazard this exists to prevent.
+  if (held) {
+    return Promise.reject(
+      new Error(
+        "withCwd cannot be nested: the inner call would move the directory the outer call is using.",
+      ),
+    );
+  }
+
   const run = queue.then(async () => {
     const previous = Deno.cwd();
+    held = true;
     try {
       Deno.chdir(dir);
       return await fn();
     } finally {
+      held = false;
       Deno.chdir(previous);
     }
   });
