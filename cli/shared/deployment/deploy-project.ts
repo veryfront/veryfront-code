@@ -1123,7 +1123,15 @@ export function createDeployProject(options: {
       });
 
       if (request.mode === "dry-run") {
-        if (!bootstrapPush && request.source.kind === "ensure-pushed") {
+        // Naming a project also makes the source already-pushed, which would
+        // otherwise skip this check: the dry run then reported a deploy that
+        // the byte-identical apply refused, because the apply compares the
+        // receipt against the named project. `--skip-source-push` keeps its
+        // existing dry-run behaviour; the caller has said the source is handled.
+        if (
+          !bootstrapPush &&
+          (request.source.kind === "ensure-pushed" || request.projectSlug !== undefined)
+        ) {
           await resolvePushedSource({
             projectDir: request.projectDir,
             controlPlane: config.apiUrl,
