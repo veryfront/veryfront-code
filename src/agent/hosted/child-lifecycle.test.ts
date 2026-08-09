@@ -254,17 +254,13 @@ describe("agent/hosted-child-lifecycle", () => {
       getExecutionSnapshot: () => null,
     });
 
-    const message = result.terminalState.terminalErrorMessage ?? "";
     assertEquals(result.status, "failed", "the run still reports failed");
+    // Exact rather than substring checks: this pins that only the password is
+    // masked and the rest of the message survives verbatim.
     assertEquals(
-      message.includes("hunter2"),
-      false,
-      "url credentials must not reach the durable run record",
-    );
-    assertEquals(
-      message.includes("api.example.com"),
-      true,
-      "the actionable part of the message survives",
+      result.terminalState.terminalErrorMessage,
+      "post to https://svc:[REDACTED]@api.example.com/v1/chat failed",
+      "the password is masked while the actionable message survives",
     );
   });
 
