@@ -19,13 +19,17 @@ export interface AgUiRuntimeEventEncoder {
 /** Options accepted by create AG-UI runtime event encoder. */
 export interface CreateAgUiRuntimeEventEncoderOptions {
   initialMetadata?: Partial<AgUiBrowserRunFinishedMetadata>;
+  /** Clock for `elapsedMs`; forwarded to the encoder state. */
+  nowMs?: (() => number) | null;
 }
 
 /** Create AG-UI runtime event encoder. */
 export function createAgUiRuntimeEventEncoder(
   options: CreateAgUiRuntimeEventEncoderOptions = {},
 ): AgUiRuntimeEventEncoder {
-  const state = createAgUiBrowserEncoderState();
+  const state = createAgUiBrowserEncoderState(
+    options.nowMs === undefined ? {} : { nowMs: options.nowMs },
+  );
   const toolInputs = new Map<string, unknown>();
 
   Object.assign(state.metadata, options.initialMetadata ?? {});

@@ -6,6 +6,7 @@ import type {
 } from "../agent/ag-ui/browser-encoder.ts";
 import { parseDataStreamSseEvents } from "#veryfront/agent/streaming/data-stream.ts";
 import {
+  type AgUiBrowserEncoderStateOptions,
   createAgUiBrowserEncoderState,
   finalizeAgUiBrowserEvents,
   mapRuntimeStreamEventToAgUiBrowserEvents,
@@ -21,8 +22,10 @@ export type RunFinishedMetadata = AgUiBrowserRunFinishedMetadata;
 export type StreamTransformState = AgUiBrowserEncoderState;
 export type MappedAgUiEvent = AgUiBrowserEncodedEvent;
 
-export function createStreamTransformState(): StreamTransformState {
-  return createAgUiBrowserEncoderState();
+export function createStreamTransformState(
+  options: AgUiBrowserEncoderStateOptions = {},
+): StreamTransformState {
+  return createAgUiBrowserEncoderState(options);
 }
 
 function buildAgUiEventPayloadSchemas(): Record<string, Schema<Record<string, unknown>>> {
