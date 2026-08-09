@@ -52,7 +52,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 const TRUNCATED_TEXT_SUFFIX = "… [truncated]";
-const OMITTED_MESSAGE_NOTICE = "[messages omitted: model call context exceeded the payload limit]";
+const OMITTED_MESSAGE_NOTICE = "[veryfront] Model call context truncated for audit.";
 
 const utf8Encoder = new TextEncoder();
 
@@ -88,76 +88,91 @@ function truncateMessageTextParts(message: unknown, maxTextBytes: number): unkno
   };
 }
 
+function buildTruncationNotice(input: {
+  originalByteLength: number;
+  omittedMessageCount: number;
+}): unknown {
+  return {
+    role: "system",
+    content: [{
+      type: "text",
+      text:
+        `${OMITTED_MESSAGE_NOTICE} Original ${
+          formatMebibytes(input.originalByteLength)
+        } exceeded the ${
+          formatMebibytes(MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES)
+        } append limit; ${input.omittedMessageCount} message(s) omitted. The model call was not ` +
+        `dispatched — this record is an excerpt, not the context that was sent.`,
+    }],
+  };
+}
+
 /**
  * Fit an oversized model call context inside the append budget.
  *
  * Private run events are exempt from `normalizeConversationRunEvent`'s size clamp,
  * so nothing upstream shrinks them and the raw event is what gets sent. Rather
  * than lose the run's remaining events by disposing the mirror, the context is
- * reduced to fit and stamped so it never reads as a faithful record: `truncated`
- * says the content was reduced, and the original size and omitted-message count
- * say by how much. Newest messages are kept — they are the ones a reader of a
- * failed run is looking for.
+ * reduced to fit and led by a notice message saying what was cut, so it can never
+ * be read as the context that was actually sent. Newest messages are kept — they
+ * are what someone reading a failed run is looking for.
+ *
+ * The notice lives inside `messages` rather than in new top-level fields on
+ * purpose: `isPrivateConversationRunEvent` allows only `type`, `messages` and
+ * `tools`, and any extra key makes normalization throw — which this sink would
+ * then treat as a persistence failure and dispose the mirror, reintroducing the
+ * exact loss this function exists to prevent.
  */
-function truncatePrivateRunEventToLimit(event: Record<string, unknown>): Record<string, unknown> {
-  const originalByteLength = getPrivateRunEventAppendRequestByteLength(event);
+function truncatePrivateRunEventToLimit(
+  event: Record<string, unknown>,
+  originalByteLength: number,
+): { event: Record<string, unknown>; omittedMessageCount: number } {
   const messages = Array.isArray(event.messages) ? event.messages : [];
+  const tools = Array.isArray(event.tools) ? event.tools : undefined;
 
-  const stamp = (
-    next: Record<string, unknown>,
+  const build = (
+    kept: unknown[],
     omittedMessageCount: number,
+    keepTools: boolean,
   ): Record<string, unknown> => ({
-    ...next,
-    truncated: true,
-    originalByteLength,
-    omittedMessageCount,
+    type: event.type,
+    messages: [buildTruncationNotice({ originalByteLength, omittedMessageCount }), ...kept],
+    ...(tools === undefined ? {} : { tools: keepTools ? tools : [] }),
   });
 
-  // Clamp text progressively; each pass halves the per-part budget.
+  const fits = (candidate: Record<string, unknown>): boolean =>
+    getPrivateRunEventAppendRequestByteLength(candidate) <=
+      MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES;
+
+  // Clamp message text progressively; each pass quarters the per-part budget.
   for (
     let maxTextBytes = 64 * 1024;
     maxTextBytes >= 256;
     maxTextBytes = Math.floor(maxTextBytes / 4)
   ) {
-    const candidate = stamp(
-      {
-        ...event,
-        messages: messages.map((message) => truncateMessageTextParts(message, maxTextBytes)),
-      },
+    const candidate = build(
+      messages.map((message) => truncateMessageTextParts(message, maxTextBytes)),
       0,
+      true,
     );
-    if (
-      getPrivateRunEventAppendRequestByteLength(candidate) <=
-        MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES
-    ) {
-      return candidate;
-    }
+    if (fits(candidate)) return { event: candidate, omittedMessageCount: 0 };
   }
 
   // Still over: drop the oldest messages, keeping the most recent ones.
   const clamped = messages.map((message) => truncateMessageTextParts(message, 256));
   for (let keep = Math.min(clamped.length, 8); keep >= 1; keep--) {
-    const candidate = stamp(
-      { ...event, messages: clamped.slice(-keep) },
-      clamped.length - keep,
-    );
-    if (
-      getPrivateRunEventAppendRequestByteLength(candidate) <=
-        MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES
-    ) {
-      return candidate;
-    }
+    const candidate = build(clamped.slice(-keep), clamped.length - keep, true);
+    if (fits(candidate)) return { event: candidate, omittedMessageCount: clamped.length - keep };
   }
 
-  // Guaranteed-fit fallback: keep the envelope, drop the content entirely.
-  return stamp(
-    {
-      ...event,
-      messages: [{ role: "system", content: [{ type: "text", text: OMITTED_MESSAGE_NOTICE }] }],
-      ...(event.tools === undefined ? {} : { tools: [] }),
-    },
-    clamped.length,
-  );
+  // Last resort: notice only, and drop tools — the remaining bulk can only be there.
+  const bare = build([], clamped.length, false);
+  if (!fits(bare)) {
+    throw new DurableRunEventPersistenceError(
+      "Run event append request exceeds the supported payload size and could not be reduced",
+    );
+  }
+  return { event: bare, omittedMessageCount: clamped.length };
 }
 
 function formatMebibytes(bytes: number): string {
@@ -191,12 +206,12 @@ function resolvePersistableEvent(event: unknown): ResolvedRunEvent {
     );
   }
 
-  const truncated = truncatePrivateRunEventToLimit(event);
+  const truncated = truncatePrivateRunEventToLimit(event, requestByteLength);
   return {
-    event: truncated,
+    event: truncated.event,
     oversize: {
       originalByteLength: requestByteLength,
-      omittedMessageCount: Number(truncated.omittedMessageCount ?? 0),
+      omittedMessageCount: truncated.omittedMessageCount,
     },
   };
 }

@@ -12,6 +12,8 @@ import {
   MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
   MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
 } from "../conversation/run-event-limits.ts";
+import { isPrivateConversationRunEvent } from "../conversation/private-run-event.ts";
+import { prepareConversationRunExternalEvents } from "../conversation/run-event-preparation.ts";
 import {
   createDurableRunEventSink,
   DurableRunEventPersistenceError,
@@ -154,11 +156,43 @@ describe("agent/hosted/durable-run-event-sink", () => {
       true,
       "the persisted record fits the append budget",
     );
-    assertEquals(persisted.truncated, true, "the record declares that it was reduced");
     assertEquals(
-      typeof persisted.originalByteLength,
-      "number",
-      "the record carries the size it was reduced from",
+      isPrivateConversationRunEvent(persisted),
+      true,
+      "the reduced record must still satisfy the private-event shape, or the real mirror " +
+        "would throw on append and dispose the mirror — the very loss this fixes",
+    );
+    const noticeText = ((persisted.messages as Array<Record<string, unknown>>)[0]
+      .content as Array<Record<string, unknown>>)[0].text as string;
+    assertEquals(
+      noticeText.includes("truncated for audit"),
+      true,
+      "the record leads with a notice saying it is an excerpt",
+    );
+    assertEquals(
+      noticeText.includes("not the context that was sent"),
+      true,
+      "the notice denies that it is a faithful record",
+    );
+  });
+
+  it("survives the real normalization path used by the production mirror", () => {
+    const oversized = createModelCallContextEventWithText(
+      MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+    );
+    const target = mirror();
+    return createDurableRunEventSink({ mirror: target.result })(oversized).then(
+      () => {
+        throw new Error("expected the oversize gate to reject");
+      },
+      () => {
+        const persisted = target.appended[0][0] as never;
+        // prepareConversationRunExternalEvents is what the hosted mirror actually
+        // runs on append; it throws "Invalid private run event shape" for any
+        // unexpected top-level key.
+        const normalized = prepareConversationRunExternalEvents([persisted]);
+        assertEquals(normalized.length, 1, "the reduced record normalizes to exactly one event");
+      },
     );
   });
 
@@ -230,9 +264,16 @@ describe("agent/hosted/durable-run-event-sink", () => {
       "clamping text cannot help here, so messages must be dropped until it fits",
     );
     assertEquals(
-      (persisted.omittedMessageCount as number) > 0,
+      isPrivateConversationRunEvent(persisted),
       true,
-      "the record says how many messages were dropped",
+      "the reduced record still satisfies the private-event shape",
+    );
+    const noticeText = ((persisted.messages as Array<Record<string, unknown>>)[0]
+      .content as Array<Record<string, unknown>>)[0].text as string;
+    assertEquals(
+      /\b[1-9]\d* message\(s\) omitted/.test(noticeText),
+      true,
+      "the notice states how many messages were dropped",
     );
   });
 
@@ -359,8 +400,9 @@ describe("agent/hosted/durable-run-event-sink", () => {
     assertEquals(dispatches, 0);
     assertEquals(oversized.appended.length, 1);
     assertEquals(
-      (oversized.appended[0][0] as unknown as Record<string, unknown>).truncated,
+      isPrivateConversationRunEvent(oversized.appended[0][0]),
       true,
+      "the audit record stays a valid private event",
     );
     assertEquals(oversized.isDisposed(), false);
   });
