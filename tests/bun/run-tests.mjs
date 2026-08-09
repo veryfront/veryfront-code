@@ -5,6 +5,7 @@ import os from "node:os";
 import { readFileSync } from "node:fs";
 import { filterTestFiles, listTestFiles, splitIntoShards } from "../test-file-utils.mjs";
 import { ensureNpmNodeModulesLinks } from "../ensure-npm-links.mjs";
+import { DENO_ONLY_TESTS } from "../deno-only-tests.mjs";
 
 function resolveConcurrency(envKeys) {
   for (const key of envKeys) {
@@ -45,6 +46,8 @@ const includePatterns = (process.env.BUN_TEST_INCLUDE || process.env.VF_TEST_INC
   .map((value) => value.trim())
   .filter(Boolean);
 const runtimeIncompatibleTests = [
+  // Files the `Deno.`-in-source heuristic below cannot see; see the shared list.
+  ...DENO_ONLY_TESTS,
   "src/config/env.test.ts",
   "src/proxy/handler.test.ts",
   "src/proxy/oauth-client.test.ts",

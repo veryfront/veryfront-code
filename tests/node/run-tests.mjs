@@ -5,6 +5,7 @@ import os from "node:os";
 import { readFileSync } from "node:fs";
 import { filterTestFiles, listTestFiles, splitIntoShards } from "../test-file-utils.mjs";
 import { ensureNpmNodeModulesLinks } from "../ensure-npm-links.mjs";
+import { DENO_ONLY_TESTS } from "../deno-only-tests.mjs";
 
 function resolveConcurrency(envKeys) {
   for (const key of envKeys) {
@@ -43,8 +44,14 @@ const includePatterns = (process.env.NODE_TEST_INCLUDE || process.env.VF_TEST_IN
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
-// Exclude Deno-specific test files that use Deno.test directly
-const denoOnlyTests = ["src/issues/**", "src/cache/backend.test.ts"];
+// Exclude Deno-specific test files that use Deno.test directly. Files the
+// `Deno.`-in-source heuristic below cannot see live in ./deno-only-tests.mjs,
+// shared with the Bun runner.
+const denoOnlyTests = [
+  "src/issues/**",
+  "src/cache/backend.test.ts",
+  ...DENO_ONLY_TESTS,
+];
 const runtimeIncompatibleTests = [
   "src/proxy/handler.test.ts",
   "src/proxy/oauth-client.test.ts",
