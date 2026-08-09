@@ -12,6 +12,8 @@ import {
   MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
   MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
 } from "../conversation/run-event-limits.ts";
+import { isPrivateConversationRunEvent } from "../conversation/private-run-event.ts";
+import { prepareConversationRunExternalEvents } from "../conversation/run-event-preparation.ts";
 import {
   createDurableRunEventSink,
   DurableRunEventPersistenceError,
@@ -52,6 +54,24 @@ function mirror(input: {
     },
   };
   return { result, appended, isDisposed: () => disposed };
+}
+
+function firstAppendedEvent(appended: unknown[][]): Record<string, unknown> {
+  const batch = appended[0];
+  if (!batch || batch[0] === undefined) {
+    throw new Error("expected an appended event");
+  }
+  return batch[0] as Record<string, unknown>;
+}
+
+function leadingNoticeText(event: Record<string, unknown>): string {
+  const messages = event.messages as Array<Record<string, unknown>> | undefined;
+  const parts = messages?.[0]?.content as Array<Record<string, unknown>> | undefined;
+  const text = parts?.[0]?.text;
+  if (typeof text !== "string") {
+    throw new Error("expected a leading notice message");
+  }
+  return text;
 }
 
 function createModelCallContextEventWithText(
@@ -140,7 +160,137 @@ describe("agent/hosted/durable-run-event-sink", () => {
       DurableRunEventPersistenceError,
       "Run event append request exceeds the supported payload size",
     );
-    assertEquals(oversizedTarget.appended, []);
+
+    // The gate still refuses the dispatch, but the attempt is now on the record.
+    assertEquals(
+      oversizedTarget.appended.length,
+      1,
+      "a truncated record is persisted for audit before the gate throws",
+    );
+    const persisted = firstAppendedEvent(oversizedTarget.appended);
+    assertEquals(
+      getPrivateRunEventAppendRequestByteLength(persisted) <=
+        MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+      true,
+      "the persisted record fits the append budget",
+    );
+    assertEquals(
+      isPrivateConversationRunEvent(persisted),
+      true,
+      "the reduced record must still satisfy the private-event shape, or the real mirror " +
+        "would throw on append and dispose the mirror — the very loss this fixes",
+    );
+    const noticeText = leadingNoticeText(persisted);
+    assertEquals(
+      noticeText.includes("truncated for audit"),
+      true,
+      "the record leads with a notice saying it is an excerpt",
+    );
+    assertEquals(
+      noticeText.includes("not the context that was sent"),
+      true,
+      "the notice denies that it is a faithful record",
+    );
+  });
+
+  it("survives the real normalization path used by the production mirror", async () => {
+    const target = mirror();
+    await assertRejects(
+      async () =>
+        await createDurableRunEventSink({ mirror: target.result })(
+          createModelCallContextEventWithText(MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES),
+        ),
+      DurableRunEventPersistenceError,
+    );
+
+    // prepareConversationRunExternalEvents is what the hosted mirror actually runs
+    // on append; it throws "Invalid private run event shape" for any unexpected
+    // top-level key, which this sink would treat as a persistence failure.
+    const normalized = prepareConversationRunExternalEvents([
+      firstAppendedEvent(target.appended) as never,
+    ]);
+    assertEquals(normalized.length, 1, "the reduced record normalizes to exactly one event");
+  });
+
+  it("keeps the mirror usable after an oversized context is refused", async () => {
+    const target = mirror();
+    const sink = createDurableRunEventSink({ mirror: target.result });
+
+    await assertRejects(
+      async () =>
+        await sink(
+          createModelCallContextEventWithText(MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES),
+        ),
+      DurableRunEventPersistenceError,
+    );
+    assertEquals(target.isDisposed(), false, "one oversized context must not disable the mirror");
+
+    await sink(createModelCallContextEventWithText(16));
+    assertEquals(
+      target.appended.length,
+      2,
+      "later events in the same run still persist",
+    );
+  });
+
+  it("explains the refusal in terms an operator can act on", async () => {
+    const target = mirror();
+    const error = await assertRejects(
+      async () =>
+        await createDurableRunEventSink({ mirror: target.result })(
+          createModelCallContextEventWithText(MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES),
+        ),
+      DurableRunEventPersistenceError,
+    );
+
+    assertInstanceOf(error, DurableRunEventPersistenceError);
+    const message = error.message;
+    assertEquals(message.includes("MiB"), true, "the message states the size and the limit");
+    assertEquals(
+      message.includes("was not dispatched"),
+      true,
+      "the message says the model call did not happen",
+    );
+    assertEquals(
+      message.includes("truncated record was persisted"),
+      true,
+      "the message points at the audit record that was written",
+    );
+  });
+
+  it("guarantees a fit when message count alone exceeds the budget", async () => {
+    const target = mirror();
+    const event = {
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      messages: Array.from({ length: 120_000 }, () => ({
+        role: "user",
+        content: [{ type: "text", text: "y".repeat(80) }],
+      })),
+    } as unknown as Parameters<ReturnType<typeof createDurableRunEventSink>>[0];
+
+    await assertRejects(
+      async () => await createDurableRunEventSink({ mirror: target.result })(event),
+      DurableRunEventPersistenceError,
+    );
+
+    const persisted = firstAppendedEvent(target.appended);
+    assertEquals(
+      getPrivateRunEventAppendRequestByteLength(persisted) <=
+        MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+      true,
+      "clamping text cannot help here, so messages must be dropped until it fits",
+    );
+    assertEquals(
+      isPrivateConversationRunEvent(persisted),
+      true,
+      "the reduced record still satisfies the private-event shape",
+    );
+    const noticeText = leadingNoticeText(persisted);
+    assertEquals(
+      /\b[1-9]\d* message\(s\) omitted/.test(noticeText),
+      true,
+      "the notice states how many messages were dropped",
+    );
   });
 
   it("serializes concurrent events that share a durable mirror", async () => {
@@ -260,8 +410,17 @@ describe("agent/hosted/durable-run-event-sink", () => {
       DurableRunEventPersistenceError,
       "Run event append request exceeds the supported payload size",
     );
-    assertEquals(oversized.appended, []);
+    // The fail-closed contract that matters: the model is never called when the
+    // context could not be recorded faithfully. Only the audit record changed —
+    // a truncated one is now written before the refusal.
     assertEquals(dispatches, 0);
+    assertEquals(oversized.appended.length, 1);
+    assertEquals(
+      isPrivateConversationRunEvent(firstAppendedEvent(oversized.appended)),
+      true,
+      "the audit record stays a valid private event",
+    );
+    assertEquals(oversized.isDisposed(), false);
   });
 
   it("rejects caller aborts without a reason as AbortError", async () => {
