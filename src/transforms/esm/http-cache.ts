@@ -102,6 +102,8 @@ import {
 /** Threshold in ms above which an HTTP module fetch is considered slow */
 const SLOW_HTTP_FETCH_THRESHOLD_MS = 500;
 const HTTP_MODULE_FETCH_WAIT_GRACE_MS = 5_000;
+const HTTP_MODULE_PUBLICATION_TIMEOUT_MS = HTTP_MODULE_FETCH_TIMEOUT_MS +
+  HTTP_MODULE_FETCH_WAIT_GRACE_MS;
 /** Maximum time a caller can wait for one complete HTTP module fetch sequence. */
 export const HTTP_MODULE_FETCH_MAX_WAIT_MS = HTTP_MODULE_FETCH_RETRY_BUDGET_MS +
   HTTP_MODULE_FETCH_WAIT_GRACE_MS;
@@ -142,7 +144,7 @@ async function publishHttpBundleGeneration<T>(
       .catch(() => {})
       .then(async () => {
         assertCurrentHttpFetch(abortSignal, control);
-        if (!control.commit(HTTP_MODULE_FETCH_TIMEOUT_MS)) {
+        if (!control.commit(HTTP_MODULE_PUBLICATION_TIMEOUT_MS)) {
           throw abandonedHttpFetchError(abortSignal);
         }
         // The committed publication stays authoritative even if its caller-facing

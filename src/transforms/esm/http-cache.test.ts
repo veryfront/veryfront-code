@@ -375,6 +375,48 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
+  it("lets an optional distributed write time out before publication expires", async () => {
+    using time = new FakeTime();
+    const distributedWriteStarted = Promise.withResolvers<void>();
+    const backend: CacheBackend = {
+      type: "memory",
+      get: () => Promise.resolve(null),
+      set: async () => {
+        distributedWriteStarted.resolve();
+        await new Promise<void>((_, reject) =>
+          setTimeout(
+            () => reject(new DOMException("Distributed cache write timed out", "TimeoutError")),
+            HTTP_MODULE_FETCH_TIMEOUT_MS,
+          )
+        );
+      },
+      del: () => Promise.resolve(),
+    };
+    const mockFetch = (() =>
+      Promise.resolve(
+        new Response("export const cached = true;", {
+          headers: { "content-type": "application/javascript" },
+        }),
+      )) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-distributed-timeout-", mockFetch, async (tempDir) => {
+      __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+      const source = 'import "https://93.184.216.34/distributed-timeout.js";';
+      const resultPromise = cacheHttpImportsToLocal(source, {
+        cacheDir: tempDir,
+        importMap: { imports: {}, scopes: {} },
+      });
+
+      await time.runMicrotasks();
+      await distributedWriteStarted.promise;
+      await time.tickAsync(HTTP_MODULE_FETCH_TIMEOUT_MS);
+
+      const result = await resultPromise;
+      assert(result.code.includes("file://"));
+      assertEquals(inFlightHttpFetches.size, 0);
+    });
+  });
+
   it("rechecks publication quarantine after a cache lookup yields", async () => {
     using time = new FakeTime();
     const moduleUrl = "https://93.184.216.34/committed-distributed-owner.js";
@@ -448,7 +490,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
             controller.abort(new DOMException("render abandoned", "AbortError"));
             await assertRejects(() => abandonedOwner, DOMException, "render abandoned");
 
-            await time.tickAsync(HTTP_MODULE_FETCH_TIMEOUT_MS);
+            await runNextFakeTimer(time, tempDir);
             await time.runMicrotasks();
 
             assertEquals(inFlightHttpFetches.size, 0);
@@ -548,7 +590,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
           controller.abort(new DOMException("render abandoned", "AbortError"));
           await assertRejects(() => abandoned, DOMException, "render abandoned");
 
-          await time.tickAsync(HTTP_MODULE_FETCH_TIMEOUT_MS);
+          await runNextFakeTimer(time, tempDir);
           await time.runMicrotasks();
 
           assertEquals(inFlightHttpFetches.size, 0);
