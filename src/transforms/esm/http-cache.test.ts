@@ -696,9 +696,10 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(secondError, undefined);
       assert(secondResult?.code.includes("file://"));
       assertEquals(fetchCount, 1);
-      assertEquals(secondProgress.length, 1);
-      assertEquals(secondProgress[0]?.phase, "http-cache:module-fetched");
-      assertEquals(secondProgress[0]?.filePath?.startsWith("http-"), true);
+      assertEquals(secondProgress.map(({ phase }) => phase), [
+        "http-cache:module-fetched",
+      ]);
+      assertEquals(secondProgress.every(({ filePath }) => filePath?.startsWith("http-")), true);
     });
   });
 
@@ -879,7 +880,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(fetchedUrls, [parentUrl, childUrl]);
   });
 
-  it("reports progress after each module in a recursive HTTP graph is fetched", async () => {
+  it("reports progress after cache lookup and fetch for each recursive HTTP module", async () => {
     const parentUrl = "https://93.184.216.34/progress/parent.js";
     const childUrl = "https://93.184.216.34/progress/child.js";
     const progressEvents: Array<{ phase: string; filePath?: string }> = [];
@@ -907,7 +908,9 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     );
 
     assertEquals(progressEvents.map(({ phase }) => phase), [
+      "http-cache:cache-lookup-complete",
       "http-cache:module-fetched",
+      "http-cache:cache-lookup-complete",
       "http-cache:module-fetched",
     ]);
     assertEquals(progressEvents.every(({ filePath }) => filePath?.startsWith("http-")), true);

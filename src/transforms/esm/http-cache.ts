@@ -495,6 +495,10 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       ? { code: null, wasGzipped: false, failReason: "not_found" as const }
       : await httpBundleCache.getCodeByUrl(String(hash));
     abortSignal.throwIfAborted();
+    reportProgress({
+      phase: "http-cache:cache-lookup-complete",
+      filePath: `http-${hash}.mjs`,
+    });
 
     if (cacheResult.code) {
       const cachedCode = unbrand(cacheResult.code);
