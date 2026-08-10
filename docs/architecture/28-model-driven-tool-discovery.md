@@ -42,7 +42,9 @@ example. Read it in
   authorizes it. `form_input` remains authorized but deferred until a search
   loads it. Bootstrap tools are filtered against the authorized set, so a run
   that does not authorize `load_skill` exposes `tool_search` alone. That is why
-  the measurement below reports one initially exposed tool.
+  the measurement below reports one initially exposed tool. Its deterministic
+  fixture authorizes exactly 64 generated tools and does not authorize
+  `load_skill`.
 - **eager**: the agent declares a binding. The bound set is exposed directly and
   `selectProviderCompatibleToolNames` still applies, so a binding larger than
   the provider cap is still truncated in alphabetical order after local tools
@@ -86,7 +88,7 @@ mechanism.
 ## Authorization: two independent gates
 
 1. **Discovery**: `tool_search` searches only the authorized catalog.
-2. **Execution**: unchanged. `prepareExecution` in
+2. **Execution**: `prepareExecution` in
    `project-scoped-remote-tools.ts` re-checks remote allowance at call time via
    `isRemoteToolNameAllowed`. Provider-native exposure is intersected with the
    current configured provider tools and selected model support before each
