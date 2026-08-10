@@ -5,7 +5,7 @@
  *
  * @example
  * ```sh
- * npx veryfront dev
+ * npx veryfront@latest dev
  * ```
  */
 

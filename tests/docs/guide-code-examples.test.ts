@@ -541,8 +541,8 @@ describe("Guide: deploying.md", () => {
         "veryfront dev",
         "veryfront build",
         "veryfront serve",
-        "npx veryfront deploy",
-        "npx veryfront deploy --branch feature-x --env staging",
+        "npx veryfront@latest deploy",
+        "npx veryfront@latest deploy --branch feature-x --env staging",
         "veryfront open",
       ]
     ) {
@@ -924,7 +924,7 @@ describe("Guide: installation.md", () => {
       "pnpm add -g veryfront",
       "yarn global add veryfront",
       "bun add -g veryfront",
-      "npx veryfront",
+      "npx veryfront@latest",
       "veryfront install agents",
       "veryfront --version",
     ];
@@ -1013,8 +1013,8 @@ describe("Guide: deploy-project.md", () => {
       const command of [
         "veryfront build",
         "veryfront serve",
-        "npx veryfront deploy",
-        "npx veryfront push --branch feature-x",
+        "npx veryfront@latest deploy",
+        "npx veryfront@latest push --branch feature-x",
         "veryfront open",
       ]
     ) {

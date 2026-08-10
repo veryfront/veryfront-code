@@ -187,6 +187,7 @@ describe("init command integration", () => {
       assertEquals(result.stdout?.includes("Deploy:"), true);
       assertEquals(result.stdout?.includes("Project structure"), false);
       assertEquals(result.stdout?.includes("npm run deploy"), true);
+      assertEquals(result.stdout?.includes("npx veryfront@latest deploy"), false);
       assertEquals(result.stdout?.includes("npx veryfront deploy"), false);
       assertEquals(result.stdout?.includes("Project files created"), false);
       assertEquals(result.stdout?.includes("Dependencies installed"), false);

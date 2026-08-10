@@ -63,7 +63,7 @@ FIGMA_CLIENT_SECRET=your_figma_client_secret
 ### 3. Install the Integration
 
 ```bash
-npx veryfront add figma
+npx veryfront@latest add figma
 ```
 
 ## File Structure

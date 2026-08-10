@@ -99,7 +99,7 @@ bun add -g veryfront
 Use `npx` when you do not want a global install:
 
 ```bash
-npx veryfront
+npx veryfront@latest
 ```
 
 Runs the latest published `veryfront` CLI without installing it globally.
