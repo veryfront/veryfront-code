@@ -75,6 +75,7 @@ export type DeclarativeConfigWorkerInfrastructureReason =
   | "worker-aborted"
   | "worker-overloaded"
   | "worker-protocol"
+  | "worker-memory-limit-unavailable"
   | "worker-timeout"
   | "worker-unavailable";
 
@@ -175,6 +176,7 @@ const ERROR_REASON_TABLE = ObjectFreeze(
     "worker-aborted": true,
     "worker-overloaded": true,
     "worker-protocol": true,
+    "worker-memory-limit-unavailable": true,
     "worker-timeout": true,
     "worker-unavailable": true,
   } as const satisfies Readonly<Record<DeclarativeConfigErrorReason, true>>,
@@ -347,6 +349,7 @@ function isWorkerReason(
   return value === "worker-aborted" ||
     value === "worker-overloaded" ||
     value === "worker-protocol" ||
+    value === "worker-memory-limit-unavailable" ||
     value === "worker-timeout" ||
     value === "worker-unavailable";
 }
@@ -378,6 +381,7 @@ function isLegalErrorTuple(
     if (phase !== "worker" || !isWorkerReason(reason)) return false;
     return retryable === (
       reason === "worker-overloaded" ||
+      reason === "worker-memory-limit-unavailable" ||
       reason === "worker-timeout" ||
       reason === "worker-unavailable"
     );

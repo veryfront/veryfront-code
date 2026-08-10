@@ -38,15 +38,19 @@ function resolveShardCount(envKeys) {
 }
 
 const args = process.argv.slice(2);
-ensureNpmNodeModulesLinks();
 const projectRoot = fileURLToPath(new URL("../..", import.meta.url));
-const bunWorkspacePackages = prepareBunWorkspacePackages(projectRoot);
-registerBunWorkspaceCleanup(() => bunWorkspacePackages.cleanup());
-const concurrency = resolveConcurrency(["VF_TEST_CONCURRENCY", "BUN_TEST_CONCURRENCY"]);
+const concurrency = resolveConcurrency([
+  "VF_TEST_CONCURRENCY",
+  "BUN_TEST_CONCURRENCY",
+]);
 const shardOverride = resolveShardCount(["VF_TEST_SHARDS", "BUN_TEST_SHARDS"]);
 const processCount = shardOverride ?? Math.max(1, Math.min(4, concurrency));
 const defaultRoots = ["src", "tests", "proxy"];
-const includePatterns = (process.env.BUN_TEST_INCLUDE || process.env.VF_TEST_INCLUDE || "")
+const includePatterns = (
+  process.env.BUN_TEST_INCLUDE ||
+  process.env.VF_TEST_INCLUDE ||
+  ""
+)
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
@@ -60,7 +64,11 @@ const runtimeIncompatibleTests = [
   "src/server/project-env/fetcher.test.ts",
   "src/routing/api/module-loader/loader.test.ts",
 ];
-const envExcludePatterns = (process.env.BUN_TEST_EXCLUDE || process.env.VF_TEST_EXCLUDE || "")
+const envExcludePatterns = (
+  process.env.BUN_TEST_EXCLUDE ||
+  process.env.VF_TEST_EXCLUDE ||
+  ""
+)
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
@@ -69,10 +77,12 @@ const hasFilters = includePatterns.length > 0 || excludePatterns.length > 0;
 function isDenoDependentTest(file) {
   try {
     const source = readFileSync(file, "utf-8");
-    return /\bDeno\./.test(source) ||
+    return (
+      /\bDeno\./.test(source) ||
       /\bDeno\.test\s*\(/.test(source) ||
       /tests\/_helpers\/utils\.ts/.test(source) ||
-      /\bcreateMockServer\s*\(/.test(source);
+      /\bcreateMockServer\s*\(/.test(source)
+    );
   } catch {
     return false;
   }
@@ -86,14 +96,20 @@ function selectedTestFiles() {
   const patterns = args.length > 0 ? args : defaultRoots;
   let files = listTestFiles(patterns);
   if (hasFilters) {
-    files = filterTestFiles(files, { include: includePatterns, exclude: excludePatterns });
+    files = filterTestFiles(files, {
+      include: includePatterns,
+      exclude: excludePatterns,
+    });
   }
   return removeDenoDependentTests(files);
 }
 
 function runBunProcess(file, bunArgs) {
   return new Promise((resolvePromise) => {
-    const child = spawn("bun", bunArgs, { stdio: ["ignore", "pipe", "pipe"], env });
+    const child = spawn("bun", bunArgs, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env,
+    });
     const stdout = [];
     const stderr = [];
     let settled = false;
@@ -169,6 +185,13 @@ for (
 }
 
 const files = selectedTestFiles();
+if (files.length > 0) ensureNpmNodeModulesLinks();
+const bunWorkspacePackages = files.length === 0
+  ? undefined
+  : prepareBunWorkspacePackages(projectRoot);
+if (bunWorkspacePackages) {
+  registerBunWorkspaceCleanup(() => bunWorkspacePackages.cleanup());
+}
 runIsolatedTests(files)
   .then((ok) => {
     process.exitCode = ok ? 0 : 1;

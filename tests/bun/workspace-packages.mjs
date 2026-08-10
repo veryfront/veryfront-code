@@ -1,14 +1,7 @@
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmdirSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
+import { ensureDirectoryLink } from "../ensure-npm-links.mjs";
 
 const MARKER_NAME = ".veryfront-bun-workspace-package.json";
 const LOCK_NAME = ".veryfront-bun-workspace-packages.lock";
@@ -16,34 +9,6 @@ const LOCK_OWNER = "veryfront-bun-tests";
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
-}
-
-export function reclaimStalePreparationLock(lockPath, runtimeProcess = process) {
-  let marker;
-  try {
-    marker = readJson(join(lockPath, MARKER_NAME));
-  } catch {
-    rmSync(lockPath, { recursive: true, force: true });
-    return true;
-  }
-
-  if (
-    marker?.owner !== LOCK_OWNER ||
-    !Number.isSafeInteger(marker.pid) ||
-    marker.pid <= 0
-  ) {
-    rmSync(lockPath, { recursive: true, force: true });
-    return true;
-  }
-
-  try {
-    runtimeProcess.kill(marker.pid, 0);
-    return false;
-  } catch (error) {
-    if (error?.code !== "ESRCH") return false;
-    rmSync(lockPath, { recursive: true, force: true });
-    return true;
-  }
 }
 
 function acquirePreparationLock(nodeModulesPath) {
@@ -83,6 +48,30 @@ function acquirePreparationLock(nodeModulesPath) {
   return { lockPath, token };
 }
 
+export function reclaimStalePreparationLock(lockPath, runtimeProcess = process) {
+  let marker;
+  try {
+    marker = readJson(join(lockPath, MARKER_NAME));
+  } catch {
+    return false;
+  }
+
+  if (marker?.owner !== LOCK_OWNER) {
+    return false;
+  }
+  if (!Number.isSafeInteger(marker.pid) || marker.pid < 1) {
+    return false;
+  }
+  try {
+    runtimeProcess.kill(marker.pid, 0);
+    return false;
+  } catch (error) {
+    if (error?.code !== "ESRCH") return false;
+    rmSync(lockPath, { recursive: true, force: true });
+    return true;
+  }
+}
+
 function releasePreparationLock(lockPath, token) {
   let marker;
   try {
@@ -104,31 +93,48 @@ function packageSegments(name) {
 
 function packageTarget(packageName, subpath, target, targetRoot, sourceRoot) {
   if (typeof target !== "string" || !target.startsWith(".")) {
-    throw new TypeError(`${packageName} export ${subpath} must target a local path`);
+    throw new TypeError(
+      `${packageName} export ${subpath} must target a local path`,
+    );
   }
   const targetPath = resolve(targetRoot, target);
   const sourceRelativePath = relative(sourceRoot, targetPath);
   if (
-    isAbsolute(sourceRelativePath) || sourceRelativePath === ".." ||
+    isAbsolute(sourceRelativePath) ||
+    sourceRelativePath === ".." ||
     sourceRelativePath.startsWith(`..${sep}`)
   ) {
-    throw new Error(`${packageName} export ${subpath} escapes its generated package source`);
+    throw new Error(
+      `${packageName} export ${subpath} escapes its generated package source`,
+    );
   }
   return `./source/${sourceRelativePath.split(sep).join("/")}`;
 }
 
-function packageExports(packageName, exports, targetRoot, sourceRoot = targetRoot) {
+function packageExports(
+  packageName,
+  exports,
+  targetRoot,
+  sourceRoot = targetRoot,
+) {
   if (typeof exports === "string") {
     return packageTarget(packageName, ".", exports, targetRoot, sourceRoot);
   }
-  if (!exports || typeof exports !== "object" || Array.isArray(exports)) return null;
+  if (!exports || typeof exports !== "object" || Array.isArray(exports)) {
+    return null;
+  }
 
   return Object.fromEntries(
     Object.entries(exports).map(([subpath, target]) => {
       if (subpath !== "." && !subpath.startsWith("./")) {
-        throw new TypeError(`${packageName} export ${subpath} must be . or start with ./`);
+        throw new TypeError(
+          `${packageName} export ${subpath} must be . or start with ./`,
+        );
       }
-      return [subpath, packageTarget(packageName, subpath, target, targetRoot, sourceRoot)];
+      return [
+        subpath,
+        packageTarget(packageName, subpath, target, targetRoot, sourceRoot),
+      ];
     }),
   );
 }
@@ -140,8 +146,14 @@ function addWorkspaceImportsToRootExports(
   workspaceConfig,
   projectRoot,
 ) {
-  for (const [specifier, target] of Object.entries(workspaceConfig.imports ?? {})) {
-    if (!specifier.startsWith(`${rootName}/`) || typeof target !== "string") continue;
+  for (
+    const [specifier, target] of Object.entries(
+      workspaceConfig.imports ?? {},
+    )
+  ) {
+    if (!specifier.startsWith(`${rootName}/`) || typeof target !== "string") {
+      continue;
+    }
     const subpath = `./${specifier.slice(rootName.length + 1)}`;
     const generatedTarget = packageTarget(
       rootName,
@@ -173,10 +185,13 @@ export function prepareBunWorkspacePackages(projectRoot) {
         throw new Error(`${name} already exists in node_modules`);
       }
       if (
-        marker.owner !== LOCK_OWNER || marker.name !== name ||
+        marker.owner !== LOCK_OWNER ||
+        marker.name !== name ||
         marker.source !== sourceRoot
       ) {
-        throw new Error(`${name} in node_modules is not owned by the Bun test runner`);
+        throw new Error(
+          `${name} in node_modules is not owned by the Bun test runner`,
+        );
       }
       rmSync(packageRoot, { recursive: true, force: true });
     }
@@ -184,10 +199,10 @@ export function prepareBunWorkspacePackages(projectRoot) {
     mkdirSync(packageRoot, { recursive: true });
     createdPackages.push(packageRoot);
     if (segments.length > 1) scopeDirectories.add(dirname(packageRoot));
-    symlinkSync(
+    ensureDirectoryLink(
       sourceRoot,
       join(packageRoot, "source"),
-      process.platform === "win32" ? "junction" : "dir",
+      `${name}/source`,
     );
     writeFileSync(
       join(packageRoot, "package.json"),
@@ -215,7 +230,9 @@ export function prepareBunWorkspacePackages(projectRoot) {
         try {
           rmdirSync(scopeDirectory);
         } catch (error) {
-          if (error?.code !== "ENOENT" && error?.code !== "ENOTEMPTY") throw error;
+          if (error?.code !== "ENOENT" && error?.code !== "ENOTEMPTY") {
+            throw error;
+          }
         }
       }
     } finally {
@@ -225,11 +242,13 @@ export function prepareBunWorkspacePackages(projectRoot) {
 
   try {
     const rootConfig = readJson(resolve(projectRoot, "deno.json"));
-    const workspaces = (rootConfig.workspace ?? []).map((workspaceDirectory) => {
-      const workspaceRoot = resolve(projectRoot, workspaceDirectory);
-      const workspaceConfig = readJson(resolve(workspaceRoot, "deno.json"));
-      return { workspaceDirectory, workspaceRoot, workspaceConfig };
-    });
+    const workspaces = (rootConfig.workspace ?? []).map(
+      (workspaceDirectory) => {
+        const workspaceRoot = resolve(projectRoot, workspaceDirectory);
+        const workspaceConfig = readJson(resolve(workspaceRoot, "deno.json"));
+        return { workspaceDirectory, workspaceRoot, workspaceConfig };
+      },
+    );
 
     if (typeof rootConfig.name !== "string") {
       throw new TypeError("deno.json must name the root package");
@@ -260,7 +279,13 @@ export function prepareBunWorkspacePackages(projectRoot) {
     }
     createPackage(rootConfig.name, projectRoot, rootExports);
 
-    for (const { workspaceDirectory, workspaceRoot, workspaceConfig } of workspaces) {
+    for (
+      const {
+        workspaceDirectory,
+        workspaceRoot,
+        workspaceConfig,
+      } of workspaces
+    ) {
       if (workspaceConfig.exports === undefined) continue;
       if (typeof workspaceConfig.name !== "string") {
         throw new TypeError(

@@ -286,49 +286,59 @@ describe("transforms/esm/http-cache-helpers", () => {
       assertEquals(urlPrototypeCalls, 0);
     });
 
-    it("uses captured query append and array iteration for duplicate parameters", () => {
-      const rawUrl = "https://esm.sh/lodash@4?custom=first&custom=second";
-      const baseline = normalizeHttpUrl(rawUrl);
-      assertEquals(
-        baseline,
-        "https://esm.sh/lodash@4?custom=first&custom=second&external=react&target=es2022",
-      );
-
-      const iteratorDescriptor = Object.getOwnPropertyDescriptor(
-        Array.prototype,
-        Symbol.iterator,
-      )!;
-      const appendDescriptor = Object.getOwnPropertyDescriptor(
+    it("preserves query identity with captured query intrinsics", async () => {
+      const importMap = { imports: {}, scopes: {} };
+      const originalIterator = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator);
+      const originalAppend = Object.getOwnPropertyDescriptor(
         URLSearchParams.prototype,
         "append",
-      )!;
-      let hookCalls = 0;
-      let poisoned: string;
+      );
+      const baselineUrl = "https://esm.sh/pkg@1?dup=one&dup=two&encoded=a%2Bb&q=a+b";
+      const expectedNormalized =
+        "https://esm.sh/pkg@1?dup=one&dup=two&encoded=a%2Bb&external=react&q=a+b&target=es2022";
+      const baselineIdentity = await buildHttpCacheIdentity(baselineUrl, { importMap });
+      let iteratorCalls = 0;
+      let appendCalls = 0;
+      let poisonedNormalized = "";
+      let poisonedIdentity = "";
+
       try {
         Object.defineProperty(Array.prototype, Symbol.iterator, {
           configurable: true,
           value() {
-            hookCalls++;
-            throw new Error("poisoned Array.prototype iterator");
+            iteratorCalls++;
+            return (originalIterator?.value as () => Iterator<unknown>).call([]);
           },
           writable: true,
         });
         Object.defineProperty(URLSearchParams.prototype, "append", {
           configurable: true,
           value() {
-            hookCalls++;
+            appendCalls++;
             throw new Error("poisoned URLSearchParams.prototype.append");
           },
           writable: true,
         });
-        poisoned = normalizeHttpUrl(rawUrl);
+
+        poisonedNormalized = normalizeHttpUrl(baselineUrl);
+        poisonedIdentity = await buildHttpCacheIdentity(baselineUrl, { importMap });
       } finally {
-        Object.defineProperty(Array.prototype, Symbol.iterator, iteratorDescriptor);
-        Object.defineProperty(URLSearchParams.prototype, "append", appendDescriptor);
+        if (originalIterator) {
+          Object.defineProperty(Array.prototype, Symbol.iterator, originalIterator);
+        } else {
+          Reflect.deleteProperty(Array.prototype, Symbol.iterator);
+        }
+        if (originalAppend) {
+          Object.defineProperty(URLSearchParams.prototype, "append", originalAppend);
+        } else {
+          Reflect.deleteProperty(URLSearchParams.prototype, "append");
+        }
       }
 
-      assertEquals(poisoned, baseline);
-      assertEquals(hookCalls, 0);
+      assertEquals(poisonedNormalized, expectedNormalized);
+      assertEquals(poisonedIdentity, baselineIdentity);
+      assertEquals(iteratorCalls, 0);
+      assertEquals(appendCalls, 0);
     });
 
     it("does not consult inherited toJSON hooks while fingerprinting import maps", async () => {

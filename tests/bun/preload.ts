@@ -143,16 +143,20 @@ plugin({
     // real test-module imports before Bun resolves them, while the lexer keeps
     // import-looking fixture strings and comments untouched.
     build.onLoad(
-      { filter: /(\.test\.[cm]?[jt]sx?|\/extensions\/ext-[^/]+\/src\/.*\.[cm]?[jt]sx?)$/ },
+      {
+        filter:
+          /(\.test\.[cm]?[jt]sx?|[/\\]extensions[/\\]ext-[^/\\]+[/\\]src[/\\].*\.[cm]?[jt]sx?)$/,
+      },
       (args) => {
+        const posixPath = args.path.split(sep).join("/");
         const source = readFileSync(args.path, "utf8");
-        let contents = args.path.includes(`${sep}extensions${sep}`)
+        let contents = posixPath.includes("/extensions/")
           ? rewriteModuleSpecifiers(
             source,
             (specifier) => workspaceModuleSpecifier(args.path, specifier),
           ) ?? source
           : source;
-        if (/\.test\.[cm]?[jt]sx?$/.test(args.path)) {
+        if (/\.test\.[cm]?[jt]sx?$/.test(posixPath)) {
           contents = rewriteNpmProtocolImports(contents) ?? contents;
         }
         const extension = extname(args.path).toLowerCase();
