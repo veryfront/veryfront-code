@@ -129,6 +129,7 @@ async function publishHttpBundleGeneration<T>(
   fs: FileSystem,
   abortSignal: AbortSignal,
   control: InFlightHttpFetchControl,
+  prepare: () => Promise<void>,
   publish: () => Promise<T>,
 ): Promise<T> {
   const stagedPath = `${cachePath}.pending-${crypto.randomUUID()}`;
@@ -139,6 +140,8 @@ async function publishHttpBundleGeneration<T>(
     const publication: Promise<T> = previousPublication
       .catch(() => {})
       .then(async () => {
+        assertCurrentHttpFetch(abortSignal, control);
+        await prepare();
         assertCurrentHttpFetch(abortSignal, control);
         if (!fs.rename) {
           throw new Error("The active filesystem does not support atomic bundle publication");
@@ -348,8 +351,9 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
   const hash = await hashHttpCacheIdentity(cacheIdentity);
   const cachePath = join(cacheDir, `http-${hash}.mjs`);
   const fs = createFileSystem();
+  const publicationPending = httpBundlePublications.has(cacheKey);
 
-  const existing = getCachedPaths().get(cacheKey);
+  const existing = publicationPending ? undefined : getCachedPaths().get(cacheKey);
   if (existing) {
     if (
       await exists(existing) &&
@@ -360,7 +364,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     getCachedPaths().delete(cacheKey);
   }
 
-  if (await exists(cachePath)) {
+  if (!publicationPending && await exists(cachePath)) {
     const cachedBundle = await readCachedHttpBundleFile(fs, cachePath);
     const code = cachedBundle?.code;
 
@@ -467,7 +471,9 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     control: InFlightHttpFetchControl,
   ): Promise<string | null> => {
     const sharedOptions = { ...options, abortSignal, onProgress: reportProgress };
-    const cacheResult = await httpBundleCache.getCodeByUrl(String(hash));
+    const cacheResult = publicationPending
+      ? { code: null, wasGzipped: false, failReason: "not_found" as const }
+      : await httpBundleCache.getCodeByUrl(String(hash));
     abortSignal.throwIfAborted();
 
     if (cacheResult.code) {
@@ -500,6 +506,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
           fs,
           abortSignal,
           control,
+          () => Promise.resolve(),
           async () => {
             if (!(await exists(cachePath))) {
               throw FILE_NOT_FOUND.create({
@@ -581,13 +588,6 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       abortSignal,
       control,
       async () => {
-        if (!(await exists(cachePath))) {
-          throw FILE_NOT_FOUND.create({
-            detail:
-              `[HTTP-CACHE] INVARIANT VIOLATION: File write succeeded but file does not exist: ${cachePath}`,
-          });
-        }
-
         try {
           await httpBundleCache.setCode(
             String(hash),
@@ -601,6 +601,14 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
             throw error;
           }
           httpCacheLog.debug("Distributed cache set failed", { url: safeUrl, error });
+        }
+      },
+      async () => {
+        if (!(await exists(cachePath))) {
+          throw FILE_NOT_FOUND.create({
+            detail:
+              `[HTTP-CACHE] INVARIANT VIOLATION: File write succeeded but file does not exist: ${cachePath}`,
+          });
         }
 
         getCachedPaths().set(cacheKey, cachePath);

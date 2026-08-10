@@ -303,6 +303,90 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
+  it("does not expose an abandoned bundle while its distributed write is pending", async () => {
+    const moduleUrl = "https://93.184.216.34/abandoned-distributed-owner.js";
+    const firstDistributedWriteStarted = Promise.withResolvers<void>();
+    const releaseFirstDistributedWrite = Promise.withResolvers<void>();
+    const replacementFetched = Promise.withResolvers<void>();
+    const distributed = new Map<string, string>();
+    let distributedWriteCount = 0;
+    let fetchCount = 0;
+
+    const backend: CacheBackend = {
+      type: "memory",
+      get: (key) => Promise.resolve(distributed.get(key) ?? null),
+      set: async (key, value) => {
+        distributedWriteCount++;
+        distributed.set(key, value);
+        if (distributedWriteCount === 1) {
+          firstDistributedWriteStarted.resolve();
+          await releaseFirstDistributedWrite.promise;
+        }
+      },
+      del: (key) => {
+        distributed.delete(key);
+        return Promise.resolve();
+      },
+    };
+    const mockFetch = (() => {
+      fetchCount++;
+      if (fetchCount === 2) replacementFetched.resolve();
+      const generation = fetchCount === 1 ? "stale" : "fresh";
+      return Promise.resolve(
+        new Response(`export const generation = "${generation}";`, {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-abandoned-distributed-", mockFetch, async (tempDir) => {
+      __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+      const controller = new AbortController();
+      const source = `import { generation } from "${moduleUrl}"; export { generation };`;
+      const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+      const abandoned = cacheHttpImportsToLocal(source, {
+        ...options,
+        abortSignal: controller.signal,
+      });
+      let replacement: ReturnType<typeof cacheHttpImportsToLocal> | undefined;
+
+      try {
+        await firstDistributedWriteStarted.promise;
+        controller.abort(new DOMException("render abandoned", "AbortError"));
+        await assertRejects(() => abandoned, DOMException, "render abandoned");
+
+        replacement = cacheHttpImportsToLocal(source, options);
+        const replacementState = await Promise.race([
+          replacement.then(() => "resolved" as const),
+          replacementFetched.promise.then(() => "fetched" as const),
+        ]);
+        assertEquals(replacementState, "fetched");
+
+        releaseFirstDistributedWrite.resolve();
+        const result = await replacement;
+        assert(result.code.includes("file://"));
+        const bundleFiles: string[] = [];
+        for await (const entry of readDir(tempDir)) {
+          if (entry.isFile && entry.name.startsWith("http-") && entry.name.endsWith(".mjs")) {
+            bundleFiles.push(entry.name);
+          }
+        }
+        assertEquals(bundleFiles.length, 1);
+        const publishedCode = await readTextFile(join(tempDir, bundleFiles[0]!));
+        assert(publishedCode.includes('generation = "fresh"'));
+        assertEquals(publishedCode.includes('generation = "stale"'), false);
+        assertEquals(
+          [...distributed.values()].some((value) => value.includes('generation = "stale"')),
+          false,
+        );
+        assertEquals(fetchCount, 2);
+      } finally {
+        releaseFirstDistributedWrite.resolve();
+        await replacement?.catch(() => {});
+      }
+    });
+  });
+
   it("keeps a shared HTTP fetch alive while another caller is still waiting", async () => {
     let fetchCount = 0;
     let releaseFetch!: () => void;
