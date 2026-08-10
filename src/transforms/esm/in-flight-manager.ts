@@ -238,7 +238,15 @@ export async function waitForSharedInFlightHttpFetch(
       await Promise.all(
         [...state.completionDependencies.entries()]
           .filter(([dependencyCacheKey]) => dependencyCacheKey !== cacheKey)
-          .map(([, dependencyPromise]) => waitForSharedPromise(dependencyPromise, abortSignal)),
+          .map(([dependencyCacheKey, dependencyPromise]) =>
+            waitForSharedInFlightHttpFetch(
+              dependencyCacheKey,
+              dependencyPromise,
+              null,
+              abortSignal,
+              onProgress,
+            )
+          ),
       );
     }
     return result;
