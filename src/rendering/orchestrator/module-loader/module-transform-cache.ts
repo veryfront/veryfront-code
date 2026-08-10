@@ -79,7 +79,10 @@ export interface ModuleTransformCacheDeps {
   initializeTransformCache: typeof initializeTransformCache;
   getOrComputeTransform: (
     key: string,
-    compute: (reportProgress?: TransformProgressListener) => Promise<string>,
+    compute: (
+      reportProgress?: TransformProgressListener,
+      abortSignal?: AbortSignal,
+    ) => Promise<string>,
     ttlSeconds: number,
     onProgress?: TransformProgressListener,
     signal?: AbortSignal,
@@ -228,7 +231,7 @@ export async function transformModuleCodeWithCache(
     string,
     DependencyResolutionObservation
   >();
-  const transformOptions = {
+  const transformOptions: TransformOptions = {
     projectId: input.effectiveProjectId,
     dev: input.mode === "development",
     ssr: true,
@@ -241,21 +244,20 @@ export async function transformModuleCodeWithCache(
       dependencyResolutionObservations.set(observation.packageName, observation);
     },
     onProgress: input.onProgress,
-    abortSignal: input.signal,
   };
 
   await deps.initializeTransformCache();
 
   const transformResult = await deps.getOrComputeTransform(
     cacheKey,
-    (reportProgress) => {
+    (reportProgress, abortSignal) => {
       logger.debug("Transform cache miss, transforming", { filePath: input.filePath });
       return deps.transformToESM(
         input.fileContent,
         input.filePath,
         input.projectDir,
         input.adapter,
-        { ...transformOptions, onProgress: reportProgress },
+        { ...transformOptions, abortSignal, onProgress: reportProgress },
       );
     },
     ttlSeconds,
@@ -319,7 +321,7 @@ export async function transformModuleCodeWithCache(
       input.fileContent,
       input.filePath,
       input.projectDir,
-      transformOptions,
+      { ...transformOptions, abortSignal: input.signal },
     );
     transformedCode = pipelineResult.code;
 

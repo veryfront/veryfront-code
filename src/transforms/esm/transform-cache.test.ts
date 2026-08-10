@@ -729,10 +729,38 @@ describe("transforms/esm/transform-cache", () => {
       assertEquals(followerResult.code, "shared-code");
     });
 
+    it("cancels a shared transform after its last caller aborts", async () => {
+      const controller = new AbortController();
+      const computeStarted = Promise.withResolvers<void>();
+      let sharedSignal: AbortSignal | undefined;
+
+      const caller = getOrComputeTransform(
+        "orphaned-transform-key",
+        (_reportProgress, abortSignal) => {
+          sharedSignal = abortSignal;
+          computeStarted.resolve();
+          return new Promise<string>((_resolve, reject) => {
+            const onAbort = () => reject(abortSignal?.reason);
+            abortSignal?.addEventListener("abort", onAbort, { once: true });
+          });
+        },
+        300,
+        undefined,
+        controller.signal,
+      );
+
+      await computeStarted.promise;
+      controller.abort(new Error("caller timed out"));
+      await assertRejects(() => caller, Error, "caller timed out");
+
+      assertEquals(sharedSignal?.aborted, true);
+    });
+
     it("detaches an aborted caller without cancelling the shared transform", async () => {
       const controller = new AbortController();
       const abortedCallerPhases: string[] = [];
       const followerPhases: string[] = [];
+      let sharedSignal: AbortSignal | undefined;
       let computeCalls = 0;
       let releaseCompute!: () => void;
       let markComputeStarted!: () => void;
@@ -745,8 +773,9 @@ describe("transforms/esm/transform-cache", () => {
 
       const abortedCaller = getOrComputeTransform(
         "aborted-progress-key",
-        async (reportProgress) => {
+        async (reportProgress, abortSignal) => {
           computeCalls++;
+          sharedSignal = abortSignal;
           reportProgress?.({ phase: "leader:started" });
           markComputeStarted();
           await computeGate;
@@ -772,12 +801,14 @@ describe("transforms/esm/transform-cache", () => {
 
       controller.abort(new Error("caller timed out"));
       await assertRejects(() => abortedCaller, Error, "caller timed out");
+      assertEquals(sharedSignal?.aborted, false);
 
       releaseCompute();
       const followerResult = await follower;
 
       assertEquals(computeCalls, 1);
       assertEquals(followerResult.code, "shared-after-abort");
+      assertEquals(sharedSignal?.aborted, false);
       assertEquals(abortedCallerPhases.includes("leader:finished"), false);
       assertEquals(followerPhases.includes("leader:finished"), true);
     });

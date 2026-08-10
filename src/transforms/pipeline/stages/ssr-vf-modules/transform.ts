@@ -342,6 +342,7 @@ async function rewriteFallbackRelativeImports(
   const cacheResult = await cacheHttpImportsToLocal(rewritten, {
     cacheDir: getHttpBundleCacheDir(),
     importMap,
+    abortSignal: ctx.abortSignal,
     reactVersion: ctx.reactVersion,
   });
   return cacheResult.code;
@@ -648,6 +649,7 @@ async function transformFrameworkCodeUncoalesced(
     const cacheResult = await cacheHttpImportsToLocal(transformed, {
       cacheDir: getHttpBundleCacheDir(),
       importMap,
+      abortSignal: ctx.abortSignal,
       reactVersion: ctx.reactVersion,
     });
 
@@ -762,11 +764,12 @@ export async function transformFrameworkSource(
   onProgress?: TransformContext["onProgress"],
   importMap?: TransformContext["importMap"],
   importMapFingerprint?: string,
+  abortSignal?: AbortSignal,
 ): Promise<string> {
   return transformFrameworkCode(
     content,
     sourcePath,
-    { reactVersion, projectDir, fs, onProgress, importMap, importMapFingerprint },
+    { reactVersion, projectDir, fs, onProgress, importMap, importMapFingerprint, abortSignal },
     true,
   );
 }

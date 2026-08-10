@@ -168,6 +168,7 @@ export const ssrVfModulesPlugin: TransformPlugin = {
             ctx.onProgress,
             importMap,
             importMapFingerprint,
+            ctx.abortSignal,
           );
 
           // Skip cycle placeholders - don't cache or use them

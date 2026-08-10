@@ -58,7 +58,8 @@ describe("module-loader/module-transform-cache", () => {
   });
 
   it("forwards module-loading cancellation into the SSR transform", async () => {
-    const controller = new AbortController();
+    const callerController = new AbortController();
+    const transformController = new AbortController();
     let observedSignal: AbortSignal | undefined;
 
     await transformModuleCodeWithCache({
@@ -68,10 +69,10 @@ describe("module-loader/module-transform-cache", () => {
       effectiveProjectId: "project-1",
       mode: "production",
       adapter: {} as RuntimeAdapter,
-      signal: controller.signal,
+      signal: callerController.signal,
       deps: createDeps({
         getOrComputeTransform: async (_key, compute) => ({
-          code: await compute(),
+          code: await compute(undefined, transformController.signal),
           cacheHit: false,
         }),
         transformToESM: (_code, _filePath, _projectDir, _adapter, options) => {
@@ -81,7 +82,7 @@ describe("module-loader/module-transform-cache", () => {
       }),
     });
 
-    assertEquals(observedSignal, controller.signal);
+    assertEquals(observedSignal, transformController.signal);
   });
 
   it("isolates outer transform cache keys by React, runtime, and dependency-pin state", async () => {
