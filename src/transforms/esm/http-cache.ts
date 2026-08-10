@@ -96,7 +96,8 @@ import {
 /** Threshold in ms above which an HTTP module fetch is considered slow */
 const SLOW_HTTP_FETCH_THRESHOLD_MS = 500;
 const HTTP_MODULE_FETCH_WAIT_GRACE_MS = 5_000;
-const HTTP_MODULE_FETCH_MAX_WAIT_MS = HTTP_MODULE_FETCH_RETRY_BUDGET_MS +
+/** Maximum time a caller can wait for one complete HTTP module fetch sequence. */
+export const HTTP_MODULE_FETCH_MAX_WAIT_MS = HTTP_MODULE_FETCH_RETRY_BUDGET_MS +
   HTTP_MODULE_FETCH_WAIT_GRACE_MS;
 
 const httpCacheLog = logger.component("http-cache");

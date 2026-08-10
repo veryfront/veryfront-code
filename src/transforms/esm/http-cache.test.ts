@@ -25,6 +25,7 @@ import {
   cacheModuleToLocal,
   ensureHttpBundlesExist,
   extractSourceUrl,
+  HTTP_MODULE_FETCH_MAX_WAIT_MS,
   normalizeHttpUrl,
 } from "./http-cache.ts";
 import { __setDistributedCacheAccessorForTests } from "./http-cache-wrapper.ts";
@@ -34,7 +35,6 @@ import { simpleHash } from "#veryfront/utils/hash-utils.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
-import { HTTP_MODULE_FETCH_RETRY_BUDGET_MS } from "#veryfront/utils/constants/http.ts";
 import { MODULE_LOAD_TIMEOUT_MS } from "#veryfront/rendering/orchestrator/module-collection.ts";
 
 /** Duplicated from http-cache.ts for isolated unit testing of the pattern. */
@@ -98,8 +98,8 @@ async function withIsolatedHttpCache<T>(
 }
 
 describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, () => {
-  it("keeps the full retry sequence within the module-loading idle deadline", () => {
-    assert(HTTP_MODULE_FETCH_RETRY_BUDGET_MS < MODULE_LOAD_TIMEOUT_MS);
+  it("keeps the full fetch retry window within the module-loading idle deadline", () => {
+    assert(HTTP_MODULE_FETCH_MAX_WAIT_MS <= MODULE_LOAD_TIMEOUT_MS);
   });
 
   it("rejects internal module URLs before invoking fetch", async () => {

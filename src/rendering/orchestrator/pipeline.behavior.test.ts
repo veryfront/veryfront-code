@@ -341,7 +341,7 @@ describe("RenderPipeline behavior", () => {
             phase: "framework:module-transformed",
             filePath: "/framework/repeating.js",
           });
-        }, 5_000);
+        }, 1_000);
       });
     };
 
@@ -355,7 +355,7 @@ describe("RenderPipeline behavior", () => {
       "Module loading for /repeating-graph timed out",
     );
     await started;
-    await time.tickAsync(45_000);
+    await time.tickAsync(41_000);
 
     assertEquals((await rejected as Error & { timeoutKind?: string }).timeoutKind, "idle");
   });
