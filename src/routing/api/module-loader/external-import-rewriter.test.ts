@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -8,10 +13,12 @@ import {
   getNodeExternalPackagesToResolve,
   NODE_BUILTINS,
   resolveEsmUserDependencies,
+  resolveVeryfrontPackageExport,
   rewriteCompiledBinaryUserDependencyImports,
   rewriteCompiledBinaryVeryfrontImports,
   rewriteDenoNodeBuiltinImports,
   rewriteDenoNpmDependencyImports,
+  rewriteExternalImports,
 } from "./external-import-rewriter.ts";
 
 function createFakeFileSystem(files: Record<string, string>): FileSystem {
@@ -291,6 +298,50 @@ describe("external-import-rewriter", () => {
 
       assertStringIncludes(out, `from "npm:lodash@4.17.21"`);
       assertStringIncludes(out, `from "npm:lodash@4.17.21/merge"`);
+    });
+  });
+
+  describe("rewriteExternalImports", () => {
+    it("resolves packaged Veryfront exports inside the running package", () => {
+      const runningPackage = {
+        packageUrl: new URL("file:///opt/veryfront/package.json"),
+        exports: {
+          "./embedding": { import: "./esm/src/embedding/index.js" },
+          "./escape": { import: "../escape.js" },
+        },
+      };
+
+      assertEquals(
+        resolveVeryfrontPackageExport("veryfront/embedding", runningPackage),
+        "file:///opt/veryfront/esm/src/embedding/index.js",
+      );
+      assertThrows(
+        () => resolveVeryfrontPackageExport("veryfront/escape", runningPackage),
+        TypeError,
+        "escapes its package root",
+      );
+    });
+
+    it("resolves Veryfront imports from the running package for Deno temp modules", async () => {
+      const source = [
+        `import { createUploadHandler } from "veryfront/embedding";`,
+        `const agentModule = import("veryfront/agent");`,
+      ].join("\n");
+
+      const out = await rewriteExternalImports(
+        source,
+        "/srv/app",
+        createFakeFileSystem({}),
+      );
+
+      assertStringIncludes(
+        out,
+        `from "${import.meta.resolve("veryfront/embedding")}"`,
+      );
+      assertStringIncludes(
+        out,
+        `import("${import.meta.resolve("veryfront/agent")}")`,
+      );
     });
   });
 

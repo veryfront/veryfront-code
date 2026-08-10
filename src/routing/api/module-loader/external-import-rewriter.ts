@@ -284,6 +284,77 @@ export function rewriteDenoNodeBuiltinImports(code: string): string {
   return rewriteDenoNodeBuiltinsForRoute(code);
 }
 
+interface RunningVeryfrontPackage {
+  packageUrl: URL;
+  exports: Record<string, unknown>;
+}
+
+let runningVeryfrontPackage: Promise<RunningVeryfrontPackage | null> | null = null;
+
+function loadRunningVeryfrontPackage(): Promise<RunningVeryfrontPackage | null> {
+  runningVeryfrontPackage ??= (async () => {
+    const packageUrl = new URL("../../../../../package.json", import.meta.url);
+    try {
+      const raw = await Deno.readTextFile(packageUrl);
+      const pkg = JSON.parse(raw) as { name?: unknown; exports?: unknown };
+      if (pkg.name !== "veryfront" || !pkg.exports || typeof pkg.exports !== "object") {
+        return null;
+      }
+      return {
+        packageUrl,
+        exports: pkg.exports as Record<string, unknown>,
+      };
+    } catch {
+      return null;
+    }
+  })();
+  return runningVeryfrontPackage;
+}
+
+async function resolveDenoVeryfrontImport(specifier: string): Promise<string> {
+  const runningPackage = await loadRunningVeryfrontPackage();
+  if (!runningPackage) return import.meta.resolve(specifier);
+
+  return resolveVeryfrontPackageExport(specifier, runningPackage);
+}
+
+export function resolveVeryfrontPackageExport(
+  specifier: string,
+  runningPackage: RunningVeryfrontPackage,
+): string {
+  const exportKey = specifier === "veryfront" ? "." : `./${specifier.slice("veryfront/".length)}`;
+  const exportPath = resolveExportEntry(runningPackage.exports[exportKey]);
+  if (!exportPath) {
+    throw new TypeError(`Veryfront package does not export ${exportKey}`);
+  }
+
+  const packageRoot = new URL("./", runningPackage.packageUrl);
+  const resolved = new URL(exportPath, packageRoot);
+  if (!resolved.href.startsWith(packageRoot.href)) {
+    throw new TypeError(`Veryfront package export escapes its package root: ${exportKey}`);
+  }
+  return resolved.href;
+}
+
+async function rewriteDenoVeryfrontImports(code: string): Promise<string> {
+  const replacements = new Map<string, string>();
+
+  for (const imported of await parseImports(code)) {
+    const specifier = imported.n;
+    if (
+      typeof specifier !== "string" ||
+      (specifier !== "veryfront" && !specifier.startsWith("veryfront/"))
+    ) {
+      continue;
+    }
+
+    replacements.set(specifier, await resolveDenoVeryfrontImport(specifier));
+  }
+
+  if (replacements.size === 0) return code;
+  return await replaceSpecifiers(code, (specifier) => replacements.get(specifier));
+}
+
 export async function rewriteExternalImports(
   code: string,
   projectDir: string,
@@ -304,6 +375,10 @@ export async function rewriteExternalImports(
   if (isDeno) {
     transformed = rewriteNpmImports(transformed, projectDir);
     transformed = rewriteDenoNodeBuiltinImports(transformed);
+
+    if (!isCompiledBinary()) {
+      transformed = await rewriteDenoVeryfrontImports(transformed);
+    }
 
     // Rewrite user-installed npm dependencies.
     // In non-compiled Deno: use npm: specifiers (resolved by Deno's npm support).
