@@ -61,9 +61,9 @@ function runWorkspacePreparationChild() {
       process.exit(1);
     }
   `;
-  const evalArgs = typeof globalThis.Deno === "undefined"
-    ? ["--input-type=module", "-e", source]
-    : ["eval", "--ext=mts", source];
+  const evalArgs = process.versions.deno
+    ? ["eval", source]
+    : ["--input-type=module", "--eval", source];
 
   return new Promise((resolvePromise) => {
     const child = spawn(process.execPath, evalArgs, {
