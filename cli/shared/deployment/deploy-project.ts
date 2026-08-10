@@ -859,6 +859,14 @@ function decodeJwtSegment(segment: string | undefined): object | null {
  * a shape check, not verification — the CLI cannot verify the signature and
  * does not need to. It only needs to know whether the gate could possibly
  * accept the credential.
+ *
+ * The counterpart is `isApiKeyToken` in `cli/auth/login.ts`, which asks what
+ * the operator logged in with; this asks what the proxy gate can resolve. They
+ * must never both be true for one credential, and this one is deliberately
+ * fail-closed: a credential it cannot recognise is withheld, not sent. An
+ * earlier revision of this check was loose enough to leak `a.b.c`, so the
+ * invariant is held by a test — `does not send an API key to the protected
+ * environment gate` fails the moment a key becomes presentable again.
  */
 function isSessionCredential(apiToken: string): boolean {
   const segments = apiToken.split(".");
@@ -881,10 +889,17 @@ function buildEnvironmentReadinessProbes(
   const route = target.route === undefined ? "/" : target.route;
   if (route === null) return [];
 
-  // Without a session credential the probe cannot get past the gate. A sign-in
-  // redirect still proves routing resolves and the proxy is serving this
-  // environment, which is the most this step can establish — and the
-  // deployment it would otherwise fail is already committed and verified.
+  // Without a session credential the probe cannot get past the gate. Its
+  // challenge — a sign-in redirect, 401, or 403 — still proves routing
+  // resolves and the proxy is serving this environment, which is the most this
+  // step can establish, and the deployment it would otherwise fail is already
+  // committed and verified.
+  //
+  // Accepting the whole challenge rather than only the redirect is the same
+  // allowance the protected custom-domain probe below already makes, not a new
+  // one. Narrowing it would buy nothing here either: the gate answers before
+  // the app does, so for a protected environment with no session this probe is
+  // blind to application health whichever challenge it accepts.
   const canAuthenticate = isSessionCredential(target.apiToken);
 
   const targetUrl = buildEnvironmentProbeUrl(target.url, route);
@@ -928,6 +943,27 @@ function isSignInRedirect(response: Response, requestUrl: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Describe why a probe was turned away at the gate.
+ *
+ * A challenge is a sign-in redirect, a 401, or a 403, so the message has to
+ * name which one arrived. Reporting every challenge as "redirected to sign-in"
+ * sent operators looking for a redirect that a 403 never performed.
+ */
+function describeAuthenticationChallenge(
+  probe: EnvironmentReadinessProbe,
+  status: number,
+  signInRedirect: boolean,
+): string {
+  if (probe.authenticate) {
+    return `Could not authenticate the protected environment URL ${probe.url}. Run veryfront login and deploy again.`;
+  }
+  if (signInRedirect) {
+    return `Environment URL ${probe.url} redirected to sign-in. Check its protection settings and deploy again.`;
+  }
+  return `Environment URL ${probe.url} returned HTTP ${status}. Check its protection settings and deploy again.`;
 }
 
 function isTransientEnvironmentStatus(status: number): boolean {
@@ -991,10 +1027,8 @@ export async function waitForEnvironmentReady(
           // slug. A bare Error reaches the operator as `unknown-error` with
           // "Check logs for more details", which describes nothing.
           throw DEPLOYMENT_ERROR.create({
-            detail: probe.authenticate
-              ? `Could not authenticate the protected environment URL ${probe.url}. Run veryfront login and deploy again.`
-              : `Environment URL ${probe.url} redirected to sign-in. Check its protection settings and deploy again.`,
-            context: { url: probe.url },
+            detail: describeAuthenticationChallenge(probe, response.status, signInRedirect),
+            context: { url: probe.url, status: response.status },
           });
         }
         if (!isTransientEnvironmentStatus(response.status)) {

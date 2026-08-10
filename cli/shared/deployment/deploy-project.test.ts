@@ -997,6 +997,18 @@ describe("environment URL readiness", () => {
     );
   });
 
+  it("names the status when a challenge was not a sign-in redirect", async () => {
+    const message = await withMockFetch(
+      () => Promise.resolve(new Response(null, { status: 403 })),
+      () =>
+        expectErrorMessage(() => waitForEnvironmentReady({ ...hostedTarget, protected: false })),
+    );
+
+    // A 403 performs no redirect. Reporting one sends the operator looking for
+    // a hop that never happened.
+    assertMatch(message ?? "", /returned HTTP 403/);
+  });
+
   it("reports the URL and last status when readiness times out", async () => {
     const error = await withMockFetch(
       () => Promise.resolve(new Response("not ready", { status: 404 })),
