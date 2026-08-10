@@ -1826,7 +1826,10 @@ export class AgentRuntime {
       );
 
       const state = createStreamState();
-      await processStream(streamSource, state, controller, encoder, textPartId, {
+      const stepTextPartId = textPartId === undefined || step === 0
+        ? textPartId
+        : `${textPartId}:step:${step}`;
+      await processStream(streamSource, state, controller, encoder, stepTextPartId, {
         onChunk: callbacks?.onChunk,
         onUsage: (usage) => accumulateUsage(totalUsage, usage),
         providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
