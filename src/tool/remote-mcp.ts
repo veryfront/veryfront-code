@@ -1,4 +1,5 @@
 import { NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
+import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
 import type { ToolAnnotations } from "#veryfront/mcp/types.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import type { JsonSchema } from "./schema/json-schema.ts";
@@ -804,14 +805,32 @@ function normalizeCallToolResult(input: {
   return result;
 }
 
+/**
+ * True when `endpoint` targets the Veryfront control plane, whose MCP handler
+ * reads `_meta.run_id` back into the integration authorization gate. Every
+ * other server treats it as opaque correlation metadata.
+ */
+function endpointBindsToolAuthorization(endpoint: string): boolean {
+  const apiBaseUrl = getApiBaseUrlEnv();
+  if (typeof apiBaseUrl !== "string" || apiBaseUrl.length === 0) return false;
+  try {
+    return new URL(endpoint).origin === new URL(apiBaseUrl).origin;
+  } catch {
+    return false;
+  }
+}
+
 function buildRunContextMeta(
   context: ToolExecutionContext | undefined,
+  endpoint: string,
 ): Record<string, unknown> | undefined {
   const meta: Record<string, unknown> = {};
-  // Same authorization gate as the REST integration route, so a run id the
-  // control plane never issued must not be sent here either.
+  // Suppress only where the run id would be read as an authorization binding.
+  // Third-party servers keep receiving it as correlation metadata.
+  const suppressRunId = context?.runIdBindsToolAuthorization === false &&
+    endpointBindsToolAuthorization(endpoint);
   if (
-    context?.runIdBindsToolAuthorization !== false &&
+    !suppressRunId &&
     typeof context?.runId === "string" && context.runId.length > 0
   ) {
     meta.run_id = context.runId;
@@ -902,7 +921,7 @@ function createRemoteMCPToolSourceWithFetch(
     async executeTool(toolName, args, context) {
       const endpoint = validateEndpoint(await resolveValue(config.endpoint, context));
       const headers = await resolveHeaders(config.headers, context);
-      const meta = buildRunContextMeta(context);
+      const meta = buildRunContextMeta(context, endpoint);
       const requestId = `${id}:tools:call:${toolName}`;
 
       try {

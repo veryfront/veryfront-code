@@ -296,6 +296,8 @@ describe("tool/remote-mcp", () => {
 
   it("omits non-binding run ids from MCP call metadata", async () => {
     let requestBody: Record<string, unknown> | undefined;
+    const previousApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://93.184.216.34");
     const source = createRemoteMCPToolSource({
       id: "veryfront-mcp",
       endpoint: "https://93.184.216.34",
@@ -329,6 +331,47 @@ describe("tool/remote-mcp", () => {
         _meta: { agent_id: "gmail-agent" },
       },
     });
+
+    if (previousApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+    else Deno.env.set("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
+  });
+
+  it("keeps run ids for MCP servers that are not the Veryfront control plane", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const previousApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://93.184.216.34");
+    const source = createRemoteMCPToolSource({
+      id: "third-party-mcp",
+      endpoint: "https://93.184.216.35",
+    });
+
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requestBody = await request.json();
+        return Response.json({
+          jsonrpc: "2.0",
+          id: "third-party-mcp:tools:call:search",
+          result: { content: [], structuredContent: { ok: true } },
+        });
+      },
+      async () =>
+        await source.executeTool("search", {}, {
+          runId: "run-local",
+          runIdBindsToolAuthorization: false,
+          agentId: "gmail-agent",
+        }),
+    );
+
+    // The marker means "not a Veryfront authorization binding", not "secret".
+    // Third-party servers still get the id for correlation.
+    assertEquals(
+      (requestBody as { params?: { _meta?: Record<string, unknown> } }).params?._meta,
+      { run_id: "run-local", agent_id: "gmail-agent" },
+    );
+
+    if (previousApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+    else Deno.env.set("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
   });
 
   it("prefers structuredContent for MCP isError tool results", async () => {
