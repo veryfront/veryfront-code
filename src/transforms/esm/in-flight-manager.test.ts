@@ -45,7 +45,7 @@ describe("transforms/esm/in-flight-manager", () => {
         cacheKey,
         async (abortSignal, _reportProgress, control) => {
           sharedSignal = abortSignal;
-          assertEquals(control.commit(), true);
+          assertEquals(control.commit(1_000), true);
           publicationStarted.resolve();
           await releasePublication.promise;
           abortSignal.throwIfAborted();
@@ -71,6 +71,41 @@ describe("transforms/esm/in-flight-manager", () => {
         releasePublication.resolve();
         assertEquals(await follower, "/path/to/committed-publication.mjs");
         await promise;
+        assertEquals(inFlightHttpFetches.has(cacheKey), false);
+      } finally {
+        releasePublication.resolve();
+        await Promise.allSettled([owner, promise]);
+        __clearInFlightHttpFetches();
+      }
+    });
+
+    it("retires a committed publication when its deadline expires", async () => {
+      const cacheKey = "committed-publication-timeout";
+      const publicationStarted = Promise.withResolvers<void>();
+      const releasePublication = Promise.withResolvers<void>();
+      let sharedSignal: AbortSignal | undefined;
+      const promise = createInFlightHttpFetch(
+        cacheKey,
+        async (abortSignal, _reportProgress, control) => {
+          sharedSignal = abortSignal;
+          assertEquals(control.commit(5), true);
+          publicationStarted.resolve();
+          await releasePublication.promise;
+          abortSignal.throwIfAborted();
+          return "/path/to/late-publication.mjs";
+        },
+      );
+      const owner = waitForSharedInFlightHttpFetch(cacheKey, promise, null);
+
+      try {
+        await publicationStarted.promise;
+        const error = await assertRejects(
+          () => owner,
+          DOMException,
+          "HTTP bundle publication timed out",
+        );
+        assertEquals(error.name, "TimeoutError");
+        assertEquals(sharedSignal?.aborted, true);
         assertEquals(inFlightHttpFetches.has(cacheKey), false);
       } finally {
         releasePublication.resolve();
@@ -187,6 +222,72 @@ describe("transforms/esm/in-flight-manager", () => {
         clearTimeout(watchdogTimer!);
         release.resolve();
         await Promise.allSettled([promise, liveFollower, signalLessFollower]);
+        __clearInFlightHttpFetches();
+      }
+    });
+
+    it("returns a timeout before waiting for retained cycle peers", async () => {
+      const cycleDetected = Promise.withResolvers<void>();
+      const firstWaitStarted = Promise.withResolvers<void>();
+      const releaseSecond = Promise.withResolvers<void>();
+      const startCycle = Promise.withResolvers<void>();
+      const secondFlight: { promise?: Promise<string | null> } = {};
+      const secondOwnerController = new AbortController();
+
+      const firstPromise = createInFlightHttpFetch("bounded-cycle-a", async () => {
+        await startCycle.promise;
+        const dependency = waitForSharedInFlightHttpFetch(
+          "bounded-cycle-b",
+          secondFlight.promise!,
+          1_000,
+        );
+        firstWaitStarted.resolve();
+        await dependency;
+        return "/path/to/bounded-cycle-a.mjs";
+      });
+      secondFlight.promise = createInFlightHttpFetch("bounded-cycle-b", async () => {
+        startCycle.resolve();
+        await firstWaitStarted.promise;
+        assertEquals(
+          await waitForSharedInFlightHttpFetch(
+            "bounded-cycle-a",
+            firstPromise,
+            1_000,
+          ),
+          IN_FLIGHT_HTTP_FETCH_DEPENDENCY_CYCLE,
+        );
+        cycleDetected.resolve();
+        await releaseSecond.promise;
+        return "/path/to/bounded-cycle-b.mjs";
+      });
+      const secondOwner = waitForSharedInFlightHttpFetch(
+        "bounded-cycle-b",
+        secondFlight.promise,
+        null,
+        secondOwnerController.signal,
+      );
+      let watchdogTimer: ReturnType<typeof setTimeout>;
+
+      try {
+        await cycleDetected.promise;
+        const follower = waitForSharedInFlightHttpFetch(
+          "bounded-cycle-b",
+          secondFlight.promise,
+          5,
+        );
+        const outcome = await Promise.race([
+          follower.then((result) => ({ result, status: "settled" as const })),
+          new Promise<{ status: "hung" }>((resolve) => {
+            watchdogTimer = setTimeout(() => resolve({ status: "hung" }), 30);
+          }),
+        ]);
+
+        assertEquals(outcome, { result: undefined, status: "settled" });
+        await follower;
+      } finally {
+        clearTimeout(watchdogTimer!);
+        releaseSecond.resolve();
+        await Promise.allSettled([firstPromise, secondOwner, secondFlight.promise]);
         __clearInFlightHttpFetches();
       }
     });

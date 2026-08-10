@@ -42,6 +42,7 @@ export function hasInFlightHttpFetchOwner(): boolean {
 
 interface InFlightHttpFetchAbortState {
   committed: boolean;
+  commitTimeoutId?: ReturnType<typeof setTimeout>;
   controller: AbortController;
   completionDependencies: Map<string, Promise<string | null>>;
   completionDependencyReleases: Map<string, (reason?: unknown) => void>;
@@ -55,12 +56,18 @@ interface InFlightHttpFetchAbortState {
 
 export interface InFlightHttpFetchControl {
   /** Keep this generation authoritative after publication side effects begin. */
-  commit(): boolean;
+  commit(timeoutMs: number): boolean;
   /** Whether this owner is still the registered generation for its cache key. */
   isCurrent(): boolean;
 }
 
 const inFlightHttpFetchAbortStates = new Map<string, InFlightHttpFetchAbortState>();
+
+function clearInFlightHttpFetchCommitTimeout(state: InFlightHttpFetchAbortState): void {
+  if (state.commitTimeoutId === undefined) return;
+  clearTimeout(state.commitTimeoutId);
+  state.commitTimeoutId = undefined;
+}
 
 function releaseCompletionDependencyRetentions(
   state: InFlightHttpFetchAbortState,
@@ -77,6 +84,7 @@ function removeInFlightHttpFetchAbortState(
   reason?: unknown,
 ): void {
   if (inFlightHttpFetchAbortStates.get(cacheKey) !== state) return;
+  clearInFlightHttpFetchCommitTimeout(state);
   inFlightHttpFetchAbortStates.delete(cacheKey);
   releaseCompletionDependencyRetentions(state, reason);
   state.completionDependencies.clear();
@@ -185,6 +193,7 @@ const IN_FLIGHT_WAIT_TIMEOUT_MS = 30_000;
  */
 export function __clearInFlightHttpFetches(): void {
   for (const state of inFlightHttpFetchAbortStates.values()) {
+    clearInFlightHttpFetchCommitTimeout(state);
     if (!state.settled) {
       state.controller.abort(
         new DOMException("The HTTP fetch registry was cleared", "AbortError"),
@@ -232,13 +241,13 @@ export function createInFlightHttpFetch(
       }
     }
   };
-  const promise: Promise<string | null> = Promise.resolve()
+  const computation = Promise.resolve()
     .then(() =>
       inFlightHttpFetchOwnerStorage.run(
         cacheKey,
         () =>
           compute(controller.signal, reportProgress, {
-            commit: (): boolean => {
+            commit: (timeoutMs: number): boolean => {
               if (
                 controller.signal.aborted || state.settled ||
                 inFlightHttpFetches.get(cacheKey) !== promise
@@ -246,14 +255,29 @@ export function createInFlightHttpFetch(
                 return false;
               }
               state.committed = true;
+              state.commitTimeoutId ??= setTimeout(() => {
+                if (state.settled || inFlightHttpFetches.get(cacheKey) !== promise) return;
+                const reason = new DOMException(
+                  "HTTP bundle publication timed out",
+                  "TimeoutError",
+                );
+                state.committed = false;
+                state.controller.abort(reason);
+                if (inFlightHttpFetches.get(cacheKey) === promise) {
+                  inFlightHttpFetches.delete(cacheKey);
+                }
+                removeInFlightHttpFetchAbortState(cacheKey, state, reason);
+              }, timeoutMs);
               return true;
             },
             isCurrent: (): boolean => inFlightHttpFetches.get(cacheKey) === promise,
           }),
       )
-    )
+    );
+  const promise: Promise<string | null> = waitForSharedPromise(computation, controller.signal)
     .finally(() => {
       state.settled = true;
+      clearInFlightHttpFetchCommitTimeout(state);
       if (inFlightHttpFetches.get(cacheKey) === promise) {
         inFlightHttpFetches.delete(cacheKey);
       }
@@ -343,6 +367,7 @@ export async function waitForSharedInFlightHttpFetch(
       abortSignal !== undefined && result === undefined &&
       inFlightHttpFetches.get(cacheKey) === promise
     );
+    if (result === undefined) return undefined;
     if (ownerCacheKey && ownerState) {
       for (const [dependencyCacheKey, dependencyPromise] of state.completionDependencies) {
         if (dependencyCacheKey !== ownerCacheKey) {

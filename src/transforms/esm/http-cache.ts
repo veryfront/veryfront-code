@@ -141,7 +141,9 @@ async function publishHttpBundleGeneration<T>(
       .catch(() => {})
       .then(async () => {
         assertCurrentHttpFetch(abortSignal, control);
-        if (!control.commit()) throw abandonedHttpFetchError(abortSignal);
+        if (!control.commit(HTTP_MODULE_FETCH_TIMEOUT_MS)) {
+          throw abandonedHttpFetchError(abortSignal);
+        }
         await prepare();
         assertCurrentHttpFetch(abortSignal, control);
         if (!fs.rename) {
