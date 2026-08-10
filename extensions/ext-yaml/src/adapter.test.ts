@@ -166,9 +166,12 @@ describe("@std/yaml JSON schema fidelity", () => {
   it("still reports the real error hiding behind those diagnostics", () => {
     // A duplicate key raises DUPLICATE_KEY *after* two TAG_RESOLVE_FAILEDs, so
     // reading the first diagnostic would have surfaced the benign one.
+    // Asserting the type alone would pass on the TAG_RESOLVE_FAILED that
+    // precedes it, which is the very confusion this guards against.
     assertThrows(
       () => parseYamlSource("a: 1\na: 2", { schema: "json" }),
       SyntaxError,
+      "Map keys must be unique",
     );
   });
 });

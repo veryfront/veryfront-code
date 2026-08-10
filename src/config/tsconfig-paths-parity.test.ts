@@ -51,7 +51,10 @@ function resolveThroughPaths(specifier: string, paths: PathsMap): string | null 
     best.prefix.length,
     specifier.length - best.suffix.length,
   );
-  return best.target.replace("*", captured);
+  // Every wildcard, not just the first: `replace` with a string pattern
+  // substitutes one occurrence, so a target carrying two would keep a literal
+  // `*` and silently compare unequal.
+  return best.target.replaceAll("*", captured);
 }
 
 /** Collapses the extensionless and directory forms a resolver would accept. */

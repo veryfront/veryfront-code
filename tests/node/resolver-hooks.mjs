@@ -9,7 +9,7 @@
  */
 
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, resolve as pathResolve } from "node:path";
+import { dirname, resolve as pathResolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -202,7 +202,10 @@ export function findWorkspaceImportScope(parentPath) {
   if (!parentPath) return null;
   let best = null;
   for (const scope of workspaceImportScopes) {
-    if (parentPath !== scope.dir && !parentPath.startsWith(`${scope.dir}/`)) continue;
+    // `sep`, not a literal "/": both sides come from pathResolve/fileURLToPath,
+    // so on Windows they are backslash-separated and a hard-coded slash matches
+    // nothing -- every member scope would silently fail to apply.
+    if (parentPath !== scope.dir && !parentPath.startsWith(`${scope.dir}${sep}`)) continue;
     if (!best || scope.dir.length > best.dir.length) best = scope;
   }
   return best;
