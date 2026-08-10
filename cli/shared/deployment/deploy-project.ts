@@ -849,24 +849,9 @@ function decodeJwtSegment(segment: string | undefined): object | null {
 /**
  * Whether a stored credential could satisfy the protected-environment gate.
  *
- * The gate resolves the `authToken` cookie by decoding it as a JWT and reading
- * `userId` from the verified payload; it has no API-key branch. An opaque
- * `vf_…` API key therefore fails the same way an absent cookie does, so
- * presenting one only leaks the key.
- *
- * This mirrors what the gate reads rather than merely counting dots, so an
- * opaque credential that happens to contain dots is withheld too. It is still
- * a shape check, not verification — the CLI cannot verify the signature and
- * does not need to. It only needs to know whether the gate could possibly
- * accept the credential.
- *
- * The counterpart is `isApiKeyToken` in `cli/auth/login.ts`, which asks what
- * the operator logged in with; this asks what the proxy gate can resolve. They
- * must never both be true for one credential, and this one is deliberately
- * fail-closed: a credential it cannot recognise is withheld, not sent. An
- * earlier revision of this check was loose enough to leak `a.b.c`, so the
- * invariant is held by a test — `does not send an API key to the protected
- * environment gate` fails the moment a key becomes presentable again.
+ * The gate reads `userId` from the verified JWT payload and has no API-key
+ * branch, so presenting an opaque key only leaks it. Reads what the gate
+ * reads, and withholds anything it cannot recognise.
  */
 function isSessionCredential(apiToken: string): boolean {
   const segments = apiToken.split(".");
@@ -890,16 +875,10 @@ function buildEnvironmentReadinessProbes(
   if (route === null) return [];
 
   // Without a session credential the probe cannot get past the gate. Its
-  // challenge — a sign-in redirect, 401, or 403 — still proves routing
-  // resolves and the proxy is serving this environment, which is the most this
-  // step can establish, and the deployment it would otherwise fail is already
-  // committed and verified.
-  //
-  // Accepting the whole challenge rather than only the redirect is the same
-  // allowance the protected custom-domain probe below already makes, not a new
-  // one. Narrowing it would buy nothing here either: the gate answers before
-  // the app does, so for a protected environment with no session this probe is
-  // blind to application health whichever challenge it accepts.
+  // challenge still proves routing resolves and the proxy is serving this
+  // environment — the most this step can establish, and the deployment it
+  // would otherwise fail is already committed and verified. Same allowance the
+  // protected custom-domain probe below already makes.
   const canAuthenticate = isSessionCredential(target.apiToken);
 
   const targetUrl = buildEnvironmentProbeUrl(target.url, route);
@@ -945,13 +924,7 @@ function isSignInRedirect(response: Response, requestUrl: string): boolean {
   }
 }
 
-/**
- * Describe why a probe was turned away at the gate.
- *
- * A challenge is a sign-in redirect, a 401, or a 403, so the message has to
- * name which one arrived. Reporting every challenge as "redirected to sign-in"
- * sent operators looking for a redirect that a 403 never performed.
- */
+/** A challenge is a sign-in redirect, a 401, or a 403; say which one arrived. */
 function describeAuthenticationChallenge(
   probe: EnvironmentReadinessProbe,
   status: number,
@@ -1023,9 +996,7 @@ export async function waitForEnvironmentReady(
 
         if (ready) break;
         if (authenticationChallenge) {
-          // These are diagnosed conditions, so they must carry the deployment
-          // slug. A bare Error reaches the operator as `unknown-error` with
-          // "Check logs for more details", which describes nothing.
+          // A bare Error here reaches the operator as `unknown-error`.
           throw DEPLOYMENT_ERROR.create({
             detail: describeAuthenticationChallenge(probe, response.status, signInRedirect),
             context: { url: probe.url, status: response.status },

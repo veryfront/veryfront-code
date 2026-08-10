@@ -582,8 +582,7 @@ describe("pushed source provenance", () => {
 });
 
 describe("environment URL readiness", () => {
-  // The protected-environment gate only accepts a session JWT, so the probe
-  // credential has to be JWT-shaped for the authenticated path to be exercised.
+  // Must be JWT-shaped, or the authenticated path stops being exercised.
   const sessionToken = "eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOiJ1XzEifQ.test-signature";
   const apiKeyToken = "vf_d157f0000000000000000000000000000000000";
 
@@ -692,8 +691,6 @@ describe("environment URL readiness", () => {
         }),
     );
 
-    // The gate only resolves session JWTs, so an API key is rejected exactly
-    // like no credential at all. Sending it leaks the key for no benefit.
     assertEquals(requests, [{
       url: "https://my-project.production.veryfront.com/",
       cookie: null,
@@ -718,7 +715,6 @@ describe("environment URL readiness", () => {
         waitForEnvironmentReady({
           ...hostedTarget,
           protected: true,
-          // Three non-empty segments, but no decodable JWT payload behind them.
           apiToken: "opaque.segment.value",
         }),
     );
@@ -731,8 +727,7 @@ describe("environment URL readiness", () => {
 
   it("does not send a JWT-shaped credential whose payload carries no userId", async () => {
     const requests: Array<{ url: string; cookie: string | null }> = [];
-    // {"alg":"HS256"} . {"sub":"u_1"} . sig — decodes cleanly, but the gate
-    // reads userId, so this could never resolve to a member.
+    // {"alg":"HS256"} . {"sub":"u_1"} . sig — decodes, but carries no userId.
     const withoutUserId = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1XzEifQ.test-signature";
 
     await withMockFetch(
@@ -761,9 +756,6 @@ describe("environment URL readiness", () => {
   });
 
   it("treats a sign-in redirect as ready when the credential is an API key", async () => {
-    // The deployment is already committed by the time this probe runs. A
-    // redirect proves routing resolves and the gate is serving the
-    // environment, which is all this probe can establish without a session.
     await withMockFetch(
       () =>
         Promise.resolve(
@@ -1004,8 +996,6 @@ describe("environment URL readiness", () => {
         expectErrorMessage(() => waitForEnvironmentReady({ ...hostedTarget, protected: false })),
     );
 
-    // A 403 performs no redirect. Reporting one sends the operator looking for
-    // a hop that never happened.
     assertMatch(message ?? "", /returned HTTP 403/);
   });
 
