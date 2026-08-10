@@ -119,9 +119,9 @@ it("deferred generate searches, exposes on the next step, and executes once", as
     "read_release_marker",
     "tool_search",
   ]);
-  assertEquals(observedSystems[0].includes("form_input"), false);
-  assertEquals(observedSystems[0].includes("read_release_marker"), false);
-  assertEquals(observedSystems[1].includes("read_release_marker"), false);
+  assertEquals((observedSystems[0] ?? "").includes("form_input"), false);
+  assertEquals((observedSystems[0] ?? "").includes("read_release_marker"), false);
+  assertEquals((observedSystems[1] ?? "").includes("read_release_marker"), false);
   assertEquals(executionCount, 1);
   assertEquals(response.text, "Release marker marker-1");
 });
@@ -199,9 +199,9 @@ it("deferred generate activates and executes provider-native web search on deman
   assertEquals(observedTools[0], ["tool_search"]);
   assertEquals(observedTools[1], ["tool_search", "web_search"]);
   assertEquals(observedTools[2], ["tool_search", "web_search"]);
-  assertEquals(observedSystems[0].includes("web_search"), false);
-  assertEquals(observedSystems[0].includes("web_fetch"), false);
-  assertEquals(observedSystems[1].includes("web_search"), false);
+  assertEquals((observedSystems[0] ?? "").includes("web_search"), false);
+  assertEquals((observedSystems[0] ?? "").includes("web_fetch"), false);
+  assertEquals((observedSystems[1] ?? "").includes("web_search"), false);
   assertEquals(response.toolCalls.map((call) => [call.name, call.status]), [
     ["tool_search", "completed"],
     ["web_search", "completed"],
