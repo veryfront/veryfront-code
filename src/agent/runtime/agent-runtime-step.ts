@@ -23,6 +23,7 @@ import {
   withRuntimeToolInventory,
 } from "./tool-inventory.ts";
 import { getProviderToolProfile } from "./provider-tool-compat.ts";
+import { createProviderNativeToolExposureDefinitions } from "./provider-native-tool-inventory.ts";
 
 export type AgentRuntimeStepMode = "generate" | "stream";
 
@@ -218,6 +219,14 @@ export async function prepareAgentRuntimeStep(
       integrationToolDiscovery = { status: "ok", tools: usableForwardedTools };
     }
   }
+  const existingToolNames = new Set(tools.map((tool) => tool.name));
+  tools = [
+    ...tools,
+    ...createProviderNativeToolExposureDefinitions({
+      model: input.effectiveModel ?? input.config.model,
+      toolNames: input.providerToolNames ?? [],
+    }).filter((tool) => !existingToolNames.has(tool.name)),
+  ];
   const toolExposureState = input.toolExposureState ?? createToolExposureState();
   if (input.toolExposureCheckpoint) {
     const restoredState = restoreToolExposureState(input.toolExposureCheckpoint, tools);
@@ -237,9 +246,7 @@ export async function prepareAgentRuntimeStep(
     ? flattenSystemInstructions(
       withRuntimeToolInventory(
         baseSystemPrompt,
-        [...toolExposurePlan.visible.map((tool) => tool.name), ...(input.providerToolNames ?? [])]
-          .filter((name, index, names) => names.indexOf(name) === index)
-          .sort(),
+        toolExposurePlan.visible.map((tool) => tool.name),
         // Naming what is deferred is the difference between a tool the model
         // can seek and one it has no reason to believe exists.
         toolExposurePlan.deferred.map((tool) => ({

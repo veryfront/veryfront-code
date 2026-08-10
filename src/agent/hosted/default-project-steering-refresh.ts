@@ -275,9 +275,7 @@ export function createDefaultHostedProjectSteeringRefresh(
       model: input.taskContext.model,
       requiredToolNames: input.toolAssembly.localToolNames,
     });
-    const bootstrapToolNames = toolNames.filter((toolName) =>
-      toolName === "form_input" || toolName === "load_skill"
-    );
+    const bootstrapToolNames = toolNames.filter((toolName) => toolName === "load_skill");
     const hasDeferredTools = toolNames.length > bootstrapToolNames.length;
     const modelVisibleToolNames = input.toolAssembly.toolLoadingMode === "deferred"
       ? [

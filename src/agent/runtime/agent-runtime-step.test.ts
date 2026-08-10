@@ -59,15 +59,16 @@ describe("agent/runtime-step", () => {
 
     assertEquals(
       prepared.tools.map((tool) => tool.name),
-      ["form_input", "get_release", "load_skill", "tool_search"],
+      ["get_release", "load_skill", "tool_search"],
     );
     assertEquals(
       prepared.toolExposurePlan.deferred.map((tool) => tool.name),
-      ["create_release"],
+      ["create_release", "form_input"],
     );
   });
 
-  it("keeps provider-native tools in prompt inventory but outside tool_search authorization", async () => {
+  it("keeps provider-native tools authorized but deferred until tool_search loads them", async () => {
+    const state = createToolExposureState();
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
       activeSkillToolAvailability: undefined,
@@ -88,10 +89,41 @@ describe("agent/runtime-step", () => {
       step: 0,
       systemPrompt: "Base",
       toolContextBase: undefined,
+      toolExposureState: state,
     });
 
     assertEquals(prepared.systemPrompt.includes("- web_search"), true);
-    assertEquals(prepared.toolExposurePlan.authorized.map((tool) => tool.name), ["create_release"]);
+    assertEquals(prepared.tools.map((tool) => tool.name), ["tool_search"]);
+    assertEquals(
+      prepared.toolExposurePlan.authorized.map((tool) => tool.name),
+      ["create_release", "web_search"],
+    );
+    assertEquals(
+      prepared.toolExposurePlan.deferred.map((tool) => tool.name),
+      ["create_release", "web_search"],
+    );
+
+    state.loadedToolNames.add("web_search");
+    const loaded = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "anthropic/claude-opus-4-6", system: "Base", tools: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async () => [toolDefinition("create_release")],
+      supportsToolCalling: true,
+      messages: [],
+      mode: "generate",
+      providerToolNames: ["web_search"],
+      remoteToolSources: undefined,
+      resolveRuntimeState: async () => ({ systemPrompt: prepared.systemPrompt }),
+      runtimeContext: undefined,
+      step: 1,
+      systemPrompt: prepared.systemPrompt,
+      toolContextBase: undefined,
+      toolExposureState: state,
+    });
+    assertEquals(loaded.tools.map((tool) => tool.name), ["tool_search", "web_search"]);
   });
 
   it("preserves a typed empty integration catalog without adding a warning", async () => {
