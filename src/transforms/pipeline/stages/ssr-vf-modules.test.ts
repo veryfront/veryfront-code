@@ -8,7 +8,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * @see ssr-vf-modules.ts
  */
 
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
@@ -23,6 +23,7 @@ import {
   _testExports,
   cacheTransformedCode,
   frameworkFileCache,
+  frameworkFileTransformFlight,
   frameworkTransformFlight,
   transformFrameworkSource,
   transformingFiles,
@@ -217,6 +218,133 @@ describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () 
         false,
       );
       assertEquals(frameworkTransformFlight.size, 0);
+    });
+
+    it("keeps shared framework work alive for an active render", async () => {
+      const firstController = new AbortController();
+      const secondController = new AbortController();
+      const started = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const firstProgress: string[] = [];
+      const secondProgress: string[] = [];
+      let executions = 0;
+      let sharedSignalAborted = false;
+      let reportProgress!: (event: { phase: string }) => void;
+      const key = `framework-cancellation-${crypto.randomUUID()}`;
+
+      const first = _testExports.runFrameworkTransformFlight(
+        key,
+        async (abortSignal, publishProgress) => {
+          executions++;
+          reportProgress = publishProgress;
+          abortSignal.addEventListener("abort", () => sharedSignalAborted = true, {
+            once: true,
+          });
+          started.resolve();
+          await release.promise;
+          abortSignal.throwIfAborted();
+          return "transformed";
+        },
+        {
+          abortSignal: firstController.signal,
+          onProgress: (event) => firstProgress.push(event.phase),
+        },
+      );
+      await started.promise;
+
+      const second = _testExports.runFrameworkTransformFlight(
+        key,
+        () => {
+          executions++;
+          return Promise.resolve("unexpected second execution");
+        },
+        {
+          abortSignal: secondController.signal,
+          onProgress: (event) => secondProgress.push(event.phase),
+        },
+      );
+      reportProgress({ phase: "framework:test-shared" });
+
+      firstController.abort(new DOMException("first render canceled", "AbortError"));
+      await assertRejects(() => first, DOMException, "first render canceled");
+      assertEquals(sharedSignalAborted, false);
+
+      reportProgress({ phase: "framework:test-follower" });
+      release.resolve();
+      assertEquals(await second, "transformed");
+      assertEquals(executions, 1);
+      assertEquals(firstProgress, ["framework:test-shared"]);
+      assertEquals(secondProgress, ["framework:test-shared", "framework:test-follower"]);
+      assertEquals(frameworkTransformFlight.size, 0);
+    });
+
+    it("cancels orphaned framework work after its last render detaches", async () => {
+      const controller = new AbortController();
+      const started = Promise.withResolvers<void>();
+      const sharedAborted = Promise.withResolvers<unknown>();
+      const abortReason = new DOMException("last render canceled", "AbortError");
+
+      const pending = _testExports.runFrameworkTransformFlight(
+        `framework-orphan-${crypto.randomUUID()}`,
+        (abortSignal) => {
+          started.resolve();
+          return new Promise<string>((_resolve, reject) => {
+            abortSignal.addEventListener("abort", () => {
+              sharedAborted.resolve(abortSignal.reason);
+              reject(abortSignal.reason);
+            }, { once: true });
+          });
+        },
+        { abortSignal: controller.signal },
+      );
+      await started.promise;
+
+      controller.abort(abortReason);
+      const error = await assertRejects(() => pending);
+      assertEquals(error, abortReason);
+      assertEquals(await sharedAborted.promise, abortReason);
+    });
+
+    it("does not attach a new render to an aborted framework flight", async () => {
+      const key = `framework-aborted-flight-${crypto.randomUUID()}`;
+      const firstController = new AbortController();
+      const firstStarted = Promise.withResolvers<void>();
+      const releaseFirst = Promise.withResolvers<string>();
+      const abortReason = new DOMException("first render canceled", "AbortError");
+      let replacementExecutions = 0;
+      let replacement: Promise<string> | undefined;
+
+      const first = _testExports.runFrameworkTransformFlight(
+        key,
+        (abortSignal) =>
+          frameworkFileTransformFlight.do(key, () => {
+            firstStarted.resolve();
+            abortSignal.addEventListener("abort", () => {
+              replacement = _testExports.runFrameworkTransformFlight(
+                key,
+                () =>
+                  frameworkFileTransformFlight.do(key, () => {
+                    replacementExecutions++;
+                    return Promise.resolve("fresh transform");
+                  }),
+                {},
+              );
+            }, { once: true });
+            return releaseFirst.promise;
+          }),
+        { abortSignal: firstController.signal },
+      );
+      await firstStarted.promise;
+      firstController.abort(abortReason);
+      assertEquals(await assertRejects(() => first), abortReason);
+
+      try {
+        assertEquals(replacementExecutions, 1);
+        assertEquals(await replacement!, "fresh transform");
+      } finally {
+        releaseFirst.resolve("stale transform");
+        await replacement?.catch(() => {});
+      }
     });
   });
 

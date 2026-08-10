@@ -57,6 +57,34 @@ describe("module-loader/module-transform-cache", () => {
     await esbuild.stop();
   });
 
+  it("forwards module-loading cancellation into the SSR transform", async () => {
+    const callerController = new AbortController();
+    const transformController = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+
+    await transformModuleCodeWithCache({
+      fileContent: "export const page = 1;",
+      filePath: "/project/app/page.tsx",
+      projectDir: "/project",
+      effectiveProjectId: "project-1",
+      mode: "production",
+      adapter: {} as RuntimeAdapter,
+      signal: callerController.signal,
+      deps: createDeps({
+        getOrComputeTransform: async (_key, compute) => ({
+          code: await compute(undefined, transformController.signal),
+          cacheHit: false,
+        }),
+        transformToESM: (_code, _filePath, _projectDir, _adapter, options) => {
+          observedSignal = options.abortSignal;
+          return Promise.resolve("export const page = 1;");
+        },
+      }),
+    });
+
+    assertEquals(observedSignal, transformController.signal);
+  });
+
   it("isolates outer transform cache keys by React, runtime, and dependency-pin state", async () => {
     const cacheKeys: string[] = [];
     const deps = createDeps({

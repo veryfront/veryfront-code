@@ -78,6 +78,16 @@ describe("transforms/pipeline/context", () => {
 
       assertEquals(ctx.jsxImportSource, "react");
     });
+
+    it("preserves the module-loading abort signal", () => {
+      const controller = new AbortController();
+      const ctx = createTransformContextSync("code", "/file.tsx", "/project", "hash", {
+        projectId: "test",
+        abortSignal: controller.signal,
+      });
+
+      assertEquals(ctx.abortSignal, controller.signal);
+    });
   });
 
   describe("recordStageTiming", () => {

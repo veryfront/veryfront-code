@@ -52,6 +52,14 @@ let cacheInitPromise: Promise<void> | null = null;
 let transformFlight = new Singleflight<TransformCacheResult>();
 const transformCachePublications = new Map<string, Promise<void>>();
 
+interface TransformFlightAbortState {
+  controller: AbortController;
+  waiters: number;
+  settled: boolean;
+}
+
+let transformFlightAbortStates = new Map<string, TransformFlightAbortState>();
+
 interface TransformProgressState {
   listeners: Set<TransformProgressListener>;
   flights: number;
@@ -408,7 +416,15 @@ function setLocalFallback(key: string, entry: TransformCacheEntry): void {
 
 export function destroyTransformCache(): void {
   getLocalFallback().clear();
+  for (const abortState of transformFlightAbortStates.values()) {
+    if (!abortState.settled) {
+      abortState.controller.abort(
+        new DOMException("The transform cache was destroyed", "AbortError"),
+      );
+    }
+  }
   transformFlight = new Singleflight<TransformCacheResult>();
+  transformFlightAbortStates = new Map();
   transformProgress.clear();
 }
 
@@ -468,7 +484,10 @@ function publishComputedTransform(
 
 export async function getOrComputeTransform(
   key: string,
-  computeFn: (reportProgress?: TransformProgressListener) => Promise<string>,
+  computeFn: (
+    reportProgress?: TransformProgressListener,
+    abortSignal?: AbortSignal,
+  ) => Promise<string>,
   ttlSeconds: number = DEFAULT_TTL_SECONDS,
   onProgress?: TransformProgressListener,
   signal?: AbortSignal,
@@ -477,9 +496,20 @@ export async function getOrComputeTransform(
 ): Promise<TransformCacheResult> {
   signal?.throwIfAborted();
   const flightRegistry = transformFlight;
-  if (!flightRegistry.has(key)) {
+  const hasExistingFlight = flightRegistry.has(key);
+  if (!hasExistingFlight) {
     transformProgress.set(key, { listeners: new Set(), flights: 0 });
   }
+  let abortState = transformFlightAbortStates.get(key);
+  if (!hasExistingFlight || !abortState) {
+    abortState = {
+      controller: new AbortController(),
+      waiters: 0,
+      settled: false,
+    };
+    transformFlightAbortStates.set(key, abortState);
+  }
+  abortState.waiters++;
   const unsubscribe = subscribeToTransformProgress(key, onProgress);
 
   try {
@@ -539,7 +569,7 @@ export async function getOrComputeTransform(
 
           logger.debug("Cache miss, computing", { key });
           reportProgress({ phase: "transform-cache:miss" });
-          const code = await computeFn(reportProgress);
+          const code = await computeFn(reportProgress, abortState.controller.signal);
           const dependencyResolutionObservations = getDependencyResolutionObservations?.().map(
             (observation) => ({ ...observation }),
           );
@@ -569,6 +599,13 @@ export async function getOrComputeTransform(
               : { dependencyResolutionObservations }),
           };
         } finally {
+          abortState.settled = true;
+          if (
+            abortState.waiters === 0 &&
+            transformFlightAbortStates.get(key) === abortState
+          ) {
+            transformFlightAbortStates.delete(key);
+          }
           progressFlight.end();
         }
       },
@@ -583,11 +620,26 @@ export async function getOrComputeTransform(
       },
     );
 
-    // A caller timeout must detach that request without cancelling the shared
-    // singleflight leader: another concurrent render may still depend on the
-    // same cold transform, and completing it warms the cache for later work.
+    // A caller timeout detaches that request. Shared work remains active while
+    // another render is waiting, but is canceled once its last waiter leaves.
     return await waitForSharedPromise(flight, signal);
   } finally {
     unsubscribe();
+    abortState.waiters = Math.max(0, abortState.waiters - 1);
+    if (abortState.waiters === 0 && !abortState.settled) {
+      if (transformFlightAbortStates.get(key) === abortState) {
+        flightRegistry.forget(key);
+        transformFlightAbortStates.delete(key);
+      }
+      abortState.controller.abort(
+        signal?.reason ?? new DOMException("The transform was canceled", "AbortError"),
+      );
+    }
+    if (
+      abortState.waiters === 0 && abortState.settled &&
+      transformFlightAbortStates.get(key) === abortState
+    ) {
+      transformFlightAbortStates.delete(key);
+    }
   }
 }

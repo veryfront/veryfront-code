@@ -14,7 +14,7 @@ import {
 describe("module-collection", () => {
   describe("timeout constants", () => {
     it("has reasonable timeout values", () => {
-      assertEquals(MODULE_LOAD_TIMEOUT_MS, 10000);
+      assertEquals(MODULE_LOAD_TIMEOUT_MS, 40000);
       assertEquals(MODULE_LOAD_HARD_TIMEOUT_MS, 45000);
       assertEquals(DATA_FETCH_TIMEOUT_MS, 15000);
       assertEquals(SSR_RENDER_TIMEOUT_MS, 20000);

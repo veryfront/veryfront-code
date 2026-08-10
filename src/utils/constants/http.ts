@@ -2,8 +2,17 @@ export { MS_PER_MINUTE, MS_PER_SECOND, SECONDS_PER_MINUTE } from "./cache.ts";
 
 export const KB_IN_BYTES = 1024;
 
-/** Shared HTTP module fetch timeout ms value. */
-export const HTTP_MODULE_FETCH_TIMEOUT_MS = 2500;
+/** HTTP module fetch timeout, including cold upstream module generation. */
+export const HTTP_MODULE_FETCH_TIMEOUT_MS = 10_000;
+/** Maximum attempts for one HTTP module fetch. */
+export const HTTP_MODULE_FETCH_MAX_ATTEMPTS = 3;
+/** Linear backoff base between HTTP module fetch attempts. */
+export const HTTP_MODULE_FETCH_RETRY_DELAY_MS = 100;
+/** Maximum time consumed by all HTTP module fetch attempts and backoffs. */
+export const HTTP_MODULE_FETCH_RETRY_BUDGET_MS =
+  HTTP_MODULE_FETCH_TIMEOUT_MS * HTTP_MODULE_FETCH_MAX_ATTEMPTS +
+  HTTP_MODULE_FETCH_RETRY_DELAY_MS *
+    ((HTTP_MODULE_FETCH_MAX_ATTEMPTS - 1) * HTTP_MODULE_FETCH_MAX_ATTEMPTS / 2);
 export const HTTP_FETCH_TIMEOUT_MS =
   30000; /** Default timeout for HTTP module/bundle fetch operations (30 seconds) */
 

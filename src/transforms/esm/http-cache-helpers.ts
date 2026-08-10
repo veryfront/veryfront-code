@@ -16,6 +16,7 @@ import {
 import { rendererLogger } from "#veryfront/utils";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
+import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
 import { buildEsmShUrl } from "../import-rewriter/url-builder.ts";
 import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
 import { DEFAULT_REACT_VERSION, getReactImportMap } from "./react-cdn.ts";
@@ -256,6 +257,10 @@ export type CacheOptions = {
   moduleServerOrigin?: string;
   /** Request-scoped dependency-pinning state used to isolate module-server URLs. */
   dependencyPinningCacheKey?: string;
+  /** Cancels request-scoped fetch, rewrite, and cache work. */
+  abortSignal?: AbortSignal;
+  /** Reports completed remote-module fetches as idle-deadline heartbeats. */
+  onProgress?: TransformProgressListener;
 };
 
 export type HttpCacheIdentityOptions = Pick<CacheOptions, "importMap" | "reactVersion">;
@@ -371,6 +376,16 @@ export function ensurePreparedHttpCacheRequestOptions<T extends CacheOptions>(op
   return getHttpCacheRequestIdentityContext(options)
     ? options
     : prepareHttpCacheRequestOptions(options);
+}
+
+/** Clone runtime options while preserving one request graph's identity snapshot. */
+export function deriveHttpCacheRequestOptions<T extends CacheOptions>(
+  options: T,
+  overrides: Pick<CacheOptions, "abortSignal" | "onProgress">,
+): T {
+  const derived = { ...options, ...overrides } as T;
+  const context = getHttpCacheRequestIdentityContext(options) ?? {};
+  return attachHttpCacheRequestIdentityContext(derived, context);
 }
 
 function getRequestImportMapFingerprint(

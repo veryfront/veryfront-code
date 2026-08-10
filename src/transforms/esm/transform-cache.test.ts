@@ -729,10 +729,77 @@ describe("transforms/esm/transform-cache", () => {
       assertEquals(followerResult.code, "shared-code");
     });
 
+    it("cancels a shared transform after its last caller aborts", async () => {
+      const controller = new AbortController();
+      const computeStarted = Promise.withResolvers<void>();
+      let sharedSignal: AbortSignal | undefined;
+
+      const caller = getOrComputeTransform(
+        "orphaned-transform-key",
+        (_reportProgress, abortSignal) => {
+          sharedSignal = abortSignal;
+          computeStarted.resolve();
+          return new Promise<string>((_resolve, reject) => {
+            const onAbort = () => reject(abortSignal?.reason);
+            abortSignal?.addEventListener("abort", onAbort, { once: true });
+          });
+        },
+        300,
+        undefined,
+        controller.signal,
+      );
+
+      await computeStarted.promise;
+      controller.abort(new Error("caller timed out"));
+      await assertRejects(() => caller, Error, "caller timed out");
+
+      assertEquals(sharedSignal?.aborted, true);
+    });
+
+    it("does not attach a new caller to an abandoned transform flight", async () => {
+      const key = `abandoned-transform-${crypto.randomUUID()}`;
+      const controller = new AbortController();
+      const started = Promise.withResolvers<void>();
+      const releaseOld = Promise.withResolvers<string>();
+      const abortReason = new DOMException("render abandoned", "AbortError");
+      let replacement: Promise<{ code: string; cacheHit: boolean }> | undefined;
+      let replacementExecutions = 0;
+
+      const abandoned = getOrComputeTransform(
+        key,
+        (_reportProgress, abortSignal) => {
+          started.resolve();
+          abortSignal?.addEventListener("abort", () => {
+            replacement = getOrComputeTransform(key, () => {
+              replacementExecutions++;
+              return Promise.resolve("fresh transform");
+            });
+          }, { once: true });
+          return releaseOld.promise;
+        },
+        300,
+        undefined,
+        controller.signal,
+      );
+      await started.promise;
+
+      controller.abort(abortReason);
+      assertEquals(await assertRejects(() => abandoned), abortReason);
+
+      try {
+        assertEquals(replacementExecutions, 1);
+        assertEquals(await replacement!, { code: "fresh transform", cacheHit: false });
+      } finally {
+        releaseOld.resolve("stale transform");
+        await Promise.resolve();
+      }
+    });
+
     it("detaches an aborted caller without cancelling the shared transform", async () => {
       const controller = new AbortController();
       const abortedCallerPhases: string[] = [];
       const followerPhases: string[] = [];
+      let sharedSignal: AbortSignal | undefined;
       let computeCalls = 0;
       let releaseCompute!: () => void;
       let markComputeStarted!: () => void;
@@ -745,8 +812,9 @@ describe("transforms/esm/transform-cache", () => {
 
       const abortedCaller = getOrComputeTransform(
         "aborted-progress-key",
-        async (reportProgress) => {
+        async (reportProgress, abortSignal) => {
           computeCalls++;
+          sharedSignal = abortSignal;
           reportProgress?.({ phase: "leader:started" });
           markComputeStarted();
           await computeGate;
@@ -772,12 +840,14 @@ describe("transforms/esm/transform-cache", () => {
 
       controller.abort(new Error("caller timed out"));
       await assertRejects(() => abortedCaller, Error, "caller timed out");
+      assertEquals(sharedSignal?.aborted, false);
 
       releaseCompute();
       const followerResult = await follower;
 
       assertEquals(computeCalls, 1);
       assertEquals(followerResult.code, "shared-after-abort");
+      assertEquals(sharedSignal?.aborted, false);
       assertEquals(abortedCallerPhases.includes("leader:finished"), false);
       assertEquals(followerPhases.includes("leader:finished"), true);
     });
@@ -1121,6 +1191,31 @@ describe("transforms/esm/transform-cache", () => {
       destroyTransformCache();
       assertEquals(getCachedTransform("k1"), undefined);
       assertEquals(getCachedTransform("k2"), undefined);
+    });
+
+    it("aborts unsettled transform flights before resetting their registry", async () => {
+      const started = Promise.withResolvers<void>();
+      let finish!: (value: string) => void;
+      let sharedSignal: AbortSignal | undefined;
+      const pending = getOrComputeTransform(
+        "unsettled-transform",
+        (_reportProgress, abortSignal) => {
+          sharedSignal = abortSignal;
+          started.resolve();
+          return new Promise<string>((resolve) => finish = resolve);
+        },
+      );
+      await started.promise;
+
+      try {
+        destroyTransformCache();
+        assertEquals(sharedSignal?.aborted, true);
+        assertEquals(sharedSignal?.reason instanceof DOMException, true);
+        assertEquals(sharedSignal?.reason.name, "AbortError");
+      } finally {
+        finish("stale transform");
+        await pending;
+      }
     });
   });
 });
