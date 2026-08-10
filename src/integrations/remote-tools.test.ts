@@ -730,6 +730,35 @@ describe("integrations/remote-tools", () => {
     });
   });
 
+  it("suppresses run_id only on strict false, not on other falsy markers", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "environment-token",
+      VERYFRONT_PROJECT_SLUG: "environment-project",
+    });
+
+    for (const marker of [true, undefined, 0, "false"]) {
+      let requestBody: Record<string, unknown> | undefined;
+      await withMockFetch(
+        async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          requestBody = await request.json();
+          return Response.json({ structuredContent: { ok: true } });
+        },
+        async () =>
+          await executeRemoteIntegrationTool("gmail__list_emails", {}, {
+            runId: "run-platform-123",
+            runIdBindsToolAuthorization: marker as boolean | undefined,
+          }),
+      );
+
+      assertEquals(
+        (requestBody as { run_id?: string } | undefined)?.run_id,
+        "run-platform-123",
+      );
+    }
+  });
+
   it("omits a non-binding run ID while retaining other call metadata", async () => {
     setRemoteToolEnv({
       VERYFRONT_API_BASE_URL: "https://api.test",
