@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -33,11 +34,32 @@ test("buildIsolatedBunTestRuns puts each test file in its own Bun process", () =
 });
 
 test("the Bun runner drains child output and exits naturally", () => {
-  const source = readFileSync(new URL("./run-tests.mjs", import.meta.url), "utf8");
+  const source = readFileSync(
+    new URL("./run-tests.mjs", import.meta.url),
+    "utf8",
+  );
 
-  assert.match(source, /child\.on\("close", \(code\) => finish\(code \?\? 1\)\)/);
+  assert.match(
+    source,
+    /child\.on\("close", \(code\) => finish\(code \?\? 1\)\)/,
+  );
   assert.doesNotMatch(source, /process\.exit\(/);
   assert.match(source, /process\.exitCode = ok \? 0 : 1/);
+});
+
+test("the Bun runner fails loudly when filters select no files", () => {
+  const result = spawnSync(
+    process.execPath,
+    [new URL("./run-tests.mjs", import.meta.url).pathname],
+    {
+      env: { ...process.env, BUN_TEST_INCLUDE: "missing-bun-fixture.test.ts" },
+      encoding: "utf8",
+    },
+  );
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Bun test runner selected no test files\./);
+  assert.doesNotMatch(result.stdout, /0 passed, 0 failed/);
 });
 
 test("Bun workspace cleanup runs before termination signals are re-raised", () => {

@@ -327,6 +327,44 @@ describe("first-party extension imports", () => {
       assertEquals(isMissingFirstPartyExtensionModule(unrelated), false);
     });
 
+    it("parses Bun missing-module reports from strings and object-shaped errors", () => {
+      const relative = {
+        message:
+          "ResolveMessage: Cannot find module './parser-only' from '/app/extensions/ext-parser-babel/src/index.ts'",
+      };
+      assertEquals(
+        isMissingFirstPartyExtensionModule(relative, [
+          "extensions/ext-parser-babel/src/parser-only",
+        ]),
+        true,
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(relative, [
+          "extensions/ext-parser-babel/src/other",
+        ]),
+        false,
+      );
+
+      const packageSpecifier = {
+        message:
+          "Cannot find module '@veryfront/ext-parser-babel/parser-only' from '/app/loader.js'",
+      };
+      assertEquals(
+        isMissingFirstPartyExtensionModule(packageSpecifier, [
+          "@veryfront/ext-parser-babel/parser-only",
+        ]),
+        true,
+      );
+
+      assertEquals(
+        isMissingFirstPartyExtensionModule(
+          "Cannot find module '@veryfront/ext-parser-babel' from '/app/loader.js'",
+          ["@veryfront/ext-parser-babel"],
+        ),
+        true,
+      );
+    });
+
     it("requires a full recognized message when no stable code is present", () => {
       assertEquals(
         isMissingFirstPartyExtensionModule(

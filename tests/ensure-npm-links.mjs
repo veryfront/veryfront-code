@@ -6,12 +6,18 @@ export function resolveDirectoryLinkType(platform = process.platform) {
   return platform === "win32" ? "junction" : "dir";
 }
 
-function ensureDirectorySymlink(sourcePath, targetPath, packageName) {
+export function ensureDirectoryLink(sourcePath, targetPath, packageName) {
   if (existsSync(targetPath)) return;
   try {
     symlinkSync(sourcePath, targetPath, resolveDirectoryLinkType());
-  } catch {
-    throw new Error(`Cannot link npm dependency "${packageName}" into node_modules.`);
+  } catch (error) {
+    if (error?.code === "EEXIST") return;
+    throw new Error(
+      `Cannot link npm dependency "${packageName}" into node_modules.`,
+      {
+        cause: error,
+      },
+    );
   }
 }
 
@@ -19,9 +25,11 @@ function linkTopLevelPackage(npmModulesRoot, rootModulesRoot, packageName) {
   const sourcePath = resolve(npmModulesRoot, packageName);
   const targetPath = resolve(rootModulesRoot, packageName);
   if (!existsSync(sourcePath)) {
-    throw new Error(`npm dependency "${packageName}" disappeared while links were prepared.`);
+    throw new Error(
+      `npm dependency "${packageName}" disappeared while links were prepared.`,
+    );
   }
-  ensureDirectorySymlink(sourcePath, targetPath, packageName);
+  ensureDirectoryLink(sourcePath, targetPath, packageName);
 }
 
 function linkScopedPackages(npmModulesRoot, rootModulesRoot, scopeName) {
@@ -30,22 +38,24 @@ function linkScopedPackages(npmModulesRoot, rootModulesRoot, scopeName) {
   if (!existsSync(sourceScopeDir)) return;
 
   if (!existsSync(targetScopeDir)) {
-    ensureDirectorySymlink(sourceScopeDir, targetScopeDir, scopeName);
+    ensureDirectoryLink(sourceScopeDir, targetScopeDir, scopeName);
     if (existsSync(targetScopeDir)) return;
   }
 
   let entries;
   try {
     entries = readdirSync(sourceScopeDir, { withFileTypes: true });
-  } catch {
-    throw new Error(`Cannot read npm dependency scope "${scopeName}".`);
+  } catch (error) {
+    throw new Error(`Cannot read npm dependency scope "${scopeName}".`, {
+      cause: error,
+    });
   }
 
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const sourcePath = resolve(sourceScopeDir, entry.name);
     const targetPath = resolve(targetScopeDir, entry.name);
-    ensureDirectorySymlink(sourcePath, targetPath, `${scopeName}/${entry.name}`);
+    ensureDirectoryLink(sourcePath, targetPath, `${scopeName}/${entry.name}`);
   }
 }
 
@@ -68,8 +78,13 @@ export function ensureNpmNodeModulesLinks(
   let entries;
   try {
     entries = readdirSync(npmModulesRoot, { withFileTypes: true });
-  } catch {
-    throw new Error("Cannot read npm/node_modules while preparing runtime tests.");
+  } catch (error) {
+    throw new Error(
+      "Cannot read npm/node_modules while preparing runtime tests.",
+      {
+        cause: error,
+      },
+    );
   }
 
   for (const entry of entries) {

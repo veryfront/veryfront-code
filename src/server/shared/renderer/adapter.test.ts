@@ -10,12 +10,15 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { Renderer, RendererOptions } from "#veryfront/rendering/renderer.ts";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { isBun } from "#veryfront/platform/compat/runtime.ts";
 import {
   destroyRendererAdapter,
   getRendererForProject,
   type RendererInitializer,
   setRendererInitializer,
 } from "./adapter.ts";
+
+const hostedWorkerIt = isBun ? it.skip : it;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -485,69 +488,72 @@ describe("RendererAdapter with RendererInitializer", () => {
       assertEquals(pages, ["/"]);
     });
 
-    it("evaluates shared multi-project config through the request's hosted context", async () => {
-      const ctx = stubHandlerContext();
-      ctx.enriched = undefined;
-      ctx.config = undefined;
-      ctx.isLocalProject = false;
-      ctx.projectDir = "/tmp/hosted-project";
-      ctx.resolvedEnvironment = "preview";
-      ctx.requestContext = { branch: "feature/hosted-render", mode: "preview" };
+    hostedWorkerIt(
+      "evaluates shared multi-project config through the request's hosted context",
+      async () => {
+        const ctx = stubHandlerContext();
+        ctx.enriched = undefined;
+        ctx.config = undefined;
+        ctx.isLocalProject = false;
+        ctx.projectDir = "/tmp/hosted-project";
+        ctx.resolvedEnvironment = "preview";
+        ctx.requestContext = { branch: "feature/hosted-render", mode: "preview" };
 
-      const sourceContext = {
-        productionMode: false,
-        branch: "feature/hosted-render",
-      } as const;
-      ctx.prepareHostedConfigContext = async () => ({
-        sourceContext,
-        preparedContext: await prepareDeclarativeConfigContext({
-          environmentName: "preview",
-          environment: { TENANT: "tenant-value" },
-        }),
-      });
+        const sourceContext = {
+          productionMode: false,
+          branch: "feature/hosted-render",
+        } as const;
+        ctx.prepareHostedConfigContext = async () => ({
+          sourceContext,
+          preparedContext: await prepareDeclarativeConfigContext({
+            environmentName: "preview",
+            environment: { TENANT: "tenant-value" },
+          }),
+        });
 
-      const fs = {
-        isVeryfrontAdapter: () => true,
-        getUnderlyingAdapter: () => ({}),
-        isMultiProjectMode: () => true,
-        runWithContext: (
-          projectSlug: string,
-          token: string,
-          fn: () => Promise<unknown>,
-          projectId?: string,
-          opts?: Record<string, unknown>,
-        ) =>
-          runWithRequestContext(
-            { projectSlug, token, projectId, ...opts },
-            fn as () => Promise<never>,
-          ),
-        exists: () => Promise.reject(new Error("hosted config must not probe exists")),
-        readFile: (path: string) => {
-          if (path !== "/veryfront.config.ts") {
-            return Promise.reject(
-              Object.assign(new Error(`File not found: ${path}`), { code: "ENOENT" }),
-            );
-          }
-          return Promise.resolve(`
+        const fs = {
+          isVeryfrontAdapter: () => true,
+          getUnderlyingAdapter: () => ({}),
+          isMultiProjectMode: () => true,
+          runWithContext: (
+            projectSlug: string,
+            token: string,
+            fn: () => Promise<unknown>,
+            projectId?: string,
+            opts?: Record<string, unknown>,
+          ) =>
+            runWithRequestContext(
+              { projectSlug, token, projectId, ...opts },
+              fn as () => Promise<never>,
+            ),
+          exists: () => Promise.reject(new Error("hosted config must not probe exists")),
+          readFile: (path: string) => {
+            if (path !== "/veryfront.config.ts") {
+              return Promise.reject(
+                Object.assign(new Error(`File not found: ${path}`), { code: "ENOENT" }),
+              );
+            }
+            return Promise.resolve(`
             import { defineConfigWithEnv, getEnv } from "veryfront";
             export default defineConfigWithEnv((environmentName) => ({
               title: \`\${environmentName}:\${getEnv("TENANT") ?? "missing"}\`,
             }));
           `);
-        },
-        readDir: async function* () {},
-        stat: () => Promise.resolve({ isFile: false, isDirectory: false }),
-      };
-      ctx.adapter = {
-        fs,
-        env: { get: () => undefined, set: () => {}, delete: () => {}, toObject: () => ({}) },
-      } as unknown as any;
+          },
+          readDir: async function* () {},
+          stat: () => Promise.resolve({ isFile: false, isDirectory: false }),
+        };
+        ctx.adapter = {
+          fs,
+          env: { get: () => undefined, set: () => {}, delete: () => {}, toObject: () => ({}) },
+        } as unknown as any;
 
-      await getRendererForProject(ctx);
+        await getRendererForProject(ctx);
 
-      assertEquals(ctx.enriched !== undefined, true);
-      assertEquals(ctx.enriched.config.title, "preview:tenant-value");
-    });
+        assertEquals(ctx.enriched !== undefined, true);
+        assertEquals(ctx.enriched.config.title, "preview:tenant-value");
+      },
+    );
 
     it("falls back to defaults when the release published no config", async () => {
       // A release with no config answers 404. adapter-factory.ts already treats

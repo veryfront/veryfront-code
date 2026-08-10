@@ -285,6 +285,42 @@ describe("transforms/esm/http-cache-helpers", () => {
       assertEquals(urlPrototypeCalls, 0);
     });
 
+    it("preserves query identity under a poisoned array iterator", async () => {
+      const importMap = { imports: {}, scopes: {} };
+      const originalIterator = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator);
+      const baselineUrl = "https://esm.sh/pkg@1?dup=one&dup=two&encoded=a%2Bb&q=a+b";
+      const expectedNormalized =
+        "https://esm.sh/pkg@1?dup=one&dup=two&encoded=a%2Bb&external=react&q=a+b&target=es2022";
+      const baselineIdentity = await buildHttpCacheIdentity(baselineUrl, { importMap });
+      let iteratorCalls = 0;
+      let poisonedNormalized = "";
+      let poisonedIdentity = "";
+
+      try {
+        Object.defineProperty(Array.prototype, Symbol.iterator, {
+          configurable: true,
+          value() {
+            iteratorCalls++;
+            return (originalIterator?.value as () => Iterator<unknown>).call([]);
+          },
+          writable: true,
+        });
+
+        poisonedNormalized = normalizeHttpUrl(baselineUrl);
+        poisonedIdentity = await buildHttpCacheIdentity(baselineUrl, { importMap });
+      } finally {
+        if (originalIterator) {
+          Object.defineProperty(Array.prototype, Symbol.iterator, originalIterator);
+        } else {
+          Reflect.deleteProperty(Array.prototype, Symbol.iterator);
+        }
+      }
+
+      assertEquals(poisonedNormalized, expectedNormalized);
+      assertEquals(poisonedIdentity, baselineIdentity);
+      assertEquals(iteratorCalls, 0);
+    });
+
     it("does not consult inherited toJSON hooks while fingerprinting import maps", async () => {
       const importMap = {
         imports: { pkg: "https://modules.example.com/pkg-v1.js" },
