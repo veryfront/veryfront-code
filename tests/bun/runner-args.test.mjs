@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { buildBunTestArgs, buildIsolatedBunTestRuns } from "./runner-args.mjs";
+import {
+  buildBunTestArgs,
+  buildIsolatedBunTestRuns,
+  registerBunWorkspaceCleanup,
+} from "./runner-args.mjs";
 
 test("buildBunTestArgs caps concurrency without enabling concurrent test semantics", () => {
   const args = buildBunTestArgs(["one.test.ts", "two.test.ts"], 3);
@@ -33,4 +38,17 @@ test("the Bun runner drains child output and exits naturally", () => {
   assert.match(source, /child\.on\("close", \(code\) => finish\(code \?\? 1\)\)/);
   assert.doesNotMatch(source, /process\.exit\(/);
   assert.match(source, /process\.exitCode = ok \? 0 : 1/);
+});
+
+test("Bun workspace cleanup runs before termination signals are re-raised", () => {
+  const runtimeProcess = new EventEmitter();
+  runtimeProcess.pid = 123;
+  const events = [];
+  runtimeProcess.kill = (pid, signal) => events.push(["kill", pid, signal]);
+
+  registerBunWorkspaceCleanup(() => events.push(["cleanup"]), runtimeProcess);
+  runtimeProcess.emit("SIGINT");
+  runtimeProcess.emit("exit");
+
+  assert.deepEqual(events, [["cleanup"], ["kill", 123, "SIGINT"]]);
 });

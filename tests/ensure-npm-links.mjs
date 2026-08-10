@@ -2,10 +2,14 @@ import { existsSync, readdirSync, symlinkSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+export function resolveDirectoryLinkType(platform = process.platform) {
+  return platform === "win32" ? "junction" : "dir";
+}
+
 function ensureDirectorySymlink(sourcePath, targetPath, packageName) {
   if (existsSync(targetPath)) return;
   try {
-    symlinkSync(sourcePath, targetPath, "dir");
+    symlinkSync(sourcePath, targetPath, resolveDirectoryLinkType());
   } catch {
     throw new Error(`Cannot link npm dependency "${packageName}" into node_modules.`);
   }
