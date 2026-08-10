@@ -19,6 +19,7 @@ describe("BunFileSystemAdapter native integration", () => {
 
     try {
       const file = join(root, "file.txt");
+      const watchedFile = join(root, "watched.txt");
       await adapter.writeFile(file, "hello");
       assertEquals(await adapter.readFile(file), "hello");
       assertEquals((await adapter.readFileBytes(file)).length, 5);
@@ -100,7 +101,7 @@ describe("BunFileSystemAdapter native integration", () => {
         while (true) {
           const result = await iterator.next();
           if (result.done) throw new Error("Bun watcher closed before observing the file");
-          if (result.value.paths.some((path) => path.endsWith("file.txt"))) {
+          if (result.value.paths.includes(watchedFile)) {
             return result.value;
           }
         }
@@ -112,10 +113,10 @@ describe("BunFileSystemAdapter native integration", () => {
         );
       });
 
-      await adapter.writeFile(file, "updated");
+      await writeFile(watchedFile, "created");
       const event = await Promise.race([observed, timeout]);
       assertEquals(
-        event.paths.some((path: string) => path.endsWith("file.txt")),
+        event.paths.includes(watchedFile),
         true,
       );
 
