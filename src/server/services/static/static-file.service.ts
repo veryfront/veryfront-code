@@ -200,6 +200,15 @@ export class StaticFileService {
       if (isWithinDirectory(root, absPath)) addCandidate(absPath, dir);
     }
 
+    if (!this.isAssetRequest(normalizedPath) && normalizedPath !== "/index.html") {
+      const indexPath = `${normalizedPath.replace(/\/$/, "")}/index.html`;
+      for (const dir of dirs) {
+        const root = joinPath(options.projectDir, dir);
+        const absPath = normalizePath(joinPath(root, indexPath));
+        if (isWithinDirectory(root, absPath)) addCandidate(absPath, dir);
+      }
+    }
+
     return candidates;
   }
 
