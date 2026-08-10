@@ -616,6 +616,65 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     });
   });
 
+  it("returns a signal-less cache follower after its bounded wait", async () => {
+    using time = new FakeTime();
+    const distributedRead = Promise.withResolvers<string | null>();
+    const backend: CacheBackend = {
+      type: "memory",
+      get: () => distributedRead.promise,
+      set: () => Promise.resolve(),
+      del: () => Promise.resolve(),
+    };
+    const moduleUrl = "https://93.184.216.34/signal-less-cache-follower.js";
+    const source = `import { value } from "${moduleUrl}"; export { value };`;
+
+    await withIsolatedHttpCache(
+      "vf-esm-signal-less-follower-",
+      (() => Promise.reject(new Error("network fetch must not start"))) as typeof fetch,
+      async (tempDir) => {
+        __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+        const ownerController = new AbortController();
+        const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+        const owner = cacheHttpImportsToLocal(source, {
+          ...options,
+          abortSignal: ownerController.signal,
+        });
+        const ownerOutcome = owner.catch((error) => error);
+
+        await time.runMicrotasks();
+        const follower = cacheHttpImportsToLocal(source, options);
+        const followerOutcome = follower.then(
+          (value) => ({ error: undefined, value }),
+          (error: unknown) => ({ error, value: undefined }),
+        );
+        let followerSettled = false;
+        void followerOutcome.then(() => followerSettled = true);
+
+        try {
+          for (let attempt = 0; attempt < 10; attempt++) {
+            if (__getMaxInFlightHttpFetchWaiterCountForTests() >= 2) break;
+            await time.runMicrotasks();
+          }
+          assertEquals(__getMaxInFlightHttpFetchWaiterCountForTests(), 2);
+
+          await time.tickAsync(HTTP_MODULE_FETCH_MAX_WAIT_MS);
+          await time.runMicrotasks();
+
+          assertEquals(followerSettled, true);
+          const { error } = await followerOutcome;
+          assertInstanceOf(error, Error);
+          assert(error.message.includes("Failed to cache absolute HTTP module"));
+          assertEquals(inFlightHttpFetches.size, 1);
+        } finally {
+          ownerController.abort(new DOMException("owner cancelled", "AbortError"));
+          __clearInFlightHttpFetches();
+          distributedRead.resolve(null);
+          await Promise.allSettled([ownerOutcome, followerOutcome]);
+        }
+      },
+    );
+  });
+
   it("pins same-origin module-server imports before fetching", async () => {
     const origin = "http://93.184.216.34:3000";
     const source = `export { value } from "${origin}/_vf_modules/shared/Absolute.js";`;
