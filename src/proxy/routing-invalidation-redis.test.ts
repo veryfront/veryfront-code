@@ -229,13 +229,18 @@ describe("proxy routing invalidation Redis bus", () => {
     });
     assert(bus);
 
-    const result = await settleWithin(
-      bus.publish(createEvent()),
-      "single-recipient invalidation",
-    );
+    const publish = bus.publish(createEvent());
+    try {
+      const result = await settleWithin(
+        publish,
+        "single-recipient invalidation",
+      );
 
-    assertEquals(result, { acknowledged: 1, converged: false, recipients: 1 });
-    await bus?.close();
+      assertEquals(result, { acknowledged: 1, converged: false, recipients: 1 });
+    } finally {
+      await bus.close();
+      await publish.catch(() => undefined);
+    }
   });
 
   it("keeps overlapping publish acknowledgement subscriptions isolated", async () => {
