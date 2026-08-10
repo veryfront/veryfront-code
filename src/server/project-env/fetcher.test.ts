@@ -445,61 +445,74 @@ describe("project-env/fetcher", () => {
   });
 
   it("does not call the internal endpoint after management authorization times out", async () => {
+    const originalFetch = globalThis.fetch;
     const paths: string[] = [];
-    const { server, port } = createMockServer(async (req: Request) => {
-      paths.push(new URL(req.url).pathname);
-      await new Promise((resolve) => setTimeout(resolve, 40));
-      return Response.json({ data: [] });
-    });
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(new Error("management timeout")), 10);
+    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+      paths.push(new URL(input instanceof Request ? input.url : input).pathname);
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+      });
+    }) as typeof fetch;
 
     try {
-      const error = await assertRejects(() =>
-        fetchFromMockApi(
-          port,
-          { username: "runtime-user", password: "runtime-pass" },
-          controller.signal,
-        )
+      const assertion = assertRejects(() =>
+        withInternalCredentials("runtime-user", "runtime-pass", () =>
+          fetchProjectEnvVars(
+            "https://api.veryfront.test",
+            "my-project",
+            "env-123",
+            "test-token",
+            controller.signal,
+          ))
       );
+      controller.abort(new Error("management timeout"));
+      const error = await assertion;
       assertInstanceOf(error, Error);
       assertEquals(error.message, "management timeout");
       assertEquals(paths, ["/projects/my-project/environment-variables"]);
     } finally {
-      clearTimeout(timeoutId);
-      await server.shutdown();
+      globalThis.fetch = originalFetch;
     }
   });
 
   it("does not fall back after the internal request times out", async () => {
+    const originalFetch = globalThis.fetch;
     const paths: string[] = [];
-    const { server, port } = createMockServer(async (req: Request) => {
-      const path = new URL(req.url).pathname;
+    const internalRequestStarted = Promise.withResolvers<void>();
+    const controller = new AbortController();
+    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(input instanceof Request ? input.url : input).pathname;
       paths.push(path);
       if (path === "/projects/my-project/environment-variables") {
-        return Response.json({ data: [] });
+        return Promise.resolve(Response.json({ data: [] }));
       }
-      await new Promise((resolve) => setTimeout(resolve, 40));
-      return Response.json({ data: [{ key: "API_KEY", value: "late" }] });
-    });
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(new Error("internal timeout")), 10);
+      internalRequestStarted.resolve();
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+      });
+    }) as typeof fetch;
 
     try {
-      await assertRejects(() =>
-        fetchFromMockApi(
-          port,
-          { username: "runtime-user", password: "runtime-pass" },
-          controller.signal,
-        )
+      const assertion = assertRejects(() =>
+        withInternalCredentials("runtime-user", "runtime-pass", () =>
+          fetchProjectEnvVars(
+            "https://api.veryfront.test",
+            "my-project",
+            "env-123",
+            "test-token",
+            controller.signal,
+          ))
       );
+      await internalRequestStarted.promise;
+      controller.abort(new Error("internal timeout"));
+      await assertion;
       assertEquals(paths, [
         "/projects/my-project/environment-variables",
         "/internal/project-environment-variables",
       ]);
     } finally {
-      clearTimeout(timeoutId);
-      await server.shutdown();
+      globalThis.fetch = originalFetch;
     }
   });
 
