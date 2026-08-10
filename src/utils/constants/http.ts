@@ -3,7 +3,7 @@ export { MS_PER_MINUTE, MS_PER_SECOND, SECONDS_PER_MINUTE } from "./cache.ts";
 export const KB_IN_BYTES = 1024;
 
 /** HTTP module fetch timeout, including cold upstream module generation. */
-export const HTTP_MODULE_FETCH_TIMEOUT_MS = 10_000;
+export const HTTP_MODULE_FETCH_TIMEOUT_MS = 5_000;
 export const HTTP_FETCH_TIMEOUT_MS =
   30000; /** Default timeout for HTTP module/bundle fetch operations (30 seconds) */
 
