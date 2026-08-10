@@ -64,9 +64,19 @@ describe("testing/cwd", () => {
         `${path} must be omitted from parallel test discovery`,
       );
       assertEquals(cwdTask.includes(path), true, `${path} must run in the serial cwd task`);
+      assertEquals(
+        exclusionTask.includes(path),
+        false,
+        `${path} must not run in the isolated parallel task`,
+      );
     }
 
     for (const path of CWD_EXCLUSION_TESTS) {
+      assertEquals(
+        cwdTask.includes(path),
+        false,
+        `${path} must not run in the serial cwd task`,
+      );
       assertEquals(
         parallelTask.includes(`! -path '${path}'`),
         true,
