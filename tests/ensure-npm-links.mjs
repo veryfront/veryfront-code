@@ -6,7 +6,7 @@ export function resolveDirectoryLinkType(platform = process.platform) {
   return platform === "win32" ? "junction" : "dir";
 }
 
-export function ensureDirectorySymlink(
+export function ensureDirectoryLink(
   sourcePath,
   targetPath,
   packageName,
@@ -27,9 +27,11 @@ function linkTopLevelPackage(npmModulesRoot, rootModulesRoot, packageName) {
   const sourcePath = resolve(npmModulesRoot, packageName);
   const targetPath = resolve(rootModulesRoot, packageName);
   if (!existsSync(sourcePath)) {
-    throw new Error(`npm dependency "${packageName}" disappeared while links were prepared.`);
+    throw new Error(
+      `npm dependency "${packageName}" disappeared while links were prepared.`,
+    );
   }
-  ensureDirectorySymlink(sourcePath, targetPath, packageName);
+  ensureDirectoryLink(sourcePath, targetPath, packageName);
 }
 
 function linkScopedPackages(npmModulesRoot, rootModulesRoot, scopeName) {
@@ -38,7 +40,7 @@ function linkScopedPackages(npmModulesRoot, rootModulesRoot, scopeName) {
   if (!existsSync(sourceScopeDir)) return;
 
   if (!existsSync(targetScopeDir)) {
-    ensureDirectorySymlink(sourceScopeDir, targetScopeDir, scopeName);
+    ensureDirectoryLink(sourceScopeDir, targetScopeDir, scopeName);
     if (existsSync(targetScopeDir)) return;
   }
 
@@ -46,14 +48,16 @@ function linkScopedPackages(npmModulesRoot, rootModulesRoot, scopeName) {
   try {
     entries = readdirSync(sourceScopeDir, { withFileTypes: true });
   } catch (error) {
-    throw new Error(`Cannot read npm dependency scope "${scopeName}".`, { cause: error });
+    throw new Error(`Cannot read npm dependency scope "${scopeName}".`, {
+      cause: error,
+    });
   }
 
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const sourcePath = resolve(sourceScopeDir, entry.name);
     const targetPath = resolve(targetScopeDir, entry.name);
-    ensureDirectorySymlink(sourcePath, targetPath, `${scopeName}/${entry.name}`);
+    ensureDirectoryLink(sourcePath, targetPath, `${scopeName}/${entry.name}`);
   }
 }
 
@@ -77,9 +81,12 @@ export function ensureNpmNodeModulesLinks(
   try {
     entries = readdirSync(npmModulesRoot, { withFileTypes: true });
   } catch (error) {
-    throw new Error("Cannot read npm/node_modules while preparing runtime tests.", {
-      cause: error,
-    });
+    throw new Error(
+      "Cannot read npm/node_modules while preparing runtime tests.",
+      {
+        cause: error,
+      },
+    );
   }
 
   for (const entry of entries) {
