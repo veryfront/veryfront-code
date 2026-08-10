@@ -35,6 +35,50 @@ describe("transforms/esm/in-flight-manager", () => {
   });
 
   describe("waitForSharedInFlightHttpFetch", () => {
+    it("keeps a committed publication current after its last caller cancels", async () => {
+      const cacheKey = "committed-publication";
+      const publicationStarted = Promise.withResolvers<void>();
+      const releasePublication = Promise.withResolvers<void>();
+      const ownerController = new AbortController();
+      let sharedSignal: AbortSignal | undefined;
+      const promise = createInFlightHttpFetch(
+        cacheKey,
+        async (abortSignal, _reportProgress, control) => {
+          sharedSignal = abortSignal;
+          assertEquals(control.commit(), true);
+          publicationStarted.resolve();
+          await releasePublication.promise;
+          abortSignal.throwIfAborted();
+          return "/path/to/committed-publication.mjs";
+        },
+      );
+      const owner = waitForSharedInFlightHttpFetch(
+        cacheKey,
+        promise,
+        null,
+        ownerController.signal,
+      );
+
+      try {
+        await publicationStarted.promise;
+        ownerController.abort(new DOMException("owner cancelled", "AbortError"));
+        await assertRejects(() => owner, DOMException, "owner cancelled");
+
+        assertEquals(sharedSignal?.aborted, false);
+        assertEquals(inFlightHttpFetches.get(cacheKey), promise);
+
+        const follower = waitForSharedInFlightHttpFetch(cacheKey, promise, null);
+        releasePublication.resolve();
+        assertEquals(await follower, "/path/to/committed-publication.mjs");
+        await promise;
+        assertEquals(inFlightHttpFetches.has(cacheKey), false);
+      } finally {
+        releasePublication.resolve();
+        await Promise.allSettled([owner, promise]);
+        __clearInFlightHttpFetches();
+      }
+    });
+
     it("does not apply the follower timeout to the flight owner", async () => {
       const cacheKey = "owner-with-recursive-work";
       const release = Promise.withResolvers<void>();
