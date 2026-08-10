@@ -404,7 +404,7 @@ describe("chat-stream-handler", () => {
           output: { submitted: false },
           providerExecuted: true,
         },
-        { type: "text-delta", text: " After tool." },
+        { type: "text-delta", text: "I've opened the panel." },
         { type: "finish", finishReason: "stop", totalUsage: null },
       ]);
 
@@ -428,9 +428,9 @@ describe("chat-stream-handler", () => {
           output: { submitted: false },
           providerExecuted: true,
         },
-        { type: "text-start", id: "text-1" },
-        { type: "text-delta", id: "text-1", delta: " After tool." },
-        { type: "text-end", id: "text-1" },
+        { type: "text-start", id: "text-1:1" },
+        { type: "text-delta", id: "text-1:1", delta: "I've opened the panel." },
+        { type: "text-end", id: "text-1:1" },
       ]);
     });
 
@@ -2023,6 +2023,39 @@ describe("processStream active mode", () => {
       { type: "text-delta", text: "answer" },
       { type: "finish", finishReason: "stop", totalUsage: null },
     ]);
+  });
+
+  it("matches legacy SSE and preserves resumed text after a tool interruption", async () => {
+    const { active } = await assertModeParity([
+      { type: "text-delta", text: "Before tool." },
+      { type: "tool-input-start", id: "native-1", toolName: "web_search" },
+      {
+        type: "tool-input-available",
+        toolCallId: "native-1",
+        toolName: "web_search",
+        input: { query: "x" },
+      },
+      {
+        type: "tool-result",
+        toolCallId: "native-1",
+        toolName: "web_search",
+        result: { answer: 42 },
+      },
+      { type: "text-delta", text: "I've opened the panel." },
+      { type: "finish", finishReason: "stop", totalUsage: null },
+    ]);
+
+    assertEquals(
+      active.events.filter((event) => event.type.startsWith("text-")),
+      [
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "Before tool." },
+        { type: "text-end", id: "text-1" },
+        { type: "text-start", id: "text-1:1" },
+        { type: "text-delta", id: "text-1:1", delta: "I've opened the panel." },
+        { type: "text-end", id: "text-1:1" },
+      ],
+    );
   });
 
   it("matches legacy SSE and state for a committed local tool call", async () => {

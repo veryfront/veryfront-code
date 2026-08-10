@@ -1563,9 +1563,10 @@ describe("agent runtime refresh hooks", () => {
       context: { projectId: "project-stream" },
     })).toDataStreamResponse();
 
-    await response.text();
+    const body = await response.text();
 
     assertEquals(toolResults.length, 1);
+    assertEquals(/"type":"text-start","id":"[^"]+:step:1"/.test(body), true);
     assertEquals(toolResults[0]?.toolName, "write_report");
     assertEquals(toolResults[0]?.toolCallId, "write-stream-1");
     assertEquals(toolResults[0]?.input, { path: "research/stream-report.md" });

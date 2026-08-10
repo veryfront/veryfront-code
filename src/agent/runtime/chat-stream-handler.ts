@@ -561,6 +561,8 @@ export function processStreamInternal(
       : null;
     let shadowLifecycleFailed = false;
     let textOpen = false;
+    let activeTextPartId: string | undefined;
+    let nextTextSegmentIndex = 0;
     let activeReasoningId: string | null = null;
     const reasoningParts = new Map<string, StreamingReasoningPart>();
     let shouldStopForCommittedLocalToolCall = false;
@@ -670,9 +672,13 @@ export function processStreamInternal(
       }
 
       textOpen = true;
+      activeTextPartId = textPartId === undefined || nextTextSegmentIndex === 0
+        ? textPartId
+        : `${textPartId}:${nextTextSegmentIndex}`;
+      nextTextSegmentIndex += 1;
       sendSSE(controller, encoder, {
         type: "text-start",
-        id: textPartId,
+        id: activeTextPartId,
       });
     };
 
@@ -684,8 +690,9 @@ export function processStreamInternal(
       textOpen = false;
       sendSSE(controller, encoder, {
         type: "text-end",
-        id: textPartId,
+        id: activeTextPartId,
       });
+      activeTextPartId = undefined;
     };
 
     const openReasoningSegment = (reasoningId: string) => {
@@ -956,7 +963,7 @@ export function processStreamInternal(
             state.accumulatedText += typedPart.text;
             sendSSE(controller, encoder, {
               type: "text-delta",
-              id: textPartId,
+              id: activeTextPartId,
               delta: typedPart.text,
             });
             callbacks?.onChunk?.(typedPart.text);
