@@ -49,6 +49,23 @@ describe("runtime test filters", () => {
     assertEquals(kept, ELIGIBLE_FILES, "the filter must not shrink the suite");
   });
 
+  it("keeps the portable removal suite scannable by the other runners", async () => {
+    // Both runners drop a file whose own source names the Deno namespace with a
+    // trailing dot. `fs-remove-portable.test.ts` exists precisely to run on Node
+    // and Bun, so that spelling must never appear in it -- not in code, and not
+    // in a comment explaining the rule, which is how a first draft excluded
+    // itself. Prose may say "Deno"; only "Deno." is disqualifying.
+    const source = await Deno.readTextFile(
+      new URL("../src/platform/compat/fs-remove-portable.test.ts", import.meta.url),
+    );
+
+    assertEquals(
+      /\bDeno\./.test(source),
+      false,
+      "naming the Deno namespace here silently removes this suite from Node and Bun",
+    );
+  });
+
   it("matches files that actually exist", async () => {
     // A renamed or moved file leaves a pattern matching nothing, and the
     // exclusion silently stops working. Cheaper to catch here than in a failing

@@ -150,6 +150,7 @@ interface NodeFsPromises {
     }>
   >;
   rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>;
+  rmdir(path: string): Promise<void>;
   mkdtemp(prefix: string): Promise<string>;
   chmod(path: string, mode: number): Promise<void>;
 }
@@ -299,7 +300,17 @@ class NodeFileSystem implements FileSystem {
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
     await this.ensureInitialized();
     const recursive = options?.recursive ?? false;
-    await this.getFs().rm(path, { recursive, force: false });
+    try {
+      await this.getFs().rm(path, { recursive, force: false });
+    } catch (error) {
+      // Deno removes an empty directory without `recursive`; `node:fs` `rm`
+      // refuses one, and refuses it with a different code on Node (ERR_FS_EISDIR)
+      // than on Bun (EFAULT). Ask the filesystem instead of reading the code.
+      if (recursive) throw error;
+      const info = await this.getFs().lstat(path).catch(() => undefined);
+      if (!info?.isDirectory()) throw error;
+      await this.getFs().rmdir(path);
+    }
   }
 
   async makeTempDir(options?: { prefix?: string }): Promise<string> {

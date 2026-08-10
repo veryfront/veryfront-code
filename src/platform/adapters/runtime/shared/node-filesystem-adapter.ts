@@ -562,7 +562,18 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
 
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
     const fs = await import("node:fs/promises");
-    await fs.rm(path, { recursive: options?.recursive, force: true });
+    const recursive = options?.recursive ?? false;
+    try {
+      await fs.rm(path, { recursive, force: true });
+    } catch (error) {
+      // Same divergence as `platform/compat/fs.ts`: Deno removes an empty
+      // directory without `recursive`, `node:fs` `rm` refuses one, and `force`
+      // does not cover it -- it suppresses a missing path, not a directory.
+      if (recursive) throw error;
+      const info = await fs.lstat(path).catch(() => undefined);
+      if (!info?.isDirectory()) throw error;
+      await fs.rmdir(path);
+    }
   }
 
   async makeTempDir(prefix: string): Promise<string> {
