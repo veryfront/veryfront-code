@@ -1,6 +1,22 @@
 import { SSR_MAX_BUFFERED_BYTES, SSR_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 
 let timeoutOverrideMs: number | undefined;
+let deadlineRuntimeOverride: SSRAdapterDeadlineRuntime | undefined;
+
+export interface SSRAdapterDeadlineRuntime {
+  now(): number;
+  setTimer(
+    callback: () => void,
+    delayMs: number,
+  ): ReturnType<typeof setTimeout>;
+  clearTimer(handle: ReturnType<typeof setTimeout>): void;
+}
+
+const defaultDeadlineRuntime: SSRAdapterDeadlineRuntime = {
+  now: () => performance.now(),
+  setTimer: (callback, delayMs) => setTimeout(callback, delayMs),
+  clearTimer: (handle) => clearTimeout(handle),
+};
 
 export function getSSRAdapterTimeoutMs(): number {
   return timeoutOverrideMs ?? SSR_TIMEOUT_MS;
@@ -13,8 +29,19 @@ export function setSSRAdapterTimeoutForTests(timeoutMs: number): void {
   timeoutOverrideMs = timeoutMs;
 }
 
+export function getSSRAdapterDeadlineRuntime(): SSRAdapterDeadlineRuntime {
+  return deadlineRuntimeOverride ?? defaultDeadlineRuntime;
+}
+
+export function setSSRAdapterDeadlineRuntimeForTests(
+  runtime: SSRAdapterDeadlineRuntime,
+): void {
+  deadlineRuntimeOverride = runtime;
+}
+
 export function resetSSRAdapterTimeoutForTests(): void {
   timeoutOverrideMs = undefined;
+  deadlineRuntimeOverride = undefined;
 }
 
 export function getSSRBufferLimitBytes(override: number | undefined): number {
