@@ -737,7 +737,9 @@ export class ReadOperations {
         throw error;
       }
 
-      if (requiresExactPublishedPath(apiPath)) throw error;
+      if (requiresExactPublishedPath(apiPath)) {
+        throw createNotFoundLikeError(normalizedPath);
+      }
 
       const fallbackContent = await this.tryFallbackExtensions(
         apiPath,

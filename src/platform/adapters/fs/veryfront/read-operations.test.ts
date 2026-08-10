@@ -760,7 +760,9 @@ describe("ReadOperations", () => {
         getPublishedFileContent: (path: string) => {
           publishedFetchPaths.push(path);
           if (path === "veryfront.config.ts") return Promise.resolve("typescript config");
-          return Promise.reject(new Error("404 Not Found"));
+          return Promise.reject(
+            API_CLIENT_ERROR.create({ detail: "not found", status: 404 }),
+          );
         },
         resolveFileWithExtension: () => {
           resolveCallCount++;
@@ -777,11 +779,11 @@ describe("ReadOperations", () => {
         createReleaseContext("release-config"),
       );
 
-      await assertRejects(
+      const error = await assertRejects(
         () => readOps.readTextFile("veryfront.config.js"),
         Error,
-        "404 Not Found",
       );
+      assertEquals((error as Error & { code?: string }).code, "ENOENT");
       assertEquals(publishedFetchPaths, ["veryfront.config.js"]);
       assertEquals(resolveCallCount, 0);
     });
