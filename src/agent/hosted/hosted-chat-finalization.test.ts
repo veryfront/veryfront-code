@@ -698,6 +698,35 @@ describe("agent/hosted-chat-finalization", () => {
     });
   }
 
+  it("preserves delivered output when a trailing model step fails after a completed tool handoff", async () => {
+    const calls: string[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+
+    await finalizeHostedChatRun({
+      kind: "response",
+      responseMessage: createResponseMessage({ parts: [] }),
+      isAborted: false,
+      streamResult: createStreamResult({
+        text: "The environment panel is open and ready.",
+        finishReason: "tool-calls",
+      }),
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      streamError: new Error("Provider request failed with status 502"),
+    });
+
+    assertEquals(terminalStates, [{ status: "completed" }]);
+  });
+
   it("logs and suppresses cleanup errors after terminal dispatch", async () => {
     const calls: string[] = [];
     const terminalStates: HostedLifecycleTerminalState[] = [];

@@ -131,8 +131,7 @@ export function resolveStreamOutcome(
     input.thrownError !== undefined &&
     !(
       input.snapshot.hasStreamOutput &&
-      hasCompletedStepSignal(input.snapshot.finishReason) &&
-      isLateProviderBodyReadError(input.thrownError)
+      hasCompletedStepSignal(input.snapshot.finishReason)
     )
   ) {
     return failedClassifiedProviderOutcome(
