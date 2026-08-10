@@ -135,6 +135,13 @@ describe("update-check", () => {
       assertEquals(
         getUpdateInstallCommand({
           standalone: true,
+          executablePath: "prefix/homebrew/lib/node_modules/veryfront/bin/veryfront",
+        }),
+        "npm install -g veryfront@latest",
+      );
+      assertEquals(
+        getUpdateInstallCommand({
+          standalone: true,
           executablePath: "prefix/homebrew/bin/veryfront",
         }),
         "brew upgrade veryfront/tap/veryfront",
@@ -181,6 +188,30 @@ describe("update-check", () => {
         data: JSON.stringify({ lastCheck: 123, latestVersion: "1.2.4" }),
       }]);
       assertEquals(notices, [{ current: "1.2.3", latest: "1.2.4" }]);
+    });
+
+    it("prints a valid update notice when cache persistence fails", async () => {
+      const diagnostics: string[] = [];
+      const notices: Array<{ current: string; latest: string }> = [];
+
+      await checkForUpdates("1.2.3", {
+        shouldSkip: () => false,
+        cacheLocation: {
+          directory: "cache/veryfront",
+          file: "cache/veryfront/update-check.json",
+        },
+        fileSystem: {
+          readTextFile: () => Promise.reject(new Error("missing")),
+          mkdir: () => Promise.resolve(),
+          writeTextFile: () => Promise.reject(new Error("read-only cache")),
+        },
+        fetcher: () => Promise.resolve(Response.json({ version: "1.2.4" })),
+        printNotice: (current, latest) => notices.push({ current, latest }),
+        debug: (message) => diagnostics.push(message),
+      });
+
+      assertEquals(notices, [{ current: "1.2.3", latest: "1.2.4" }]);
+      assertEquals(diagnostics, ["Veryfront could not cache the update check."]);
     });
 
     it("reports a broken registry endpoint in verbose diagnostics", async () => {

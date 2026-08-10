@@ -85,6 +85,10 @@ export function getUpdateInstallCommand(
   if (!context.standalone) return UPDATE_INSTALL_COMMAND;
 
   const executablePath = context.executablePath.replaceAll("\\", "/").toLowerCase();
+  if (executablePath.includes("/node_modules/veryfront/bin/")) {
+    return UPDATE_INSTALL_COMMAND;
+  }
+
   if (
     executablePath.includes("/cellar/") ||
     executablePath.includes("/homebrew/") ||
@@ -160,14 +164,18 @@ export async function checkForUpdates(
 
   try {
     const latestVersion = await fetchLatestVersion(options.fetcher ?? fetch);
-    await fs.mkdir(cacheLocation.directory, { recursive: true });
-    await fs.writeTextFile(
-      cacheLocation.file,
-      JSON.stringify({ lastCheck: now(), latestVersion }),
-    );
-
     if (compareVersions(currentVersion, latestVersion)) {
       notice(currentVersion, latestVersion);
+    }
+
+    try {
+      await fs.mkdir(cacheLocation.directory, { recursive: true });
+      await fs.writeTextFile(
+        cacheLocation.file,
+        JSON.stringify({ lastCheck: now(), latestVersion }),
+      );
+    } catch {
+      debug("Veryfront could not cache the update check.");
     }
   } catch (error) {
     debug(

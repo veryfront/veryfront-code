@@ -143,7 +143,7 @@ describe("guide content contracts", () => {
     const guide = await Deno.readTextFile("docs/guides/deploying.md");
 
     assertStringIncludes(guide, "prints the environment URL");
-    assertStringIncludes(guide, "veryfront open");
+    assertStringIncludes(guide, "npx veryfront@latest open");
   });
 
   it("uses serve for local production builds", async () => {
@@ -171,6 +171,7 @@ describe("guide content contracts", () => {
       const text = await Deno.readTextFile(path);
 
       assertStringIncludes(text, deploy);
+      assertEquals(text.includes("npx veryfront deploy"), false);
       assertStringIncludes(text, "It does not write");
       assertStringIncludes(text, "`veryfront.json`");
       assertStringIncludes(text, "last verified Push receipt");
