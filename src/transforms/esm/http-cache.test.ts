@@ -583,6 +583,81 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     });
   });
 
+  it("serializes a replacement behind an expired atomic rename", async () => {
+    using time = new FakeTime();
+    const renameStarted = Promise.withResolvers<void>();
+    const releaseRename = Promise.withResolvers<void>();
+    const replacementFetchStarted = Promise.withResolvers<void>();
+    const originalRename = Deno.rename.bind(Deno);
+    let fetchCount = 0;
+
+    Deno.rename = async (from, to) => {
+      const stagedCode = await readTextFile(String(from));
+      if (stagedCode.includes('generation = "stale"')) {
+        renameStarted.resolve();
+        await releaseRename.promise;
+      }
+      await originalRename(from, to);
+    };
+
+    const mockFetch = (() => {
+      fetchCount++;
+      if (fetchCount === 2) replacementFetchStarted.resolve();
+      const generation = fetchCount === 1 ? "stale" : "fresh";
+      return Promise.resolve(
+        new Response(`export const generation = "${generation}";`, {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      await withIsolatedHttpCache("vf-esm-expired-rename-", mockFetch, async (tempDir) => {
+        const source = 'import "https://93.184.216.34/expired-rename.js";';
+        const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+        const expiredOwner = cacheHttpImportsToLocal(source, options);
+
+        await time.runMicrotasks();
+        await renameStarted.promise;
+        await time.tickAsync(HTTP_MODULE_FETCH_TIMEOUT_MS);
+        await assertRejects(
+          () => expiredOwner,
+          DOMException,
+          "HTTP bundle publication timed out",
+        );
+
+        const replacement = cacheHttpImportsToLocal(source, options);
+        let replacementSettled = false;
+        void replacement.then(
+          () => replacementSettled = true,
+          () => replacementSettled = true,
+        );
+        await replacementFetchStarted.promise;
+
+        assertEquals(fetchCount, 2);
+        assertEquals(replacementSettled, false);
+
+        releaseRename.resolve();
+        const result = await replacement;
+        assert(result.code.includes("file://"));
+
+        const bundleFiles: string[] = [];
+        for await (const entry of readDir(tempDir)) {
+          if (entry.isFile && entry.name.startsWith("http-") && entry.name.endsWith(".mjs")) {
+            bundleFiles.push(entry.name);
+          }
+        }
+        assertEquals(bundleFiles.length, 1);
+        const publishedCode = await readTextFile(join(tempDir, bundleFiles[0]!));
+        assert(publishedCode.includes('generation = "fresh"'));
+        assertEquals(publishedCode.includes('generation = "stale"'), false);
+      });
+    } finally {
+      releaseRename.resolve();
+      Deno.rename = originalRename;
+    }
+  });
+
   it("keeps a shared HTTP fetch alive while another caller is still waiting", async () => {
     let fetchCount = 0;
     let releaseFetch!: () => void;
