@@ -1,4 +1,13 @@
-import { existsSync, mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { ensureDirectoryLink } from "../ensure-npm-links.mjs";
@@ -7,6 +16,7 @@ const MARKER_NAME = ".veryfront-bun-workspace-package.json";
 const LOCK_NAME = ".veryfront-bun-workspace-packages.lock";
 const RECLAIMER_NAME = ".veryfront-bun-workspace-packages.reclaim";
 const LOCK_OWNER = "veryfront-bun-tests";
+const INCOMPLETE_RECLAIMER_GRACE_MS = 30_000;
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
@@ -45,12 +55,8 @@ function acquirePreparationLock(nodeModulesPath) {
 
 export function reclaimStalePreparationLock(lockPath, runtimeProcess = process) {
   const reclaimerPath = join(dirname(lockPath), RECLAIMER_NAME);
-  try {
-    mkdirSync(reclaimerPath);
-  } catch (error) {
-    if (error?.code === "EEXIST") return null;
-    throw error;
-  }
+  const reclaimerToken = acquireReclaimerLock(reclaimerPath);
+  if (reclaimerToken === null) return null;
 
   try {
     let marker;
@@ -76,8 +82,82 @@ export function reclaimStalePreparationLock(lockPath, runtimeProcess = process) 
     );
     return token;
   } finally {
-    rmSync(reclaimerPath, { recursive: true, force: true });
+    releaseReclaimerLock(reclaimerPath, reclaimerToken);
   }
+}
+
+function acquireReclaimerLock(reclaimerPath) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const token = randomUUID();
+    try {
+      mkdirSync(reclaimerPath);
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      if (!discardAbandonedReclaimerLock(reclaimerPath)) return null;
+      continue;
+    }
+
+    try {
+      writeFileSync(
+        join(reclaimerPath, MARKER_NAME),
+        `${JSON.stringify({ owner: LOCK_OWNER, pid: process.pid, token })}\n`,
+      );
+      return token;
+    } catch (error) {
+      rmSync(reclaimerPath, { recursive: true, force: true });
+      throw error;
+    }
+  }
+
+  return null;
+}
+
+function discardAbandonedReclaimerLock(reclaimerPath) {
+  let marker;
+  try {
+    marker = readJson(join(reclaimerPath, MARKER_NAME));
+  } catch {
+    try {
+      if (Date.now() - statSync(reclaimerPath).mtimeMs < INCOMPLETE_RECLAIMER_GRACE_MS) {
+        return false;
+      }
+    } catch (error) {
+      if (error?.code === "ENOENT") return true;
+      throw error;
+    }
+  }
+
+  if (marker !== undefined) {
+    if (marker?.owner !== LOCK_OWNER) return false;
+    if (!Number.isSafeInteger(marker.pid) || marker.pid < 1) return false;
+    try {
+      process.kill(marker.pid, 0);
+      return false;
+    } catch (error) {
+      if (error?.code !== "ESRCH") return false;
+    }
+  }
+
+  const discardedPath = `${reclaimerPath}.${randomUUID()}.stale`;
+  try {
+    renameSync(reclaimerPath, discardedPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return true;
+    throw error;
+  }
+  rmSync(discardedPath, { recursive: true, force: true });
+  return true;
+}
+
+function releaseReclaimerLock(reclaimerPath, token) {
+  let marker;
+  try {
+    marker = readJson(join(reclaimerPath, MARKER_NAME));
+  } catch {
+    return;
+  }
+  if (marker.owner !== LOCK_OWNER || marker.token !== token) return;
+  rmSync(reclaimerPath, { recursive: true, force: true });
 }
 
 function releasePreparationLock(lockPath, token) {

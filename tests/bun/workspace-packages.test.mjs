@@ -14,7 +14,7 @@ import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { prepareBunWorkspacePackages } from "./workspace-packages.mjs";
+import { prepareBunWorkspacePackages, reclaimStalePreparationLock } from "./workspace-packages.mjs";
 
 const projectRoot = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -206,6 +206,38 @@ test("workspace package preparation reclaims a stale lock with a dead owner", ()
     );
   } finally {
     prepared.cleanup();
+  }
+});
+
+test("stale-lock recovery reclaims an abandoned reclaimer directory", () => {
+  const coordinationRoot = mkdtempSync(join(tmpdir(), "veryfront-bun-lock-interrupted-"));
+  const lockPath = join(coordinationRoot, ".veryfront-bun-workspace-packages.lock");
+  const reclaimerPath = join(coordinationRoot, ".veryfront-bun-workspace-packages.reclaim");
+  mkdirSync(lockPath);
+  mkdirSync(reclaimerPath);
+  writeFileSync(
+    join(lockPath, ".veryfront-bun-workspace-package.json"),
+    `${JSON.stringify({ owner: "veryfront-bun-tests", pid: 9_999_999, token: "stale" })}\n`,
+  );
+  writeFileSync(
+    join(reclaimerPath, ".veryfront-bun-workspace-package.json"),
+    `${
+      JSON.stringify({
+        owner: "veryfront-bun-tests",
+        pid: 9_999_998,
+        token: "abandoned-reclaimer",
+      })
+    }\n`,
+  );
+
+  try {
+    const token = reclaimStalePreparationLock(lockPath);
+
+    assert.equal(typeof token, "string");
+    assert.equal(readJson(join(lockPath, ".veryfront-bun-workspace-package.json")).token, token);
+    assert.equal(existsSync(reclaimerPath), false);
+  } finally {
+    rmSync(coordinationRoot, { recursive: true, force: true });
   }
 });
 
