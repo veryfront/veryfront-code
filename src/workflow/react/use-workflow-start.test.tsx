@@ -133,4 +133,37 @@ describe("useWorkflowStart", () => {
       restoreDom();
     }
   });
+
+  it("does not send the page CSRF token to a cross-origin API base", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    let requestHeaders = new Headers();
+    let hook: UseWorkflowStartResult<Record<string, never>> | null = null;
+
+    document.cookie = "__Host-vf_csrf=host-token; Path=/; Secure";
+    globalThis.fetch = (_input, init) => {
+      requestHeaders = new Headers(init?.headers);
+      return Promise.resolve(Response.json({ runId: "run-1" }));
+    };
+
+    function Capture(): null {
+      hook = useWorkflowStart({
+        workflowId: "content-pipeline",
+        apiBase: "https://workflows.example/api/workflows",
+      });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      await hook!.start({});
+
+      assertEquals(requestHeaders.get("x-csrf-token"), null);
+    } finally {
+      flushSync(() => root.unmount());
+      globalThis.fetch = originalFetch;
+      restoreDom();
+    }
+  });
 });

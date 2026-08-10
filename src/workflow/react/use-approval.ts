@@ -83,9 +83,10 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
       setError(null);
 
       try {
-        const response = await fetch(`${apiBase}/runs/${runId}/approvals/${approvalId}`, {
+        const requestUrl = `${apiBase}/runs/${runId}/approvals/${approvalId}`;
+        const response = await fetch(requestUrl, {
           method: "POST",
-          headers: workflowMutationHeaders({ "Content-Type": "application/json" }),
+          headers: workflowMutationHeaders(requestUrl, { "Content-Type": "application/json" }),
           body: JSON.stringify(decision),
         });
 

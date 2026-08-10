@@ -128,9 +128,10 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     if (!runId) return;
 
     try {
-      const response = await fetch(`${apiBase}/runs/${runId}/cancel`, {
+      const requestUrl = `${apiBase}/runs/${runId}/cancel`;
+      const response = await fetch(requestUrl, {
         method: "POST",
-        headers: workflowMutationHeaders(),
+        headers: workflowMutationHeaders(requestUrl),
       });
       if (!response.ok) {
         throw REQUEST_ERROR.create({
@@ -150,9 +151,10 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     if (!runId) return;
 
     try {
-      const response = await fetch(`${apiBase}/runs/${runId}/retry`, {
+      const requestUrl = `${apiBase}/runs/${runId}/retry`;
+      const response = await fetch(requestUrl, {
         method: "POST",
-        headers: workflowMutationHeaders(),
+        headers: workflowMutationHeaders(requestUrl),
       });
       if (!response.ok) {
         throw REQUEST_ERROR.create({
