@@ -6,6 +6,7 @@ import type {
   WorkflowStatus,
 } from "#veryfront/workflow/types.ts";
 import { ORCHESTRATION_ERROR, REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
+import { workflowMutationHeaders } from "./mutation-headers.ts";
 
 /** Default polling interval for workflow status updates */
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
@@ -127,7 +128,10 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     if (!runId) return;
 
     try {
-      const response = await fetch(`${apiBase}/runs/${runId}/cancel`, { method: "POST" });
+      const response = await fetch(`${apiBase}/runs/${runId}/cancel`, {
+        method: "POST",
+        headers: workflowMutationHeaders(),
+      });
       if (!response.ok) {
         throw REQUEST_ERROR.create({
           detail: `Failed to cancel workflow: ${response.status}`,
@@ -146,7 +150,10 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     if (!runId) return;
 
     try {
-      const response = await fetch(`${apiBase}/runs/${runId}/retry`, { method: "POST" });
+      const response = await fetch(`${apiBase}/runs/${runId}/retry`, {
+        method: "POST",
+        headers: workflowMutationHeaders(),
+      });
       if (!response.ok) {
         throw REQUEST_ERROR.create({
           detail: `Failed to retry workflow: ${response.status}`,

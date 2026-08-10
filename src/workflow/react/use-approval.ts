@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { ApprovalDecision, PendingApproval } from "#veryfront/workflow/types.ts";
+import { workflowMutationHeaders } from "./mutation-headers.ts";
 
 /** Options accepted by use approval. */
 export interface UseApprovalOptions {
@@ -84,7 +85,7 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
       try {
         const response = await fetch(`${apiBase}/runs/${runId}/approvals/${approvalId}`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: workflowMutationHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify(decision),
         });
 

@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
+import { workflowMutationHeaders } from "./mutation-headers.ts";
 
 /** Options accepted by use workflow start. */
 export interface UseWorkflowStartOptions {
@@ -36,7 +37,7 @@ export function useWorkflowStart<TInput = unknown>(
       try {
         const response = await fetch(`${apiBase}/${workflowId}/start`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: workflowMutationHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({ input }),
         });
 
