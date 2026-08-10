@@ -336,7 +336,7 @@ export function resolveVeryfrontPackageExport(
   return resolved.href;
 }
 
-async function rewriteDenoVeryfrontImports(code: string): Promise<string> {
+export async function rewriteDenoVeryfrontImports(code: string): Promise<string> {
   const replacements = new Map<string, string>();
 
   for (const imported of await parseImports(code)) {

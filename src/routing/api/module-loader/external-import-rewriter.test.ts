@@ -18,7 +18,7 @@ import {
   rewriteCompiledBinaryVeryfrontImports,
   rewriteDenoNodeBuiltinImports,
   rewriteDenoNpmDependencyImports,
-  rewriteExternalImports,
+  rewriteDenoVeryfrontImports,
 } from "./external-import-rewriter.ts";
 
 function createFakeFileSystem(files: Record<string, string>): FileSystem {
@@ -301,7 +301,7 @@ describe("external-import-rewriter", () => {
     });
   });
 
-  describe("rewriteExternalImports", () => {
+  describe("Deno Veryfront package imports", () => {
     it("resolves packaged Veryfront exports inside the running package", () => {
       const runningPackage = {
         packageUrl: new URL("file:///opt/veryfront/package.json"),
@@ -328,11 +328,7 @@ describe("external-import-rewriter", () => {
         `const agentModule = import("veryfront/agent");`,
       ].join("\n");
 
-      const out = await rewriteExternalImports(
-        source,
-        "/srv/app",
-        createFakeFileSystem({}),
-      );
+      const out = await rewriteDenoVeryfrontImports(source);
 
       assertStringIncludes(
         out,
