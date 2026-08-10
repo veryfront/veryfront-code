@@ -22,6 +22,14 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
+function signalRelease(path) {
+  try {
+    writeFileSync(path, "release\n", { flag: "wx" });
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+  }
+}
+
 async function waitForFiles(paths, timeoutMs = 5_000) {
   const deadline = Date.now() + timeoutMs;
   while (!paths.every((path) => existsSync(path))) {
@@ -277,13 +285,13 @@ test("concurrent stale-lock reclaimers preserve the live replacement owner", asy
     assert.doesNotThrow(() => process.kill(winner.pid, 0));
     assert.equal(existsSync(lockPath), true);
 
-    writeFileSync(releasePath, "release\n");
+    signalRelease(releasePath);
     const completions = await Promise.all(reclaimers.map(({ completion }) => completion));
     for (const completion of completions) {
       assert.deepEqual(completion, { code: 0, signal: null, stderr: "" });
     }
   } finally {
-    if (!existsSync(releasePath)) writeFileSync(releasePath, "release\n");
+    signalRelease(releasePath);
     for (const { child } of reclaimers) {
       if (child.exitCode === null && child.signalCode === null) child.kill();
     }
