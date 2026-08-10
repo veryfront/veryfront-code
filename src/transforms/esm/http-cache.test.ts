@@ -145,7 +145,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     });
   });
 
-  it("allows a cold HTTP module response to exceed the legacy attempt deadline", async () => {
+  it("allows a cold HTTP module response to exceed five seconds", async () => {
     let fetchCount = 0;
 
     const mockFetch = ((_input, init) => {
@@ -159,7 +159,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
               headers: { "content-type": "application/javascript" },
             }),
           );
-        }, 3_000);
+        }, 6_000);
         const onAbort = () => {
           clearTimeout(timeoutId);
           reject(signal?.reason ?? new DOMException("aborted", "AbortError"));
