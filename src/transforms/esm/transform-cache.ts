@@ -627,6 +627,10 @@ export async function getOrComputeTransform(
     unsubscribe();
     abortState.waiters = Math.max(0, abortState.waiters - 1);
     if (abortState.waiters === 0 && !abortState.settled) {
+      if (transformFlightAbortStates.get(key) === abortState) {
+        flightRegistry.forget(key);
+        transformFlightAbortStates.delete(key);
+      }
       abortState.controller.abort(
         signal?.reason ?? new DOMException("The transform was canceled", "AbortError"),
       );

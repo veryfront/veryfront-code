@@ -41,6 +41,7 @@ import {
   EXTENSIONS,
   FRAMEWORK_LOOKUPS,
   FRAMEWORK_ROOT,
+  frameworkFileTransformFlight,
   frameworkTransformFlight,
   LOG_PREFIX,
 } from "./constants.ts";
@@ -174,6 +175,7 @@ async function runFrameworkTransformFlight(
     if (flightState.waiters === 0 && !flightState.settled) {
       if (frameworkTransformAbortStates.get(key) === flightState) {
         frameworkTransformFlight.forget(key);
+        frameworkFileTransformFlight.forget(key);
         frameworkTransformAbortStates.delete(key);
       }
       flightState.controller.abort(

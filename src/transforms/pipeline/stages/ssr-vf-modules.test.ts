@@ -23,6 +23,7 @@ import {
   _testExports,
   cacheTransformedCode,
   frameworkFileCache,
+  frameworkFileTransformFlight,
   frameworkTransformFlight,
   transformFrameworkSource,
   transformingFiles,
@@ -315,20 +316,22 @@ describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () 
 
       const first = _testExports.runFrameworkTransformFlight(
         key,
-        (abortSignal) => {
-          firstStarted.resolve();
-          abortSignal.addEventListener("abort", () => {
-            replacement = _testExports.runFrameworkTransformFlight(
-              key,
-              () => {
-                replacementExecutions++;
-                return Promise.resolve("fresh transform");
-              },
-              {},
-            );
-          }, { once: true });
-          return releaseFirst.promise;
-        },
+        (abortSignal) =>
+          frameworkFileTransformFlight.do(key, () => {
+            firstStarted.resolve();
+            abortSignal.addEventListener("abort", () => {
+              replacement = _testExports.runFrameworkTransformFlight(
+                key,
+                () =>
+                  frameworkFileTransformFlight.do(key, () => {
+                    replacementExecutions++;
+                    return Promise.resolve("fresh transform");
+                  }),
+                {},
+              );
+            }, { once: true });
+            return releaseFirst.promise;
+          }),
         { abortSignal: firstController.signal },
       );
       await firstStarted.promise;

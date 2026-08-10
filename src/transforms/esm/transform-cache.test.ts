@@ -756,6 +756,45 @@ describe("transforms/esm/transform-cache", () => {
       assertEquals(sharedSignal?.aborted, true);
     });
 
+    it("does not attach a new caller to an abandoned transform flight", async () => {
+      const key = `abandoned-transform-${crypto.randomUUID()}`;
+      const controller = new AbortController();
+      const started = Promise.withResolvers<void>();
+      const releaseOld = Promise.withResolvers<string>();
+      const abortReason = new DOMException("render abandoned", "AbortError");
+      let replacement: Promise<{ code: string; cacheHit: boolean }> | undefined;
+      let replacementExecutions = 0;
+
+      const abandoned = getOrComputeTransform(
+        key,
+        (_reportProgress, abortSignal) => {
+          started.resolve();
+          abortSignal?.addEventListener("abort", () => {
+            replacement = getOrComputeTransform(key, () => {
+              replacementExecutions++;
+              return Promise.resolve("fresh transform");
+            });
+          }, { once: true });
+          return releaseOld.promise;
+        },
+        300,
+        undefined,
+        controller.signal,
+      );
+      await started.promise;
+
+      controller.abort(abortReason);
+      assertEquals(await assertRejects(() => abandoned), abortReason);
+
+      try {
+        assertEquals(replacementExecutions, 1);
+        assertEquals(await replacement!, { code: "fresh transform", cacheHit: false });
+      } finally {
+        releaseOld.resolve("stale transform");
+        await Promise.resolve();
+      }
+    });
+
     it("detaches an aborted caller without cancelling the shared transform", async () => {
       const controller = new AbortController();
       const abortedCallerPhases: string[] = [];
