@@ -446,7 +446,6 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     httpCacheLog.debug("Fetching from network", { url: safeUrl });
     const fetchedModule = await fetchHttpModule(normalizedUrl, abortSignal);
     abortSignal.throwIfAborted();
-    reportProgress({ phase: "http-cache:module-fetched" });
     let code = fetchedModule.code;
 
     const contentType = fetchedModule.contentType;
@@ -465,6 +464,11 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
           `Received HTML instead of JavaScript from ${safeUrl}. The package may not exist or failed to build on esm.sh.`,
       });
     }
+
+    reportProgress({
+      phase: "http-cache:module-fetched",
+      filePath: `http-${hash}.mjs`,
+    });
 
     processingStack.add(cacheIdentity);
     try {

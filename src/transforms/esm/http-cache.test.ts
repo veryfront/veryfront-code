@@ -257,7 +257,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       const firstController = new AbortController();
       const secondController = new AbortController();
       const firstAbortReason = new DOMException("first render cancelled", "AbortError");
-      const secondProgress: string[] = [];
+      const secondProgress: Array<{ phase: string; filePath?: string }> = [];
       const first = cacheHttpImportsToLocal(source, {
         cacheDir: tempDir,
         importMap,
@@ -269,7 +269,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
         cacheDir: tempDir,
         importMap,
         abortSignal: secondController.signal,
-        onProgress: ({ phase }) => secondProgress.push(phase),
+        onProgress: (event) => secondProgress.push(event),
       });
       const secondOutcome = second.then(
         (value) => ({ value, error: undefined }),
@@ -293,7 +293,9 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(secondError, undefined);
       assert(secondResult?.code.includes("file://"));
       assertEquals(fetchCount, 1);
-      assertEquals(secondProgress, ["http-cache:module-fetched"]);
+      assertEquals(secondProgress.length, 1);
+      assertEquals(secondProgress[0]?.phase, "http-cache:module-fetched");
+      assertEquals(secondProgress[0]?.filePath?.startsWith("http-"), true);
     });
   });
 
@@ -418,7 +420,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
   it("reports progress after each module in a recursive HTTP graph is fetched", async () => {
     const parentUrl = "https://93.184.216.34/progress/parent.js";
     const childUrl = "https://93.184.216.34/progress/child.js";
-    const progressPhases: string[] = [];
+    const progressEvents: Array<{ phase: string; filePath?: string }> = [];
 
     await withIsolatedHttpCache(
       "vf-esm-recursive-progress-",
@@ -437,15 +439,17 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
         await cacheHttpImportsToLocal(`export { value } from "${parentUrl}";`, {
           cacheDir: tempDir,
           importMap: { imports: {}, scopes: {} },
-          onProgress: ({ phase }) => progressPhases.push(phase),
+          onProgress: (event) => progressEvents.push(event),
         });
       },
     );
 
-    assertEquals(progressPhases, [
+    assertEquals(progressEvents.map(({ phase }) => phase), [
       "http-cache:module-fetched",
       "http-cache:module-fetched",
     ]);
+    assertEquals(progressEvents.every(({ filePath }) => filePath?.startsWith("http-")), true);
+    assertEquals(new Set(progressEvents.map(({ filePath }) => filePath)).size, 2);
   });
 
   it("does not retry permanent HTTP module failures", async () => {
