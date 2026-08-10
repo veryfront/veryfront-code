@@ -8,7 +8,7 @@
  */
 
 /** Idle timeout for the module-loading stage. Any concrete module/transform progress resets it. */
-export const MODULE_LOAD_TIMEOUT_MS = 25_000;
+export const MODULE_LOAD_TIMEOUT_MS = 35_000;
 
 /**
  * Fallback cap when module loading is called without an owner signal.
