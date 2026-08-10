@@ -142,6 +142,14 @@ describe("resolveStreamOutcome", () => {
     );
     assertEquals(
       resolveStreamOutcome({
+        snapshot: snapshot("tool_handoff", "tool-calls", true),
+        elapsedMs: 300_000,
+        thrownError: new Error("Chat stream idle timeout after 300000ms"),
+      }).status,
+      "failed",
+    );
+    assertEquals(
+      resolveStreamOutcome({
         snapshot: snapshot("streaming", null, true),
         elapsedMs: 10,
         thrownError: new Error("Error reading a body from connection"),

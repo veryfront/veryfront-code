@@ -9,7 +9,7 @@ import {
   toConversationHostedTerminalState,
 } from "../conversation/hosted-terminal.ts";
 import type { MirroredToolChunkState } from "../streaming/mirrored-tool-chunk-state.ts";
-import { hasCompletedStepSignal } from "../streaming/stream-outcome.ts";
+import { hasCompletedStepSignal, isStreamTimeoutError } from "../streaming/stream-outcome.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 import {
   buildDetachedFallbackChunks,
@@ -242,7 +242,8 @@ function shouldFailStreamError(input: {
 
   if (
     input.hasOutput &&
-    hasFinalStepCompletionSignal(input.finalStep)
+    hasFinalStepCompletionSignal(input.finalStep) &&
+    !isStreamTimeoutError(input.streamError)
   ) {
     return false;
   }
