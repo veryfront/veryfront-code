@@ -1,6 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { VeryfrontError } from "#veryfront/errors";
-import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type AgentRunEvent, runWithRunEventSink } from "../agent/index.ts";
 import { runWithMandatoryRunEventSink } from "./run-event-sink-context.ts";
@@ -12,7 +11,7 @@ import {
 } from "./runtime-bridge.test-helpers.ts";
 
 describe("runtime-bridge", () => {
-  it("rejects non-cloneable model context with a stable registered error", async () => {
+  it("skips non-cloneable model context without failing model dispatch", async () => {
     const sensitiveValue = "CUSTOMER_SECRET_123";
     for (
       const testCase of [
@@ -47,41 +46,26 @@ describe("runtime-bridge", () => {
       const model = createGenerateModel("test", `test/${testCase.name}`, async () => {
         dispatches += 1;
         return {
-          content: [{ type: "text", text: "must not dispatch" }],
+          content: [{ type: "text", text: "dispatched" }],
           finishReason: "stop",
           usage: {},
         };
       });
 
-      const error = await assertRejects(async () =>
-        await runWithRunEventSink(
-          () => {
-            sinkCalls += 1;
-          },
-          () =>
-            generateText({
-              model,
-              messages: testCase.messages,
-              tools: testCase.tools as never,
-            }),
-        )
+      const result = await runWithRunEventSink(
+        () => {
+          sinkCalls += 1;
+        },
+        () =>
+          generateText({
+            model,
+            messages: testCase.messages,
+            tools: testCase.tools as never,
+          }),
       );
-
-      assertInstanceOf(error, VeryfrontError);
-      assertEquals(error.slug, "durable-run-event-persistence-failed");
-      assertEquals(
-        error.message,
-        "Model call context contains data that cannot be persisted safely",
-      );
-      assertEquals(error.cause, undefined);
-      assertEquals(
-        JSON.stringify(error, Object.getOwnPropertyNames(error)).includes(
-          sensitiveValue,
-        ),
-        false,
-      );
+      assertEquals(result.text, "dispatched");
       assertEquals(sinkCalls, 0);
-      assertEquals(dispatches, 0);
+      assertEquals(dispatches, 1);
     }
   });
 
