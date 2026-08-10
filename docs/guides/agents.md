@@ -154,11 +154,15 @@ const assistant = agent({
 ```
 
 The framework `tool_search` fallback is provider-neutral. It searches the
-authorized `tools` catalog and does not search `providerTools`. Search ranks an
-exact tool name first, followed by normalized substrings in the tool name,
-description, and input parameter descriptions. It returns at most five names
-and descriptions. Results never include schemas, and `tool_search` has no
-pagination options.
+authorized `tools` catalog and configured `providerTools` that the selected
+model supports. Provider-native entries contain only a name and description
+until a search loads them. The runtime attaches the provider's native schema on
+the next model step.
+
+Search ranks an exact tool name first, followed by normalized substrings in the
+tool name, description, and input parameter descriptions. It returns at most
+five names and descriptions. Results never include schemas, and `tool_search`
+has no pagination options.
 
 Loading a schema never authorizes a tool. The runtime rechecks authorization
 before execution. It also filters restored loaded-tool state against the
@@ -168,8 +172,9 @@ You can use deferred loading with a direct provider and its API key without
 Veryfront Cloud. Hosted durable runs additionally require the Veryfront API
 durable run-event contract. The hosted runtime stores loaded-tool state in a
 private checkpoint and waits for that checkpoint before continuing. Private
-checkpoint data does not appear in public messages or replay. Provider-native
-tool search and provider replay are not part of this feature.
+checkpoint data does not appear in public messages or replay. Configured,
+supported provider-native tools use the same private exposure checkpoint.
+Provider replay is not part of this feature.
 
 See [Tools](./tools.md#how-agents-use-tools) for the search and execution flow.
 

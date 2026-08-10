@@ -78,6 +78,22 @@ describe("guide content contracts", () => {
     );
   });
 
+  it("documents deferred form and provider-native tool discovery", async () => {
+    const agentsGuide = await Deno.readTextFile("docs/guides/agents.md");
+    const toolsGuide = await Deno.readTextFile("docs/guides/tools.md");
+    const architecture = await Deno.readTextFile(
+      "docs/architecture/28-model-driven-tool-discovery.md",
+    );
+    const docs = [agentsGuide, toolsGuide, architecture].join("\n");
+
+    assertStringIncludes(toolsGuide, "`form_input` is authorized but deferred");
+    assertStringIncludes(docs, "configured `providerTools`");
+    assertStringIncludes(docs, "provider's native schema on the next model step");
+    assertEquals(docs.includes("does not search or load provider-native `providerTools`"), false);
+    assertEquals(docs.includes("does not search `providerTools`"), false);
+    assertEquals(docs.includes("bootstrap tools (`form_input`"), false);
+  });
+
   it("documents the exact-run writer capability migration", async () => {
     const guide = await Deno.readTextFile(
       "docs/guides/agent-service-runtime.md",
