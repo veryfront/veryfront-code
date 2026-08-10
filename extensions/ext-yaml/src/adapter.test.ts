@@ -143,3 +143,32 @@ describe("yaml general parser", () => {
     });
   });
 });
+
+describe("@std/yaml JSON schema fidelity", () => {
+  it("does not widen YAML 1.1 octals under the JSON schema", () => {
+    // The parser ran the core schema before the schema was forwarded, so this
+    // decoded to the number 7 -- a type the caller asked the JSON schema to
+    // exclude.
+    const parsed = parseYamlSource("o: 0o7", { schema: "json" }) as { o: unknown };
+
+    assertEquals(parsed.o, "0o7");
+  });
+
+  it("accepts ordinary metadata, which the JSON schema flags per scalar", () => {
+    // Every plain scalar raises TAG_RESOLVE_FAILED under this schema, so a
+    // parser that rejected on any diagnostic would reject every Skill document.
+    assertEquals(
+      parseYamlSource("name: code-review\ndescription: Review code.", { schema: "json" }),
+      { name: "code-review", description: "Review code." },
+    );
+  });
+
+  it("still reports the real error hiding behind those diagnostics", () => {
+    // A duplicate key raises DUPLICATE_KEY *after* two TAG_RESOLVE_FAILEDs, so
+    // reading the first diagnostic would have surfaced the benign one.
+    assertThrows(
+      () => parseYamlSource("a: 1\na: 2", { schema: "json" }),
+      SyntaxError,
+    );
+  });
+});

@@ -255,14 +255,18 @@ function findActualFile(relativePath, baseDir = projectRoot) {
 
 function resolveAliasSpecifier(specifier, scope) {
   const stdNormalized = normalizeStdSpecifier(specifier);
-  const mapped = resolveFromImportMap(specifier) ?? resolveFromImportMap(stdNormalized);
-  // The root map keeps priority so this stays behaviour-preserving for every
-  // specifier it already covers; a member map only fills the gaps.
-  const scoped = mapped || !scope
+  // A member's own map wins inside that member, which is what Deno does and
+  // what the member declared it for. Consulting the root first looked
+  // conservative but silently resolved the six React specifiers that appear in
+  // both maps to the root's targets, so the member's aliases never applied.
+  const scoped = scope
+    ? resolveFromMap(scope.imports, specifier) ?? resolveFromMap(scope.imports, stdNormalized)
+    : null;
+  const mapped = scoped
     ? null
-    : resolveFromMap(scope.imports, specifier) ?? resolveFromMap(scope.imports, stdNormalized);
+    : resolveFromImportMap(specifier) ?? resolveFromImportMap(stdNormalized);
   const fallback = fallbackAliasMap[specifier] ?? fallbackAliasMap[stdNormalized];
-  const target = mapped ?? scoped ?? fallback;
+  const target = scoped ?? mapped ?? fallback;
 
   if (!target) return null;
 

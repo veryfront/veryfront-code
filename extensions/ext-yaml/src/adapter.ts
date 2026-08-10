@@ -83,6 +83,10 @@ function decodeDocument(source: string, options: YamlParseOptions): unknown {
   try {
     documents = parseAllDocuments(source, {
       uniqueKeys: options.allowDuplicateKeys !== true,
+      // Forwarded, not merely recorded: without it the parser runs the core
+      // schema and resolves `0o7` to 7, which is exactly the widening
+      // `schema: "json"` is asked for at a trust boundary.
+      schema: jsonSchema ? "json" : "core",
       // Warnings are inspected below; left to the library they would be
       // written straight to the host process's stderr.
       logLevel: "silent",
@@ -102,7 +106,16 @@ function decodeDocument(source: string, options: YamlParseOptions): unknown {
   // An unresolved tag is a warning in `yaml` and an error in `@std/yaml`.
   // Treat it as an error: a tag the parser did not understand means the
   // decoded value is not the one the document asked for.
-  const problem = document.errors[0] ?? document.warnings[0];
+  //
+  // `TAG_RESOLVE_FAILED` is the exception, and only under the JSON schema,
+  // where it fires for every ordinary unquoted string -- `name: code-review`
+  // raises it twice. It is filtered per diagnostic rather than by taking the
+  // first: a document that raises it also raises the real ones beside it, so
+  // reading `errors[0]` would report the benign one and hide `BAD_INDENT` or
+  // `DUPLICATE_KEY` behind it.
+  const problem = [...document.errors, ...document.warnings].find(
+    (diagnostic) => !(jsonSchema && diagnostic.code === "TAG_RESOLVE_FAILED"),
+  );
   if (problem) throw new SyntaxError(problem.message, { cause: problem });
 
   if (jsonSchema) assertJsonRepresentableTags(document);
