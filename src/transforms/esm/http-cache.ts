@@ -36,7 +36,6 @@ import {
 import { looksLikeHtmlContent as looksLikeHtmlNotJs } from "./html-content.ts";
 import { HttpModuleBodyError, readHttpModuleText } from "../shared/http-module-response.ts";
 import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
-import { waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
 import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
 import {
   guardedOutboundFetch,
@@ -83,6 +82,7 @@ import {
   inFlightHttpFetches,
   processingStackStorage,
   refreshDistributedCacheAsync,
+  waitForInFlightFetch,
   waitForSharedInFlightHttpFetch,
 } from "./in-flight-manager.ts";
 import {
@@ -138,55 +138,31 @@ async function publishHttpBundleGeneration<T>(
     await fs.writeTextFile(stagedPath, code);
 
     const previousPublication = httpBundlePublications.get(cacheKey) ?? Promise.resolve();
-    let filesystemCommitStarted = false;
-    const publicationWork: Promise<T> = previousPublication
+    const publication: Promise<T> = previousPublication
       .catch(() => {})
       .then(async () => {
         assertCurrentHttpFetch(abortSignal, control);
         if (!control.commit(HTTP_MODULE_FETCH_TIMEOUT_MS)) {
           throw abandonedHttpFetchError(abortSignal);
         }
+        // The committed publication stays authoritative even if its caller-facing
+        // deadline expires. Storage writes already in progress must finish before
+        // another generation can safely publish this cache key.
         await prepare();
-        assertCurrentHttpFetch(abortSignal, control);
         if (!fs.rename) {
           throw new Error("The active filesystem does not support atomic bundle publication");
         }
-        filesystemCommitStarted = true;
         await fs.rename(stagedPath, cachePath);
-        assertCurrentHttpFetch(abortSignal, control);
-        const result = await publish();
-        assertCurrentHttpFetch(abortSignal, control);
-        return result;
-      });
-    // A timed-out prepare can be bypassed because the next authority check
-    // prevents it from reaching rename. Once rename starts, keep replacements
-    // serialized until it settles so a late filesystem operation cannot
-    // overwrite a newer generation.
-    const publicationBarrier = new Promise<void>((resolve) => {
-      let settled = false;
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        abortSignal.removeEventListener("abort", handleAbort);
-        resolve();
-      };
-      const handleAbort = () => {
-        if (!filesystemCommitStarted) finish();
-      };
-
-      abortSignal.addEventListener("abort", handleAbort, { once: true });
-      publicationWork.then(finish, finish);
-      if (abortSignal.aborted) handleAbort();
-    });
-    const trackedPublication = publicationBarrier
+        return await publish();
+      })
       .finally(() => {
-        if (httpBundlePublications.get(cacheKey) === trackedPublication) {
+        if (httpBundlePublications.get(cacheKey) === publication) {
           httpBundlePublications.delete(cacheKey);
         }
       });
-    httpBundlePublications.set(cacheKey, trackedPublication);
+    httpBundlePublications.set(cacheKey, publication);
 
-    return await waitForSharedPromise(publicationWork, abortSignal);
+    return await publication;
   } finally {
     try {
       if (await fs.exists(stagedPath)) await fs.remove(stagedPath);
@@ -378,6 +354,17 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
   const hash = await hashHttpCacheIdentity(cacheIdentity);
   const cachePath = join(cacheDir, `http-${hash}.mjs`);
   const fs = createFileSystem();
+  const committedPublication = httpBundlePublications.get(cacheKey);
+  if (committedPublication && !inFlightHttpFetches.has(cacheKey)) {
+    // A committed generation outlived its caller-facing flight. Quarantine the
+    // key until that publication settles instead of starting a competing write.
+    const settled = await waitForInFlightFetch(
+      committedPublication.then(() => null, () => null),
+      HTTP_MODULE_FETCH_MAX_WAIT_MS,
+      options.abortSignal,
+    );
+    if (settled === undefined) return null;
+  }
   const publicationPending = httpBundlePublications.has(cacheKey) ||
     inFlightHttpFetches.has(cacheKey);
 
@@ -654,6 +641,16 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       },
     );
   };
+  const lateCommittedPublication = httpBundlePublications.get(cacheKey);
+  if (lateCommittedPublication && !inFlightHttpFetches.has(cacheKey)) {
+    const settled = await waitForInFlightFetch(
+      lateCommittedPublication.then(() => null, () => null),
+      HTTP_MODULE_FETCH_MAX_WAIT_MS,
+      options.abortSignal,
+    );
+    if (settled === undefined) return null;
+    return await cacheHttpModuleInternal(url, options);
+  }
   const fetchPromise = createInFlightHttpFetch(cacheKey, computeHttpBundle);
 
   const result = await waitForSharedInFlightHttpFetch(

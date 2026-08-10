@@ -82,6 +82,7 @@ describe("transforms/esm/in-flight-manager", () => {
     it("retires a committed publication when its deadline expires", async () => {
       const cacheKey = "committed-publication-timeout";
       const publicationStarted = Promise.withResolvers<void>();
+      const publicationFinished = Promise.withResolvers<void>();
       const releasePublication = Promise.withResolvers<void>();
       let sharedSignal: AbortSignal | undefined;
       const promise = createInFlightHttpFetch(
@@ -91,7 +92,7 @@ describe("transforms/esm/in-flight-manager", () => {
           assertEquals(control.commit(5), true);
           publicationStarted.resolve();
           await releasePublication.promise;
-          abortSignal.throwIfAborted();
+          publicationFinished.resolve();
           return "/path/to/late-publication.mjs";
         },
       );
@@ -108,6 +109,9 @@ describe("transforms/esm/in-flight-manager", () => {
         assertEquals(error.name, "TimeoutError");
         assertEquals(sharedSignal?.aborted, true);
         assertEquals(inFlightHttpFetches.has(cacheKey), false);
+
+        releasePublication.resolve();
+        await publicationFinished.promise;
       } finally {
         releasePublication.resolve();
         await Promise.allSettled([owner, promise]);

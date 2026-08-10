@@ -34,10 +34,10 @@ import { buildHttpCacheIdentity } from "./http-cache-helpers.ts";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
+import { HTTP_MODULE_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 import { MODULE_LOAD_TIMEOUT_MS } from "#veryfront/rendering/orchestrator/module-collection.ts";
 import { FakeTime } from "#std/testing/time";
-import { HTTP_MODULE_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 import {
   __getMaxInFlightHttpFetchWaiterCountForTests,
   createInFlightHttpFetch,
@@ -103,6 +103,14 @@ async function withIsolatedHttpCache<T>(
   } finally {
     await remove(tempDir, { recursive: true });
   }
+}
+
+async function runNextFakeTimer(time: FakeTime, tempDir: string): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await Deno.stat(tempDir);
+    if (await time.nextAsync()) return;
+  }
+  throw new Error("Expected a fake timer to be scheduled");
 }
 
 describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, () => {
@@ -367,11 +375,16 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
-  it("keeps a publishing generation authoritative through distributed writes", async () => {
+  it("rechecks publication quarantine after a cache lookup yields", async () => {
+    using time = new FakeTime();
     const moduleUrl = "https://93.184.216.34/committed-distributed-owner.js";
+    const cacheLookupStarted = Promise.withResolvers<void>();
+    const releaseCacheLookup = Promise.withResolvers<void>();
     const firstDistributedWriteStarted = Promise.withResolvers<void>();
     const releaseFirstDistributedWrite = Promise.withResolvers<void>();
     const distributed = new Map<string, string>();
+    const originalStat = Deno.stat.bind(Deno);
+    let cacheLookupBlocked = false;
     let distributedWriteCount = 0;
     let fetchCount = 0;
 
@@ -400,59 +413,98 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       );
     }) as typeof fetch;
 
-    await withIsolatedHttpCache("vf-esm-committed-distributed-", mockFetch, async (tempDir) => {
-      __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
-      const controller = new AbortController();
-      const source = `import { generation } from "${moduleUrl}"; export { generation };`;
-      const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
-      const abandoned = cacheHttpImportsToLocal(source, {
-        ...options,
-        abortSignal: controller.signal,
-      });
-      let replacement: ReturnType<typeof cacheHttpImportsToLocal> | undefined;
+    try {
+      await withIsolatedHttpCache(
+        "vf-esm-committed-distributed-",
+        mockFetch,
+        async (tempDir) => {
+          Deno.stat = async (path) => {
+            if (
+              !cacheLookupBlocked && String(path).startsWith(tempDir) &&
+              String(path).endsWith(".mjs")
+            ) {
+              cacheLookupBlocked = true;
+              cacheLookupStarted.resolve();
+              await releaseCacheLookup.promise;
+            }
+            return await originalStat(path);
+          };
+          __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+          const controller = new AbortController();
+          const source = `import { generation } from "${moduleUrl}"; export { generation };`;
+          const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+          const lateEntrant = cacheHttpImportsToLocal(source, options);
+          let abandoned: ReturnType<typeof cacheHttpImportsToLocal> | undefined;
+          let recovery: ReturnType<typeof cacheHttpImportsToLocal> | undefined;
 
-      try {
-        await firstDistributedWriteStarted.promise;
-        controller.abort(new DOMException("render abandoned", "AbortError"));
-        await assertRejects(() => abandoned, DOMException, "render abandoned");
+          try {
+            await cacheLookupStarted.promise;
+            const abandonedOwner = cacheHttpImportsToLocal(source, {
+              ...options,
+              abortSignal: controller.signal,
+            });
+            abandoned = abandonedOwner;
+            await firstDistributedWriteStarted.promise;
+            controller.abort(new DOMException("render abandoned", "AbortError"));
+            await assertRejects(() => abandonedOwner, DOMException, "render abandoned");
 
-        replacement = cacheHttpImportsToLocal(source, options);
-        let replacementSettled = false;
-        void replacement.then(
-          () => replacementSettled = true,
-          () => replacementSettled = true,
-        );
-        while (__getMaxInFlightHttpFetchWaiterCountForTests() < 1) {
-          await new Promise((resolve) => setTimeout(resolve, 1));
-        }
-        assertEquals(replacementSettled, false);
-        assertEquals(fetchCount, 1);
-        assertEquals(
-          [...distributed.values()].some((value) => value.includes('generation = "committed"')),
-          true,
-        );
+            await time.tickAsync(HTTP_MODULE_FETCH_TIMEOUT_MS);
+            await time.runMicrotasks();
 
-        releaseFirstDistributedWrite.resolve();
-        const result = await replacement;
-        assert(result.code.includes("file://"));
-        const bundleFiles: string[] = [];
-        for await (const entry of readDir(tempDir)) {
-          if (entry.isFile && entry.name.startsWith("http-") && entry.name.endsWith(".mjs")) {
-            bundleFiles.push(entry.name);
+            assertEquals(inFlightHttpFetches.size, 0);
+            assertEquals(fetchCount, 1);
+            assertEquals(
+              [...distributed.values()].some((value) => value.includes('generation = "committed"')),
+              true,
+            );
+
+            releaseCacheLookup.resolve();
+            const lateEntrantOutcome = lateEntrant.catch((error) => error);
+            await runNextFakeTimer(time, tempDir);
+            await time.runMicrotasks();
+
+            const lateEntrantError = await lateEntrantOutcome;
+            assertInstanceOf(lateEntrantError, Error);
+            assert(lateEntrantError.message.includes("Failed to cache absolute HTTP module"));
+            assertEquals(inFlightHttpFetches.size, 0);
+            assertEquals(fetchCount, 1);
+
+            recovery = cacheHttpImportsToLocal(source, options);
+            await time.runMicrotasks();
+            releaseFirstDistributedWrite.resolve();
+            const result = await recovery;
+            assert(result.code.includes("file://"));
+            const bundleFiles: string[] = [];
+            for await (const entry of readDir(tempDir)) {
+              if (
+                entry.isFile && entry.name.startsWith("http-") &&
+                entry.name.endsWith(".mjs")
+              ) {
+                bundleFiles.push(entry.name);
+              }
+            }
+            assertEquals(bundleFiles.length, 1);
+            const publishedCode = await readTextFile(join(tempDir, bundleFiles[0]!));
+            assert(publishedCode.includes('generation = "committed"'));
+            assertEquals(fetchCount, 1);
+          } finally {
+            releaseCacheLookup.resolve();
+            releaseFirstDistributedWrite.resolve();
+            await Promise.allSettled(
+              [lateEntrant, abandoned, recovery].filter((value) => value),
+            );
           }
-        }
-        assertEquals(bundleFiles.length, 1);
-        const publishedCode = await readTextFile(join(tempDir, bundleFiles[0]!));
-        assert(publishedCode.includes('generation = "committed"'));
-        assertEquals(fetchCount, 1);
-      } finally {
-        releaseFirstDistributedWrite.resolve();
-        await replacement?.catch(() => {});
-      }
-    });
+        },
+      );
+    } finally {
+      releaseCacheLookup.resolve();
+      releaseFirstDistributedWrite.resolve();
+      Deno.stat = originalStat;
+    }
   });
 
   it("keeps a publishing generation authoritative through an atomic rename", async () => {
+    using time = new FakeTime();
     const moduleUrl = "https://93.184.216.34/committed-rename-owner.js";
     const renameStarted = Promise.withResolvers<void>();
     const releaseRename = Promise.withResolvers<void>();
@@ -488,25 +540,36 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
           ...options,
           abortSignal: controller.signal,
         });
-        let replacement: ReturnType<typeof cacheHttpImportsToLocal> | undefined;
-        let third: ReturnType<typeof cacheHttpImportsToLocal> | undefined;
+        let boundedFollower: ReturnType<typeof cacheHttpImportsToLocal> | undefined;
+        let recovery: ReturnType<typeof cacheHttpImportsToLocal> | undefined;
 
         try {
           await renameStarted.promise;
           controller.abort(new DOMException("render abandoned", "AbortError"));
           await assertRejects(() => abandoned, DOMException, "render abandoned");
 
-          replacement = cacheHttpImportsToLocal(source, options);
-          third = cacheHttpImportsToLocal(source, options);
-          while (__getMaxInFlightHttpFetchWaiterCountForTests() < 2) {
-            await new Promise((resolve) => setTimeout(resolve, 1));
-          }
+          await time.tickAsync(HTTP_MODULE_FETCH_TIMEOUT_MS);
+          await time.runMicrotasks();
+
+          assertEquals(inFlightHttpFetches.size, 0);
           assertEquals(fetchCount, 1);
 
+          boundedFollower = cacheHttpImportsToLocal(source, options);
+          const boundedFollowerOutcome = boundedFollower.catch((error) => error);
+          await runNextFakeTimer(time, tempDir);
+          await time.runMicrotasks();
+
+          const boundedFollowerError = await boundedFollowerOutcome;
+          assertInstanceOf(boundedFollowerError, Error);
+          assert(boundedFollowerError.message.includes("Failed to cache absolute HTTP module"));
+          assertEquals(inFlightHttpFetches.size, 0);
+          assertEquals(fetchCount, 1);
+
+          recovery = cacheHttpImportsToLocal(source, options);
+          await time.runMicrotasks();
           releaseRename.resolve();
-          const [replacementResult, thirdResult] = await Promise.all([replacement, third]);
-          assert(replacementResult.code.includes("file://"));
-          assert(thirdResult.code.includes("file://"));
+          const recoveryResult = await recovery;
+          assert(recoveryResult.code.includes("file://"));
           const bundleFiles: string[] = [];
           for await (const entry of readDir(tempDir)) {
             if (entry.isFile && entry.name.startsWith("http-") && entry.name.endsWith(".mjs")) {
@@ -519,138 +582,10 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
           assertEquals(fetchCount, 1);
         } finally {
           releaseRename.resolve();
-          await Promise.allSettled([abandoned, replacement, third].filter((value) => value));
+          await Promise.allSettled(
+            [abandoned, boundedFollower, recovery].filter((value) => value),
+          );
         }
-      });
-    } finally {
-      releaseRename.resolve();
-      Deno.rename = originalRename;
-    }
-  });
-
-  it("retires a committed generation when publication never settles", async () => {
-    using time = new FakeTime();
-    const writeStarted = Promise.withResolvers<void>();
-    const stalledWrite = new Promise<void>(() => {});
-    let stallWrites = true;
-    let fetchCount = 0;
-    const backend: CacheBackend = {
-      type: "memory",
-      get: () => Promise.resolve(null),
-      set: () => {
-        if (!stallWrites) return Promise.resolve();
-        writeStarted.resolve();
-        return stalledWrite;
-      },
-      del: () => Promise.resolve(),
-    };
-    const mockFetch = (() => {
-      fetchCount++;
-      return Promise.resolve(
-        new Response(`export const generation = ${fetchCount};`, {
-          headers: { "content-type": "application/javascript" },
-        }),
-      );
-    }) as typeof fetch;
-
-    await withIsolatedHttpCache("vf-esm-stalled-publication-", mockFetch, async (tempDir) => {
-      __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
-      const source = 'import "https://93.184.216.34/stalled-publication.js";';
-      const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
-      const stalledOwner = cacheHttpImportsToLocal(source, options);
-      const stalledOutcome = stalledOwner.then(
-        (value) => ({ error: undefined, value }),
-        (error: unknown) => ({ error, value: undefined }),
-      );
-      let stalledOwnerSettled = false;
-      void stalledOutcome.then(() => stalledOwnerSettled = true);
-
-      await time.runMicrotasks();
-      await writeStarted.promise;
-      await time.tickAsync(HTTP_MODULE_FETCH_TIMEOUT_MS);
-      await time.runMicrotasks();
-
-      assertEquals(stalledOwnerSettled, true);
-      const { error } = await stalledOutcome;
-      assertInstanceOf(error, DOMException);
-      assertEquals(error.name, "TimeoutError");
-      assertEquals(inFlightHttpFetches.size, 0);
-
-      stallWrites = false;
-      const replacement = await cacheHttpImportsToLocal(source, options);
-      assert(replacement.code.includes("file://"));
-      assertEquals(fetchCount, 2);
-    });
-  });
-
-  it("serializes a replacement behind an expired atomic rename", async () => {
-    using time = new FakeTime();
-    const renameStarted = Promise.withResolvers<void>();
-    const releaseRename = Promise.withResolvers<void>();
-    const replacementFetchStarted = Promise.withResolvers<void>();
-    const originalRename = Deno.rename.bind(Deno);
-    let fetchCount = 0;
-
-    Deno.rename = async (from, to) => {
-      const stagedCode = await readTextFile(String(from));
-      if (stagedCode.includes('generation = "stale"')) {
-        renameStarted.resolve();
-        await releaseRename.promise;
-      }
-      await originalRename(from, to);
-    };
-
-    const mockFetch = (() => {
-      fetchCount++;
-      if (fetchCount === 2) replacementFetchStarted.resolve();
-      const generation = fetchCount === 1 ? "stale" : "fresh";
-      return Promise.resolve(
-        new Response(`export const generation = "${generation}";`, {
-          headers: { "content-type": "application/javascript" },
-        }),
-      );
-    }) as typeof fetch;
-
-    try {
-      await withIsolatedHttpCache("vf-esm-expired-rename-", mockFetch, async (tempDir) => {
-        const source = 'import "https://93.184.216.34/expired-rename.js";';
-        const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
-        const expiredOwner = cacheHttpImportsToLocal(source, options);
-
-        await time.runMicrotasks();
-        await renameStarted.promise;
-        await time.tickAsync(HTTP_MODULE_FETCH_TIMEOUT_MS);
-        await assertRejects(
-          () => expiredOwner,
-          DOMException,
-          "HTTP bundle publication timed out",
-        );
-
-        const replacement = cacheHttpImportsToLocal(source, options);
-        let replacementSettled = false;
-        void replacement.then(
-          () => replacementSettled = true,
-          () => replacementSettled = true,
-        );
-        await replacementFetchStarted.promise;
-
-        assertEquals(fetchCount, 2);
-        assertEquals(replacementSettled, false);
-
-        releaseRename.resolve();
-        const result = await replacement;
-        assert(result.code.includes("file://"));
-
-        const bundleFiles: string[] = [];
-        for await (const entry of readDir(tempDir)) {
-          if (entry.isFile && entry.name.startsWith("http-") && entry.name.endsWith(".mjs")) {
-            bundleFiles.push(entry.name);
-          }
-        }
-        assertEquals(bundleFiles.length, 1);
-        const publishedCode = await readTextFile(join(tempDir, bundleFiles[0]!));
-        assert(publishedCode.includes('generation = "fresh"'));
-        assertEquals(publishedCode.includes('generation = "stale"'), false);
       });
     } finally {
       releaseRename.resolve();
