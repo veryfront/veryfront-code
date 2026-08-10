@@ -303,31 +303,24 @@ export function resolveTsconfigPath(
   const exact = paths[specifier];
   if (exact) return exact;
 
-  let bestPrefix: string | null = null;
-  for (const key of Object.keys(paths)) {
+  let best: { prefix: string; suffix: string; target: string } | null = null;
+  for (const [key, target] of Object.entries(paths)) {
     const star = key.indexOf("*");
     if (star === -1) continue;
     const prefix = key.slice(0, star);
     const suffix = key.slice(star + 1);
     if (!specifier.startsWith(prefix) || !specifier.endsWith(suffix)) continue;
     if (specifier.length < prefix.length + suffix.length) continue;
-    if (bestPrefix === null || prefix.length > bestPrefix.length) {
-      bestPrefix = prefix;
-    }
+    if (best && best.prefix.length >= prefix.length) continue;
+    best = { prefix, suffix, target };
   }
-  if (bestPrefix === null) return null;
+  if (!best) return null;
 
-  for (const [key, target] of Object.entries(paths)) {
-    const star = key.indexOf("*");
-    if (star === -1 || key.slice(0, star) !== bestPrefix) continue;
-    const suffix = key.slice(star + 1);
-    const matched = specifier.slice(
-      bestPrefix.length,
-      specifier.length - suffix.length,
-    );
-    return target.replace("*", matched);
-  }
-  return null;
+  const matched = specifier.slice(
+    best.prefix.length,
+    specifier.length - best.suffix.length,
+  );
+  return best.target.replaceAll("*", matched);
 }
 
 /** Would Bun resolve this specifier to a file? */

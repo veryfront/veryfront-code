@@ -106,6 +106,22 @@ describe("resolveTsconfigPath", () => {
     assertEquals(resolveTsconfigPath(paths, "#a/x.ts"), "./short/x.ts");
   });
 
+  it("keeps the suffix and target from the selected wildcard key", () => {
+    const paths = {
+      "#a/*.json": "./json/*.json",
+      "#a/*.ts": "./typed/*.ts",
+      "#a/*": "./plain/*",
+    };
+    assertEquals(resolveTsconfigPath(paths, "#a/x.ts"), "./typed/x.ts");
+  });
+
+  it("substitutes every wildcard in the selected target", () => {
+    assertEquals(
+      resolveTsconfigPath({ "#a/*": "./*/index/*.ts" }, "#a/x"),
+      "./x/index/x.ts",
+    );
+  });
+
   it("returns null for an unmapped specifier", () => {
     assertEquals(resolveTsconfigPath({ "#a/b": "./x.ts" }, "#a/c"), null);
   });

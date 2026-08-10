@@ -1,5 +1,10 @@
+import { readFileSync, statSync } from "node:fs";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  flattenTsconfigPaths,
+  resolveTsconfigPath,
+} from "../../scripts/lint/audit-cross-runtime-jsr.ts";
 
 /**
  * Bun's runtime resolver never hands a bare package specifier to a `--preload`
@@ -18,7 +23,7 @@ type PathsMap = Record<string, string[]>;
 const repoRoot = new URL("../../", import.meta.url);
 
 function readRepoJson(name: string): Record<string, unknown> {
-  return JSON.parse(Deno.readTextFileSync(new URL(name, repoRoot)));
+  return JSON.parse(readFileSync(new URL(name, repoRoot), "utf8"));
 }
 
 const denoImports = readRepoJson("deno.json").imports as
@@ -27,35 +32,7 @@ const denoImports = readRepoJson("deno.json").imports as
 const tsconfigPaths =
   ((readRepoJson("tsconfig.json").compilerOptions as { paths?: PathsMap } | undefined)
     ?.paths ?? {}) as PathsMap;
-
-/** Applies TypeScript's `paths` rules: exact key first, then longest prefix. */
-function resolveThroughPaths(specifier: string, paths: PathsMap): string | null {
-  const exact = paths[specifier]?.[0];
-  if (exact) return exact;
-
-  let best: { prefix: string; suffix: string; target: string } | null = null;
-  for (const [pattern, targets] of Object.entries(paths)) {
-    const star = pattern.indexOf("*");
-    const target = targets[0];
-    if (star === -1 || target === undefined) continue;
-    const prefix = pattern.slice(0, star);
-    const suffix = pattern.slice(star + 1);
-    if (!specifier.startsWith(prefix) || !specifier.endsWith(suffix)) continue;
-    if (specifier.length < prefix.length + suffix.length) continue;
-    if (best && best.prefix.length >= prefix.length) continue;
-    best = { prefix, suffix, target };
-  }
-  if (!best) return null;
-
-  const captured = specifier.slice(
-    best.prefix.length,
-    specifier.length - best.suffix.length,
-  );
-  // Every wildcard, not just the first: `replace` with a string pattern
-  // substitutes one occurrence, so a target carrying two would keep a literal
-  // `*` and silently compare unequal.
-  return best.target.replaceAll("*", captured);
-}
+const flattenedTsconfigPaths = flattenTsconfigPaths(tsconfigPaths);
 
 /** Collapses the extensionless and directory forms a resolver would accept. */
 function toExistingFile(target: string): string | null {
@@ -68,7 +45,7 @@ function toExistingFile(target: string): string | null {
   ];
   for (const candidate of candidates) {
     try {
-      if (Deno.statSync(new URL(candidate, repoRoot)).isFile) return candidate;
+      if (statSync(new URL(candidate, repoRoot)).isFile()) return candidate;
     } catch {
       continue;
     }
@@ -98,7 +75,7 @@ describe("config/tsconfig-paths-parity", () => {
         drifted.push(`${specifier}: deno.json points at missing ${denoTarget}`);
         continue;
       }
-      const viaPaths = resolveThroughPaths(specifier, tsconfigPaths);
+      const viaPaths = resolveTsconfigPath(flattenedTsconfigPaths, specifier);
       if (viaPaths === null) {
         drifted.push(`${specifier}: no tsconfig paths entry`);
         continue;
