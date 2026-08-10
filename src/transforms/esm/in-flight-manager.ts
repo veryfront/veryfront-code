@@ -14,6 +14,10 @@ import { httpBundleCache } from "./http-cache-wrapper.ts";
 import { asLocalModuleCode } from "./http-cache-invariants.ts";
 import { getManifestIdForHash, refreshManifestTTL } from "./bundle-manifest-ttl.ts";
 import type { HttpCacheIdentityMetadata, HttpCacheLike } from "./http-cache-helpers.ts";
+import type {
+  TransformProgressEvent,
+  TransformProgressListener,
+} from "#veryfront/transforms/progress.ts";
 
 const logger = rendererLogger.component("http-cache");
 
@@ -26,71 +30,13 @@ export const inFlightHttpFetches = new Map<string, Promise<string | null>>();
 
 interface InFlightHttpFetchAbortState {
   controller: AbortController;
+  promise?: Promise<string | null>;
   waiters: number;
   settled: boolean;
+  progressListeners: Set<TransformProgressListener>;
 }
 
-const inFlightHttpFetchAbortStates = new Map<
-  Promise<string | null>,
-  InFlightHttpFetchAbortState
->();
-
-type ReleaseInFlightHttpFetch = (reason?: unknown) => void;
-
-function retainInFlightHttpFetchState(
-  state: InFlightHttpFetchAbortState,
-): ReleaseInFlightHttpFetch {
-  state.waiters++;
-  let released = false;
-  return (reason?: unknown) => {
-    if (released) return;
-    released = true;
-    state.waiters = Math.max(0, state.waiters - 1);
-    if (state.waiters === 0 && !state.settled) {
-      state.controller.abort(
-        reason ?? new DOMException("The HTTP module fetch was canceled", "AbortError"),
-      );
-    }
-  };
-}
-
-/** Create shared HTTP work whose cancellation follows all active waiters. */
-export function createInFlightHttpFetch(
-  operation: (abortSignal: AbortSignal) => Promise<string | null>,
-): { promise: Promise<string | null>; retain: () => ReleaseInFlightHttpFetch } {
-  const controller = new AbortController();
-  let promise: Promise<string | null>;
-  try {
-    promise = operation(controller.signal);
-  } catch (error) {
-    promise = Promise.reject(error);
-  }
-
-  const state: InFlightHttpFetchAbortState = {
-    controller,
-    waiters: 0,
-    settled: false,
-  };
-  inFlightHttpFetchAbortStates.set(promise, state);
-  const settle = () => {
-    state.settled = true;
-    inFlightHttpFetchAbortStates.delete(promise);
-  };
-  void promise.then(settle, settle);
-
-  return {
-    promise,
-    retain: () => retainInFlightHttpFetchState(state),
-  };
-}
-
-/** Retain an existing shared HTTP fetch for one additional caller. */
-export function retainInFlightHttpFetch(
-  promise: Promise<string | null>,
-): ReleaseInFlightHttpFetch {
-  const state = inFlightHttpFetchAbortStates.get(promise);
-  return state ? retainInFlightHttpFetchState(state) : () => {};
-}
+const inFlightHttpFetchAbortStates = new Map<string, InFlightHttpFetchAbortState>();
 
 /** Return the largest shared-fetch waiter count for deterministic tests. */
 export function __getMaxInFlightHttpFetchWaiterCountForTests(): number {
@@ -118,6 +64,94 @@ export function __clearInFlightHttpFetches(): void {
   }
   inFlightHttpFetchAbortStates.clear();
   inFlightHttpFetches.clear();
+}
+
+/**
+ * Start one shared HTTP fetch whose lifetime is owned by all of its waiters.
+ */
+export function createInFlightHttpFetch(
+  cacheKey: string,
+  compute: (
+    abortSignal: AbortSignal,
+    reportProgress: TransformProgressListener,
+  ) => Promise<string | null>,
+): Promise<string | null> {
+  const existing = inFlightHttpFetches.get(cacheKey);
+  if (existing) return existing;
+
+  const controller = new AbortController();
+  const state: InFlightHttpFetchAbortState = {
+    controller,
+    waiters: 0,
+    settled: false,
+    progressListeners: new Set(),
+  };
+  const reportProgress = (event: TransformProgressEvent) => {
+    for (const listener of state.progressListeners) {
+      try {
+        listener(event);
+      } catch (error) {
+        logger.debug("HTTP fetch progress listener failed", { error });
+      }
+    }
+  };
+  const promise = Promise.resolve()
+    .then(() => compute(controller.signal, reportProgress))
+    .finally(() => {
+      state.settled = true;
+      if (inFlightHttpFetches.get(cacheKey) === promise) {
+        inFlightHttpFetches.delete(cacheKey);
+      }
+      if (state.waiters === 0 && inFlightHttpFetchAbortStates.get(cacheKey) === state) {
+        inFlightHttpFetchAbortStates.delete(cacheKey);
+      }
+    });
+
+  state.promise = promise;
+  inFlightHttpFetchAbortStates.set(cacheKey, state);
+  inFlightHttpFetches.set(cacheKey, promise);
+  return promise;
+}
+
+/**
+ * Wait for shared HTTP work without letting one cancelled caller abort work
+ * that still has other active waiters.
+ */
+export async function waitForSharedInFlightHttpFetch(
+  cacheKey: string,
+  promise: Promise<string | null>,
+  waitTimeoutMs: number,
+  abortSignal?: AbortSignal,
+  onProgress?: TransformProgressListener,
+): Promise<string | null | undefined> {
+  const state = inFlightHttpFetchAbortStates.get(cacheKey);
+  if (!state || state.promise !== promise) {
+    return await waitForInFlightFetch(promise, waitTimeoutMs, abortSignal);
+  }
+
+  state.waiters++;
+  const progressListener = onProgress
+    ? (event: TransformProgressEvent) => onProgress(event)
+    : undefined;
+  if (progressListener) state.progressListeners.add(progressListener);
+  try {
+    return await waitForInFlightFetch(promise, waitTimeoutMs, abortSignal);
+  } finally {
+    if (progressListener) state.progressListeners.delete(progressListener);
+    state.waiters--;
+    if (state.waiters === 0 && !state.settled) {
+      state.controller.abort(
+        abortSignal?.reason ??
+          new DOMException("HTTP module fetch has no active callers", "AbortError"),
+      );
+      if (inFlightHttpFetches.get(cacheKey) === promise) {
+        inFlightHttpFetches.delete(cacheKey);
+      }
+    }
+    if (state.waiters === 0 && inFlightHttpFetchAbortStates.get(cacheKey) === state) {
+      inFlightHttpFetchAbortStates.delete(cacheKey);
+    }
+  }
 }
 
 /** Jitter to spread out timeout retries and prevent thundering herd (0-5s) */

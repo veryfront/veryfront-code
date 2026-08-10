@@ -78,10 +78,8 @@ import {
   inFlightHttpFetches,
   processingStackStorage,
   refreshDistributedCacheAsync,
-  retainInFlightHttpFetch,
-  waitForInFlightFetch,
+  waitForSharedInFlightHttpFetch,
 } from "./in-flight-manager.ts";
-import { waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
 import {
   __injectCachesForTests,
   getCachedPaths,
@@ -376,17 +374,13 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
 
   let inFlight = inFlightHttpFetches.get(cacheKey);
   while (inFlight) {
-    const release = retainInFlightHttpFetch(inFlight);
-    let result: string | null | undefined;
-    try {
-      result = await waitForInFlightFetch(
-        inFlight,
-        HTTP_MODULE_FETCH_MAX_WAIT_MS,
-        options.abortSignal,
-      );
-    } finally {
-      release(options.abortSignal?.reason);
-    }
+    const result = await waitForSharedInFlightHttpFetch(
+      cacheKey,
+      inFlight,
+      HTTP_MODULE_FETCH_MAX_WAIT_MS,
+      options.abortSignal,
+      options.onProgress,
+    );
     if (result !== undefined) {
       if (
         result === null ||
@@ -396,17 +390,13 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       }
     }
 
-    if (inFlightHttpFetches.get(cacheKey) === inFlight) {
-      inFlightHttpFetches.delete(cacheKey);
-      break;
-    }
     inFlight = inFlightHttpFetches.get(cacheKey);
   }
 
-  const flight = createInFlightHttpFetch(async (abortSignal) => {
-    const sharedOptions = { ...options, abortSignal };
+  const fetchPromise = createInFlightHttpFetch(cacheKey, async (abortSignal, reportProgress) => {
+    const sharedOptions = { ...options, abortSignal, onProgress: reportProgress };
     const cacheResult = await httpBundleCache.getCodeByUrl(String(hash));
-    sharedOptions.abortSignal.throwIfAborted();
+    abortSignal.throwIfAborted();
 
     if (cacheResult.code) {
       const cachedCode = unbrand(cacheResult.code);
@@ -428,9 +418,9 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
             : "[HTTP-CACHE] Distributed cache hit",
           { url: safeUrl, hash },
         );
-        sharedOptions.abortSignal.throwIfAborted();
+        abortSignal.throwIfAborted();
         await fs.mkdir(cacheDir, { recursive: true });
-        sharedOptions.abortSignal.throwIfAborted();
+        abortSignal.throwIfAborted();
         await fs.writeTextFile(cachePath, cachedCode);
 
         if (!(await exists(cachePath))) {
@@ -454,8 +444,9 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     }
 
     httpCacheLog.debug("Fetching from network", { url: safeUrl });
-    const fetchedModule = await fetchHttpModule(normalizedUrl, sharedOptions.abortSignal);
-    sharedOptions.abortSignal.throwIfAborted();
+    const fetchedModule = await fetchHttpModule(normalizedUrl, abortSignal);
+    abortSignal.throwIfAborted();
+    reportProgress({ phase: "http-cache:module-fetched" });
     let code = fetchedModule.code;
 
     const contentType = fetchedModule.contentType;
@@ -475,8 +466,6 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       });
     }
 
-    sharedOptions.onProgress?.({ phase: "http-cache:module-fetched" });
-
     processingStack.add(cacheIdentity);
     try {
       const rewritten = await rewriteModuleImports(
@@ -490,7 +479,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       processingStack.delete(cacheIdentity);
     }
 
-    sharedOptions.abortSignal.throwIfAborted();
+    abortSignal.throwIfAborted();
     code = embedSourceUrl(code, normalizedUrl);
     if (!isHttpBundleCodeWithinLimit(code)) {
       throw BUNDLE_ERROR.create({
@@ -499,7 +488,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     }
 
     await fs.mkdir(cacheDir, { recursive: true });
-    sharedOptions.abortSignal.throwIfAborted();
+    abortSignal.throwIfAborted();
     await fs.writeTextFile(cachePath, code);
 
     if (!(await exists(cachePath))) {
@@ -535,26 +524,15 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     return cachePath;
   });
 
-  const fetchPromise = flight.promise;
-  inFlightHttpFetches.set(cacheKey, fetchPromise);
-  void fetchPromise.then(
-    () => {
-      if (inFlightHttpFetches.get(cacheKey) === fetchPromise) {
-        inFlightHttpFetches.delete(cacheKey);
-      }
-    },
-    () => {
-      if (inFlightHttpFetches.get(cacheKey) === fetchPromise) {
-        inFlightHttpFetches.delete(cacheKey);
-      }
-    },
+  const result = await waitForSharedInFlightHttpFetch(
+    cacheKey,
+    fetchPromise,
+    HTTP_MODULE_FETCH_MAX_WAIT_MS,
+    options.abortSignal,
+    options.onProgress,
   );
-  const release = flight.retain();
-  try {
-    return await waitForSharedPromise(fetchPromise, options.abortSignal);
-  } finally {
-    release(options.abortSignal?.reason);
-  }
+  if (result !== undefined) return result;
+  return await cacheHttpModuleInternal(url, options);
 }
 
 async function cacheHttpModule(url: string, options: CacheOptions): Promise<string | null> {

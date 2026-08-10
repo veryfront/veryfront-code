@@ -228,12 +228,10 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     });
   });
 
-  it("keeps a shared HTTP fetch alive for an active render", async () => {
-    const firstController = new AbortController();
-    const secondController = new AbortController();
-    const fetchStarted = Promise.withResolvers<void>();
-    const releaseFetch = Promise.withResolvers<void>();
+  it("keeps a shared HTTP fetch alive while another caller is still waiting", async () => {
     let fetchCount = 0;
+    let releaseFetch!: () => void;
+    const fetchStarted = Promise.withResolvers<void>();
 
     const mockFetch = ((_input, init) => {
       fetchCount += 1;
@@ -242,34 +240,40 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
         const signal = init?.signal;
         const onAbort = () => reject(signal?.reason);
         signal?.addEventListener("abort", onAbort, { once: true });
-        releaseFetch.promise.then(() => {
+        releaseFetch = () => {
           signal?.removeEventListener("abort", onAbort);
           resolve(
             new Response("export const shared = true;", {
               headers: { "content-type": "application/javascript" },
             }),
           );
-        });
+        };
       });
     }) as typeof fetch;
 
-    await withIsolatedHttpCache("vf-esm-shared-fetch-cancel-", mockFetch, async (tempDir) => {
+    await withIsolatedHttpCache("vf-esm-shared-fetch-", mockFetch, async (tempDir) => {
       const source = 'import "https://esm.sh/shared-package";';
+      const importMap = { imports: {}, scopes: {} };
+      const firstController = new AbortController();
+      const secondController = new AbortController();
+      const firstAbortReason = new DOMException("first render cancelled", "AbortError");
+      const secondProgress: string[] = [];
       const first = cacheHttpImportsToLocal(source, {
         cacheDir: tempDir,
-        importMap: { imports: {}, scopes: {} },
+        importMap,
         abortSignal: firstController.signal,
       });
-      await fetchStarted.promise;
 
+      await fetchStarted.promise;
       const second = cacheHttpImportsToLocal(source, {
         cacheDir: tempDir,
-        importMap: { imports: {}, scopes: {} },
+        importMap,
         abortSignal: secondController.signal,
+        onProgress: ({ phase }) => secondProgress.push(phase),
       });
       const secondOutcome = second.then(
-        (value) => ({ value }),
-        (error: unknown) => ({ error }),
+        (value) => ({ value, error: undefined }),
+        (error: unknown) => ({ value: undefined, error }),
       );
       const waiterDeadline = Date.now() + 1_000;
       while (
@@ -279,43 +283,18 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
         await new Promise((resolve) => setTimeout(resolve, 1));
       }
       assertEquals(__getMaxInFlightHttpFetchWaiterCountForTests(), 2);
+
+      firstController.abort(firstAbortReason);
+      const firstError = await assertRejects(() => first);
+      releaseFetch();
+
+      const { value: secondResult, error: secondError } = await secondOutcome;
+      assertEquals(firstError, firstAbortReason);
+      assertEquals(secondError, undefined);
+      assert(secondResult?.code.includes("file://"));
       assertEquals(fetchCount, 1);
-
-      firstController.abort(new DOMException("first render cancelled", "AbortError"));
-      await assertRejects(() => first, DOMException, "first render cancelled");
-
-      releaseFetch.resolve();
-      const outcome = await secondOutcome;
-      if ("error" in outcome) throw outcome.error;
-      assertEquals(outcome.value.code.includes("file://"), true);
-      assertEquals(fetchCount, 1);
+      assertEquals(secondProgress, ["http-cache:module-fetched"]);
     });
-  });
-
-  it("reports progress for every fetched module in a remote dependency graph", async () => {
-    const parentUrl = "https://93.184.216.34/progress-parent.js";
-    const childUrl = "https://93.184.216.34/progress-child.js";
-    const phases: string[] = [];
-    const mockFetch = ((input: string | URL | Request) => {
-      const code = String(input) === parentUrl
-        ? `import { child } from "${childUrl}"; export { child };`
-        : "export const child = true;";
-      return Promise.resolve(
-        new Response(code, {
-          headers: { "content-type": "application/javascript" },
-        }),
-      );
-    }) as typeof fetch;
-
-    await withIsolatedHttpCache("vf-esm-fetch-progress-", mockFetch, async (tempDir) => {
-      await cacheHttpImportsToLocal(`import { child } from "${parentUrl}";`, {
-        cacheDir: tempDir,
-        importMap: { imports: {}, scopes: {} },
-        onProgress: (event) => phases.push(event.phase),
-      });
-    });
-
-    assertEquals(phases, ["http-cache:module-fetched", "http-cache:module-fetched"]);
   });
 
   it("pins same-origin module-server imports before fetching", async () => {
@@ -434,6 +413,39 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     );
 
     assertEquals(fetchedUrls, [parentUrl, childUrl]);
+  });
+
+  it("reports progress after each module in a recursive HTTP graph is fetched", async () => {
+    const parentUrl = "https://93.184.216.34/progress/parent.js";
+    const childUrl = "https://93.184.216.34/progress/child.js";
+    const progressPhases: string[] = [];
+
+    await withIsolatedHttpCache(
+      "vf-esm-recursive-progress-",
+      ((input) => {
+        const url = String(input);
+        const code = url === parentUrl
+          ? `export { value } from "${childUrl}";`
+          : `export const value = "child";`;
+        return Promise.resolve(
+          new Response(code, {
+            headers: { "content-type": "application/javascript" },
+          }),
+        );
+      }) as typeof fetch,
+      async (tempDir) => {
+        await cacheHttpImportsToLocal(`export { value } from "${parentUrl}";`, {
+          cacheDir: tempDir,
+          importMap: { imports: {}, scopes: {} },
+          onProgress: ({ phase }) => progressPhases.push(phase),
+        });
+      },
+    );
+
+    assertEquals(progressPhases, [
+      "http-cache:module-fetched",
+      "http-cache:module-fetched",
+    ]);
   });
 
   it("does not retry permanent HTTP module failures", async () => {

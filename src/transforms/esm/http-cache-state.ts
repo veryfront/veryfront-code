@@ -11,7 +11,11 @@ import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { HTTP_MODULE_CACHE_MAX_ENTRIES } from "#veryfront/utils/constants/cache.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import type { HttpCacheLike, SetLike } from "./http-cache-helpers.ts";
-import { inFlightHttpFetches, processingStackStorage } from "./in-flight-manager.ts";
+import {
+  __clearInFlightHttpFetches,
+  inFlightHttpFetches,
+  processingStackStorage,
+} from "./in-flight-manager.ts";
 
 const defaultCachedPaths = new LRUCache<string, string>({
   maxEntries: HTTP_MODULE_CACHE_MAX_ENTRIES,
@@ -100,7 +104,7 @@ export function __injectCachesForTests(
     injectedCachedPaths = null;
     injectedProcessingStack = null;
     injectedLastDistributedRefresh = null;
-    inFlightHttpFetches.clear();
+    __clearInFlightHttpFetches();
     return;
   }
 
