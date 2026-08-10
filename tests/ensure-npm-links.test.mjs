@@ -4,12 +4,17 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { ensureNpmNodeModulesLinks } from "./ensure-npm-links.mjs";
+import { ensureNpmNodeModulesLinks, resolveDirectoryLinkType } from "./ensure-npm-links.mjs";
 
 const MISSING_BUILD_MESSAGE =
   'Cannot prepare runtime tests because npm/node_modules is missing. Run "deno task build:npm" first.';
 
 describe("ensureNpmNodeModulesLinks", () => {
+  it("uses junctions for Windows directory links", () => {
+    assert.equal(resolveDirectoryLinkType("win32"), "junction");
+    assert.equal(resolveDirectoryLinkType("linux"), "dir");
+  });
+
   it("fails with the build instruction when npm dependencies are missing", () => {
     const rootDir = mkdtempSync(join(tmpdir(), "veryfront-npm-links-"));
     mkdirSync(join(rootDir, "node_modules"));

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { filterTestFiles, listTestFiles } from "../test-file-utils.mjs";
 import { ensureNpmNodeModulesLinks } from "../ensure-npm-links.mjs";
 import { DENO_ONLY_TESTS } from "../deno-only-tests.mjs";
-import { buildIsolatedBunTestRuns } from "./runner-args.mjs";
+import { buildIsolatedBunTestRuns, registerBunWorkspaceCleanup } from "./runner-args.mjs";
 import { prepareBunWorkspacePackages } from "./workspace-packages.mjs";
 
 function resolveConcurrency(envKeys) {
@@ -41,7 +41,7 @@ const args = process.argv.slice(2);
 ensureNpmNodeModulesLinks();
 const projectRoot = fileURLToPath(new URL("../..", import.meta.url));
 const bunWorkspacePackages = prepareBunWorkspacePackages(projectRoot);
-process.once("exit", () => bunWorkspacePackages.cleanup());
+registerBunWorkspaceCleanup(() => bunWorkspacePackages.cleanup());
 const concurrency = resolveConcurrency(["VF_TEST_CONCURRENCY", "BUN_TEST_CONCURRENCY"]);
 const shardOverride = resolveShardCount(["VF_TEST_SHARDS", "BUN_TEST_SHARDS"]);
 const processCount = shardOverride ?? Math.max(1, Math.min(4, concurrency));
