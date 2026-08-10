@@ -499,7 +499,9 @@ async function emitModelCallContextEvent(directOptions: DirectModelOptions): Pro
     try {
       return cloneStructuredValue(event);
     } catch (error) {
-      const failureClass = error instanceof Error ? error.name : typeof error;
+      const failureClass = error instanceof DOMException && error.name === "DataCloneError"
+        ? "DataCloneError"
+        : "unknown";
       recordErrorCount({
         slug: "model-call-context-clone-failed",
         failure_class: failureClass,
@@ -512,7 +514,6 @@ async function emitModelCallContextEvent(directOptions: DirectModelOptions): Pro
   };
   const mandatoryEvent = sinks.mandatory ? cloneEvent() : undefined;
   const publicEvent = sinks.public && sinks.public !== sinks.mandatory ? cloneEvent() : undefined;
-  if (mandatoryEvent === null || publicEvent === null) return;
   if (sinks.mandatory && mandatoryEvent) {
     await sinks.mandatory(mandatoryEvent);
   }

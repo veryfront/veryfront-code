@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { metricsManager } from "#veryfront/observability/metrics/index.ts";
 import { type AgentRunEvent, runWithRunEventSink } from "../agent/index.ts";
 import { runWithMandatoryRunEventSink } from "./run-event-sink-context.ts";
 import { generateText, streamText } from "./runtime-bridge.ts";
@@ -393,6 +394,78 @@ describe("runtime-bridge", () => {
     );
 
     assertEquals(order, ["mandatory", "public", "dispatch"]);
+  });
+
+  it("delivers a successful sink clone and sanitizes another clone failure", async () => {
+    const sensitiveFailureClass = "CUSTOMER_SECRET_FAILURE_CLASS";
+    const cloneError = new Error("clone failed");
+    cloneError.name = sensitiveFailureClass;
+    let cloneReads = 0;
+    const statefulInput = {};
+    Object.defineProperty(statefulInput, "value", {
+      enumerable: true,
+      get() {
+        cloneReads += 1;
+        if (cloneReads === 1) throw cloneError;
+        return "safe";
+      },
+    });
+
+    const recorder = metricsManager.getRecorder();
+    const originalRecordError = recorder?.recordError;
+    const failureClasses: string[] = [];
+    if (recorder) {
+      recorder.recordError = (attributes) => {
+        if (
+          attributes?.slug === "model-call-context-clone-failed" &&
+          typeof attributes.failure_class === "string"
+        ) {
+          failureClasses.push(attributes.failure_class);
+        }
+      };
+    }
+
+    let mandatoryCalls = 0;
+    let publicEvent: AgentRunEvent | undefined;
+    let dispatches = 0;
+    const model = createGenerateModel("test", "test/partial-clone", async () => {
+      dispatches += 1;
+      return { content: [], finishReason: "stop", usage: {} };
+    });
+
+    try {
+      await runWithMandatoryRunEventSink(
+        () => {
+          mandatoryCalls += 1;
+        },
+        () =>
+          runWithRunEventSink(
+            (event) => {
+              publicEvent = event;
+            },
+            () =>
+              generateText({
+                model,
+                messages: [{
+                  role: "assistant",
+                  content: [{
+                    type: "tool-call",
+                    toolCallId: "call-1",
+                    toolName: "stateful",
+                    input: statefulInput,
+                  }],
+                }, { role: "user", content: "Continue" }],
+              }),
+          ),
+      );
+    } finally {
+      if (recorder && originalRecordError) recorder.recordError = originalRecordError;
+    }
+
+    assertEquals(mandatoryCalls, 0);
+    assertEquals(publicEvent?.type, "AGENT_RUN_MODEL_CALL_CONTEXT");
+    assertEquals(dispatches, 1);
+    assertEquals(failureClasses, ["unknown"]);
   });
 
   it("calls a sink shared by both lanes only once", async () => {
