@@ -50,6 +50,7 @@
  */
 
 import { extractImports } from "./check-module-boundaries.ts";
+import { flattenTsconfigPaths, resolveTsconfigPath } from "./tsconfig-paths.ts";
 
 /**
  * Roots that Node and Bun execute. Mirrors the runner globs: `test:node` runs
@@ -291,38 +292,6 @@ export function resolvesOnNode(
   return false;
 }
 
-/**
- * Resolve a specifier through tsconfig `paths`: exact key first, then the
- * longest matching wildcard key. This is TypeScript's documented algorithm and
- * the one Bun implements.
- */
-export function resolveTsconfigPath(
-  paths: Readonly<Record<string, string>>,
-  specifier: string,
-): string | null {
-  const exact = paths[specifier];
-  if (exact) return exact;
-
-  let best: { prefix: string; suffix: string; target: string } | null = null;
-  for (const [key, target] of Object.entries(paths)) {
-    const star = key.indexOf("*");
-    if (star === -1) continue;
-    const prefix = key.slice(0, star);
-    const suffix = key.slice(star + 1);
-    if (!specifier.startsWith(prefix) || !specifier.endsWith(suffix)) continue;
-    if (specifier.length < prefix.length + suffix.length) continue;
-    if (best && best.prefix.length >= prefix.length) continue;
-    best = { prefix, suffix, target };
-  }
-  if (!best) return null;
-
-  const matched = specifier.slice(
-    best.prefix.length,
-    specifier.length - best.suffix.length,
-  );
-  return best.target.replaceAll("*", matched);
-}
-
 /** Would Bun resolve this specifier to a file? */
 export function resolvesOnBun(
   specifier: string,
@@ -489,17 +458,6 @@ function fileExistsOnDisk(path: string): boolean {
 }
 
 /** Flatten tsconfig `paths` (arrays of candidates) to the first candidate. */
-export function flattenTsconfigPaths(
-  raw: Record<string, unknown>,
-): Record<string, string> {
-  const paths: Record<string, string> = {};
-  for (const [key, value] of Object.entries(raw)) {
-    const first = Array.isArray(value) ? value[0] : value;
-    if (typeof first === "string") paths[key] = first;
-  }
-  return paths;
-}
-
 async function loadContext(): Promise<RuntimeResolutionContext> {
   const config = JSON.parse(await Deno.readTextFile(DENO_CONFIG_PATH)) as {
     imports?: Record<string, unknown>;

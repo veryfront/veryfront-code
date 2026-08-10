@@ -5,7 +5,6 @@ import {
   compareAgainstBaseline,
   type CrossRuntimeImport,
   failingRuntimes,
-  flattenTsconfigPaths,
   hasFailures,
   isShimmedEverywhere,
   isStdOrJsrSpecifier,
@@ -13,9 +12,9 @@ import {
   parseStdShimMap,
   resolvesOnBun,
   resolvesOnNode,
-  resolveTsconfigPath,
   type RuntimeResolutionContext,
 } from "./audit-cross-runtime-jsr.ts";
+import { flattenTsconfigPaths, resolveTsconfigPath } from "./tsconfig-paths.ts";
 
 /**
  * A miniature repo: `#std/path` is shimmed everywhere, `#std/testing/time` is

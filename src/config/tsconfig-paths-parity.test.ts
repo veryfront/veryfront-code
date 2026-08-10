@@ -1,10 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  flattenTsconfigPaths,
-  resolveTsconfigPath,
-} from "../../scripts/lint/audit-cross-runtime-jsr.ts";
+import { flattenTsconfigPaths, resolveTsconfigPath } from "../../scripts/lint/tsconfig-paths.ts";
 
 /**
  * Bun's runtime resolver never hands a bare package specifier to a `--preload`
