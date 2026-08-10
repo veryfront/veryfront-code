@@ -135,7 +135,12 @@ export function constrainRuntimeRemoteToolSources(
   return sourcesToConstrain.map((source) => createMcpToolPolicySource(source, policy));
 }
 
-const REMOTE_TOOL_CREDENTIAL_CONTEXT_KEYS = ["authToken", "runId", "agentId"] as const;
+const REMOTE_TOOL_CREDENTIAL_CONTEXT_KEYS = [
+  "authToken",
+  "runId",
+  "runIdBindsToolAuthorization",
+  "agentId",
+] as const;
 
 function withBoundRemoteToolContext(
   context: ToolExecutionContext | undefined,
@@ -145,7 +150,14 @@ function withBoundRemoteToolContext(
   const mergedContext = { ...(context ?? {}) };
   for (const key of keys) {
     if (boundContext[key] !== undefined) {
-      mergedContext[key] = boundContext[key];
+      (mergedContext as Record<string, unknown>)[key] = boundContext[key];
+    } else if (
+      key === "runIdBindsToolAuthorization" && boundContext.runId !== undefined
+    ) {
+      // The marker travels with the run id it describes. An owner supplying a
+      // real run id and no marker must clear a stale one from the nested
+      // context, or a legitimate binding is suppressed.
+      delete mergedContext.runIdBindsToolAuthorization;
     }
   }
   return mergedContext;

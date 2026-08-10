@@ -808,7 +808,12 @@ function buildRunContextMeta(
   context: ToolExecutionContext | undefined,
 ): Record<string, unknown> | undefined {
   const meta: Record<string, unknown> = {};
-  if (typeof context?.runId === "string" && context.runId.length > 0) {
+  // Same authorization gate as the REST integration route, so a run id the
+  // control plane never issued must not be sent here either.
+  if (
+    context?.runIdBindsToolAuthorization !== false &&
+    typeof context?.runId === "string" && context.runId.length > 0
+  ) {
     meta.run_id = context.runId;
   }
   if (typeof context?.agentId === "string" && context.agentId.length > 0) {
