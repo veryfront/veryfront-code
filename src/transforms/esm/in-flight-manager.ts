@@ -28,9 +28,16 @@ const DISTRIBUTED_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 export const processingStackStorage = new AsyncLocalStorage<Set<string>>();
 /** Deduplicate concurrent HTTP module fetches to avoid races. */
 export const inFlightHttpFetches = new Map<string, Promise<string | null>>();
+/** Signals that awaiting another owner would close a shared-fetch dependency cycle. */
+export const IN_FLIGHT_HTTP_FETCH_DEPENDENCY_CYCLE = Symbol(
+  "in-flight-http-fetch-dependency-cycle",
+);
+
+const inFlightHttpFetchOwnerStorage = new AsyncLocalStorage<string>();
 
 interface InFlightHttpFetchAbortState {
   controller: AbortController;
+  dependencies: Map<string, number>;
   promise?: Promise<string | null>;
   waiters: number;
   settled: boolean;
@@ -38,6 +45,28 @@ interface InFlightHttpFetchAbortState {
 }
 
 const inFlightHttpFetchAbortStates = new Map<string, InFlightHttpFetchAbortState>();
+
+function hasInFlightHttpFetchDependencyPath(
+  fromCacheKey: string,
+  toCacheKey: string,
+  visited = new Set<string>(),
+): boolean {
+  if (fromCacheKey === toCacheKey) return true;
+  if (visited.has(fromCacheKey)) return false;
+  visited.add(fromCacheKey);
+
+  const state = inFlightHttpFetchAbortStates.get(fromCacheKey);
+  if (!state) return false;
+  for (const [dependencyCacheKey, count] of state.dependencies) {
+    if (
+      count > 0 &&
+      hasInFlightHttpFetchDependencyPath(dependencyCacheKey, toCacheKey, visited)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /** Return the largest shared-fetch waiter count for deterministic tests. */
 export function __getMaxInFlightHttpFetchWaiterCountForTests(): number {
@@ -83,6 +112,7 @@ export function createInFlightHttpFetch(
   const controller = new AbortController();
   const state: InFlightHttpFetchAbortState = {
     controller,
+    dependencies: new Map(),
     waiters: 0,
     settled: false,
     progressListeners: new Set(),
@@ -97,7 +127,12 @@ export function createInFlightHttpFetch(
     }
   };
   const promise = Promise.resolve()
-    .then(() => compute(controller.signal, reportProgress))
+    .then(() =>
+      inFlightHttpFetchOwnerStorage.run(
+        cacheKey,
+        () => compute(controller.signal, reportProgress),
+      )
+    )
     .finally(() => {
       state.settled = true;
       if (inFlightHttpFetches.get(cacheKey) === promise) {
@@ -131,14 +166,18 @@ export function waitForSharedInFlightHttpFetch(
   waitTimeoutMs: number,
   abortSignal?: AbortSignal,
   onProgress?: TransformProgressListener,
-): Promise<string | null | undefined>;
+): Promise<
+  string | null | undefined | typeof IN_FLIGHT_HTTP_FETCH_DEPENDENCY_CYCLE
+>;
 export async function waitForSharedInFlightHttpFetch(
   cacheKey: string,
   promise: Promise<string | null>,
   waitTimeoutMs: number | null,
   abortSignal?: AbortSignal,
   onProgress?: TransformProgressListener,
-): Promise<string | null | undefined> {
+): Promise<
+  string | null | undefined | typeof IN_FLIGHT_HTTP_FETCH_DEPENDENCY_CYCLE
+> {
   const waitForFetch = (): Promise<string | null | undefined> =>
     waitTimeoutMs === null
       ? waitForSharedPromise(promise, abortSignal)
@@ -146,6 +185,23 @@ export async function waitForSharedInFlightHttpFetch(
   const state = inFlightHttpFetchAbortStates.get(cacheKey);
   if (!state || state.promise !== promise) {
     return await waitForFetch();
+  }
+
+  const ownerCacheKey = waitTimeoutMs === null
+    ? undefined
+    : inFlightHttpFetchOwnerStorage.getStore();
+  const ownerState = ownerCacheKey ? inFlightHttpFetchAbortStates.get(ownerCacheKey) : undefined;
+  if (
+    ownerCacheKey && ownerState &&
+    hasInFlightHttpFetchDependencyPath(cacheKey, ownerCacheKey)
+  ) {
+    return IN_FLIGHT_HTTP_FETCH_DEPENDENCY_CYCLE;
+  }
+  if (ownerCacheKey && ownerState) {
+    ownerState.dependencies.set(
+      cacheKey,
+      (ownerState.dependencies.get(cacheKey) ?? 0) + 1,
+    );
   }
 
   state.waiters++;
@@ -156,6 +212,11 @@ export async function waitForSharedInFlightHttpFetch(
   try {
     return await waitForFetch();
   } finally {
+    if (ownerCacheKey && ownerState) {
+      const dependencyCount = ownerState.dependencies.get(cacheKey) ?? 0;
+      if (dependencyCount <= 1) ownerState.dependencies.delete(cacheKey);
+      else ownerState.dependencies.set(cacheKey, dependencyCount - 1);
+    }
     if (progressListener) state.progressListeners.delete(progressListener);
     state.waiters--;
     if (state.waiters === 0 && !state.settled) {

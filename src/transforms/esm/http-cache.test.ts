@@ -452,6 +452,37 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(new Set(progressEvents.map(({ filePath }) => filePath)).size, 2);
   });
 
+  it("completes cross-request circular module fetches", async () => {
+    const firstUrl = "https://93.184.216.34/cross-flight/first.js";
+    const secondUrl = "https://93.184.216.34/cross-flight/second.js";
+    const startedUrls = new Set<string>();
+    const bothFetchesStarted = Promise.withResolvers<void>();
+
+    const mockFetch = (async (input) => {
+      const url = String(input);
+      startedUrls.add(url);
+      if (startedUrls.size === 2) bothFetchesStarted.resolve();
+      await bothFetchesStarted.promise;
+      const dependencyUrl = url === firstUrl ? secondUrl : firstUrl;
+      return new Response(`import "${dependencyUrl}"; export const loaded = true;`, {
+        headers: { "content-type": "application/javascript" },
+      });
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-cross-flight-cycle-", mockFetch, async (tempDir) => {
+      __injectCachesForTests({ processingStack: null });
+      const importMap = { imports: {}, scopes: {} };
+      const [first, second] = await Promise.all([
+        cacheHttpImportsToLocal(`import "${firstUrl}";`, { cacheDir: tempDir, importMap }),
+        cacheHttpImportsToLocal(`import "${secondUrl}";`, { cacheDir: tempDir, importMap }),
+      ]);
+
+      assert(first.code.includes("file://"));
+      assert(second.code.includes("file://"));
+      assertEquals(startedUrls, new Set([firstUrl, secondUrl]));
+    });
+  });
+
   it("does not retry permanent HTTP module failures", async () => {
     let fetchCount = 0;
     let bodyCancelled = false;

@@ -75,6 +75,7 @@ import {
 import {
   __clearInFlightHttpFetches,
   createInFlightHttpFetch,
+  IN_FLIGHT_HTTP_FETCH_DEPENDENCY_CYCLE,
   inFlightHttpFetches,
   processingStackStorage,
   refreshDistributedCacheAsync,
@@ -381,6 +382,12 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       options.abortSignal,
       options.onProgress,
     );
+    if (result === IN_FLIGHT_HTTP_FETCH_DEPENDENCY_CYCLE) {
+      httpCacheLog.debug("Cross-flight circular dependency detected, file pending write", {
+        url: safeUrl,
+      });
+      return cachePath;
+    }
     if (result !== undefined) {
       if (
         result === null ||

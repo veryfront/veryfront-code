@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __clearInFlightHttpFetches,
   createInFlightHttpFetch,
+  IN_FLIGHT_HTTP_FETCH_DEPENDENCY_CYCLE,
   inFlightHttpFetches,
   waitForInFlightFetch,
   waitForSharedInFlightHttpFetch,
@@ -48,6 +49,47 @@ describe("transforms/esm/in-flight-manager", () => {
 
       assertEquals(await owner, "/path/to/complete-graph.mjs");
       __clearInFlightHttpFetches();
+    });
+
+    it("breaks dependency cycles between independent fetch owners", async () => {
+      const startCycle = Promise.withResolvers<void>();
+      const secondFlight: { promise?: Promise<string | null> } = {};
+      let cycleDetections = 0;
+
+      const firstPromise = createInFlightHttpFetch("cycle-a", async () => {
+        await startCycle.promise;
+        const result = await waitForSharedInFlightHttpFetch(
+          "cycle-b",
+          secondFlight.promise!,
+          1_000,
+        );
+        if (result === IN_FLIGHT_HTTP_FETCH_DEPENDENCY_CYCLE) cycleDetections++;
+        return "/path/to/cycle-a.mjs";
+      });
+      secondFlight.promise = createInFlightHttpFetch("cycle-b", async () => {
+        startCycle.resolve();
+        const result = await waitForSharedInFlightHttpFetch(
+          "cycle-a",
+          firstPromise,
+          1_000,
+        );
+        if (result === IN_FLIGHT_HTTP_FETCH_DEPENDENCY_CYCLE) cycleDetections++;
+        return "/path/to/cycle-b.mjs";
+      });
+
+      try {
+        assertEquals(
+          await Promise.all([
+            waitForSharedInFlightHttpFetch("cycle-a", firstPromise, null),
+            waitForSharedInFlightHttpFetch("cycle-b", secondFlight.promise, null),
+          ]),
+          ["/path/to/cycle-a.mjs", "/path/to/cycle-b.mjs"],
+        );
+        assertEquals(cycleDetections, 1);
+        assertEquals(inFlightHttpFetches.size, 0);
+      } finally {
+        __clearInFlightHttpFetches();
+      }
     });
   });
 
