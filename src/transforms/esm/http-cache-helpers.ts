@@ -545,12 +545,32 @@ export function isInternalBare(specifier: string): boolean {
     stringStartsWith(specifier, "/_veryfront/");
 }
 
+/**
+ * esm.sh target for modules this cache evaluates server-side. Browser targets
+ * get the `browser` export condition, which resolves DOM implementations that
+ * throw under SSG.
+ *
+ * `node`, not `denonext`: this cache keeps SSR runtime-agnostic across Deno,
+ * Node, and Bun, and Deno's condition can select Deno-only APIs.
+ *
+ * Not the `normalizeEsmShUrl` default: that also canonicalizes browser-facing
+ * release-asset URLs.
+ */
+export const SERVER_ESM_TARGET = "node";
+
+const ESM_SH_LEADING_DENONEXT = "/denonext/";
+
 function normalizeEsmShUrlWithSearchParams(url: URL, searchParams: URLSearchParams): void {
   if (getURLHostname(url) !== "esm.sh") return;
 
+  // Only a leading `/denonext/` selects a target. An inner one belongs to a
+  // resolved build path (`/pkg@1/X-abc/denonext/pkg.mjs`).
   const originalPathname = getURLPathname(url);
-  if (stringIncludes(originalPathname, "/denonext/")) {
-    setURLPathname(url, stringReplace(originalPathname, "/denonext/", "/"));
+  if (stringStartsWith(originalPathname, ESM_SH_LEADING_DENONEXT)) {
+    setURLPathname(
+      url,
+      stringSlice(originalPathname, ESM_SH_LEADING_DENONEXT.length - 1),
+    );
   }
 
   if (!hasURLSearchParam(searchParams, "target")) {
@@ -633,13 +653,14 @@ export function resolveBareSpecifier(
 
   const parsed = parseBarePackageSpecifier(specifier);
   if (parsed == null) {
-    return `https://esm.sh/${specifier}?target=es2022`;
+    return `https://esm.sh/${specifier}?target=${SERVER_ESM_TARGET}`;
   }
 
   return buildEsmShUrl(
     parsed.packageName,
     parsed.version ?? undefined,
     parsed.subpath ?? undefined,
+    { target: SERVER_ESM_TARGET },
   );
 }
 
