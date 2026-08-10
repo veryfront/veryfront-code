@@ -611,6 +611,61 @@ Deno.test("nested remote source bindings keep a run marker with its run id", asy
   });
 });
 
+Deno.test("owner run id and its non-binding marker both replace the nested run context", async () => {
+  let executeContext: ToolExecutionContext | undefined;
+  const source: RemoteToolSource = {
+    id: VERYFRONT_STUDIO_MCP_SOURCE_ID,
+    listTools: () => Promise.resolve([]),
+    executeTool(_toolName, _args, context) {
+      executeContext = context;
+      return Promise.resolve({ ok: true });
+    },
+  };
+  const bound = bindRuntimeRemoteToolSourcesToCredentialOwner([source], {
+    authToken: "owner-token",
+    runId: "owner-run",
+    runIdBindsToolAuthorization: false,
+  });
+
+  await bound?.[0]?.executeTool("get_file", {}, {
+    runId: "nested-run",
+    runIdBindsToolAuthorization: true,
+  });
+
+  assertEquals(executeContext, {
+    authToken: "owner-token",
+    runId: "owner-run",
+    runIdBindsToolAuthorization: false,
+  });
+});
+
+Deno.test("an owner run id without a marker clears a stale nested marker", async () => {
+  let executeContext: ToolExecutionContext | undefined;
+  const source: RemoteToolSource = {
+    id: VERYFRONT_STUDIO_MCP_SOURCE_ID,
+    listTools: () => Promise.resolve([]),
+    executeTool(_toolName, _args, context) {
+      executeContext = context;
+      return Promise.resolve({ ok: true });
+    },
+  };
+  const bound = bindRuntimeRemoteToolSourcesToCredentialOwner([source], {
+    authToken: "owner-token",
+    runId: "owner-run",
+  });
+
+  // Without the delete, the nested false would suppress a legitimate binding.
+  await bound?.[0]?.executeTool("get_file", {}, {
+    runId: "nested-run",
+    runIdBindsToolAuthorization: false,
+  });
+
+  assertEquals(executeContext, {
+    authToken: "owner-token",
+    runId: "owner-run",
+  });
+});
+
 Deno.test("getRuntimeRemoteToolSources skips the implicit source without server identity", () => {
   const sources = getRuntimeRemoteToolSources(
     {

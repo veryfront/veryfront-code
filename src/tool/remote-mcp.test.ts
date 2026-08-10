@@ -5,7 +5,9 @@ import {
   assertRejects,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
+import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   createRemoteMCPToolSource,
@@ -15,6 +17,24 @@ import {
   MAX_REMOTE_MCP_TOOL_LIST_PAGES,
   MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
 } from "./remote-mcp.ts";
+
+
+/**
+ * Runtime-neutral env override for the control-plane origin. Restored by the
+ * afterEach below, so it is undone even when a test fails.
+ */
+const originalApiBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
+
+function setApiBaseUrl(value: string): void {
+  setEnv("VERYFRONT_API_BASE_URL", value);
+  refreshEnvironmentConfig();
+}
+
+afterEach(() => {
+  if (originalApiBaseUrl === undefined) deleteEnv("VERYFRONT_API_BASE_URL");
+  else setEnv("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+  refreshEnvironmentConfig();
+});
 
 describe("tool/remote-mcp", () => {
   it("uses host transport only for an exact trusted endpoint", async () => {
@@ -295,9 +315,8 @@ describe("tool/remote-mcp", () => {
   });
 
   it("omits non-binding run ids from MCP call metadata", async () => {
+    setApiBaseUrl("https://93.184.216.34");
     let requestBody: Record<string, unknown> | undefined;
-    const previousApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
-    Deno.env.set("VERYFRONT_API_BASE_URL", "https://93.184.216.34");
     const source = createRemoteMCPToolSource({
       id: "veryfront-mcp",
       endpoint: "https://93.184.216.34",
@@ -332,14 +351,11 @@ describe("tool/remote-mcp", () => {
       },
     });
 
-    if (previousApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
-    else Deno.env.set("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
   });
 
   it("keeps run ids for MCP servers that are not the Veryfront control plane", async () => {
+    setApiBaseUrl("https://93.184.216.34");
     let requestBody: Record<string, unknown> | undefined;
-    const previousApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
-    Deno.env.set("VERYFRONT_API_BASE_URL", "https://93.184.216.34");
     const source = createRemoteMCPToolSource({
       id: "third-party-mcp",
       endpoint: "https://93.184.216.35",
@@ -370,8 +386,6 @@ describe("tool/remote-mcp", () => {
       { run_id: "run-local", agent_id: "gmail-agent" },
     );
 
-    if (previousApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
-    else Deno.env.set("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
   });
 
   it("prefers structuredContent for MCP isError tool results", async () => {
