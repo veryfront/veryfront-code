@@ -342,6 +342,29 @@ describe("server/services/static/static-file.service", () => {
       }
     });
 
+    it("serves built index pages when a clean route segment contains a dot", async () => {
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const fileData = new TextEncoder().encode("<html>Blog post</html>");
+      const files = new Map<string, Uint8Array>([
+        ["/project/dist/blog.post/index.html", fileData],
+      ]);
+      const service = new StaticFileService(createMockFsRepo(files));
+      const options = makeOptions();
+
+      for (const route of ["/blog.post", "/blog.post/"]) {
+        const result = await service.resolveFile(route, options);
+
+        assertExists(result);
+        assertEquals(result.path, "/project/dist/blog.post/index.html");
+        assertEquals(result.contentType.includes("text/html"), true);
+        assertEquals(result.data, fileData);
+      }
+    });
+
     it("should resolve file from public directory", async () => {
       __injectDepsForTests({
         manifestCache: new Map(),

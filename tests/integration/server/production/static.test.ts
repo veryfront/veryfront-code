@@ -57,17 +57,22 @@ describe(
 
     it("serves generated nested pages through clean route URLs", async () => {
       await withTestContext("production-server-clean-route", async (context: TestContext) => {
-        const pageDir = join(context.projectDir, "dist", "about");
-        await mkdir(pageDir, { recursive: true });
-        await writeTextFile(join(pageDir, "index.html"), "<html>About</html>");
+        for (const page of ["about", "blog.post"]) {
+          const pageDir = join(context.projectDir, "dist", page);
+          await mkdir(pageDir, { recursive: true });
+          await writeTextFile(join(pageDir, "index.html"), `<html>${page}</html>`);
+        }
 
         const server = await context.createProductionServer();
         const baseUrl = `http://127.0.0.1:${server.port}`;
 
-        for (const route of ["/about", "/about/"]) {
+        for (const route of ["/about", "/about/", "/blog.post", "/blog.post/"]) {
           const response = await fetch(`${baseUrl}${route}`);
           assertEquals(response.status, 200);
-          assertEquals(await response.text(), "<html>About</html>");
+          assertEquals(
+            await response.text(),
+            route.startsWith("/about") ? "<html>about</html>" : "<html>blog.post</html>",
+          );
         }
       });
     });
