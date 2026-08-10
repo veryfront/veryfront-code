@@ -584,6 +584,33 @@ Deno.test("nested remote source bindings keep the original credential identity",
   }]);
 });
 
+Deno.test("nested remote source bindings keep a run marker with its run id", async () => {
+  let executeContext: ToolExecutionContext | undefined;
+  const source: RemoteToolSource = {
+    id: VERYFRONT_STUDIO_MCP_SOURCE_ID,
+    listTools: () => Promise.resolve([]),
+    executeTool(_toolName, _args, context) {
+      executeContext = context;
+      return Promise.resolve({ ok: true });
+    },
+  };
+  const bound = bindRuntimeRemoteToolSourcesToCredentialOwner([source], {
+    authToken: "owner-token",
+    runIdBindsToolAuthorization: false,
+  });
+
+  await bound?.[0]?.executeTool("get_file", {}, {
+    runId: "nested-run",
+    runIdBindsToolAuthorization: true,
+  });
+
+  assertEquals(executeContext, {
+    authToken: "owner-token",
+    runId: "nested-run",
+    runIdBindsToolAuthorization: true,
+  });
+});
+
 Deno.test("getRuntimeRemoteToolSources skips the implicit source without server identity", () => {
   const sources = getRuntimeRemoteToolSources(
     {
