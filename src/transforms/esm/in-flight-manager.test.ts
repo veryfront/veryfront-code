@@ -65,7 +65,6 @@ describe("transforms/esm/in-flight-manager", () => {
         abortSignal.throwIfAborted();
         return "/path/to/live-follower-timeout.mjs";
       });
-
       const originalOwnerController = new AbortController();
       const originalOwner = waitForSharedInFlightHttpFetch(
         cacheKey,
@@ -99,6 +98,44 @@ describe("transforms/esm/in-flight-manager", () => {
       } finally {
         release.resolve();
         await Promise.allSettled([originalOwner, follower, promise]);
+        __clearInFlightHttpFetches();
+      }
+    });
+
+    it("returns after the wait window for callers without cancellation", async () => {
+      const cacheKey = "uncancelled-follower-timeout";
+      const release = Promise.withResolvers<void>();
+      const followerController = new AbortController();
+      let sharedSignal: AbortSignal | undefined;
+      const promise = createInFlightHttpFetch(cacheKey, async (abortSignal) => {
+        sharedSignal = abortSignal;
+        await release.promise;
+        abortSignal.throwIfAborted();
+        return "/path/to/uncancelled-follower-timeout.mjs";
+      });
+      const liveFollower = waitForSharedInFlightHttpFetch(
+        cacheKey,
+        promise,
+        5,
+        followerController.signal,
+      );
+
+      try {
+        assertEquals(
+          await waitForSharedInFlightHttpFetch(cacheKey, promise, 5),
+          undefined,
+        );
+        assertEquals(sharedSignal?.aborted, false);
+        assertEquals(inFlightHttpFetches.get(cacheKey), promise);
+
+        release.resolve();
+        assertEquals(
+          await liveFollower,
+          "/path/to/uncancelled-follower-timeout.mjs",
+        );
+      } finally {
+        release.resolve();
+        await Promise.allSettled([promise, liveFollower]);
         __clearInFlightHttpFetches();
       }
     });

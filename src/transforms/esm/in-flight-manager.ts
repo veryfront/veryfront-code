@@ -318,12 +318,16 @@ export async function waitForSharedInFlightHttpFetch(
     : undefined;
   if (progressListener) state.progressListeners.add(progressListener);
   try {
-    // Keep this caller's waiter lease while the same shared generation is
-    // useful, including across bounded wait intervals.
+    // Signal-bounded render callers keep their waiter lease while the same
+    // shared generation is useful. Callers without cancellation regain
+    // control after one bounded wait so they can retry.
     let result: string | null | undefined;
     do {
       result = await waitForFetch();
-    } while (result === undefined && inFlightHttpFetches.get(cacheKey) === promise);
+    } while (
+      abortSignal !== undefined && result === undefined &&
+      inFlightHttpFetches.get(cacheKey) === promise
+    );
     if (ownerCacheKey && ownerState) {
       for (const [dependencyCacheKey, dependencyPromise] of state.completionDependencies) {
         if (dependencyCacheKey !== ownerCacheKey) {
