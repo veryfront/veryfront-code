@@ -256,6 +256,8 @@ export type CacheOptions = {
   moduleServerOrigin?: string;
   /** Request-scoped dependency-pinning state used to isolate module-server URLs. */
   dependencyPinningCacheKey?: string;
+  /** Cancels request-scoped fetch, rewrite, and cache work. */
+  abortSignal?: AbortSignal;
 };
 
 export type HttpCacheIdentityOptions = Pick<CacheOptions, "importMap" | "reactVersion">;

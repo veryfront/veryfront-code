@@ -68,6 +68,7 @@ interface TransformOptions {
     observation: DependencyResolutionObservation,
   ) => void;
   onProgress?: TransformProgressListener;
+  abortSignal?: AbortSignal;
 }
 
 interface PipelineResult {
@@ -240,6 +241,7 @@ export async function transformModuleCodeWithCache(
       dependencyResolutionObservations.set(observation.packageName, observation);
     },
     onProgress: input.onProgress,
+    abortSignal: input.signal,
   };
 
   await deps.initializeTransformCache();

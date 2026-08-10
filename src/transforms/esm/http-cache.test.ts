@@ -180,6 +180,53 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     });
   });
 
+  it("stops HTTP module retries when module loading is cancelled", async () => {
+    let fetchCount = 0;
+    let markFetchStarted!: () => void;
+    let releaseFetch!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve;
+    });
+    const fetchReleased = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+
+    const mockFetch = ((_input, init) => {
+      fetchCount += 1;
+      markFetchStarted();
+      return new Promise<Response>((resolve, reject) => {
+        const signal = init?.signal;
+        const onAbort = () => reject(signal?.reason);
+        signal?.addEventListener("abort", onAbort, { once: true });
+        fetchReleased.then(() => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve(new Response("upstream failure", { status: 502 }));
+        });
+      });
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-cancel-fetch-", mockFetch, async (tempDir) => {
+      const controller = new AbortController();
+      const abortReason = new DOMException("module loading cancelled", "AbortError");
+      const pending = cacheHttpImportsToLocal(
+        'import "https://esm.sh/cancelled-package";',
+        {
+          cacheDir: tempDir,
+          importMap: { imports: {}, scopes: {} },
+          abortSignal: controller.signal,
+        },
+      );
+
+      await fetchStarted;
+      controller.abort(abortReason);
+      releaseFetch();
+
+      const error = await assertRejects(() => pending);
+      assertEquals(error, abortReason);
+      assertEquals(fetchCount, 1);
+    });
+  });
+
   it("pins same-origin module-server imports before fetching", async () => {
     const origin = "http://93.184.216.34:3000";
     const source = `export { value } from "${origin}/_vf_modules/shared/Absolute.js";`;

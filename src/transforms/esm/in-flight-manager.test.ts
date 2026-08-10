@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __clearInFlightHttpFetches,
@@ -33,7 +33,7 @@ describe("transforms/esm/in-flight-manager", () => {
 
   describe("waitForInFlightFetch", () => {
     it("does not accept cache identities that could be written to timeout logs", () => {
-      assertEquals(waitForInFlightFetch.length, 2);
+      assertEquals(waitForInFlightFetch.length, 3);
     });
 
     it("resolves with the promise result", async () => {
@@ -84,6 +84,18 @@ describe("transforms/esm/in-flight-manager", () => {
         Math.random = originalRandom;
         clearTimeout(timer!);
       }
+    });
+
+    it("stops waiting when the caller is cancelled", async () => {
+      const controller = new AbortController();
+      const abortReason = new DOMException("module loading cancelled", "AbortError");
+      const pendingFetch = new Promise<string>(() => {});
+      const pendingWait = waitForInFlightFetch(pendingFetch, 30_000, controller.signal);
+
+      controller.abort(abortReason);
+
+      const error = await assertRejects(() => pendingWait);
+      assertEquals(error, abortReason);
     });
   });
 });

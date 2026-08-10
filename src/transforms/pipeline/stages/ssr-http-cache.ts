@@ -35,6 +35,7 @@ export const ssrHttpCachePlugin: TransformPlugin = {
       reactVersion: ctx.reactVersion,
       moduleServerOrigin: ctx.moduleServerOrigin,
       dependencyPinningCacheKey: ctx.dependencyPinningCacheKey,
+      abortSignal: ctx.abortSignal,
     });
 
     if (code !== ctx.code) {

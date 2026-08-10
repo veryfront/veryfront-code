@@ -46,7 +46,9 @@ const IN_FLIGHT_JITTER_MS = 5_000;
 export async function waitForInFlightFetch(
   promise: Promise<string | null>,
   waitTimeoutMs?: number,
+  abortSignal?: AbortSignal,
 ): Promise<string | null | undefined> {
+  abortSignal?.throwIfAborted();
   const timeoutMs = waitTimeoutMs === undefined
     ? IN_FLIGHT_WAIT_TIMEOUT_MS + Math.floor(Math.random() * IN_FLIGHT_JITTER_MS)
     : waitTimeoutMs;
@@ -61,10 +63,30 @@ export async function waitForInFlightFetch(
     }, timeoutMs);
   });
 
+  let removeAbortListener: (() => void) | undefined;
+  const abortPromise = abortSignal
+    ? new Promise<never>((_, reject) => {
+      const abort = () => {
+        reject(
+          abortSignal.reason ?? new DOMException("The operation was aborted", "AbortError"),
+        );
+      };
+      if (abortSignal.aborted) {
+        abort();
+        return;
+      }
+      abortSignal.addEventListener("abort", abort, { once: true });
+      removeAbortListener = () => abortSignal.removeEventListener("abort", abort);
+    })
+    : undefined;
+
   try {
-    return await Promise.race([promise, timeoutPromise]);
+    return await Promise.race(
+      abortPromise ? [promise, timeoutPromise, abortPromise] : [promise, timeoutPromise],
+    );
   } finally {
     clearTimeout(timeoutId!);
+    removeAbortListener?.();
   }
 }
 

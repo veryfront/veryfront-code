@@ -189,7 +189,10 @@ async function fetchHttpModuleAttempt(
   }
 }
 
-async function fetchHttpModule(url: string): Promise<HttpModuleFetchResult> {
+async function fetchHttpModule(
+  url: string,
+  abortSignal?: AbortSignal,
+): Promise<HttpModuleFetchResult> {
   const urlObj = new URL(url);
   const safeUrl = sanitizeUrlForSpan(url);
 
@@ -209,6 +212,7 @@ async function fetchHttpModule(url: string): Promise<HttpModuleFetchResult> {
         ),
       {
         maxAttempts: HTTP_MODULE_FETCH_MAX_ATTEMPTS,
+        abortSignal,
         timeoutMs: HTTP_MODULE_FETCH_TIMEOUT_MS,
         shouldRetry: (error) =>
           error instanceof HttpModuleBodyError
@@ -271,6 +275,7 @@ export { embedSourceUrl, extractSourceUrl };
 export { __injectCachesForTests };
 
 async function cacheHttpModuleInternal(url: string, options: CacheOptions): Promise<string | null> {
+  options.abortSignal?.throwIfAborted();
   const normalizedUrl = normalizeHttpUrl(url);
   const safeUrl = sanitizeUrlForSpan(normalizedUrl);
   const cacheDir = ensureAbsoluteDir(options.cacheDir);
@@ -368,7 +373,11 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
 
   let inFlight = inFlightHttpFetches.get(cacheKey);
   while (inFlight) {
-    const result = await waitForInFlightFetch(inFlight, HTTP_MODULE_FETCH_MAX_WAIT_MS);
+    const result = await waitForInFlightFetch(
+      inFlight,
+      HTTP_MODULE_FETCH_MAX_WAIT_MS,
+      options.abortSignal,
+    );
     if (result !== undefined) {
       if (
         result === null ||
@@ -387,6 +396,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
 
   const fetchPromise = (async () => {
     const cacheResult = await httpBundleCache.getCodeByUrl(String(hash));
+    options.abortSignal?.throwIfAborted();
 
     if (cacheResult.code) {
       const cachedCode = unbrand(cacheResult.code);
@@ -408,7 +418,9 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
             : "[HTTP-CACHE] Distributed cache hit",
           { url: safeUrl, hash },
         );
+        options.abortSignal?.throwIfAborted();
         await fs.mkdir(cacheDir, { recursive: true });
+        options.abortSignal?.throwIfAborted();
         await fs.writeTextFile(cachePath, cachedCode);
 
         if (!(await exists(cachePath))) {
@@ -432,7 +444,8 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     }
 
     httpCacheLog.debug("Fetching from network", { url: safeUrl });
-    const fetchedModule = await fetchHttpModule(normalizedUrl);
+    const fetchedModule = await fetchHttpModule(normalizedUrl, options.abortSignal);
+    options.abortSignal?.throwIfAborted();
     let code = fetchedModule.code;
 
     const contentType = fetchedModule.contentType;
@@ -465,6 +478,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       processingStack.delete(cacheIdentity);
     }
 
+    options.abortSignal?.throwIfAborted();
     code = embedSourceUrl(code, normalizedUrl);
     if (!isHttpBundleCodeWithinLimit(code)) {
       throw BUNDLE_ERROR.create({
@@ -473,6 +487,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     }
 
     await fs.mkdir(cacheDir, { recursive: true });
+    options.abortSignal?.throwIfAborted();
     await fs.writeTextFile(cachePath, code);
 
     if (!(await exists(cachePath))) {
@@ -545,6 +560,7 @@ export function cacheHttpImportsToLocal(
   code: string,
   options: CacheOptions,
 ): Promise<CacheHttpImportsResult> {
+  options.abortSignal?.throwIfAborted();
   const requestOptions = prepareHttpCacheRequestOptions(options);
   const accumulator = createBundleAccumulator();
   return bundleAccumulatorStorage.run(accumulator, async () => {
@@ -554,6 +570,7 @@ export function cacheHttpImportsToLocal(
       requestOptions,
       cacheHttpModule,
     );
+    requestOptions.abortSignal?.throwIfAborted();
     if (replacements.size === 0) return { code };
 
     httpCacheLog.debug("Cached HTTP imports", { count: replacements.size });
