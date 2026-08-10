@@ -1,6 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
-import { writeTextFile } from "#veryfront/compat/fs.ts";
+import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
+import { join } from "#veryfront/compat/path";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 import "../../../_helpers/log-guard.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
@@ -52,6 +53,28 @@ describe(
           await m.text();
         },
       );
+    });
+
+    it("serves generated nested pages through clean route URLs", async () => {
+      await withTestContext("production-server-clean-route", async (context: TestContext) => {
+        for (const page of ["about", "blog.post"]) {
+          const pageDir = join(context.projectDir, "dist", page);
+          await mkdir(pageDir, { recursive: true });
+          await writeTextFile(join(pageDir, "index.html"), `<html>${page}</html>`);
+        }
+
+        const server = await context.createProductionServer();
+        const baseUrl = `http://127.0.0.1:${server.port}`;
+
+        for (const route of ["/about", "/about/", "/blog.post", "/blog.post/"]) {
+          const response = await fetch(`${baseUrl}${route}`);
+          assertEquals(response.status, 200);
+          assertEquals(
+            await response.text(),
+            route.startsWith("/about") ? "<html>about</html>" : "<html>blog.post</html>",
+          );
+        }
+      });
     });
   },
 );
