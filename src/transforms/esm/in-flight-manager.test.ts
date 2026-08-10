@@ -94,6 +94,68 @@ describe("transforms/esm/in-flight-manager", () => {
         __clearInFlightHttpFetches();
       }
     });
+
+    it("keeps a cycle-closing owner pending until its peer finishes", async () => {
+      const firstWaitStarted = Promise.withResolvers<void>();
+      const allowSecondWait = Promise.withResolvers<void>();
+      const firstDependencyResolved = Promise.withResolvers<void>();
+      const releaseFirst = Promise.withResolvers<void>();
+      const secondFlight: { promise?: Promise<string | null> } = {};
+
+      const firstPromise = createInFlightHttpFetch("ready-cycle-a", async () => {
+        firstWaitStarted.resolve();
+        await waitForSharedInFlightHttpFetch(
+          "ready-cycle-b",
+          secondFlight.promise!,
+          1_000,
+        );
+        firstDependencyResolved.resolve();
+        await releaseFirst.promise;
+        return "/path/to/ready-cycle-a.mjs";
+      });
+      secondFlight.promise = createInFlightHttpFetch("ready-cycle-b", async () => {
+        await allowSecondWait.promise;
+        assertEquals(
+          await waitForSharedInFlightHttpFetch(
+            "ready-cycle-a",
+            firstPromise,
+            1_000,
+          ),
+          IN_FLIGHT_HTTP_FETCH_DEPENDENCY_CYCLE,
+        );
+        return "/path/to/ready-cycle-b.mjs";
+      });
+
+      const firstOwner = waitForSharedInFlightHttpFetch(
+        "ready-cycle-a",
+        firstPromise,
+        null,
+      );
+      const secondOwner = waitForSharedInFlightHttpFetch(
+        "ready-cycle-b",
+        secondFlight.promise,
+        null,
+      );
+      let secondOwnerSettled = false;
+      void secondOwner.then(() => secondOwnerSettled = true);
+
+      try {
+        await firstWaitStarted.promise;
+        allowSecondWait.resolve();
+        await firstDependencyResolved.promise;
+        await Promise.resolve();
+        assertEquals(secondOwnerSettled, false);
+
+        releaseFirst.resolve();
+        assertEquals(await firstOwner, "/path/to/ready-cycle-a.mjs");
+        assertEquals(await secondOwner, "/path/to/ready-cycle-b.mjs");
+      } finally {
+        allowSecondWait.resolve();
+        releaseFirst.resolve();
+        await Promise.allSettled([firstOwner, secondOwner]);
+        __clearInFlightHttpFetches();
+      }
+    });
   });
 
   describe("waitForInFlightFetch", () => {

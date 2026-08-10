@@ -36,7 +36,10 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 import { MODULE_LOAD_TIMEOUT_MS } from "#veryfront/rendering/orchestrator/module-collection.ts";
-import { __getMaxInFlightHttpFetchWaiterCountForTests } from "./in-flight-manager.ts";
+import {
+  __getMaxInFlightHttpFetchWaiterCountForTests,
+  inFlightHttpFetches,
+} from "./in-flight-manager.ts";
 
 /** Duplicated from http-cache.ts for isolated unit testing of the pattern. */
 const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
@@ -226,6 +229,78 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(error, abortReason);
       assertEquals(fetchCount, 1);
     });
+  });
+
+  it("does not let an abandoned HTTP owner overwrite its replacement", async () => {
+    const moduleUrl = "https://93.184.216.34/abandoned-owner.js";
+    const oldWriteStarted = Promise.withResolvers<void>();
+    const releaseOldWrite = Promise.withResolvers<void>();
+    const originalWriteTextFile = Deno.writeTextFile.bind(Deno);
+    const distributed = new Map<string, string>();
+    let fetchCount = 0;
+
+    Deno.writeTextFile = async (path, data, options) => {
+      if (typeof data === "string" && data.includes('generation = "stale"')) {
+        oldWriteStarted.resolve();
+        await releaseOldWrite.promise;
+      }
+      await originalWriteTextFile(path, data, options);
+    };
+
+    try {
+      const mockFetch = (() => {
+        fetchCount++;
+        const generation = fetchCount === 1 ? "stale" : "fresh";
+        return Promise.resolve(
+          new Response(`export const generation = "${generation}";`, {
+            headers: { "content-type": "application/javascript" },
+          }),
+        );
+      }) as typeof fetch;
+
+      await withIsolatedHttpCache("vf-esm-abandoned-owner-", mockFetch, async (tempDir) => {
+        __setDistributedCacheAccessorForTests(() =>
+          Promise.resolve(createMemoryBackend(distributed))
+        );
+        const controller = new AbortController();
+        const source = `import { generation } from "${moduleUrl}"; export { generation };`;
+        const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+        const abandoned = cacheHttpImportsToLocal(source, {
+          ...options,
+          abortSignal: controller.signal,
+        });
+
+        await oldWriteStarted.promise;
+        controller.abort(new DOMException("render abandoned", "AbortError"));
+        await assertRejects(() => abandoned, DOMException, "render abandoned");
+
+        const replacement = await cacheHttpImportsToLocal(source, options);
+        assert(replacement.code.includes("file://"));
+        releaseOldWrite.resolve();
+        while (inFlightHttpFetches.size > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+
+        const bundleFiles: string[] = [];
+        for await (const entry of readDir(tempDir)) {
+          if (entry.isFile && entry.name.startsWith("http-") && entry.name.endsWith(".mjs")) {
+            bundleFiles.push(entry.name);
+          }
+        }
+        assertEquals(bundleFiles.length, 1);
+        const publishedCode = await readTextFile(join(tempDir, bundleFiles[0]!));
+        assert(publishedCode.includes('generation = "fresh"'));
+        assertEquals(publishedCode.includes('generation = "stale"'), false);
+        assertEquals(
+          [...distributed.values()].some((value) => value.includes('generation = "stale"')),
+          false,
+        );
+        assertEquals(fetchCount, 2);
+      });
+    } finally {
+      releaseOldWrite.resolve();
+      Deno.writeTextFile = originalWriteTextFile;
+    }
   });
 
   it("keeps a shared HTTP fetch alive while another caller is still waiting", async () => {
@@ -453,6 +528,21 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     const secondUrl = "https://93.184.216.34/cross-flight/second.js";
     const startedUrls = new Set<string>();
     const bothFetchesStarted = Promise.withResolvers<void>();
+    const delayedWriteStarted = Promise.withResolvers<void>();
+    const releaseDelayedWrite = Promise.withResolvers<void>();
+    const originalWriteTextFile = Deno.writeTextFile.bind(Deno);
+    let bundleWriteCount = 0;
+
+    Deno.writeTextFile = async (path, data, options) => {
+      if (typeof data === "string" && data.startsWith("/*! @vf-source:")) {
+        bundleWriteCount++;
+        if (bundleWriteCount === 2) {
+          delayedWriteStarted.resolve();
+          await releaseDelayedWrite.promise;
+        }
+      }
+      await originalWriteTextFile(path, data, options);
+    };
 
     const mockFetch = (async (input) => {
       const url = String(input);
@@ -465,18 +555,44 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       });
     }) as typeof fetch;
 
-    await withIsolatedHttpCache("vf-esm-cross-flight-cycle-", mockFetch, async (tempDir) => {
-      __injectCachesForTests({ processingStack: null });
-      const importMap = { imports: {}, scopes: {} };
-      const [first, second] = await Promise.all([
-        cacheHttpImportsToLocal(`import "${firstUrl}";`, { cacheDir: tempDir, importMap }),
-        cacheHttpImportsToLocal(`import "${secondUrl}";`, { cacheDir: tempDir, importMap }),
-      ]);
+    try {
+      await withIsolatedHttpCache("vf-esm-cross-flight-cycle-", mockFetch, async (tempDir) => {
+        __injectCachesForTests({ processingStack: null });
+        const importMap = { imports: {}, scopes: {} };
+        const firstResult = cacheHttpImportsToLocal(`import "${firstUrl}";`, {
+          cacheDir: tempDir,
+          importMap,
+        });
+        const secondResult = cacheHttpImportsToLocal(`import "${secondUrl}";`, {
+          cacheDir: tempDir,
+          importMap,
+        });
 
-      assert(first.code.includes("file://"));
-      assert(second.code.includes("file://"));
-      assertEquals(startedUrls, new Set([firstUrl, secondUrl]));
-    });
+        try {
+          await delayedWriteStarted.promise;
+          let settledResults = 0;
+          void firstResult.then(() => settledResults++);
+          void secondResult.then(() => settledResults++);
+          await Promise.resolve();
+          await Promise.resolve();
+          assertEquals(settledResults, 0);
+
+          releaseDelayedWrite.resolve();
+          const [first, second] = await Promise.all([firstResult, secondResult]);
+          assert(first.code.includes("file://"));
+          assert(second.code.includes("file://"));
+          assert(first.bundleManifestId);
+          assertEquals(second.bundleManifestId, first.bundleManifestId);
+          assertEquals(startedUrls, new Set([firstUrl, secondUrl]));
+        } finally {
+          releaseDelayedWrite.resolve();
+          await Promise.allSettled([firstResult, secondResult]);
+        }
+      });
+    } finally {
+      releaseDelayedWrite.resolve();
+      Deno.writeTextFile = originalWriteTextFile;
+    }
   });
 
   it("does not retry permanent HTTP module failures", async () => {

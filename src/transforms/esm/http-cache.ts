@@ -7,7 +7,7 @@
  * @module transforms/esm/http-cache
  */
 
-import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, exists, type FileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { BUILD_FAILED, BUNDLE_ERROR, FILE_NOT_FOUND, retryWithBackoff } from "#veryfront/errors";
@@ -36,6 +36,7 @@ import {
 import { looksLikeHtmlContent as looksLikeHtmlNotJs } from "./html-content.ts";
 import { HttpModuleBodyError, readHttpModuleText } from "../shared/http-module-response.ts";
 import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
+import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
 import {
   guardedOutboundFetch,
   OutboundRequestBlockedError,
@@ -75,7 +76,9 @@ import {
 import {
   __clearInFlightHttpFetches,
   createInFlightHttpFetch,
+  hasInFlightHttpFetchOwner,
   IN_FLIGHT_HTTP_FETCH_DEPENDENCY_CYCLE,
+  type InFlightHttpFetchControl,
   inFlightHttpFetches,
   processingStackStorage,
   refreshDistributedCacheAsync,
@@ -104,6 +107,64 @@ export const HTTP_MODULE_FETCH_MAX_WAIT_MS = HTTP_MODULE_FETCH_RETRY_BUDGET_MS +
 
 const httpCacheLog = logger.component("http-cache");
 const contentMetricsLog = logger.component("content-metrics");
+const httpBundlePublications = new Map<string, Promise<unknown>>();
+
+function abandonedHttpFetchError(abortSignal: AbortSignal): unknown {
+  return abortSignal.reason ??
+    new DOMException("The HTTP module fetch was replaced", "AbortError");
+}
+
+function assertCurrentHttpFetch(
+  abortSignal: AbortSignal,
+  control: InFlightHttpFetchControl,
+): void {
+  abortSignal.throwIfAborted();
+  if (!control.isCurrent()) throw abandonedHttpFetchError(abortSignal);
+}
+
+async function publishHttpBundleGeneration<T>(
+  cacheKey: string,
+  cachePath: string,
+  code: string,
+  fs: FileSystem,
+  abortSignal: AbortSignal,
+  control: InFlightHttpFetchControl,
+  publish: () => Promise<T>,
+): Promise<T> {
+  const stagedPath = `${cachePath}.pending-${crypto.randomUUID()}`;
+  try {
+    await fs.writeTextFile(stagedPath, code);
+
+    const previousPublication = httpBundlePublications.get(cacheKey) ?? Promise.resolve();
+    const publication: Promise<T> = previousPublication
+      .catch(() => {})
+      .then(async () => {
+        assertCurrentHttpFetch(abortSignal, control);
+        if (!fs.rename) {
+          throw new Error("The active filesystem does not support atomic bundle publication");
+        }
+        await fs.rename(stagedPath, cachePath);
+        assertCurrentHttpFetch(abortSignal, control);
+        const result = await publish();
+        assertCurrentHttpFetch(abortSignal, control);
+        return result;
+      })
+      .finally(() => {
+        if (httpBundlePublications.get(cacheKey) === publication) {
+          httpBundlePublications.delete(cacheKey);
+        }
+      });
+    httpBundlePublications.set(cacheKey, publication);
+
+    return await publication;
+  } finally {
+    try {
+      if (await fs.exists(stagedPath)) await fs.remove(stagedPath);
+    } catch (error) {
+      httpCacheLog.debug("Failed to remove staged HTTP bundle", { error });
+    }
+  }
+}
 
 interface HttpModuleFetchResult {
   code: string;
@@ -400,7 +461,11 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     inFlight = inFlightHttpFetches.get(cacheKey);
   }
 
-  const fetchPromise = createInFlightHttpFetch(cacheKey, async (abortSignal, reportProgress) => {
+  const computeHttpBundle = async (
+    abortSignal: AbortSignal,
+    reportProgress: TransformProgressListener,
+    control: InFlightHttpFetchControl,
+  ): Promise<string | null> => {
     const sharedOptions = { ...options, abortSignal, onProgress: reportProgress };
     const cacheResult = await httpBundleCache.getCodeByUrl(String(hash));
     abortSignal.throwIfAborted();
@@ -428,17 +493,25 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
         abortSignal.throwIfAborted();
         await fs.mkdir(cacheDir, { recursive: true });
         abortSignal.throwIfAborted();
-        await fs.writeTextFile(cachePath, cachedCode);
-
-        if (!(await exists(cachePath))) {
-          throw FILE_NOT_FOUND.create({
-            detail:
-              `[HTTP-CACHE] INVARIANT VIOLATION: Redis recovery write succeeded but file does not exist: ${cachePath}`,
-          });
-        }
-
-        getCachedPaths().set(cacheKey, cachePath);
-        if (await trackCachedBundleGraph(hash, normalizedUrl, cachePath, cacheDir)) {
+        const recovered = await publishHttpBundleGeneration(
+          cacheKey,
+          cachePath,
+          cachedCode,
+          fs,
+          abortSignal,
+          control,
+          async () => {
+            if (!(await exists(cachePath))) {
+              throw FILE_NOT_FOUND.create({
+                detail:
+                  `[HTTP-CACHE] INVARIANT VIOLATION: Redis recovery write succeeded but file does not exist: ${cachePath}`,
+              });
+            }
+            getCachedPaths().set(cacheKey, cachePath);
+            return await trackCachedBundleGraph(hash, normalizedUrl, cachePath, cacheDir);
+          },
+        );
+        if (recovered) {
           return cachePath;
         }
         getCachedPaths().delete(cacheKey);
@@ -500,40 +573,49 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
 
     await fs.mkdir(cacheDir, { recursive: true });
     abortSignal.throwIfAborted();
-    await fs.writeTextFile(cachePath, code);
+    return await publishHttpBundleGeneration(
+      cacheKey,
+      cachePath,
+      code,
+      fs,
+      abortSignal,
+      control,
+      async () => {
+        if (!(await exists(cachePath))) {
+          throw FILE_NOT_FOUND.create({
+            detail:
+              `[HTTP-CACHE] INVARIANT VIOLATION: File write succeeded but file does not exist: ${cachePath}`,
+          });
+        }
 
-    if (!(await exists(cachePath))) {
-      throw FILE_NOT_FOUND.create({
-        detail:
-          `[HTTP-CACHE] INVARIANT VIOLATION: File write succeeded but file does not exist: ${cachePath}`,
-      });
-    }
+        try {
+          await httpBundleCache.setCode(
+            String(hash),
+            asLocalModuleCode(code),
+            normalizedUrl,
+            HTTP_MODULE_DISTRIBUTED_TTL_SEC,
+            identityMetadata,
+          );
+        } catch (error) {
+          if (error instanceof VeryfrontError && error.slug === "cache-invariant-violation") {
+            throw error;
+          }
+          httpCacheLog.debug("Distributed cache set failed", { url: safeUrl, error });
+        }
 
-    try {
-      await httpBundleCache.setCode(
-        String(hash),
-        asLocalModuleCode(code),
-        normalizedUrl,
-        HTTP_MODULE_DISTRIBUTED_TTL_SEC,
-        identityMetadata,
-      );
-    } catch (error) {
-      if (error instanceof VeryfrontError && error.slug === "cache-invariant-violation") {
-        throw error;
-      }
-      httpCacheLog.debug("Distributed cache set failed", { url: safeUrl, error });
-    }
+        getCachedPaths().set(cacheKey, cachePath);
+        if (!(await trackWrittenBundle(hash, normalizedUrl, cachePath))) {
+          getCachedPaths().delete(cacheKey);
+          throw BUNDLE_ERROR.create({
+            detail: "Freshly written HTTP bundle could not be verified",
+          });
+        }
 
-    getCachedPaths().set(cacheKey, cachePath);
-    if (!(await trackWrittenBundle(hash, normalizedUrl, cachePath))) {
-      getCachedPaths().delete(cacheKey);
-      throw BUNDLE_ERROR.create({
-        detail: "Freshly written HTTP bundle could not be verified",
-      });
-    }
-
-    return cachePath;
-  });
+        return cachePath;
+      },
+    );
+  };
+  const fetchPromise = createInFlightHttpFetch(cacheKey, computeHttpBundle);
 
   const result = await waitForSharedInFlightHttpFetch(
     cacheKey,
@@ -542,6 +624,16 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     options.abortSignal,
     options.onProgress,
   );
+  if (
+    result &&
+    !(await trackCachedBundleGraph(hash, normalizedUrl, result, cacheDir))
+  ) {
+    if (hasInFlightHttpFetchOwner()) return result;
+    getCachedPaths().delete(cacheKey);
+    throw BUNDLE_ERROR.create({
+      detail: "Completed HTTP bundle graph could not be verified",
+    });
+  }
   return result;
 }
 

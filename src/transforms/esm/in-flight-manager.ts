@@ -35,13 +35,24 @@ export const IN_FLIGHT_HTTP_FETCH_DEPENDENCY_CYCLE = Symbol(
 
 const inFlightHttpFetchOwnerStorage = new AsyncLocalStorage<string>();
 
+/** Whether the current call is resolving a dependency for an active fetch owner. */
+export function hasInFlightHttpFetchOwner(): boolean {
+  return inFlightHttpFetchOwnerStorage.getStore() !== undefined;
+}
+
 interface InFlightHttpFetchAbortState {
   controller: AbortController;
+  completionDependencies: Map<string, Promise<string | null>>;
   dependencies: Map<string, number>;
   promise?: Promise<string | null>;
   waiters: number;
   settled: boolean;
   progressListeners: Set<TransformProgressListener>;
+}
+
+export interface InFlightHttpFetchControl {
+  /** Whether this owner is still the registered generation for its cache key. */
+  isCurrent(): boolean;
 }
 
 const inFlightHttpFetchAbortStates = new Map<string, InFlightHttpFetchAbortState>();
@@ -104,6 +115,7 @@ export function createInFlightHttpFetch(
   compute: (
     abortSignal: AbortSignal,
     reportProgress: TransformProgressListener,
+    control: InFlightHttpFetchControl,
   ) => Promise<string | null>,
 ): Promise<string | null> {
   const existing = inFlightHttpFetches.get(cacheKey);
@@ -112,6 +124,7 @@ export function createInFlightHttpFetch(
   const controller = new AbortController();
   const state: InFlightHttpFetchAbortState = {
     controller,
+    completionDependencies: new Map(),
     dependencies: new Map(),
     waiters: 0,
     settled: false,
@@ -126,11 +139,14 @@ export function createInFlightHttpFetch(
       }
     }
   };
-  const promise = Promise.resolve()
+  const promise: Promise<string | null> = Promise.resolve()
     .then(() =>
       inFlightHttpFetchOwnerStorage.run(
         cacheKey,
-        () => compute(controller.signal, reportProgress),
+        () =>
+          compute(controller.signal, reportProgress, {
+            isCurrent: (): boolean => inFlightHttpFetches.get(cacheKey) === promise,
+          }),
       )
     )
     .finally(() => {
@@ -195,6 +211,7 @@ export async function waitForSharedInFlightHttpFetch(
     ownerCacheKey && ownerState &&
     hasInFlightHttpFetchDependencyPath(cacheKey, ownerCacheKey)
   ) {
+    ownerState.completionDependencies.set(cacheKey, promise);
     return IN_FLIGHT_HTTP_FETCH_DEPENDENCY_CYCLE;
   }
   if (ownerCacheKey && ownerState) {
@@ -210,7 +227,21 @@ export async function waitForSharedInFlightHttpFetch(
     : undefined;
   if (progressListener) state.progressListeners.add(progressListener);
   try {
-    return await waitForFetch();
+    const result = await waitForFetch();
+    if (ownerCacheKey && ownerState) {
+      for (const [dependencyCacheKey, dependencyPromise] of state.completionDependencies) {
+        if (dependencyCacheKey !== ownerCacheKey) {
+          ownerState.completionDependencies.set(dependencyCacheKey, dependencyPromise);
+        }
+      }
+    } else {
+      await Promise.all(
+        [...state.completionDependencies.entries()]
+          .filter(([dependencyCacheKey]) => dependencyCacheKey !== cacheKey)
+          .map(([, dependencyPromise]) => waitForSharedPromise(dependencyPromise, abortSignal)),
+      );
+    }
+    return result;
   } finally {
     if (ownerCacheKey && ownerState) {
       const dependencyCount = ownerState.dependencies.get(cacheKey) ?? 0;
