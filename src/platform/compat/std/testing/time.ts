@@ -99,6 +99,13 @@ export class FakeTime {
 
   /** Advance the clock, running every timer that comes due on the way. */
   tick(ms = 0): void {
+    if (!Number.isFinite(ms)) {
+      // NaN slips past the comparison below -- `NaN < this.#now` is false --
+      // and then `#due` treats every pending timer as due, because
+      // `timer.due > NaN` is false too. The clock ends up NaN and every later
+      // assertion on it is quietly meaningless.
+      throw new RangeError(`Cannot advance the fake clock by ${ms}ms`);
+    }
     const target = this.#now + ms;
     if (target < this.#now) {
       throw new RangeError(`Cannot move the fake clock backwards; received ${ms}ms`);

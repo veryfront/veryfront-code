@@ -13,7 +13,7 @@
 import {
   importFirstPartyExtensionModule,
   isMissingFirstPartyExtensionModule,
-} from "../first-party-import.ts";
+} from "#veryfront/extensions/first-party-import.ts";
 import { snapshotYamlParserProvider, type YamlParserProvider } from "./yaml-parser.ts";
 
 const DEFAULT_YAML_SOURCE_DIRECTORY = "ext-yaml";

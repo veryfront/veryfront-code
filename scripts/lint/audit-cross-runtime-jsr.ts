@@ -465,23 +465,25 @@ async function collectCrossRuntimeFiles(
   root: string,
   out: string[],
 ): Promise<void> {
-  let entries: AsyncIterable<Deno.DirEntry>;
+  // `Deno.readDir` is lazy: a missing root raises when iteration starts, not
+  // when it is called, so guarding the call alone caught nothing. Only an
+  // absent root is expected -- a permissions failure or an I/O error is a
+  // reason to stop, not to silently audit fewer files than the caller thinks.
   try {
-    entries = Deno.readDir(root);
-  } catch (_) {
-    return; // expected: a scan root may be absent in a partial checkout
-  }
-  for await (const entry of entries) {
-    if (entry.name === "node_modules") continue;
-    const path = `${root}/${entry.name}`;
-    if (entry.isDirectory) {
-      await collectCrossRuntimeFiles(path, out);
-    } else if (
-      entry.isFile && (path.endsWith(".ts") || path.endsWith(".tsx")) &&
-      !path.endsWith(".d.ts")
-    ) {
-      out.push(path);
+    for await (const entry of Deno.readDir(root)) {
+      if (entry.name === "node_modules") continue;
+      const path = `${root}/${entry.name}`;
+      if (entry.isDirectory) {
+        await collectCrossRuntimeFiles(path, out);
+      } else if (
+        entry.isFile && (path.endsWith(".ts") || path.endsWith(".tsx")) &&
+        !path.endsWith(".d.ts")
+      ) {
+        out.push(path);
+      }
     }
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
   }
 }
 

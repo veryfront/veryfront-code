@@ -155,3 +155,18 @@ describe("platform/compat/std/testing/time", () => {
     assertThrows(() => time.tick(-1), RangeError);
   });
 });
+
+describe("platform/compat/std/testing/time non-finite advance", () => {
+  it("rejects a non-finite advance", () => {
+    // NaN slips past the backwards check (`NaN < now` is false) and then makes
+    // #due treat every pending timer as due (`due > NaN` is false too), leaving
+    // the clock NaN and every later assertion on it meaningless.
+    using time = new FakeTime();
+    let fired = false;
+    setTimeout(() => (fired = true), 10_000);
+
+    assertThrows(() => time.tick(NaN), RangeError);
+    assertEquals(fired, false, "a rejected tick must not fire timers");
+    assertEquals(Number.isFinite(time.now), true, "the clock must stay finite");
+  });
+});
