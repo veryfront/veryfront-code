@@ -454,6 +454,9 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       });
       return cachePath;
     }
+    if (result === undefined && options.abortSignal === undefined) {
+      return null;
+    }
     if (result !== undefined) {
       if (
         result === null ||

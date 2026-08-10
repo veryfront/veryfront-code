@@ -36,9 +36,12 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 import { MODULE_LOAD_TIMEOUT_MS } from "#veryfront/rendering/orchestrator/module-collection.ts";
+import { FakeTime } from "#std/testing/time";
 import {
   __getMaxInFlightHttpFetchWaiterCountForTests,
+  createInFlightHttpFetch,
   inFlightHttpFetches,
+  waitForSharedInFlightHttpFetch,
 } from "./in-flight-manager.ts";
 
 /** Duplicated from http-cache.ts for isolated unit testing of the pattern. */
@@ -229,6 +232,66 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(error, abortReason);
       assertEquals(fetchCount, 1);
     });
+  });
+
+  it("stops an uncancelled caller after one wait on a retained flight", async () => {
+    using time = new FakeTime();
+    const moduleUrl = "https://93.184.216.34/retained-timeout.js";
+
+    await withIsolatedHttpCache(
+      "vf-esm-retained-timeout-",
+      (() => Promise.reject(new Error("unexpected fetch"))) as typeof fetch,
+      async (tempDir) => {
+        const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+        const cacheIdentity = await buildHttpCacheIdentity(moduleUrl, options);
+        const cacheKey = `${tempDir}:${cacheIdentity}`;
+        const release = Promise.withResolvers<void>();
+        const renderController = new AbortController();
+        let sharedSignal: AbortSignal | undefined;
+        const flight = createInFlightHttpFetch(cacheKey, async (abortSignal) => {
+          sharedSignal = abortSignal;
+          await release.promise;
+          abortSignal.throwIfAborted();
+          return "/path/to/retained-timeout.mjs";
+        });
+        const renderWaiter = waitForSharedInFlightHttpFetch(
+          cacheKey,
+          flight,
+          null,
+          renderController.signal,
+        );
+        const uncancelledCaller = cacheHttpImportsToLocal(
+          `import "${moduleUrl}";`,
+          options,
+        );
+
+        try {
+          for (
+            let attempt = 0;
+            attempt < 100 && __getMaxInFlightHttpFetchWaiterCountForTests() < 2;
+            attempt++
+          ) {
+            await time.tickAsync(0);
+          }
+          assertEquals(__getMaxInFlightHttpFetchWaiterCountForTests(), 2);
+
+          await time.tickAsync(HTTP_MODULE_FETCH_MAX_WAIT_MS);
+          await assertRejects(
+            () => uncancelledCaller,
+            Error,
+            "Failed to cache absolute HTTP module",
+          );
+          assertEquals(sharedSignal?.aborted, false);
+          assertEquals(inFlightHttpFetches.get(cacheKey), flight);
+
+          release.resolve();
+          assertEquals(await renderWaiter, "/path/to/retained-timeout.mjs");
+        } finally {
+          release.resolve();
+          await Promise.allSettled([flight, renderWaiter, uncancelledCaller]);
+        }
+      },
+    );
   });
 
   it("does not let an abandoned HTTP owner overwrite its replacement", async () => {
