@@ -626,6 +626,16 @@ describe("transforms/esm/http-cache-helpers", () => {
       assertEquals(result.includes("/denonext/"), false);
     });
 
+    it("preserves inner /denonext/ segments in esm.sh paths", () => {
+      const result = normalizeHttpUrl(
+        "https://esm.sh/pkg@1/X-abc/denonext/pkg.mjs",
+      );
+      assertEquals(
+        new URL(result).pathname,
+        "/pkg@1/X-abc/denonext/pkg.mjs",
+      );
+    });
+
     it("returns raw string for malformed URLs", () => {
       assertEquals(normalizeHttpUrl("not-a-url"), "not-a-url");
     });
@@ -757,6 +767,7 @@ describe("transforms/esm/http-cache-helpers", () => {
     it("requests a server build, not the browser one", () => {
       // Both pull decode-named-character-reference, whose browser build calls
       // document.createElement at module scope and throws during SSG.
+      assertEquals(SERVER_ESM_TARGET, "node");
       for (const specifier of ["react-markdown@9.0.3", "remark-gfm@4.0.1"]) {
         const result = resolveBareSpecifier(specifier, emptyImportMap);
         assertEquals(result.includes("target=es2022"), false, specifier);
