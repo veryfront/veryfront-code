@@ -318,7 +318,10 @@ export async function waitForSharedInFlightHttpFetch(
     : undefined;
   if (progressListener) state.progressListeners.add(progressListener);
   try {
-    const result = await waitForFetch();
+    let result: string | null | undefined;
+    do {
+      result = await waitForFetch();
+    } while (result === undefined && inFlightHttpFetches.get(cacheKey) === promise);
     if (ownerCacheKey && ownerState) {
       for (const [dependencyCacheKey, dependencyPromise] of state.completionDependencies) {
         if (dependencyCacheKey !== ownerCacheKey) {

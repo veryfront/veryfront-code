@@ -54,6 +54,35 @@ describe("transforms/esm/in-flight-manager", () => {
       }
     });
 
+    it("keeps a live follower attached across its wait window", async () => {
+      const cacheKey = "live-follower-timeout";
+      const release = Promise.withResolvers<void>();
+      let sharedSignal: AbortSignal | undefined;
+      const promise = createInFlightHttpFetch(cacheKey, async (abortSignal) => {
+        sharedSignal = abortSignal;
+        await release.promise;
+        abortSignal.throwIfAborted();
+        return "/path/to/live-follower-timeout.mjs";
+      });
+      const follower = waitForSharedInFlightHttpFetch(cacheKey, promise, 5);
+      let followerSettled = false;
+      void follower.then(() => followerSettled = true);
+
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        assertEquals(followerSettled, false);
+        assertEquals(sharedSignal?.aborted, false);
+        assertEquals(inFlightHttpFetches.get(cacheKey), promise);
+
+        release.resolve();
+        assertEquals(await follower, "/path/to/live-follower-timeout.mjs");
+      } finally {
+        release.resolve();
+        await Promise.allSettled([promise, follower]);
+        __clearInFlightHttpFetches();
+      }
+    });
+
     it("breaks dependency cycles between independent fetch owners", async () => {
       const startCycle = Promise.withResolvers<void>();
       const secondFlight: { promise?: Promise<string | null> } = {};
