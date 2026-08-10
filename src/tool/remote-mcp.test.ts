@@ -18,7 +18,6 @@ import {
   MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
 } from "./remote-mcp.ts";
 
-
 /**
  * Runtime-neutral env override for the control-plane origin. Restored by the
  * afterEach below, so it is undone even when a test fails.
@@ -350,7 +349,6 @@ describe("tool/remote-mcp", () => {
         _meta: { agent_id: "gmail-agent" },
       },
     });
-
   });
 
   it("keeps run ids for MCP servers that are not the Veryfront control plane", async () => {
@@ -385,7 +383,6 @@ describe("tool/remote-mcp", () => {
       (requestBody as { params?: { _meta?: Record<string, unknown> } }).params?._meta,
       { run_id: "run-local", agent_id: "gmail-agent" },
     );
-
   });
 
   it("prefers structuredContent for MCP isError tool results", async () => {
