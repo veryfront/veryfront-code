@@ -38,11 +38,13 @@ example. Read it in
 [`chat-runtime-tool-assembly.ts`](../../src/agent/hosted/chat-runtime-tool-assembly.ts).
 
 - **deferred**: the agent has no explicit `tools` binding. The model initially
-  sees only `tool_search` plus whichever bootstrap tools (`form_input`,
-  `load_skill`) the run actually authorizes. Bootstrap tools are filtered
-  against the authorized set, so a run that authorizes neither exposes
-  `tool_search` alone. That is why the measurement below reports one initially
-  exposed tool.
+  sees only `tool_search` plus the `load_skill` bootstrap tool when the run
+  authorizes it. `form_input` remains authorized but deferred until a search
+  loads it. Bootstrap tools are filtered against the authorized set, so a run
+  that does not authorize `load_skill` exposes `tool_search` alone. That is why
+  the measurement below reports one initially exposed tool. Its deterministic
+  fixture authorizes exactly 64 generated tools and does not authorize
+  `load_skill`.
 - **eager**: the agent declares a binding. The bound set is exposed directly and
   `selectProviderCompatibleToolNames` still applies, so a binding larger than
   the provider cap is still truncated in alphabetical order after local tools
@@ -78,14 +80,19 @@ mechanism.
   constants in `tool-exposure.ts`.
 - Matching schemas are loaded into `ToolExposureState.loadedToolNames` and are
   callable from the next model step.
+- Configured provider-native tools supported by the selected model enter the
+  authorized catalog as schema-free name and description records. A matching
+  search attaches the provider's native schema on the next model step. The
+  runtime never treats that record as a local executable tool.
 
 ## Authorization: two independent gates
 
 1. **Discovery**: `tool_search` searches only the authorized catalog.
-2. **Execution**: unchanged. `prepareExecution` in
-   `project-scoped-remote-tools.ts` re-checks allowance at call time via
-   `isRemoteToolNameAllowed`, so a schema reaching a request is not sufficient
-   to execute.
+2. **Execution**: `prepareExecution` in
+   `project-scoped-remote-tools.ts` re-checks remote allowance at call time via
+   `isRemoteToolNameAllowed`. Provider-native exposure is intersected with the
+   current configured provider tools and selected model support before each
+   step. A schema reaching an earlier request is not sufficient to execute.
 
 ## Durability and resume
 

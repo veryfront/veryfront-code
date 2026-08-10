@@ -66,11 +66,12 @@ Use this pattern to verify the tool contract before giving the tool to an agent.
 ## How agents use tools
 
 An explicit tool map authorizes only the selected tools and sends those schemas
-to the model immediately. Use `tools: true` for a broad authorized scope: the
-framework initially sends only bootstrap schemas and `tool_search`, then loads
-matching schemas for the next model step. Omit `tools` to expose no project
-tools. Search results contain names and descriptions, not input or output
-schemas.
+to the model immediately. Use `tools: true` for a broad authorized scope. The
+framework initially sends only the `load_skill` bootstrap schema when it is
+authorized, plus `tool_search`, then loads matching schemas for the next model
+step. `form_input` is authorized but deferred until it is needed. Omit `tools`
+to expose no project tools. Search results contain names and descriptions, not
+input or output schemas.
 
 ```ts
 // agents/assistant.ts
@@ -106,11 +107,15 @@ has an aggregate schema-work budget. A malformed, cyclic, or over-budget schema
 cannot abort the search; that tool simply cannot match by parameter description.
 Name and description matching remains available for other healthy tools.
 
-The search only loads schemas from the current authorized `tools` catalog. It
-does not search or load provider-native `providerTools`. The runtime reapplies
-the current authorization policy before executing a tool and when restoring a
-loaded-tool checkpoint, so a previously loaded name cannot restore a removed
-permission.
+The search loads schemas from the current authorized `tools` catalog. It also
+loads configured `providerTools` that the selected model supports. A
+provider-native search entry contains only its name and description. The
+runtime attaches the provider's native schema on the next model step and never
+executes it as a local tool.
+
+The runtime reapplies the current authorization policy, configured provider
+tools, and model support before execution and checkpoint restoration, so a
+previously loaded name cannot restore a removed permission.
 
 Deferred loading works with direct provider model strings and provider API
 keys. Veryfront Cloud is not required for that path. Hosted durable execution
@@ -147,8 +152,9 @@ Agent config separates tools by execution boundary:
 Use `tools` for functions you define in the project. Do not add provider-native
 tools or skill loader tools to `tools`.
 
-Use `providerTools` for provider-executed capabilities. Framework
-`tool_search` does not search this catalog:
+Use `providerTools` for provider-executed capabilities. In deferred mode,
+`tool_search` can load a configured capability when the selected model supports
+it:
 
 ```ts
 // agents/researcher.ts

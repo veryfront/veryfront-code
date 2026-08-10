@@ -381,9 +381,7 @@ export async function prepareHostedChatRuntimeToolAssembly<
   const compatibleRemoteToolNames = toolLoadingMode === "deferred"
     ? remoteToolNames
     : remoteToolNames.filter((toolName) => compatibleToolNames.has(toolName));
-  const bootstrapToolNames = availableToolNames.filter((toolName) =>
-    toolName === "form_input" || toolName === "load_skill"
-  );
+  const bootstrapToolNames = availableToolNames.filter((toolName) => toolName === "load_skill");
   const hasDeferredTools = availableToolNames.length > bootstrapToolNames.length;
   const modelVisibleToolNames = toolLoadingMode === "deferred"
     ? [

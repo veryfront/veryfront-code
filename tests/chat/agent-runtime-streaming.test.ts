@@ -131,11 +131,11 @@ it("deferred respond searches, exposes on the next step, and executes once", asy
   );
   const body = await response.text();
 
-  assertEquals(observedTools[0], ["form_input", "load_skill", "tool_search"]);
+  assertEquals(observedTools[0], ["load_skill", "tool_search"]);
   assertEquals(observedTools[1], [
-    "form_input",
     "load_skill",
     "read_release_marker",
+    "tool_search",
   ]);
   assertEquals(executionCount, 1);
   assert(body.includes("marker-1"), "respond should stream the final marker");

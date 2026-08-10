@@ -162,7 +162,11 @@ Deno.test("prepareHostedChatRuntimeToolAssembly defers an omitted allowed tools 
     sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
     taskContext,
     instructions: "Base instructions",
-    localTools: { sleep: localTool("Sleep") },
+    localTools: {
+      form_input: localTool("Form input"),
+      load_skill: localTool("Load skill"),
+      sleep: localTool("Sleep"),
+    },
     apiUrl: "https://api.example.com",
     apiMcpUrl: "https://api.example.com/mcp",
     createRemoteToolSource: remoteSourceFromConfig,
@@ -170,7 +174,13 @@ Deno.test("prepareHostedChatRuntimeToolAssembly defers an omitted allowed tools 
   });
 
   assertEquals(toolAssembly.toolLoadingMode, "deferred");
-  assertEquals(taskContext.availableToolNames, ["tool_search"]);
+  assertEquals(toolAssembly.availableToolNames, [
+    "create_file",
+    "form_input",
+    "load_skill",
+    "sleep",
+  ]);
+  assertEquals(taskContext.availableToolNames, ["load_skill", "tool_search"]);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly defers an unrestricted tools true catalog", async () => {

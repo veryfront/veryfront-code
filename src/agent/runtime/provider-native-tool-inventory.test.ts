@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HostToolSet } from "#veryfront/tool";
 import {
+  createProviderNativeToolExposureDefinitions,
   expandAllowedRemoteToolNames,
   getForkRuntimeAllowedToolNames,
   getProviderNativeToolNames,
@@ -44,6 +45,27 @@ describe("provider-native-tool-inventory", () => {
 
   it("returns no provider-native tool names for unsupported providers", () => {
     assertEquals(getProviderNativeToolNames({ model: "google/gemini-3.5-flash" }), []);
+  });
+
+  it("creates deterministic schema-free search entries only for configured supported tools", () => {
+    assertEquals(
+      createProviderNativeToolExposureDefinitions({
+        model: "anthropic/claude-sonnet-4-6",
+        toolNames: ["web_search", "unknown", "web_fetch", "web_search"],
+      }),
+      [
+        {
+          name: "web_fetch",
+          description: "Fetch and read the contents of a web page.",
+          parameters: { type: "object", properties: {} },
+        },
+        {
+          name: "web_search",
+          description: "Search the web for current information.",
+          parameters: { type: "object", properties: {} },
+        },
+      ],
+    );
   });
 
   it("preserves a fork/runtime allowlist without adding undeclared provider-native tools", () => {

@@ -5,7 +5,7 @@ import { isOwnDataPropertyDescriptor } from "./data-property-descriptor.ts";
 /** Framework-owned model-facing tool used to load authorized schemas. */
 export const TOOL_SEARCH_TOOL_NAME = "tool_search";
 
-const DEFAULT_BOOTSTRAP_TOOL_NAMES = new Set(["form_input", "load_skill"]);
+const DEFAULT_BOOTSTRAP_TOOL_NAMES = new Set(["load_skill"]);
 const TOOL_SEARCH_RESULT_LIMIT = 5;
 const TOOL_SEARCH_QUERY_MAX_BYTES = 256;
 const TOOL_SEARCH_CANDIDATE_LIMIT = 4_096;

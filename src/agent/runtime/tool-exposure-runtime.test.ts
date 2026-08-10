@@ -22,14 +22,25 @@ function toolNames(options: unknown): string[] {
     : Object.keys((value as Record<string, unknown> | undefined) ?? {}).sort();
 }
 
+function systemPrompt(options: unknown): string {
+  const prompt = (options as { prompt?: Array<{ role?: string; content?: unknown }> }).prompt;
+  if (!Array.isArray(prompt)) return "";
+  return prompt
+    .filter((entry) => entry?.role === "system" && typeof entry.content === "string")
+    .map((entry) => entry.content as string)
+    .join("\n");
+}
+
 it("deferred generate searches, exposes on the next step, and executes once", async () => {
   const observedTools: string[][] = [];
+  const observedSystems: string[] = [];
   let step = 0;
   const model: ModelRuntime = {
     provider: "hosted",
     modelId: "hosted/deferred-tools",
     async doGenerate(options: unknown) {
       observedTools.push(toolNames(options));
+      observedSystems.push(systemPrompt(options));
       step++;
       if (step === 1) {
         return {
@@ -102,14 +113,100 @@ it("deferred generate searches, exposes on the next step, and executes once", as
 
   const response = await assistant.generate({ input: "Read the release marker" });
 
-  assertEquals(observedTools[0], ["form_input", "load_skill", "tool_search"]);
+  assertEquals(observedTools[0], ["load_skill", "tool_search"]);
   assertEquals(observedTools[1], [
-    "form_input",
     "load_skill",
     "read_release_marker",
+    "tool_search",
   ]);
+  assertEquals((observedSystems[0] ?? "").includes("form_input"), false);
+  assertEquals((observedSystems[0] ?? "").includes("read_release_marker"), false);
+  assertEquals((observedSystems[1] ?? "").includes("read_release_marker"), false);
   assertEquals(executionCount, 1);
   assertEquals(response.text, "Release marker marker-1");
+});
+
+it("deferred generate activates and executes provider-native web search on demand", async () => {
+  const observedTools: string[][] = [];
+  const observedSystems: string[] = [];
+  let step = 0;
+  const model: ModelRuntime = {
+    provider: "anthropic",
+    modelId: "claude-sonnet-4-6",
+    async doGenerate(options: unknown) {
+      observedTools.push(toolNames(options));
+      observedSystems.push(systemPrompt(options));
+      step++;
+      if (step === 1) {
+        return {
+          content: [{
+            type: "tool-call",
+            toolCallId: "search-native-1",
+            toolName: "tool_search",
+            input: JSON.stringify({ query: "web_search" }),
+          }],
+          finishReason: "tool-calls",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      }
+      if (step === 2) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "web-search-1",
+              toolName: "web_search",
+              input: JSON.stringify({ query: "Veryfront" }),
+            },
+            {
+              type: "tool-result",
+              toolCallId: "web-search-1",
+              toolName: "web_search",
+              result: { results: [{ title: "Veryfront" }] },
+              providerExecuted: true,
+            },
+          ],
+          finishReason: "tool-calls",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      }
+      return {
+        content: [{ type: "text", text: "Found Veryfront." }],
+        finishReason: "stop",
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      };
+    },
+    async doStream() {
+      return { stream: new ReadableStream() };
+    },
+  };
+  const assistant = agent(
+    {
+      id: "deferred-provider-native-test",
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Use web search when current information is required.",
+      skills: false,
+      tools: {},
+      providerTools: ["web_search", "web_fetch"],
+      maxSteps: 3,
+      resolveModelTransport: () => ({ model }),
+      __vfToolLoadingMode: "deferred",
+    } as AgentConfig & RuntimeToolFilterConfig,
+  );
+
+  const response = await assistant.generate({ input: "Search the web for Veryfront" });
+
+  assertEquals(observedTools[0], ["tool_search"]);
+  assertEquals(observedTools[1], ["tool_search", "web_search"]);
+  assertEquals(observedTools[2], ["tool_search", "web_search"]);
+  assertEquals((observedSystems[0] ?? "").includes("web_search"), false);
+  assertEquals((observedSystems[0] ?? "").includes("web_fetch"), false);
+  assertEquals((observedSystems[1] ?? "").includes("web_search"), false);
+  assertEquals(response.toolCalls.map((call) => [call.name, call.status]), [
+    ["tool_search", "completed"],
+    ["web_search", "completed"],
+  ]);
+  assertEquals(response.text, "Found Veryfront.");
 });
 
 it("deferred generate rejects a guessed tool that was not exposed", async () => {

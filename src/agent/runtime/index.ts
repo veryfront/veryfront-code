@@ -1181,8 +1181,9 @@ export class AgentRuntime {
           "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
           "tool.loading.path": "framework-fallback",
         });
+        const visibleToolNames = new Set(tools.map((tool) => tool.name));
         const stepProviderTools = supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
-          ? providerTools
+          ? providerTools.filter((toolName) => visibleToolNames.has(toolName))
           : [];
 
         const temperature = this.resolveTemperature(
@@ -1783,8 +1784,9 @@ export class AgentRuntime {
         "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
         "tool.loading.path": "framework-fallback",
       });
+      const visibleToolNames = new Set(tools.map((tool) => tool.name));
       const stepProviderTools = supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
-        ? providerTools
+        ? providerTools.filter((toolName) => visibleToolNames.has(toolName))
         : [];
 
       const runtimeTools = convertToolsToRuntimeTools(tools, {
