@@ -21,6 +21,23 @@ describe("styles-builder/style-scope-profile", () => {
     );
   });
 
+  it("ignores the packed Deno runtime used by local template journeys", () => {
+    const profile = createStyleScopeProfile();
+
+    assertEquals(
+      shouldIncludeStylePath(
+        profile,
+        "/project/.veryfront-packed-cli/package/esm/cli/main.js",
+        "/project",
+      ),
+      false,
+    );
+    assertEquals(
+      shouldTraverseStyleDirectory(profile, "/project/.veryfront-packed-cli", "/project"),
+      false,
+    );
+  });
+
   it("keeps runtime roots included by default", () => {
     const profile = createStyleScopeProfile();
 
