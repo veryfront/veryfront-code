@@ -829,11 +829,32 @@ function isMatchingVeryfrontHostedUrl(
     parsed.environment === target.environmentName.toLowerCase();
 }
 
+/**
+ * Whether a stored credential could satisfy the protected-environment gate.
+ *
+ * The gate resolves the `authToken` cookie by decoding it as a JWT and reading
+ * `userId` from the verified payload; it has no API-key branch. An opaque
+ * `vf_…` API key therefore fails the same way an absent cookie does, so
+ * presenting one only leaks the key. This is a shape check, not verification —
+ * the CLI cannot verify the signature and does not need to. It only needs to
+ * know whether the gate could possibly accept the credential.
+ */
+function isSessionCredential(apiToken: string): boolean {
+  const segments = apiToken.split(".");
+  return segments.length === 3 && segments.every((segment) => segment.length > 0);
+}
+
 function buildEnvironmentReadinessProbes(
   target: EnvironmentReadinessTarget,
 ): EnvironmentReadinessProbe[] {
   const route = target.route === undefined ? "/" : target.route;
   if (route === null) return [];
+
+  // Without a session credential the probe cannot get past the gate. A sign-in
+  // redirect still proves routing resolves and the proxy is serving this
+  // environment, which is the most this step can establish — and the
+  // deployment it would otherwise fail is already committed and verified.
+  const canAuthenticate = isSessionCredential(target.apiToken);
 
   const targetUrl = buildEnvironmentProbeUrl(target.url, route);
   if (target.protected && !isMatchingVeryfrontHostedUrl(new URL(targetUrl), target)) {
@@ -848,15 +869,15 @@ function buildEnvironmentReadinessProbes(
           buildCanonicalEnvironmentUrl(target.projectSlug, target.environmentName),
           route,
         ),
-        authenticate: true,
-        acceptAuthenticationChallenge: false,
+        authenticate: canAuthenticate,
+        acceptAuthenticationChallenge: !canAuthenticate,
       },
     ];
   }
   return [{
     url: target.protected ? secureEnvironmentProbeUrl(targetUrl) : targetUrl,
-    authenticate: target.protected,
-    acceptAuthenticationChallenge: false,
+    authenticate: target.protected && canAuthenticate,
+    acceptAuthenticationChallenge: target.protected && !canAuthenticate,
   }];
 }
 
@@ -935,25 +956,33 @@ export async function waitForEnvironmentReady(
 
         if (ready) break;
         if (authenticationChallenge) {
-          const message = probe.authenticate
-            ? `Could not authenticate the protected environment URL ${probe.url}. Run veryfront login and deploy again.`
-            : `Environment URL ${probe.url} redirected to sign-in. Check its protection settings and deploy again.`;
-          throw new Error(message);
+          // These are diagnosed conditions, so they must carry the deployment
+          // slug. A bare Error reaches the operator as `unknown-error` with
+          // "Check logs for more details", which describes nothing.
+          throw DEPLOYMENT_ERROR.create({
+            detail: probe.authenticate
+              ? `Could not authenticate the protected environment URL ${probe.url}. Run veryfront login and deploy again.`
+              : `Environment URL ${probe.url} redirected to sign-in. Check its protection settings and deploy again.`,
+            context: { url: probe.url },
+          });
         }
         if (!isTransientEnvironmentStatus(response.status)) {
-          throw new Error(
-            `Environment URL ${probe.url} returned HTTP ${response.status}. Check the environment configuration and deploy again.`,
-          );
+          throw DEPLOYMENT_ERROR.create({
+            detail:
+              `Environment URL ${probe.url} returned HTTP ${response.status}. Check the environment configuration and deploy again.`,
+            context: { url: probe.url, status: response.status },
+          });
         }
       }
 
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) {
-        throw new Error(
-          `Environment URL ${probe.url} did not become ready within ${
+        throw DEPLOYMENT_ERROR.create({
+          detail: `Environment URL ${probe.url} did not become ready within ${
             Math.ceil(timeoutMs / 1000)
           }s (last response: ${lastResponse}). Check the deployment and run deploy again.`,
-        );
+          context: { url: probe.url, timeoutMs },
+        });
       }
       await wait(Math.min(pollIntervalMs, remainingMs));
     }

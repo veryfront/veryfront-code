@@ -582,12 +582,17 @@ describe("pushed source provenance", () => {
 });
 
 describe("environment URL readiness", () => {
+  // The protected-environment gate only accepts a session JWT, so the probe
+  // credential has to be JWT-shaped for the authenticated path to be exercised.
+  const sessionToken = "eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOiJ1XzEifQ.test-signature";
+  const apiKeyToken = "vf_d157f0000000000000000000000000000000000";
+
   const hostedTarget = {
     projectSlug: "my-project",
     environmentName: "production",
     url: "https://my-project.production.veryfront.com",
     protected: false,
-    apiToken: "test-token",
+    apiToken: sessionToken,
   };
 
   it("retries a transient 404 before accepting the environment URL", async () => {
@@ -662,7 +667,81 @@ describe("environment URL readiness", () => {
         }),
     );
 
-    assertEquals(cookie, "authToken=test-token");
+    assertEquals(cookie, `authToken=${sessionToken}`);
+  });
+
+  it("does not send an API key to the protected environment gate", async () => {
+    const requests: Array<{ url: string; cookie: string | null }> = [];
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requests.push({ url: request.url, cookie: request.headers.get("cookie") });
+        return Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://veryfront.com/sign-in" },
+          }),
+        );
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          protected: true,
+          apiToken: apiKeyToken,
+        }),
+    );
+
+    // The gate only resolves session JWTs, so an API key is rejected exactly
+    // like no credential at all. Sending it leaks the key for no benefit.
+    assertEquals(requests, [{
+      url: "https://my-project.production.veryfront.com/",
+      cookie: null,
+    }]);
+  });
+
+  it("treats a sign-in redirect as ready when the credential is an API key", async () => {
+    // The deployment is already committed by the time this probe runs. A
+    // redirect proves routing resolves and the gate is serving the
+    // environment, which is all this probe can establish without a session.
+    await withMockFetch(
+      () =>
+        Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://veryfront.com/sign-in" },
+          }),
+        ),
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          protected: true,
+          apiToken: apiKeyToken,
+        }),
+    );
+  });
+
+  it("classifies a rejected session credential as a deployment error", async () => {
+    const error = await assertRejects(() =>
+      withMockFetch(
+        () =>
+          Promise.resolve(
+            new Response(null, {
+              status: 302,
+              headers: { location: "https://veryfront.com/sign-in" },
+            }),
+          ),
+        () =>
+          waitForEnvironmentReady({
+            ...hostedTarget,
+            protected: true,
+          }),
+      )
+    );
+
+    // A bare Error here surfaces to the operator as `unknown-error`.
+    assertStrictEquals(error instanceof VeryfrontError, true);
+    assertEquals((error as VeryfrontError).slug, DEPLOYMENT_ERROR.slug);
   });
 
   it("upgrades authenticated Veryfront environment probes to HTTPS", async () => {
@@ -685,7 +764,7 @@ describe("environment URL readiness", () => {
     );
 
     assertEquals(requestedUrl, "https://my-project.production.veryfront.com/");
-    assertEquals(cookie, "authToken=test-token");
+    assertEquals(cookie, `authToken=${sessionToken}`);
   });
 
   it("does not send credentials to a mismatched Veryfront project host", async () => {
@@ -722,7 +801,7 @@ describe("environment URL readiness", () => {
       },
       {
         url: "https://my-project.production.veryfront.com/",
-        cookie: "authToken=test-token",
+        cookie: `authToken=${sessionToken}`,
       },
     ]);
   });
@@ -749,7 +828,7 @@ describe("environment URL readiness", () => {
 
     assertEquals(requests, [{
       url: "https://my-project.production.veryfront.org/",
-      cookie: "authToken=test-token",
+      cookie: `authToken=${sessionToken}`,
     }]);
   });
 
@@ -784,7 +863,7 @@ describe("environment URL readiness", () => {
       { url: "https://app.example.com/", cookie: null },
       {
         url: "https://my-project.production.veryfront.com/",
-        cookie: "authToken=test-token",
+        cookie: `authToken=${sessionToken}`,
       },
     ]);
   });
