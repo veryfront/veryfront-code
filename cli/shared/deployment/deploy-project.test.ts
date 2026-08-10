@@ -582,12 +582,16 @@ describe("pushed source provenance", () => {
 });
 
 describe("environment URL readiness", () => {
+  // Must be JWT-shaped, or the authenticated path stops being exercised.
+  const sessionToken = "eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOiJ1XzEifQ.test-signature";
+  const apiKeyToken = "vf_d157f0000000000000000000000000000000000";
+
   const hostedTarget = {
     projectSlug: "my-project",
     environmentName: "production",
     url: "https://my-project.production.veryfront.com",
     protected: false,
-    apiToken: "test-token",
+    apiToken: sessionToken,
   };
 
   it("retries a transient 404 before accepting the environment URL", async () => {
@@ -662,7 +666,134 @@ describe("environment URL readiness", () => {
         }),
     );
 
-    assertEquals(cookie, "authToken=test-token");
+    assertEquals(cookie, `authToken=${sessionToken}`);
+  });
+
+  it("does not send an API key to the protected environment gate", async () => {
+    const requests: Array<{ url: string; cookie: string | null }> = [];
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requests.push({ url: request.url, cookie: request.headers.get("cookie") });
+        return Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://veryfront.com/sign-in" },
+          }),
+        );
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          protected: true,
+          apiToken: apiKeyToken,
+        }),
+    );
+
+    assertEquals(requests, [{
+      url: "https://my-project.production.veryfront.com/",
+      cookie: null,
+    }]);
+  });
+
+  it("does not send an opaque credential that merely contains dots", async () => {
+    const requests: Array<{ url: string; cookie: string | null }> = [];
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requests.push({ url: request.url, cookie: request.headers.get("cookie") });
+        return Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://veryfront.com/sign-in" },
+          }),
+        );
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          protected: true,
+          apiToken: "opaque.segment.value",
+        }),
+    );
+
+    assertEquals(requests, [{
+      url: "https://my-project.production.veryfront.com/",
+      cookie: null,
+    }]);
+  });
+
+  it("does not send a JWT-shaped credential whose payload carries no userId", async () => {
+    const requests: Array<{ url: string; cookie: string | null }> = [];
+    // {"alg":"HS256"} . {"sub":"u_1"} . sig — decodes, but carries no userId.
+    const withoutUserId = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1XzEifQ.test-signature";
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requests.push({ url: request.url, cookie: request.headers.get("cookie") });
+        return Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://veryfront.com/sign-in" },
+          }),
+        );
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          protected: true,
+          apiToken: withoutUserId,
+        }),
+    );
+
+    assertEquals(requests, [{
+      url: "https://my-project.production.veryfront.com/",
+      cookie: null,
+    }]);
+  });
+
+  it("treats a sign-in redirect as ready when the credential is an API key", async () => {
+    await withMockFetch(
+      () =>
+        Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://veryfront.com/sign-in" },
+          }),
+        ),
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          protected: true,
+          apiToken: apiKeyToken,
+        }),
+    );
+  });
+
+  it("classifies a rejected session credential as a deployment error", async () => {
+    const error = await assertRejects(() =>
+      withMockFetch(
+        () =>
+          Promise.resolve(
+            new Response(null, {
+              status: 302,
+              headers: { location: "https://veryfront.com/sign-in" },
+            }),
+          ),
+        () =>
+          waitForEnvironmentReady({
+            ...hostedTarget,
+            protected: true,
+          }),
+      )
+    );
+
+    // A bare Error here surfaces to the operator as `unknown-error`.
+    assertStrictEquals(error instanceof VeryfrontError, true);
+    assertEquals((error as VeryfrontError).slug, DEPLOYMENT_ERROR.slug);
   });
 
   it("upgrades authenticated Veryfront environment probes to HTTPS", async () => {
@@ -685,7 +816,7 @@ describe("environment URL readiness", () => {
     );
 
     assertEquals(requestedUrl, "https://my-project.production.veryfront.com/");
-    assertEquals(cookie, "authToken=test-token");
+    assertEquals(cookie, `authToken=${sessionToken}`);
   });
 
   it("does not send credentials to a mismatched Veryfront project host", async () => {
@@ -722,7 +853,7 @@ describe("environment URL readiness", () => {
       },
       {
         url: "https://my-project.production.veryfront.com/",
-        cookie: "authToken=test-token",
+        cookie: `authToken=${sessionToken}`,
       },
     ]);
   });
@@ -749,7 +880,7 @@ describe("environment URL readiness", () => {
 
     assertEquals(requests, [{
       url: "https://my-project.production.veryfront.org/",
-      cookie: "authToken=test-token",
+      cookie: `authToken=${sessionToken}`,
     }]);
   });
 
@@ -784,7 +915,7 @@ describe("environment URL readiness", () => {
       { url: "https://app.example.com/", cookie: null },
       {
         url: "https://my-project.production.veryfront.com/",
-        cookie: "authToken=test-token",
+        cookie: `authToken=${sessionToken}`,
       },
     ]);
   });
@@ -856,6 +987,16 @@ describe("environment URL readiness", () => {
           "veryfront login",
         ),
     );
+  });
+
+  it("names the status when a challenge was not a sign-in redirect", async () => {
+    const message = await withMockFetch(
+      () => Promise.resolve(new Response(null, { status: 403 })),
+      () =>
+        expectErrorMessage(() => waitForEnvironmentReady({ ...hostedTarget, protected: false })),
+    );
+
+    assertMatch(message ?? "", /returned HTTP 403/);
   });
 
   it("reports the URL and last status when readiness times out", async () => {
