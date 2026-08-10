@@ -285,6 +285,51 @@ describe("transforms/esm/http-cache-helpers", () => {
       assertEquals(urlPrototypeCalls, 0);
     });
 
+    it("uses captured query append and array iteration for duplicate parameters", () => {
+      const rawUrl = "https://esm.sh/lodash@4?custom=first&custom=second";
+      const baseline = normalizeHttpUrl(rawUrl);
+      assertEquals(
+        baseline,
+        "https://esm.sh/lodash@4?custom=first&custom=second&external=react&target=es2022",
+      );
+
+      const iteratorDescriptor = Object.getOwnPropertyDescriptor(
+        Array.prototype,
+        Symbol.iterator,
+      )!;
+      const appendDescriptor = Object.getOwnPropertyDescriptor(
+        URLSearchParams.prototype,
+        "append",
+      )!;
+      let hookCalls = 0;
+      let poisoned: string;
+      try {
+        Object.defineProperty(Array.prototype, Symbol.iterator, {
+          configurable: true,
+          value() {
+            hookCalls++;
+            throw new Error("poisoned Array.prototype iterator");
+          },
+          writable: true,
+        });
+        Object.defineProperty(URLSearchParams.prototype, "append", {
+          configurable: true,
+          value() {
+            hookCalls++;
+            throw new Error("poisoned URLSearchParams.prototype.append");
+          },
+          writable: true,
+        });
+        poisoned = normalizeHttpUrl(rawUrl);
+      } finally {
+        Object.defineProperty(Array.prototype, Symbol.iterator, iteratorDescriptor);
+        Object.defineProperty(URLSearchParams.prototype, "append", appendDescriptor);
+      }
+
+      assertEquals(poisoned, baseline);
+      assertEquals(hookCalls, 0);
+    });
+
     it("does not consult inherited toJSON hooks while fingerprinting import maps", async () => {
       const importMap = {
         imports: { pkg: "https://modules.example.com/pkg-v1.js" },

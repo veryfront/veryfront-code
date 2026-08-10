@@ -11,7 +11,7 @@ import {
  * The tags a JSON-representable document may carry explicitly. `yaml`'s
  * `Schema.knownTags` fallback resolves YAML 1.1 tags such as `!!binary`,
  * `!!timestamp`, `!!set` and `!!omap` even under the 1.2 core schema, and does
- * so without raising a warning, so the parser options alone cannot express
+ * without raising a warning, so the parser options alone cannot express
  * `@std/yaml`'s JSON schema. Rejecting every other explicit tag does.
  */
 const JSON_SCHEMA_TAGS: ReadonlySet<string> = new Set([

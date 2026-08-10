@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { prepareBunWorkspacePackages } from "./workspace-packages.mjs";
+import { prepareBunWorkspacePackages, reclaimStalePreparationLock } from "./workspace-packages.mjs";
 
 const projectRoot = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -81,4 +90,41 @@ test("workspace package preparation rejects an overlapping run without disturbin
   }
 
   assert.equal(existsSync(rootPackagePath), false);
+});
+
+test("workspace package preparation reclaims a lock owned by a dead process", () => {
+  const root = mkdtempSync(join(tmpdir(), "veryfront-bun-lock-"));
+  const lockPath = join(root, ".veryfront-bun-workspace-packages.lock");
+  mkdirSync(lockPath);
+  writeFileSync(
+    join(lockPath, ".veryfront-bun-workspace-package.json"),
+    `${JSON.stringify({ owner: "veryfront-bun-tests", pid: 123, token: "stale" })}\n`,
+  );
+  const runtimeProcess = {
+    kill(pid, signal) {
+      assert.equal(pid, 123);
+      assert.equal(signal, 0);
+      throw Object.assign(new Error("process does not exist"), { code: "ESRCH" });
+    },
+  };
+
+  try {
+    assert.equal(reclaimStalePreparationLock(lockPath, runtimeProcess), true);
+    assert.equal(existsSync(lockPath), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("workspace package preparation reclaims a lock without a valid marker", () => {
+  const root = mkdtempSync(join(tmpdir(), "veryfront-bun-lock-"));
+  const lockPath = join(root, ".veryfront-bun-workspace-packages.lock");
+  mkdirSync(lockPath);
+
+  try {
+    assert.equal(reclaimStalePreparationLock(lockPath), true);
+    assert.equal(existsSync(lockPath), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

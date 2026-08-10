@@ -40,6 +40,14 @@ test("the Bun runner drains child output and exits naturally", () => {
   assert.match(source, /process\.exitCode = ok \? 0 : 1/);
 });
 
+test("the Bun runner fails when selection produces no test files", () => {
+  const source = readFileSync(new URL("./run-tests.mjs", import.meta.url), "utf8");
+
+  assert.match(source, /if \(files\.length === 0\)/);
+  assert.match(source, /Bun test runner selected no test files\./);
+  assert.match(source, /return false;/);
+});
+
 test("Bun workspace cleanup runs before termination signals are re-raised", () => {
   const runtimeProcess = new EventEmitter();
   runtimeProcess.pid = 123;

@@ -61,6 +61,7 @@ const URLSearchParamsGet = ObjectGetOwnPropertyDescriptor(
 const URLToString = IntrinsicURL.prototype.toString;
 const URLSearchParamsGetValue = IntrinsicURLSearchParams.prototype.get;
 const URLSearchParamsHas = IntrinsicURLSearchParams.prototype.has;
+const URLSearchParamsAppend = IntrinsicURLSearchParams.prototype.append;
 const URLSearchParamsSetValue = IntrinsicURLSearchParams.prototype.set;
 const URLSearchParamsSort = IntrinsicURLSearchParams.prototype.sort;
 const URLSearchParamsToString = IntrinsicURLSearchParams.prototype.toString;
@@ -188,17 +189,22 @@ function decodeQueryComponent(value: string): string {
 
 function parseURLSearchParams(url: URL): URLSearchParams {
   const search = getURLSearch(url);
-  const entries: Array<[string, string]> = [];
-  if (search.length <= 1) return new IntrinsicURLSearchParams(entries);
+  const searchParams = new IntrinsicURLSearchParams();
+  if (search.length <= 1) return searchParams;
 
-  for (const part of stringSplit(stringSlice(search, 1), "&")) {
+  const parts = stringSplit(stringSlice(search, 1), "&");
+  for (let index = 0; index < parts.length; index++) {
+    const part = parts[index]!;
     if (part.length === 0) continue;
     const separatorIndex = stringIndexOf(part, "=");
     const name = separatorIndex < 0 ? part : stringSlice(part, 0, separatorIndex);
     const value = separatorIndex < 0 ? "" : stringSlice(part, separatorIndex + 1);
-    arrayPush(entries, [decodeQueryComponent(name), decodeQueryComponent(value)]);
+    ReflectApply(URLSearchParamsAppend, searchParams, [
+      decodeQueryComponent(name),
+      decodeQueryComponent(value),
+    ]);
   }
-  return new IntrinsicURLSearchParams(entries);
+  return searchParams;
 }
 
 function writeURLSearchParams(url: URL, searchParams: URLSearchParams): void {

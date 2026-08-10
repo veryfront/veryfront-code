@@ -6,12 +6,20 @@ export function resolveDirectoryLinkType(platform = process.platform) {
   return platform === "win32" ? "junction" : "dir";
 }
 
-function ensureDirectorySymlink(sourcePath, targetPath, packageName) {
-  if (existsSync(targetPath)) return;
+export function ensureDirectorySymlink(
+  sourcePath,
+  targetPath,
+  packageName,
+  { pathExists = existsSync, createSymlink = symlinkSync } = {},
+) {
+  if (pathExists(targetPath)) return;
   try {
-    symlinkSync(sourcePath, targetPath, resolveDirectoryLinkType());
-  } catch {
-    throw new Error(`Cannot link npm dependency "${packageName}" into node_modules.`);
+    createSymlink(sourcePath, targetPath, resolveDirectoryLinkType());
+  } catch (error) {
+    if (error?.code === "EEXIST") return;
+    throw new Error(`Cannot link npm dependency "${packageName}" into node_modules.`, {
+      cause: error,
+    });
   }
 }
 
@@ -37,8 +45,8 @@ function linkScopedPackages(npmModulesRoot, rootModulesRoot, scopeName) {
   let entries;
   try {
     entries = readdirSync(sourceScopeDir, { withFileTypes: true });
-  } catch {
-    throw new Error(`Cannot read npm dependency scope "${scopeName}".`);
+  } catch (error) {
+    throw new Error(`Cannot read npm dependency scope "${scopeName}".`, { cause: error });
   }
 
   for (const entry of entries) {
@@ -68,8 +76,10 @@ export function ensureNpmNodeModulesLinks(
   let entries;
   try {
     entries = readdirSync(npmModulesRoot, { withFileTypes: true });
-  } catch {
-    throw new Error("Cannot read npm/node_modules while preparing runtime tests.");
+  } catch (error) {
+    throw new Error("Cannot read npm/node_modules while preparing runtime tests.", {
+      cause: error,
+    });
   }
 
   for (const entry of entries) {

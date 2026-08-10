@@ -18,6 +18,34 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
+export function reclaimStalePreparationLock(lockPath, runtimeProcess = process) {
+  let marker;
+  try {
+    marker = readJson(join(lockPath, MARKER_NAME));
+  } catch {
+    rmSync(lockPath, { recursive: true, force: true });
+    return true;
+  }
+
+  if (
+    marker?.owner !== LOCK_OWNER ||
+    !Number.isSafeInteger(marker.pid) ||
+    marker.pid <= 0
+  ) {
+    rmSync(lockPath, { recursive: true, force: true });
+    return true;
+  }
+
+  try {
+    runtimeProcess.kill(marker.pid, 0);
+    return false;
+  } catch (error) {
+    if (error?.code !== "ESRCH") return false;
+    rmSync(lockPath, { recursive: true, force: true });
+    return true;
+  }
+}
+
 function acquirePreparationLock(nodeModulesPath) {
   mkdirSync(nodeModulesPath, { recursive: true });
   const lockPath = join(nodeModulesPath, LOCK_NAME);
@@ -25,9 +53,20 @@ function acquirePreparationLock(nodeModulesPath) {
     mkdirSync(lockPath);
   } catch (error) {
     if (error?.code === "EEXIST") {
-      throw new Error("Bun workspace package preparation is already active");
+      if (!reclaimStalePreparationLock(lockPath)) {
+        throw new Error("Bun workspace package preparation is already active");
+      }
+      try {
+        mkdirSync(lockPath);
+      } catch (retryError) {
+        if (retryError?.code === "EEXIST") {
+          throw new Error("Bun workspace package preparation is already active");
+        }
+        throw retryError;
+      }
+    } else {
+      throw error;
     }
-    throw error;
   }
 
   const token = randomUUID();

@@ -118,6 +118,10 @@ function runBunProcess(file, bunArgs) {
 }
 
 async function runIsolatedTests(files) {
+  if (files.length === 0) {
+    console.error("Bun test runner selected no test files.");
+    return false;
+  }
   const runs = buildIsolatedBunTestRuns(files);
   let nextIndex = 0;
   let passed = 0;

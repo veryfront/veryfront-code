@@ -4,7 +4,11 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { ensureNpmNodeModulesLinks, resolveDirectoryLinkType } from "./ensure-npm-links.mjs";
+import {
+  ensureDirectorySymlink,
+  ensureNpmNodeModulesLinks,
+  resolveDirectoryLinkType,
+} from "./ensure-npm-links.mjs";
 
 const MISSING_BUILD_MESSAGE =
   'Cannot prepare runtime tests because npm/node_modules is missing. Run "deno task build:npm" first.';
@@ -13,6 +17,34 @@ describe("ensureNpmNodeModulesLinks", () => {
   it("uses junctions for Windows directory links", () => {
     assert.equal(resolveDirectoryLinkType("win32"), "junction");
     assert.equal(resolveDirectoryLinkType("linux"), "dir");
+  });
+
+  it("tolerates a concurrent directory link and preserves other failures", () => {
+    const existsError = Object.assign(new Error("already linked"), { code: "EEXIST" });
+    assert.doesNotThrow(() =>
+      ensureDirectorySymlink("source", "target", "package", {
+        pathExists: () => false,
+        createSymlink: () => {
+          throw existsError;
+        },
+      })
+    );
+
+    const permissionError = Object.assign(new Error("permission denied"), { code: "EACCES" });
+    assert.throws(
+      () =>
+        ensureDirectorySymlink("source", "target", "package", {
+          pathExists: () => false,
+          createSymlink: () => {
+            throw permissionError;
+          },
+        }),
+      (error) => {
+        assert.equal(error.message, 'Cannot link npm dependency "package" into node_modules.');
+        assert.equal(error.cause, permissionError);
+        return true;
+      },
+    );
   });
 
   it("fails with the build instruction when npm dependencies are missing", () => {
