@@ -1153,5 +1153,30 @@ describe("transforms/esm/transform-cache", () => {
       assertEquals(getCachedTransform("k1"), undefined);
       assertEquals(getCachedTransform("k2"), undefined);
     });
+
+    it("aborts unsettled transform flights before resetting their registry", async () => {
+      const started = Promise.withResolvers<void>();
+      let finish!: (value: string) => void;
+      let sharedSignal: AbortSignal | undefined;
+      const pending = getOrComputeTransform(
+        "unsettled-transform",
+        (_reportProgress, abortSignal) => {
+          sharedSignal = abortSignal;
+          started.resolve();
+          return new Promise<string>((resolve) => finish = resolve);
+        },
+      );
+      await started.promise;
+
+      try {
+        destroyTransformCache();
+        assertEquals(sharedSignal?.aborted, true);
+        assertEquals(sharedSignal?.reason instanceof DOMException, true);
+        assertEquals(sharedSignal?.reason.name, "AbortError");
+      } finally {
+        finish("stale transform");
+        await pending;
+      }
+    });
   });
 });

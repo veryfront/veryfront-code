@@ -416,6 +416,13 @@ function setLocalFallback(key: string, entry: TransformCacheEntry): void {
 
 export function destroyTransformCache(): void {
   getLocalFallback().clear();
+  for (const abortState of transformFlightAbortStates.values()) {
+    if (!abortState.settled) {
+      abortState.controller.abort(
+        new DOMException("The transform cache was destroyed", "AbortError"),
+      );
+    }
+  }
   transformFlight = new Singleflight<TransformCacheResult>();
   transformFlightAbortStates = new Map();
   transformProgress.clear();

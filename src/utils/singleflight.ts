@@ -116,6 +116,14 @@ export class Singleflight<T> {
     return this.inflight.has(key);
   }
 
+  /** Allow a replacement leader while the forgotten operation finishes independently. */
+  forget(key: string): boolean {
+    const entry = this.inflight.get(key);
+    if (!entry) return false;
+    if (entry.staleTimer !== undefined) clearTimeout(entry.staleTimer);
+    return this.inflight.delete(key);
+  }
+
   get size(): number {
     return this.inflight.size;
   }

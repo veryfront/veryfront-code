@@ -176,6 +176,10 @@ async function runFrameworkTransformFlight(
         options.abortSignal?.reason ??
           new DOMException("The framework transform was canceled", "AbortError"),
       );
+      if (frameworkTransformAbortStates.get(key) === flightState) {
+        frameworkTransformFlight.forget(key);
+        frameworkTransformAbortStates.delete(key);
+      }
     }
     if (
       flightState.waiters === 0 && flightState.settled &&

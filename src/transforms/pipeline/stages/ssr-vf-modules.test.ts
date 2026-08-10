@@ -303,6 +303,47 @@ describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(error, abortReason);
       assertEquals(await sharedAborted.promise, abortReason);
     });
+
+    it("does not attach a new render to an aborted framework flight", async () => {
+      const key = `framework-aborted-flight-${crypto.randomUUID()}`;
+      const firstController = new AbortController();
+      const firstStarted = Promise.withResolvers<void>();
+      const releaseFirst = Promise.withResolvers<string>();
+      const abortReason = new DOMException("first render canceled", "AbortError");
+      let replacementExecutions = 0;
+
+      const first = _testExports.runFrameworkTransformFlight(
+        key,
+        (abortSignal) => {
+          firstStarted.resolve();
+          abortSignal.addEventListener("abort", () => {}, { once: true });
+          return releaseFirst.promise;
+        },
+        { abortSignal: firstController.signal },
+      );
+      await firstStarted.promise;
+      firstController.abort(abortReason);
+      assertEquals(await assertRejects(() => first), abortReason);
+
+      let replacement: Promise<string> | undefined;
+      try {
+        replacement = _testExports.runFrameworkTransformFlight(
+          key,
+          () => {
+            replacementExecutions++;
+            return Promise.resolve("fresh transform");
+          },
+          {},
+        );
+        await Promise.resolve();
+
+        assertEquals(replacementExecutions, 1);
+        assertEquals(await replacement, "fresh transform");
+      } finally {
+        releaseFirst.resolve("stale transform");
+        await replacement?.catch(() => {});
+      }
+    });
   });
 
   describe("React URL consistency", () => {

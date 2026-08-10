@@ -43,12 +43,15 @@ describe("transforms/esm/in-flight-manager", () => {
         return "/path/to/complete-graph.mjs";
       });
 
-      const owner = waitForSharedInFlightHttpFetch(cacheKey, promise, null);
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      release.resolve();
+      try {
+        const owner = waitForSharedInFlightHttpFetch(cacheKey, promise, null);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        release.resolve();
 
-      assertEquals(await owner, "/path/to/complete-graph.mjs");
-      __clearInFlightHttpFetches();
+        assertEquals(await owner, "/path/to/complete-graph.mjs");
+      } finally {
+        __clearInFlightHttpFetches();
+      }
     });
 
     it("breaks dependency cycles between independent fetch owners", async () => {

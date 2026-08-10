@@ -131,6 +131,20 @@ describe("Singleflight", () => {
     assertEquals(r2, 2);
   });
 
+  it("allows a replacement after an active operation is forgotten", async () => {
+    const sf = new Singleflight<number>();
+    const staleResult = Promise.withResolvers<number>();
+    const stale = sf.do("key", () => staleResult.promise);
+
+    assertEquals(sf.forget("key"), true);
+    assertEquals(sf.forget("key"), false);
+    assertEquals(await sf.do("key", () => Promise.resolve(2)), 2);
+
+    staleResult.resolve(1);
+    assertEquals(await stale, 1);
+    assertEquals(sf.size, 0);
+  });
+
   it("evicts only the exact leader that exceeds its stale window", async () => {
     using time = new FakeTime();
     const sf = new Singleflight<number>();
