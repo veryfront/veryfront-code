@@ -54,9 +54,10 @@ describe("transforms/esm/in-flight-manager", () => {
       }
     });
 
-    it("keeps a live follower attached across its wait window", async () => {
+    it("keeps a live follower attached across bounded wait intervals", async () => {
       const cacheKey = "live-follower-timeout";
       const release = Promise.withResolvers<void>();
+      const callerController = new AbortController();
       let sharedSignal: AbortSignal | undefined;
       const promise = createInFlightHttpFetch(cacheKey, async (abortSignal) => {
         sharedSignal = abortSignal;
@@ -64,12 +65,31 @@ describe("transforms/esm/in-flight-manager", () => {
         abortSignal.throwIfAborted();
         return "/path/to/live-follower-timeout.mjs";
       });
-      const follower = waitForSharedInFlightHttpFetch(cacheKey, promise, 5);
+
+      const originalOwnerController = new AbortController();
+      const originalOwner = waitForSharedInFlightHttpFetch(
+        cacheKey,
+        promise,
+        null,
+        originalOwnerController.signal,
+      );
+      const originalOwnerOutcome = originalOwner.catch((error) => error);
+      const follower = waitForSharedInFlightHttpFetch(
+        cacheKey,
+        promise,
+        5,
+        callerController.signal,
+      );
       let followerSettled = false;
       void follower.then(() => followerSettled = true);
 
       try {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        originalOwnerController.abort(
+          new DOMException("original caller cancelled", "AbortError"),
+        );
+        await originalOwnerOutcome;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
         assertEquals(followerSettled, false);
         assertEquals(sharedSignal?.aborted, false);
         assertEquals(inFlightHttpFetches.get(cacheKey), promise);
@@ -78,7 +98,7 @@ describe("transforms/esm/in-flight-manager", () => {
         assertEquals(await follower, "/path/to/live-follower-timeout.mjs");
       } finally {
         release.resolve();
-        await Promise.allSettled([promise, follower]);
+        await Promise.allSettled([originalOwner, follower, promise]);
         __clearInFlightHttpFetches();
       }
     });

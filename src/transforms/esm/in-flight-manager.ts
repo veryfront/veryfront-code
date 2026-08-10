@@ -318,6 +318,8 @@ export async function waitForSharedInFlightHttpFetch(
     : undefined;
   if (progressListener) state.progressListeners.add(progressListener);
   try {
+    // Keep this caller's waiter lease while the same shared generation is
+    // useful, including across bounded wait intervals.
     let result: string | null | undefined;
     do {
       result = await waitForFetch();
