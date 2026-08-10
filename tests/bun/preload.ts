@@ -12,7 +12,8 @@ import { plugin } from "bun";
 import { existsSync, readFileSync, statSync } from "fs";
 import { dirname, extname, relative, resolve, sep } from "path";
 import { fileURLToPath } from "url";
-import { rewriteModuleSpecifiers, rewriteNpmProtocolImports } from "./npm-protocol-imports.ts";
+import { rewriteModuleSpecifiers } from "./npm-protocol-imports.ts";
+import { bunPreloadRewriteFilter, rewriteBunPreloadSource } from "./preload-rewrite.ts";
 
 const projectRoot = resolve(import.meta.dir, "../..");
 
@@ -144,21 +145,19 @@ plugin({
     // import-looking fixture strings and comments untouched.
     build.onLoad(
       {
-        filter:
-          /(\.test\.[cm]?[jt]sx?|[/\\]extensions[/\\]ext-[^/\\]+[/\\]src[/\\].*\.[cm]?[jt]sx?)$/,
+        filter: bunPreloadRewriteFilter,
       },
       (args) => {
-        const posixPath = args.path.split(sep).join("/");
         const source = readFileSync(args.path, "utf8");
-        let contents = posixPath.includes("/extensions/")
-          ? rewriteModuleSpecifiers(
-            source,
-            (specifier) => workspaceModuleSpecifier(args.path, specifier),
-          ) ?? source
-          : source;
-        if (/\.test\.[cm]?[jt]sx?$/.test(posixPath)) {
-          contents = rewriteNpmProtocolImports(contents) ?? contents;
-        }
+        const contents = rewriteBunPreloadSource(
+          args.path,
+          source,
+          (extensionSource) =>
+            rewriteModuleSpecifiers(
+              extensionSource,
+              (specifier) => workspaceModuleSpecifier(args.path, specifier),
+            ),
+        );
         const extension = extname(args.path).toLowerCase();
         const loader = extension === ".tsx"
           ? "tsx"

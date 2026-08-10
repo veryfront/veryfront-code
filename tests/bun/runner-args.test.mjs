@@ -3,11 +3,14 @@ import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   buildBunTestArgs,
   buildIsolatedBunTestRuns,
   registerBunWorkspaceCleanup,
 } from "./runner-args.mjs";
+
+const runTestsPath = fileURLToPath(new URL("./run-tests.mjs", import.meta.url));
 
 test("buildBunTestArgs caps concurrency without enabling concurrent test semantics", () => {
   const args = buildBunTestArgs(["one.test.ts", "two.test.ts"], 3);
@@ -50,7 +53,7 @@ test("the Bun runner drains child output and exits naturally", () => {
 test("the Bun runner fails loudly when filters select no files", () => {
   const result = spawnSync(
     process.execPath,
-    [new URL("./run-tests.mjs", import.meta.url).pathname],
+    [runTestsPath],
     {
       env: { ...process.env, BUN_TEST_INCLUDE: "missing-bun-fixture.test.ts" },
       encoding: "utf8",
@@ -60,6 +63,18 @@ test("the Bun runner fails loudly when filters select no files", () => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Bun test runner selected no test files\./);
   assert.doesNotMatch(result.stdout, /0 passed, 0 failed/);
+});
+
+test("the empty-selection spawn path is decoded through fileURLToPath", () => {
+  const source = readFileSync(fileURLToPath(import.meta.url), "utf8");
+  const runnerPathnameAccess = 'run-tests.mjs", import.meta.url)' +
+    ".pathname";
+
+  assert.match(
+    source,
+    /const runTestsPath = fileURLToPath\(new URL\("\.\/run-tests\.mjs", import\.meta\.url\)\)/,
+  );
+  assert.equal(source.includes(runnerPathnameAccess), false);
 });
 
 test("Bun workspace cleanup runs before termination signals are re-raised", () => {
