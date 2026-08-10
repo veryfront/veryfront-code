@@ -308,6 +308,16 @@ describe("first-party extension imports", () => {
         ]),
         true,
       );
+
+      const denoMissingDependency = new Error(
+        `Import "@veryfront/ext-auth-jwt" not a dependency`,
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(denoMissingDependency, [
+          "@veryfront/ext-auth-jwt",
+        ]),
+        true,
+      );
     });
 
     it("parses Bun relative, package, and object-shaped missing-module errors", () => {
