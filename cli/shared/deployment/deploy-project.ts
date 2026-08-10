@@ -829,19 +829,50 @@ function isMatchingVeryfrontHostedUrl(
     parsed.environment === target.environmentName.toLowerCase();
 }
 
+const MAX_JWT_SEGMENT_CODE_UNITS = 8 * 1024;
+
+/** Decode one base64url JWT segment into a plain object, or null if it is not one. */
+function decodeJwtSegment(segment: string | undefined): object | null {
+  if (segment === undefined) return null;
+  if (segment.length === 0 || segment.length > MAX_JWT_SEGMENT_CODE_UNITS) return null;
+  try {
+    const base64 = segment.replaceAll("-", "+").replaceAll("_", "/");
+    const binary = atob(base64 + "=".repeat((4 - base64.length % 4) % 4));
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const parsed = JSON.parse(new TextDecoder().decode(bytes));
+    return typeof parsed === "object" && parsed !== null ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Whether a stored credential could satisfy the protected-environment gate.
  *
  * The gate resolves the `authToken` cookie by decoding it as a JWT and reading
  * `userId` from the verified payload; it has no API-key branch. An opaque
  * `vf_…` API key therefore fails the same way an absent cookie does, so
- * presenting one only leaks the key. This is a shape check, not verification —
- * the CLI cannot verify the signature and does not need to. It only needs to
- * know whether the gate could possibly accept the credential.
+ * presenting one only leaks the key.
+ *
+ * This mirrors what the gate reads rather than merely counting dots, so an
+ * opaque credential that happens to contain dots is withheld too. It is still
+ * a shape check, not verification — the CLI cannot verify the signature and
+ * does not need to. It only needs to know whether the gate could possibly
+ * accept the credential.
  */
 function isSessionCredential(apiToken: string): boolean {
   const segments = apiToken.split(".");
-  return segments.length === 3 && segments.every((segment) => segment.length > 0);
+  if (segments.length !== 3) return false;
+
+  const header = decodeJwtSegment(segments[0]);
+  if (header === null || typeof readUntrustedOwnDataProperty(header, "alg") !== "string") {
+    return false;
+  }
+
+  const payload = decodeJwtSegment(segments[1]);
+  if (payload === null) return false;
+  const userId = readUntrustedOwnDataProperty(payload, "userId");
+  return typeof userId === "string" && userId.length > 0;
 }
 
 function buildEnvironmentReadinessProbes(

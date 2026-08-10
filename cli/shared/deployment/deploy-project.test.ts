@@ -700,6 +700,66 @@ describe("environment URL readiness", () => {
     }]);
   });
 
+  it("does not send an opaque credential that merely contains dots", async () => {
+    const requests: Array<{ url: string; cookie: string | null }> = [];
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requests.push({ url: request.url, cookie: request.headers.get("cookie") });
+        return Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://veryfront.com/sign-in" },
+          }),
+        );
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          protected: true,
+          // Three non-empty segments, but no decodable JWT payload behind them.
+          apiToken: "opaque.segment.value",
+        }),
+    );
+
+    assertEquals(requests, [{
+      url: "https://my-project.production.veryfront.com/",
+      cookie: null,
+    }]);
+  });
+
+  it("does not send a JWT-shaped credential whose payload carries no userId", async () => {
+    const requests: Array<{ url: string; cookie: string | null }> = [];
+    // {"alg":"HS256"} . {"sub":"u_1"} . sig — decodes cleanly, but the gate
+    // reads userId, so this could never resolve to a member.
+    const withoutUserId = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1XzEifQ.test-signature";
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requests.push({ url: request.url, cookie: request.headers.get("cookie") });
+        return Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://veryfront.com/sign-in" },
+          }),
+        );
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          protected: true,
+          apiToken: withoutUserId,
+        }),
+    );
+
+    assertEquals(requests, [{
+      url: "https://my-project.production.veryfront.com/",
+      cookie: null,
+    }]);
+  });
+
   it("treats a sign-in redirect as ready when the credential is an API key", async () => {
     // The deployment is already committed by the time this probe runs. A
     // redirect proves routing resolves and the gate is serving the
