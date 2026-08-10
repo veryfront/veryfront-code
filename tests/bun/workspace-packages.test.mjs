@@ -61,9 +61,12 @@ function runWorkspacePreparationChild() {
       process.exit(1);
     }
   `;
+  const evalArgs = typeof globalThis.Deno === "undefined"
+    ? ["--input-type=module", "-e", source]
+    : ["eval", "--ext=mts", source];
 
   return new Promise((resolvePromise) => {
-    const child = spawn(process.execPath, ["--input-type=module", "-e", source], {
+    const child = spawn(process.execPath, evalArgs, {
       env: {
         ...process.env,
         VF_BUN_WORKSPACE_HOLD_MS: "500",
