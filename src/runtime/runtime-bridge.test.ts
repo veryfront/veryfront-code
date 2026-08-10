@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { VeryfrontError } from "#veryfront/errors";
-import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { metricsManager } from "#veryfront/observability/metrics/index.ts";
 import { type AgentRunEvent, runWithRunEventSink } from "../agent/index.ts";
 import { runWithMandatoryRunEventSink } from "./run-event-sink-context.ts";
 import { generateText, streamText } from "./runtime-bridge.ts";
@@ -12,7 +12,7 @@ import {
 } from "./runtime-bridge.test-helpers.ts";
 
 describe("runtime-bridge", () => {
-  it("rejects non-cloneable model context with a stable registered error", async () => {
+  it("skips non-cloneable model context without failing model dispatch", async () => {
     const sensitiveValue = "CUSTOMER_SECRET_123";
     for (
       const testCase of [
@@ -47,41 +47,26 @@ describe("runtime-bridge", () => {
       const model = createGenerateModel("test", `test/${testCase.name}`, async () => {
         dispatches += 1;
         return {
-          content: [{ type: "text", text: "must not dispatch" }],
+          content: [{ type: "text", text: "dispatched" }],
           finishReason: "stop",
           usage: {},
         };
       });
 
-      const error = await assertRejects(async () =>
-        await runWithRunEventSink(
-          () => {
-            sinkCalls += 1;
-          },
-          () =>
-            generateText({
-              model,
-              messages: testCase.messages,
-              tools: testCase.tools as never,
-            }),
-        )
+      const result = await runWithRunEventSink(
+        () => {
+          sinkCalls += 1;
+        },
+        () =>
+          generateText({
+            model,
+            messages: testCase.messages,
+            tools: testCase.tools as never,
+          }),
       );
-
-      assertInstanceOf(error, VeryfrontError);
-      assertEquals(error.slug, "durable-run-event-persistence-failed");
-      assertEquals(
-        error.message,
-        "Model call context contains data that cannot be persisted safely",
-      );
-      assertEquals(error.cause, undefined);
-      assertEquals(
-        JSON.stringify(error, Object.getOwnPropertyNames(error)).includes(
-          sensitiveValue,
-        ),
-        false,
-      );
+      assertEquals(result.text, "dispatched");
       assertEquals(sinkCalls, 0);
-      assertEquals(dispatches, 0);
+      assertEquals(dispatches, 1);
     }
   });
 
@@ -409,6 +394,78 @@ describe("runtime-bridge", () => {
     );
 
     assertEquals(order, ["mandatory", "public", "dispatch"]);
+  });
+
+  it("delivers a successful sink clone and sanitizes another clone failure", async () => {
+    const sensitiveFailureClass = "CUSTOMER_SECRET_FAILURE_CLASS";
+    const cloneError = new Error("clone failed");
+    cloneError.name = sensitiveFailureClass;
+    let cloneReads = 0;
+    const statefulInput = {};
+    Object.defineProperty(statefulInput, "value", {
+      enumerable: true,
+      get() {
+        cloneReads += 1;
+        if (cloneReads === 1) throw cloneError;
+        return "safe";
+      },
+    });
+
+    const recorder = metricsManager.getRecorder();
+    const originalRecordError = recorder?.recordError;
+    const failureClasses: string[] = [];
+    if (recorder) {
+      recorder.recordError = (attributes) => {
+        if (
+          attributes?.slug === "model-call-context-clone-failed" &&
+          typeof attributes.failure_class === "string"
+        ) {
+          failureClasses.push(attributes.failure_class);
+        }
+      };
+    }
+
+    let mandatoryCalls = 0;
+    let publicEvent: AgentRunEvent | undefined;
+    let dispatches = 0;
+    const model = createGenerateModel("test", "test/partial-clone", async () => {
+      dispatches += 1;
+      return { content: [], finishReason: "stop", usage: {} };
+    });
+
+    try {
+      await runWithMandatoryRunEventSink(
+        () => {
+          mandatoryCalls += 1;
+        },
+        () =>
+          runWithRunEventSink(
+            (event) => {
+              publicEvent = event;
+            },
+            () =>
+              generateText({
+                model,
+                messages: [{
+                  role: "assistant",
+                  content: [{
+                    type: "tool-call",
+                    toolCallId: "call-1",
+                    toolName: "stateful",
+                    input: statefulInput,
+                  }],
+                }, { role: "user", content: "Continue" }],
+              }),
+          ),
+      );
+    } finally {
+      if (recorder && originalRecordError) recorder.recordError = originalRecordError;
+    }
+
+    assertEquals(mandatoryCalls, 0);
+    assertEquals(publicEvent?.type, "AGENT_RUN_MODEL_CALL_CONTEXT");
+    assertEquals(dispatches, 1);
+    assertEquals(failureClasses, ["unknown"]);
   });
 
   it("calls a sink shared by both lanes only once", async () => {
