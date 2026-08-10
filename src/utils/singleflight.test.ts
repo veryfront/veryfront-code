@@ -138,10 +138,15 @@ describe("Singleflight", () => {
 
     assertEquals(sf.forget("key"), true);
     assertEquals(sf.forget("key"), false);
-    assertEquals(await sf.do("key", () => Promise.resolve(2)), 2);
+    const replacementResult = Promise.withResolvers<number>();
+    const replacement = sf.do("key", () => replacementResult.promise);
 
     staleResult.resolve(1);
     assertEquals(await stale, 1);
+    assertEquals(sf.size, 1);
+
+    replacementResult.resolve(2);
+    assertEquals(await replacement, 2);
     assertEquals(sf.size, 0);
   });
 
