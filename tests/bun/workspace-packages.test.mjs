@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { prepareBunWorkspacePackages } from "./workspace-packages.mjs";
@@ -11,7 +20,10 @@ import { prepareBunWorkspacePackages } from "./workspace-packages.mjs";
 const projectRoot = fileURLToPath(new URL("../..", import.meta.url));
 const workspacePackagesModuleUrl = new URL("./workspace-packages.mjs", import.meta.url).href;
 const PREPARATION_ACTIVE_EXIT_CODE = 17;
+const PREPARATION_PUBLISH_INTERRUPTED_EXIT_CODE = 18;
+const LOCK_STAGING_PREFIX = ".veryfront-bun-workspace-packages.lock.staging-";
 const RECLAIMER_GUARD_PREFIX = ".veryfront-bun-workspace-packages.reclaiming-";
+const RECLAIM_BARRIER_PREFIX = ".veryfront-bun-workspace-packages.barrier-";
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
@@ -43,7 +55,7 @@ function writeStaleLock(lockPath, token = "stale") {
   writeOwnedLockMarker(lockPath, token);
 }
 
-function runWorkspacePreparationChild() {
+function runWorkspacePreparationChild(extraEnv = {}) {
   const source = `
     import { setTimeout } from "node:timers/promises";
     import { prepareBunWorkspacePackages } from ${JSON.stringify(workspacePackagesModuleUrl)};
@@ -70,7 +82,7 @@ function runWorkspacePreparationChild() {
       env: {
         ...process.env,
         VF_BUN_WORKSPACE_HOLD_MS: "500",
-        VF_BUN_WORKSPACE_RECLAIM_PAUSE_MS: "100",
+        ...extraEnv,
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -93,6 +105,33 @@ function runWorkspacePreparationChild() {
       });
     });
   });
+}
+
+function stagingLockPaths() {
+  const nodeModulesPath = join(projectRoot, "node_modules");
+  return readdirSync(nodeModulesPath)
+    .filter((name) => name.startsWith(LOCK_STAGING_PREFIX))
+    .map((name) => join(nodeModulesPath, name));
+}
+
+async function waitForReclaimerArrivals(barrierPath, expectedCount) {
+  const deadline = Date.now() + 10_000;
+  while (
+    readdirSync(barrierPath).filter((name) => name.startsWith("ready-")).length < expectedCount
+  ) {
+    if (Date.now() >= deadline) {
+      throw new Error("Timed out waiting for Bun workspace reclaimers");
+    }
+    await delay(10);
+  }
+}
+
+function releaseReclaimers(barrierPath) {
+  try {
+    writeFileSync(join(barrierPath, "release"), "release\n", { flag: "wx" });
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+  }
 }
 
 test("prepareBunWorkspacePackages derives native packages from every workspace export", () => {
@@ -193,6 +232,33 @@ test("workspace package preparation rejects an overlapping run without disturbin
   assert.equal(existsSync(rootPackagePath), false);
 });
 
+test("workspace package preparation survives interrupted lock publication", async () => {
+  const lockPath = staleLockPath();
+  rmSync(lockPath, { recursive: true, force: true });
+  for (const path of stagingLockPaths()) {
+    rmSync(path, { recursive: true, force: true });
+  }
+
+  try {
+    const result = await runWorkspacePreparationChild({
+      VF_BUN_WORKSPACE_HOLD_MS: "0",
+      VF_BUN_WORKSPACE_INTERRUPT_BEFORE_LOCK_PUBLISH: "1",
+    });
+
+    assert.equal(result.code, PREPARATION_PUBLISH_INTERRUPTED_EXIT_CODE);
+    assert.equal(existsSync(lockPath), false);
+    assert.equal(stagingLockPaths().length, 1);
+
+    const prepared = prepareBunWorkspacePackages(projectRoot);
+    prepared.cleanup();
+  } finally {
+    rmSync(lockPath, { recursive: true, force: true });
+    for (const path of stagingLockPaths()) {
+      rmSync(path, { recursive: true, force: true });
+    }
+  }
+});
+
 test("workspace package preparation reclaims a stale lock with a dead owner", () => {
   const lockPath = staleLockPath();
   const staleToken = "single-stale-generation";
@@ -220,14 +286,27 @@ test("workspace package preparation serializes concurrent stale-lock reclaimers"
   const lockPath = staleLockPath();
   const staleToken = "raced-stale-generation";
   const guardPath = reclaimerGuardPath(staleToken);
+  const barrierPath = join(
+    projectRoot,
+    "node_modules",
+    `${RECLAIM_BARRIER_PREFIX}${randomUUID()}`,
+  );
   rmSync(guardPath, { recursive: true, force: true });
+  mkdirSync(barrierPath, { recursive: true });
   writeStaleLock(lockPath, staleToken);
+  const children = [
+    runWorkspacePreparationChild({
+      VF_BUN_WORKSPACE_RECLAIM_BARRIER_PATH: barrierPath,
+    }),
+    runWorkspacePreparationChild({
+      VF_BUN_WORKSPACE_RECLAIM_BARRIER_PATH: barrierPath,
+    }),
+  ];
 
   try {
-    const results = await Promise.all([
-      runWorkspacePreparationChild(),
-      runWorkspacePreparationChild(),
-    ]);
+    await waitForReclaimerArrivals(barrierPath, children.length);
+    releaseReclaimers(barrierPath);
+    const results = await Promise.all(children);
     const exitCodes = results.map((result) => result.code).sort((a, b) => a - b);
 
     assert.deepEqual(
@@ -242,8 +321,11 @@ test("workspace package preparation serializes concurrent stale-lock reclaimers"
       false,
     );
   } finally {
+    releaseReclaimers(barrierPath);
+    await Promise.allSettled(children);
     rmSync(lockPath, { recursive: true, force: true });
     rmSync(guardPath, { recursive: true, force: true });
+    rmSync(barrierPath, { recursive: true, force: true });
   }
 });
 

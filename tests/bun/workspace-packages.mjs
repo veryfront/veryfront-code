@@ -24,24 +24,24 @@ function activePreparationError() {
   return new Error("Bun workspace package preparation is already active");
 }
 
-function writeJsonFileAtomically(path, value) {
-  const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  writeFileSync(temporaryPath, `${JSON.stringify(value)}\n`);
-  try {
-    renameSync(temporaryPath, path);
-  } catch (error) {
-    rmSync(temporaryPath, { force: true });
-    throw error;
-  }
-}
-
-function pauseForReclaimRaceTest() {
-  const raw = process.env.VF_BUN_WORKSPACE_RECLAIM_PAUSE_MS;
-  if (!raw) return;
-  const pauseMs = Number(raw);
-  if (!Number.isFinite(pauseMs) || pauseMs <= 0) return;
+function waitForReclaimRaceTestBarrier() {
+  const barrierPath = process.env.VF_BUN_WORKSPACE_RECLAIM_BARRIER_PATH;
+  if (!barrierPath) return;
+  mkdirSync(barrierPath, { recursive: true });
+  writeFileSync(
+    join(barrierPath, `ready-${process.pid}-${randomUUID()}`),
+    "ready\n",
+    { flag: "wx" },
+  );
+  const releasePath = join(barrierPath, "release");
+  const deadline = Date.now() + 10_000;
   const signal = new Int32Array(new SharedArrayBuffer(4));
-  Atomics.wait(signal, 0, 0, Math.floor(pauseMs));
+  while (!existsSync(releasePath)) {
+    if (Date.now() >= deadline) {
+      throw new Error("Timed out waiting for the Bun workspace reclaim barrier");
+    }
+    Atomics.wait(signal, 0, 0, 10);
+  }
 }
 
 function reclaimerGuardPath(nodeModulesPath, token) {
@@ -49,22 +49,35 @@ function reclaimerGuardPath(nodeModulesPath, token) {
   return join(nodeModulesPath, `${RECLAIMER_GUARD_PREFIX}${digest}`);
 }
 
-function writePreparationLockMarker(lockPath, token) {
+function createPreparationLock(nodeModulesPath, lockPath, token) {
+  const stagingPath = join(
+    nodeModulesPath,
+    `${LOCK_NAME}.staging-${process.pid}-${token}`,
+  );
   try {
-    writeJsonFileAtomically(join(lockPath, MARKER_NAME), {
-      owner: LOCK_OWNER,
-      pid: process.pid,
-      token,
-    });
+    mkdirSync(stagingPath);
+    writeFileSync(
+      join(stagingPath, MARKER_NAME),
+      `${JSON.stringify({ owner: LOCK_OWNER, pid: process.pid, token })}\n`,
+    );
+    if (process.env.VF_BUN_WORKSPACE_INTERRUPT_BEFORE_LOCK_PUBLISH === "1") {
+      process.exit(18);
+    }
+    if (existsSync(lockPath)) {
+      const conflict = new Error("Bun workspace package lock already exists");
+      conflict.code = "EEXIST";
+      throw conflict;
+    }
+    renameSync(stagingPath, lockPath);
   } catch (error) {
-    rmSync(lockPath, { recursive: true, force: true });
+    rmSync(stagingPath, { recursive: true, force: true });
     throw error;
   }
 }
 
-function createPreparationLock(lockPath, token) {
-  mkdirSync(lockPath);
-  writePreparationLockMarker(lockPath, token);
+function isLockPathConflict(error, lockPath) {
+  return existsSync(lockPath) &&
+    ["EACCES", "EEXIST", "ENOTEMPTY", "EPERM"].includes(error?.code);
 }
 
 function acquirePreparationLock(nodeModulesPath) {
@@ -73,9 +86,9 @@ function acquirePreparationLock(nodeModulesPath) {
   const token = randomUUID();
   let reclaimedGuardPath;
   try {
-    createPreparationLock(lockPath, token);
+    createPreparationLock(nodeModulesPath, lockPath, token);
   } catch (error) {
-    if (error?.code === "EEXIST") {
+    if (isLockPathConflict(error, lockPath)) {
       reclaimedGuardPath = reclaimStalePreparationLock(
         nodeModulesPath,
         lockPath,
@@ -84,9 +97,9 @@ function acquirePreparationLock(nodeModulesPath) {
         throw activePreparationError();
       }
       try {
-        createPreparationLock(lockPath, token);
+        createPreparationLock(nodeModulesPath, lockPath, token);
       } catch (retryError) {
-        if (retryError?.code === "EEXIST") {
+        if (isLockPathConflict(retryError, lockPath)) {
           // This generation tombstone must remain permanent. Otherwise an
           // arbitrarily delayed stale-generation reader could reuse it after a
           // fresh runner acquires lockPath and move that fresh live lock.
@@ -136,7 +149,7 @@ function reclaimStalePreparationLock(
     return false;
   } catch (error) {
     if (error?.code !== "ESRCH") return false;
-    pauseForReclaimRaceTest();
+    waitForReclaimRaceTestBarrier();
     const guardPath = reclaimerGuardPath(nodeModulesPath, marker.token);
     try {
       renameSync(lockPath, guardPath);

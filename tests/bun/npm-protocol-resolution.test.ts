@@ -59,6 +59,8 @@ describe("Bun npm protocol resolution", () => {
       const testPath of [
         "/repo/tests/bun/npm-protocol-resolution.test.ts",
         String.raw`C:\repo\tests\bun\npm-protocol-resolution.test.ts`,
+        "/repo/extensions/fixtures/npm-protocol-resolution.test.ts",
+        String.raw`C:\repo\extensions\fixtures\npm-protocol-resolution.test.ts`,
       ]
     ) {
       assertEquals(bunPreloadRewriteFilter.test(testPath), true);
