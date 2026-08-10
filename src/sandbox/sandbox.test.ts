@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert";
 import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import {
-  clearSandboxEnv,
   type FetchCall,
   headerValue,
   installMockFetch,
@@ -13,6 +12,7 @@ import {
   mockTimers,
   ndjsonResponse,
   restoreTimers,
+  SANDBOX_ENV_KEYS,
   textResponse,
 } from "./sandbox.test-helpers.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
@@ -27,6 +27,10 @@ import { logger } from "#veryfront/utils";
 const originalFetch = globalThis.fetch;
 let fetchCalls: FetchCall[] = [];
 let fetchResponses: MockResponseEntry[] = [];
+
+function clearSandboxEnvironment(): void {
+  for (const key of SANDBOX_ENV_KEYS) deleteEnv(key);
+}
 
 function mockFetch(responses: MockResponseEntry[]) {
   fetchResponses = [...responses];
@@ -57,6 +61,7 @@ async function countTextDecoderFlushes(action: () => Promise<void>): Promise<num
 
 describe("Sandbox", () => {
   beforeEach(() => {
+    clearSandboxEnvironment();
     fetchCalls = [];
     fetchResponses = [];
   });
@@ -64,7 +69,7 @@ describe("Sandbox", () => {
   afterEach(() => {
     restoreTimers();
     globalThis.fetch = originalFetch;
-    clearSandboxEnv();
+    clearSandboxEnvironment();
   });
 
   describe("create()", () => {

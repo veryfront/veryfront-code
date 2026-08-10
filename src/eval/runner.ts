@@ -3,6 +3,7 @@ import { isEvalDefinition } from "./factory.ts";
 import { createEvalDatasetMetadata, createEvalReport } from "./report.ts";
 import { createEvalRunId } from "./run-id.ts";
 import { metrics as runtimeMetrics } from "#veryfront/metrics";
+import { cwd } from "#veryfront/platform/compat/process.ts";
 import {
   createEvalReportExporterRegistry,
   type EvalReportExportContext,
@@ -594,7 +595,7 @@ export async function runEval(
   const runId = options.runId === undefined
     ? createEvalRunId(startedAt)
     : normalizeEvalString(options.runId, "Eval run id");
-  const baseDir = options.baseDir ?? Deno.cwd();
+  const baseDir = options.baseDir ?? cwd();
   const loadedExamples = await definition.dataset.load({ baseDir });
   const examples = normalizeEvalExamples(
     loadedExamples,

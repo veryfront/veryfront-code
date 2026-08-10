@@ -1,16 +1,15 @@
 import { readFileSync, statSync } from "node:fs";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { flattenTsconfigPaths, resolveTsconfigPath } from "../../scripts/lint/tsconfig-paths.ts";
+import { flattenTsconfigPaths, resolveTsconfigPath } from "./tsconfig-paths.ts";
 
 /**
- * Bun's runtime resolver never hands a bare package specifier to a `--preload`
- * plugin -- `onResolve` is only consulted for relative paths and `#`-prefixed
- * subpath imports. So for every `veryfront/...` specifier in the sources, the
- * only mapping Bun can see is `tsconfig.json`'s `paths`, and it has to agree
- * with the import map Deno reads out of `deno.json`. When the two drift, the
- * Bun suite fails at module load with "Cannot find module", far from the edit
- * that caused it.
+ * Bun resolves root project aliases through `tsconfig.json`. The Bun preload
+ * deliberately leaves `veryfront/*` and `#veryfront/*` to that native resolver
+ * because intercepting repeated dynamic aliases can leave an import pending.
+ * These paths therefore have to agree with the import map Deno reads out of
+ * `deno.json`. When the two drift, the Bun suite fails at module load with
+ * "Cannot find module", far from the edit that caused it.
  */
 
 type PathsMap = Record<string, string[]>;
@@ -26,10 +25,10 @@ function readRepoJson(name: string): Record<string, unknown> {
 const denoImports = readRepoJson("deno.json").imports as
   | Record<string, string>
   | undefined;
-const tsconfigPaths =
+const tsconfigPaths = flattenTsconfigPaths(
   ((readRepoJson("tsconfig.json").compilerOptions as { paths?: PathsMap } | undefined)
-    ?.paths ?? {}) as PathsMap;
-const flattenedTsconfigPaths = flattenTsconfigPaths(tsconfigPaths);
+    ?.paths ?? {}) as PathsMap,
+);
 
 /** Collapses the extensionless and directory forms a resolver would accept. */
 function toExistingFile(target: string): string | null {
@@ -50,29 +49,30 @@ function toExistingFile(target: string): string | null {
   return null;
 }
 
-const bareVeryfrontImports = Object.entries(denoImports ?? {}).filter(
+const localVeryfrontImports = Object.entries(denoImports ?? {}).filter(
   ([specifier, target]) =>
-    (specifier === "veryfront" || specifier.startsWith("veryfront/")) &&
+    (specifier === "veryfront" || specifier.startsWith("veryfront/") ||
+      specifier === "#veryfront" || specifier.startsWith("#veryfront/")) &&
     typeof target === "string" && target.startsWith("./"),
 );
 
 describe("config/tsconfig-paths-parity", () => {
-  it("has bare veryfront specifiers to check", () => {
+  it("has local Veryfront specifiers to check", () => {
     assert(
-      bareVeryfrontImports.length > 50,
-      `expected deno.json to map many veryfront/* specifiers, found ${bareVeryfrontImports.length}`,
+      localVeryfrontImports.length > 50,
+      `expected deno.json to map many Veryfront specifiers, found ${localVeryfrontImports.length}`,
     );
   });
 
-  it("resolves every bare veryfront specifier to the file deno.json names", () => {
+  it("resolves every local Veryfront specifier to the file deno.json names", () => {
     const drifted: string[] = [];
-    for (const [specifier, denoTarget] of bareVeryfrontImports) {
+    for (const [specifier, denoTarget] of localVeryfrontImports) {
       const expected = toExistingFile(denoTarget);
       if (expected === null) {
         drifted.push(`${specifier}: deno.json points at missing ${denoTarget}`);
         continue;
       }
-      const viaPaths = resolveTsconfigPath(flattenedTsconfigPaths, specifier);
+      const viaPaths = resolveTsconfigPath(tsconfigPaths, specifier);
       if (viaPaths === null) {
         drifted.push(`${specifier}: no tsconfig paths entry`);
         continue;

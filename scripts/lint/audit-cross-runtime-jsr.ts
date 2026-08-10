@@ -5,7 +5,7 @@
  * Deno is the primary runtime, but `src/` is also executed by the Node and Bun
  * test runners (`deno task test:node`, `deno task test:bun`). Neither of those
  * runtimes understands JSR. They only work because a std specifier is rewritten
- * to a LOCAL compat shim under `src/platform/compat/std/` — and each runtime
+ * to a LOCAL compat shim under `src/platform/compat/std/`, and each runtime
  * does that rewriting through a DIFFERENT config file:
  *
  *   - Node reads `deno.json` `imports` through `tests/node/resolver-hooks.mjs`,
@@ -25,16 +25,16 @@
  *
  * Two rules:
  *
- * 1. HARD — a cross-runtime file may never import a `jsr:` specifier directly.
+ * 1. HARD: a cross-runtime file may never import a `jsr:` specifier directly.
  *    Bun has no `jsr:` protocol; `tsconfig.json` `paths` has no `jsr:` key; and
  *    the alias plugin in `tests/bun/preload.ts` filters on
  *    `/^(#deno-config|@std\/|#std\/|std\/|#veryfront...)/`, which cannot match
- *    a `jsr:` specifier. Node happens to cope — `resolveJsrStdSpecifier` in
- *    resolver-hooks.mjs intercepts `jsr:@std/*` — which is exactly why "the
+ *    a `jsr:` specifier. Node happens to cope because `resolveJsrStdSpecifier` in
+ *    resolver-hooks.mjs intercepts `jsr:@std/*`. This is exactly why "the
  *    equivalent `#std/` alias is shimmed" and "it resolves on Node" are both
  *    worthless as exemptions. Import the `#std/...` alias instead.
  *
- * 2. RATCHET — a std specifier that is not shimmed on both runtimes is recorded
+ * 2. RATCHET: a std specifier that is not shimmed on both runtimes is recorded
  *    in `UNSHIMMED_STD_BASELINE` with the number of cross-runtime files that
  *    depend on it. Both the set of such specifiers and the per-specifier
  *    dependent count may only shrink. Gating the dependent count and not just
@@ -42,15 +42,20 @@
  *    already-baselined broken specifier adds a new broken Node/Bun test, and a
  *    set-only ratchet would stay green through it.
  *
- * Requiring both runtimes is what keeps "shimmed" honest — the two resolvers
+ * Requiring both runtimes is what keeps "shimmed" honest. The two resolvers
  * are not equivalent. Node retries the lookup with a `.ts` suffix and falls
  * back to a `./src/platform/compat/std/<subpath>.ts` convention, so dropping a
  * shim file in is enough for Node; Bun does neither and needs an exact
  * `tsconfig.json` `paths` key. This audit holds to the stricter of the two.
  */
 
+import {
+  flattenTsconfigPaths,
+  resolveTsconfigPath,
+} from "#veryfront/config/tsconfig-paths.ts";
 import { extractImports } from "./check-module-boundaries.ts";
-import { flattenTsconfigPaths, resolveTsconfigPath } from "./tsconfig-paths.ts";
+
+export { flattenTsconfigPaths, resolveTsconfigPath };
 
 /**
  * Roots that Node and Bun execute. Mirrors the runner globs: `test:node` runs
@@ -63,7 +68,7 @@ export const CROSS_RUNTIME_ROOTS = ["src"] as const;
  * cross-runtime files importing them at runtime. Every entry is a Node/Bun
  * breakage waiting to be triggered.
  *
- * Only ever lower these numbers — by shimming the specifier (a file under
+ * Only ever lower these numbers by shimming the specifier (a file under
  * `src/platform/compat/std/`, a local `deno.json` "imports" entry, AND a
  * matching `tsconfig.json` "paths" entry), or by dropping the import. The lint
  * prints the exact edit when a number moves.
@@ -71,9 +76,7 @@ export const CROSS_RUNTIME_ROOTS = ["src"] as const;
 export const UNSHIMMED_STD_BASELINE: Readonly<Record<string, number>> = {
   "#std/fs/walk": 1,
   "#std/testing/mock": 2,
-  "#std/testing/time": 27,
   "@std/fs/walk": 1,
-  "@std/yaml/parse": 4,
 };
 
 const NODE_RESOLVER_PATH = "tests/node/resolver-hooks.mjs";
@@ -113,7 +116,7 @@ export interface CrossRuntimeImport {
 }
 
 export interface CrossRuntimeAudit {
-  /** Direct `jsr:` imports — unresolvable on Bun, no exemption. */
+  /** Direct `jsr:` imports are unresolvable on Bun, with no exemption. */
   readonly directJsrImports: readonly CrossRuntimeImport[];
   /** Unshimmed std specifier -> sorted unique files importing it. */
   readonly unshimmedDependents: ReadonlyMap<string, readonly string[]>;
@@ -139,7 +142,7 @@ export interface BaselineComparison {
   readonly grown: readonly GrownEntry[];
   /** Baselined specifiers that lost dependents but still have some. */
   readonly shrunk: readonly ShrunkEntry[];
-  /** Baselined specifiers that now resolve on BOTH runtimes — a shim landed. */
+  /** Baselined specifiers that now resolve on BOTH runtimes because a shim landed. */
   readonly staleShimmed: readonly string[];
   /** Baselined specifiers still unshimmed but no longer imported anywhere. */
   readonly staleUnused: readonly string[];
@@ -303,7 +306,7 @@ export function resolvesOnBun(
   if (specifier.startsWith("jsr:")) return false;
 
   // tsconfig `paths` is the only mechanism that reaches Bun for a std
-  // specifier — the preload plugin is provably never consulted for one, and
+  // specifier. The preload plugin is provably never consulted for one, and
   // Bun does not read deno.json. No `@std/` -> `#std/` normalisation either:
   // tsconfig lists both spellings explicitly, precisely because there is none.
   const target = resolveTsconfigPath(context.tsconfigPaths, specifier);
@@ -317,7 +320,7 @@ export function resolvesOnBun(
   );
 }
 
-/** Shimmed means BOTH runtimes resolve it — the stricter of the two wins. */
+/** Shimmed means BOTH runtimes resolve it, so the stricter of the two wins. */
 export function isShimmedEverywhere(
   specifier: string,
   context: RuntimeResolutionContext,
@@ -367,8 +370,8 @@ export function auditCrossRuntimeImports(
 
 /**
  * Compare the live unshimmed set against the baseline. A baselined specifier
- * can leave the set for two very different reasons — a shim landed, or nothing
- * imports it any more — and the two need different follow-up edits, so they
+ * can leave the set for two very different reasons: a shim landed, or nothing
+ * imports it any more. The two need different follow-up edits, so they
  * are reported separately rather than collapsed into one "stale" bucket.
  */
 export function compareAgainstBaseline(
@@ -419,8 +422,15 @@ export function compareAgainstBaseline(
   return { newSpecifiers, grown, shrunk, staleShimmed, staleUnused };
 }
 
-export function hasFailures(comparison: BaselineComparison): boolean {
+function hasRegressions(comparison: BaselineComparison): boolean {
   return comparison.newSpecifiers.length > 0 || comparison.grown.length > 0;
+}
+
+export function hasFailures(comparison: BaselineComparison): boolean {
+  return hasRegressions(comparison) ||
+    comparison.shrunk.length > 0 ||
+    comparison.staleShimmed.length > 0 ||
+    comparison.staleUnused.length > 0;
 }
 
 async function collectCrossRuntimeFiles(
@@ -457,7 +467,6 @@ function fileExistsOnDisk(path: string): boolean {
   }
 }
 
-/** Flatten tsconfig `paths` (arrays of candidates) to the first candidate. */
 async function loadContext(): Promise<RuntimeResolutionContext> {
   const config = JSON.parse(await Deno.readTextFile(DENO_CONFIG_PATH)) as {
     imports?: Record<string, unknown>;
@@ -582,14 +591,14 @@ function reportBaselineFailures(
         `Now imported by: ${files}`,
     );
   }
-  if (!hasFailures(comparison)) return;
+  if (!hasRegressions(comparison)) return;
   console.error(
     `  These specifiers resolve on Deno but not on every runtime, so each ` +
       `dependent file is a broken \`deno task test:node\` / \`test:bun\` run. ` +
       `To shim one, all three of these must line up:\n` +
       `    1. a local file under src/platform/compat/std/\n` +
       `    2. a ${DENO_CONFIG_PATH} "imports" entry with a "./" target (Deno + Node)\n` +
-      `    3. a ${TSCONFIG_PATH} "paths" entry with the SAME key (Bun — it reads ` +
+      `    3. a ${TSCONFIG_PATH} "paths" entry with the SAME key (Bun reads ` +
       `neither ${DENO_CONFIG_PATH} nor ${BUN_PRELOAD_PATH} for std specifiers, ` +
       `and does no "@std/" -> "#std/" or ".ts" fallback, so map every spelling ` +
       `you import)\n` +
@@ -601,7 +610,7 @@ function reportBaselineFailures(
 function reportImprovements(comparison: BaselineComparison): void {
   for (const specifier of comparison.staleShimmed) {
     console.log(
-      `"${specifier}" now resolves on both Node and Bun — a local shim landed. ` +
+      `"${specifier}" now resolves on both Node and Bun because a local shim landed. ` +
         `Delete its UNSHIMMED_STD_BASELINE entry in audit-cross-runtime-jsr.ts.`,
     );
   }
@@ -651,11 +660,10 @@ async function main(): Promise<void> {
 
   reportDirectJsrImports(audit);
   reportBaselineFailures(comparison, audit, context);
+  reportImprovements(comparison);
   if (audit.directJsrImports.length > 0 || hasFailures(comparison)) {
     Deno.exit(1);
   }
-
-  reportImprovements(comparison);
 
   const total = [...audit.unshimmedDependents.values()].reduce(
     (sum, files) => sum + files.length,

@@ -20,7 +20,7 @@ const workspacePackageMap = {};
 const workspacePackagePatterns = [];
 // Deno applies a workspace member's own `imports` to the modules inside that
 // member's directory; the root import map does not contain them. `react/` is
-// the case that matters here — its wrappers import `@veryfront/react-*-upstream`,
+// the case that matters here: its wrappers import `@veryfront/react-*-upstream`,
 // which exists only in `react/deno.json`. These scopes are derived from the
 // member configs this loader already reads, so a new member entry needs no
 // edit here.
@@ -105,14 +105,14 @@ function registerWorkspaceImports(config, workspaceDir) {
   workspaceImportScopes.push({ dir: workspaceDir, imports: scoped });
 }
 
-function registerWorkspacePackage(workspaceEntry) {
+function registerWorkspacePackage(workspaceEntry, registerImportScope = true) {
   if (typeof workspaceEntry !== "string") return;
   const workspaceDir = pathResolve(projectRoot, workspaceEntry);
   try {
     const config = JSON.parse(readFileSync(pathResolve(workspaceDir, "deno.json"), "utf-8"));
     // Registered before the `name`/`exports` guards below: a member can carry
     // imports without publishing exports.
-    registerWorkspaceImports(config, workspaceDir);
+    if (registerImportScope) registerWorkspaceImports(config, workspaceDir);
     if (typeof config.name !== "string" || !config.name) return;
     if (typeof config.exports === "string") {
       registerWorkspaceExport(config.name, ".", config.exports, workspaceDir);
@@ -136,6 +136,7 @@ try {
   for (const [key, value] of Object.entries(denoJson.imports || {})) {
     if (typeof value === "string") importMap[key] = value;
   }
+  registerWorkspacePackage(".", false);
   for (const workspaceEntry of denoJson.workspace || []) {
     registerWorkspacePackage(workspaceEntry);
   }
@@ -198,14 +199,16 @@ function resolveFromImportMap(specifier) {
  * import map applies only where Deno would apply it. The deepest match wins
  * when members nest.
  */
-export function findWorkspaceImportScope(parentPath) {
+export function findWorkspaceImportScope(parentPath, pathSeparator = sep) {
   if (!parentPath) return null;
   let best = null;
   for (const scope of workspaceImportScopes) {
     // `sep`, not a literal "/": both sides come from pathResolve/fileURLToPath,
     // so on Windows they are backslash-separated and a hard-coded slash matches
     // nothing -- every member scope would silently fail to apply.
-    if (parentPath !== scope.dir && !parentPath.startsWith(`${scope.dir}${sep}`)) continue;
+    if (
+      parentPath !== scope.dir && !parentPath.startsWith(`${scope.dir}${pathSeparator}`)
+    ) continue;
     if (!best || scope.dir.length > best.dir.length) best = scope;
   }
   return best;

@@ -17,7 +17,7 @@ const freeze = Object.freeze;
 const mathCeil = Math.ceil;
 const mathMax = Math.max;
 const monotonicClock = performance;
-const monotonicNow = Performance.prototype.now;
+const monotonicNow = performance.now;
 const scheduleTimeout = setTimeout;
 
 function now(): number {

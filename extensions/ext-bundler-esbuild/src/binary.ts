@@ -125,7 +125,7 @@ export async function ensureEsbuildBinary(): Promise<void> {
 
   setupPromise = (async () => {
     try {
-      if (Deno.env.get("ESBUILD_BINARY_PATH") || !isDenoCompiled) {
+      if (!isDenoCompiled || Deno.env.get("ESBUILD_BINARY_PATH")) {
         setupComplete = true;
         return;
       }

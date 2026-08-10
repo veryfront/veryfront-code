@@ -78,10 +78,23 @@ async function runRegression() {
   };
 }
 
+async function postWorkerMessage(message: unknown): Promise<void> {
+  if (typeof globalThis.postMessage === "function") {
+    globalThis.postMessage(message);
+    return;
+  }
+
+  const { parentPort } = await import("node:worker_threads");
+  if (parentPort === null) {
+    throw new TypeError("Primordial poisoning test worker requires a parent port");
+  }
+  parentPort.postMessage(message);
+}
+
 try {
-  postMessage({ ok: true, result: await runRegression() });
+  await postWorkerMessage({ ok: true, result: await runRegression() });
 } catch (error) {
-  postMessage({
+  await postWorkerMessage({
     ok: false,
     error: error instanceof Error ? (error.stack ?? error.message) : String(error),
   });

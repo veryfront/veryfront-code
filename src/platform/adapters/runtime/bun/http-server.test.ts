@@ -319,7 +319,7 @@ describe("Bun HTTP server lifecycle", () => {
 
       client = new WebSocket(
         `ws://127.0.0.1:${server.addr.port}/_ws`,
-        ["hmr"],
+        ["chat", "hmr"],
       );
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(

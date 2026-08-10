@@ -1,5 +1,5 @@
 /**
- * Parser category barrel — CodeParser (AST traversal), SkillDocumentParser
+ * Parser category barrel: CodeParser (AST traversal), SkillDocumentParser
  * (Skill frontmatter decoding), and YamlParser (general YAML decoding)
  * contracts.
  *

@@ -2,22 +2,23 @@
  * Simplified Bun preload script for import aliasing.
  *
  * This plugin handles:
- * 1. #veryfront/* aliases → ./src/* paths
- * 2. #std/* and @std/* aliases → compat shims
- * 3. npm: protocol stripping (for Deno compat)
+ * 1. #std/* and @std/* aliases → compat shims
+ * 2. npm: protocol stripping (for Deno compat)
+ * 3. extension-local Deno import maps
  * 4. file:// URLs with query params (cache busting)
  */
 
 import { plugin } from "bun";
 import { existsSync, readFileSync, statSync } from "fs";
-import { dirname, extname, resolve } from "path";
+import { dirname, extname, relative, resolve, sep } from "path";
 import { fileURLToPath } from "url";
+import { rewriteModuleSpecifiers, rewriteNpmProtocolImports } from "./npm-protocol-imports.ts";
 
 const projectRoot = resolve(import.meta.dir, "../..");
 
 const denoConfig = JSON.parse(
   readFileSync(resolve(projectRoot, "deno.json"), "utf-8"),
-) as { imports?: Record<string, unknown> };
+) as { imports?: Record<string, unknown>; workspace?: string[] };
 const localProjectImportMap = Object.fromEntries(
   Object.entries(denoConfig.imports ?? {}).filter(
     (entry): entry is [string, string] =>
@@ -51,10 +52,6 @@ const stdImportMap: Record<string, string> = {
   "#std/path.ts": "./src/platform/compat/std/path.ts",
   "#std/path/posix": "./src/platform/compat/std/path.ts",
   "#std/path/posix.ts": "./src/platform/compat/std/path.ts",
-  "#std/yaml": "./src/platform/compat/std/yaml.ts",
-  "#std/yaml.ts": "./src/platform/compat/std/yaml.ts",
-  "#std/yaml/parse": "./src/platform/compat/std/yaml.ts",
-  "#std/yaml/parse.ts": "./src/platform/compat/std/yaml.ts",
 };
 
 const reactImportMap: Record<string, string> = {
@@ -73,6 +70,32 @@ const importMap: Record<string, string> = {
   ...stdImportMap,
   ...reactImportMap,
 };
+
+const workspaceImportMaps = (denoConfig.workspace ?? []).map((directory) => {
+  const root = resolve(projectRoot, directory);
+  const config = JSON.parse(readFileSync(resolve(root, "deno.json"), "utf8")) as {
+    imports?: Record<string, unknown>;
+  };
+  const imports = Object.fromEntries(
+    Object.entries(config.imports ?? {}).filter(
+      (entry): entry is [string, string] =>
+        typeof entry[1] === "string" && entry[1].startsWith("."),
+    ),
+  );
+  return { root, imports };
+});
+
+function workspaceModuleSpecifier(importer: string, specifier: string): string | null {
+  const workspace = workspaceImportMaps.find(({ root }) =>
+    importer === root || importer.startsWith(`${root}${sep}`)
+  );
+  const target = workspace?.imports[specifier];
+  if (!workspace || target === undefined) return null;
+  const path = relative(dirname(importer), resolve(workspace.root, target))
+    .split(sep)
+    .join("/");
+  return path.startsWith(".") ? path : `./${path}`;
+}
 
 function findProjectModule(candidate: string): string | null {
   const fullPath = resolve(projectRoot, candidate.replace(/^\.\//, ""));
@@ -110,24 +133,40 @@ function resolveImport(specifier: string): string | null {
     return findProjectModule(mapped);
   }
 
-  if (specifier === "#veryfront" || specifier === "veryfront") {
-    return findProjectModule("./src/index.ts");
-  }
-
-  if (specifier.startsWith("#veryfront/")) {
-    return findProjectModule(`./src/${specifier.slice("#veryfront/".length)}`);
-  }
-
-  if (specifier.startsWith("veryfront/")) {
-    return findProjectModule(`./src/${specifier.slice("veryfront/".length)}`);
-  }
-
   return null;
 }
 
 plugin({
   name: "veryfront-resolver",
   setup(build) {
+    // Bun 1.3 does not dispatch `npm:` URL imports through onResolve. Rewrite
+    // real test-module imports before Bun resolves them, while the lexer keeps
+    // import-looking fixture strings and comments untouched.
+    build.onLoad(
+      { filter: /(\.test\.[cm]?[jt]sx?|\/extensions\/ext-[^/]+\/src\/.*\.[cm]?[jt]sx?)$/ },
+      (args) => {
+        const source = readFileSync(args.path, "utf8");
+        let contents = args.path.includes(`${sep}extensions${sep}`)
+          ? rewriteModuleSpecifiers(
+            source,
+            (specifier) => workspaceModuleSpecifier(args.path, specifier),
+          ) ?? source
+          : source;
+        if (/\.test\.[cm]?[jt]sx?$/.test(args.path)) {
+          contents = rewriteNpmProtocolImports(contents) ?? contents;
+        }
+        const extension = extname(args.path).toLowerCase();
+        const loader = extension === ".tsx"
+          ? "tsx"
+          : extension === ".jsx"
+          ? "jsx"
+          : extension === ".ts" || extension === ".mts" || extension === ".cts"
+          ? "ts"
+          : "js";
+        return { contents, loader, resolveDir: dirname(args.path) };
+      },
+    );
+
     // Handle file:// URLs with query params (cache busting)
     build.onResolve({ filter: /^file:.*\?.+/ }, (args) => ({
       path: args.path,
@@ -167,7 +206,7 @@ plugin({
 
     build.onResolve({
       filter:
-        /^(#deno-config|@std\/|#std\/|std\/|#veryfront(?:\/|$)|veryfront(?:\/|$)|react(?:$|\/jsx-runtime$|\/jsx-dev-runtime$)|react-dom(?:$|\/client$|\/server$|\/static$))/,
+        /^(#deno-config|@std\/|#std\/|std\/|react(?:$|\/jsx-runtime$|\/jsx-dev-runtime$)|react-dom(?:$|\/client$|\/server$|\/static$))/,
     }, (args) => {
       const resolved = resolveImport(args.path);
       if (resolved) {

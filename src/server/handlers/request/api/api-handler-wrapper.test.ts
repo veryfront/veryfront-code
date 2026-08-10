@@ -52,14 +52,14 @@ describe("ApiHandlerWrapper", () => {
     fs.runWithContext = async (_slug, _token, fn) => await fn();
     const handler = new ApiHandlerWrapper("/tmp/project", ctx.adapter);
     const controller = new AbortController();
+    const request = new Request("http://localhost/review", { signal: controller.signal });
+    // Bun's synthetic Request follower can lose a custom reason after other
+    // network tests, so keep the fixture's cancellation source explicit.
+    Object.defineProperty(request, "signal", { value: controller.signal });
     controller.abort(new Error("request cancelled"));
 
     await assertRejects(
-      () =>
-        handler.handle(
-          new Request("http://localhost/review", { signal: controller.signal }),
-          ctx,
-        ),
+      () => handler.handle(request, ctx),
       Error,
       "request cancelled",
     );
