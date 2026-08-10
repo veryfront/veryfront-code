@@ -22,7 +22,7 @@ describe("ProjectsHandler method policy", () => {
     const cancellationGate = new Promise<void>((resolve) => {
       releaseCancellation = resolve;
     });
-    const request = new Request("http://veryfront.me/_projects", {
+    const init: RequestInit & { duplex: "half" } = {
       method: "POST",
       body: new ReadableStream<Uint8Array>({
         cancel() {
@@ -30,7 +30,9 @@ describe("ProjectsHandler method policy", () => {
           return cancellationGate;
         },
       }),
-    });
+      duplex: "half",
+    };
+    const request = new Request("http://veryfront.me/_projects", init);
     let responseSettled = false;
     const responsePromise = new ProjectsHandler(PROVIDER).handle(request, projectsContext());
     void responsePromise.then(() => {

@@ -265,7 +265,15 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
 
       pipeline.onTeardown(() => {});
 
-      const originalResponse = await fetch("data:text/plain,byob");
+      const originalResponse = new Response(
+        new ReadableStream({
+          type: "bytes",
+          start(controller) {
+            controller.enqueue(encoder.encode("byob"));
+            controller.close();
+          },
+        }),
+      );
       assert(supportsByobReader(originalResponse.body));
 
       const response = await pipeline.handle(

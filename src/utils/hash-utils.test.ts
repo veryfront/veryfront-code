@@ -43,7 +43,7 @@ describe("hash-utils", () => {
         Uint8Array.prototype,
         "byteLength",
       );
-      let hash: string | undefined;
+      let hashPromise: Promise<string> | undefined;
       try {
         Object.defineProperty(Uint8Array.prototype, "length", {
           configurable: true,
@@ -53,7 +53,7 @@ describe("hash-utils", () => {
           configurable: true,
           get: () => 0,
         });
-        hash = await computeHash("typed-array-accessor-regression");
+        hashPromise = computeHash("typed-array-accessor-regression");
       } finally {
         if (lengthDescriptor) {
           Object.defineProperty(Uint8Array.prototype, "length", lengthDescriptor);
@@ -71,7 +71,8 @@ describe("hash-utils", () => {
         }
       }
 
-      assertEquals(hash?.length, 64);
+      const hash = await hashPromise;
+      assertEquals(hash.length, 64);
       assertEquals(hash, await computeHash("typed-array-accessor-regression"));
     });
   });

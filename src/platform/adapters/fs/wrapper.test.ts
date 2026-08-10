@@ -168,7 +168,7 @@ describe("FSAdapterWrapper", () => {
     });
 
     it("isVeryfrontAdapter should return true for MultiProjectFSAdapter", () => {
-      class MultiProjectFSAdapter {
+      const MockMultiProjectFSAdapter = class MultiProjectFSAdapter {
         readFile = () => Promise.resolve("content");
         exists = () => Promise.resolve(true);
         stat = () =>
@@ -179,9 +179,9 @@ describe("FSAdapterWrapper", () => {
             isSymlink: false,
             mtime: new Date(),
           });
-      }
+      };
 
-      const wrapper = new FSAdapterWrapper(new MultiProjectFSAdapter() as FSAdapter);
+      const wrapper = new FSAdapterWrapper(new MockMultiProjectFSAdapter() as FSAdapter);
       assertEquals(wrapper.isVeryfrontAdapter(), true);
     });
   });

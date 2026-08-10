@@ -801,7 +801,7 @@ import {
 
 ### `veryfront/extensions/parser`
 
-Parser category barrel - CodeParser (AST traversal), SkillDocumentParser (Skill frontmatter decoding), and YamlParser (general YAML decoding) contracts.
+Parser category barrel: CodeParser (AST traversal), SkillDocumentParser (Skill frontmatter decoding), and YamlParser (general YAML decoding) contracts.
 
 ```ts
 import {

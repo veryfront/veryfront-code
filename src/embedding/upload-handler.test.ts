@@ -717,10 +717,14 @@ describe("createUploadHandler", () => {
       "file",
       new File(["hello world"], "<>", { type: "text/plain" }),
     );
+    // Bun drops the declared media type when it reparses an extensionless
+    // multipart filename, so keep this sanitizer regression at the formData seam.
+    const request = new Request("http://test/uploads", { method: "POST", body: formData });
+    Object.defineProperty(request, "formData", {
+      value: () => Promise.resolve(formData),
+    });
 
-    const response = await POST(
-      new Request("http://test/uploads", { method: "POST", body: formData }),
-    );
+    const response = await POST(request);
 
     assertEquals(response.status, 200);
     assertEquals(

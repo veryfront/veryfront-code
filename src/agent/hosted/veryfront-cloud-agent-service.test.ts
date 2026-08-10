@@ -1333,10 +1333,15 @@ Deno.test("startNodeVeryfrontCloudAgentService preserves startup error when regi
             },
           }),
         Error,
+        "Node server port must be an integer from 0 to 65535, got -1",
       );
 
       assertStrictEquals(rejected === rollbackError, false);
-      assertEquals(rejected instanceof Error && rejected.message.includes("options.port"), true);
+      assert(rejected instanceof Error);
+      assertEquals(
+        rejected.message,
+        "Node server port must be an integer from 0 to 65535, got -1",
+      );
     } finally {
       globalThis.fetch = originalFetch;
       globalThis.clearInterval = originalClearInterval;

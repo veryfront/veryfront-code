@@ -296,7 +296,7 @@ describe("react/compat/ssr-adapter/string-renderer", () => {
   });
 
   it("enforces the absolute deadline while an always-ready stream starves timers", async () => {
-    let cancelReason: unknown;
+    const cancelled = Promise.withResolvers<unknown>();
     let observed: Error | undefined;
     let thrown: unknown;
     setSSRAdapterTimeoutForTests(1);
@@ -315,7 +315,7 @@ describe("react/compat/ssr-adapter/string-renderer", () => {
             controller.enqueue(new Uint8Array(1024));
           },
           cancel(reason) {
-            cancelReason = reason;
+            cancelled.resolve(reason);
           },
         }) as Awaited<
           ReturnType<NonNullable<ReactDOMServer["renderToReadableStream"]>>
@@ -340,7 +340,7 @@ describe("react/compat/ssr-adapter/string-renderer", () => {
       "SSR timeout",
     );
     assertStrictEquals(observed, thrown as Error);
-    assertStrictEquals(cancelReason, thrown);
+    assertStrictEquals(await cancelled.promise, thrown);
   });
 
   it("cancels and reports the owned failure when buffered output exceeds its limit", async () => {

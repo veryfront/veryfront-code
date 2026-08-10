@@ -459,9 +459,9 @@ describe("transform pipeline cache identity", () => {
     };
 
     let snapshot: ReturnType<typeof snapshotImportMap> | undefined;
-    let fingerprint: string | undefined;
+    let fingerprintPromise: Promise<string> | undefined;
     let pluginIdentity: ReturnType<typeof getCustomPluginCacheIdentity> | undefined;
-    let pipelineIdentity: string | undefined;
+    let pipelineIdentityPromise: Promise<string> | undefined;
     let invalidMapError: unknown;
     let oversizedPluginListError: unknown;
     try {
@@ -515,10 +515,8 @@ describe("transform pipeline cache identity", () => {
       });
 
       snapshot = snapshotImportMap(rawImportMap);
-      [fingerprint, pipelineIdentity] = await Promise.all([
-        fingerprintPipelineImportMap(snapshot),
-        computePipelineConfigIdentity(identityInput()),
-      ]);
+      fingerprintPromise = fingerprintPipelineImportMap(snapshot);
+      pipelineIdentityPromise = computePipelineConfigIdentity(identityInput());
       pluginIdentity = getCustomPluginCacheIdentity([plugin]);
       try {
         snapshotImportMap(null);
@@ -575,6 +573,10 @@ describe("transform pipeline cache identity", () => {
       }
     }
 
+    const [fingerprint, pipelineIdentity] = await Promise.all([
+      fingerprintPromise,
+      pipelineIdentityPromise,
+    ]);
     assertEquals(snapshot?.imports?.package, "https://example.com/package.ts");
     assertEquals(Object.isFrozen(snapshot), true);
     assertEquals(Object.isFrozen(snapshot?.imports), true);

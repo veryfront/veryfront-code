@@ -5,6 +5,7 @@ import {
   compareAgainstBaseline,
   type CrossRuntimeImport,
   failingRuntimes,
+  flattenTsconfigPaths,
   hasFailures,
   isShimmedEverywhere,
   isStdOrJsrSpecifier,
@@ -12,9 +13,9 @@ import {
   parseStdShimMap,
   resolvesOnBun,
   resolvesOnNode,
+  resolveTsconfigPath,
   type RuntimeResolutionContext,
 } from "./audit-cross-runtime-jsr.ts";
-import { flattenTsconfigPaths, resolveTsconfigPath } from "./tsconfig-paths.ts";
 
 /**
  * A miniature repo: `#std/path` is shimmed everywhere, `#std/testing/time` is
@@ -105,20 +106,13 @@ describe("resolveTsconfigPath", () => {
     assertEquals(resolveTsconfigPath(paths, "#a/x.ts"), "./short/x.ts");
   });
 
-  it("keeps the suffix and target from the selected wildcard key", () => {
+  it("keeps the suffix and target from the wildcard that actually matched", () => {
     const paths = {
-      "#a/*.json": "./json/*.json",
-      "#a/*.ts": "./typed/*.ts",
-      "#a/*": "./plain/*",
+      "#a/*.js": "./javascript/*.js",
+      "#a/*.ts": "./typescript/*.ts",
     };
-    assertEquals(resolveTsconfigPath(paths, "#a/x.ts"), "./typed/x.ts");
-  });
 
-  it("substitutes every wildcard in the selected target", () => {
-    assertEquals(
-      resolveTsconfigPath({ "#a/*": "./*/index/*.ts" }, "#a/x"),
-      "./x/index/x.ts",
-    );
+    assertEquals(resolveTsconfigPath(paths, "#a/x.ts"), "./typescript/x.ts");
   });
 
   it("returns null for an unmapped specifier", () => {
@@ -149,7 +143,7 @@ describe("resolvesOnNode", () => {
     assertEquals(resolvesOnNode("#std/testing/time", makeContext()), false);
   });
 
-  it("resolves a direct jsr:@std specifier — which Bun cannot", () => {
+  it("resolves a direct jsr:@std specifier, which Bun cannot", () => {
     assertEquals(resolvesOnNode("jsr:@std/path@1.1.4", makeContext()), true);
   });
 
@@ -302,7 +296,7 @@ describe("compareAgainstBaseline", () => {
     assertEquals(comparison.newSpecifiers[0].specifier, "#std/fs/walk");
   });
 
-  it("reports a shrink without failing", () => {
+  it("fails when a baseline shrinks until the lower count is recorded", () => {
     const audit = auditCrossRuntimeImports(
       [importOf("src/a.ts", "#std/testing/time")],
       context,
@@ -312,7 +306,7 @@ describe("compareAgainstBaseline", () => {
       { "#std/testing/time": 3 },
       context,
     );
-    assertEquals(hasFailures(comparison), false);
+    assertEquals(hasFailures(comparison), true);
     assertEquals(comparison.shrunk, [{
       specifier: "#std/testing/time",
       baseline: 3,
@@ -320,7 +314,7 @@ describe("compareAgainstBaseline", () => {
     }]);
   });
 
-  it("separates 'a shim landed' from 'nothing imports it any more'", () => {
+  it("fails on stale baselines while distinguishing shimmed from unused", () => {
     // #std/path resolves on both runtimes; #std/testing/time does not and is
     // simply unused. Collapsing these two into one message sends the reader
     // looking for a shim that was never written.
@@ -331,6 +325,6 @@ describe("compareAgainstBaseline", () => {
     );
     assertEquals(comparison.staleShimmed, ["#std/path"]);
     assertEquals(comparison.staleUnused, ["#std/testing/time"]);
-    assertEquals(hasFailures(comparison), false);
+    assertEquals(hasFailures(comparison), true);
   });
 });

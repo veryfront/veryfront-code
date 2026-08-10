@@ -158,7 +158,7 @@ function fallbackUrl(requestUrl: string, id: string): string {
 }
 
 function normalizeMediaType(value: string): string {
-  const candidate = value.trim();
+  const candidate = value.split(";", 1)[0]?.trim() ?? "";
   return MEDIA_TYPE_PATTERN.test(candidate) ? candidate : "application/octet-stream";
 }
 

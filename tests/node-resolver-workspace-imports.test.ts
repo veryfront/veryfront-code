@@ -5,22 +5,26 @@
  * When the Node loader read the root import map alone they escaped to a real
  * npm lookup, and every test whose graph touches React died at the import. The
  * entries must therefore come from the member configs the loader already
- * parses, not from a copy kept in the loader — a copy silently rots the next
+ * parses, not from a copy kept in the loader. A copy silently rots the next
  * time `react/deno.json` moves.
  *
  * @module tests/node-resolver-workspace-imports
  */
 
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve as resolvePath } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import {
   bareSpecifierFromRemoteTarget,
   findWorkspaceImportScope,
+  resolve,
   workspaceImportScopes,
 } from "./node/resolver-hooks.mjs";
 
-const projectRoot = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+const projectRoot = resolvePath(fileURLToPath(new URL("..", import.meta.url)));
 const reactMemberDir = `${projectRoot}/react`;
 
 interface WorkspaceImportScope {
@@ -82,9 +86,59 @@ describe("tests/node-resolver-workspace-imports", () => {
       assertEquals(findWorkspaceImportScope(`${reactMemberDir}-extra/thing.ts`), null);
     });
 
+    it("uses Windows separators when matching a member directory", () => {
+      const windowsScope = {
+        dir: String.raw`C:\veryfront\react`,
+        imports: {},
+      };
+      scopes.push(windowsScope);
+
+      try {
+        assertEquals(
+          findWorkspaceImportScope(String.raw`C:\veryfront\react\react.ts`, "\\"),
+          windowsScope,
+        );
+        assertEquals(
+          findWorkspaceImportScope(String.raw`C:\veryfront\react-extra\react.ts`, "\\"),
+          null,
+        );
+      } finally {
+        scopes.splice(scopes.indexOf(windowsScope), 1);
+      }
+    });
+
     it("has no scope for a module Node cannot place on disk", () => {
       assertEquals(findWorkspaceImportScope(null), null);
     });
+  });
+
+  it("resolves a member mapping before a colliding root mapping", async () => {
+    const scopeDir = mkdtempSync(join(tmpdir(), "veryfront-node-resolver-"));
+    const targetPath = join(scopeDir, "member-assert.ts");
+    writeFileSync(targetPath, "export const source = 'member';\n");
+    const scope = {
+      dir: scopeDir,
+      imports: { "#std/assert": "./member-assert.ts" },
+    };
+    scopes.push(scope);
+
+    try {
+      const result = await resolve(
+        "#std/assert",
+        { parentURL: pathToFileURL(join(scopeDir, "consumer.ts")).href },
+        () => {
+          throw new Error("unexpected fallback to Node resolution");
+        },
+      );
+
+      assertEquals(result, {
+        shortCircuit: true,
+        url: pathToFileURL(targetPath).href,
+      });
+    } finally {
+      scopes.splice(scopes.indexOf(scope), 1);
+      rmSync(scopeDir, { recursive: true, force: true });
+    }
   });
 
   describe("bareSpecifierFromRemoteTarget", () => {

@@ -51,8 +51,8 @@ function toStartTime(start: number | string | Date | undefined, fallback: number
 /**
  * Replaces the global clock and timer functions so tests advance time by hand.
  *
- * Only one instance may be installed at a time. Dispose it — `using time = new
- * FakeTime()` — or call {@linkcode FakeTime.restore} to put the real globals back.
+ * Only one instance may be installed at a time. Dispose it with `using time = new
+ * FakeTime()`, or call {@linkcode FakeTime.restore} to put the real globals back.
  */
 export class FakeTime {
   static #installed: FakeTime | undefined;
@@ -223,6 +223,9 @@ export class FakeTime {
   #createDate(): DateConstructor {
     const readNow = () => this.#now;
     return new Proxy(this.#originals.Date, {
+      apply(target) {
+        return new target(readNow()).toString();
+      },
       construct(target, args, newTarget) {
         const effective = args.length === 0 ? [readNow()] : args;
         return Reflect.construct(target, effective, newTarget);

@@ -168,6 +168,11 @@ describe("classifyModuleRequest", () => {
           { kind: "invalid-module", namespace: "cross-project" },
           path,
         );
+        assertEquals(
+          classifyModuleRequest(url(`/_vf_modules/_cross/demo@^1.0.0/@/${path}`)),
+          { kind: "invalid-module", namespace: "cross-project" },
+          path,
+        );
       }
     });
   });

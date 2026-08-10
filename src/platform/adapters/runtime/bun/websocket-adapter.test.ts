@@ -59,6 +59,7 @@ class FakeBunServer implements BunServer<BunWebSocketData> {
   lastNativeSocket: FakeNativeSocket | null = null;
   upgradeCalls: Array<{
     request: Request;
+    requestProtocols: string | null;
     data: BunWebSocketData;
     headers?: HeadersInit;
   }> = [];
@@ -72,7 +73,11 @@ class FakeBunServer implements BunServer<BunWebSocketData> {
     options: { data: BunWebSocketData; headers?: HeadersInit },
   ): boolean {
     if (this.upgradeError) throw this.upgradeError;
-    this.upgradeCalls.push({ request, ...options });
+    this.upgradeCalls.push({
+      request,
+      requestProtocols: request.headers.get("sec-websocket-protocol"),
+      ...options,
+    });
     if (this.openSynchronously) {
       this.lastNativeSocket = new FakeNativeSocket(options.data);
       bunWebSocketHandler.open?.(this.lastNativeSocket);
@@ -160,7 +165,7 @@ describe("Bun WebSocket transport bridge", () => {
   });
 
   it("upgrades the original request and bridges open, send, message, and close", async () => {
-    const request = websocketRequest("hmr");
+    const request = websocketRequest("chat, hmr");
     const server = new FakeBunServer();
     const adapter = new BunServerAdapter();
     let socket: BunWebSocket | undefined;
@@ -190,7 +195,10 @@ describe("Bun WebSocket transport bridge", () => {
     const upgradeCall = server.upgradeCalls[0];
     if (!upgradeCall) throw new Error("Expected one native upgrade call");
     assertEquals(upgradeCall.request, request);
+    assertEquals(upgradeCall.requestProtocols, "hmr");
+    assertEquals(new Headers(upgradeCall.headers).has("sec-websocket-protocol"), false);
     assertEquals(new Headers(upgradeCall.headers).get("set-cookie"), "session=one");
+    assertEquals(request.headers.get("sec-websocket-protocol"), "chat, hmr");
 
     const nativeSocket = new FakeNativeSocket(upgradeCall.data);
     bunWebSocketHandler.open?.(nativeSocket);
