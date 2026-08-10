@@ -51,6 +51,10 @@ const stdImportMap: Record<string, string> = {
   "#std/path.ts": "./src/platform/compat/std/path.ts",
   "#std/path/posix": "./src/platform/compat/std/path.ts",
   "#std/path/posix.ts": "./src/platform/compat/std/path.ts",
+  "#std/yaml": "./src/platform/compat/std/yaml.ts",
+  "#std/yaml.ts": "./src/platform/compat/std/yaml.ts",
+  "#std/yaml/parse": "./src/platform/compat/std/yaml.ts",
+  "#std/yaml/parse.ts": "./src/platform/compat/std/yaml.ts",
 };
 
 const reactImportMap: Record<string, string> = {

@@ -98,6 +98,7 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"unist-util-visit",
 	"vfile",
 	"ws",
+	"yaml",
 ] as const;
 
 const STALE_DEV_DEPENDENCIES = [
