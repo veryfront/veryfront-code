@@ -142,15 +142,15 @@ function buildStreamContext(
   baseContext: Record<string, unknown>,
   threadId: string,
   runId: string,
-  runIdBindsToolAuthorization: boolean,
 ): Record<string, unknown> {
   return {
     ...baseContext,
     threadId,
     runId,
-    // Only mark the run id as non-binding. Absence preserves the previous
-    // behaviour byte for byte, so no other context producer has to change.
-    ...(runIdBindsToolAuthorization ? {} : { runIdBindsToolAuthorization: false }),
+    // An AG-UI run id is never a control-plane run, whether the client supplied
+    // it or we generated it. Hosted durable runs bind through the token claim
+    // (createAgUiRuntimeHandler), so this handler always marks it non-binding.
+    runIdBindsToolAuthorization: false,
     agUi: {
       context: request.context,
       forwardedProps: request.forwardedProps,
@@ -327,15 +327,8 @@ async function createAgUiDirectStreamResponse(
   onComplete?: AgUiOnComplete,
 ): Promise<Response> {
   const threadId = request.threadId ?? crypto.randomUUID();
-  const clientRunId = request.runId;
-  const runId = clientRunId ?? generateRunId();
-  const context = buildStreamContext(
-    request,
-    baseContext,
-    threadId,
-    runId,
-    clientRunId !== undefined,
-  );
+  const runId = request.runId ?? generateRunId();
+  const context = buildStreamContext(request, baseContext, threadId, runId);
   let messages = normalizeAgUiMessages(request.messages, {
     providerOwnedToolNames: getProviderToolNames(agent),
   });
@@ -349,7 +342,12 @@ async function createAgUiDirectStreamResponse(
   if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
 
   messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
-  const finalContext = beforeStreamResult?.context ?? context;
+  // beforeStream may return a fresh context object rather than spreading ours,
+  // which would drop the marker and re-export the run id as a binding.
+  const finalContext = {
+    ...(beforeStreamResult?.context ?? context),
+    runIdBindsToolAuthorization: false,
+  };
 
   await agent.clearMemory();
 
@@ -405,15 +403,8 @@ async function createAgUiInjectedToolsStreamResponse(
   onComplete?: AgUiOnComplete,
 ): Promise<Response> {
   const threadId = request.threadId ?? crypto.randomUUID();
-  const clientRunId = request.runId;
-  const runId = clientRunId ?? generateRunId();
-  const context = buildStreamContext(
-    request,
-    baseContext,
-    threadId,
-    runId,
-    clientRunId !== undefined,
-  );
+  const runId = request.runId ?? generateRunId();
+  const context = buildStreamContext(request, baseContext, threadId, runId);
   let messages = normalizeAgUiMessages(request.messages, {
     providerOwnedToolNames: getProviderToolNames(agent),
   });
@@ -427,7 +418,12 @@ async function createAgUiInjectedToolsStreamResponse(
   if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
 
   messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
-  const finalContext = beforeStreamResult?.context ?? context;
+  // beforeStream may return a fresh context object rather than spreading ours,
+  // which would drop the marker and re-export the run id as a binding.
+  const finalContext = {
+    ...(beforeStreamResult?.context ?? context),
+    runIdBindsToolAuthorization: false,
+  };
 
   try {
     sessionManager.startRun({ runId, threadId });
