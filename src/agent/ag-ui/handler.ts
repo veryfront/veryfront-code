@@ -143,13 +143,18 @@ function buildStreamContext(
   threadId: string,
   runId: string,
 ): Record<string, unknown> {
+  const configuredRunIdBinding = baseContext.runIdBindsToolAuthorization;
   return {
     ...baseContext,
     threadId,
     runId,
-    // Only a locally minted ID is not a control-plane authorization binding.
-    // Client-supplied IDs remain eligible for the existing binding flow.
-    runIdBindsToolAuthorization: request.runId === undefined ? false : undefined,
+    // A trusted server context can mark locally generated client IDs, such as
+    // eval IDs, as non-binding. Other client-supplied IDs keep existing behavior.
+    runIdBindsToolAuthorization: typeof configuredRunIdBinding === "boolean"
+      ? configuredRunIdBinding
+      : request.runId === undefined
+      ? false
+      : undefined,
     agUi: {
       context: request.context,
       forwardedProps: request.forwardedProps,

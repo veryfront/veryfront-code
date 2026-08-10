@@ -207,6 +207,33 @@ describe("agent/ag-ui-handler", () => {
     assertStringIncludes(await response.text(), '"runId":"run_client_1"');
   });
 
+  it("keeps client run IDs non-binding in a trusted local eval context", async () => {
+    const testAgent = createTestAgent();
+    const handler = createAgUiHandler({
+      agent: testAgent.agent,
+      context: { runIdBindsToolAuthorization: false },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: "eval-run-local",
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          }],
+        }),
+      }),
+    );
+
+    assertEquals(response.status, 200);
+    assertEquals(testAgent.capturedContext?.runId, "eval-run-local");
+    assertEquals(testAgent.capturedContext?.runIdBindsToolAuthorization, false);
+  });
+
   it("omits provider-owned remote tool history before direct streaming", async () => {
     const testAgent = createTestAgent();
     testAgent.agent.config.providerTools = ["web_search"];

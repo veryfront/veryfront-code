@@ -300,7 +300,7 @@ describe("tool/remote-mcp", () => {
     await withEnv({ VERYFRONT_API_BASE_URL: "https://93.184.216.34" }, async () => {
       const source = createRemoteMCPToolSource({
         id: "veryfront-mcp",
-        endpoint: "https://93.184.216.34",
+        endpoint: "https://93.184.216.34/mcp",
       });
 
       await withMockFetch(
@@ -334,12 +334,12 @@ describe("tool/remote-mcp", () => {
     });
   });
 
-  it("keeps run ids for MCP servers that are not the Veryfront control plane", async () => {
+  it("keeps run ids for same-origin MCP servers outside the control-plane path", async () => {
     let requestBody: Record<string, unknown> | undefined;
     await withEnv({ VERYFRONT_API_BASE_URL: "https://93.184.216.34" }, async () => {
       const source = createRemoteMCPToolSource({
         id: "third-party-mcp",
-        endpoint: "https://93.184.216.35",
+        endpoint: "https://93.184.216.34/custom-mcp",
       });
 
       await withMockFetch(

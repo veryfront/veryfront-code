@@ -813,11 +813,11 @@ function normalizeCallToolResult(input: {
 function endpointBindsToolAuthorization(endpoint: string): boolean {
   const apiBaseUrl = getApiBaseUrlEnv();
   if (typeof apiBaseUrl !== "string" || apiBaseUrl.length === 0) return false;
-  try {
-    return new URL(endpoint).origin === new URL(apiBaseUrl).origin;
-  } catch {
-    return false;
-  }
+  const normalizedEndpoint = normalizeTrustedEndpoint(endpoint);
+  const controlPlaneEndpoint = normalizeTrustedEndpoint(
+    `${apiBaseUrl.replace(/\/+$/, "")}/mcp`,
+  );
+  return normalizedEndpoint !== undefined && normalizedEndpoint === controlPlaneEndpoint;
 }
 
 function buildRunContextMeta(
