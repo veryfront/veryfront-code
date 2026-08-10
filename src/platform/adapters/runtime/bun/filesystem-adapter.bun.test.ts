@@ -9,16 +9,13 @@ import { join } from "node:path";
 import { BunFileSystemAdapter } from "./filesystem-adapter.ts";
 import { getBunRuntime } from "./types.ts";
 
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
 describe("BunFileSystemAdapter native integration", () => {
   it("reads, writes, and watches through the real Bun runtime", async () => {
     if (!getBunRuntime()) return;
     const root = await mkdtemp(join(tmpdir(), "veryfront-bun-fs-"));
     const adapter = new BunFileSystemAdapter();
     let watcher: ReturnType<BunFileSystemAdapter["watch"]> | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
     try {
       const file = join(root, "file.txt");
@@ -96,19 +93,29 @@ describe("BunFileSystemAdapter native integration", () => {
       }
 
       watcher = adapter.watch(root, { recursive: false });
-      const eventPromise = watcher[Symbol.asyncIterator]().next();
+      const iterator = watcher[Symbol.asyncIterator]();
       assertExists(watcher.ready);
       await watcher.ready;
+      const observed = (async () => {
+        while (true) {
+          const result = await iterator.next();
+          if (result.done) throw new Error("Bun watcher closed before observing the file");
+          if (result.value.paths.some((path) => path.endsWith("file.txt"))) {
+            return result.value;
+          }
+        }
+      })();
+      const timeout = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error("Bun filesystem watcher integration timed out")),
+          5_000,
+        );
+      });
+
       await adapter.writeFile(file, "updated");
-      const event = await Promise.race([
-        eventPromise,
-        delay(3_000).then(() => {
-          throw new Error("Bun filesystem watcher integration timed out");
-        }),
-      ]);
-      assertEquals(event.done, false);
+      const event = await Promise.race([observed, timeout]);
       assertEquals(
-        event.value?.paths.some((path: string) => path.endsWith("file.txt")),
+        event.paths.some((path: string) => path.endsWith("file.txt")),
         true,
       );
 
@@ -116,6 +123,7 @@ describe("BunFileSystemAdapter native integration", () => {
       assertExists(watcher.done);
       await watcher.done;
     } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
       watcher?.close();
       await watcher?.done;
       await rm(root, { recursive: true, force: true });
