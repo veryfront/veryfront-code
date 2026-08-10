@@ -147,9 +147,8 @@ function buildStreamContext(
     ...baseContext,
     threadId,
     runId,
-    // An AG-UI run id is never a control-plane run, whether the client supplied
-    // it or we generated it. Hosted durable runs bind through the token claim
-    // (createAgUiRuntimeHandler), so this handler always marks it non-binding.
+    // Never a control-plane run id, whoever generated it. Hosted durable runs
+    // bind through the token claim instead.
     runIdBindsToolAuthorization: false,
     agUi: {
       context: request.context,
@@ -342,8 +341,7 @@ async function createAgUiDirectStreamResponse(
   if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
 
   messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
-  // beforeStream may return a fresh context object rather than spreading ours,
-  // which would drop the marker and re-export the run id as a binding.
+  // beforeStream may return a fresh context, dropping the marker.
   const finalContext = {
     ...(beforeStreamResult?.context ?? context),
     runIdBindsToolAuthorization: false,
@@ -418,8 +416,7 @@ async function createAgUiInjectedToolsStreamResponse(
   if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
 
   messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
-  // beforeStream may return a fresh context object rather than spreading ours,
-  // which would drop the marker and re-export the run id as a binding.
+  // beforeStream may return a fresh context, dropping the marker.
   const finalContext = {
     ...(beforeStreamResult?.context ?? context),
     runIdBindsToolAuthorization: false,

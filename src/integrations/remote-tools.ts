@@ -159,9 +159,8 @@ function snapshotToolExecutionContext(
     const agentId = includeCallMetadata
       ? readOwnDataProperty("agentId")
       : { present: false, value: undefined };
-    // A run id minted in-process is not a control-plane run, so it must not be
-    // presented as a run authorization binding. Strict `=== false` only:
-    // absent, truthy, or malformed keeps the previous behaviour.
+    // Strict `=== false` only: an absent marker means the id is a real
+    // control-plane run and stays bindable.
     const runIdBinds = includeCallMetadata
       ? readOwnDataProperty("runIdBindsToolAuthorization")
       : { present: false, value: undefined };
