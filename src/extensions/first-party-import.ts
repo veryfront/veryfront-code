@@ -318,7 +318,7 @@ function reportedMissingSpecifier(message: string): string | undefined {
     const pattern of [
       /^Cannot find module\s+["']([^"']+)["']\nRequire stack:(?:\n- [^\r\n]+)+$/,
       /^(?:Cannot find package|Cannot find module|Module not found)\s+["']([^"']+)["'](?:(?:\s+imported from\s+.+)|\.)?$/,
-      /^Import\s+["']([^"']+)["']\s+not a dependency and not in import map(?:\s+from\s+.+)?$/,
+      /^Import\s+["']([^"']+)["']\s+not a dependency(?: and not in import map)?(?:\s+from\s+.+)?$/,
       /^Unable to resolve\s+["']([^"']+)["'](?:\s+from\s+.+)?$/,
     ]
   ) {
