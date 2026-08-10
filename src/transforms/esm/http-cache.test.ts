@@ -139,6 +139,41 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     });
   });
 
+  it("allows a cold HTTP module response to exceed the legacy attempt deadline", async () => {
+    let fetchCount = 0;
+
+    const mockFetch = ((_input, init) => {
+      fetchCount += 1;
+      return new Promise<Response>((resolve, reject) => {
+        const signal = init?.signal;
+        const timeoutId = setTimeout(() => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve(
+            new Response("export const cold = true;", {
+              headers: { "content-type": "application/javascript" },
+            }),
+          );
+        }, 3_000);
+        const onAbort = () => {
+          clearTimeout(timeoutId);
+          reject(signal?.reason ?? new DOMException("aborted", "AbortError"));
+        };
+
+        signal?.addEventListener("abort", onAbort, { once: true });
+      });
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-cold-fetch-", mockFetch, async (tempDir) => {
+      const cachedUrl = await cacheModuleToLocal(
+        "https://esm.sh/cold-package",
+        tempDir,
+      );
+
+      assert(cachedUrl.startsWith("file://"));
+      assertEquals(fetchCount, 1);
+    });
+  });
+
   it("pins same-origin module-server imports before fetching", async () => {
     const origin = "http://93.184.216.34:3000";
     const source = `export { value } from "${origin}/_vf_modules/shared/Absolute.js";`;
