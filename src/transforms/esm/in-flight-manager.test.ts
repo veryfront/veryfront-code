@@ -159,11 +159,15 @@ describe("transforms/esm/in-flight-manager", () => {
 
     it("keeps a cycle peer alive when its original caller cancels", async () => {
       const allowSecondWait = Promise.withResolvers<void>();
+      const cycleDetected = Promise.withResolvers<void>();
+      const releaseSecond = Promise.withResolvers<void>();
       const firstDependencyResolved = Promise.withResolvers<void>();
       const releaseFirst = Promise.withResolvers<void>();
       const secondFlight: { promise?: Promise<string | null> } = {};
       const firstCallerController = new AbortController();
+      const secondCallerController = new AbortController();
       const firstCallerAbort = new DOMException("first caller cancelled", "AbortError");
+      const secondCallerAbort = new DOMException("second caller cancelled", "AbortError");
       let firstSharedSignal: AbortSignal | undefined;
 
       const firstPromise = createInFlightHttpFetch(
@@ -191,6 +195,8 @@ describe("transforms/esm/in-flight-manager", () => {
           ),
           IN_FLIGHT_HTTP_FETCH_DEPENDENCY_CYCLE,
         );
+        cycleDetected.resolve();
+        await releaseSecond.promise;
         return "/path/to/cancel-cycle-b.mjs";
       });
 
@@ -205,22 +211,123 @@ describe("transforms/esm/in-flight-manager", () => {
         "cancel-cycle-b",
         secondFlight.promise,
         null,
+        secondCallerController.signal,
+      );
+      const secondOwnerOutcome = secondOwner.catch((error) => error);
+      const secondFollower = waitForSharedInFlightHttpFetch(
+        "cancel-cycle-b",
+        secondFlight.promise,
+        1_000,
       );
 
       try {
         allowSecondWait.resolve();
-        await firstDependencyResolved.promise;
+        await cycleDetected.promise;
         firstCallerController.abort(firstCallerAbort);
 
         assertEquals(await firstOwnerOutcome, firstCallerAbort);
+        secondCallerController.abort(secondCallerAbort);
+        assertEquals(await secondOwnerOutcome, secondCallerAbort);
         assertEquals(firstSharedSignal?.aborted, false);
 
+        releaseSecond.resolve();
+        await firstDependencyResolved.promise;
         releaseFirst.resolve();
-        assertEquals(await secondOwner, "/path/to/cancel-cycle-b.mjs");
+        assertEquals(await secondFollower, "/path/to/cancel-cycle-b.mjs");
       } finally {
         allowSecondWait.resolve();
+        releaseSecond.resolve();
         releaseFirst.resolve();
-        await Promise.allSettled([firstOwner, secondOwner]);
+        await Promise.allSettled([firstOwner, secondOwner, secondFollower]);
+        __clearInFlightHttpFetches();
+      }
+    });
+
+    it("releases cycle retention after every caller cancels", async () => {
+      const allowSecondWait = Promise.withResolvers<void>();
+      const cycleDetected = Promise.withResolvers<void>();
+      const releaseSecond = Promise.withResolvers<void>();
+      const secondFlight: { promise?: Promise<string | null> } = {};
+      const firstCaller = new AbortController();
+      const secondCaller = new AbortController();
+      let firstSharedSignal: AbortSignal | undefined;
+      let secondSharedSignal: AbortSignal | undefined;
+
+      const firstPromise = createInFlightHttpFetch("orphan-cycle-a", async (abortSignal) => {
+        firstSharedSignal = abortSignal;
+        await waitForSharedInFlightHttpFetch(
+          "orphan-cycle-b",
+          secondFlight.promise!,
+          1_000,
+          abortSignal,
+        );
+        return "/path/to/orphan-cycle-a.mjs";
+      });
+      secondFlight.promise = createInFlightHttpFetch(
+        "orphan-cycle-b",
+        async (abortSignal) => {
+          secondSharedSignal = abortSignal;
+          await allowSecondWait.promise;
+          assertEquals(
+            await waitForSharedInFlightHttpFetch(
+              "orphan-cycle-a",
+              firstPromise,
+              1_000,
+              abortSignal,
+            ),
+            IN_FLIGHT_HTTP_FETCH_DEPENDENCY_CYCLE,
+          );
+          cycleDetected.resolve();
+          await waitForInFlightFetch(
+            releaseSecond.promise.then(() => "released"),
+            30_000,
+            abortSignal,
+          );
+          return "/path/to/orphan-cycle-b.mjs";
+        },
+      );
+
+      const firstOwner = waitForSharedInFlightHttpFetch(
+        "orphan-cycle-a",
+        firstPromise,
+        null,
+        firstCaller.signal,
+      );
+      const secondOwner = waitForSharedInFlightHttpFetch(
+        "orphan-cycle-b",
+        secondFlight.promise,
+        null,
+        secondCaller.signal,
+      );
+      const firstOutcome = firstOwner.catch((error) => error);
+      const secondOutcome = secondOwner.catch((error) => error);
+
+      try {
+        allowSecondWait.resolve();
+        await cycleDetected.promise;
+        firstCaller.abort(new DOMException("first caller cancelled", "AbortError"));
+        await firstOutcome;
+        assertEquals(firstSharedSignal?.aborted, false);
+
+        secondCaller.abort(new DOMException("second caller cancelled", "AbortError"));
+        await secondOutcome;
+        let retentionTimer: ReturnType<typeof setTimeout>;
+        const retained = new Promise<"retained">((resolve) => {
+          retentionTimer = setTimeout(() => resolve("retained"), 20);
+        });
+        const sharedWork = await Promise.race([
+          Promise.allSettled([firstPromise, secondFlight.promise]).then(() => "settled" as const),
+          retained,
+        ]).finally(() => clearTimeout(retentionTimer));
+
+        assertEquals(sharedWork, "settled");
+        assertEquals(firstSharedSignal?.aborted, true);
+        assertEquals(secondSharedSignal?.aborted, true);
+        assertEquals(inFlightHttpFetches.size, 0);
+      } finally {
+        allowSecondWait.resolve();
+        releaseSecond.resolve();
+        await Promise.allSettled([firstOwner, secondOwner, firstPromise, secondFlight.promise]);
         __clearInFlightHttpFetches();
       }
     });

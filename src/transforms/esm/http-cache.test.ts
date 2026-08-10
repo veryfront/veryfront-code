@@ -387,6 +387,105 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     });
   });
 
+  it("does not read an abandoned rename while its replacement is active", async () => {
+    const moduleUrl = "https://93.184.216.34/abandoned-rename-owner.js";
+    const staleRenameStarted = Promise.withResolvers<void>();
+    const releaseStaleRename = Promise.withResolvers<void>();
+    const stalePublicationDrained = Promise.withResolvers<void>();
+    const replacementFetchStarted = Promise.withResolvers<void>();
+    const releaseReplacementFetch = Promise.withResolvers<void>();
+    const originalRename = Deno.rename.bind(Deno);
+    let fetchCount = 0;
+
+    Deno.rename = async (from, to) => {
+      const stagedCode = await readTextFile(String(from));
+      if (stagedCode.includes('generation = "stale"')) {
+        staleRenameStarted.resolve();
+        await releaseStaleRename.promise;
+        await originalRename(from, to);
+        setTimeout(() => stalePublicationDrained.resolve(), 0);
+        return;
+      }
+      await originalRename(from, to);
+    };
+
+    const mockFetch = (async () => {
+      fetchCount++;
+      if (fetchCount === 2) {
+        replacementFetchStarted.resolve();
+        await releaseReplacementFetch.promise;
+      }
+      const generation = fetchCount === 1 ? "stale" : "fresh";
+      return new Response(`export const generation = "${generation}";`, {
+        headers: { "content-type": "application/javascript" },
+      });
+    }) as typeof fetch;
+
+    try {
+      await withIsolatedHttpCache("vf-esm-abandoned-rename-", mockFetch, async (tempDir) => {
+        const controller = new AbortController();
+        const source = `import { generation } from "${moduleUrl}"; export { generation };`;
+        const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+        const abandoned = cacheHttpImportsToLocal(source, {
+          ...options,
+          abortSignal: controller.signal,
+        });
+        let replacement: ReturnType<typeof cacheHttpImportsToLocal> | undefined;
+        let third: ReturnType<typeof cacheHttpImportsToLocal> | undefined;
+
+        try {
+          await staleRenameStarted.promise;
+          controller.abort(new DOMException("render abandoned", "AbortError"));
+          await assertRejects(() => abandoned, DOMException, "render abandoned");
+
+          replacement = cacheHttpImportsToLocal(source, options);
+          await replacementFetchStarted.promise;
+          releaseStaleRename.resolve();
+          await stalePublicationDrained.promise;
+
+          third = cacheHttpImportsToLocal(source, options);
+          let stopWaiterPoll = false;
+          const thirdBehavior = await Promise.race([
+            third.then(() => "resolved" as const),
+            (async () => {
+              while (!stopWaiterPoll && __getMaxInFlightHttpFetchWaiterCountForTests() < 2) {
+                await new Promise((resolve) => setTimeout(resolve, 1));
+              }
+              return __getMaxInFlightHttpFetchWaiterCountForTests() >= 2
+                ? "joined" as const
+                : "stopped" as const;
+            })(),
+          ]);
+          stopWaiterPoll = true;
+          assertEquals(thirdBehavior, "joined");
+
+          releaseReplacementFetch.resolve();
+          const [replacementResult, thirdResult] = await Promise.all([replacement, third]);
+          assert(replacementResult.code.includes("file://"));
+          assert(thirdResult.code.includes("file://"));
+          const bundleFiles: string[] = [];
+          for await (const entry of readDir(tempDir)) {
+            if (entry.isFile && entry.name.startsWith("http-") && entry.name.endsWith(".mjs")) {
+              bundleFiles.push(entry.name);
+            }
+          }
+          assertEquals(bundleFiles.length, 1);
+          const publishedCode = await readTextFile(join(tempDir, bundleFiles[0]!));
+          assert(publishedCode.includes('generation = "fresh"'));
+          assertEquals(fetchCount, 2);
+        } finally {
+          releaseStaleRename.resolve();
+          releaseReplacementFetch.resolve();
+          await Promise.allSettled([abandoned, replacement, third].filter((value) => value));
+        }
+      });
+    } finally {
+      releaseStaleRename.resolve();
+      releaseReplacementFetch.resolve();
+      Deno.rename = originalRename;
+    }
+  });
+
   it("keeps a shared HTTP fetch alive while another caller is still waiting", async () => {
     let fetchCount = 0;
     let releaseFetch!: () => void;

@@ -43,7 +43,9 @@ export function hasInFlightHttpFetchOwner(): boolean {
 interface InFlightHttpFetchAbortState {
   controller: AbortController;
   completionDependencies: Map<string, Promise<string | null>>;
+  completionDependencyReleases: Map<string, (reason?: unknown) => void>;
   dependencies: Map<string, number>;
+  externalWaiters: number;
   promise?: Promise<string | null>;
   waiters: number;
   settled: boolean;
@@ -56,6 +58,88 @@ export interface InFlightHttpFetchControl {
 }
 
 const inFlightHttpFetchAbortStates = new Map<string, InFlightHttpFetchAbortState>();
+
+function releaseCompletionDependencyRetentions(
+  state: InFlightHttpFetchAbortState,
+  reason?: unknown,
+): void {
+  const releases = [...state.completionDependencyReleases.values()];
+  state.completionDependencyReleases.clear();
+  for (const release of releases) release(reason);
+}
+
+function removeInFlightHttpFetchAbortState(
+  cacheKey: string,
+  state: InFlightHttpFetchAbortState,
+  reason?: unknown,
+): void {
+  if (inFlightHttpFetchAbortStates.get(cacheKey) !== state) return;
+  inFlightHttpFetchAbortStates.delete(cacheKey);
+  releaseCompletionDependencyRetentions(state, reason);
+  state.completionDependencies.clear();
+}
+
+function releaseInFlightHttpFetchWaiter(
+  cacheKey: string,
+  promise: Promise<string | null>,
+  state: InFlightHttpFetchAbortState,
+  external: boolean,
+  reason?: unknown,
+): void {
+  if (external) {
+    state.externalWaiters--;
+    if (state.externalWaiters === 0) {
+      releaseCompletionDependencyRetentions(state, reason);
+    }
+  }
+  state.waiters--;
+  if (state.waiters !== 0) return;
+  if (!state.settled) {
+    state.controller.abort(
+      reason ?? new DOMException("HTTP module fetch has no active callers", "AbortError"),
+    );
+    if (inFlightHttpFetches.get(cacheKey) === promise) {
+      inFlightHttpFetches.delete(cacheKey);
+    }
+  }
+  removeInFlightHttpFetchAbortState(cacheKey, state, reason);
+}
+
+function retainCompletionDependency(
+  ownerState: InFlightHttpFetchAbortState,
+  cacheKey: string,
+  promise: Promise<string | null>,
+): void {
+  const existingPromise = ownerState.completionDependencies.get(cacheKey);
+  if (existingPromise !== promise) {
+    ownerState.completionDependencyReleases.get(cacheKey)?.();
+    ownerState.completionDependencyReleases.delete(cacheKey);
+  } else if (ownerState.completionDependencyReleases.has(cacheKey)) {
+    return;
+  }
+  ownerState.completionDependencies.set(cacheKey, promise);
+  if (ownerState.externalWaiters === 0) return;
+
+  const dependencyState = inFlightHttpFetchAbortStates.get(cacheKey);
+  if (!dependencyState || dependencyState.promise !== promise) {
+    ownerState.completionDependencyReleases.delete(cacheKey);
+    return;
+  }
+
+  dependencyState.waiters++;
+  let released = false;
+  ownerState.completionDependencyReleases.set(cacheKey, (reason?: unknown) => {
+    if (released) return;
+    released = true;
+    releaseInFlightHttpFetchWaiter(cacheKey, promise, dependencyState, false, reason);
+  });
+}
+
+function retainStoredCompletionDependencies(state: InFlightHttpFetchAbortState): void {
+  for (const [cacheKey, promise] of state.completionDependencies) {
+    retainCompletionDependency(state, cacheKey, promise);
+  }
+}
 
 function hasInFlightHttpFetchDependencyPath(
   fromCacheKey: string,
@@ -102,6 +186,8 @@ export function __clearInFlightHttpFetches(): void {
         new DOMException("The HTTP fetch registry was cleared", "AbortError"),
       );
     }
+    state.completionDependencies.clear();
+    state.completionDependencyReleases.clear();
   }
   inFlightHttpFetchAbortStates.clear();
   inFlightHttpFetches.clear();
@@ -125,7 +211,9 @@ export function createInFlightHttpFetch(
   const state: InFlightHttpFetchAbortState = {
     controller,
     completionDependencies: new Map(),
+    completionDependencyReleases: new Map(),
     dependencies: new Map(),
+    externalWaiters: 0,
     waiters: 0,
     settled: false,
     progressListeners: new Set(),
@@ -154,9 +242,7 @@ export function createInFlightHttpFetch(
       if (inFlightHttpFetches.get(cacheKey) === promise) {
         inFlightHttpFetches.delete(cacheKey);
       }
-      if (state.waiters === 0 && inFlightHttpFetchAbortStates.get(cacheKey) === state) {
-        inFlightHttpFetchAbortStates.delete(cacheKey);
-      }
+      if (state.waiters === 0) removeInFlightHttpFetchAbortState(cacheKey, state);
     });
 
   state.promise = promise;
@@ -211,7 +297,7 @@ export async function waitForSharedInFlightHttpFetch(
     ownerCacheKey && ownerState &&
     hasInFlightHttpFetchDependencyPath(cacheKey, ownerCacheKey)
   ) {
-    ownerState.completionDependencies.set(cacheKey, promise);
+    retainCompletionDependency(ownerState, cacheKey, promise);
     return IN_FLIGHT_HTTP_FETCH_DEPENDENCY_CYCLE;
   }
   if (ownerCacheKey && ownerState) {
@@ -221,7 +307,12 @@ export async function waitForSharedInFlightHttpFetch(
     );
   }
 
+  const externalWaiter = ownerCacheKey === undefined;
   state.waiters++;
+  if (externalWaiter) {
+    state.externalWaiters++;
+    if (state.externalWaiters === 1) retainStoredCompletionDependencies(state);
+  }
   const progressListener = onProgress
     ? (event: TransformProgressEvent) => onProgress(event)
     : undefined;
@@ -231,7 +322,7 @@ export async function waitForSharedInFlightHttpFetch(
     if (ownerCacheKey && ownerState) {
       for (const [dependencyCacheKey, dependencyPromise] of state.completionDependencies) {
         if (dependencyCacheKey !== ownerCacheKey) {
-          ownerState.completionDependencies.set(dependencyCacheKey, dependencyPromise);
+          retainCompletionDependency(ownerState, dependencyCacheKey, dependencyPromise);
         }
       }
     } else {
@@ -257,19 +348,13 @@ export async function waitForSharedInFlightHttpFetch(
       else ownerState.dependencies.set(cacheKey, dependencyCount - 1);
     }
     if (progressListener) state.progressListeners.delete(progressListener);
-    state.waiters--;
-    if (state.waiters === 0 && !state.settled) {
-      state.controller.abort(
-        abortSignal?.reason ??
-          new DOMException("HTTP module fetch has no active callers", "AbortError"),
-      );
-      if (inFlightHttpFetches.get(cacheKey) === promise) {
-        inFlightHttpFetches.delete(cacheKey);
-      }
-    }
-    if (state.waiters === 0 && inFlightHttpFetchAbortStates.get(cacheKey) === state) {
-      inFlightHttpFetchAbortStates.delete(cacheKey);
-    }
+    releaseInFlightHttpFetchWaiter(
+      cacheKey,
+      promise,
+      state,
+      externalWaiter,
+      abortSignal?.reason,
+    );
   }
 }
 

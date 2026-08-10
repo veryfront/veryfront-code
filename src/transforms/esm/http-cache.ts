@@ -351,7 +351,8 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
   const hash = await hashHttpCacheIdentity(cacheIdentity);
   const cachePath = join(cacheDir, `http-${hash}.mjs`);
   const fs = createFileSystem();
-  const publicationPending = httpBundlePublications.has(cacheKey);
+  const publicationPending = httpBundlePublications.has(cacheKey) ||
+    inFlightHttpFetches.has(cacheKey);
 
   const existing = publicationPending ? undefined : getCachedPaths().get(cacheKey);
   if (existing) {
