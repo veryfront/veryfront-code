@@ -102,6 +102,7 @@
     "npm:unist-util-visit@5.1.0": "5.1.0",
     "npm:vfile@6.0.3": "6.0.3",
     "npm:ws@8.21.1": "8.21.1",
+    "npm:yaml@2.9.0": "2.9.0",
     "npm:zod@4.3.6": "4.3.6"
   },
   "jsr": {
@@ -389,7 +390,8 @@
         "@smithy/types",
         "bowser",
         "tslib@2.8.1"
-      ]
+      ],
+      "deprecated": true
     },
     "@aws-sdk/credential-provider-env@3.972.64": {
       "integrity": "sha512-14kkR5aj1c7D+cYCrEcG2W3xw87wMYAEUeB/tMiQ2j0RVKzzdewd4mJw1+Q0JVLr4IFU1JHGDCyj0WqLrtIixg==",
@@ -6332,8 +6334,7 @@
       "jsr:@std/fmt@1.0.9",
       "jsr:@std/fs@1.0.23",
       "jsr:@std/path@1.1.4",
-      "jsr:@std/testing@1.0.17",
-      "jsr:@std/yaml@1.1.0"
+      "jsr:@std/testing@1.0.17"
     ],
     "members": {
       "extensions/ext-auth-jwt": {
@@ -6565,7 +6566,7 @@
         "dependencies": [
           "jsr:@std/assert@1.0.19",
           "jsr:@std/testing@1.0.17",
-          "jsr:@std/yaml@1.1.0"
+          "npm:yaml@2.9.0"
         ]
       }
     }

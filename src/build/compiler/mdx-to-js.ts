@@ -43,7 +43,7 @@ async function extractFrontmatter(
   if (!match?.[1]) return { frontmatter: {}, content: mdxContent };
 
   try {
-    const { parse } = await import("@std/yaml/parse");
+    const { parse } = await import("#std/yaml/parse");
     const parsed = parse(match[1]);
     const frontmatter = (parsed && typeof parsed === "object" ? parsed : {}) as MDXFrontmatter;
 

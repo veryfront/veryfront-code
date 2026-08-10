@@ -4,7 +4,7 @@
  * @module
  */
 
-import { parse } from "@std/yaml/parse";
+import { parse } from "#std/yaml/parse";
 
 export interface Extract<T> {
   attrs: T;
