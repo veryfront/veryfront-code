@@ -142,11 +142,15 @@ function buildStreamContext(
   baseContext: Record<string, unknown>,
   threadId: string,
   runId: string,
+  runIdBindsToolAuthorization: boolean,
 ): Record<string, unknown> {
   return {
     ...baseContext,
     threadId,
     runId,
+    // Only mark the run id as non-binding. Absence preserves the previous
+    // behaviour byte for byte, so no other context producer has to change.
+    ...(runIdBindsToolAuthorization ? {} : { runIdBindsToolAuthorization: false }),
     agUi: {
       context: request.context,
       forwardedProps: request.forwardedProps,
@@ -323,8 +327,15 @@ async function createAgUiDirectStreamResponse(
   onComplete?: AgUiOnComplete,
 ): Promise<Response> {
   const threadId = request.threadId ?? crypto.randomUUID();
-  const runId = request.runId ?? generateRunId();
-  const context = buildStreamContext(request, baseContext, threadId, runId);
+  const clientRunId = request.runId;
+  const runId = clientRunId ?? generateRunId();
+  const context = buildStreamContext(
+    request,
+    baseContext,
+    threadId,
+    runId,
+    clientRunId !== undefined,
+  );
   let messages = normalizeAgUiMessages(request.messages, {
     providerOwnedToolNames: getProviderToolNames(agent),
   });
@@ -394,8 +405,15 @@ async function createAgUiInjectedToolsStreamResponse(
   onComplete?: AgUiOnComplete,
 ): Promise<Response> {
   const threadId = request.threadId ?? crypto.randomUUID();
-  const runId = request.runId ?? generateRunId();
-  const context = buildStreamContext(request, baseContext, threadId, runId);
+  const clientRunId = request.runId;
+  const runId = clientRunId ?? generateRunId();
+  const context = buildStreamContext(
+    request,
+    baseContext,
+    threadId,
+    runId,
+    clientRunId !== undefined,
+  );
   let messages = normalizeAgUiMessages(request.messages, {
     providerOwnedToolNames: getProviderToolNames(agent),
   });

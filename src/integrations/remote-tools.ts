@@ -159,6 +159,12 @@ function snapshotToolExecutionContext(
     const agentId = includeCallMetadata
       ? readOwnDataProperty("agentId")
       : { present: false, value: undefined };
+    // A run id minted in-process is not a control-plane run, so it must not be
+    // presented as a run authorization binding. Strict `=== false` only:
+    // absent, truthy, or malformed keeps the previous behaviour.
+    const runIdBinds = includeCallMetadata
+      ? readOwnDataProperty("runIdBindsToolAuthorization")
+      : { present: false, value: undefined };
     const abortSignal = readOwnDataProperty("abortSignal");
     if (
       abortSignal.value !== undefined &&
@@ -171,7 +177,7 @@ function snapshotToolExecutionContext(
       hasExplicitCredential: authToken.present,
       authToken: authToken.value,
       projectSlug: projectSlug.value,
-      runId: runId.value,
+      runId: runIdBinds.value === false ? undefined : runId.value,
       agentId: agentId.value,
       abortSignal: abortSignal.value as AbortSignal | undefined,
     });

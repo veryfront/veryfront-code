@@ -76,6 +76,13 @@ export interface ToolExecutionContext {
   agentId?: string;
   /** ID of the current agent run when the runtime is tracking run lifecycles */
   runId?: string;
+  /**
+   * False when `runId` was minted in-process and is NOT a control-plane run id,
+   * so it must not be sent as a run authorization binding on integration tool
+   * calls. Absent means the id came from the platform and may be presented as
+   * one. Only the local AG-UI handler sets this to false.
+   */
+  runIdBindsToolAuthorization?: boolean;
   /** Stable ID for the current tool call when the runtime is tracking tool lifecycles */
   toolCallId?: string;
   /** Project identity used by integration token resolution */
