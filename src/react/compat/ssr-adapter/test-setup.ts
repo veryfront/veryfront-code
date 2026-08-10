@@ -13,7 +13,7 @@
  * Import this file as a side effect at the top of any `*.test.ts` that renders
  * through the SSR adapter without asserting on the download path itself.
  *
- * @module react/compat/ssr-adapter/_test-setup
+ * @module react/compat/ssr-adapter/test-setup
  */
 
 import * as React from "react";

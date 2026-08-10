@@ -91,6 +91,12 @@ describe("platform/compat/std/testing/time", () => {
     assertEquals(new Date("2026-06-01T00:00:00.000Z").getUTCMonth(), 5);
   });
 
+  it("reports the faked clock when Date is called without new", () => {
+    using _time = new FakeTime(0);
+
+    assertEquals(Date(), new Date(0).toString());
+  });
+
   it("exposes the fake clock to a timer callback while it runs", () => {
     using time = new FakeTime(0);
     const observed: number[] = [];

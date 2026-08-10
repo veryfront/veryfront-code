@@ -6,6 +6,17 @@ import { getNavigationStore } from "./navigation-store.ts";
 import type { RouteData } from "#veryfront/routing";
 
 const NAVIGATION_STORE_KEY = Symbol.for("veryfront.navigation.store.v1");
+const DOM_GLOBAL_KEYS = [
+  "window",
+  "document",
+  "navigator",
+  "self",
+  "history",
+  "location",
+  "addEventListener",
+  "removeEventListener",
+  "dispatchEvent",
+] as const;
 
 /** Drop the cross-bundle store so each test starts with fresh subscribers. */
 function resetNavigationStore(): void {
@@ -15,20 +26,35 @@ function resetNavigationStore(): void {
 function installDom(url: string): () => void {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url });
   const window = dom.window;
-  const keys = ["window", "document", "navigator", "self", "history", "location"] as const;
-  const previous: Record<string, unknown> = {};
-  for (const key of keys) previous[key] = (globalThis as Record<string, unknown>)[key];
-  Object.assign(globalThis, {
+  const previous = new Map(
+    DOM_GLOBAL_KEYS.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const),
+  );
+  const globals = {
     window,
     document: window.document,
     navigator: window.navigator,
     self: window,
     history: window.history,
     location: window.location,
-  });
+    addEventListener: window.addEventListener.bind(window),
+    removeEventListener: window.removeEventListener.bind(window),
+    dispatchEvent: window.dispatchEvent.bind(window),
+  };
+  for (const key of DOM_GLOBAL_KEYS) {
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      enumerable: previous.get(key)?.enumerable ?? true,
+      value: globals[key],
+      writable: true,
+    });
+  }
   resetNavigationStore();
   return () => {
-    Object.assign(globalThis, previous);
+    for (const key of DOM_GLOBAL_KEYS) {
+      const descriptor = previous.get(key);
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
     resetNavigationStore();
     dom.window.close();
   };
@@ -63,6 +89,33 @@ function spyOnLoaders(router: VeryfrontRouter): string[] {
 }
 
 describe("rendering/client/VeryfrontRouter — soft same-route navigation", () => {
+  it("restores host global descriptors without changing unrelated globals", () => {
+    const previous = new Map(
+      DOM_GLOBAL_KEYS.map((key) =>
+        [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const
+      ),
+    );
+    const unrelatedKey = Symbol("unrelated-router-test-global");
+    const unrelatedGlobal = globalThis as typeof globalThis & Record<symbol, unknown>;
+    unrelatedGlobal[unrelatedKey] = "preserved";
+
+    const restore = installDom("https://example.com/");
+    try {
+      assertEquals(globalThis.navigator.userAgent.length > 0, true);
+    } finally {
+      restore();
+    }
+
+    try {
+      for (const key of DOM_GLOBAL_KEYS) {
+        assertEquals(Object.getOwnPropertyDescriptor(globalThis, key), previous.get(key));
+      }
+      assertEquals(unrelatedGlobal[unrelatedKey], "preserved");
+    } finally {
+      Reflect.deleteProperty(unrelatedGlobal, unrelatedKey);
+    }
+  });
+
   it("initializes route state from the full browser URL", () => {
     const restore = installDom("https://example.com/dashboard?tab=a#top");
     try {

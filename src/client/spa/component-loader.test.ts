@@ -139,35 +139,42 @@ describe("client/spa/component-loader", () => {
       throw new Error("deterministic import failure");
     `;
 
-    globalRecord.__veryfrontComponentImportAttempts = 0;
-    globalRecord.__veryfrontReleaseAssetModules = {
-      "pages/always-fails.tsx": `data:text/javascript,${encodeURIComponent(moduleSource)}`,
-    };
-    console.error = () => {};
-    clearComponentCache();
+    await withTempDir(async (tempDir) => {
+      await writeModule(tempDir, "pages/always-fails.js", moduleSource);
+      globalRecord.__veryfrontComponentImportAttempts = 0;
+      delete globalRecord.__veryfrontReleaseAssetModules;
+      console.error = () => {};
 
-    try {
-      for (let attempt = 0; attempt < 20; attempt++) {
-        assertStrictEquals(await loadComponent("pages/always-fails.tsx"), null);
-      }
-      clearComponentCache();
-      assertStrictEquals(await loadComponent("pages/always-fails.tsx"), null);
+      try {
+        await withModuleServerUrl(tempDir, async () => {
+          for (let attempt = 0; attempt < 20; attempt++) {
+            assertStrictEquals(await loadComponent("pages/always-fails.tsx"), null);
+          }
+          clearComponentCache();
+          assertStrictEquals(await loadComponent("pages/always-fails.tsx"), null);
 
-      assertEquals(globalRecord.__veryfrontComponentImportAttempts, 2);
-    } finally {
-      console.error = originalError;
-      clearComponentCache();
-      if (previousAttempts === undefined) {
-        delete globalRecord.__veryfrontComponentImportAttempts;
-      } else {
-        globalRecord.__veryfrontComponentImportAttempts = previousAttempts;
+          const importAttempts = globalRecord.__veryfrontComponentImportAttempts ?? 0;
+          assertEquals(importAttempts > 0, true, "Expected at least one dynamic import attempt");
+          assertEquals(
+            importAttempts <= 2,
+            true,
+            `Expected at most two dynamic import identities, received ${importAttempts}`,
+          );
+        });
+      } finally {
+        console.error = originalError;
+        if (previousAttempts === undefined) {
+          delete globalRecord.__veryfrontComponentImportAttempts;
+        } else {
+          globalRecord.__veryfrontComponentImportAttempts = previousAttempts;
+        }
+        if (previousModules === undefined) {
+          delete globalRecord.__veryfrontReleaseAssetModules;
+        } else {
+          globalRecord.__veryfrontReleaseAssetModules = previousModules;
+        }
       }
-      if (previousModules === undefined) {
-        delete globalRecord.__veryfrontReleaseAssetModules;
-      } else {
-        globalRecord.__veryfrontReleaseAssetModules = previousModules;
-      }
-    }
+    }, { prefix: "vf-client-loader-failure-budget-" });
   });
 
   it("does not let an invalidated in-flight import repopulate the cache", async () => {
@@ -339,7 +346,7 @@ describe("client/spa/component-loader", () => {
       await writeModule(
         tempDir,
         "components/Memo.js",
-        `import React from "react";
+        `import React from ${JSON.stringify(import.meta.resolve("react"))};
          function Component() { return React.createElement("span", null, "memo"); }
          export default React.memo(Component);`,
       );

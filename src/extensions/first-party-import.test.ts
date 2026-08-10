@@ -310,6 +310,43 @@ describe("first-party extension imports", () => {
       );
     });
 
+    it("parses Bun relative, package, and object-shaped missing-module errors", () => {
+      const relativeError = Object.assign(
+        new Error(
+          `ResolveMessage: Cannot find module './index.ts' from '/app/extensions/ext-auth-jwt/src/loader.ts'`,
+        ),
+        { code: "ERR_MODULE_NOT_FOUND" },
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(relativeError, [
+          "file:///app/extensions/ext-auth-jwt/src/index.ts",
+        ]),
+        true,
+      );
+
+      const packageError = new Error(
+        `Cannot find module '@veryfront/ext-auth-jwt' from '/app/index.ts'`,
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(packageError, [
+          "@veryfront/ext-auth-jwt",
+        ]),
+        true,
+      );
+
+      const objectError = {
+        code: "ERR_MODULE_NOT_FOUND",
+        message:
+          `Cannot find module '@veryfront/ext-parser-babel/parser-only' from '/app/index.ts'`,
+      };
+      assertEquals(
+        isMissingFirstPartyExtensionModule(objectError, [
+          "@veryfront/ext-parser-babel/parser-only",
+        ]),
+        true,
+      );
+    });
+
     it("uses stable codes unanchored and parses exact resolver messages", () => {
       const nodeError = Object.assign(
         new Error("Unable to resolve '@veryfront/ext-auth-jwt' from /app/x.js"),

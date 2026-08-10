@@ -1,0 +1,62 @@
+import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import {
+  buildBunTestArgs,
+  buildIsolatedBunTestRuns,
+  registerBunWorkspaceCleanup,
+} from "./runner-args.mjs";
+
+test("buildBunTestArgs caps concurrency without enabling concurrent test semantics", () => {
+  const args = buildBunTestArgs(["one.test.ts", "two.test.ts"], 3);
+
+  assert.deepEqual(args, [
+    "--no-env-file",
+    "test",
+    "--preload",
+    "./tests/bun/preload.ts",
+    "--max-concurrency",
+    "3",
+    "one.test.ts",
+    "two.test.ts",
+  ]);
+  assert.equal(args.includes("--concurrent"), false);
+  assert.equal(args.includes("--concurrency"), false);
+});
+
+test("buildIsolatedBunTestRuns puts each test file in its own Bun process", () => {
+  assert.deepEqual(buildIsolatedBunTestRuns(["one.test.ts", "two.test.ts"]), [
+    buildBunTestArgs(["one.test.ts"], 1),
+    buildBunTestArgs(["two.test.ts"], 1),
+  ]);
+});
+
+test("the Bun runner drains child output and exits naturally", () => {
+  const source = readFileSync(new URL("./run-tests.mjs", import.meta.url), "utf8");
+
+  assert.match(source, /child\.on\("close", \(code\) => finish\(code \?\? 1\)\)/);
+  assert.doesNotMatch(source, /process\.exit\(/);
+  assert.match(source, /process\.exitCode = ok \? 0 : 1/);
+});
+
+test("the Bun runner fails when selection produces no test files", () => {
+  const source = readFileSync(new URL("./run-tests.mjs", import.meta.url), "utf8");
+
+  assert.match(source, /if \(files\.length === 0\)/);
+  assert.match(source, /Bun test runner selected no test files\./);
+  assert.match(source, /return false;/);
+});
+
+test("Bun workspace cleanup runs before termination signals are re-raised", () => {
+  const runtimeProcess = new EventEmitter();
+  runtimeProcess.pid = 123;
+  const events = [];
+  runtimeProcess.kill = (pid, signal) => events.push(["kill", pid, signal]);
+
+  registerBunWorkspaceCleanup(() => events.push(["cleanup"]), runtimeProcess);
+  runtimeProcess.emit("SIGINT");
+  runtimeProcess.emit("exit");
+
+  assert.deepEqual(events, [["cleanup"], ["kill", 123, "SIGINT"]]);
+});

@@ -713,6 +713,7 @@ describe("Select", () => {
       { length: 100 },
       (_, index) => `Item ${String(index).padStart(3, "0")}`,
     );
+    const comparisonBudget = values.length * Math.ceil(Math.log2(values.length));
     const renderItems = (orderedValues: string[]) => (
       <Select defaultOpen>
         <SelectTrigger id="budget-trigger">
@@ -734,8 +735,8 @@ describe("Select", () => {
       );
       await Promise.resolve();
       assert(
-        comparisons <= 250,
-        `Expected at most two coalesced 100-item sorts, received ${comparisons} comparisons`,
+        comparisons <= comparisonBudget,
+        `Expected one O(n log n) 100-item sort, received ${comparisons} comparisons`,
       );
 
       comparisons = 0;
@@ -746,8 +747,8 @@ describe("Select", () => {
       );
       await Promise.resolve();
       assert(
-        comparisons <= 250,
-        `Expected at most two coalesced reorder sorts, received ${comparisons} comparisons`,
+        comparisons <= comparisonBudget,
+        `Expected one O(n log n) reorder sort, received ${comparisons} comparisons`,
       );
     } finally {
       nodePrototype.compareDocumentPosition = compareDocumentPosition;

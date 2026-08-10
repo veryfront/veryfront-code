@@ -13,8 +13,8 @@ Veryfront core owns the `SKILL.md` frontmatter envelope, document limits,
 mapping-root validation, immutable snapshots, and Skill metadata policy. This
 extension receives only the YAML source between the delimiters and returns the
 decoded, untrusted value. Keeping that boundary narrow prevents YAML parser
-details and third-party dependencies from entering core — core may depend on
-the Deno standard library and nothing else, so the parser has to live here.
+details and third-party dependencies from entering core. Core may depend on
+the Deno standard library and nothing else, so the parser must live here.
 
 ## YAML version
 

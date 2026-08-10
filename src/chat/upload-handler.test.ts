@@ -250,11 +250,15 @@ describe("chat/upload-handler", () => {
       });
 
       const res = await POST(
-        new Request("http://localhost:3000/api/uploads", {
-          method: "POST",
-          headers: { "content-type": "multipart/form-data; boundary=test" },
-          body: stream,
-        }),
+        new Request(
+          "http://localhost:3000/api/uploads",
+          {
+            method: "POST",
+            headers: { "content-type": "multipart/form-data; boundary=test" },
+            body: stream,
+            duplex: "half",
+          } as RequestInit & { duplex: "half" },
+        ),
       );
 
       assertEquals(res.status, 413);

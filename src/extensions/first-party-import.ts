@@ -293,6 +293,27 @@ function reportedMissingSpecifier(message: string): string | undefined {
     if (packageName) return `${packageName}/${packageSubpath[1]!.slice(2)}`;
   }
 
+  const bunResolveMessage = message.match(
+    /^(?:ResolveMessage:\s+)?Cannot find module\s+["']([^"']+)["']\s+from\s+["']([^"']+)["']$/,
+  );
+  if (bunResolveMessage) {
+    const specifier = bunResolveMessage[1]!;
+    const importer = bunResolveMessage[2]!;
+    if (
+      (specifier.startsWith("./") || specifier.startsWith("../")) &&
+      importer.startsWith("/")
+    ) {
+      try {
+        return canonicalFilePath(
+          new URL(specifier, new URL(".", `file://${importer}`)).href,
+        );
+      } catch {
+        return undefined;
+      }
+    }
+    return specifier;
+  }
+
   for (
     const pattern of [
       /^Cannot find module\s+["']([^"']+)["']\nRequire stack:(?:\n- [^\r\n]+)+$/,
@@ -441,6 +462,10 @@ function errorMessage(error: unknown): string | undefined {
   try {
     if (error instanceof Error) {
       return typeof error.message === "string" ? error.message : undefined;
+    }
+    if (typeof error === "object" && error !== null) {
+      const message = (error as { message?: unknown }).message;
+      return typeof message === "string" ? message : undefined;
     }
     return typeof error === "string" ? error : undefined;
   } catch {

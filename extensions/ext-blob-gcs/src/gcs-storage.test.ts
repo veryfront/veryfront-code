@@ -568,7 +568,7 @@ describe("GCSBlobStorage", () => {
       await assertRejects(
         operation,
         Error,
-        "Blob IDs must contain only alphanumeric characters, hyphens, and underscores",
+        "Blob IDs must contain at most 256 alphanumeric characters, hyphens, and underscores",
       );
     }
     assertEquals(requests, 0);

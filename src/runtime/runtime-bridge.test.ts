@@ -11,6 +11,15 @@ import {
   createStreamModel,
 } from "./runtime-bridge.test-helpers.ts";
 
+function readableStreamFrom<T>(values: Iterable<T>): ReadableStream<T> {
+  return new ReadableStream({
+    start(controller) {
+      for (const value of values) controller.enqueue(value);
+      controller.close();
+    },
+  });
+}
+
 describe("runtime-bridge", () => {
   it("skips non-cloneable model context without failing model dispatch", async () => {
     const sensitiveValue = "CUSTOMER_SECRET_123";
@@ -306,7 +315,7 @@ describe("runtime-bridge", () => {
         ...createStreamModel("test", `test/${mode}-record`, async () => {
           order.push("dispatch");
           return {
-            stream: ReadableStream.from([
+            stream: readableStreamFrom([
               { type: "text-delta", delta: "ok" },
               { type: "finish", finishReason: "stop", usage: {} },
             ]),
@@ -546,7 +555,7 @@ describe("runtime-bridge", () => {
         : createStreamModel("test", "test/mutation-stream", async (options) => {
           assertProviderInput(options);
           return {
-            stream: ReadableStream.from([
+            stream: readableStreamFrom([
               { type: "finish", finishReason: "stop", usage: {} },
             ]),
           };
@@ -659,7 +668,7 @@ describe("runtime-bridge", () => {
             content: [{ type: "text", text: "Hello" }],
           }]);
           return {
-            stream: ReadableStream.from([
+            stream: readableStreamFrom([
               { type: "text-delta", delta: "Hel" },
               { type: "text-delta", delta: "lo" },
               {
@@ -697,7 +706,7 @@ describe("runtime-bridge", () => {
     const model = {
       ...createStreamModel("veryfront-cloud", "veryfront-cloud/anthropic/claude-test", async () => {
         return {
-          stream: ReadableStream.from([
+          stream: readableStreamFrom([
             { type: "tool-input-start", id: "tool-1", toolName: "search" },
             { type: "tool-input-delta", id: "tool-1", delta: '{"query":' },
             { type: "tool-input-delta", id: "tool-1", delta: '"webgpu"}' },
@@ -739,7 +748,7 @@ describe("runtime-bridge", () => {
         content: [{ type: "text", text: "Hello" }],
       }]);
       return {
-        stream: ReadableStream.from([
+        stream: readableStreamFrom([
           { type: "text-delta", delta: "Hel" },
           { type: "text-delta", delta: "lo" },
           {
@@ -783,7 +792,7 @@ describe("runtime-bridge", () => {
 
   it("rejects a second stream view started after direct consumption", async () => {
     const model = createStreamModel("test", "test/late-second-stream", async () => ({
-      stream: ReadableStream.from([
+      stream: readableStreamFrom([
         { type: "text-delta", delta: "Hel" },
         { type: "text-delta", delta: "lo" },
       ]),
@@ -848,7 +857,7 @@ describe("runtime-bridge", () => {
     const model = createStreamModel("test", "test/reasoning-stream", async (options) => {
       assertEquals(options.reasoning, { enabled: true, budgetTokens: 2048 });
       return {
-        stream: ReadableStream.from([
+        stream: readableStreamFrom([
           { type: "text-delta", delta: "ok" },
           { type: "finish", finishReason: "stop", usage: { inputTokens: 1, outputTokens: 1 } },
         ]),
@@ -952,7 +961,7 @@ describe("runtime-bridge", () => {
         },
       }]);
       return {
-        stream: ReadableStream.from([
+        stream: readableStreamFrom([
           { type: "tool-input-start", id: "tool-1", toolName: "weather" },
           { type: "tool-input-delta", id: "tool-1", delta: '{"city":' },
           { type: "tool-input-delta", id: "tool-1", delta: '"Tokyo"}' },
@@ -1041,7 +1050,7 @@ describe("runtime-bridge", () => {
         }]);
 
         return {
-          stream: ReadableStream.from([
+          stream: readableStreamFrom([
             {
               type: "tool-call",
               toolCallId: "tool-web-1",
@@ -1323,7 +1332,7 @@ describe("runtime-bridge", () => {
         }]);
 
         return {
-          stream: ReadableStream.from([
+          stream: readableStreamFrom([
             {
               type: "tool-call",
               toolCallId: "tool-fetch-1",
@@ -1553,7 +1562,7 @@ describe("runtime-bridge", () => {
           content: [{ type: "text", text: "Continue after the tool result." }],
         }]);
         return {
-          stream: ReadableStream.from([
+          stream: readableStreamFrom([
             { type: "text-delta", delta: "Continuing" },
             { type: "finish", finishReason: { unified: "stop", raw: "stop" } },
           ]),

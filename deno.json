@@ -311,6 +311,7 @@
     "#veryfront/build": "./src/build/index.ts",
     "#veryfront/cache": "./src/cache/index.ts",
     "#veryfront/config": "./src/config/index.ts",
+    "#veryfront/config/tsconfig-paths.ts": "./src/config/tsconfig-paths.ts",
     "#veryfront/discovery": "./src/discovery/index.ts",
     "#veryfront/data": "./src/data/index.ts",
     "#veryfront/errors": "./src/errors/index.ts",
@@ -536,8 +537,14 @@
     "test:sentry-runtime-packages": "deno test --config=scripts/test.deno.json --no-check --no-lock --allow-read --allow-write --allow-run --allow-env=DENO_DIR,HOME,XDG_CACHE_HOME,LOCALAPPDATA,USERPROFILE scripts/build/sentry-runtime-packages.test.ts",
     "test:tool-search-live": "VF_DISABLE_LRU_INTERVAL=1 deno test --no-check -A tests/agent/verify-tool-search-live.test.ts",
     "test:cross-runtime": "deno run --allow-all src/platform/compat/cross-runtime.test.ts",
-    "test:node": "node ./tests/node/run-tests.mjs 'src/**/*.test.ts'",
-    "test:bun": "node ./tests/bun/run-tests.mjs src/",
+    "test:node": {
+      "command": "node ./tests/node/run-tests.mjs 'src/**/*.test.ts' extensions/ext-bundler-esbuild/src/binary.test.ts tests/ensure-npm-links.test.mjs",
+      "dependencies": ["build:npm"]
+    },
+    "test:bun": {
+      "command": "node --test tests/bun/runner-args.test.mjs tests/bun/workspace-packages.test.mjs && node ./tests/bun/run-tests.mjs src/ tests/bun/dynamic-alias-resolution.test.ts tests/bun/npm-protocol-resolution.test.ts tests/bun/workspace-resolution.test.ts",
+      "dependencies": ["build:npm"]
+    },
     "test:all-runtimes": "deno task test:unit && deno task test:node && deno task test:bun",
     "test:e2e": "deno task test:e2e:playwright",
     "test:e2e:playwright": "PW_DISABLE_TS_ESM=1 npx playwright test --config=tests/e2e/playwright.config.cjs",

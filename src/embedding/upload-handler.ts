@@ -53,8 +53,12 @@ const EXT_TO_TYPE: Record<string, string> = {
   ppt: "ppt",
 };
 
+function normalizeMediaType(value: string): string {
+  return value.split(";", 1)[0]?.trim() ?? "";
+}
+
 function inferType(file: File): string | null {
-  const fromMime = MIME_TO_TYPE[file.type];
+  const fromMime = MIME_TO_TYPE[normalizeMediaType(file.type)];
   if (fromMime) return fromMime;
   const ext = file.name.split(".").pop()?.toLowerCase();
   return EXT_TO_TYPE[ext ?? ""] ?? null;
@@ -293,6 +297,7 @@ export function createUploadHandler(
       // Sanitize file name: strip path components, HTML characters, and
       // control characters to prevent stored XSS via filenames rendered in UI.
       const safeName = sanitizeFileName(file.name);
+      const mediaType = normalizeMediaType(file.type) || typeToMime(fileType);
 
       const id = await store.ingest(safeName, text, {
         source: `upload:${safeName}`,
@@ -304,7 +309,7 @@ export function createUploadHandler(
         try {
           await sourceBlobStorage.put(file, {
             id,
-            mimeType: file.type || typeToMime(fileType),
+            mimeType: mediaType,
             metadata: {
               originalName: safeName,
               source: `upload:${safeName}`,
@@ -328,7 +333,7 @@ export function createUploadHandler(
       return Response.json({
         id,
         name: safeName,
-        mediaType: file.type || typeToMime(fileType),
+        mediaType,
         size: file.size,
       });
     } catch (error) {

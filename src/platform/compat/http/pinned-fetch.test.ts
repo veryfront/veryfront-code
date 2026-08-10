@@ -106,10 +106,10 @@ describe("fetchWithPinnedAddresses", () => {
     }
   });
 
-  it("derives sec-fetch-mode and accept-encoding the way the runtime does", async () => {
-    // Both defaults are conditional in undici, so a fixed value would be wrong
-    // for range requests (a compressed byte range is ambiguous to decode) and
-    // for any non-default request mode. Baselines come from the live runtime.
+  it("uses identity for ranges and derives sec-fetch-mode from the request", async () => {
+    // A compressed byte range is ambiguous for the pinned transport to decode,
+    // even on runtimes such as Bun that advertise compression for native range
+    // requests. Fetch metadata still follows the caller's request mode.
     const { createServer } = await import("node:http");
     const seen = new Map<string, Record<string, string | string[] | undefined>>();
     const server = createServer((request, response) => {
@@ -128,22 +128,15 @@ describe("fetchWithPinnedAddresses", () => {
         throw new Error("Test server did not expose a TCP address");
       }
       const origin = `http://127.0.0.1:${address.port}`;
-      await fetch(`${origin}/range`, { headers: { range: "bytes=0-0" } });
       await fetch(`${origin}/no-cors`, { mode: "no-cors" });
 
       const ranged = applyRuntimeDefaultRequestHeaders(
         new Headers({ range: "bytes=0-0" }),
       );
-      assertEquals(
-        ranged.get("accept-encoding"),
-        seen.get("/range")?.["accept-encoding"],
-      );
       assertEquals(ranged.get("accept-encoding"), "identity");
 
-      // Both Node and Deno send `identity` for a range request, so that
-      // baseline is compared unconditionally above. Fetch metadata is not
-      // universal — Deno omits `sec-fetch-mode` entirely — so cross-check it
-      // only where the runtime actually emits one.
+      // Fetch metadata is not universal. Deno omits `sec-fetch-mode`, so
+      // cross-check it only where the runtime actually emits one.
       const noCors = applyRuntimeDefaultRequestHeaders(new Headers(), "no-cors");
       const runtimeMode = seen.get("/no-cors")?.["sec-fetch-mode"];
       if (runtimeMode !== undefined) {

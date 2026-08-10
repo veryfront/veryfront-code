@@ -218,6 +218,32 @@ describe("NodeServer lifecycle", () => {
     assertEquals(outcome, "stopped");
   });
 
+  it("accepts Bun's inherited not-running close result after binding", async () => {
+    const prototype = Object.create(Error.prototype, {
+      code: {
+        value: "ERR_SERVER_NOT_RUNNING",
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      },
+    });
+    const notRunning = Object.create(prototype) as Error;
+    Object.defineProperty(notRunning, "message", {
+      value: "Server is not running.",
+      writable: true,
+      configurable: true,
+    });
+    const server = new NodeServer(
+      createHttpServer((callback) => callback(notRunning)),
+      "127.0.0.1",
+      3_000,
+    );
+    server.setListeningPort(3_000);
+
+    await server.stop();
+    await server.stop();
+  });
+
   it("rejects startup without listening when the signal is already aborted", async () => {
     const controller = new AbortController();
     controller.abort();
