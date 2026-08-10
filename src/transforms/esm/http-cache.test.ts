@@ -970,6 +970,44 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(new Set(progressEvents.map(({ filePath }) => filePath)).size, 2);
   });
 
+  it("fingerprints one import map once across recursive HTTP modules", async () => {
+    const parentUrl = "https://93.184.216.34/fingerprint/parent.js";
+    const childUrl = "https://93.184.216.34/fingerprint/child.js";
+    let importEnumerations = 0;
+    const imports = new Proxy({
+      [parentUrl]: parentUrl,
+      [childUrl]: childUrl,
+    }, {
+      ownKeys(target) {
+        importEnumerations++;
+        return Reflect.ownKeys(target);
+      },
+    });
+
+    await withIsolatedHttpCache(
+      "vf-esm-recursive-fingerprint-",
+      ((input) => {
+        const url = String(input);
+        const code = url === parentUrl
+          ? `export { value } from "${childUrl}";`
+          : `export const value = "child";`;
+        return Promise.resolve(
+          new Response(code, {
+            headers: { "content-type": "application/javascript" },
+          }),
+        );
+      }) as typeof fetch,
+      async (tempDir) => {
+        await cacheHttpImportsToLocal(`export { value } from "${parentUrl}";`, {
+          cacheDir: tempDir,
+          importMap: { imports, scopes: {} },
+        });
+      },
+    );
+
+    assertEquals(importEnumerations, 1);
+  });
+
   it("completes cross-request circular module fetches", async () => {
     const firstUrl = "https://93.184.216.34/cross-flight/first.js";
     const secondUrl = "https://93.184.216.34/cross-flight/second.js";

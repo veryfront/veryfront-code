@@ -378,6 +378,16 @@ export function ensurePreparedHttpCacheRequestOptions<T extends CacheOptions>(op
     : prepareHttpCacheRequestOptions(options);
 }
 
+/** Clone runtime options while preserving one request graph's identity snapshot. */
+export function deriveHttpCacheRequestOptions<T extends CacheOptions>(
+  options: T,
+  overrides: Pick<CacheOptions, "abortSignal" | "onProgress">,
+): T {
+  const derived = { ...options, ...overrides } as T;
+  const context = getHttpCacheRequestIdentityContext(options) ?? {};
+  return attachHttpCacheRequestIdentityContext(derived, context);
+}
+
 function getRequestImportMapFingerprint(
   rawUrl: string,
   effectiveOptions: HttpCacheIdentityOptions,

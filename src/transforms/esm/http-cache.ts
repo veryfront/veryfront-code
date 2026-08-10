@@ -49,6 +49,7 @@ import {
   buildHttpCacheIdentity,
   buildHttpCacheIdentityMetadata,
   type CacheOptions,
+  deriveHttpCacheRequestOptions,
   ensureAbsoluteDir,
   ensurePreparedHttpCacheRequestOptions,
   getEffectiveHttpCacheRequest,
@@ -490,7 +491,10 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     reportProgress: TransformProgressListener,
     control: InFlightHttpFetchControl,
   ): Promise<string | null> => {
-    const sharedOptions = { ...options, abortSignal, onProgress: reportProgress };
+    const sharedOptions = deriveHttpCacheRequestOptions(options, {
+      abortSignal,
+      onProgress: reportProgress,
+    });
     const cacheResult = publicationPending
       ? { code: null, wasGzipped: false, failReason: "not_found" as const }
       : await httpBundleCache.getCodeByUrl(String(hash));
