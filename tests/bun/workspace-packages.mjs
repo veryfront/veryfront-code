@@ -1,31 +1,96 @@
-import { existsSync, mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { ensureDirectoryLink } from "../ensure-npm-links.mjs";
 
 const MARKER_NAME = ".veryfront-bun-workspace-package.json";
 const LOCK_NAME = ".veryfront-bun-workspace-packages.lock";
+const RECLAIMER_GUARD_PREFIX = ".veryfront-bun-workspace-packages.reclaiming-";
 const LOCK_OWNER = "veryfront-bun-tests";
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
+function activePreparationError() {
+  return new Error("Bun workspace package preparation is already active");
+}
+
+function writeJsonFileAtomically(path, value) {
+  const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  writeFileSync(temporaryPath, `${JSON.stringify(value)}\n`);
+  try {
+    renameSync(temporaryPath, path);
+  } catch (error) {
+    rmSync(temporaryPath, { force: true });
+    throw error;
+  }
+}
+
+function pauseForReclaimRaceTest() {
+  const raw = process.env.VF_BUN_WORKSPACE_RECLAIM_PAUSE_MS;
+  if (!raw) return;
+  const pauseMs = Number(raw);
+  if (!Number.isFinite(pauseMs) || pauseMs <= 0) return;
+  const signal = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(signal, 0, 0, Math.floor(pauseMs));
+}
+
+function reclaimerGuardPath(nodeModulesPath, token) {
+  const digest = createHash("sha256").update(token).digest("hex");
+  return join(nodeModulesPath, `${RECLAIMER_GUARD_PREFIX}${digest}`);
+}
+
+function writePreparationLockMarker(lockPath, token) {
+  try {
+    writeJsonFileAtomically(join(lockPath, MARKER_NAME), {
+      owner: LOCK_OWNER,
+      pid: process.pid,
+      token,
+    });
+  } catch (error) {
+    rmSync(lockPath, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function createPreparationLock(lockPath, token) {
+  mkdirSync(lockPath);
+  writePreparationLockMarker(lockPath, token);
+}
+
 function acquirePreparationLock(nodeModulesPath) {
   mkdirSync(nodeModulesPath, { recursive: true });
   const lockPath = join(nodeModulesPath, LOCK_NAME);
+  const token = randomUUID();
+  let reclaimedGuardPath;
   try {
-    mkdirSync(lockPath);
+    createPreparationLock(lockPath, token);
   } catch (error) {
     if (error?.code === "EEXIST") {
-      if (!reclaimStalePreparationLock(lockPath)) {
-        throw new Error("Bun workspace package preparation is already active");
+      reclaimedGuardPath = reclaimStalePreparationLock(
+        nodeModulesPath,
+        lockPath,
+      );
+      if (!reclaimedGuardPath) {
+        throw activePreparationError();
       }
       try {
-        mkdirSync(lockPath);
+        createPreparationLock(lockPath, token);
       } catch (retryError) {
         if (retryError?.code === "EEXIST") {
-          throw new Error("Bun workspace package preparation is already active");
+          // This generation tombstone must remain permanent. Otherwise an
+          // arbitrarily delayed stale-generation reader could reuse it after a
+          // fresh runner acquires lockPath and move that fresh live lock.
+          throw activePreparationError();
         }
         throw retryError;
       }
@@ -34,21 +99,28 @@ function acquirePreparationLock(nodeModulesPath) {
     }
   }
 
-  const token = randomUUID();
-  try {
-    writeFileSync(
-      join(lockPath, MARKER_NAME),
-      `${JSON.stringify({ owner: LOCK_OWNER, pid: process.pid, token })}\n`,
-    );
-  } catch (error) {
-    rmSync(lockPath, { recursive: true, force: true });
-    throw error;
-  }
-
   return { lockPath, token };
 }
 
-export function reclaimStalePreparationLock(lockPath, runtimeProcess = process) {
+function isOwnedLockMarker(marker) {
+  return marker?.owner === LOCK_OWNER &&
+    Number.isSafeInteger(marker.pid) &&
+    marker.pid >= 1 &&
+    typeof marker.token === "string" &&
+    marker.token.length > 0;
+}
+
+function sameLockGeneration(left, right) {
+  return left?.owner === right?.owner &&
+    left?.pid === right?.pid &&
+    left?.token === right?.token;
+}
+
+function reclaimStalePreparationLock(
+  nodeModulesPath,
+  lockPath,
+  runtimeProcess = process,
+) {
   let marker;
   try {
     marker = readJson(join(lockPath, MARKER_NAME));
@@ -56,10 +128,7 @@ export function reclaimStalePreparationLock(lockPath, runtimeProcess = process) 
     return false;
   }
 
-  if (marker?.owner !== LOCK_OWNER) {
-    return false;
-  }
-  if (!Number.isSafeInteger(marker.pid) || marker.pid < 1) {
+  if (!isOwnedLockMarker(marker)) {
     return false;
   }
   try {
@@ -67,8 +136,34 @@ export function reclaimStalePreparationLock(lockPath, runtimeProcess = process) 
     return false;
   } catch (error) {
     if (error?.code !== "ESRCH") return false;
-    rmSync(lockPath, { recursive: true, force: true });
-    return true;
+    pauseForReclaimRaceTest();
+    const guardPath = reclaimerGuardPath(nodeModulesPath, marker.token);
+    try {
+      renameSync(lockPath, guardPath);
+    } catch (renameError) {
+      if (
+        renameError?.code === "ENOENT" ||
+        renameError?.code === "EEXIST" ||
+        renameError?.code === "ENOTEMPTY"
+      ) {
+        return false;
+      }
+      throw renameError;
+    }
+
+    let claimedMarker;
+    try {
+      claimedMarker = readJson(join(guardPath, MARKER_NAME));
+    } catch {
+      return false;
+    }
+    if (!sameLockGeneration(marker, claimedMarker)) {
+      return false;
+    }
+    // Lock markers are immutable after publication. Matching the generation
+    // after the atomic rename proves this process claimed the stale directory;
+    // keep that path as a permanent tombstone for delayed readers.
+    return guardPath;
   }
 }
 
