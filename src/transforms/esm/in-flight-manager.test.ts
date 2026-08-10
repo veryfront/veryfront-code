@@ -119,12 +119,18 @@ describe("transforms/esm/in-flight-manager", () => {
         5,
         followerController.signal,
       );
+      const signalLessFollower = waitForSharedInFlightHttpFetch(cacheKey, promise, 5);
+      let watchdogTimer: ReturnType<typeof setTimeout>;
 
       try {
-        assertEquals(
-          await waitForSharedInFlightHttpFetch(cacheKey, promise, 5),
-          undefined,
-        );
+        const outcome = await Promise.race([
+          signalLessFollower.then((result) => ({ result, status: "settled" as const })),
+          new Promise<{ status: "hung" }>((resolve) => {
+            watchdogTimer = setTimeout(() => resolve({ status: "hung" }), 30);
+          }),
+        ]);
+
+        assertEquals(outcome, { result: undefined, status: "settled" });
         assertEquals(sharedSignal?.aborted, false);
         assertEquals(inFlightHttpFetches.get(cacheKey), promise);
 
@@ -134,8 +140,9 @@ describe("transforms/esm/in-flight-manager", () => {
           "/path/to/uncancelled-follower-timeout.mjs",
         );
       } finally {
+        clearTimeout(watchdogTimer!);
         release.resolve();
-        await Promise.allSettled([promise, liveFollower]);
+        await Promise.allSettled([promise, liveFollower, signalLessFollower]);
         __clearInFlightHttpFetches();
       }
     });
