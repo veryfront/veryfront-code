@@ -118,6 +118,59 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     assert(HTTP_MODULE_FETCH_MAX_WAIT_MS <= MODULE_LOAD_TIMEOUT_MS);
   });
 
+  it("reports progress after the distributed cache lookup before fetching", async () => {
+    const lookupRelease = Promise.withResolvers<void>();
+    const lookupStarted = Promise.withResolvers<void>();
+    const events: string[] = [];
+    const backend: CacheBackend = {
+      type: "memory",
+      get: async () => {
+        events.push("lookup-started");
+        lookupStarted.resolve();
+        await lookupRelease.promise;
+        events.push("lookup-completed");
+        return null;
+      },
+      set: () => Promise.resolve(),
+      del: () => Promise.resolve(),
+    };
+
+    await withIsolatedHttpCache(
+      "vf-esm-cache-lookup-progress-",
+      (() => {
+        events.push("fetch-started");
+        return Promise.resolve(
+          new Response("export const cached = true;", {
+            headers: { "content-type": "application/javascript" },
+          }),
+        );
+      }) as typeof fetch,
+      async (tempDir) => {
+        __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+        const result = cacheHttpImportsToLocal(
+          'import "https://93.184.216.34/cache-lookup-progress.js";',
+          {
+            cacheDir: tempDir,
+            importMap: { imports: {}, scopes: {} },
+            onProgress: ({ phase }) => events.push(phase),
+          },
+        );
+
+        await lookupStarted.promise;
+        assertEquals(events, ["lookup-started"]);
+        lookupRelease.resolve();
+        await result;
+
+        assertEquals(events.slice(0, 4), [
+          "lookup-started",
+          "lookup-completed",
+          "http-cache:cache-lookup-complete",
+          "fetch-started",
+        ]);
+      },
+    );
+  });
+
   it("rejects internal module URLs before invoking fetch", async () => {
     let fetchCount = 0;
     await withIsolatedHttpCache(
