@@ -311,12 +311,22 @@ describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () 
       const releaseFirst = Promise.withResolvers<string>();
       const abortReason = new DOMException("first render canceled", "AbortError");
       let replacementExecutions = 0;
+      let replacement: Promise<string> | undefined;
 
       const first = _testExports.runFrameworkTransformFlight(
         key,
         (abortSignal) => {
           firstStarted.resolve();
-          abortSignal.addEventListener("abort", () => {}, { once: true });
+          abortSignal.addEventListener("abort", () => {
+            replacement = _testExports.runFrameworkTransformFlight(
+              key,
+              () => {
+                replacementExecutions++;
+                return Promise.resolve("fresh transform");
+              },
+              {},
+            );
+          }, { once: true });
           return releaseFirst.promise;
         },
         { abortSignal: firstController.signal },
@@ -325,20 +335,9 @@ describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () 
       firstController.abort(abortReason);
       assertEquals(await assertRejects(() => first), abortReason);
 
-      let replacement: Promise<string> | undefined;
       try {
-        replacement = _testExports.runFrameworkTransformFlight(
-          key,
-          () => {
-            replacementExecutions++;
-            return Promise.resolve("fresh transform");
-          },
-          {},
-        );
-        await Promise.resolve();
-
         assertEquals(replacementExecutions, 1);
-        assertEquals(await replacement, "fresh transform");
+        assertEquals(await replacement!, "fresh transform");
       } finally {
         releaseFirst.resolve("stale transform");
         await replacement?.catch(() => {});

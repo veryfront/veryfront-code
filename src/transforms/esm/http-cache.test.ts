@@ -275,11 +275,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
         (value) => ({ value, error: undefined }),
         (error: unknown) => ({ value: undefined, error }),
       );
-      const waiterDeadline = Date.now() + 1_000;
-      while (
-        __getMaxInFlightHttpFetchWaiterCountForTests() < 2 &&
-        Date.now() < waiterDeadline
-      ) {
+      while (__getMaxInFlightHttpFetchWaiterCountForTests() < 2) {
         await new Promise((resolve) => setTimeout(resolve, 1));
       }
       assertEquals(__getMaxInFlightHttpFetchWaiterCountForTests(), 2);

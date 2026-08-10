@@ -172,14 +172,14 @@ async function runFrameworkTransformFlight(
     if (progressListener) flightState.listeners.delete(progressListener);
     flightState.waiters = Math.max(0, flightState.waiters - 1);
     if (flightState.waiters === 0 && !flightState.settled) {
-      flightState.controller.abort(
-        options.abortSignal?.reason ??
-          new DOMException("The framework transform was canceled", "AbortError"),
-      );
       if (frameworkTransformAbortStates.get(key) === flightState) {
         frameworkTransformFlight.forget(key);
         frameworkTransformAbortStates.delete(key);
       }
+      flightState.controller.abort(
+        options.abortSignal?.reason ??
+          new DOMException("The framework transform was canceled", "AbortError"),
+      );
     }
     if (
       flightState.waiters === 0 && flightState.settled &&
