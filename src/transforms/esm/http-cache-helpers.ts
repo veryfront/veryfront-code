@@ -548,10 +548,15 @@ export function isInternalBare(specifier: string): boolean {
 /**
  * esm.sh target for modules this cache evaluates server-side. Browser targets
  * get the `browser` export condition, which resolves DOM implementations that
- * throw under SSG. Not the `normalizeEsmShUrl` default: that also canonicalizes
- * browser-facing release-asset URLs.
+ * throw under SSG.
+ *
+ * `node`, not `denonext`: this cache keeps SSR runtime-agnostic across Deno,
+ * Node, and Bun, and Deno's condition can select Deno-only APIs.
+ *
+ * Not the `normalizeEsmShUrl` default: that also canonicalizes browser-facing
+ * release-asset URLs.
  */
-export const SERVER_ESM_TARGET = "denonext";
+export const SERVER_ESM_TARGET = "node";
 
 const ESM_SH_LEADING_DENONEXT = "/denonext/";
 
