@@ -2046,7 +2046,9 @@ describe("processStream active mode", () => {
     ]);
 
     assertEquals(
-      active.events.filter((event) => event.type.startsWith("text-")),
+      active.events.filter((event) =>
+        typeof event.type === "string" && event.type.startsWith("text-")
+      ),
       [
         { type: "text-start", id: "text-1" },
         { type: "text-delta", id: "text-1", delta: "Before tool." },
