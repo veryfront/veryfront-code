@@ -36,6 +36,7 @@ export const ssrHttpCachePlugin: TransformPlugin = {
       moduleServerOrigin: ctx.moduleServerOrigin,
       dependencyPinningCacheKey: ctx.dependencyPinningCacheKey,
       abortSignal: ctx.abortSignal,
+      onProgress: ctx.onProgress,
     });
 
     if (code !== ctx.code) {

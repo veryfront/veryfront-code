@@ -36,6 +36,7 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 import { MODULE_LOAD_TIMEOUT_MS } from "#veryfront/rendering/orchestrator/module-collection.ts";
+import { __getMaxInFlightHttpFetchWaiterCountForTests } from "./in-flight-manager.ts";
 
 /** Duplicated from http-cache.ts for isolated unit testing of the pattern. */
 const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
@@ -225,6 +226,96 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(error, abortReason);
       assertEquals(fetchCount, 1);
     });
+  });
+
+  it("keeps a shared HTTP fetch alive for an active render", async () => {
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const fetchStarted = Promise.withResolvers<void>();
+    const releaseFetch = Promise.withResolvers<void>();
+    let fetchCount = 0;
+
+    const mockFetch = ((_input, init) => {
+      fetchCount += 1;
+      fetchStarted.resolve();
+      return new Promise<Response>((resolve, reject) => {
+        const signal = init?.signal;
+        const onAbort = () => reject(signal?.reason);
+        signal?.addEventListener("abort", onAbort, { once: true });
+        releaseFetch.promise.then(() => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve(
+            new Response("export const shared = true;", {
+              headers: { "content-type": "application/javascript" },
+            }),
+          );
+        });
+      });
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-shared-fetch-cancel-", mockFetch, async (tempDir) => {
+      const source = 'import "https://esm.sh/shared-package";';
+      const first = cacheHttpImportsToLocal(source, {
+        cacheDir: tempDir,
+        importMap: { imports: {}, scopes: {} },
+        abortSignal: firstController.signal,
+      });
+      await fetchStarted.promise;
+
+      const second = cacheHttpImportsToLocal(source, {
+        cacheDir: tempDir,
+        importMap: { imports: {}, scopes: {} },
+        abortSignal: secondController.signal,
+      });
+      const secondOutcome = second.then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      );
+      const waiterDeadline = Date.now() + 1_000;
+      while (
+        __getMaxInFlightHttpFetchWaiterCountForTests() < 2 &&
+        Date.now() < waiterDeadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      assertEquals(__getMaxInFlightHttpFetchWaiterCountForTests(), 2);
+      assertEquals(fetchCount, 1);
+
+      firstController.abort(new DOMException("first render cancelled", "AbortError"));
+      await assertRejects(() => first, DOMException, "first render cancelled");
+
+      releaseFetch.resolve();
+      const outcome = await secondOutcome;
+      if ("error" in outcome) throw outcome.error;
+      assertEquals(outcome.value.code.includes("file://"), true);
+      assertEquals(fetchCount, 1);
+    });
+  });
+
+  it("reports progress for every fetched module in a remote dependency graph", async () => {
+    const parentUrl = "https://93.184.216.34/progress-parent.js";
+    const childUrl = "https://93.184.216.34/progress-child.js";
+    const phases: string[] = [];
+    const mockFetch = ((input: string | URL | Request) => {
+      const code = String(input) === parentUrl
+        ? `import { child } from "${childUrl}"; export { child };`
+        : "export const child = true;";
+      return Promise.resolve(
+        new Response(code, {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-fetch-progress-", mockFetch, async (tempDir) => {
+      await cacheHttpImportsToLocal(`import { child } from "${parentUrl}";`, {
+        cacheDir: tempDir,
+        importMap: { imports: {}, scopes: {} },
+        onProgress: (event) => phases.push(event.phase),
+      });
+    });
+
+    assertEquals(phases, ["http-cache:module-fetched", "http-cache:module-fetched"]);
   });
 
   it("pins same-origin module-server imports before fetching", async () => {

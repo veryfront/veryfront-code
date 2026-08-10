@@ -16,6 +16,7 @@ import {
 import { rendererLogger } from "#veryfront/utils";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
+import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
 import { buildEsmShUrl } from "../import-rewriter/url-builder.ts";
 import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
 import { DEFAULT_REACT_VERSION, getReactImportMap } from "./react-cdn.ts";
@@ -258,6 +259,8 @@ export type CacheOptions = {
   dependencyPinningCacheKey?: string;
   /** Cancels request-scoped fetch, rewrite, and cache work. */
   abortSignal?: AbortSignal;
+  /** Reports completed remote-module fetches as idle-deadline heartbeats. */
+  onProgress?: TransformProgressListener;
 };
 
 export type HttpCacheIdentityOptions = Pick<CacheOptions, "importMap" | "reactVersion">;

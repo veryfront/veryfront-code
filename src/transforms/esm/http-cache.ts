@@ -74,11 +74,14 @@ import {
 } from "./http-bundle-file.ts";
 import {
   __clearInFlightHttpFetches,
+  createInFlightHttpFetch,
   inFlightHttpFetches,
   processingStackStorage,
   refreshDistributedCacheAsync,
+  retainInFlightHttpFetch,
   waitForInFlightFetch,
 } from "./in-flight-manager.ts";
+import { waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
 import {
   __injectCachesForTests,
   getCachedPaths,
@@ -373,11 +376,17 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
 
   let inFlight = inFlightHttpFetches.get(cacheKey);
   while (inFlight) {
-    const result = await waitForInFlightFetch(
-      inFlight,
-      HTTP_MODULE_FETCH_MAX_WAIT_MS,
-      options.abortSignal,
-    );
+    const release = retainInFlightHttpFetch(inFlight);
+    let result: string | null | undefined;
+    try {
+      result = await waitForInFlightFetch(
+        inFlight,
+        HTTP_MODULE_FETCH_MAX_WAIT_MS,
+        options.abortSignal,
+      );
+    } finally {
+      release(options.abortSignal?.reason);
+    }
     if (result !== undefined) {
       if (
         result === null ||
@@ -394,9 +403,10 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     inFlight = inFlightHttpFetches.get(cacheKey);
   }
 
-  const fetchPromise = (async () => {
+  const flight = createInFlightHttpFetch(async (abortSignal) => {
+    const sharedOptions = { ...options, abortSignal };
     const cacheResult = await httpBundleCache.getCodeByUrl(String(hash));
-    options.abortSignal?.throwIfAborted();
+    sharedOptions.abortSignal.throwIfAborted();
 
     if (cacheResult.code) {
       const cachedCode = unbrand(cacheResult.code);
@@ -418,9 +428,9 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
             : "[HTTP-CACHE] Distributed cache hit",
           { url: safeUrl, hash },
         );
-        options.abortSignal?.throwIfAborted();
+        sharedOptions.abortSignal.throwIfAborted();
         await fs.mkdir(cacheDir, { recursive: true });
-        options.abortSignal?.throwIfAborted();
+        sharedOptions.abortSignal.throwIfAborted();
         await fs.writeTextFile(cachePath, cachedCode);
 
         if (!(await exists(cachePath))) {
@@ -444,8 +454,8 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     }
 
     httpCacheLog.debug("Fetching from network", { url: safeUrl });
-    const fetchedModule = await fetchHttpModule(normalizedUrl, options.abortSignal);
-    options.abortSignal?.throwIfAborted();
+    const fetchedModule = await fetchHttpModule(normalizedUrl, sharedOptions.abortSignal);
+    sharedOptions.abortSignal.throwIfAborted();
     let code = fetchedModule.code;
 
     const contentType = fetchedModule.contentType;
@@ -465,12 +475,14 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       });
     }
 
+    sharedOptions.onProgress?.({ phase: "http-cache:module-fetched" });
+
     processingStack.add(cacheIdentity);
     try {
       const rewritten = await rewriteModuleImports(
         code,
         normalizedUrl,
-        options,
+        sharedOptions,
         cacheHttpModule,
       );
       code = rewritten.code;
@@ -478,7 +490,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       processingStack.delete(cacheIdentity);
     }
 
-    options.abortSignal?.throwIfAborted();
+    sharedOptions.abortSignal.throwIfAborted();
     code = embedSourceUrl(code, normalizedUrl);
     if (!isHttpBundleCodeWithinLimit(code)) {
       throw BUNDLE_ERROR.create({
@@ -487,7 +499,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     }
 
     await fs.mkdir(cacheDir, { recursive: true });
-    options.abortSignal?.throwIfAborted();
+    sharedOptions.abortSignal.throwIfAborted();
     await fs.writeTextFile(cachePath, code);
 
     if (!(await exists(cachePath))) {
@@ -521,13 +533,27 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     }
 
     return cachePath;
-  })();
+  });
 
+  const fetchPromise = flight.promise;
   inFlightHttpFetches.set(cacheKey, fetchPromise);
+  void fetchPromise.then(
+    () => {
+      if (inFlightHttpFetches.get(cacheKey) === fetchPromise) {
+        inFlightHttpFetches.delete(cacheKey);
+      }
+    },
+    () => {
+      if (inFlightHttpFetches.get(cacheKey) === fetchPromise) {
+        inFlightHttpFetches.delete(cacheKey);
+      }
+    },
+  );
+  const release = flight.retain();
   try {
-    return await fetchPromise;
+    return await waitForSharedPromise(fetchPromise, options.abortSignal);
   } finally {
-    inFlightHttpFetches.delete(cacheKey);
+    release(options.abortSignal?.reason);
   }
 }
 

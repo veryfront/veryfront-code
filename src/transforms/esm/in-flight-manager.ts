@@ -24,6 +24,83 @@ export const processingStackStorage = new AsyncLocalStorage<Set<string>>();
 /** Deduplicate concurrent HTTP module fetches to avoid races. */
 export const inFlightHttpFetches = new Map<string, Promise<string | null>>();
 
+interface InFlightHttpFetchAbortState {
+  controller: AbortController;
+  waiters: number;
+  settled: boolean;
+}
+
+const inFlightHttpFetchAbortStates = new Map<
+  Promise<string | null>,
+  InFlightHttpFetchAbortState
+>();
+
+type ReleaseInFlightHttpFetch = (reason?: unknown) => void;
+
+function retainInFlightHttpFetchState(
+  state: InFlightHttpFetchAbortState,
+): ReleaseInFlightHttpFetch {
+  state.waiters++;
+  let released = false;
+  return (reason?: unknown) => {
+    if (released) return;
+    released = true;
+    state.waiters = Math.max(0, state.waiters - 1);
+    if (state.waiters === 0 && !state.settled) {
+      state.controller.abort(
+        reason ?? new DOMException("The HTTP module fetch was canceled", "AbortError"),
+      );
+    }
+  };
+}
+
+/** Create shared HTTP work whose cancellation follows all active waiters. */
+export function createInFlightHttpFetch(
+  operation: (abortSignal: AbortSignal) => Promise<string | null>,
+): { promise: Promise<string | null>; retain: () => ReleaseInFlightHttpFetch } {
+  const controller = new AbortController();
+  let promise: Promise<string | null>;
+  try {
+    promise = operation(controller.signal);
+  } catch (error) {
+    promise = Promise.reject(error);
+  }
+
+  const state: InFlightHttpFetchAbortState = {
+    controller,
+    waiters: 0,
+    settled: false,
+  };
+  inFlightHttpFetchAbortStates.set(promise, state);
+  const settle = () => {
+    state.settled = true;
+    inFlightHttpFetchAbortStates.delete(promise);
+  };
+  void promise.then(settle, settle);
+
+  return {
+    promise,
+    retain: () => retainInFlightHttpFetchState(state),
+  };
+}
+
+/** Retain an existing shared HTTP fetch for one additional caller. */
+export function retainInFlightHttpFetch(
+  promise: Promise<string | null>,
+): ReleaseInFlightHttpFetch {
+  const state = inFlightHttpFetchAbortStates.get(promise);
+  return state ? retainInFlightHttpFetchState(state) : () => {};
+}
+
+/** Return the largest shared-fetch waiter count for deterministic tests. */
+export function __getMaxInFlightHttpFetchWaiterCountForTests(): number {
+  let maximum = 0;
+  for (const state of inFlightHttpFetchAbortStates.values()) {
+    maximum = Math.max(maximum, state.waiters);
+  }
+  return maximum;
+}
+
 /** Maximum time to wait for an in-flight fetch from another request before retrying */
 const IN_FLIGHT_WAIT_TIMEOUT_MS = 30_000;
 
@@ -32,6 +109,14 @@ const IN_FLIGHT_WAIT_TIMEOUT_MS = 30_000;
  * Used for testing to ensure clean state between tests.
  */
 export function __clearInFlightHttpFetches(): void {
+  for (const state of inFlightHttpFetchAbortStates.values()) {
+    if (!state.settled) {
+      state.controller.abort(
+        new DOMException("The HTTP fetch registry was cleared", "AbortError"),
+      );
+    }
+  }
+  inFlightHttpFetchAbortStates.clear();
   inFlightHttpFetches.clear();
 }
 

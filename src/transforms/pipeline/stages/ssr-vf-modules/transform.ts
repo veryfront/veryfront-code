@@ -343,6 +343,7 @@ async function rewriteFallbackRelativeImports(
     cacheDir: getHttpBundleCacheDir(),
     importMap,
     abortSignal: ctx.abortSignal,
+    onProgress: ctx.onProgress,
     reactVersion: ctx.reactVersion,
   });
   return cacheResult.code;
@@ -650,6 +651,7 @@ async function transformFrameworkCodeUncoalesced(
       cacheDir: getHttpBundleCacheDir(),
       importMap,
       abortSignal: ctx.abortSignal,
+      onProgress: ctx.onProgress,
       reactVersion: ctx.reactVersion,
     });
 
