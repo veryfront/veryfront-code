@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __clearInFlightHttpFetches,
@@ -104,6 +104,7 @@ describe("transforms/esm/in-flight-manager", () => {
           DOMException,
           "HTTP bundle publication timed out",
         );
+        assertInstanceOf(error, DOMException);
         assertEquals(error.name, "TimeoutError");
         assertEquals(sharedSignal?.aborted, true);
         assertEquals(inFlightHttpFetches.has(cacheKey), false);
