@@ -135,7 +135,12 @@ export function constrainRuntimeRemoteToolSources(
   return sourcesToConstrain.map((source) => createMcpToolPolicySource(source, policy));
 }
 
-const REMOTE_TOOL_CREDENTIAL_CONTEXT_KEYS = ["authToken", "runId", "agentId"] as const;
+const REMOTE_TOOL_CREDENTIAL_CONTEXT_KEYS = [
+  "authToken",
+  "runId",
+  "runIdBindsToolAuthorization",
+  "agentId",
+] as const;
 
 function withBoundRemoteToolContext(
   context: ToolExecutionContext | undefined,
@@ -144,8 +149,17 @@ function withBoundRemoteToolContext(
 ): ToolExecutionContext {
   const mergedContext = { ...(context ?? {}) };
   for (const key of keys) {
+    if (key === "runIdBindsToolAuthorization") {
+      if (boundContext.runId === undefined) continue;
+      if (boundContext.runIdBindsToolAuthorization !== undefined) {
+        mergedContext.runIdBindsToolAuthorization = boundContext.runIdBindsToolAuthorization;
+      } else {
+        delete mergedContext.runIdBindsToolAuthorization;
+      }
+      continue;
+    }
     if (boundContext[key] !== undefined) {
-      mergedContext[key] = boundContext[key];
+      (mergedContext as Record<string, unknown>)[key] = boundContext[key];
     }
   }
   return mergedContext;

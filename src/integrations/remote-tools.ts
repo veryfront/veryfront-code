@@ -159,6 +159,11 @@ function snapshotToolExecutionContext(
     const agentId = includeCallMetadata
       ? readOwnDataProperty("agentId")
       : { present: false, value: undefined };
+    // Strict `=== false` only: an absent marker means the id is a real
+    // control-plane run and stays bindable.
+    const runIdBinds = includeCallMetadata
+      ? readOwnDataProperty("runIdBindsToolAuthorization")
+      : { present: false, value: undefined };
     const abortSignal = readOwnDataProperty("abortSignal");
     if (
       abortSignal.value !== undefined &&
@@ -171,7 +176,7 @@ function snapshotToolExecutionContext(
       hasExplicitCredential: authToken.present,
       authToken: authToken.value,
       projectSlug: projectSlug.value,
-      runId: runId.value,
+      runId: runIdBinds.value === false ? undefined : runId.value,
       agentId: agentId.value,
       abortSignal: abortSignal.value as AbortSignal | undefined,
     });
