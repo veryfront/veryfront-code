@@ -41,6 +41,7 @@ export function hasInFlightHttpFetchOwner(): boolean {
 }
 
 interface InFlightHttpFetchAbortState {
+  committed: boolean;
   controller: AbortController;
   completionDependencies: Map<string, Promise<string | null>>;
   completionDependencyReleases: Map<string, (reason?: unknown) => void>;
@@ -53,6 +54,8 @@ interface InFlightHttpFetchAbortState {
 }
 
 export interface InFlightHttpFetchControl {
+  /** Keep this generation authoritative after publication side effects begin. */
+  commit(): boolean;
   /** Whether this owner is still the registered generation for its cache key. */
   isCurrent(): boolean;
 }
@@ -95,6 +98,7 @@ function releaseInFlightHttpFetchWaiter(
   state.waiters--;
   if (state.waiters !== 0) return;
   if (!state.settled) {
+    if (state.committed) return;
     state.controller.abort(
       reason ?? new DOMException("HTTP module fetch has no active callers", "AbortError"),
     );
@@ -209,6 +213,7 @@ export function createInFlightHttpFetch(
 
   const controller = new AbortController();
   const state: InFlightHttpFetchAbortState = {
+    committed: false,
     controller,
     completionDependencies: new Map(),
     completionDependencyReleases: new Map(),
@@ -233,6 +238,16 @@ export function createInFlightHttpFetch(
         cacheKey,
         () =>
           compute(controller.signal, reportProgress, {
+            commit: (): boolean => {
+              if (
+                controller.signal.aborted || state.settled ||
+                inFlightHttpFetches.get(cacheKey) !== promise
+              ) {
+                return false;
+              }
+              state.committed = true;
+              return true;
+            },
             isCurrent: (): boolean => inFlightHttpFetches.get(cacheKey) === promise,
           }),
       )

@@ -366,11 +366,10 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
-  it("does not expose an abandoned bundle while its distributed write is pending", async () => {
-    const moduleUrl = "https://93.184.216.34/abandoned-distributed-owner.js";
+  it("keeps a publishing generation authoritative through distributed writes", async () => {
+    const moduleUrl = "https://93.184.216.34/committed-distributed-owner.js";
     const firstDistributedWriteStarted = Promise.withResolvers<void>();
     const releaseFirstDistributedWrite = Promise.withResolvers<void>();
-    const replacementFetched = Promise.withResolvers<void>();
     const distributed = new Map<string, string>();
     let distributedWriteCount = 0;
     let fetchCount = 0;
@@ -393,16 +392,14 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     };
     const mockFetch = (() => {
       fetchCount++;
-      if (fetchCount === 2) replacementFetched.resolve();
-      const generation = fetchCount === 1 ? "stale" : "fresh";
       return Promise.resolve(
-        new Response(`export const generation = "${generation}";`, {
+        new Response('export const generation = "committed";', {
           headers: { "content-type": "application/javascript" },
         }),
       );
     }) as typeof fetch;
 
-    await withIsolatedHttpCache("vf-esm-abandoned-distributed-", mockFetch, async (tempDir) => {
+    await withIsolatedHttpCache("vf-esm-committed-distributed-", mockFetch, async (tempDir) => {
       __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
       const controller = new AbortController();
       const source = `import { generation } from "${moduleUrl}"; export { generation };`;
@@ -419,11 +416,20 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
         await assertRejects(() => abandoned, DOMException, "render abandoned");
 
         replacement = cacheHttpImportsToLocal(source, options);
-        const replacementState = await Promise.race([
-          replacement.then(() => "resolved" as const),
-          replacementFetched.promise.then(() => "fetched" as const),
-        ]);
-        assertEquals(replacementState, "fetched");
+        let replacementSettled = false;
+        void replacement.then(
+          () => replacementSettled = true,
+          () => replacementSettled = true,
+        );
+        while (__getMaxInFlightHttpFetchWaiterCountForTests() < 1) {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+        assertEquals(replacementSettled, false);
+        assertEquals(fetchCount, 1);
+        assertEquals(
+          [...distributed.values()].some((value) => value.includes('generation = "committed"')),
+          true,
+        );
 
         releaseFirstDistributedWrite.resolve();
         const result = await replacement;
@@ -436,13 +442,8 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
         }
         assertEquals(bundleFiles.length, 1);
         const publishedCode = await readTextFile(join(tempDir, bundleFiles[0]!));
-        assert(publishedCode.includes('generation = "fresh"'));
-        assertEquals(publishedCode.includes('generation = "stale"'), false);
-        assertEquals(
-          [...distributed.values()].some((value) => value.includes('generation = "stale"')),
-          false,
-        );
-        assertEquals(fetchCount, 2);
+        assert(publishedCode.includes('generation = "committed"'));
+        assertEquals(fetchCount, 1);
       } finally {
         releaseFirstDistributedWrite.resolve();
         await replacement?.catch(() => {});
@@ -450,42 +451,35 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     });
   });
 
-  it("does not read an abandoned rename while its replacement is active", async () => {
-    const moduleUrl = "https://93.184.216.34/abandoned-rename-owner.js";
-    const staleRenameStarted = Promise.withResolvers<void>();
-    const releaseStaleRename = Promise.withResolvers<void>();
-    const stalePublicationDrained = Promise.withResolvers<void>();
-    const replacementFetchStarted = Promise.withResolvers<void>();
-    const releaseReplacementFetch = Promise.withResolvers<void>();
+  it("keeps a publishing generation authoritative through an atomic rename", async () => {
+    const moduleUrl = "https://93.184.216.34/committed-rename-owner.js";
+    const renameStarted = Promise.withResolvers<void>();
+    const releaseRename = Promise.withResolvers<void>();
     const originalRename = Deno.rename.bind(Deno);
     let fetchCount = 0;
 
     Deno.rename = async (from, to) => {
       const stagedCode = await readTextFile(String(from));
-      if (stagedCode.includes('generation = "stale"')) {
-        staleRenameStarted.resolve();
-        await releaseStaleRename.promise;
+      if (stagedCode.includes('generation = "committed"')) {
+        renameStarted.resolve();
+        await releaseRename.promise;
         await originalRename(from, to);
-        setTimeout(() => stalePublicationDrained.resolve(), 0);
         return;
       }
       await originalRename(from, to);
     };
 
-    const mockFetch = (async () => {
+    const mockFetch = (() => {
       fetchCount++;
-      if (fetchCount === 2) {
-        replacementFetchStarted.resolve();
-        await releaseReplacementFetch.promise;
-      }
-      const generation = fetchCount === 1 ? "stale" : "fresh";
-      return new Response(`export const generation = "${generation}";`, {
-        headers: { "content-type": "application/javascript" },
-      });
+      return Promise.resolve(
+        new Response('export const generation = "committed";', {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
     }) as typeof fetch;
 
     try {
-      await withIsolatedHttpCache("vf-esm-abandoned-rename-", mockFetch, async (tempDir) => {
+      await withIsolatedHttpCache("vf-esm-committed-rename-", mockFetch, async (tempDir) => {
         const controller = new AbortController();
         const source = `import { generation } from "${moduleUrl}"; export { generation };`;
         const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
@@ -497,32 +491,18 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
         let third: ReturnType<typeof cacheHttpImportsToLocal> | undefined;
 
         try {
-          await staleRenameStarted.promise;
+          await renameStarted.promise;
           controller.abort(new DOMException("render abandoned", "AbortError"));
           await assertRejects(() => abandoned, DOMException, "render abandoned");
 
           replacement = cacheHttpImportsToLocal(source, options);
-          await replacementFetchStarted.promise;
-          releaseStaleRename.resolve();
-          await stalePublicationDrained.promise;
-
           third = cacheHttpImportsToLocal(source, options);
-          let stopWaiterPoll = false;
-          const thirdBehavior = await Promise.race([
-            third.then(() => "resolved" as const),
-            (async () => {
-              while (!stopWaiterPoll && __getMaxInFlightHttpFetchWaiterCountForTests() < 2) {
-                await new Promise((resolve) => setTimeout(resolve, 1));
-              }
-              return __getMaxInFlightHttpFetchWaiterCountForTests() >= 2
-                ? "joined" as const
-                : "stopped" as const;
-            })(),
-          ]);
-          stopWaiterPoll = true;
-          assertEquals(thirdBehavior, "joined");
+          while (__getMaxInFlightHttpFetchWaiterCountForTests() < 2) {
+            await new Promise((resolve) => setTimeout(resolve, 1));
+          }
+          assertEquals(fetchCount, 1);
 
-          releaseReplacementFetch.resolve();
+          releaseRename.resolve();
           const [replacementResult, thirdResult] = await Promise.all([replacement, third]);
           assert(replacementResult.code.includes("file://"));
           assert(thirdResult.code.includes("file://"));
@@ -534,17 +514,15 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
           }
           assertEquals(bundleFiles.length, 1);
           const publishedCode = await readTextFile(join(tempDir, bundleFiles[0]!));
-          assert(publishedCode.includes('generation = "fresh"'));
-          assertEquals(fetchCount, 2);
+          assert(publishedCode.includes('generation = "committed"'));
+          assertEquals(fetchCount, 1);
         } finally {
-          releaseStaleRename.resolve();
-          releaseReplacementFetch.resolve();
+          releaseRename.resolve();
           await Promise.allSettled([abandoned, replacement, third].filter((value) => value));
         }
       });
     } finally {
-      releaseStaleRename.resolve();
-      releaseReplacementFetch.resolve();
+      releaseRename.resolve();
       Deno.rename = originalRename;
     }
   });
