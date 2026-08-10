@@ -531,12 +531,11 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
   const result = await waitForSharedInFlightHttpFetch(
     cacheKey,
     fetchPromise,
-    HTTP_MODULE_FETCH_MAX_WAIT_MS,
+    null,
     options.abortSignal,
     options.onProgress,
   );
-  if (result !== undefined) return result;
-  return await cacheHttpModuleInternal(url, options);
+  return result;
 }
 
 async function cacheHttpModule(url: string, options: CacheOptions): Promise<string | null> {

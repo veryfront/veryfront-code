@@ -3,8 +3,10 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __clearInFlightHttpFetches,
+  createInFlightHttpFetch,
   inFlightHttpFetches,
   waitForInFlightFetch,
+  waitForSharedInFlightHttpFetch,
 } from "./in-flight-manager.ts";
 
 describe("transforms/esm/in-flight-manager", () => {
@@ -27,6 +29,24 @@ describe("transforms/esm/in-flight-manager", () => {
       const p = Promise.resolve("result");
       inFlightHttpFetches.set("key1", p);
       assertEquals(inFlightHttpFetches.get("key1"), p);
+      __clearInFlightHttpFetches();
+    });
+  });
+
+  describe("waitForSharedInFlightHttpFetch", () => {
+    it("does not apply the follower timeout to the flight owner", async () => {
+      const cacheKey = "owner-with-recursive-work";
+      const release = Promise.withResolvers<void>();
+      const promise = createInFlightHttpFetch(cacheKey, async () => {
+        await release.promise;
+        return "/path/to/complete-graph.mjs";
+      });
+
+      const owner = waitForSharedInFlightHttpFetch(cacheKey, promise, null);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      release.resolve();
+
+      assertEquals(await owner, "/path/to/complete-graph.mjs");
       __clearInFlightHttpFetches();
     });
   });

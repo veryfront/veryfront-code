@@ -9,6 +9,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { rendererLogger } from "#veryfront/utils";
+import { waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
 import { HTTP_MODULE_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { httpBundleCache } from "./http-cache-wrapper.ts";
 import { asLocalModuleCode } from "./http-cache-invariants.ts";
@@ -117,16 +118,34 @@ export function createInFlightHttpFetch(
  * Wait for shared HTTP work without letting one cancelled caller abort work
  * that still has other active waiters.
  */
-export async function waitForSharedInFlightHttpFetch(
+export function waitForSharedInFlightHttpFetch(
+  cacheKey: string,
+  promise: Promise<string | null>,
+  waitTimeoutMs: null,
+  abortSignal?: AbortSignal,
+  onProgress?: TransformProgressListener,
+): Promise<string | null>;
+export function waitForSharedInFlightHttpFetch(
   cacheKey: string,
   promise: Promise<string | null>,
   waitTimeoutMs: number,
   abortSignal?: AbortSignal,
   onProgress?: TransformProgressListener,
+): Promise<string | null | undefined>;
+export async function waitForSharedInFlightHttpFetch(
+  cacheKey: string,
+  promise: Promise<string | null>,
+  waitTimeoutMs: number | null,
+  abortSignal?: AbortSignal,
+  onProgress?: TransformProgressListener,
 ): Promise<string | null | undefined> {
+  const waitForFetch = (): Promise<string | null | undefined> =>
+    waitTimeoutMs === null
+      ? waitForSharedPromise(promise, abortSignal)
+      : waitForInFlightFetch(promise, waitTimeoutMs, abortSignal);
   const state = inFlightHttpFetchAbortStates.get(cacheKey);
   if (!state || state.promise !== promise) {
-    return await waitForInFlightFetch(promise, waitTimeoutMs, abortSignal);
+    return await waitForFetch();
   }
 
   state.waiters++;
@@ -135,7 +154,7 @@ export async function waitForSharedInFlightHttpFetch(
     : undefined;
   if (progressListener) state.progressListeners.add(progressListener);
   try {
-    return await waitForInFlightFetch(promise, waitTimeoutMs, abortSignal);
+    return await waitForFetch();
   } finally {
     if (progressListener) state.progressListeners.delete(progressListener);
     state.waiters--;
