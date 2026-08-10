@@ -75,8 +75,8 @@ function createPreparationLock(nodeModulesPath, lockPath, token) {
   }
 }
 
-function isLockPathConflict(error, lockPath) {
-  return existsSync(lockPath) &&
+export function isDirectoryPathConflict(error, path) {
+  return existsSync(path) &&
     ["EACCES", "EEXIST", "ENOTEMPTY", "EPERM"].includes(error?.code);
 }
 
@@ -88,7 +88,7 @@ function acquirePreparationLock(nodeModulesPath) {
   try {
     createPreparationLock(nodeModulesPath, lockPath, token);
   } catch (error) {
-    if (isLockPathConflict(error, lockPath)) {
+    if (isDirectoryPathConflict(error, lockPath)) {
       reclaimedGuardPath = reclaimStalePreparationLock(
         nodeModulesPath,
         lockPath,
@@ -99,7 +99,7 @@ function acquirePreparationLock(nodeModulesPath) {
       try {
         createPreparationLock(nodeModulesPath, lockPath, token);
       } catch (retryError) {
-        if (isLockPathConflict(retryError, lockPath)) {
+        if (isDirectoryPathConflict(retryError, lockPath)) {
           // This generation tombstone must remain permanent. Otherwise an
           // arbitrarily delayed stale-generation reader could reuse it after a
           // fresh runner acquires lockPath and move that fresh live lock.
@@ -156,8 +156,7 @@ function reclaimStalePreparationLock(
     } catch (renameError) {
       if (
         renameError?.code === "ENOENT" ||
-        renameError?.code === "EEXIST" ||
-        renameError?.code === "ENOTEMPTY"
+        isDirectoryPathConflict(renameError, guardPath)
       ) {
         return false;
       }

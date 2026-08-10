@@ -15,7 +15,7 @@ import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { prepareBunWorkspacePackages } from "./workspace-packages.mjs";
+import { isDirectoryPathConflict, prepareBunWorkspacePackages } from "./workspace-packages.mjs";
 
 const projectRoot = fileURLToPath(new URL("../..", import.meta.url));
 const workspacePackagesModuleUrl = new URL("./workspace-packages.mjs", import.meta.url).href;
@@ -24,6 +24,21 @@ const PREPARATION_PUBLISH_INTERRUPTED_EXIT_CODE = 18;
 const LOCK_STAGING_PREFIX = ".veryfront-bun-workspace-packages.lock.staging-";
 const RECLAIMER_GUARD_PREFIX = ".veryfront-bun-workspace-packages.reclaiming-";
 const RECLAIM_BARRIER_PREFIX = ".veryfront-bun-workspace-packages.barrier-";
+
+test("directory conflicts include Windows access errors for existing paths", () => {
+  const guardPath = reclaimerGuardPath(randomUUID());
+  mkdirSync(guardPath, { recursive: true });
+
+  try {
+    assert.equal(isDirectoryPathConflict({ code: "EPERM" }, guardPath), true);
+    assert.equal(isDirectoryPathConflict({ code: "EACCES" }, guardPath), true);
+    assert.equal(isDirectoryPathConflict({ code: "EINVAL" }, guardPath), false);
+  } finally {
+    rmSync(guardPath, { recursive: true, force: true });
+  }
+
+  assert.equal(isDirectoryPathConflict({ code: "EPERM" }, guardPath), false);
+});
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
