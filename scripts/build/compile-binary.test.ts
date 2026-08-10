@@ -184,6 +184,50 @@ it("proxy binary embeds only the runtime-resolved proxy entrypoint", async () =>
   }
 });
 
+it("proxy binary cannot reach declarative config worker modules", async () => {
+  const command = new Deno.Command(Deno.execPath(), {
+    args: ["info", "--json", "cli/proxy-main.ts"],
+    stdout: "piped",
+    stderr: "piped",
+  });
+  const output = await command.output();
+  assertEquals(
+    output.success,
+    true,
+    new TextDecoder().decode(output.stderr),
+  );
+
+  const info = JSON.parse(new TextDecoder().decode(output.stdout)) as {
+    roots?: string[];
+    modules?: Array<{
+      dependencies?: Array<{ code?: { specifier?: string } }>;
+      specifier?: string;
+    }>;
+  };
+  const modules = new Map(
+    (info.modules ?? []).map((module) => [module.specifier ?? "", module]),
+  );
+  const reachable = new Set(info.roots ?? []);
+  const pending = [...reachable];
+  while (pending.length > 0) {
+    const specifier = pending.shift()!;
+    for (const dependency of modules.get(specifier)?.dependencies ?? []) {
+      const dependencySpecifier = dependency.code?.specifier;
+      if (!dependencySpecifier || reachable.has(dependencySpecifier)) continue;
+      reachable.add(dependencySpecifier);
+      pending.push(dependencySpecifier);
+    }
+  }
+  const evaluatorWorkerModules = [...reachable]
+    .filter((specifier) => specifier.includes("declarative-evaluator-worker"));
+
+  assertEquals(
+    evaluatorWorkerModules,
+    [],
+    "the proxy must not reach project config evaluation; it only forwards requests to the production server",
+  );
+});
+
 it("proxy release verifies lock freshness and publishes an exact SBOM", async () => {
   const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
   const denoConfig = JSON.parse(await Deno.readTextFile("deno.json")) as {

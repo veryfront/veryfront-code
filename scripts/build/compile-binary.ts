@@ -69,19 +69,12 @@ export const DEFAULT_INCLUDES = [
 ];
 
 export const PROXY_INCLUDES = [
-  // Deliberately omits UNTRACEABLE_WORKER_INCLUDES, on build grounds only.
-  // Adding them fails the compile outright: the worker entry's graph wants
-  // @babel/types@7.29.8 plus @babel/helper-string-parser and
-  // @babel/helper-validator-identifier, while proxy-deno.lock pins
-  // @babel/types@7.29.0, and --frozen refuses to update the lock.
-  //
-  // This is NOT evidence that the proxy is safe. The lock already carries a
-  // babel parse toolchain (parser, generator, traverse, types), so "the deps
-  // are absent, therefore the worker never runs here" does not follow --
-  // the conflict is a version skew, not an absence. `cli/proxy-main.ts` does
-  // pull the evaluator's runner into its graph, so whether the proxy can reach
-  // a spawn at runtime is an open question, tracked in veryfront-issue-inbox#382.
-  // If it can, this list and the proxy lock have to be regenerated together.
+  // Deliberately omits UNTRACEABLE_WORKER_INCLUDES. The standalone proxy
+  // forwards project requests to the production server and never evaluates
+  // project config. Its entry graph must therefore remain unable to reach the
+  // declarative evaluator worker. compile-binary.test.ts enforces that runtime
+  // boundary. If project config evaluation is added to the proxy, embed every
+  // reachable worker here and regenerate the proxy lock in the same change.
   //
   // The proxy runtime is loaded after provider activation. Providers are
   // statically referenced by cli/proxy-main.ts so --include does not embed the
