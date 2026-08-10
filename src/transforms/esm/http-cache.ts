@@ -36,6 +36,7 @@ import {
 import { looksLikeHtmlContent as looksLikeHtmlNotJs } from "./html-content.ts";
 import { HttpModuleBodyError, readHttpModuleText } from "../shared/http-module-response.ts";
 import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
+import { waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
 import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
 import {
   guardedOutboundFetch,
@@ -137,7 +138,7 @@ async function publishHttpBundleGeneration<T>(
     await fs.writeTextFile(stagedPath, code);
 
     const previousPublication = httpBundlePublications.get(cacheKey) ?? Promise.resolve();
-    const publication: Promise<T> = previousPublication
+    const publicationWork: Promise<T> = previousPublication
       .catch(() => {})
       .then(async () => {
         assertCurrentHttpFetch(abortSignal, control);
@@ -154,7 +155,8 @@ async function publishHttpBundleGeneration<T>(
         const result = await publish();
         assertCurrentHttpFetch(abortSignal, control);
         return result;
-      })
+      });
+    const publication = waitForSharedPromise(publicationWork, abortSignal)
       .finally(() => {
         if (httpBundlePublications.get(cacheKey) === publication) {
           httpBundlePublications.delete(cacheKey);

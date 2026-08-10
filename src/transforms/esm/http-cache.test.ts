@@ -37,6 +37,7 @@ import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 import { MODULE_LOAD_TIMEOUT_MS } from "#veryfront/rendering/orchestrator/module-collection.ts";
 import { FakeTime } from "#std/testing/time";
+import { HTTP_MODULE_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 import {
   __getMaxInFlightHttpFetchWaiterCountForTests,
   createInFlightHttpFetch,
@@ -525,6 +526,61 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       releaseRename.resolve();
       Deno.rename = originalRename;
     }
+  });
+
+  it("retires a committed generation when publication never settles", async () => {
+    using time = new FakeTime();
+    const writeStarted = Promise.withResolvers<void>();
+    const stalledWrite = new Promise<void>(() => {});
+    let stallWrites = true;
+    let fetchCount = 0;
+    const backend: CacheBackend = {
+      type: "memory",
+      get: () => Promise.resolve(null),
+      set: () => {
+        if (!stallWrites) return Promise.resolve();
+        writeStarted.resolve();
+        return stalledWrite;
+      },
+      del: () => Promise.resolve(),
+    };
+    const mockFetch = (() => {
+      fetchCount++;
+      return Promise.resolve(
+        new Response(`export const generation = ${fetchCount};`, {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-stalled-publication-", mockFetch, async (tempDir) => {
+      __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+      const source = 'import "https://93.184.216.34/stalled-publication.js";';
+      const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+      const stalledOwner = cacheHttpImportsToLocal(source, options);
+      const stalledOutcome = stalledOwner.then(
+        (value) => ({ error: undefined, value }),
+        (error: unknown) => ({ error, value: undefined }),
+      );
+      let stalledOwnerSettled = false;
+      void stalledOutcome.then(() => stalledOwnerSettled = true);
+
+      await time.runMicrotasks();
+      await writeStarted.promise;
+      await time.tickAsync(HTTP_MODULE_FETCH_TIMEOUT_MS);
+      await time.runMicrotasks();
+
+      assertEquals(stalledOwnerSettled, true);
+      const { error } = await stalledOutcome;
+      assertInstanceOf(error, DOMException);
+      assertEquals(error.name, "TimeoutError");
+      assertEquals(inFlightHttpFetches.size, 0);
+
+      stallWrites = false;
+      const replacement = await cacheHttpImportsToLocal(source, options);
+      assert(replacement.code.includes("file://"));
+      assertEquals(fetchCount, 2);
+    });
   });
 
   it("keeps a shared HTTP fetch alive while another caller is still waiting", async () => {
