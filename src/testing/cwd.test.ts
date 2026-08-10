@@ -8,6 +8,21 @@ import {
 import { VeryfrontError } from "#veryfront/errors";
 import { withCwd } from "./cwd.ts";
 
+const CWD_SCOPED_TESTS = [
+  "cli/router.test.ts",
+  "cli/app/operations/project-creation.test.ts",
+  "cli/commands/schedule/handler.test.ts",
+  "cli/commands/skills/validate.test.ts",
+  "cli/commands/webhook/handler.test.ts",
+  "src/platform/compat/process.test.ts",
+  "src/testing/cwd.test.ts",
+] as const;
+
+const CWD_EXCLUSION_TESTS = [
+  "src/testing/cwd-exclusion-a.test.ts",
+  "src/testing/cwd-exclusion-b.test.ts",
+] as const;
+
 /**
  * The working directory, or `null` when it cannot be read.
  *
@@ -25,6 +40,56 @@ function currentDirOrUnreadable(): string | null {
 }
 
 describe("testing/cwd", () => {
+  it("keeps cwd mutation isolated from parallel module loading", async () => {
+    const config = JSON.parse(
+      await Deno.readTextFile(new URL("../../deno.json", import.meta.url)),
+    ) as { tasks?: Record<string, string> };
+    const tasks = config.tasks ?? {};
+    const unitTask = tasks["test:unit"] ?? "";
+    const parallelTask = tasks["test:unit:parallel"] ?? "";
+    const cwdTask = tasks["test:unit:cwd"] ?? "";
+    const exclusionTask = tasks["test:unit:cwd-exclusion"] ?? "";
+
+    for (const task of ["test:unit:parallel", "test:unit:cwd", "test:unit:cwd-exclusion"]) {
+      assertEquals(unitTask.includes(`deno task ${task}`), true);
+    }
+    assertEquals(parallelTask.includes("--parallel"), true);
+    assertEquals(cwdTask.includes("--parallel"), false);
+    assertEquals(exclusionTask.includes("--parallel"), true);
+
+    for (const path of CWD_SCOPED_TESTS) {
+      assertEquals(
+        parallelTask.includes(`! -path '${path}'`),
+        true,
+        `${path} must be omitted from parallel test discovery`,
+      );
+      assertEquals(cwdTask.includes(path), true, `${path} must run in the serial cwd task`);
+      assertEquals(
+        exclusionTask.includes(path),
+        false,
+        `${path} must not run in the isolated parallel task`,
+      );
+    }
+
+    for (const path of CWD_EXCLUSION_TESTS) {
+      assertEquals(
+        cwdTask.includes(path),
+        false,
+        `${path} must not run in the serial cwd task`,
+      );
+      assertEquals(
+        parallelTask.includes(`! -path '${path}'`),
+        true,
+        `${path} must be omitted from parallel test discovery`,
+      );
+      assertEquals(
+        exclusionTask.includes(path),
+        true,
+        `${path} must run in the isolated parallel probe`,
+      );
+    }
+  });
+
   it("enters the requested directory and does not park the process in it", async () => {
     const temp = await Deno.makeTempDir();
     const entered = await Deno.realPath(temp);
