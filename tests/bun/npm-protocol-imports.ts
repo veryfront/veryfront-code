@@ -3,6 +3,10 @@ type Token = {
   value: string;
 };
 
+/** Module paths whose imports need Bun-specific rewriting before resolution. */
+export const BUN_REWRITE_MODULE_FILTER =
+  /(\.test\.[cm]?[jt]sx?|[/\\]extensions[/\\]ext-[^/\\]+[/\\]src[/\\].*\.[cm]?[jt]sx?)$/;
+
 function bareNpmSpecifier(specifier: string): string {
   const value = specifier.slice("npm:".length);
   const match = /^((?:@[^/]+\/)?[^@/]+)(?:@[^/]+)?(\/.*)?$/.exec(value);
@@ -95,4 +99,20 @@ export function rewriteNpmProtocolImports(source: string): string | null {
     source,
     (specifier) => specifier.startsWith("npm:") ? bareNpmSpecifier(specifier) : null,
   );
+}
+
+/** Rewrite imports selected by the Bun preload hook on every path style. */
+export function rewriteBunPreloadedModuleContents(
+  modulePath: string,
+  source: string,
+  resolveWorkspaceSpecifier: (specifier: string) => string | null,
+): string {
+  const posixPath = modulePath.replaceAll("\\", "/");
+  let contents = posixPath.includes("/extensions/")
+    ? rewriteModuleSpecifiers(source, resolveWorkspaceSpecifier) ?? source
+    : source;
+  if (/\.test\.[cm]?[jt]sx?$/.test(posixPath)) {
+    contents = rewriteNpmProtocolImports(contents) ?? contents;
+  }
+  return contents;
 }

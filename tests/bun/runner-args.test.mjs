@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   buildBunTestArgs,
   buildIsolatedBunTestRuns,
@@ -50,7 +51,7 @@ test("the Bun runner drains child output and exits naturally", () => {
 test("the Bun runner fails loudly when filters select no files", () => {
   const result = spawnSync(
     process.execPath,
-    [new URL("./run-tests.mjs", import.meta.url).pathname],
+    [fileURLToPath(new URL("./run-tests.mjs", import.meta.url))],
     {
       env: { ...process.env, BUN_TEST_INCLUDE: "missing-bun-fixture.test.ts" },
       encoding: "utf8",

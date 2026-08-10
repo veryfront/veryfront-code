@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { prepareBunWorkspacePackages } from "./workspace-packages.mjs";
@@ -9,6 +20,71 @@ const projectRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
+}
+
+async function waitForFiles(paths, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!paths.every((path) => existsSync(path))) {
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for ${paths.join(", ")}`);
+    }
+    await delay(10);
+  }
+}
+
+function spawnLockReclaimer(lockPath, coordinationRoot, id) {
+  const childSource = String.raw`
+    import { existsSync, writeFileSync } from "node:fs";
+    const { reclaimStalePreparationLock } = await import(process.env.VF_LOCK_MODULE_URL);
+    const lockPath = process.env.VF_LOCK_PATH;
+    const coordinationRoot = process.env.VF_COORDINATION_ROOT;
+    const id = process.env.VF_RECLAIMER_ID;
+    const otherId = id === "0" ? "1" : "0";
+    const waitBuffer = new Int32Array(new SharedArrayBuffer(4));
+    const wait = () => Atomics.wait(waitBuffer, 0, 0, 10);
+    writeFileSync(coordinationRoot + "/" + id + ".ready", "ready\n");
+    while (!existsSync(coordinationRoot + "/start")) wait();
+    const runtimeProcess = {
+      kill() {
+        writeFileSync(coordinationRoot + "/" + id + ".checked", "checked\n");
+        const deadline = Date.now() + 500;
+        while (
+          !existsSync(coordinationRoot + "/" + otherId + ".checked") &&
+          Date.now() < deadline
+        ) wait();
+        const error = new Error("dead lock owner");
+        error.code = "ESRCH";
+        throw error;
+      },
+    };
+    const token = reclaimStalePreparationLock(lockPath, runtimeProcess);
+    writeFileSync(
+      coordinationRoot + "/" + id + ".result.json",
+      JSON.stringify({ id, pid: process.pid, token }),
+    );
+    if (token !== null) {
+      while (!existsSync(coordinationRoot + "/release")) wait();
+    }
+  `;
+  const child = spawn(process.execPath, ["--input-type=module", "--eval", childSource], {
+    env: {
+      ...process.env,
+      VF_COORDINATION_ROOT: coordinationRoot,
+      VF_LOCK_MODULE_URL: new URL("./workspace-packages.mjs", import.meta.url).href,
+      VF_LOCK_PATH: lockPath,
+      VF_RECLAIMER_ID: String(id),
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+  const completion = new Promise((resolveCompletion) => {
+    child.on("close", (code, signal) => resolveCompletion({ code, signal, stderr }));
+  });
+  return { child, completion };
 }
 
 test("prepareBunWorkspacePackages derives native packages from every workspace export", () => {
@@ -130,6 +206,57 @@ test("workspace package preparation reclaims a stale lock with a dead owner", ()
     );
   } finally {
     prepared.cleanup();
+  }
+});
+
+test("concurrent stale-lock reclaimers preserve the live replacement owner", async () => {
+  const coordinationRoot = mkdtempSync(join(tmpdir(), "veryfront-bun-lock-race-"));
+  const lockPath = join(coordinationRoot, ".veryfront-bun-workspace-packages.lock");
+  mkdirSync(lockPath);
+  writeFileSync(
+    join(lockPath, ".veryfront-bun-workspace-package.json"),
+    `${JSON.stringify({ owner: "veryfront-bun-tests", pid: 9_999_999, token: "stale" })}\n`,
+  );
+  const reclaimers = [
+    spawnLockReclaimer(lockPath, coordinationRoot, 0),
+    spawnLockReclaimer(lockPath, coordinationRoot, 1),
+  ];
+  const releasePath = join(coordinationRoot, "release");
+
+  try {
+    await waitForFiles([
+      join(coordinationRoot, "0.ready"),
+      join(coordinationRoot, "1.ready"),
+    ]);
+    writeFileSync(join(coordinationRoot, "start"), "start\n");
+    const resultPaths = [
+      join(coordinationRoot, "0.result.json"),
+      join(coordinationRoot, "1.result.json"),
+    ];
+    await waitForFiles(resultPaths);
+
+    const results = resultPaths.map(readJson);
+    const winners = results.filter((result) => result.token !== null);
+    assert.equal(winners.length, 1);
+    const winner = winners[0];
+    const marker = readJson(join(lockPath, ".veryfront-bun-workspace-package.json"));
+    assert.equal(marker.token, winner.token);
+    assert.equal(marker.pid, winner.pid);
+    assert.doesNotThrow(() => process.kill(winner.pid, 0));
+    assert.equal(existsSync(lockPath), true);
+
+    writeFileSync(releasePath, "release\n");
+    const completions = await Promise.all(reclaimers.map(({ completion }) => completion));
+    for (const completion of completions) {
+      assert.deepEqual(completion, { code: 0, signal: null, stderr: "" });
+    }
+  } finally {
+    if (!existsSync(releasePath)) writeFileSync(releasePath, "release\n");
+    for (const { child } of reclaimers) {
+      if (child.exitCode === null && child.signalCode === null) child.kill();
+    }
+    await Promise.allSettled(reclaimers.map(({ completion }) => completion));
+    rmSync(coordinationRoot, { recursive: true, force: true });
   }
 });
 

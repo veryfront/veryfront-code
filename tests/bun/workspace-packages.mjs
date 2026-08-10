@@ -5,6 +5,7 @@ import { ensureDirectoryLink } from "../ensure-npm-links.mjs";
 
 const MARKER_NAME = ".veryfront-bun-workspace-package.json";
 const LOCK_NAME = ".veryfront-bun-workspace-packages.lock";
+const RECLAIMER_NAME = ".veryfront-bun-workspace-packages.reclaim";
 const LOCK_OWNER = "veryfront-bun-tests";
 
 function readJson(path) {
@@ -14,27 +15,21 @@ function readJson(path) {
 function acquirePreparationLock(nodeModulesPath) {
   mkdirSync(nodeModulesPath, { recursive: true });
   const lockPath = join(nodeModulesPath, LOCK_NAME);
+  const token = randomUUID();
   try {
     mkdirSync(lockPath);
   } catch (error) {
     if (error?.code === "EEXIST") {
-      if (!reclaimStalePreparationLock(lockPath)) {
+      const reclaimedToken = reclaimStalePreparationLock(lockPath);
+      if (reclaimedToken === null) {
         throw new Error("Bun workspace package preparation is already active");
       }
-      try {
-        mkdirSync(lockPath);
-      } catch (retryError) {
-        if (retryError?.code === "EEXIST") {
-          throw new Error("Bun workspace package preparation is already active");
-        }
-        throw retryError;
-      }
+      return { lockPath, token: reclaimedToken };
     } else {
       throw error;
     }
   }
 
-  const token = randomUUID();
   try {
     writeFileSync(
       join(lockPath, MARKER_NAME),
@@ -49,26 +44,39 @@ function acquirePreparationLock(nodeModulesPath) {
 }
 
 export function reclaimStalePreparationLock(lockPath, runtimeProcess = process) {
-  let marker;
+  const reclaimerPath = join(dirname(lockPath), RECLAIMER_NAME);
   try {
-    marker = readJson(join(lockPath, MARKER_NAME));
-  } catch {
-    return false;
+    mkdirSync(reclaimerPath);
+  } catch (error) {
+    if (error?.code === "EEXIST") return null;
+    throw error;
   }
 
-  if (marker?.owner !== LOCK_OWNER) {
-    return false;
-  }
-  if (!Number.isSafeInteger(marker.pid) || marker.pid < 1) {
-    return false;
-  }
   try {
-    runtimeProcess.kill(marker.pid, 0);
-    return false;
-  } catch (error) {
-    if (error?.code !== "ESRCH") return false;
-    rmSync(lockPath, { recursive: true, force: true });
-    return true;
+    let marker;
+    try {
+      marker = readJson(join(lockPath, MARKER_NAME));
+    } catch {
+      return null;
+    }
+
+    if (marker?.owner !== LOCK_OWNER) return null;
+    if (!Number.isSafeInteger(marker.pid) || marker.pid < 1) return null;
+    try {
+      runtimeProcess.kill(marker.pid, 0);
+      return null;
+    } catch (error) {
+      if (error?.code !== "ESRCH") return null;
+    }
+
+    const token = randomUUID();
+    writeFileSync(
+      join(lockPath, MARKER_NAME),
+      `${JSON.stringify({ owner: LOCK_OWNER, pid: process.pid, token })}\n`,
+    );
+    return token;
+  } finally {
+    rmSync(reclaimerPath, { recursive: true, force: true });
   }
 }
 
