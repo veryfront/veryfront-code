@@ -39,7 +39,7 @@ endpoints work.
 Create or link the cloud project and push the current source to its preview:
 
 ```bash
-npx veryfront push
+npx veryfront@latest push
 ```
 
 `veryfront push` stores local project identity in ignored
@@ -48,13 +48,13 @@ npx veryfront push
 `veryfront.json`.
 
 Push preserves remote-only files by default. Use
-`npx veryfront push --prune --dry-run` to preview an exact remote mirror, then
-run `npx veryfront push --prune` only when those deletions are intentional.
+`npx veryfront@latest push --prune --dry-run` to preview an exact remote mirror, then
+run `npx veryfront@latest push --prune` only when those deletions are intentional.
 
 For a preview deployment per branch:
 
 ```bash
-npx veryfront push --branch feature-x
+npx veryfront@latest push --branch feature-x
 ```
 
 ## Deploy to Veryfront Cloud
@@ -62,7 +62,7 @@ npx veryfront push --branch feature-x
 After checking the preview, deploy the exact pushed source digest:
 
 ```bash
-npx veryfront deploy --env production
+npx veryfront@latest deploy --env production
 ```
 
 Deploy uses the last verified Push receipt, verifies the release source digest,

@@ -9,7 +9,7 @@ order: -1
 - Node.js 22.3 or later.
 
 The examples use `veryfront` commands. If you have not installed the CLI
-globally, run them with `npx veryfront ...`.
+globally, run them with `npx veryfront@latest ...`.
 
 ## Create the app
 
@@ -87,7 +87,7 @@ The answer should stream. The curl response should emit `data:` lines.
 From the project directory, push the source to its cloud preview:
 
 ```bash
-npx veryfront push
+npx veryfront@latest push
 ```
 
 The command creates or links the cloud project, stores that local identity in
@@ -95,11 +95,11 @@ ignored `.veryfront/project.json`, and prints the preview URL. When the preview
 is ready for production, deploy the exact pushed source digest:
 
 Push preserves remote-only files by default. Use
-`npx veryfront push --prune --dry-run` to preview an exact remote mirror, then
-run `npx veryfront push --prune` only when those deletions are intentional.
+`npx veryfront@latest push --prune --dry-run` to preview an exact remote mirror, then
+run `npx veryfront@latest push --prune` only when those deletions are intentional.
 
 ```bash
-npx veryfront deploy --env production
+npx veryfront@latest deploy --env production
 ```
 
 Deploy uses the last verified Push receipt. If no receipt exists yet, it first

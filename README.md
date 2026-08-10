@@ -37,7 +37,7 @@ deno init --npm veryfront
 The default starter is `ai-agent`. Choose another template directly:
 
 ```bash
-npx veryfront init <PROJECT_NAME> --template <TEMPLATE>
+npx veryfront@latest init <PROJECT_NAME> --template <TEMPLATE>
 ```
 
 Available starters: `ai-agent`, `minimal`, `agentic-workflow`.

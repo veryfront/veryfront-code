@@ -165,7 +165,7 @@ describe("guide content contracts", () => {
       "docs/getting-started/deploy-project.md",
       "docs/guides/deploying.md",
     ];
-    const deploy = "npx veryfront deploy";
+    const deploy = "npx veryfront@latest deploy";
 
     for (const path of docs) {
       const text = await Deno.readTextFile(path);

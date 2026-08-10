@@ -7,7 +7,7 @@ order: 4
 ## Examples
 
 ```sh
-npx veryfront dev
+npx veryfront@latest dev
 ```
 
 ## Commands

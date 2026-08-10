@@ -24,7 +24,7 @@ A chatbot that answers questions from your own documents using Retrieval-Augment
 2. Start the dev server:
 
    ```bash
-   npx veryfront dev
+   npx veryfront@latest dev
    ```
 
 3. Index the sample docs in `content/`:

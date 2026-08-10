@@ -511,7 +511,7 @@ contract demands: `onOpenChange` drops Base UI's 2nd arg; positioning goes to
 surface inside the token scope; and we re-emit `data-vf-state`:
 
 ```tsx
-// ./ui-adapters/base-ui.tsx — vendored into YOUR repo (npx veryfront add adapter base-ui)
+// ./ui-adapters/base-ui.tsx — vendored into YOUR repo (npx veryfront@latest add adapter base-ui)
 import * as React from "react";
 import { Popover as Base } from "@base-ui/react/popover"; // YOUR dependency, YOUR version
 import { useTokenScopeRef, type PopoverParts } from "veryfront/ui/adapter";
@@ -558,7 +558,7 @@ parts, so the adapter *owns the DOM* and spreads prop-getters, absorbs the
 `isOpen` naming and the two-step `useOverlayTrigger → useButton` trigger:
 
 ```tsx
-// ./ui-adapters/react-aria.tsx — vendored into YOUR repo (npx veryfront add adapter react-aria)
+// ./ui-adapters/react-aria.tsx — vendored into YOUR repo (npx veryfront@latest add adapter react-aria)
 import * as React from "react";
 import { DismissButton, Overlay, useButton, useOverlayTrigger, usePopover } from "react-aria";
 import { useOverlayTriggerState } from "react-stately";

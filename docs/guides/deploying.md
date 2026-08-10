@@ -65,7 +65,7 @@ and production responses with `curl`.
 Create or link the cloud project and push the current source to its preview:
 
 ```bash
-npx veryfront push
+npx veryfront@latest push
 ```
 
 `veryfront push` stores local project identity in ignored
@@ -74,14 +74,14 @@ npx veryfront push
 `veryfront.json`.
 
 Push preserves remote-only files by default. Use
-`npx veryfront push --prune --dry-run` to preview an exact remote mirror, then
-run `npx veryfront push --prune` only when those deletions are intentional.
+`npx veryfront@latest push --prune --dry-run` to preview an exact remote mirror, then
+run `npx veryfront@latest push --prune` only when those deletions are intentional.
 
 For an existing nonproduction environment named `staging`:
 
 ```bash
-npx veryfront push --branch feature-x
-npx veryfront deploy --branch feature-x --env staging
+npx veryfront@latest push --branch feature-x
+npx veryfront@latest deploy --branch feature-x --env staging
 ```
 
 Deploy uses the last verified Push receipt and verifies the release was built
