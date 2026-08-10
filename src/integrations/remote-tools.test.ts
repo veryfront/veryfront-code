@@ -730,6 +730,38 @@ describe("integrations/remote-tools", () => {
     });
   });
 
+  it("omits a non-binding run ID while retaining other call metadata", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "environment-token",
+    });
+
+    let requestBody: Record<string, unknown> | undefined;
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requestBody = await request.json();
+        return Response.json({ structuredContent: { ok: true } });
+      },
+      async () =>
+        await executeRemoteIntegrationTool(
+          "gmail__list_emails",
+          { maxResults: 10 },
+          {
+            runId: "run-local-123",
+            runIdBindsToolAuthorization: false,
+            agentId: "agent-123",
+          },
+        ),
+    );
+
+    assertEquals(requestBody, {
+      name: "gmail__list_emails",
+      arguments: { maxResults: 10 },
+      agent_id: "agent-123",
+    });
+  });
+
   it("prefers structuredContent for MCP error results without text content", async () => {
     setRemoteToolEnv({
       VERYFRONT_API_BASE_URL: "https://api.test",
