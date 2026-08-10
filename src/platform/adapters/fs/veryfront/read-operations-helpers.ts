@@ -101,6 +101,11 @@ export function splitKnownFileExtension(
   };
 }
 
+/** Config discovery depends on each candidate name matching the source that is returned. */
+export function requiresExactPublishedPath(apiPath: string): boolean {
+  return /(?:^|\/)veryfront\.config\.(?:js|ts|mjs)$/.test(apiPath);
+}
+
 export function isNotFoundLikeError(error: unknown): boolean {
   if (typeof error === "object" && error !== null) {
     const status = Object.getOwnPropertyDescriptor(error, "status");

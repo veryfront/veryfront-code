@@ -17,6 +17,7 @@ import {
   getResolvedCacheKey,
   isNotFoundLikeError,
   READ_OPERATION_EXTENSION_PRIORITY as EXTENSION_PRIORITY,
+  requiresExactPublishedPath,
   splitKnownFileExtension,
 } from "./read-operations-helpers.ts";
 import type { ResolvedContentContext } from "./types.ts";
@@ -119,6 +120,7 @@ export class ReadOperations {
             return await this.readExactApiPath(apiPath, admittedLimit, isPublished, context);
           } catch (error) {
             if (!isPublished || !isNotFoundLikeError(error)) throw error;
+            if (requiresExactPublishedPath(apiPath)) throw error;
             const split = splitKnownFileExtension(apiPath);
             if (!split) throw error;
             for (const extension of EXTENSION_PRIORITY) {
@@ -733,6 +735,10 @@ export class ReadOperations {
           error: errorMessage,
         });
         throw error;
+      }
+
+      if (requiresExactPublishedPath(apiPath)) {
+        throw createNotFoundLikeError(normalizedPath);
       }
 
       const fallbackContent = await this.tryFallbackExtensions(
