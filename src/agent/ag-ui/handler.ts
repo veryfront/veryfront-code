@@ -147,9 +147,9 @@ function buildStreamContext(
     ...baseContext,
     threadId,
     runId,
-    // Never a control-plane run id, whoever generated it. Hosted durable runs
-    // bind through the token claim instead.
-    runIdBindsToolAuthorization: false,
+    // Only a locally minted ID is not a control-plane authorization binding.
+    // Client-supplied IDs remain eligible for the existing binding flow.
+    runIdBindsToolAuthorization: request.runId === undefined ? false : undefined,
     agUi: {
       context: request.context,
       forwardedProps: request.forwardedProps,
@@ -341,10 +341,10 @@ async function createAgUiDirectStreamResponse(
   if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
 
   messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
-  // beforeStream may return a fresh context, dropping the marker.
+  // beforeStream may return a fresh context, dropping the generated-run marker.
   const finalContext = {
     ...(beforeStreamResult?.context ?? context),
-    runIdBindsToolAuthorization: false,
+    runIdBindsToolAuthorization: context.runIdBindsToolAuthorization,
   };
 
   await agent.clearMemory();
@@ -416,10 +416,10 @@ async function createAgUiInjectedToolsStreamResponse(
   if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
 
   messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
-  // beforeStream may return a fresh context, dropping the marker.
+  // beforeStream may return a fresh context, dropping the generated-run marker.
   const finalContext = {
     ...(beforeStreamResult?.context ?? context),
-    runIdBindsToolAuthorization: false,
+    runIdBindsToolAuthorization: context.runIdBindsToolAuthorization,
   };
 
   try {

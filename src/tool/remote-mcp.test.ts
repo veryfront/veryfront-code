@@ -5,9 +5,8 @@ import {
   assertRejects,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
-import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   createRemoteMCPToolSource,
@@ -17,23 +16,6 @@ import {
   MAX_REMOTE_MCP_TOOL_LIST_PAGES,
   MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
 } from "./remote-mcp.ts";
-
-/**
- * Runtime-neutral env override for the control-plane origin. Restored by the
- * afterEach below, so it is undone even when a test fails.
- */
-const originalApiBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
-
-function setApiBaseUrl(value: string): void {
-  setEnv("VERYFRONT_API_BASE_URL", value);
-  refreshEnvironmentConfig();
-}
-
-afterEach(() => {
-  if (originalApiBaseUrl === undefined) deleteEnv("VERYFRONT_API_BASE_URL");
-  else setEnv("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
-  refreshEnvironmentConfig();
-});
 
 describe("tool/remote-mcp", () => {
   it("uses host transport only for an exact trusted endpoint", async () => {
@@ -314,75 +296,77 @@ describe("tool/remote-mcp", () => {
   });
 
   it("omits non-binding run ids from MCP call metadata", async () => {
-    setApiBaseUrl("https://93.184.216.34");
     let requestBody: Record<string, unknown> | undefined;
-    const source = createRemoteMCPToolSource({
-      id: "veryfront-mcp",
-      endpoint: "https://93.184.216.34",
-    });
+    await withEnv({ VERYFRONT_API_BASE_URL: "https://93.184.216.34" }, async () => {
+      const source = createRemoteMCPToolSource({
+        id: "veryfront-mcp",
+        endpoint: "https://93.184.216.34",
+      });
 
-    await withMockFetch(
-      async (input: string | URL | Request, init?: RequestInit) => {
-        const request = input instanceof Request ? input : new Request(input, init);
-        requestBody = await request.json();
-        return Response.json({
-          jsonrpc: "2.0",
-          id: "veryfront-mcp:tools:call:gmail__get_profile",
-          result: { content: [], structuredContent: { ok: true } },
-        });
-      },
-      async () =>
-        await source.executeTool("gmail__get_profile", {}, {
-          runId: "run-local",
-          runIdBindsToolAuthorization: false,
-          agentId: "gmail-agent",
-        }),
-    );
+      await withMockFetch(
+        async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          requestBody = await request.json();
+          return Response.json({
+            jsonrpc: "2.0",
+            id: "veryfront-mcp:tools:call:gmail__get_profile",
+            result: { content: [], structuredContent: { ok: true } },
+          });
+        },
+        async () =>
+          await source.executeTool("gmail__get_profile", {}, {
+            runId: "run-local",
+            runIdBindsToolAuthorization: false,
+            agentId: "gmail-agent",
+          }),
+      );
 
-    assertEquals(requestBody, {
-      jsonrpc: "2.0",
-      id: "veryfront-mcp:tools:call:gmail__get_profile",
-      method: "tools/call",
-      params: {
-        name: "gmail__get_profile",
-        arguments: {},
-        _meta: { agent_id: "gmail-agent" },
-      },
+      assertEquals(requestBody, {
+        jsonrpc: "2.0",
+        id: "veryfront-mcp:tools:call:gmail__get_profile",
+        method: "tools/call",
+        params: {
+          name: "gmail__get_profile",
+          arguments: {},
+          _meta: { agent_id: "gmail-agent" },
+        },
+      });
     });
   });
 
   it("keeps run ids for MCP servers that are not the Veryfront control plane", async () => {
-    setApiBaseUrl("https://93.184.216.34");
     let requestBody: Record<string, unknown> | undefined;
-    const source = createRemoteMCPToolSource({
-      id: "third-party-mcp",
-      endpoint: "https://93.184.216.35",
+    await withEnv({ VERYFRONT_API_BASE_URL: "https://93.184.216.34" }, async () => {
+      const source = createRemoteMCPToolSource({
+        id: "third-party-mcp",
+        endpoint: "https://93.184.216.35",
+      });
+
+      await withMockFetch(
+        async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          requestBody = await request.json();
+          return Response.json({
+            jsonrpc: "2.0",
+            id: "third-party-mcp:tools:call:search",
+            result: { content: [], structuredContent: { ok: true } },
+          });
+        },
+        async () =>
+          await source.executeTool("search", {}, {
+            runId: "run-local",
+            runIdBindsToolAuthorization: false,
+            agentId: "gmail-agent",
+          }),
+      );
+
+      // The marker means "not a Veryfront authorization binding", not "secret".
+      // Third-party servers still get the id for correlation.
+      assertEquals(
+        (requestBody as { params?: { _meta?: Record<string, unknown> } }).params?._meta,
+        { run_id: "run-local", agent_id: "gmail-agent" },
+      );
     });
-
-    await withMockFetch(
-      async (input: string | URL | Request, init?: RequestInit) => {
-        const request = input instanceof Request ? input : new Request(input, init);
-        requestBody = await request.json();
-        return Response.json({
-          jsonrpc: "2.0",
-          id: "third-party-mcp:tools:call:search",
-          result: { content: [], structuredContent: { ok: true } },
-        });
-      },
-      async () =>
-        await source.executeTool("search", {}, {
-          runId: "run-local",
-          runIdBindsToolAuthorization: false,
-          agentId: "gmail-agent",
-        }),
-    );
-
-    // The marker means "not a Veryfront authorization binding", not "secret".
-    // Third-party servers still get the id for correlation.
-    assertEquals(
-      (requestBody as { params?: { _meta?: Record<string, unknown> } }).params?._meta,
-      { run_id: "run-local", agent_id: "gmail-agent" },
-    );
   });
 
   it("prefers structuredContent for MCP isError tool results", async () => {

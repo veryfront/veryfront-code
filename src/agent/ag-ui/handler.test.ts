@@ -182,7 +182,7 @@ describe("agent/ag-ui-handler", () => {
     assertStringIncludes(body, `"runId":"${testAgent.capturedContext?.runId}"`);
   });
 
-  it("keeps a client-supplied direct AG-UI run ID non-binding", async () => {
+  it("keeps a client-supplied direct AG-UI run ID eligible for binding", async () => {
     const testAgent = createTestAgent();
     const handler = createAgUiHandler({ agent: testAgent.agent });
 
@@ -203,7 +203,7 @@ describe("agent/ag-ui-handler", () => {
 
     assertEquals(response.status, 200);
     assertEquals(testAgent.capturedContext?.runId, "run_client_1");
-    assertEquals(testAgent.capturedContext?.runIdBindsToolAuthorization, false);
+    assertEquals(testAgent.capturedContext?.runIdBindsToolAuthorization, undefined);
     assertStringIncludes(await response.text(), '"runId":"run_client_1"');
   });
 
@@ -398,7 +398,7 @@ describe("agent/ag-ui-handler", () => {
       context,
     ): Promise<ReadableStream<Uint8Array>> {
       assertEquals(context?.runId, "run_data_1");
-      assertEquals(context?.runIdBindsToolAuthorization, false);
+      assertEquals(context?.runIdBindsToolAuthorization, undefined);
       const publishDataEvent = context?.publishDataEvent;
       if (typeof publishDataEvent === "function") {
         await publishDataEvent({
