@@ -23,7 +23,60 @@ const skillTool: ChatDynamicToolPart = {
   output: { loaded: true },
 };
 
+const invokeAgentTool: ChatDynamicToolPart = {
+  type: "dynamic-tool",
+  toolCallId: "tool-invoke-agent",
+  toolName: "invoke_agent",
+  state: "input-available",
+  input: { agent_id: "case-ingest", description: "Fetch and redact cases" },
+};
+
 describe("ToolCall", () => {
+  it("renders invoke_agent as a child-agent card by default", () => {
+    const html = renderToString(<ToolCall tool={invokeAgentTool} className="custom-card" />);
+
+    assertStringIncludes(html, "Case Ingest");
+    assertStringIncludes(html, "Running");
+    assertStringIncludes(html, "custom-card");
+    assertStringIncludes(html, 'aria-expanded="false"');
+    assertEquals(html.includes("Fetch and redact cases"), false);
+    assertEquals(html.includes("Parameters"), false);
+  });
+
+  it("surfaces a failed child run without exposing raw tool JSON", () => {
+    const tool: ChatDynamicToolPart = {
+      type: "dynamic-tool",
+      toolCallId: "tool-invoke-agent-failed",
+      toolName: "invoke_agent",
+      state: "output-available",
+      input: { agent_id: "case-ingest" },
+      output: {
+        structuredContent: {
+          ok: false,
+          status: "error",
+          terminalErrorMessage: "The child agent run failed before returning a usable result.",
+        },
+      },
+    };
+
+    const html = renderToString(<ToolCall tool={tool} />);
+
+    assertStringIncludes(html, "Case Ingest");
+    assertStringIncludes(html, "Failed");
+    assertStringIncludes(html, 'aria-expanded="false"');
+    assertEquals(
+      html.includes("The child agent run failed before returning a usable result."),
+      false,
+    );
+    assertEquals(html.includes("structuredContent"), false);
+
+    const expandedHtml = renderToString(<ToolCall tool={tool} defaultExpanded />);
+    assertStringIncludes(
+      expandedHtml,
+      "The child agent run failed before returning a usable result.",
+    );
+  });
+
   it("renders a completed tool with null output as a compact status row", () => {
     const tool: ChatDynamicToolPart = {
       type: "dynamic-tool",
@@ -101,6 +154,17 @@ describe("ToolCall", () => {
 // the card, inject a slot, and restyle a part. If these fail, `ToolCall` is not
 // composable — these tests ARE the definition.
 describe("ToolCall — composability contract", () => {
+  it("replaces invoke_agent anatomy with custom children", () => {
+    const html = renderToString(
+      <ToolCall tool={invokeAgentTool}>
+        <span>CUSTOM_AGENT_CARD</span>
+      </ToolCall>,
+    );
+
+    assertStringIncludes(html, "CUSTOM_AGENT_CARD");
+    assertEquals(html.includes("Case Ingest"), false);
+  });
+
   it("replaces compact anatomy with context-aware children", () => {
     function CustomSkill() {
       const { tool } = useToolCall();
