@@ -26,7 +26,7 @@ describe("Google OAuth provider configs", () => {
 
   it("keeps Google Docs runtime scopes aligned with the generated connector", async () => {
     const connector = JSON.parse(
-      await Deno.readTextFile("cli/templates/integrations/docs-google/connector.json"),
+      await Deno.readTextFile("templates/integrations/docs-google/connector.json"),
     ) as { auth: { scopes: string[] } };
     assertEquals(docsGoogleConfig.defaultScopes, connector.auth.scopes);
   });
@@ -37,7 +37,7 @@ describe("Google OAuth provider configs", () => {
     ) {
       const connector = JSON.parse(
         await Deno.readTextFile(
-          `cli/templates/integrations/${config.serviceId}/connector.json`,
+          `templates/integrations/${config.serviceId}/connector.json`,
         ),
       ) as { auth: { scopes: string[] } };
       assertEquals(config.defaultScopes, connector.auth.scopes);

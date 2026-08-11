@@ -9,27 +9,27 @@ import {
   resolveIntegrationModuleDir,
 } from "./integration-loader-helpers.ts";
 
-describe("cli/templates/integration-loader-helpers", () => {
+describe("templates/integration-loader-helpers", () => {
   it("resolves file module directories for unix and windows paths", () => {
     assertEquals(
       resolveIntegrationModuleDir(
-        "file:///Users/test/veryfront-code/cli/templates/integration-loader.ts",
+        "file:///Users/test/veryfront-code/templates/integration-loader.ts",
       ),
-      "/Users/test/veryfront-code/cli/templates/",
+      "/Users/test/veryfront-code/templates/",
     );
     assertEquals(
       resolveIntegrationModuleDir(
-        "file:///C:/veryfront/cli/templates/integration-loader.ts",
+        "file:///C:/veryfront/templates/integration-loader.ts",
         "win32",
       ),
-      "C:/veryfront/cli/templates/",
+      "C:/veryfront/templates/",
     );
   });
 
   it("builds integration directories from the module directory", () => {
     assertEquals(
-      buildIntegrationDirectory("/Users/test/veryfront-code/cli/templates/", "github"),
-      "/Users/test/veryfront-code/cli/templates/integrations/github",
+      buildIntegrationDirectory("/Users/test/veryfront-code/templates/", "github"),
+      "/Users/test/veryfront-code/templates/integrations/github",
     );
   });
 

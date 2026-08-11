@@ -72,7 +72,7 @@ describe("findIllegalZodImports", () => {
     assertEquals(shouldCheckZodImportPath("src/tool/factory.ts"), true);
     assertEquals(shouldCheckZodImportPath("cli/shared/args.ts"), true);
     assertEquals(shouldCheckZodImportPath("extensions/ext-schema-zod/src/adapter.ts"), false);
-    assertEquals(shouldCheckZodImportPath("cli/templates/files/ai-agent/tools/search.ts"), false);
+    assertEquals(shouldCheckZodImportPath("templates/files/ai-agent/tools/search.ts"), false);
     assertEquals(shouldCheckZodImportPath("npm/src/src/tool/factory.ts"), false);
     assertEquals(shouldCheckZodImportPath("projects/demo/tools/search.ts"), false);
     assertEquals(shouldCheckZodImportPath("tests/docs/guide-examples.test.ts"), false);

@@ -391,7 +391,7 @@ describe("guide content contracts", () => {
   it("recommends the current Node.js LTS in onboarding docs", async () => {
     const docs = [
       "docs/guides/deploying.md",
-      "cli/templates/features/mdx/files/app/docs/getting-started/page.mdx",
+      "templates/features/mdx/files/app/docs/getting-started/page.mdx",
     ];
 
     for (const path of docs) {

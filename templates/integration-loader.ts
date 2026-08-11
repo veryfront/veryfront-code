@@ -9,8 +9,8 @@
  */
 
 import { createFileSystem, join } from "veryfront/fs";
-import { filterVisibleIntegrations } from "../../src/integrations/feature-flags.ts";
-import { ALL_INTEGRATION_NAMES } from "../../src/integrations/schema.ts";
+import { filterVisibleIntegrations } from "../src/integrations/feature-flags.ts";
+import { ALL_INTEGRATION_NAMES } from "../src/integrations/schema.ts";
 import { loadTemplateFromDirectory } from "./loader.ts";
 import {
   buildIntegrationDirectory,

@@ -15,7 +15,7 @@ import { validateProjectName } from "../../shared/project-name.ts";
 import type { MCPTool } from "../tools.ts";
 import { directoryExists, formatError, toSlug } from "./helpers.ts";
 import type { InitTemplate } from "../../commands/init/types.ts";
-import type { IntegrationName } from "../../templates/types.ts";
+import type { IntegrationName } from "../../../templates/types.ts";
 
 // ============================================================================
 // Static Data

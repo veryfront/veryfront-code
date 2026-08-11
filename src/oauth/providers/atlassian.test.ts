@@ -5,7 +5,7 @@ import { bitbucketConfig, confluenceConfig, jiraConfig } from "./atlassian.ts";
 
 async function readConfluenceConnectorScopes(): Promise<string[]> {
   const connector = JSON.parse(
-    await Deno.readTextFile("cli/templates/integrations/confluence/connector.json"),
+    await Deno.readTextFile("templates/integrations/confluence/connector.json"),
   ) as { auth: { scopes: string[] } };
   return connector.auth.scopes;
 }
@@ -24,7 +24,7 @@ describe("Atlassian OAuth provider configs", () => {
     for (const serviceId of ["jira", "confluence"]) {
       const connector = JSON.parse(
         await Deno.readTextFile(
-          `cli/templates/integrations/${serviceId}/connector.json`,
+          `templates/integrations/${serviceId}/connector.json`,
         ),
       ) as {
         auth: {
@@ -46,7 +46,7 @@ describe("Atlassian OAuth provider configs", () => {
     for (const config of [jiraConfig, confluenceConfig, bitbucketConfig]) {
       const connector = JSON.parse(
         await Deno.readTextFile(
-          `cli/templates/integrations/${config.serviceId}/connector.json`,
+          `templates/integrations/${config.serviceId}/connector.json`,
         ),
       ) as { auth: { scopes: string[] } };
       assertEquals(config.defaultScopes, connector.auth.scopes);

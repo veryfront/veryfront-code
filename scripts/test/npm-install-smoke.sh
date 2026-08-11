@@ -168,7 +168,7 @@ echo "$BROKEN_OUTPUT" | grep -q "install @veryfront/ext-auth-jwt alongside veryf
   fail "broken transitive dependency was misclassified as a missing extension: $BROKEN_OUTPUT"
 
 echo "== 6. packed ai-agent starter: dev server renders over HTTP"
-cp -R "$ROOT_DIR/cli/templates/files/ai-agent/." "$WORKDIR/"
+cp -R "$ROOT_DIR/templates/files/ai-agent/." "$WORKDIR/"
 
 DEV_PORT="${VF_NPM_SSR_SMOKE_PORT:-43119}"
 DEV_URL="http://127.0.0.1:$DEV_PORT/"

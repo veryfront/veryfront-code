@@ -66,7 +66,7 @@ import { buildKnowledgeIngestRunResult } from "../../cli/commands/knowledge/resu
 import { parsePullArgs } from "../../cli/commands/pull/command.ts";
 import { parsePushArgs } from "../../cli/commands/push/command.ts";
 import { parseCliArgs } from "../../cli/shared/args.ts";
-import { getTemplate } from "../../cli/templates/index.ts";
+import { getTemplate } from "../../templates/index.ts";
 
 const EXISTING_GUIDE_EXAMPLE_SUITE = [
   "agents.md",

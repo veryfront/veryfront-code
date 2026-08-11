@@ -7,7 +7,7 @@
  * template gains a file and the tree is not updated, the page silently starts
  * lying about what `veryfront init` produced.
  *
- * Ground truth is `cli/templates/manifest.json` (the template's own files) plus
+ * Ground truth is `templates/manifest.json` (the template's own files) plus
  * the files the init flow generates for every template regardless of choice.
  */
 
@@ -105,7 +105,7 @@ function parseTree(block: string): string[] {
 
 async function expectedFilesFor(template: string): Promise<string[]> {
   const manifest = JSON.parse(
-    await readRepoFile("cli/templates/manifest.json"),
+    await readRepoFile("templates/manifest.json"),
   ) as { templates: Record<string, { files: Record<string, string> }> };
 
   const entry = manifest.templates[template];
