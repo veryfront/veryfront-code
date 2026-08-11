@@ -392,18 +392,49 @@ description: Excluded skill
     assertEquals(definitions.map((definition) => definition.name), ["invoke_agent"]);
   });
 
+  it("suppresses generic invoke_agent when delegates are explicitly scoped", async () => {
+    for (
+      const [id, delegates, expectedTools] of [
+        ["empty-delegate-scope", [], []],
+        ["fixed-delegate-scope", ["ingestion-agent"], ["agent_ingestion-agent"]],
+      ] as const
+    ) {
+      const assistant = agent({
+        id,
+        system: "Delegate only within the explicit scope.",
+        skills: [],
+        delegates: [...delegates],
+        tools: { invoke_agent: true },
+      });
+
+      const definitions = await getAvailableTools(assistant.config.tools, {
+        callerAgentId: assistant.id,
+        includeIntegrationTools: false,
+      });
+
+      assertEquals(definitions.map((definition) => definition.name), [...expectedTools]);
+    }
+  });
+
   it("rejects delegates combined with the implicit all-tools selector", () => {
-    assertThrows(
-      () =>
-        agent({
-          id: "broad-orchestrator",
-          system: "Delegate specialist work.",
-          delegates: ["ingestion-agent"],
-          tools: true,
-        }),
-      Error,
-      "cannot combine delegates with tools: true",
-    );
+    for (
+      const [id, delegates] of [
+        ["empty-broad-orchestrator", []],
+        ["broad-orchestrator", ["ingestion-agent"]],
+      ] as const
+    ) {
+      assertThrows(
+        () =>
+          agent({
+            id,
+            system: "Delegate specialist work.",
+            delegates: [...delegates],
+            tools: true,
+          }),
+        Error,
+        "cannot combine delegates with tools: true",
+      );
+    }
   });
 
   it("uses the default system prompt before an available skill catalog", async () => {

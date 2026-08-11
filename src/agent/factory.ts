@@ -313,7 +313,9 @@ function resolveToolsConfiguration(input: {
 
   if (config.tools !== true) {
     const configuredTools = { ...(config.tools ?? {}) };
-    if (configuredTools[INVOKE_AGENT_TOOL_ID] === true) {
+    if (delegates !== undefined) {
+      delete configuredTools[INVOKE_AGENT_TOOL_ID];
+    } else if (configuredTools[INVOKE_AGENT_TOOL_ID] === true) {
       configuredTools[INVOKE_AGENT_TOOL_ID] = createInvokeAgentTool({ selfId: id });
     }
     for (const registration of SKILL_TOOL_REGISTRATIONS) {
@@ -335,17 +337,19 @@ function resolveToolsConfiguration(input: {
     merged = hasConfiguredTools || config.tools !== undefined ? configuredTools : undefined;
   }
 
-  if (delegates?.length) {
+  if (delegates !== undefined) {
     if (merged === true) {
       throw INVALID_ARGUMENT.create({
         detail: `Agent "${id}" cannot combine delegates with tools: true. ` +
           "Declare the required tools by name so delegate capabilities remain explicit.",
       });
     }
-    merged = {
-      ...(merged ?? {}),
-      ...buildAgentDelegateTools({ delegates, selfId: id }),
-    };
+    if (delegates.length > 0) {
+      merged = {
+        ...(merged ?? {}),
+        ...buildAgentDelegateTools({ delegates, selfId: id }),
+      };
+    }
   }
 
   return merged;

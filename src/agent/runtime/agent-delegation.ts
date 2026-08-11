@@ -3,7 +3,7 @@ import type { Agent } from "../types.ts";
 import { agentAsTool, getAgent } from "../composition/index.ts";
 import { type AgentToolInput, getAgentToolInputSchema } from "../schemas/index.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX, isProviderSafeDelegateId } from "./agent-delegation-names.ts";
-import { markRuntimeLocalTool } from "./local-tool.ts";
+import { markRuntimeLocalTool, markSkillDelegationOverridesUnsupported } from "./local-tool.ts";
 import { defineSchema, getJsonValueSchema } from "#veryfront/schemas/index.ts";
 
 export { AGENT_DELEGATE_TOOL_PREFIX, isProviderSafeDelegateId };
@@ -60,7 +60,7 @@ function buildInvokeAgentPrompt(
  */
 export function createInvokeAgentTool(input: CreateInvokeAgentToolInput = {}): Tool {
   const resolveAgent = input.resolveAgent ?? getAgent;
-  return markRuntimeLocalTool({
+  return markSkillDelegationOverridesUnsupported(markRuntimeLocalTool({
     id: INVOKE_AGENT_TOOL_ID,
     type: "function",
     description:
@@ -89,7 +89,7 @@ export function createInvokeAgentTool(input: CreateInvokeAgentToolInput = {}): T
         input: buildInvokeAgentPrompt(toolInput.prompt, toolInput.context),
       }, context);
     },
-  });
+  }));
 }
 
 /** Input payload for build agent delegate tools. */
