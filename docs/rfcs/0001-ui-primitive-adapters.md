@@ -1,13 +1,13 @@
 # RFC 0001 — Bring-your-own UI primitive adapters
 
-| Field      | Value                                                                         |
-| ---------- | ----------------------------------------------------------------------------- |
-| Status     | Draft — request for comment                                                   |
-| Author     | Matt Boon                                                                     |
-| Created    | 2026-07-25                                                                    |
-| Branch     | `rfc/ui-adapter-architecture`                                                 |
-| Affects    | `veryfront/ui`, `veryfront/chat`, `src/modules/import-map/`, `defineConfig`   |
-| Supersedes | The "zero external packages" charter of `veryfront/ui` (relaxed, not removed) |
+| Field       | Value                                                        |
+| ----------- | ------------------------------------------------------------ |
+| Status      | Draft — request for comment                                  |
+| Author      | Matt Boon                                                    |
+| Created     | 2026-07-25                                                   |
+| Branch      | `rfc/ui-adapter-architecture`                                |
+| Affects     | `veryfront/ui`, `veryfront/chat`, `src/modules/import-map/`, `defineConfig` |
+| Supersedes  | The "zero external packages" charter of `veryfront/ui` (relaxed, not removed) |
 
 ## 1. Summary
 
@@ -28,16 +28,16 @@ Veryfront can then choose the engine behind our components:
   people who want no extra deps.
 - **Base UI**, **Radix UI**, **Ariakit**, **React Aria** — reference adapters that
   delegate Mechanics to a best-in-class accessible engine, selected via a
-  per-component map (§6.5) and _vendored_ into the app, not published as packages
+  per-component map (§6.5) and *vendored* into the app, not published as packages
   we version (§6.6). The engine is the developer's own dependency.
 
 shadcn is deliberately **not** on that list: it is not an engine but a
-styled-surface + distribution layer that _wraps_ an engine — a sibling of
+styled-surface + distribution layer that *wraps* an engine — a sibling of
 `veryfront/ui` itself, one axis up from the adapters. It is a different concern
 and out of scope here (§9).
 
 The strategic point is adoption. Developers are fickle and the first question a
-serious team asks is "does it use _X_?" Today we have one answer. With adapters
+serious team asks is "does it use *X*?" Today we have one answer. With adapters
 the answer becomes "**yes — or bring your own.**"
 
 ## 2. Motivation
@@ -47,8 +47,8 @@ the answer becomes "**yes — or bring your own.**"
 We want teams to build on Veryfront. Those teams have existing opinions and
 existing design systems. "Does it use Radix?" / "We're standardised on React
 Aria" / "We only ship Base UI now" are conversation-enders when the answer is
-"no, we wrote our own." An adapter layer converts a hard _no_ into a _yes, and
-here's the config line_. It also lets us ride the credibility of engines that
+"no, we wrote our own." An adapter layer converts a hard *no* into a *yes, and
+here's the config line*. It also lets us ride the credibility of engines that
 have solved accessibility properly, instead of asking teams to trust our
 `TODO(a11y)` forks.
 
@@ -71,7 +71,7 @@ Picking a single engine trades one lock-in for another and re-opens the same
 adoption objection from the other side (the "we don't want Radix" teams). It
 also breaks the current zero-dependency promise, which is genuinely valued by a
 segment of users and is load-bearing for `veryfront/chat` shipping to npm. An
-adapter layer keeps the zero-dep default _and_ offers the popular engines _and_
+adapter layer keeps the zero-dep default *and* offers the popular engines *and*
 future-proofs us against the churn in this space (Radix's maintenance wobble,
 Base UI's rise, React Aria's growth). It is more work up front and less work
 forever after.
@@ -94,7 +94,7 @@ forever after.
 
 ### Non-goals
 
-- Not abstracting _every_ component. Purely-visual primitives (Button, Card,
+- Not abstracting *every* component. Purely-visual primitives (Button, Card,
   Badge, Skeleton, Input) have no behaviour to delegate and stay as-is. Only the
   behaviour-heavy overlay/nav primitives get an adapter seam (§6.2).
 - Not shipping every engine in one bundle. An app links **one** adapter.
@@ -109,8 +109,8 @@ Findings from the current tree (`src/react/components/ui/`):
 - The library is the public `veryfront/ui` entrypoint (`deno.json` maps
   `veryfront/ui`, `veryfront/components/ui`, `veryfront/react/components/ui` all
   to `src/react/components/ui/index.ts`).
-- Charter, from `index.ts`: _"Dependency-light forks … cva/Slot inlined … zero
-  external packages."_ `chat` depends on `ui`, never the reverse.
+- Charter, from `index.ts`: *"Dependency-light forks … cva/Slot inlined … zero
+  external packages."* `chat` depends on `ui`, never the reverse.
 - `cva` is inlined (`cva.ts`, used by 31 files); `clsx` is a clean-room rewrite
   (`src/utils/clsx.ts`); `Slot`/`asChild` is inlined (`slot.tsx`, used by 11
   files).
@@ -119,13 +119,13 @@ Crucially, **the seams already exist.** The behaviour-heavy primitives do not
 each reimplement their mechanics; they route through a small shared machinery
 layer:
 
-| Machinery module       | Exports                                                                   | Consumed by                   |
-| ---------------------- | ------------------------------------------------------------------------- | ----------------------------- |
-| `disclosure.ts`        | `useDisclosure({open,defaultOpen,onOpenChange}) → {open,setOpen}`         | every overlay                 |
-| `anchored-surface.tsx` | `createAnchoredSurfaceParts()` → Root/Trigger/Content                     | Popover, DropdownMenu         |
-| `modal-surface.tsx`    | `createModalSurfaceParts(name)` → Root/Trigger/Close/Content + `useModal` | Dialog, Drawer                |
-| `floating.tsx`         | `<Floating anchorRef open onDismiss …>` (Portal + positioning)            | Popover, DropdownMenu, Select |
-| `slot.tsx`             | `<Slot>` / `asChild`                                                      | 11 components                 |
+| Machinery module            | Exports                          | Consumed by            |
+| --------------------------- | -------------------------------- | ---------------------- |
+| `disclosure.ts`             | `useDisclosure({open,defaultOpen,onOpenChange}) → {open,setOpen}` | every overlay |
+| `anchored-surface.tsx`      | `createAnchoredSurfaceParts()` → Root/Trigger/Content | Popover, DropdownMenu |
+| `modal-surface.tsx`         | `createModalSurfaceParts(name)` → Root/Trigger/Close/Content + `useModal` | Dialog, Drawer |
+| `floating.tsx`              | `<Floating anchorRef open onDismiss …>` (Portal + positioning) | Popover, DropdownMenu, Select |
+| `slot.tsx`                  | `<Slot>` / `asChild`             | 11 components          |
 
 This is the adapter boundary, already carved. An adapter replaces the contents
 of these modules; the skins (`popover.tsx`, `dialog.tsx`, `select.tsx`, …) keep
@@ -133,7 +133,7 @@ their `cva` variants and `[var(--token)]` classes untouched.
 
 ## 5. The core difficulty
 
-The reason this is a _considered_ design and not a weekend refactor: **the
+The reason this is a *considered* design and not a weekend refactor: **the
 candidate engines do not share an API.** There are three incompatible shapes.
 
 1. **Compound / parts, render-controlled** — Radix, Base UI, Ariakit. The engine
@@ -141,14 +141,14 @@ candidate engines do not share an API.** There are three incompatible shapes.
    inject your styled node through a composition prop (`asChild` in Radix,
    `render` in Base UI and Ariakit).
 2. **Hook / prop-getter** — React Aria's low-level hooks (`useButton`,
-   `useDialog`, `useOverlayTrigger`). The engine owns _no_ DOM; it returns prop
+   `useDialog`, `useOverlayTrigger`). The engine owns *no* DOM; it returns prop
    objects you spread onto your own elements. Maximum control, maximum wiring.
 3. **State-machine + connect** — Zag.js / Ark UI. A framework-agnostic state
    machine whose `connect()` returns prop-getters per part. (Prior art for
    exactly this problem — see the appendix.)
 
 A naïve "lowest common denominator = prop-getters" fails, because the
-parts-based engines _insist on rendering structure_ (their Portal, their
+parts-based engines *insist on rendering structure* (their Portal, their
 Positioner, their focus scope) and cannot be reduced to bare prop objects around
 our nodes. So the contract cannot be "just prop getters." It has to let an
 adapter **render wrapper structure** around our styled leaf nodes, while still
@@ -226,8 +226,7 @@ export interface UIAdapter {
  *  owns classes and which parts exist. */
 export interface PopoverParts {
   Root: React.FC<{
-    open?: boolean;
-    defaultOpen?: boolean;
+    open?: boolean; defaultOpen?: boolean;
     onOpenChange?: (open: boolean) => void;
     children: React.ReactNode;
   }>;
@@ -241,7 +240,7 @@ The right level for the contract is the key finding of the survey. A
 prop-getter contract (`getTriggerProps()`, à la Zag.js/React-Aria-hooks) fits
 React Aria's hook layer perfectly but **has no Ariakit equivalent** — Ariakit
 never hands you spreadable prop bags; it inverts composition (`render={<myNode/>}`
-merges _your_ node into _its_ component). So the cross-engine common denominator
+merges *your* node into *its* component). So the cross-engine common denominator
 is **higher up**: a set of **role-tagged component slots** (Root / Trigger /
 Content / Item / …) plus a **normalized controlled-state object**. All three
 archetypes happen to converge on the same open/close state shape
@@ -258,7 +257,7 @@ stable-import seam; Zag.js/Ark's normalized-state idea, lifted to the slot level
    React Aria uses `isOpen` + `useOverlayTriggerState` and is wrapped; Ariakit's
    store is wrapped. This is a real fault line: React Aria systematically prefixes
    booleans (`isOpen`, `isDisabled`) — the adapter absorbs it so skins never see it.
-2. **The adapter may render wrapper structure.** `Content` is a _component_, not
+2. **The adapter may render wrapper structure.** `Content` is a *component*, not
    a bare prop-getter, precisely so a parts-based engine can render its
    Portal/Positioner around our node. This also resolves the biggest structural
    divergence found in the survey: **Radix collapses positioning into one
@@ -311,12 +310,12 @@ behaviour** as `BuiltinAdapter`. This guarantees:
 ### 6.5 Binding — how a developer "brings their own"
 
 **Primary mechanism: a per-component adapter map, injected via context.** The
-`UIAdapter` interface from §6.3 _is_ the map (`{ popover, dialog, menu, … }`). A
+`UIAdapter` interface from §6.3 *is* the map (`{ popover, dialog, menu, … }`). A
 developer passes a **partial** map; it merges over `BuiltinAdapter`:
 
 ```tsx
 import { UIAdapterProvider } from "veryfront/ui";
-import { baseUiDialog, baseUiPopover } from "./ui-adapters/base-ui.tsx"; // vendored — see §6.6
+import { baseUiPopover, baseUiDialog } from "./ui-adapters/base-ui.tsx"; // vendored — see §6.6
 
 // Override just these two; everything else stays on the zero-dep builtin.
 <UIAdapterProvider adapter={{ popover: baseUiPopover, dialog: baseUiDialog }}>
@@ -334,7 +333,7 @@ import { baseUiDialog, baseUiPopover } from "./ui-adapters/base-ui.tsx"; // vend
 Optional optimisation (Veryfront apps only): because we own the module resolver
 (`src/modules/import-map/`), a `ui.adapter` config field can statically bind the
 map at build time so the context read is elided and only the chosen adapter is
-bundled. This is a perf layer over the _same_ contract, not a different mechanism:
+bundled. This is a perf layer over the *same* contract, not a different mechanism:
 
 ```ts
 // veryfront.config.ts — optional; the context map is the source of truth
@@ -344,14 +343,14 @@ export default defineConfig({ ui: { adapter: "base-ui" } });
 
 ### 6.6 Packaging — and why drift is not our problem
 
-The maintenance objection is the real one: _"when a new engine version ships, do
-we have to bump and align a bunch of packages? Drift is highly likely."_ The
+The maintenance objection is the real one: *"when a new engine version ships, do
+we have to bump and align a bunch of packages? Drift is highly likely."* The
 design answers it by **publishing no adapter packages and depending on no
 engine.**
 
 - **Core (`veryfront/ui`) ships exactly three things** beyond the skins: the
   `UIAdapter` contract (types), `BuiltinAdapter`, and `UIAdapterProvider`. It has
-  **zero engine dependencies** — nothing for _us_ to bump when Base UI or React
+  **zero engine dependencies** — nothing for *us* to bump when Base UI or React
   Aria releases. Core's version is decoupled from every engine's version. This is
   the opposite of the `@veryfront/ui-adapter-*`-package model, which would put us
   on the hook to re-release and re-align on every engine bump — rejected for
@@ -360,10 +359,10 @@ engine.**
   in their app and bump it on their own schedule. We never pin, track, or chase
   an engine version.
 - **Reference adapters are vendored, not versioned (the shadcn model).** We ship
-  Base UI / Radix / React Aria adapter _source_ that the developer copies into
+  Base UI / Radix / React Aria adapter *source* that the developer copies into
   their repo (see "Distribution" below). They own it; we don't publish or semver
   it. There is no adapter release train to keep in lockstep, so there is nothing
-  to drift _from_.
+  to drift *from*.
 - **Drift is detected, not prevented — by the conformance suite (§6.7).** The
   contract is a small, stable, versioned interface. If an engine's new version
   changes an API an adapter uses, the shared conformance test **fails loudly**
@@ -375,7 +374,7 @@ Net: our surface stays tiny and version-independent. The only party who bumps an
 engine is the developer who chose it; the only thing that can drift is a single
 file they own, guarded by a test we ship.
 
-**Distribution — decided: CLI-vendored, docs-mirrored.** How the developer _gets_
+**Distribution — decided: CLI-vendored, docs-mirrored.** How the developer *gets*
 the vendored file:
 
 - **Primary: `veryfront generate adapter <name>`.** This matches the CLI's
@@ -386,7 +385,7 @@ the vendored file:
   `veryfront.config.ts` when the optional build-time bind is used). One command,
   discoverable via `veryfront generate --help`, consistent with how everything
   else in the framework is scaffolded.
-- **Mirror: a docs "reference adapters" page** renders the _same_ templates the
+- **Mirror: a docs "reference adapters" page** renders the *same* templates the
   CLI copies, for readers who want to eyeball or hand-paste. Critically, the CLI
   template is the **single source of truth** and the docs page is generated from
   it — so there is no copy that can drift from the other. (This is the "both"
@@ -398,7 +397,7 @@ the vendored file:
 
 ### 6.7 Conformance — proving an adapter is correct
 
-A single shared suite (`adapter/conformance.test.tsx`) runs against _every_
+A single shared suite (`adapter/conformance.test.tsx`) runs against *every*
 adapter, asserting behaviour the Skin relies on. Minimum bar per primitive:
 
 - opens/closes via controlled + uncontrolled paths (`open` / `defaultOpen`);
@@ -445,7 +444,7 @@ the first two blocks changes when the engine changes.
 **The consumer call-site — never changes, whatever engine is selected:**
 
 ```tsx
-import { Button, Popover, PopoverContent, PopoverTrigger } from "veryfront/ui";
+import { Popover, PopoverTrigger, PopoverContent, Button } from "veryfront/ui";
 
 <Popover>
   <PopoverTrigger asChild>
@@ -483,7 +482,9 @@ export function PopoverTrigger({ className, asChild, ...props }: PopoverTriggerP
 
 export function PopoverContent({ className, align = "start", ...props }: PopoverContentProps) {
   const { popover } = useAdapter();
-  return <popover.Content align={align} className={cx(contentVariants(), className)} {...props} />;
+  return (
+    <popover.Content align={align} className={cx(contentVariants(), className)} {...props} />
+  );
 }
 ```
 
@@ -513,7 +514,7 @@ surface inside the token scope; and we re-emit `data-vf-state`:
 // ./ui-adapters/base-ui.tsx — vendored into YOUR repo (npx veryfront@latest add adapter base-ui)
 import * as React from "react";
 import { Popover as Base } from "@base-ui/react/popover"; // YOUR dependency, YOUR version
-import { type PopoverParts, useTokenScopeRef } from "veryfront/ui/adapter";
+import { useTokenScopeRef, type PopoverParts } from "veryfront/ui/adapter";
 
 export const baseUiPopover: PopoverParts = {
   Root: ({ open, defaultOpen, onOpenChange, children }) => (
@@ -553,7 +554,7 @@ export const baseUiPopover: PopoverParts = {
 ```
 
 **Adapter C — React Aria (hook archetype).** The hardest shape: no compound
-parts, so the adapter _owns the DOM_ and spreads prop-getters, absorbs the
+parts, so the adapter *owns the DOM* and spreads prop-getters, absorbs the
 `isOpen` naming and the two-step `useOverlayTrigger → useButton` trigger:
 
 ```tsx
@@ -561,7 +562,7 @@ parts, so the adapter _owns the DOM_ and spreads prop-getters, absorbs the
 import * as React from "react";
 import { DismissButton, Overlay, useButton, useOverlayTrigger, usePopover } from "react-aria";
 import { useOverlayTriggerState } from "react-stately";
-import { type PopoverParts, useTokenScopeRef } from "veryfront/ui/adapter";
+import { useTokenScopeRef, type PopoverParts } from "veryfront/ui/adapter";
 
 const Ctx = React.createContext<any>(null);
 
@@ -616,12 +617,12 @@ export const reactAriaPopover: PopoverParts = {
 ```
 
 **Selecting the adapter — the per-component map via context (primary; §6.5).**
-The map is _partial_ and _vendored_ — no `@veryfront/ui-adapter-*` package, no
+The map is *partial* and *vendored* — no `@veryfront/ui-adapter-*` package, no
 version to align. Override only what you want; the rest stays builtin:
 
 ```tsx
 import { UIAdapterProvider } from "veryfront/ui";
-import { baseUiPopover } from "./ui-adapters/base-ui.tsx"; // you own these files
+import { baseUiPopover } from "./ui-adapters/base-ui.tsx";       // you own these files
 import { reactAriaPopover } from "./ui-adapters/react-aria.tsx"; // (pick one per primitive)
 
 export default function App({ children }: { children: React.ReactNode }) {
@@ -634,7 +635,7 @@ export default function App({ children }: { children: React.ReactNode }) {
 ```
 
 With no provider at all, `useAdapter()` falls back to `BuiltinAdapter` — the
-out-of-the-box experience needs no setup. A Veryfront app may _optionally_ hoist
+out-of-the-box experience needs no setup. A Veryfront app may *optionally* hoist
 this selection into `veryfront.config.ts` (`ui: { adapter: "base-ui" }`) so the
 resolver binds it statically and elides the context read (§6.5) — same map, one
 fewer runtime lookup.
@@ -664,7 +665,7 @@ to absorb. This is what "going through each" surfaces — the seams are not unif
   `useOverlayTriggerState` + `useDialog` — the adapter must wire `titleProps` to
   our `Title` for `aria-labelledby`, and `isOpen ⇄ open`.
 
-#### Drawer / Sheet — a _skin over the Dialog contract_, not its own contract
+#### Drawer / Sheet — a *skin over the Dialog contract*, not its own contract
 
 - **Key simplification:** no engine ships a true drawer. So `Drawer` is our
   **skin** (slide-from-`side` classes) over the **same `DialogParts`** contract,
@@ -672,7 +673,7 @@ to absorb. This is what "going through each" surfaces — the seams are not unif
   Tier-1 contract count from 6 to 5.
 - **Builtin wraps** `createModalSurfaceParts("Drawer")` + the drag-handle `lead`.
 - **Intersection note (rule 6):** drag-to-dismiss / snap points (Vaul-style) are
-  **builtin-only** — no Radix/Base UI/React Aria equivalent — so they are _not_ in
+  **builtin-only** — no Radix/Base UI/React Aria equivalent — so they are *not* in
   the contract. Under a third-party adapter, Drawer is a slide-animated modal
   without drag. Documented, not silently dropped.
 
@@ -686,7 +687,7 @@ to absorb. This is what "going through each" surfaces — the seams are not unif
 - **Per-engine + the sharp constraint:** Radix `DropdownMenu.*`, Base UI `Menu.*`
   (Positioner/Popup split). **React Aria menus reject arbitrary children** — only
   `MenuItem`/`Section`/`Header` — so our `Item` maps to a role-tagged slot and
-  free-form content inside a menu is _out of the contract intersection_. Selection
+  free-form content inside a menu is *out of the contract intersection*. Selection
   normalizes to an `onSelect`/`onAction` per `Item`.
 
 #### Tooltip
@@ -736,7 +737,7 @@ selected adapter lacks a primitive the app uses?
   (§6.5) already merges over `BuiltinAdapter`, so an unmapped/missing primitive
   transparently uses the zero-dep builtin. The app never breaks because an engine
   is missing one component.
-- **But not _silently_.** Silent fallback would hide a real quality gap — a team
+- **But not *silently*.** Silent fallback would hide a real quality gap — a team
   that picked "Ariakit" for its a11y would get a builtin Slider without knowing.
   So a missing primitive emits a **dev-mode warning** (`[veryfront/ui] Ariakit has
   no Slider; falling back to the builtin Slider`) and is documented in a
@@ -775,8 +776,8 @@ Base UI is the strongest first non-builtin adapter to ship:
 
 1. **`BuiltinAdapter`** — extraction only, zero behaviour change (Phase 0).
 2. **Base UI adapter** — the reference third-party adapter; proves the contract
-   against a _parts-based_ engine (Trigger/Positioner/Popup).
-3. **React Aria adapter** — proves the contract against the _hook_ archetype (the
+   against a *parts-based* engine (Trigger/Positioner/Popup).
+3. **React Aria adapter** — proves the contract against the *hook* archetype (the
    hardest shape: prop-getters, `isOpen`, two-step trigger, `I18nProvider`). If
    the contract survives Base UI **and** React Aria, it survives anything. This
    also wins the accessibility-maximalist and Adobe-shop cohorts.
@@ -784,7 +785,7 @@ Base UI is the strongest first non-builtin adapter to ship:
    state model; primarily an ecosystem-familiarity and shadcn-`-b radix` play.
 5. **Ariakit adapter** — community-driven / lower priority. It is MIT and
    ergonomic, but **perennially 0.x** (pre-1.0 after ~4 years) and effectively
-   single-maintainer — an acceptable _opt-in_ backend, a poor thing to pin the
+   single-maintainer — an acceptable *opt-in* backend, a poor thing to pin the
    core to.
 
 Building the two archetype extremes first (Base UI = parts, React Aria = hooks)
@@ -797,13 +798,13 @@ shadcn is not an engine, so there is no shadcn adapter to recommend. Shipping th
 Base UI + Radix adapters (§7.1–7.2) already puts us on the same primitives shadcn
 sits on — the only interop this RFC owes. Token-name aliasing and shadcn-registry
 distribution are on the separate distribution axis and are deferred (§9). One
-useful fact that _does_ land here: shadcn defaulting to Base UI in 2026 is
+useful fact that *does* land here: shadcn defaulting to Base UI in 2026 is
 independent evidence that Base UI is the right flagship (§7.1).
 
-### 7.4 Consider Zag.js/Ark as a _future_ built-in engine (not now)
+### 7.4 Consider Zag.js/Ark as a *future* built-in engine (not now)
 
 Zag.js (framework-agnostic state machines) + Ark UI is the most principled
-"one behaviour spec" system and could one day _replace_ our hand-rolled
+"one behaviour spec" system and could one day *replace* our hand-rolled
 `BuiltinAdapter` internals — giving the zero-dep default a rigorous state-machine
 core instead of our forks. It is **out of scope here** (it is still a
 single-engine bet and does not answer "does it use Radix/React Aria?"), but it is
@@ -817,7 +818,7 @@ builtin twice.
   the npm build are untouched.
 - Public exports (`Popover`, `Dialog`, `Select`, …) keep identical signatures.
 - The "zero external packages" charter in `index.ts` is **amended**, not deleted:
-  zero-dependency remains the _default_; adapters are opt-in.
+  zero-dependency remains the *default*; adapters are opt-in.
 - `veryfront/chat` continues to depend only on `veryfront/ui`; it inherits
   whatever adapter the app selected, for free.
 
@@ -826,16 +827,16 @@ builtin twice.
 The instinct to add a "shadcn adapter" is a category error, and worth naming
 explicitly because reviewers will ask. There are **two orthogonal axes**:
 
-| Axis                              | Members                                  | What the axis decides                                           |
-| --------------------------------- | ---------------------------------------- | --------------------------------------------------------------- |
-| **Engine / Mechanics**            | Base UI, Radix, Ariakit, React Aria      | focus/dismiss/positioning/ARIA — _this is what adapters swap_   |
+| Axis | Members | What the axis decides |
+| ---- | ------- | --------------------- |
+| **Engine / Mechanics** | Base UI, Radix, Ariakit, React Aria | focus/dismiss/positioning/ARIA — *this is what adapters swap* |
 | **Styled surface + distribution** | **shadcn/ui**, **`veryfront/ui` itself** | the look, the tokens, and how the component source is delivered |
 
 shadcn lives on the **second** axis. It is a copy-paste distribution model
 (components vendored into your repo via a CLI/registry) that **wraps an engine** —
 Base UI by default since mid-2026, Radix on `-b radix`, and third-party registries
 wrap Ariakit and others. That makes shadcn a **sibling of `veryfront/ui`** — a
-peer styled surface — not something that sits _below_ us as an engine we adapt to.
+peer styled surface — not something that sits *below* us as an engine we adapt to.
 
 Consequences:
 
@@ -844,15 +845,15 @@ Consequences:
   shadcn has its own styled `Dialog`; they would not route it through
   `veryfront/ui`.
 - **The only interop the adapters give us is free and already covered:** shipping
-  the Base UI and Radix adapters makes `veryfront/ui` sit on the _same primitives_
+  the Base UI and Radix adapters makes `veryfront/ui` sit on the *same primitives*
   shadcn sits on. That is the entire substantive answer to "is it the same stuff
   shadcn uses?" — and it falls out of §7.1–7.2 at no extra cost.
 - **Everything else labelled "shadcn" is on the distribution axis and is deferred**
   (not rejected), out of this RFC:
-  - _token-name aliasing_ (`--background`/`--primary`/`.dark`) so a shadcn theme
+  - *token-name aliasing* (`--background`/`--primary`/`.dark`) so a shadcn theme
     can style our components — optional, and in tension with our own token
     vocabulary; do it only on real demand;
-  - _publishing our skins as a shadcn registry_ (`npx shadcn add <url>`) so shadcn
+  - *publishing our skins as a shadcn registry* (`npx shadcn add <url>`) so shadcn
     users can vendor Veryfront components — a distribution decision, orthogonal to
     adapters.
 
@@ -861,15 +862,15 @@ engine axis; being Base-UI/Radix-backed is all the shadcn story this RFC owes.
 
 ## 10. Risks and trade-offs
 
-| Risk                                                                                    | Mitigation                                                                                                                                                                                                                                                  |
-| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Contract can't express an engine's quirk (e.g. Base UI `Positioner` vs Radix `Content`) | Contract renders _components_, not prop-getters, so each adapter absorbs its own structure (§6.3 rule 2). Prototype two archetype adapters (parts-based + hook-based) before locking the contract.                                                          |
-| Combinatorial test surface (N primitives × M adapters)                                  | One shared conformance suite (§6.7); adapters are thin.                                                                                                                                                                                                     |
-| Styling seam differences (`asChild`/`render`/prop-getters) leak into skins              | Normalised to our `asChild` at the contract; adapters translate (§6.3 rule 3).                                                                                                                                                                              |
-| Portal escapes token scope under a third-party portal                                   | Mandatory scope-attribute conformance test (§6.7).                                                                                                                                                                                                          |
-| Bundle bloat if adapters aren't tree-shaken                                             | Partial per-component map: unmapped primitives are builtin; optional build-time bind (§6.5) statically includes only the chosen adapter. Engines are the developer's own dep.                                                                               |
-| Version drift / "bump and align" burden on us                                           | **Core depends on no engine and publishes no adapter package** (§6.6). Reference adapters are vendored (shadcn model); the developer owns the file and bumps their own engine; the conformance suite (§6.7) detects breakage. Nothing on our side to align. |
-| Engine churn (Radix maintenance, Base UI major)                                         | The abstraction is the hedge — retarget a vendored adapter file without touching skins.                                                                                                                                                                     |
+| Risk | Mitigation |
+| ---- | ---------- |
+| Contract can't express an engine's quirk (e.g. Base UI `Positioner` vs Radix `Content`) | Contract renders *components*, not prop-getters, so each adapter absorbs its own structure (§6.3 rule 2). Prototype two archetype adapters (parts-based + hook-based) before locking the contract. |
+| Combinatorial test surface (N primitives × M adapters) | One shared conformance suite (§6.7); adapters are thin. |
+| Styling seam differences (`asChild`/`render`/prop-getters) leak into skins | Normalised to our `asChild` at the contract; adapters translate (§6.3 rule 3). |
+| Portal escapes token scope under a third-party portal | Mandatory scope-attribute conformance test (§6.7). |
+| Bundle bloat if adapters aren't tree-shaken | Partial per-component map: unmapped primitives are builtin; optional build-time bind (§6.5) statically includes only the chosen adapter. Engines are the developer's own dep. |
+| Version drift / "bump and align" burden on us | **Core depends on no engine and publishes no adapter package** (§6.6). Reference adapters are vendored (shadcn model); the developer owns the file and bumps their own engine; the conformance suite (§6.7) detects breakage. Nothing on our side to align. |
+| Engine churn (Radix maintenance, Base UI major) | The abstraction is the hedge — retarget a vendored adapter file without touching skins. |
 
 ## 11. Alternatives considered
 
@@ -881,7 +882,7 @@ engine axis; being Base-UI/Radix-backed is all the shadcn story this RFC owes.
    X?" question. Rejected.
 3. **Adopt Zag.js/Ark as the single engine.** Attractive (one framework-agnostic
    spec), but still a single-engine bet and still answers "no" to "does it use
-   Radix/React Aria?" Considered as a _possible built-in replacement_ in the
+   Radix/React Aria?" Considered as a *possible built-in replacement* in the
    appendix, not as the adapter strategy.
 4. **Do nothing.** Keep shipping `TODO(a11y)` forks. Rejected — it is an active
    adoption and accessibility liability.
@@ -911,20 +912,20 @@ load-bearing ones (marked ⚠) before hard-coding.
 
 ### 13.1 At a glance
 
-| Engine           | API shape                                          | Composition                                                                 | State props                                                                           | License / maintainer                     | Status                                                     | Package                                                       |
-| ---------------- | -------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------- |
-| **Base UI**      | Parts (compound)                                   | `render` prop (element or fn+state)                                         | `open`/`onOpenChange(open, eventDetails)`/`defaultOpen`/`modal:boolean\|'trap-focus'` | MIT · MUI org (ex-Radix/Floating UI/MUI) | ⚠ **Stable v1.0 (2025-12-11), now v1.6**                   | `@base-ui/react` ⚠ (renamed from `@base-ui-components/react`) |
-| **Radix**        | Parts (compound)                                   | `asChild` + `Slot`                                                          | `open`/`onOpenChange(open)`/`defaultOpen`/`modal`                                     | MIT · ⚠ **WorkOS** (ex-Modulz)           | Stable, mature                                             | `radix-ui` (single) or `@radix-ui/react-*`                    |
-| **React Aria**   | **Two APIs**: low-level hooks _and_ RAC components | hooks: you own DOM; RAC: `className`/`style` render-fn + `slot`s + `data-*` | `isOpen`/`onOpenChange`/`defaultOpen`; state via `useOverlayTriggerState`             | **Apache-2.0** · Adobe                   | RAC 1.x stable (`react-aria-components@1.19`)              | `react-aria` + `react-stately`, `react-aria-components`       |
-| **Ariakit**      | One component API + store                          | `render` prop (no `as`, no prop-getters)                                    | store: `useDialogStore({open,setOpen,defaultOpen})`                                   | MIT · Diego Haz (solo)                   | ⚠ **still 0.x** (`@ariakit/react@0.4.x`)                   | `@ariakit/react` (single)                                     |
-| **shadcn/ui**    | _Not an engine_ — CLI/registry vendoring           | copies source into your repo; `cn()`=clsx+tailwind-merge; CSS-var tokens    | inherits its backend's                                                                | MIT                                      | ⚠ **defaults to Base UI (Jul 2026)**; Radix via `-b radix` | `npx shadcn add`                                              |
-| **Zag.js / Ark** | State machine + `connect()` → prop-getters         | Ark wraps getters into compound parts                                       | machine context; `open`/`defaultOpen`                                                 | MIT · Chakra/Segun Adebayo               | Zag v1 stable; Ark stable                                  | `@zag-js/*` + `@ark-ui/react`                                 |
+| Engine | API shape | Composition | State props | License / maintainer | Status | Package |
+| ------ | --------- | ----------- | ----------- | -------------------- | ------ | ------- |
+| **Base UI** | Parts (compound) | `render` prop (element or fn+state) | `open`/`onOpenChange(open, eventDetails)`/`defaultOpen`/`modal:boolean\|'trap-focus'` | MIT · MUI org (ex-Radix/Floating UI/MUI) | ⚠ **Stable v1.0 (2025-12-11), now v1.6** | `@base-ui/react` ⚠ (renamed from `@base-ui-components/react`) |
+| **Radix** | Parts (compound) | `asChild` + `Slot` | `open`/`onOpenChange(open)`/`defaultOpen`/`modal` | MIT · ⚠ **WorkOS** (ex-Modulz) | Stable, mature | `radix-ui` (single) or `@radix-ui/react-*` |
+| **React Aria** | **Two APIs**: low-level hooks *and* RAC components | hooks: you own DOM; RAC: `className`/`style` render-fn + `slot`s + `data-*` | `isOpen`/`onOpenChange`/`defaultOpen`; state via `useOverlayTriggerState` | **Apache-2.0** · Adobe | RAC 1.x stable (`react-aria-components@1.19`) | `react-aria` + `react-stately`, `react-aria-components` |
+| **Ariakit** | One component API + store | `render` prop (no `as`, no prop-getters) | store: `useDialogStore({open,setOpen,defaultOpen})` | MIT · Diego Haz (solo) | ⚠ **still 0.x** (`@ariakit/react@0.4.x`) | `@ariakit/react` (single) |
+| **shadcn/ui** | *Not an engine* — CLI/registry vendoring | copies source into your repo; `cn()`=clsx+tailwind-merge; CSS-var tokens | inherits its backend's | MIT | ⚠ **defaults to Base UI (Jul 2026)**; Radix via `-b radix` | `npx shadcn add` |
+| **Zag.js / Ark** | State machine + `connect()` → prop-getters | Ark wraps getters into compound parts | machine context; `open`/`defaultOpen` | MIT · Chakra/Segun Adebayo | Zag v1 stable; Ark stable | `@zag-js/*` + `@ark-ui/react` |
 
 ### 13.2 The fault lines an adapter must absorb
 
 - **Composition direction inverts.** Radix `asChild` and React-Aria-hooks let you
-  own/merge onto _your_ node. Base UI / Ariakit `render` merges _your_ node into
-  _their_ component. RAC styles _its_ node via `className` render-fn. Four idioms
+  own/merge onto *your* node. Base UI / Ariakit `render` merges *your* node into
+  *their* component. RAC styles *its* node via `className` render-fn. Four idioms
   for "use my element"; the contract normalises to our `asChild` (§6.3 rule 3).
 - **Positioning anatomy splits.** Radix: one `Content` node carries both
   positioning props (`side`/`align`/`sideOffset`) and the styled surface.
@@ -943,7 +944,7 @@ load-bearing ones (marked ⚠) before hard-coding.
 - **The two-step trigger (React Aria hooks only).** `useOverlayTrigger` returns
   `triggerProps` typed as `AriaButtonProps` that must pass **through `useButton`**
   before hitting the DOM — no analog elsewhere; the React Aria adapter hides it.
-- **ARIA strictness / feature intersection.** React Aria _rejects_ patterns the
+- **ARIA strictness / feature intersection.** React Aria *rejects* patterns the
   others allow (tooltips only on focusable elements; menus reject arbitrary
   children). → contract exposes the **intersection** only (§6.3 rule 6).
 - **Portal + focus ownership.** All portal; all accept a `container` (Base UI also
@@ -991,8 +992,8 @@ load-bearing ones (marked ⚠) before hard-coding.
   (Base UI default / Radix opt-in).
 - **Zag.js + Ark UI** — one framework-agnostic state machine, `connect(service,
   normalizeProps)` → prop-getters; `normalizeProps` is itself the per-framework
-  adapter seam. Solves the _cross-framework_ version; single owned engine.
-- **MUI `slots` / `slotProps`** — swaps the _rendered element per slot_, not the
+  adapter seam. Solves the *cross-framework* version; single owned engine.
+- **MUI `slots` / `slotProps`** — swaps the *rendered element per slot*, not the
   behaviour engine. Borrow the naming ergonomics for per-part overrides; it does
   not solve backend swapping.
 - **Verdict:** a live runtime multi-foreign-backend adapter is essentially
