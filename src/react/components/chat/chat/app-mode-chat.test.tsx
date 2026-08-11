@@ -91,11 +91,13 @@ describe("ConversationBoundChat — app mode, no ConversationsProvider", () => {
           },
         })),
       )) as typeof fetch;
+    let root: ReturnType<typeof createRoot> | undefined;
     try {
       const rootElement = document.getElementById("root");
       assert(rootElement, "root element exists");
-      const root = createRoot(rootElement);
-      flushSync(() => root.render(<ConversationBoundChat agentId="test-agent" />));
+      const createdRoot = createRoot(rootElement);
+      root = createdRoot;
+      flushSync(() => createdRoot.render(<ConversationBoundChat agentId="test-agent" />));
       await settle();
 
       assertStringIncludes(rootElement.textContent ?? "", "Test Agent");
@@ -105,7 +107,7 @@ describe("ConversationBoundChat — app mode, no ConversationsProvider", () => {
       );
 
       flushSync(() =>
-        root.render(
+        createdRoot.render(
           <ConversationBoundChat
             agentId="test-agent"
             emptyState={{ title: "Custom title", description: "Custom description" }}
@@ -113,8 +115,8 @@ describe("ConversationBoundChat — app mode, no ConversationsProvider", () => {
         )
       );
       assertStringIncludes(rootElement.textContent ?? "", "Custom description");
-      await unmountReactRoot(root);
     } finally {
+      if (root) await unmountReactRoot(root);
       globalThis.fetch = previousFetch;
       restoreDom();
     }
