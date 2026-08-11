@@ -542,6 +542,64 @@ export default function Page() {
 });
 
 Deno.test({
+  name:
+    "server/build-app-route-renderer hoists the layout's declared <Head> title into the prerendered document",
+  async fn() {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-app-route-head-" });
+    const appDir = join(projectDir, "app");
+    const pageFile = join(appDir, "page.tsx");
+
+    try {
+      await Deno.mkdir(appDir, { recursive: true });
+      await Deno.writeTextFile(
+        join(appDir, "layout.tsx"),
+        `import { Head } from "veryfront/head";
+
+export default function Layout({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <Head>
+        <title>Assistant</title>
+        <meta name="viewport" content="width=device-width, initial-scale=2.0" />
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+      </Head>
+      {children}
+    </>
+  );
+}
+`,
+      );
+      await Deno.writeTextFile(
+        pageFile,
+        `"use client";
+export default function Page() {
+  return <button id="head-page" type="button">Open</button>;
+}
+`,
+      );
+
+      const html = await renderAppRouteToHTML({
+        adapter: denoAdapter,
+        projectDir,
+        routePath: "/",
+        pageFile,
+        contentSourceId: "test-content-source",
+      });
+
+      assertStringIncludes(html, "<title>Assistant</title>");
+      assertEquals(html.includes("<title>Veryfront App</title>"), false);
+      assertStringIncludes(html, 'href="/favicon.svg"');
+      // A layout-declared viewport replaces the shell default instead of
+      // shipping two competing viewport directives.
+      assertEquals(html.match(/name="viewport"/g)?.length, 1);
+      assertStringIncludes(html, 'content="width=device-width, initial-scale=2.0"');
+    } finally {
+      await cleanupProject(projectDir);
+    }
+  },
+});
+
+Deno.test({
   name: "server/build-app-route-renderer discovers and unwraps JavaScript document layouts",
   async fn() {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-app-route-js-layout-" });

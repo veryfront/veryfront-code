@@ -5,10 +5,17 @@
 import { dirname, isAbsolute, join, normalize, relative } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getProjectReact, renderToStringAdapter } from "#veryfront/react";
+import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
+import {
+  buildHeadElements,
+  resolveCommittedHeadFromHTML,
+} from "#veryfront/rendering/orchestrator/html-head.ts";
 import { loadComponentFromSource } from "#veryfront/modules/react-loader/index.ts";
 import { COMPILATION_ERROR } from "#veryfront/errors";
 import { generateHydrationData, getProdScripts } from "#veryfront/html";
 import { buildImportMapJson } from "#veryfront/html/utils.ts";
+import { escapeHTML } from "#veryfront/html/html-escape.ts";
+import { headMetaSingletonKeyFromRecord } from "#veryfront/html/managed-head-protocol.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { getPreviewStylesheetLink } from "#veryfront/html/dev-scripts.ts";
 import {
@@ -271,8 +278,16 @@ async function renderAppRouteToHTMLWithInternals(
     }
   }
 
-  const htmlInner = await renderToStringAdapter(element, { reactVersion });
-  const title = "Veryfront App";
+  // Prerendered documents must carry the same identity the request-time SSR
+  // shell gives them: a layout's `<Head>` owns the title and the head links,
+  // and without a render context the Head instances never commit, leaving the
+  // built page on the framework's placeholder title.
+  const { result: htmlInner, head: requestHead } = await runWithHeadCollector(
+    (renderContext) => renderToStringAdapter(element, { reactVersion, renderContext }),
+  );
+  const committedHead = resolveCommittedHeadFromHTML(htmlInner, requestHead);
+  const title = committedHead?.title ?? "Veryfront App";
+  const headElements = buildHeadElements(committedHead);
   const slug = routePathToSlug(routePath);
   const importMapJson = await buildImportMapJson({
     projectDir,
@@ -318,12 +333,20 @@ async function renderAppRouteToHTMLWithInternals(
     ? getPreviewStylesheetLink()
     : "";
 
+  const headScripts = headElements.scripts ? `\n  ${headElements.scripts}` : "";
+  const headOther = headElements.other ? `\n  ${headElements.other}` : "";
+  // The shell owns the viewport only until a layout declares its own; emitting
+  // both would ship two competing viewport directives in one document.
+  const viewportMeta =
+    committedHead?.metas.some((meta) => headMetaSingletonKeyFromRecord(meta) === "meta:viewport")
+      ? ""
+      : `\n  <meta name="viewport" content="width=device-width, initial-scale=1.0">`;
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${title}</title>
+  <meta charset="UTF-8">${viewportMeta}${headScripts}
+  <title>${escapeHTML(title)}</title>${headOther}
 
   <!-- Import map for React dependencies -->
   <script type="importmap">
