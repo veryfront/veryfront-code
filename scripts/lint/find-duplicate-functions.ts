@@ -144,7 +144,7 @@ const WALK_SKIP_KEYS = new Set([
 ]);
 
 const DEFAULT_TEXT_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
-const DEFAULT_PATHS = ["src", "cli", "templates"];
+const DEFAULT_PATHS = ["src", "cli"];
 const DEFAULT_EXCLUDES = [
   "node_modules/",
   ".git/",
