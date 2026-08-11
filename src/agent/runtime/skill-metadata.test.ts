@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/skill/_test-setup.ts";
 import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import {
   createSkillDocumentParserProvider,
@@ -971,7 +972,7 @@ Research carefully.`,
   assertEquals(response.references, ["references/guide.md"]);
 });
 
-Deno.test("buildRuntimeLoadedSkillResponse omits override forwarding without invoke_agent", () => {
+it("buildRuntimeLoadedSkillResponse omits override forwarding without invoke_agent", () => {
   const response = buildRuntimeLoadedSkillResponse({
     skillId: "research",
     instructions: `---
