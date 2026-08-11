@@ -193,10 +193,12 @@ describe("guide content contracts", () => {
     // Veryfront Cloud environments are protected by default: an anonymous
     // request to the environment URL gets a 302 to
     // https://veryfront.com/sign-in on every path, API routes included, and
-    // VERYFRONT_API_TOKEN does not change that. Verified against published
-    // 0.1.1229:
+    // VERYFRONT_API_TOKEN does not change that. A signed-in non-member gets a
+    // 403 instead, per checkProtectedProxyAccess in
+    // src/proxy/proxy-access-control.ts. Verified against a live protected
+    // environment on published 0.1.1229:
     //   curl -s -o /dev/null -w '%{http_code} %{redirect_url}' \
-    //     https://support-agent.production.veryfront.com/api/health
+    //     https://<project>.production.veryfront.com/api/health
     //   -> 302 https://veryfront.com/sign-in?from=...
     // A verification step written as a bare `curl -sSf <environment-url>`
     // therefore exits 0 with an empty body whether or not the deployment
@@ -211,6 +213,7 @@ describe("guide content contracts", () => {
     assertStringIncludes(prose, "protected by default");
     assertStringIncludes(prose, "https://veryfront.com/sign-in");
     assertStringIncludes(prose, "Public Environment");
+    assertStringIncludes(prose, "not a member of the project gets a `403`");
     assertStringIncludes(doc, "-w '%{http_code} %{redirect_url}\\n'");
     assertEquals(doc.includes("```bash\ncurl -sSf <environment-url>\n```"), false);
   });

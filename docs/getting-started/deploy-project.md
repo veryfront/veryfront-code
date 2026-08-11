@@ -65,15 +65,21 @@ Veryfront Cloud creates `preview`, `staging`, and `production` as protected by
 default, so check the preview URL in a browser signed in to Veryfront as a
 member of the project.
 
-A protected environment serves only that signed-in browser. Every other request
-gets a `302` to `https://veryfront.com/sign-in`, on every path including API
-routes:
+A protected environment serves only that signed-in member. An unauthenticated
+request gets a `302` to `https://veryfront.com/sign-in`, on every path
+including API routes:
 
 ```bash
 curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' \
   https://<project>.production.veryfront.com/api/health
+```
+
+```text
 302 https://veryfront.com/sign-in?from=https%3A%2F%2F...%2Fapi%2Fhealth
 ```
+
+A request signed in as a user who is not a member of the project gets a `403`
+instead. A `403` means the account is wrong, not the URL.
 
 `VERYFRONT_API_TOKEN` does not open a protected environment. It authenticates
 the CLI against the Cloud API, not deployment traffic, so `curl`, a CI smoke
@@ -127,11 +133,12 @@ curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' <environment-url>
 ```
 
 A public environment answers `200`. A protected environment answers `302` to
-`https://veryfront.com/sign-in`; open the URL in a signed-in browser, or make
-the environment public, as described in
-[Environment access](#environment-access). Do not check with a bare
-`curl -sSf <environment-url>`: `curl` does not treat a `302` as a failure, so
-that command exits `0` with an empty body whether or not the deployment works.
+`https://veryfront.com/sign-in`, or `403` for a signed-in non-member. In that
+case open the URL in a member's browser, or make the environment public, as
+described in [Environment access](#environment-access). Do not check with a
+bare `curl -sSf <environment-url>`: `curl` does not treat a `302` as a failure,
+so that command exits `0` with an empty body whether or not the deployment
+works.
 
 Once the environment is public, request an API route the project serves. For
 the agent route from [Create API](./create-api.md):
