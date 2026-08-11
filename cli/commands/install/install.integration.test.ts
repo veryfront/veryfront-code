@@ -46,6 +46,22 @@ describe("install command integration", () => {
     };
   }
 
+  async function runInstallArgs(
+    args: string[],
+  ): Promise<{ code: number; output: string }> {
+    const cliPath = new URL("../../main.ts", import.meta.url).pathname;
+    const result = await runCommand("deno", {
+      args: ["run", "--allow-all", cliPath, "install", ...args],
+      cwd: tempDir,
+      capture: true,
+    });
+
+    return {
+      code: result.code,
+      output: (result.stdout ?? "") + (result.stderr ?? ""),
+    };
+  }
+
   async function assertFileExists(path: string): Promise<void> {
     assertEquals(await exists(path), true);
   }
@@ -143,6 +159,38 @@ describe("install command integration", () => {
         "veryfront schema --json",
         "veryfront routes",
       ]);
+    });
+  });
+
+  describe("bare positional target", () => {
+    it("installs AGENTS.md for `veryfront install agents`", async () => {
+      const { code } = await runInstallArgs(["agents", "--force", "--no-input"]);
+      assertEquals(code, 0);
+
+      await assertFileExists(join(tempDir, "AGENTS.md"));
+      await assertFileNotExists(join(tempDir, "SKILL.md"));
+    });
+
+    it("installs the Claude Code integration for `veryfront install claude-code`", async () => {
+      const { code } = await runInstallArgs(["claude-code", "--force", "--no-input"]);
+      assertEquals(code, 0);
+
+      await assertFileExists(join(tempDir, ".claude/CLAUDE.md"));
+      await assertFileNotExists(join(tempDir, "SKILL.md"));
+    });
+
+    it("prefers --target when both a flag and a positional are given", async () => {
+      const { code } = await runInstallArgs([
+        "agents",
+        "--target",
+        "cursor",
+        "--force",
+        "--no-input",
+      ]);
+      assertEquals(code, 0);
+
+      await assertFileExists(join(tempDir, ".cursorrules"));
+      await assertFileNotExists(join(tempDir, "AGENTS.md"));
     });
   });
 

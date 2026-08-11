@@ -19,7 +19,7 @@ const getInstallArgsSchema = defineSchema((v) =>
 const InstallArgsSchema = lazySchema(getInstallArgsSchema);
 
 export const parseInstallArgs = createArgParser(InstallArgsSchema, {
-  target: { keys: ["target", "t"], type: "string" },
+  target: { keys: ["target", "t"], type: "string", positional: 0 },
   global: { keys: ["global", "g"], type: "boolean" },
   force: CommonArgs.force,
 });
