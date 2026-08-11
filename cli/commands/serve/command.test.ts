@@ -647,12 +647,21 @@ describe("commands/serve/command", () => {
     it("brackets explicit IPv6 bind addresses", () => {
       assertEquals(serveReadyUrl("::1", 8080), "http://[::1]:8080");
     });
+
+    it("keeps an already bracketed IPv6 bind address bracketed exactly once", () => {
+      assertEquals(serveReadyUrl("[::1]", 8080), "http://[::1]:8080");
+    });
   });
 
   describe("printServeReady", () => {
     it("prints the URL the deploy docs tell developers to open", () => {
       const output = captureStdout(() => printServeReady({ port: 3000, bindAddress: "0.0.0.0" }));
       assertStringIncludes(output, "http://localhost:3000");
+    });
+
+    it("stays silent when an ephemeral port was requested", () => {
+      const output = captureStdout(() => printServeReady({ port: 0, bindAddress: "0.0.0.0" }));
+      assertEquals(output.trim(), "");
     });
 
     it("stays silent in JSON mode", () => {
