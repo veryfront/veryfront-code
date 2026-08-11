@@ -108,7 +108,7 @@ browser.
 
 The `minimal` template creates:
 
-```
+```text
 test-app/
   .gitignore
   AGENTS.md         # Project guide for coding agents
@@ -126,7 +126,7 @@ test-app/
 
 The `ai-agent` template creates:
 
-```
+```text
 test-app/
   .gitignore
   AGENTS.md         # Project guide for coding agents
