@@ -149,14 +149,24 @@ export function acquireCSSGenerationSession(minify: boolean): CSSGenerationSessi
     //
     // Once per process, not once per acquisition: regenerateCSSByHash acquires
     // a session on every cold-cache request, which made this the single most
-    // frequent line in a hosted project's logs. Name the package that registers
-    // an engine, or the message asks for a hook with no way to reach it.
+    // frequent line in a hosted project's logs.
+    //
+    // State the effect and the whole remedy. An earlier revision borrowed
+    // `resolve()`'s "install it with: deno add <package>" hint, which is only
+    // true for an auto-activating extension: `@veryfront/ext-css-lightning`
+    // declares `activation: "explicit"`, so installing it registers nothing
+    // until a `veryfront.config.ts` `extensions` entry activates it, and
+    // scaffolded projects are npm projects where `deno add` is the wrong
+    // command besides. Advice that stops at the install reads as actionable and
+    // leaves the CSS exactly as unminified as before. The contract name stays
+    // out of the instruction: it is an internal registration hook the guides
+    // never mention, and `component=css-compiler` already identifies the source.
     reportedMissingOptimizationEngine = true;
     const recommendation = getRecommendation(CSSOptimizationEngineName);
     logger.warn(
       recommendation === undefined
-        ? "No CSSOptimizationEngine registered; emitting unminified CSS"
-        : `No CSSOptimizationEngine registered; emitting unminified CSS. Install one with: deno add ${recommendation}`,
+        ? "Veryfront emits unminified CSS because no CSS optimizer is active"
+        : `Veryfront emits unminified CSS because no CSS optimizer is active. Install ${recommendation}, then add it to "extensions" in veryfront.config.ts`,
     );
   }
   const optimizationEngine = optimizationProvider === undefined
