@@ -15,6 +15,10 @@ const BUILD_OUTPUT_MARKER = "_veryfront";
 /** Names listed in the refusal message before it stops enumerating. */
 const REFUSAL_PREVIEW_LIMIT = 5;
 
+/** Longest entry name, and output path, the refusal prints before truncating. */
+const ENTRY_NAME_LIMIT = 60;
+const OUTPUT_PATH_LIMIT = 120;
+
 export async function setupBuildDirectories(
   adapter: RuntimeAdapter,
   outputDir: string,
@@ -110,10 +114,12 @@ async function outputDirectoryNeedsClearing(
   const owned = entries.some((entry) => entry.name === BUILD_OUTPUT_MARKER && entry.isDirectory);
   if (entries.length === 0 || owned) return true;
 
-  const names = entries.map((entry) => entry.name);
-  const preview = names.slice(0, REFUSAL_PREVIEW_LIMIT).join(", ");
-  const more = names.length > REFUSAL_PREVIEW_LIMIT
-    ? `, and ${names.length - REFUSAL_PREVIEW_LIMIT} more`
+  const preview = entries
+    .slice(0, REFUSAL_PREVIEW_LIMIT)
+    .map((entry) => printable(entry.name, ENTRY_NAME_LIMIT))
+    .join(", ");
+  const more = entries.length > REFUSAL_PREVIEW_LIMIT
+    ? `, and ${entries.length - REFUSAL_PREVIEW_LIMIT} more`
     : "";
 
   throw BUILD_FAILED.create({
@@ -134,6 +140,10 @@ async function outputDirectoryNeedsClearing(
  * segment rather than a chain of `../`.
  */
 function describeOutputDir(outputDir: string): string {
+  return printable(projectRelativePath(outputDir), OUTPUT_PATH_LIMIT);
+}
+
+function projectRelativePath(outputDir: string): string {
   try {
     const relativePath = relative(cwd(), outputDir);
     if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
@@ -143,6 +153,21 @@ function describeOutputDir(outputDir: string): string {
   } catch {
     return basename(outputDir) || outputDir;
   }
+}
+
+/**
+ * Render a filesystem name for a message a user reads.
+ *
+ * Entry names and configured paths are arbitrary filesystem input, so they can
+ * carry control characters and terminal escape sequences that rewrite the
+ * surrounding output instead of appearing in it. Those become `?`, the way `ls`
+ * renders them, and a long name is cut so a single entry cannot push the rest
+ * of the refusal — the part that says what to do — off the screen.
+ */
+function printable(value: string, limit: number): string {
+  // deno-lint-ignore no-control-regex
+  const escaped = value.replace(/[\u0000-\u001F\u007F-\u009F]/g, "?");
+  return escaped.length > limit ? `${escaped.slice(0, limit)}…` : escaped;
 }
 
 /** Entries in `outputDir`, or why they could not be listed. */

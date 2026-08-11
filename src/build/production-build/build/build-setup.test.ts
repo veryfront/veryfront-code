@@ -248,6 +248,37 @@ describe("build/production-build/build/build-setup", () => {
       }
     });
 
+    it("strips control characters from the entry names it lists", async () => {
+      // The names come off the filesystem, so a file can be called anything a
+      // filesystem allows — including an ANSI escape sequence that rewrites the
+      // rest of the line instead of appearing in it, hiding the very sentence
+      // that tells the developer what to do.
+      const tmpDir = await Deno.makeTempDir();
+      const outputDir = `${tmpDir}/escaping-output`;
+      const adapter = createDeletingAdapter();
+      const hostile = "\u001b[2Kfake.txt";
+
+      try {
+        await Deno.mkdir(outputDir, { recursive: true });
+        await Deno.writeTextFile(`${outputDir}/${hostile}`, "sneaky");
+
+        const error = await assertRejects(
+          () => setupBuildDirectories(adapter, outputDir, false),
+        );
+
+        const message = error instanceof Error ? error.message : String(error);
+        assertStringIncludes(message, "?[2Kfake.txt");
+        assertEquals(
+          // deno-lint-ignore no-control-regex
+          /[\u0000-\u001F\u007F-\u009F]/.test(message),
+          false,
+          "the refusal must not replay control characters from a filename",
+        );
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
     it("does not try to clear an output directory that does not exist", async () => {
       // Removing a path that was never there failed every first build into
       // `! Operation failed, using fallback err=NotFound ... remove '.../dist'`,
