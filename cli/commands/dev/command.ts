@@ -9,6 +9,7 @@ import { runtime } from "veryfront/platform";
 import { getConfig } from "veryfront/config";
 import { getEnvironmentConfig } from "veryfront/config";
 import { startDevServer } from "veryfront/server";
+import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
 import { validateProviderConfig } from "veryfront/discovery";
 import { brand, devShortcuts, dim, error as errorColor, formatDuration, warning } from "#cli/ui";
 import { exitProcess, isTTY, isVerbose, registerTerminationSignals } from "#cli/utils";
@@ -24,7 +25,7 @@ import { pullCommand } from "../pull/index.ts";
 import { createStagedPushOptions, pushCommand, type PushOptions } from "../push/index.ts";
 import { createProjectSelector } from "./project-selector.ts";
 import { createDevLogController } from "./log-controller.ts";
-import { findAvailablePort, isPortInUseError } from "./port-fallback.ts";
+import { findAvailablePort, isPortAvailable, isPortInUseError } from "./port-fallback.ts";
 
 export interface DevOptions {
   port: number;
@@ -33,6 +34,12 @@ export interface DevOptions {
   open?: boolean;
   /** Demo mode: don't exit process on shutdown, resolve done promise instead */
   demoMode?: boolean;
+  /**
+   * Clear the shared on-disk ESM caches before starting. Only honoured once the
+   * requested dev port is confirmed free, because the cache directory is shared
+   * with any dev server already serving this project.
+   */
+  clearLocalCaches?: boolean;
 }
 
 export type DevCommandOptions = DevOptions;
@@ -115,11 +122,42 @@ export async function startDevServerOnFreePort<T>(
   }
 }
 
+/**
+ * Clears the shared on-disk ESM caches, but only if `requestedPort` is free.
+ *
+ * The caches live under the project's `.cache` directory, which every dev
+ * server rooted at that project shares. A taken dev port is the signal that one
+ * of them is already running and still serving modules it compiled, so the
+ * clear is skipped rather than wiping that server's work out from under it -
+ * the second `veryfront dev` falls forward to a free port and starts on a cache
+ * it did not just destroy.
+ *
+ * Returns whether the clear ran. Takes `clear` and `probe` as parameters so the
+ * decision can be tested without booting a dev server, the same seam
+ * `startDevServerOnFreePort` uses.
+ */
+export async function clearLocalCachesIfPortFree(
+  requestedPort: number,
+  clear: () => Promise<void> = clearAllLocalCaches,
+  probe: (port: number) => Promise<boolean> = isPortAvailable,
+): Promise<boolean> {
+  if (!await probe(requestedPort)) return false;
+  await clear();
+  return true;
+}
+
 export function devCommand(options: DevOptions): Promise<DevCommandResult> {
   return withSpan(
     "cli.command.dev",
     async () => {
-      const { port, projectDir, hmr = true, open = false, demoMode = false } = options;
+      const {
+        port,
+        projectDir,
+        hmr = true,
+        open = false,
+        demoMode = false,
+        clearLocalCaches = false,
+      } = options;
       const startTime = Date.now();
 
       let doneResolve: (() => void) | undefined;
@@ -145,6 +183,8 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       const DEFAULT_DEV_PORT = 3000;
       const finalPort = port !== DEFAULT_DEV_PORT ? port : (config?.dev?.port ?? port);
       const enableHMR = config?.dev?.hmr !== false && hmr;
+
+      if (clearLocalCaches) await clearLocalCachesIfPortFree(finalPort);
 
       const env = getEnvironmentConfig();
       const isProxyMode = config?.fs?.veryfront?.proxyMode === true;
