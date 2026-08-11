@@ -122,10 +122,13 @@ function plannedUpActions(plan: DeployPlan): string[] {
  *
  * A dry run that only says it finished cannot be read before the real run, so
  * it names the project it resolved and every action the apply would take.
+ * The name comes from the plan, not from the local link: a project renamed
+ * after it was linked still resolves by id, and the plan carries the slug the
+ * apply would actually target.
  * It never predicts a preview URL: `up` prints URLs it has verified, and the
  * hostname of a deployment that does not exist yet is not one of them.
  */
-function formatUpDryRunPlan(plan: DeployPlan, projectSlug: string): string {
+function formatUpDryRunPlan(plan: DeployPlan): string {
   const actions = [
     ...(plan.plannedActions.includes("create-project") ? ["create the project"] : []),
     ...(plan.plannedActions.includes("push-source") ? [`push source to "${plan.branch}"`] : []),
@@ -134,7 +137,7 @@ function formatUpDryRunPlan(plan: DeployPlan, projectSlug: string): string {
   ];
   const last = actions[actions.length - 1];
   const phrase = `${actions.slice(0, -1).join(", ")}, and ${last}`;
-  return `Would ${phrase} for project ${projectSlug}`;
+  return `Would ${phrase} for project ${plan.projectSlug}`;
 }
 
 export async function upCommand(
@@ -307,7 +310,7 @@ export async function upCommand(
         },
       });
     } else {
-      logInfo(formatUpDryRunPlan(outcome.plan, projectSlug));
+      logInfo(formatUpDryRunPlan(outcome.plan));
       logSuccess("Dry run complete");
     }
     return;

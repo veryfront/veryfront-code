@@ -458,9 +458,12 @@ describe("Up Command", () => {
         // A status glyph with no message is a rendered line that says nothing.
         assertEquals(lines.some((line) => line.trim() === "●"), false);
         assertEquals(lines.some((line) => line.includes("Building release")), false);
+        // The name comes from the plan ("verified-slug"), not from the local
+        // link ("linked-up"): a project renamed after linking still resolves by
+        // id, and the apply would target the plan's slug.
         assertEquals(
           lines.includes(
-            '  › Would push source to "main", create release, and deploy to "preview" for project linked-up',
+            '  › Would push source to "main", create release, and deploy to "preview" for project verified-slug',
           ),
           true,
         );
@@ -477,6 +480,8 @@ describe("Up Command", () => {
       const { deployProject } = recordingDeployProject(
         dryRunOutcome({
           projectId: null,
+          // No project exists yet, so the plan carries the slug it would create.
+          projectSlug: expectedSlug,
           environmentId: null,
           plannedActions: ["create-project", "push-source", "create-release", "deploy"],
         }),
