@@ -471,6 +471,86 @@ describe("discovery/import-rewriter", () => {
     }
   });
 
+  it("binds discovery imports to the running framework install when the CLI runs from another install", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
+    const veryfrontDir = `${projectDir}/node_modules/veryfront`;
+    await Deno.mkdir(`${veryfrontDir}/local`, { recursive: true });
+    await Deno.writeTextFile(
+      `${veryfrontDir}/package.json`,
+      JSON.stringify({
+        name: "veryfront",
+        version: "0.0.0-project-local",
+        exports: {
+          "./schemas": "./local/schemas.js",
+          "./tool": "./local/tool.js",
+        },
+      }),
+    );
+    await Deno.writeTextFile(`${veryfrontDir}/local/schemas.js`, "");
+    await Deno.writeTextFile(`${veryfrontDir}/local/tool.js`, "");
+
+    const globalInstall = "file:///opt/npm/lib/node_modules/veryfront";
+
+    try {
+      const transformed = await rewriteDiscoveryImports(
+        [
+          'import { defineSchema } from "veryfront/schemas";',
+          'import { tool } from "veryfront/tool";',
+        ].join("\n"),
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/tools`,
+        {
+          resolveSpecifier: (specifier) =>
+            `${globalInstall}/esm/src/${specifier.replace("veryfront/", "")}/index.js`,
+        },
+      );
+
+      // The project copy is a *second* framework instance: nothing bootstraps
+      // its extension contracts, so `defineSchema()` there throws
+      // `Missing extension for contract "SchemaValidator"` and the project's
+      // tools never register.
+      assertStringIncludes(transformed, `${globalInstall}/esm/src/schemas/index.js`);
+      assertStringIncludes(transformed, `${globalInstall}/esm/src/tool/index.js`);
+      assertEquals(transformed.includes("node_modules/veryfront/local/"), false);
+      assertEquals(transformed.includes('from "veryfront/'), false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("keeps project-local veryfront exports when the running install is the project's own", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
+    const veryfrontDir = `${projectDir}/node_modules/veryfront`;
+    await Deno.mkdir(`${veryfrontDir}/local`, { recursive: true });
+    await Deno.writeTextFile(
+      `${veryfrontDir}/package.json`,
+      JSON.stringify({
+        name: "veryfront",
+        version: "0.0.0-project-local",
+        exports: { "./schemas": "./local/schemas.js" },
+      }),
+    );
+    await Deno.writeTextFile(`${veryfrontDir}/local/schemas.js`, "");
+
+    try {
+      const transformed = await rewriteDiscoveryImports(
+        'import { defineSchema } from "veryfront/schemas";',
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/tools`,
+        {
+          resolveSpecifier: () => `file://${veryfrontDir}/esm/src/schemas/index.js`,
+        },
+      );
+
+      assertStringIncludes(transformed, `${projectDir}/node_modules/veryfront/local/schemas.js`);
+      assertEquals(transformed.includes("esm/src/schemas/index.js"), false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("resolves project-local veryfront exports when projectDir is relative", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
     const veryfrontDir = `${projectDir}/node_modules/veryfront`;
