@@ -90,7 +90,7 @@ describe("EnvironmentConfig", () => {
           expect(second).not.toBe(first);
           expect(Object.isFrozen(second)).toBe(true);
           expect(isEnvironmentConfigInitialized()).toBe(false);
-          expect(warnings).toHaveLength(1);
+          expect(warnings).toHaveLength(0);
 
           const earlyInit = initEnvironmentConfig();
           expect(earlyInit.apiToken).toBe("after-mutation");
@@ -107,6 +107,55 @@ describe("EnvironmentConfig", () => {
       } finally {
         logger.warn = originalWarn;
       }
+    });
+
+    // Regression: a second copy of the framework can be loaded from the
+    // project's own node_modules mid-request (globally installed CLI + local
+    // `veryfront` dependency). That copy never runs loadEnv, so the early
+    // access diagnostic fired on the user's first agent request. The advice it
+    // carries ("ensure loadEnv runs before environment config access") is only
+    // actionable by framework code, so it must not reach the user's console.
+    it("keeps the early-access ordering diagnostic off the user-facing warn channel", async () => {
+      __resetEnvLoaderForTests();
+      const originalWarn = logger.warn;
+      const originalDebug = logger.debug;
+      const warnings: string[] = [];
+      const debugMessages: string[] = [];
+      logger.warn = (message: string) => warnings.push(message);
+      logger.debug = (message: string) => debugMessages.push(message);
+
+      try {
+        await withEnv({ VERYFRONT_DEBUG_RUNTIME_ENV: "0" }, async () => {
+          getEnvironmentConfig();
+          getEnvironmentConfig();
+        });
+      } finally {
+        logger.warn = originalWarn;
+        logger.debug = originalDebug;
+      }
+
+      expect(warnings).toHaveLength(0);
+      expect(debugMessages.filter((m) => m.includes("[EnvironmentConfig]"))).toHaveLength(1);
+    });
+
+    it("keeps the early-access diagnostic on warn with a stack under VERYFRONT_DEBUG_RUNTIME_ENV", async () => {
+      __resetEnvLoaderForTests();
+      const originalWarn = logger.warn;
+      const warnings: unknown[][] = [];
+      logger.warn = (...args: unknown[]) => warnings.push(args);
+
+      try {
+        await withEnv({ VERYFRONT_DEBUG_RUNTIME_ENV: "1" }, async () => {
+          getEnvironmentConfig();
+        });
+      } finally {
+        logger.warn = originalWarn;
+      }
+
+      expect(warnings).toHaveLength(1);
+      const [message, details] = warnings[0] ?? [];
+      expect(String(message)).toContain("[EnvironmentConfig]");
+      expect(details).toHaveProperty("stack");
     });
   });
 
