@@ -516,7 +516,10 @@ describe("guide content contracts", () => {
     // process took it. `--port` exists but lives only in `veryfront dev
     // --help`, so the getting-started pages that start the dev server have to
     // name it and describe the fallback.
-    const help = await Deno.readTextFile("cli/commands/dev/command-help.ts");
+    const repoRoot = new URL("../../", import.meta.url);
+    const help = await Deno.readTextFile(
+      new URL("cli/commands/dev/command-help.ts", repoRoot),
+    );
     const portFlag = help.match(/flag: "(--port [^"]*)"/)?.[1];
     assert(
       portFlag !== undefined,
@@ -529,7 +532,7 @@ describe("guide content contracts", () => {
         "docs/getting-started/quickstart.md",
       ]
     ) {
-      const page = await Deno.readTextFile(path);
+      const page = await Deno.readTextFile(new URL(path, repoRoot));
 
       assertStringIncludes(page, "veryfront dev --port");
       // The exact notice `veryfront dev` prints, so a reader who lands on a
