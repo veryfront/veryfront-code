@@ -10,6 +10,19 @@ export function toSlug(name: string): string {
     .replace(/\/+/g, "/");
 }
 
+/**
+ * Convert a slug to the camelCase id discovery derives from a filename.
+ *
+ * Kept in sync with `filenameToId` in src/discovery/discovery-utils.ts so a
+ * scaffolded primitive declares the id it will actually register under.
+ */
+export function toCamelCaseId(slug: string): string {
+  const base = slug.split("/").pop() || slug;
+  return base
+    .replace(/[-_](.)/g, (_, char: string) => char.toUpperCase())
+    .replace(/^[A-Z]/, (char) => char.toLowerCase());
+}
+
 /** Convert a slug to a PascalCase component name. */
 export function toComponentName(slug: string): string {
   const base = slug.split("/").pop() || slug;
