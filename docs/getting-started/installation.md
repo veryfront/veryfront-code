@@ -109,10 +109,10 @@ Use `npm create veryfront` when you want to scaffold a new project.
 ## Coding-agent setup
 
 Starter templates include `AGENTS.md`. For older projects, install the shared
-project guide:
+project guide with `--target agents`:
 
 ```bash
-veryfront install agents
+veryfront install --target agents
 ```
 
 Then run `veryfront dev` and connect your MCP-aware coding agent to the printed

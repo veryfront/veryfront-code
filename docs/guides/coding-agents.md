@@ -26,17 +26,23 @@ bootstrap step, inference setup, and when to use https://veryfront.com/docs.
 For older projects, add the same guide with:
 
 ```bash
-veryfront install agents
+veryfront install --target agents
 ```
 
 Tool-specific files are still available:
 
 ```bash
-veryfront install claude-code
-veryfront install cursor
-veryfront install copilot
-veryfront install windsurf
+veryfront install --target claude-code
+veryfront install --target cursor
+veryfront install --target copilot
+veryfront install --target windsurf
 ```
+
+Running `veryfront install` without `--target` opens an interactive picker
+instead, preselecting the tools it detects in the project. Without a TTY (in CI,
+behind a pipe, or from a coding agent) there is no prompt: the detected tools
+are installed immediately, and a project with nothing to detect gets `SKILL.md`.
+Always pass `--target` in non-interactive environments.
 
 Use `AGENTS.md` as the shared source of truth when multiple coding agents work
 in the same project.

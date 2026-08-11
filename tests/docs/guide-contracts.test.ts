@@ -635,7 +635,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "npm create veryfront",
       "npm install -g veryfront",
       "npx veryfront@latest",
-      "veryfront install agents",
+      "veryfront install --target agents",
     ],
   },
   "getting-started/create-agent.md": {
