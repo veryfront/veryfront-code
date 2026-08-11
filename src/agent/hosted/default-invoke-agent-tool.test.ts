@@ -266,6 +266,84 @@ Deno.test("default hosted invoke resolves and runs configured child against the 
   assertEquals(captured.prompt?.includes("Extract the application."), true);
 });
 
+Deno.test("default hosted invoke runs a generic local child with inherited assembled tools", async () => {
+  const context: DefaultHostedInvokeAgentContext = {
+    authToken: "token-123",
+    projectId: "project-123",
+    branchId: null,
+    model: "sonnet",
+  };
+  let capturedForkToolNames: readonly string[] | undefined;
+
+  const result = await executeDefaultHostedInvokeAgentTool(
+    createTestOptions({
+      context,
+      enableDurableInvokeAgent: false,
+      config: { mcpServers: [] },
+      options: {
+        resolveChildAgentExecutionConfig: (childAgentId, projectId) => {
+          assertEquals(childAgentId, "generic-agent");
+          assertEquals(projectId, "project-123");
+          return Promise.resolve(undefined);
+        },
+        buildGlobalTools: (toolContext, childAgentId, childConfig) => {
+          assertEquals(toolContext, context);
+          assertEquals(childAgentId, "generic-agent");
+          assertEquals(childConfig, undefined);
+          return {
+            lookup_job: {
+              description: "Lookup a job posting",
+              inputSchema: {},
+              execute: () => ({ ok: true }),
+            },
+          };
+        },
+        createAgentServiceSandboxTools: () =>
+          Promise.resolve({
+            tools: {},
+            sandbox: {} as never,
+            closeSandbox: () => Promise.resolve(),
+          }),
+        startRuntime: (input) => {
+          capturedForkToolNames = input.forkToolNames;
+          return {
+            forkStreamAbortController: new AbortController(),
+            childRunMonitorAbortController: null,
+            childRunMonitorPromise: Promise.resolve(),
+            forkToolNames: [...(input.forkToolNames ?? [])],
+            streamResult: {
+              fullStream: (async function* () {
+                yield { type: "text-delta", text: "Generic child ran." } as const;
+              })(),
+              steps: Promise.resolve([
+                {
+                  text: "Generic child ran.",
+                  finishReason: "stop",
+                  messages: [],
+                  toolCalls: [],
+                  toolResults: [],
+                },
+              ]),
+              totalUsage: Promise.resolve(undefined),
+            },
+          };
+        },
+      },
+    }),
+    {
+      description: "inspect application",
+      prompt: "Inspect the application.",
+      agent_id: "generic-agent",
+    },
+    "generic-agent",
+    { toolCallId: "tool-call-generic-child" },
+  );
+
+  assertEquals("success" in result && result.success, true);
+  assertEquals(capturedForkToolNames, ["lookup_job", "sleep"]);
+  assertEquals(context.availableToolNames, ["lookup_job", "sleep"]);
+});
+
 Deno.test("default hosted invoke rejects unconfirmed project identities before child setup", async () => {
   const context: DefaultHostedInvokeAgentContext = {
     authToken: "token-123",
