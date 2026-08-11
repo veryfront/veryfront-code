@@ -43,8 +43,24 @@ async function readProject(projectDir: string): Promise<Map<string, string>> {
   return files;
 }
 
+/**
+ * Index the returned files by path.
+ *
+ * A `Map` would quietly collapse a path emitted twice, and a caller writing
+ * the array in order would end up with whichever copy came last, so the
+ * duplicate is rejected here rather than hidden.
+ */
 function materializedFiles(files: { path: string; content: string }[]): Map<string, string> {
-  return new Map(files.map((file) => [file.path, file.content]));
+  const byPath = new Map<string, string>();
+  for (const file of files) {
+    assertEquals(
+      byPath.has(file.path),
+      false,
+      `materializeScaffold returned "${file.path}" more than once`,
+    );
+    byPath.set(file.path, file.content);
+  }
+  return byPath;
 }
 
 describe("scaffold parity", () => {

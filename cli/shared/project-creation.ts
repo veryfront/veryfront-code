@@ -661,20 +661,25 @@ export async function materializeScaffold(
   validateOrThrow("integrations", integrations, validateIntegrations);
 
   const assembly = await assembleScaffold({ template, features, integrations });
-  const files = assembly.files.filter(
-    (file) => file.path !== ".env" && file.path !== ".env.example",
-  );
+
+  // Keyed by path, because the generated files below are the same files the
+  // CLI writes last: whatever a template ships at those paths is merged in,
+  // never emitted twice.
+  const files = new Map(assembly.files.map((file) => [file.path, file.content]));
+  files.delete(".env");
+  files.delete(".env.example");
 
   if (request.includePackageMetadata !== false) {
-    files.push({
-      path: "package.json",
-      content: buildPackageJson(
-        request.projectName ?? FALLBACK_PROJECT_NAME,
-        assembly.packageJsonOptions,
-      ),
-    });
+    const shipped = files.get("package.json");
+    files.set(
+      "package.json",
+      buildPackageJson(request.projectName ?? FALLBACK_PROJECT_NAME, {
+        ...assembly.packageJsonOptions,
+        existingDependencies: shipped ? JSON.parse(shipped).dependencies ?? {} : undefined,
+      }),
+    );
     if (request.runtime === "deno") {
-      files.push({ path: "deno.json", content: buildDenoConfig() });
+      files.set("deno.json", buildDenoConfig());
     }
   }
 
@@ -683,15 +688,17 @@ export async function materializeScaffold(
       skipPrompt: true,
       prefilledValues: request.environmentValues ?? {},
     });
-    files.push({ path: ".env", content: env.envContent });
-    files.push({ path: ".env.example", content: env.envExampleContent });
+    files.set(".env", env.envContent);
+    files.set(".env.example", env.envExampleContent);
   }
 
-  files.push({ path: ".gitignore", content: generateGitignoreContent() });
+  files.set(".gitignore", generateGitignoreContent(files.get(".gitignore")));
 
   return {
     template,
-    files: files.sort((a, b) => a.path.localeCompare(b.path)),
+    files: [...files]
+      .map(([path, content]) => ({ path, content }))
+      .sort((a, b) => a.path.localeCompare(b.path)),
     tips: assembly.tips,
   };
 }
