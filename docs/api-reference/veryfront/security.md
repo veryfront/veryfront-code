@@ -1,7 +1,7 @@
 ---
 title: "veryfront/security"
 description: "Security layer - input validation with size limits, CORS configuration, CSP and security headers, path traversal prevention, and secure filesystem access."
-order: 32
+order: 33
 ---
 
 ## Import

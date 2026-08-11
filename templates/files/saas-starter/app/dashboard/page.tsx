@@ -24,7 +24,7 @@ export default function Dashboard(): React.JSX.Element {
       {/* Sidebar */}
       <aside className="w-64 border-r border-neutral-200 dark:border-neutral-800 flex flex-col bg-neutral-50 dark:bg-neutral-900">
         <div className="p-4 border-b border-neutral-200 dark:border-neutral-800">
-          <button className="w-full flex items-center gap-2 px-3 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg hover:bg-neutral-50 dark:hover:bg-neutral-700 transition-colors">
+          <button type="button" className="w-full flex items-center gap-2 px-3 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg hover:bg-neutral-50 dark:hover:bg-neutral-700 transition-colors">
             <svg
               className="w-4 h-4"
               fill="none"
@@ -46,6 +46,7 @@ export default function Dashboard(): React.JSX.Element {
           {conversations.map((conv) => (
             <button
               key={conv.id}
+              type="button"
               onClick={() => setActiveId(conv.id)}
               className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
                 activeId === conv.id

@@ -10,7 +10,10 @@
 #   4. installing @veryfront/ext-auth-jwt makes the extension load
 #   5. a broken transitive dependency surfaces the real error, not a
 #      misleading "extension not installed" skip
-#   6. the packed ai-agent starter starts under Node and renders over HTTP
+#   6. `veryfront/scaffold` resolves by its published subpath and materializes
+#      a project, so a hosted "create project" flow never has to walk into the
+#      package's build output to reach the starter templates
+#   7. the packed ai-agent starter starts under Node and renders over HTTP
 #      without unresolved generated runtime helpers
 #
 # Requires: `deno task build:npm` output in ./npm, node + npm + curl on PATH.
@@ -167,7 +170,36 @@ echo "$BROKEN_OUTPUT" | grep -q "jose" ||
 echo "$BROKEN_OUTPUT" | grep -q "install @veryfront/ext-auth-jwt alongside veryfront" &&
   fail "broken transitive dependency was misclassified as a missing extension: $BROKEN_OUTPUT"
 
-echo "== 6. packed ai-agent starter: dev server renders over HTTP"
+echo "== 6. scaffold resolves through the published exports map"
+# Deliberately a bare specifier, resolved by Node against the package's own
+# `exports`. The deep `./node_modules/veryfront/esm/...` paths used above
+# bypass that map, so only this proves the subpath is actually exported —
+# the failure a hosted create-project flow would hit, and the one this
+# repository's in-tree tests cannot see because they all import by relative
+# path. Without the entry it fails with ERR_PACKAGE_PATH_NOT_EXPORTED.
+node --input-type=module -e "
+const { materializeScaffold, listScaffoldTemplates } = await import('veryfront/scaffold');
+const names = listScaffoldTemplates();
+for (const name of ['minimal', 'ai-agent', 'agentic-workflow']) {
+  if (!names.includes(name)) throw new Error('scaffold cannot create ' + name);
+}
+const { files } = await materializeScaffold({
+  template: 'minimal',
+  projectName: 'smoke-app',
+});
+const paths = files.map((file) => file.path);
+for (const required of ['package.json', 'AGENTS.md', '.gitignore']) {
+  if (!paths.includes(required)) {
+    throw new Error('materialized project is missing ' + required);
+  }
+}
+const pkg = JSON.parse(files.find((file) => file.path === 'package.json').content);
+if (pkg.name !== 'smoke-app') {
+  throw new Error('materialized package.json has the wrong name: ' + pkg.name);
+}
+" || fail "veryfront/scaffold did not resolve from an installed package"
+
+echo "== 7. packed ai-agent starter: dev server renders over HTTP"
 cp -R "$ROOT_DIR/templates/files/ai-agent/." "$WORKDIR/"
 
 DEV_PORT="${VF_NPM_SSR_SMOKE_PORT:-43119}"
