@@ -507,6 +507,36 @@ describe("guide content contracts", () => {
       "agents guide samples must guard the getAgent() result before using it",
     );
   });
+
+  it("tells getting-started readers how to choose the dev server port", async () => {
+    // Port 3000 is the most contended port on a developer machine. `veryfront
+    // dev` no longer hard-fails on it: it falls forward to the next free port
+    // and announces the switch. Both halves are invisible to a doc-only
+    // reader, who then opens the 3000 the page prints and reaches whatever
+    // process took it. `--port` exists but lives only in `veryfront dev
+    // --help`, so the getting-started pages that start the dev server have to
+    // name it and describe the fallback.
+    const help = await Deno.readTextFile("cli/commands/dev/command-help.ts");
+    const portFlag = help.match(/flag: "(--port [^"]*)"/)?.[1];
+    assert(
+      portFlag !== undefined,
+      "veryfront dev must declare a --port flag in its command help",
+    );
+
+    for (
+      const path of [
+        "docs/getting-started/create-project.md",
+        "docs/getting-started/quickstart.md",
+      ]
+    ) {
+      const page = await Deno.readTextFile(path);
+
+      assertStringIncludes(page, "veryfront dev --port");
+      // The exact notice `veryfront dev` prints, so a reader who lands on a
+      // different port than the page's examples recognizes what happened.
+      assertStringIncludes(page, "is in use, using");
+    }
+  });
 });
 
 /**

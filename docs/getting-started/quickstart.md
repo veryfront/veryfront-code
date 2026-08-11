@@ -77,6 +77,15 @@ also set `VERYFRONT_API_TOKEN` directly. Direct provider keys such as
 veryfront dev
 ```
 
+The dev server binds port 3000. When that port is already taken, `veryfront dev`
+prints `! Port 3000 is in use, using 3001 instead` and serves on the first free
+port after 3000, so open the URL the CLI prints. Pass `--port` to pin one
+yourself:
+
+```bash
+veryfront dev --port 4000
+```
+
 `veryfront dev` also starts the development MCP server on the app port plus 2.
 With the default app port, coding agents can connect to
 `http://localhost:3002/mcp` and call `vf_bootstrap` once at session start.
