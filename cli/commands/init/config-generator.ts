@@ -5,6 +5,15 @@ import { createFileSystem } from "veryfront/platform";
 // Keep init scaffold aligned with current framework default React major/minor.
 const DEFAULT_INIT_REACT_VERSION = "19.2.4";
 
+// The scaffold ships a tsconfig.json and a `typecheck` script, so the compiler
+// and the React types it needs have to belong to the generated app rather than
+// to whatever a package manager happens to hoist. npm and bun flatten
+// veryfront's transitive `@types/react` to the project root and pnpm does not,
+// so without these the identical scaffold typechecks under npm and fails under
+// pnpm with TS7016 on `react/jsx-runtime`.
+const DEFAULT_INIT_REACT_TYPES_VERSION = "19.2.0";
+const DEFAULT_INIT_TYPESCRIPT_VERSION = "5.9.0";
+
 export interface CreatePackageJsonOptions {
   /** Template-owned dependencies that must be installed for generated apps. */
   dependencies?: Record<string, string>;
@@ -74,6 +83,7 @@ export async function createPackageJson(
       start: "veryfront serve",
       eval: "veryfront eval",
       deploy: "veryfront deploy",
+      typecheck: "tsc --noEmit",
     },
     pnpm: {
       onlyBuiltDependencies: ["esbuild"],
@@ -85,6 +95,11 @@ export async function createPackageJson(
       react: `^${DEFAULT_INIT_REACT_VERSION}`,
       "react-dom": `^${DEFAULT_INIT_REACT_VERSION}`,
       veryfront: veryfrontVersionRange,
+    },
+    devDependencies: {
+      "@types/react": `^${DEFAULT_INIT_REACT_TYPES_VERSION}`,
+      "@types/react-dom": `^${DEFAULT_INIT_REACT_TYPES_VERSION}`,
+      typescript: `^${DEFAULT_INIT_TYPESCRIPT_VERSION}`,
     },
   };
 
