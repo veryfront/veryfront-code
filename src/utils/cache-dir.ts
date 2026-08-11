@@ -1,7 +1,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "#veryfront/compat/path/index.ts";
 import { cwd, getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import {
+  createFileSystem,
+  type FileSystem,
+  isAlreadyExistsError,
+} from "#veryfront/platform/compat/fs.ts";
 import { isNode } from "#veryfront/platform/compat/runtime.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 import { serverLogger } from "./logger/index.ts";
@@ -107,10 +111,40 @@ export function getHttpBundleCacheDir(): string {
 }
 
 const CACHE_DIR_IGNORE_CONTENT = [
-  "# Created by Veryfront. Holds generated bundles only — safe to delete.",
+  "# Created by Veryfront. Holds generated bundles only, safe to delete.",
   "*",
   "",
 ].join("\n");
+
+/**
+ * Write the ignore marker without clobbering a file that already exists.
+ *
+ * Adapters that expose an exclusive create use it, so a `.gitignore` another
+ * process writes between the caller's `exists()` check and this write survives.
+ * Adapters without that capability fall back to a plain write.
+ */
+async function createIgnoreMarker(
+  fs: FileSystem,
+  ignorePath: string,
+): Promise<void> {
+  const createExclusive = fs.createFileBytesExclusive?.bind(fs);
+  if (createExclusive === undefined) {
+    await fs.writeTextFile(ignorePath, CACHE_DIR_IGNORE_CONTENT);
+    return;
+  }
+
+  try {
+    // Exclusive create so a `.gitignore` that appears between the exists()
+    // check and this write is left intact rather than truncated.
+    await createExclusive(
+      ignorePath,
+      new TextEncoder().encode(CACHE_DIR_IGNORE_CONTENT),
+    );
+  } catch (error) {
+    if (isAlreadyExistsError(error)) return;
+    throw error;
+  }
+}
 
 /**
  * Mark the cache base directory as ignored by version control.
@@ -119,7 +153,7 @@ const CACHE_DIR_IGNORE_CONTENT = [
  * run drops generated `.mjs` bundles into the user's project. `veryfront init`
  * scaffolds a `.gitignore` with a `.cache/` entry, but a project that adopted
  * Veryfront into an existing tree keeps its own `.gitignore` and never gets
- * one — the bundles then show up as untracked files and `git add -A` commits
+ * one, so the bundles show up as untracked files and `git add -A` commits
  * them. A `.gitignore` written *inside* the cache root ignores its contents
  * (and itself) no matter what the project's own `.gitignore` says.
  *
@@ -134,7 +168,7 @@ export async function ensureCacheDirIgnored(): Promise<void> {
     const ignorePath = join(cacheBase, ".gitignore");
     if (await fs.exists(ignorePath)) return;
     await fs.mkdir(cacheBase, { recursive: true });
-    await fs.writeTextFile(ignorePath, CACHE_DIR_IGNORE_CONTENT);
+    await createIgnoreMarker(fs, ignorePath);
   } catch (error) {
     logger.debug("Cache dir ignore marker not written", {
       cacheRoot: describeCacheRoot(cacheBase),
