@@ -176,6 +176,48 @@ describe("guide content contracts", () => {
     }
   });
 
+  it("does not present dist/ as a self-contained self-hosted deployment", async () => {
+    const doc = await Deno.readTextFile(
+      "docs/getting-started/deploy-project.md",
+    );
+    const prose = doc.replace(/\s+/g, " ");
+
+    // `veryfront build` emits browser assets only. API routes, agents,
+    // workflows, and tasks are served from the project source by
+    // `veryfront serve`, so a host that receives `dist/` alone answers pages
+    // and 404s every API route.
+    assertEquals(prose.includes("ship the `dist/` output"), false);
+    assertStringIncludes(prose, "browser build to `dist/`");
+    assertStringIncludes(prose, "not compiled into `dist/`");
+    assertStringIncludes(
+      prose,
+      "ship the whole project directory, not just `dist/`",
+    );
+    assertStringIncludes(
+      prose,
+      "run `veryfront serve` from the project directory",
+    );
+  });
+
+  it("does not offer the build output as a self-hosting target", async () => {
+    // The sibling guide is what the Getting Started page links to for a
+    // non-Cloud target, so it has to carry the same model: the host runs
+    // `veryfront serve` over the project, it does not serve `dist/` alone.
+    const guide = await Deno.readTextFile("docs/guides/deploying.md");
+    const prose = guide.replace(/\s+/g, " ");
+
+    assertEquals(prose.includes("can serve the build output"), false);
+    assertEquals(prose.includes("use the build output or a container"), false);
+    assertStringIncludes(
+      prose,
+      "ship the whole project directory, not just `dist/`",
+    );
+    assertStringIncludes(
+      prose,
+      "run `veryfront serve` from the project directory",
+    );
+  });
+
   it("documents single-command Deploy for interactive Veryfront Cloud paths", async () => {
     const docs = [
       "docs/getting-started/deploy-project.md",
