@@ -11,15 +11,19 @@
  * These tests force a real bind failure (a port already held by another
  * listener) after the subscriptions are registered, and assert that the
  * registrations are released rather than merely that `start()` rejects.
+ *
+ * Colocated with the module it covers, but named `*.integration.test.ts`: it
+ * needs a real project directory, a full `bootstrapDev()`, a real OS file
+ * watcher and a real TCP bind, so it is excluded from the unit shard.
  */
 
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import type { FileWatcher, WatchOptions } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/registry.ts";
-import { ReloadNotifier } from "../../../src/server/reload-notifier.ts";
-import { DevServer } from "../../../src/server/dev-server.ts";
-import { withTestContext } from "../../_helpers/context.ts";
+import { ReloadNotifier } from "../reload-notifier.ts";
+import { DevServer } from "./server.ts";
+import { withTestContext } from "../../../tests/_helpers/context.ts";
 
 type WatchFn = (paths: string | string[], options?: WatchOptions) => FileWatcher;
 
