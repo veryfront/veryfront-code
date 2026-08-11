@@ -125,6 +125,42 @@ describe("cli/commands/dev/port-fallback", () => {
 
       assertEquals(await isPortAvailable(freePort), true);
     });
+
+    it("probes without going through the ambient Deno namespace", async () => {
+      // The npm build runs this file with dnt's @deno/shim-deno standing in for
+      // the `Deno` namespace, even under Deno itself. That shim's Node-backed
+      // `listen()` reads `server._handle.fd` synchronously, which is null on
+      // Deno, so a probe routed through the ambient namespace dies with
+      // "Cannot read properties of null (reading 'fd')" and `veryfront dev`
+      // never binds a port. Standing in a throwing `Deno.listen` reproduces
+      // that shim here: the probe must not depend on it.
+      const nativeListen = Deno.listen;
+      const held = nativeListen({ hostname: "127.0.0.1", port: 0 });
+      const heldPort = (held.addr as Deno.NetAddr).port;
+      const freeListener = nativeListen({ hostname: "127.0.0.1", port: 0 });
+      const freePort = (freeListener.addr as Deno.NetAddr).port;
+      freeListener.close();
+
+      Object.defineProperty(Deno, "listen", {
+        configurable: true,
+        writable: true,
+        value: () => {
+          throw new TypeError("Cannot read properties of null (reading 'fd')");
+        },
+      });
+
+      try {
+        assertEquals(await isPortAvailable(heldPort), false);
+        assertEquals(await isPortAvailable(freePort), true);
+      } finally {
+        Object.defineProperty(Deno, "listen", {
+          configurable: true,
+          writable: true,
+          value: nativeListen,
+        });
+        held.close();
+      }
+    });
   });
 
   describe("isPortInUseError", () => {
