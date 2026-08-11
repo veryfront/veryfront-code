@@ -2,26 +2,43 @@ import { exists } from "#std/fs.ts";
 import { join } from "veryfront/platform/path";
 import { getConfig } from "veryfront/config";
 import type { DiagnosticResult } from "./types.ts";
+import { loadConfigOrNull } from "./project-config.ts";
 
+/**
+ * Reports which router directory the project uses.
+ *
+ * Route discovery accepts either router (`app/` or `pages/`, honoring
+ * `directories` overrides), so the check passes when either one is present and
+ * warns only when the project has no routes at all.
+ */
 export async function checkProjectStructure(projectDir: string): Promise<DiagnosticResult[]> {
-  const requiredFiles = ["pages", "pages/index.mdx"];
-  const results: DiagnosticResult[] = [];
+  const config = await loadConfigOrNull(projectDir);
+  const appDir = config?.directories?.app ?? "app";
+  const pagesDir = config?.directories?.pages ?? "pages";
 
-  for (const file of requiredFiles) {
-    const filePath = join(projectDir, file);
-    const found = await exists(filePath);
+  const [hasApp, hasPages] = await Promise.all([
+    exists(join(projectDir, appDir)),
+    exists(join(projectDir, pagesDir)),
+  ]);
 
-    results.push({
-      name: `Project Structure (${file})`,
-      status: found ? "pass" : "warn",
-      message: found ? "Found" : "Not found",
-      details: !found && file === "pages/index.mdx"
-        ? "Create an index.mdx file in your pages directory"
-        : undefined,
-    });
+  const routers: string[] = [];
+  if (hasApp) routers.push(`${appDir}/`);
+  if (hasPages) routers.push(`${pagesDir}/`);
+
+  if (routers.length === 0) {
+    return [{
+      name: "Project Structure",
+      status: "warn",
+      message: `No ${appDir}/ or ${pagesDir}/ directory found`,
+      details: `Add ${appDir}/page.tsx to create your first route`,
+    }];
   }
 
-  return results;
+  return [{
+    name: "Project Structure",
+    status: "pass",
+    message: `Found ${routers.join(", ")}`,
+  }];
 }
 
 export async function checkConfiguration(projectDir: string): Promise<DiagnosticResult> {
