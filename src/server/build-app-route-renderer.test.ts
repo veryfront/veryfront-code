@@ -16,6 +16,7 @@ import {
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
 import { CLIENT_PAGE_ISLAND_ID } from "#veryfront/rendering/rsc/page-island.ts";
+import { HEAD_SHELL_PROVENANCE_ATTRIBUTE } from "#veryfront/html/managed-head-protocol.ts";
 import { getProjectReact } from "#veryfront/react";
 import { getReactDOMServer } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 import {
@@ -561,6 +562,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <Head>
         <title>Assistant</title>
         <meta name="viewport" content="width=device-width, initial-scale=2.0" />
+        <script type="module" src="/analytics.js"></script>
         <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
       </Head>
       {children}
@@ -586,13 +588,31 @@ export default function Page() {
         contentSourceId: "test-content-source",
       });
 
-      assertStringIncludes(html, "<title>Assistant</title>");
-      assertEquals(html.includes("<title>Veryfront App</title>"), false);
+      // The title carries shell provenance so the client head manager adopts it
+      // instead of appending a second managed title.
+      assertStringIncludes(
+        html,
+        `<title ${HEAD_SHELL_PROVENANCE_ATTRIBUTE}="true">Assistant</title>`,
+      );
+      assertEquals(html.includes("Veryfront App"), false);
       assertStringIncludes(html, 'href="/favicon.svg"');
       // A layout-declared viewport replaces the shell default instead of
       // shipping two competing viewport directives.
       assertEquals(html.match(/name="viewport"/g)?.length, 1);
       assertStringIncludes(html, 'content="width=device-width, initial-scale=2.0"');
+      // Collected head elements close the head, after the project stylesheet,
+      // matching the request-time shell's cascade order.
+      const stylesheetIndex = html.indexOf('rel="stylesheet"');
+      const faviconIndex = html.indexOf('href="/favicon.svg"');
+      const headCloseIndex = html.indexOf("</head>");
+      assertEquals(stylesheetIndex >= 0 && stylesheetIndex < faviconIndex, true);
+      assertEquals(faviconIndex < headCloseIndex, true);
+      // A collected module script resolves bare specifiers only if the framework
+      // import map is already closed above it, and it still precedes the CSS.
+      const importMapEndIndex = html.indexOf("</script>", html.indexOf('type="importmap"'));
+      const collectedScriptIndex = html.indexOf('src="/analytics.js"');
+      assertEquals(importMapEndIndex >= 0 && importMapEndIndex < collectedScriptIndex, true);
+      assertEquals(collectedScriptIndex < stylesheetIndex, true);
     } finally {
       await cleanupProject(projectDir);
     }

@@ -15,7 +15,10 @@ import { COMPILATION_ERROR } from "#veryfront/errors";
 import { generateHydrationData, getProdScripts } from "#veryfront/html";
 import { buildImportMapJson } from "#veryfront/html/utils.ts";
 import { escapeHTML } from "#veryfront/html/html-escape.ts";
-import { headMetaSingletonKeyFromRecord } from "#veryfront/html/managed-head-protocol.ts";
+import {
+  HEAD_SHELL_PROVENANCE_ATTRIBUTE,
+  headMetaSingletonKeyFromRecord,
+} from "#veryfront/html/managed-head-protocol.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { getPreviewStylesheetLink } from "#veryfront/html/dev-scripts.ts";
 import {
@@ -333,6 +336,10 @@ async function renderAppRouteToHTMLWithInternals(
     ? getPreviewStylesheetLink()
     : "";
 
+  // Mirror the request-time shell's head order exactly: the framework import
+  // map precedes every collected module script, and the remaining collected
+  // elements close the head so a layout's styles win the cascade over the
+  // generated project stylesheet.
   const headScripts = headElements.scripts ? `\n  ${headElements.scripts}` : "";
   const headOther = headElements.other ? `\n  ${headElements.other}` : "";
   // The shell owns the viewport only until a layout declares its own; emitting
@@ -345,15 +352,15 @@ async function renderAppRouteToHTMLWithInternals(
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">${viewportMeta}${headScripts}
-  <title>${escapeHTML(title)}</title>${headOther}
+  <meta charset="UTF-8">${viewportMeta}
+  <title ${HEAD_SHELL_PROVENANCE_ATTRIBUTE}="true">${escapeHTML(title)}</title>
 
   <!-- Import map for React dependencies -->
   <script type="importmap">
   ${importMapJson}
-  </script>
+  </script>${headScripts}
 
-  ${stylesheetLink}
+  ${stylesheetLink}${headOther}
 </head>
 <body>
 ${hydrationDataScript}
