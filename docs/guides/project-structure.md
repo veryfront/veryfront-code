@@ -68,6 +68,8 @@ my-app/
     globals.css
   veryfront.config.ts   # Framework configuration (optional)
   package.json
+  .cache/               # Generated bundles (written by the CLI, safe to delete)
+  dist/                 # Build output (written by `veryfront build`)
 ```
 
 ## Routing directories
@@ -177,6 +179,33 @@ These directories are not auto-discovered. They are common project conventions.
 | `public/`     | Static assets served at root path   |
 | `styles/`     | Global CSS files                    |
 | `middleware/` | Custom middleware functions         |
+
+## Generated directories
+
+The CLI writes these directories into the project root. They hold derived
+output only, so deleting them is safe: the next command regenerates whatever it
+needs.
+
+| Directory | Written by                         | Contents                                                                                                  |
+| --------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `.cache/` | `veryfront dev`, `veryfront build` | Compiled page modules in `veryfront-mdx-esm/` and bundled remote dependencies in `veryfront-http-bundle/` |
+| `dist/`   | `veryfront build`                  | The build output. `-o/--output` and `build.outDir` change the location                                    |
+
+`.cache/` keeps itself out of version control: both commands write a
+`.cache/.gitignore` that ignores the directory's contents and the file itself,
+so a project that adopted Veryfront into an existing tree does not have to edit
+its own `.gitignore`. `veryfront init` also lists `.cache/` in the `.gitignore`
+it scaffolds.
+
+Set `VERYFRONT_CACHE_DIR` to keep generated bundles out of the project tree
+entirely:
+
+```bash
+VERYFRONT_CACHE_DIR=/tmp/veryfront-cache veryfront dev
+```
+
+Deleting `.cache/` costs only time. The next run recompiles the pages and
+refetches the remote dependencies it needs.
 
 ## Special files
 

@@ -1,5 +1,11 @@
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { basename } from "#veryfront/compat/path";
+import {
+  getHttpBundleCacheDir,
+  getMdxEsmCacheDir,
+  runWithCacheDir,
+} from "#veryfront/utils/cache-dir.ts";
 import { MINIMUM_DENO_VERSION, MINIMUM_NODE_VERSION } from "../../scripts/build/runtime-support.ts";
 
 describe("guide content contracts", () => {
@@ -550,6 +556,25 @@ describe("guide content contracts", () => {
       // different port than the page's examples recognizes what happened.
       assertStringIncludes(page, "is in use, using");
     }
+  });
+
+  it("documents the .cache root the CLI writes into the project", async () => {
+    const guide = await Deno.readTextFile("docs/guides/project-structure.md");
+
+    // `veryfront dev` and `veryfront build` both create `<project>/.cache`.
+    // Before this section existed the only explanation a developer got was the
+    // comment inside the generated `.cache/.gitignore`.
+    assertStringIncludes(guide, "## Generated directories");
+    assertStringIncludes(guide, "`.cache/`");
+    assertStringIncludes(guide, "`.cache/.gitignore`");
+    assertStringIncludes(guide, "VERYFRONT_CACHE_DIR");
+
+    // Pinned to the real layout, so renaming a cache subdirectory fails here
+    // instead of leaving the guide describing a tree that no longer exists.
+    runWithCacheDir("/tmp/veryfront-guide-content", () => {
+      assertStringIncludes(guide, basename(getMdxEsmCacheDir()));
+      assertStringIncludes(guide, basename(getHttpBundleCacheDir()));
+    });
   });
 });
 
