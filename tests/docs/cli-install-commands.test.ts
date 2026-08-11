@@ -1,6 +1,11 @@
 /**
  * Docs contract: every `veryfront install ...` command printed in the published
- * docs must actually select the AI-tool target the surrounding prose promises.
+ * guide set must actually select the AI-tool target the surrounding prose
+ * promises. "Published" means the same three directories the sibling docs
+ * contracts scan (`guide-contracts.test.ts`, `guide-code-examples.test.ts`):
+ * getting-started, guides, concepts. Generated pages (`docs/api-reference`) and
+ * unpublished notes (`docs/internal`, `docs/rfcs`, `docs/evidence`) are out of
+ * scope — they may quote a broken invocation deliberately.
  *
  * The install command reads its target from `--target` only. A bare positional
  * (`veryfront install agents`) is silently ignored and the command falls back to

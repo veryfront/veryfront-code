@@ -39,7 +39,10 @@ veryfront install --target windsurf
 ```
 
 Running `veryfront install` without `--target` opens an interactive picker
-instead, preselecting the tools it detects in the project.
+instead, preselecting the tools it detects in the project. Without a TTY (in CI,
+behind a pipe, or from a coding agent) there is no prompt: the detected tools
+are installed immediately, and a project with nothing to detect gets `SKILL.md`.
+Always pass `--target` in non-interactive environments.
 
 Use `AGENTS.md` as the shared source of truth when multiple coding agents work
 in the same project.
