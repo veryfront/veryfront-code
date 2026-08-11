@@ -45,13 +45,13 @@ for (const file of files) {
 | Name                      | Description                                                             | Source                                                                                              |
 | ------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | `listScaffoldTemplates`   | Every template slug a caller may ask for, canonical names and aliases.  | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L603) |
-| `materializeScaffold`     | Produce the complete contents of a new project without touching a disk. | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L641) |
+| `materializeScaffold`     | Produce the complete contents of a new project without touching a disk. | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L643) |
 | `resolveScaffoldTemplate` | Canonical starter template for a slug, or `null` when nothing matches.  | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L595) |
 
 ### Types
 
-| Name                         | Description | Source                                                                                              |
-| ---------------------------- | ----------- | --------------------------------------------------------------------------------------------------- |
-| `MaterializedScaffold`       |             | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L623) |
-| `MaterializeScaffoldRequest` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L607) |
-| `TemplateFile`               |             | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/templates/types.ts#L17)          |
+| Name                         | Description                                                                       | Source                                                                                              |
+| ---------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `MaterializedScaffold`       | A new project: every file it starts with, plus anything worth telling the author. | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L625) |
+| `MaterializeScaffoldRequest` | What to build: which starter, under what name, for which runtime.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L608) |
+| `TemplateFile`               |                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/templates/types.ts#L17)          |

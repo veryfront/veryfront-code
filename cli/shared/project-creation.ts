@@ -604,6 +604,7 @@ export function listScaffoldTemplates(): string[] {
   return [...STARTER_TEMPLATE_NAMES, ...Object.keys(SCAFFOLD_TEMPLATE_ALIASES)].sort();
 }
 
+/** What to build: which starter, under what name, for which runtime. */
 export interface MaterializeScaffoldRequest {
   /** Canonical template name or a slug from {@link SCAFFOLD_TEMPLATE_ALIASES}. */
   template: string;
@@ -620,6 +621,7 @@ export interface MaterializeScaffoldRequest {
   includePackageMetadata?: boolean;
 }
 
+/** A new project: every file it starts with, plus anything worth telling the author. */
 export interface MaterializedScaffold {
   /** Canonical template the requested slug resolved to. */
   template: InitTemplate;
