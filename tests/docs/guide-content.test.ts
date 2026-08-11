@@ -358,4 +358,64 @@ describe("guide content contracts", () => {
     );
     assertEquals(installation.includes("Deno 1.45"), false);
   });
+
+  it("wires a Markdown renderer into every chat page the docs tell you to write", async () => {
+    // `veryfront/markdown` presents plain escaped source until a renderer is
+    // installed, so a `<Chat>` built without one shows the assistant's raw
+    // Markdown. Every starter scaffolds `app/markdown-renderer.tsx` and the
+    // provider around `<Chat>`; a copy-paste sample that drops them is a
+    // silent downgrade from the scaffold the reader already has.
+    for (
+      const path of [
+        "docs/getting-started/create-frontend.md",
+        "docs/guides/chat-ui.md",
+      ]
+    ) {
+      const guide = await Deno.readTextFile(path);
+      const pageSample = firstFencedBlockContaining(guide, "// app/page.tsx");
+
+      assert(
+        pageSample !== undefined,
+        `${path}: expected an app/page.tsx sample`,
+      );
+      assertStringIncludes(pageSample, "MarkdownRendererProvider");
+      assertStringIncludes(pageSample, 'from "veryfront/markdown"');
+      assertStringIncludes(pageSample, "./markdown-renderer.tsx");
+
+      // The reader must be able to create the file the sample imports.
+      assertStringIncludes(guide, "app/markdown-renderer.tsx");
+      assertStringIncludes(guide, "MarkdownRendererProps");
+
+      // "Verify it worked" must fail when the chat renders raw source,
+      // otherwise the checklist passes on a visibly broken chat.
+      assertStringIncludes(
+        verifyItWorkedSection(guide),
+        "not raw Markdown source",
+      );
+    }
+  });
 });
+
+/**
+ * Body of the guide's "Verify it worked" section, up to the next heading, with
+ * whitespace collapsed so assertions do not depend on prose line wrapping.
+ */
+function verifyItWorkedSection(guide: string): string {
+  const start = guide.indexOf("## Verify it worked");
+  if (start === -1) return "";
+  const rest = guide.slice(start + "## Verify it worked".length);
+  const end = rest.indexOf("\n## ");
+  return (end === -1 ? rest : rest.slice(0, end)).replace(/\s+/g, " ");
+}
+
+/** First fenced code block whose body contains `needle`. */
+function firstFencedBlockContaining(
+  guide: string,
+  needle: string,
+): string | undefined {
+  for (const match of guide.matchAll(/^(`{3,})[^\n]*\n([\s\S]*?)^\1\s*$/gm)) {
+    const body = match[2] ?? "";
+    if (body.includes(needle)) return body;
+  }
+  return undefined;
+}
