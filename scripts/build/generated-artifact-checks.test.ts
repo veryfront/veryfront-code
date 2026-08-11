@@ -18,7 +18,12 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 
 type Tasks = Record<string, string>;
 
-const denoJson = JSON.parse(await Deno.readTextFile("deno.json")) as {
+// Resolved from this module rather than the process cwd — see
+// scripts/lint/audit-cwd-relative-test-reads.ts for why a cwd-relative repo
+// read from a test is only correct until an unrelated test chdirs beside it.
+const denoJson = JSON.parse(
+  await Deno.readTextFile(new URL("../../deno.json", import.meta.url)),
+) as {
   tasks: Tasks;
 };
 const tasks = denoJson.tasks;
