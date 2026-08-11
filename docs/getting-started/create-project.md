@@ -104,6 +104,24 @@ veryfront dev
 Open [http://localhost:3000](http://localhost:3000). File changes reload the
 browser.
 
+### Change the port
+
+The dev server binds port 3000. Pass `--port` to bind a different one:
+
+```bash
+veryfront dev --port 4000
+```
+
+When the requested port is already taken, `veryfront dev` does not fail. It
+scans forward for the first free port, reports the switch, and serves there:
+
+```text
+! Port 3000 is in use, using 3001 instead
+```
+
+Open the URL the CLI prints, not the one in the examples above. The development
+MCP server follows the port the dev server bound, plus 2.
+
 ## Inspect the scaffold
 
 The `minimal` template creates:
