@@ -353,6 +353,40 @@ describe("first-party extension imports", () => {
       );
     });
 
+    it("parses the Deno npm-referrer shape when it names the owning package", () => {
+      // `deno add npm:veryfront` / `deno install -g npm:veryfront` resolve the
+      // CLI out of the global Deno npm cache, and from that referrer Deno
+      // appends the owning package identifier to the message. Home directory
+      // redacted; only the trailing ` (pkg@version)` suffix is under test.
+      const denoCacheReferrer = Object.assign(
+        new Error(
+          `Could not find package '@veryfront/ext-db-sqlite' from referrer 'file:///home/<redacted>/.cache/deno/npm/registry.npmjs.org/veryfront/0.1.1228/esm/src/extensions/first-party-import.js' (veryfront@0.1.1228).`,
+        ),
+        { code: "ERR_MODULE_NOT_FOUND" },
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(denoCacheReferrer, [
+          "@veryfront/ext-db-sqlite",
+        ]),
+        true,
+      );
+
+      // The owning-package suffix must not turn a transitive dependency
+      // failure inside an installed extension into a tolerated skip.
+      const transitiveFromCache = Object.assign(
+        new Error(
+          `Could not find package 'jose' from referrer 'file:///home/<redacted>/.cache/deno/npm/registry.npmjs.org/@veryfront/ext-auth-jwt/0.1.1228/esm/src/index.js' (@veryfront/ext-auth-jwt@0.1.1228).`,
+        ),
+        { code: "ERR_MODULE_NOT_FOUND" },
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(transitiveFromCache, [
+          "@veryfront/ext-auth-jwt",
+        ]),
+        false,
+      );
+    });
+
     it("parses Bun relative, package, and object-shaped missing-module errors", () => {
       const relativeError = Object.assign(
         new Error(
