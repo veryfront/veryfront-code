@@ -1,6 +1,7 @@
-import { join, relative, resolve } from "veryfront/platform/path";
+import { isAbsolute, join, relative, resolve } from "veryfront/platform/path";
 import { runtime } from "veryfront/platform";
 import { getConfig, type VeryfrontConfig } from "veryfront/config";
+import { CONFIG_INVALID } from "veryfront/errors";
 import { buildProduction } from "veryfront/build";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { cliLogger } from "#cli/utils";
@@ -84,10 +85,48 @@ export function resolveBuildOutputDir(
   explicitOutputDir: string | undefined,
   config: Pick<VeryfrontConfig, "build">,
 ): string {
-  if (explicitOutputDir !== undefined) return explicitOutputDir;
+  const outputDir = explicitOutputDir ?? resolveConfiguredOutputDir(projectDir, config);
+  assertOutputDirExcludesProject(projectDir, outputDir, explicitOutputDir !== undefined);
+  return outputDir;
+}
+
+function resolveConfiguredOutputDir(
+  projectDir: string,
+  config: Pick<VeryfrontConfig, "build">,
+): string {
   const configured = config.build?.outDir;
   if (configured === undefined || configured === "") return join(projectDir, "dist");
   return resolve(projectDir, configured);
+}
+
+/**
+ * Refuse an output directory that is the project directory or an ancestor of it.
+ *
+ * The build clears its output directory before writing, so an `outDir` of `.`
+ * or `..` would recursively delete the project's own source — or the workspace
+ * above it. That was unreachable while `build.outDir` was ignored; now that the
+ * config value is honored, a stale compatibility-era config could reach it.
+ * Failing loudly is the only safe answer: silently substituting `dist` would
+ * reintroduce the ignored-configuration bug this change exists to fix.
+ */
+function assertOutputDirExcludesProject(
+  projectDir: string,
+  outputDir: string,
+  fromFlag: boolean,
+): void {
+  const resolvedOutput = resolve(projectDir, outputDir);
+  const relativeToOutput = relative(resolvedOutput, resolve(projectDir));
+  const containsProject = relativeToOutput === "" ||
+    (!relativeToOutput.startsWith("..") && !isAbsolute(relativeToOutput));
+  if (!containsProject) return;
+
+  const source = fromFlag ? "-o/--output" : "build.outDir";
+  throw CONFIG_INVALID.create({
+    detail:
+      `${source} resolves to ${resolvedOutput}, which is the project directory or contains it. ` +
+      `The build clears its output directory before writing, so this would delete the project. ` +
+      `Point the build at a directory of its own, such as dist.`,
+  });
 }
 
 export function buildCommand(options: BuildOptions): Promise<void> {

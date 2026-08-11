@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildCommand,
@@ -139,6 +144,41 @@ describe("commands/build/command", () => {
           build: { outDir: "/var/www/site" },
         }),
         "/var/www/site",
+      );
+    });
+
+    it("rejects a build.outDir that is the project directory", () => {
+      // The build clears its output directory before writing, so honoring
+      // `outDir: "."` would recursively delete the project's own source.
+      assertThrows(
+        () => resolveBuildOutputDir("/workspace/project", undefined, { build: { outDir: "." } }),
+        Error,
+        "build.outDir",
+      );
+    });
+
+    it("rejects a build.outDir that contains the project directory", () => {
+      assertThrows(
+        () => resolveBuildOutputDir("/workspace/project", undefined, { build: { outDir: ".." } }),
+        Error,
+        "/workspace",
+      );
+    });
+
+    it("rejects an -o/--output that contains the project directory", () => {
+      assertThrows(
+        () => resolveBuildOutputDir("/workspace/project", "..", {}),
+        Error,
+        "-o/--output",
+      );
+    });
+
+    it("allows an output directory beside the project", () => {
+      assertEquals(
+        resolveBuildOutputDir("/workspace/project", undefined, {
+          build: { outDir: "../shared-dist" },
+        }),
+        "/workspace/shared-dist",
       );
     });
   });

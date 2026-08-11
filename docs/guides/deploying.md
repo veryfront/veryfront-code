@@ -51,6 +51,8 @@ Or set it once in `veryfront.config.ts`, which `--output` overrides when both
 are present:
 
 ```ts
+import { defineConfig } from "veryfront";
+
 export default defineConfig({
   build: { outDir: "build-output" },
 });
@@ -58,7 +60,8 @@ export default defineConfig({
 
 A relative `outDir` resolves against the project directory. The build clears
 its output directory before writing, so point it somewhere the project does not
-keep files of its own.
+keep files of its own — an `outDir` that is the project directory or contains
+it is rejected before the build starts.
 
 `build.trailingSlash` remains an accepted configuration field for
 compatibility, but the production builder does not consume it.
