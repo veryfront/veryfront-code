@@ -345,8 +345,7 @@ its `id` matches the value passed to `createAgUiHandler()`.
 
 ## Non-streaming response
 
-For server-side generation (e.g., in `getServerData`), use `generate()`:
-
+For server-side generation (e.g., in `getServerData`), use `generate()`.
 `getAgent()` returns `Agent | undefined`, so narrow the result before calling
 it. Without the guard, the sample fails typecheck under the `"strict": true`
 tsconfig that `veryfront init` writes.

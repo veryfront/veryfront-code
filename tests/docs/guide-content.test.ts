@@ -462,8 +462,10 @@ describe("guide content contracts", () => {
     const unnarrowed: string[] = [];
     for (const fence of guide.matchAll(/```(?:ts|tsx)\n([\s\S]*?)```/g)) {
       const code = fence[1];
+      if (code === undefined) continue;
       for (const binding of code.matchAll(/const (\w+) = getAgent\(/g)) {
         const name = binding[1];
+        if (name === undefined) continue;
         const body = code.slice((binding.index ?? 0) + binding[0].length);
         const firstUse = body.search(new RegExp(`\\b${name}\\s*[.?]`));
         if (firstUse === -1) continue;
