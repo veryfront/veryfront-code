@@ -76,6 +76,21 @@ describe("cli/templates", () => {
     }
   });
 
+  it("ships a tsconfig for every starter template", async () => {
+    // The generated package.json carries a `typecheck` script for every
+    // starter. Without a tsconfig.json next to it, `tsc --noEmit` prints its
+    // help text and exits 0 - a typecheck that passes by checking nothing.
+    const missing: string[] = [];
+
+    for (const templateName of STARTER_TEMPLATE_NAMES) {
+      const files = await getTemplate(templateName);
+      assertExists(files, `${templateName} should load from the template registry`);
+      if (!files.some((file) => file.path === "tsconfig.json")) missing.push(templateName);
+    }
+
+    assertEquals(missing, [], `starters without a tsconfig.json: ${missing.join(", ")}`);
+  });
+
   it("does not make baseline framework extensions starter-specific", async () => {
     const files = await getTemplate("saas-starter");
     assertExists(files);

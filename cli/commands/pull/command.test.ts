@@ -110,6 +110,7 @@ function expectedBootstrapPackage(name: string): Record<string, unknown> {
       start: "veryfront serve",
       eval: "veryfront eval",
       deploy: "veryfront deploy",
+      typecheck: "tsc --noEmit",
     },
     pnpm: {
       onlyBuiltDependencies: ["esbuild"],
@@ -118,6 +119,11 @@ function expectedBootstrapPackage(name: string): Record<string, unknown> {
       react: "^19.2.4",
       "react-dom": "^19.2.4",
       veryfront: `^${VERSION}`,
+    },
+    devDependencies: {
+      "@types/react": "^19.2.0",
+      "@types/react-dom": "^19.2.0",
+      typescript: "^5.9.0",
     },
   };
 }
@@ -146,6 +152,7 @@ const EXPECTED_BOOTSTRAP_PACKAGE = {
     start: "veryfront serve",
     eval: "veryfront eval",
     deploy: "veryfront deploy",
+    typecheck: "tsc --noEmit",
   },
   pnpm: {
     onlyBuiltDependencies: ["esbuild"],
@@ -154,6 +161,11 @@ const EXPECTED_BOOTSTRAP_PACKAGE = {
     react: "^19.2.4",
     "react-dom": "^19.2.4",
     veryfront: `^${VERSION}`,
+  },
+  devDependencies: {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    typescript: "^5.9.0",
   },
 };
 
