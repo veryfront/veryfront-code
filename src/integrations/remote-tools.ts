@@ -11,6 +11,7 @@
 
 import { getApiBaseUrlEnv, getApiTokenEnv } from "#veryfront/config/env.ts";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { defineError, VeryfrontError } from "#veryfront/errors";
 import { AsyncLocalStorage } from "#veryfront/platform/compat/async-context.ts";
 import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import {
@@ -58,18 +59,17 @@ interface IntegrationRequestSignalScope {
 }
 
 /**
- * A non-2xx response from the integration tools API. Carries the status so
- * discovery can tell an unusable request apart from a real service failure.
+ * A non-2xx response from the integration tools API. Instances carry the
+ * upstream status as their own status, so discovery can tell an unusable
+ * request apart from a real service failure.
  */
-class IntegrationToolListResponseError extends Error {
-  readonly status: number;
-
-  constructor(status: number, statusText: string) {
-    super(`Integration tools API returned ${status} ${statusText}`.trim());
-    this.name = "IntegrationToolListResponseError";
-    this.status = status;
-  }
-}
+const INTEGRATION_TOOL_LIST_REQUEST_FAILED = defineError({
+  slug: "integration-tool-list-request-failed",
+  category: "RUNTIME",
+  status: 502,
+  title: "Integration tools API request failed",
+  suggestion: "Check the integration API base URL and credential, then retry",
+});
 
 interface RemoteIntegrationExecutionContext {
   readonly hasExplicitCredential: boolean;
@@ -577,7 +577,10 @@ async function fetchToolList(
       // Throw so callers can distinguish a fetch failure from "no remote tools
       // available" (which returns an empty tools array with status 200).
       discardResponseBody(response);
-      throw new IntegrationToolListResponseError(response.status, response.statusText);
+      throw INTEGRATION_TOOL_LIST_REQUEST_FAILED.create({
+        message: `Integration tools API returned ${response.status} ${response.statusText}`.trim(),
+        status: response.status,
+      });
     }
 
     const rawData = await readBoundedResponseJson(
@@ -617,7 +620,8 @@ async function discoverRemoteIntegrationToolCatalog(
     // developer can act on, so it must not surface as an error.
     if (
       projectSlug === undefined &&
-      err instanceof IntegrationToolListResponseError &&
+      err instanceof VeryfrontError &&
+      err.slug === INTEGRATION_TOOL_LIST_REQUEST_FAILED.slug &&
       err.status === 400
     ) {
       logger.debug("Skipped remote integration tools: no project scope for this runtime", {
