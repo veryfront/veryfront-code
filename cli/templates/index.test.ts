@@ -91,6 +91,46 @@ describe("cli/templates", () => {
     assertEquals(missing, [], `starters without a tsconfig.json: ${missing.join(", ")}`);
   });
 
+  it("allows the TypeScript-extension imports each starter actually writes", async () => {
+    // Discovered, not listed. `tsc --noEmit` rejects a `./x.ts` specifier with
+    // TS5097 unless `allowImportingTsExtensions` is on, and that option needs
+    // `noEmit` to be legal. Now that every scaffold ships a `typecheck` script,
+    // a starter that writes Deno-native extensions without both options fails
+    // its own typecheck on the first run. `agentic-workflow` did: three route
+    // modules import `sample-runs.ts` and its tsconfig set neither option.
+    //
+    // The chat starters are covered by name further down, but a starter that
+    // never renders `<Chat>` was not covered at all, which is how this reached
+    // a release.
+    const offenders: string[] = [];
+
+    for (const templateName of STARTER_TEMPLATE_NAMES) {
+      const files = await getTemplate(templateName);
+      assertExists(files, `${templateName} should load from the template registry`);
+
+      const importing = files.filter((file) =>
+        (file.path.endsWith(".ts") || file.path.endsWith(".tsx")) &&
+        /\bfrom\s+["'][^"']+\.tsx?["']/.test(file.content)
+      );
+      if (importing.length === 0) continue;
+
+      const tsconfig = files.find((file) => file.path === "tsconfig.json");
+      assertExists(tsconfig, `${templateName} should declare consumer TypeScript options`);
+
+      for (const option of ["allowImportingTsExtensions", "noEmit"]) {
+        if (!tsconfig.content.includes(`"${option}": true`)) {
+          offenders.push(`${templateName} (${importing[0]?.path}) is missing ${option}`);
+        }
+      }
+    }
+
+    assertEquals(
+      offenders.toSorted(),
+      [],
+      "a starter imports a .ts/.tsx specifier its own tsconfig rejects with TS5097",
+    );
+  });
+
   it("does not make baseline framework extensions starter-specific", async () => {
     const files = await getTemplate("saas-starter");
     assertExists(files);
