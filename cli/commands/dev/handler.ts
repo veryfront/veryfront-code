@@ -8,7 +8,6 @@ import { cwd, setEnv } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
 import { cliLogger, DEFAULT_DEV_SERVER_PORT, showHeader } from "#cli/utils";
 import { refreshLoggerConfig } from "veryfront/utils";
-import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
 import type { ParsedArgs } from "#cli/shared/types";
@@ -70,15 +69,17 @@ export async function handleDevCommand(args: ParsedArgs): Promise<void> {
     refreshLoggerConfig();
   }
 
-  // Clear stale ESM caches to prevent module resolution issues from previous runs
-  await clearAllLocalCaches();
-
   const { devCommand } = await import("./index.ts");
   const { done } = await devCommand({
     port: opts.port,
     projectDir,
     hmr: opts.hmr && !opts.noHmr,
     open: opts.open,
+    // Clear stale ESM caches to prevent module resolution issues from previous
+    // runs. devCommand does this only once it has resolved the dev port and
+    // found it free — the caches are shared with any dev server already running
+    // against this project.
+    clearLocalCaches: true,
   });
 
   // Block until the dev server shuts down.
