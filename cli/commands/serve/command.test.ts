@@ -5,10 +5,24 @@ import {
   assertExists,
   assertRejects,
   assertStrictEquals,
+  assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { serveCommand } from "./command.ts";
+import { setJsonMode } from "../../shared/json-output.ts";
+import { printServeReady, serveCommand, serveReadyUrl } from "./command.ts";
 import type { ServeOptions } from "./command.ts";
+
+function captureStdout(run: () => void): string {
+  const originalLog = console.log;
+  const lines: string[] = [];
+  console.log = (...args: unknown[]) => lines.push(args.join(" "));
+  try {
+    run();
+  } finally {
+    console.log = originalLog;
+  }
+  return lines.join("\n");
+}
 
 type RunWithStartupErrorReporting = <T>(
   startup: () => Promise<T>,
@@ -616,4 +630,48 @@ describe("commands/serve/command", () => {
       assertEquals(calls, [options]);
     });
   }
+
+  describe("serveReadyUrl", () => {
+    it("renders the wildcard bind address as a browsable localhost URL", () => {
+      assertEquals(serveReadyUrl("0.0.0.0", 3000), "http://localhost:3000");
+    });
+
+    it("renders the IPv6 wildcard bind address as a browsable localhost URL", () => {
+      assertEquals(serveReadyUrl("::", 3000), "http://localhost:3000");
+    });
+
+    it("keeps an explicit bind address", () => {
+      assertEquals(serveReadyUrl("127.0.0.1", 8080), "http://127.0.0.1:8080");
+    });
+
+    it("brackets explicit IPv6 bind addresses", () => {
+      assertEquals(serveReadyUrl("::1", 8080), "http://[::1]:8080");
+    });
+
+    it("keeps an already bracketed IPv6 bind address bracketed exactly once", () => {
+      assertEquals(serveReadyUrl("[::1]", 8080), "http://[::1]:8080");
+    });
+  });
+
+  describe("printServeReady", () => {
+    it("prints the URL the deploy docs tell developers to open", () => {
+      const output = captureStdout(() => printServeReady({ port: 3000, bindAddress: "0.0.0.0" }));
+      assertStringIncludes(output, "http://localhost:3000");
+    });
+
+    it("stays silent when an ephemeral port was requested", () => {
+      const output = captureStdout(() => printServeReady({ port: 0, bindAddress: "0.0.0.0" }));
+      assertEquals(output.trim(), "");
+    });
+
+    it("stays silent in JSON mode", () => {
+      setJsonMode(true);
+      try {
+        const output = captureStdout(() => printServeReady({ port: 3000, bindAddress: "0.0.0.0" }));
+        assertEquals(output.trim(), "");
+      } finally {
+        setJsonMode(false);
+      }
+    });
+  });
 });
