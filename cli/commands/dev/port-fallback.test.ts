@@ -127,6 +127,31 @@ describe("cli/commands/dev/port-fallback", () => {
     });
   });
 
+  describe("published npm build", () => {
+    // dnt rewrites every bare `Deno.` call site in the published npm package
+    // into `@deno/shim-deno`, whose Node-backed `listen()` reads
+    // `server._handle.fd` - null under Deno's `node:net`. A CLI installed with
+    // `deno install -gArf npm:veryfront` runs that package on a real Deno, so
+    // the runtime check passed while the call reached the shim, and
+    // `veryfront dev` died on "Cannot read properties of null (reading 'fd')"
+    // before printing a URL. Deno and the shim are the same object in-repo, so
+    // the invariant has to be asserted over the source dnt actually rewrites.
+    it("probes ports through getDenoRuntime(), not the bare global dnt rewrites", async () => {
+      const source = await Deno.readTextFile(new URL("./port-fallback.ts", import.meta.url));
+      const code = source
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/(["'`])(?:\\.|(?!\1)[^\\])*\1/g, '""')
+        .replace(/\/\/[^\n]*/g, "");
+
+      assertEquals(
+        code.match(/(^|[^.\w$])Deno\s*\./g) ?? [],
+        [],
+        "reach the runtime via getDenoRuntime() - dnt rewrites bare Deno calls to @deno/shim-deno",
+      );
+      assertStringIncludes(code, "getDenoRuntime()");
+    });
+  });
+
   describe("isPortInUseError", () => {
     it("recognises the address-in-use error the runtime actually throws", () => {
       const held = Deno.listen({ hostname: "127.0.0.1", port: 0 });
