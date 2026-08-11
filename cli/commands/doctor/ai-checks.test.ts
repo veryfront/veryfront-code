@@ -104,20 +104,22 @@ describe("doctor/ai-checks", () => {
         clearConfigCache();
         await mkdir(join(projectDir, "agents"), { recursive: true });
         await writeTextFile(join(projectDir, "agents", "assistant.ts"), "export default {};\n");
+        // A provider name no other test's environment touches, so the absence of
+        // its credential is deterministic.
         await writeTextFile(
           join(projectDir, "veryfront.config.js"),
-          'export default { ai: { providers: { openai: { defaultModel: "gpt-4o-mini" } } } };\n',
+          'export default { ai: { providers: { doctorfixture: { defaultModel: "m" } } } };\n',
         );
 
-        const results = await withEnv(
-          { OPENAI_API_KEY: "" },
-          () => checkAIConfig(projectDir),
+        const results = await checkAIConfig(projectDir);
+        const providerResult = results.find((result) =>
+          result.name === "AI Provider: doctorfixture"
         );
-        const providerResult = results.find((result) => result.name === "AI Provider: openai");
 
         assertExists(providerResult);
         assertEquals(providerResult.status, "fail");
         assertEquals(providerResult.message, "Missing API Key");
+        assertStringIncludes(providerResult.details ?? "", "DOCTORFIXTURE_API_KEY");
       }, { prefix: "doctor-ai-no-key-" });
     });
   });
