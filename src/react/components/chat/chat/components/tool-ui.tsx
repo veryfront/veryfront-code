@@ -14,6 +14,7 @@ import {
   XCircleIcon,
 } from "../../../ui/icons/index.ts";
 import { Alert, AlertContent, AlertIcon } from "../../../ui/alert.tsx";
+import { Status, type StatusColor } from "../../../ui/status.tsx";
 import { createStrictContext } from "../../../create-strict-context.ts";
 import type { ChatDynamicToolPart, ChatToolPart } from "#veryfront/agent/react";
 import { type ChatJsonValue, toChatJsonValue } from "#veryfront/chat/json-value.ts";
@@ -254,6 +255,127 @@ const [ToolCallContext, useToolCallContext] = createStrictContext<ToolCallContex
  */
 export const useToolCall = useToolCallContext;
 
+/** Render a tool part, optionally reusing the supplied default renderer. */
+export type ToolCallRenderer = (
+  tool: ChatToolPart | ChatDynamicToolPart,
+  defaultRenderer: React.ReactNode,
+) => React.ReactNode | undefined;
+
+type JsonRecord = Record<string, ChatJsonValue>;
+
+function asRecord(value: ChatJsonValue): JsonRecord | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as JsonRecord
+    : null;
+}
+
+function toolRecord(value: unknown): JsonRecord | null {
+  return asRecord(toChatJsonValue(value, TOOL_VALUE_LIMITS));
+}
+
+function outputRecord(value: unknown): JsonRecord | null {
+  const output = toolRecord(value);
+  return asRecord(output?.structuredContent ?? null) ?? output;
+}
+
+function firstString(record: JsonRecord | null, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record?.[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function agentLabel(value: string | undefined): string {
+  if (!value) return "Child agent";
+  return value
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function invokeAgentPresentation(tool: ChatToolPart | ChatDynamicToolPart): {
+  title: string;
+  description?: string;
+  result?: string;
+  status: { label: string; color: StatusColor; pulse?: boolean };
+} {
+  const input = toolRecord(tool.input);
+  const output = outputRecord(tool.output);
+  const status = firstString(output, "status")?.toLowerCase();
+  const failed = tool.state === "output-error" || tool.state === "output-denied" ||
+    status === "failed" || status === "error" || output?.ok === false;
+  const stopped = status === "cancelled" || status === "canceled" || status === "stopped";
+  const completed = tool.state === "output-available" || status === "completed" ||
+    output?.ok === true;
+  const summary = asRecord(output?.summary ?? null);
+  const agentId = firstString(input, "agent_id", "agentId", "subagentType") ??
+    firstString(output, "agentId", "agent_id");
+
+  return {
+    title: agentLabel(agentId),
+    description: firstString(input, "description"),
+    result: tool.errorText ?? firstString(output, "text", "error", "terminalErrorMessage") ??
+      firstString(summary, "text"),
+    status: failed
+      ? { label: "Failed", color: "red" }
+      : stopped
+      ? { label: "Stopped", color: "gray" }
+      : completed
+      ? { label: "Completed", color: "green" }
+      : { label: "Running", color: "blue", pulse: true },
+  };
+}
+
+function isInvokeAgentTool(tool: ChatToolPart | ChatDynamicToolPart): boolean {
+  return tool.toolName === "invoke_agent";
+}
+
+/** Studio-style child-agent card used by the automatic `invoke_agent` renderer. */
+function InvokeAgentToolCall(): React.ReactElement {
+  const { tool, isExpanded, toggle } = useToolCall();
+  const presentation = invokeAgentPresentation(tool);
+  const failed = presentation.status.label === "Failed";
+  const running = presentation.status.label === "Running";
+  const detail = failed
+    ? (presentation.result ?? "The child agent run failed before returning a usable result.")
+    : (presentation.result ?? presentation.description);
+  const showDetail = Boolean(detail) && (failed || running || isExpanded);
+
+  return (
+    <div className="not-prose w-full rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-transparent p-4">
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={isExpanded}
+        className="flex w-full items-center justify-between gap-3 text-left"
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="mt-0 flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--muted)] text-sm font-medium text-[var(--foreground)]">
+            {presentation.title.charAt(0)}
+          </span>
+          <span className="min-w-0 truncate text-sm font-medium text-[var(--foreground)]">
+            {presentation.title}
+          </span>
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          <Status {...presentation.status} />
+          <ChevronDownIcon
+            className={cn(
+              "size-3.5 text-[var(--faint)] transition-transform",
+              isExpanded ? "rotate-180" : "-rotate-90",
+            )}
+          />
+        </span>
+      </button>
+      {showDetail && (
+        <p className="mt-3 text-sm leading-6 text-[var(--foreground)]">
+          {detail}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** Props accepted by `ToolCall` / `ToolCall.Root`. */
 export interface ToolCallProps {
   /** The tool part to render (invocation name, state, input, output, error). */
@@ -310,6 +432,14 @@ function ToolCallRoot(
     hasOutput,
     hasError,
   };
+
+  if (variant === undefined && children === undefined && isInvokeAgentTool(tool)) {
+    return (
+      <ToolCallContext.Provider value={context}>
+        <InvokeAgentToolCall />
+      </ToolCallContext.Provider>
+    );
+  }
 
   // Compact row for skill tools (or when forced), a presentation variant.
   const isCompact = variant === "compact" ||

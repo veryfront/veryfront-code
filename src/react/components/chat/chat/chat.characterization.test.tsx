@@ -122,6 +122,30 @@ describe("Chat (god file) — controlled render characterization", () => {
     );
   });
 
+  it("lets consumers override the default renderer for a tool call", () => {
+    const html = renderToString(
+      <Chat
+        chat={fakeSession({
+          messages: [{
+            id: "a-invoke",
+            role: "assistant",
+            parts: [{
+              type: "dynamic-tool",
+              toolCallId: "invoke-1",
+              toolName: "invoke_agent",
+              state: "input-available",
+              input: { agent_id: "case-ingest" },
+            }],
+          } as ChatMessage],
+        })}
+        renderTool={(tool) => <div>{`CUSTOM_TOOL ${tool.toolName}`}</div>}
+      />,
+    );
+
+    assert(html.includes("CUSTOM_TOOL invoke_agent"), "custom tool renderer wins");
+    assert(!html.includes("Case Ingest"), "default invoke-agent card is replaced");
+  });
+
   it("compound children replace the default anatomy (render-or-compose)", () => {
     const html = renderToString(
       <Chat.Root messages={[userMsg("ignored by custom body")]} input="">

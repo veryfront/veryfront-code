@@ -24,6 +24,50 @@ const skillTool: ChatDynamicToolPart = {
 };
 
 describe("ToolCall", () => {
+  it("renders invoke_agent as a child-agent card by default", () => {
+    const tool: ChatDynamicToolPart = {
+      type: "dynamic-tool",
+      toolCallId: "tool-invoke-agent",
+      toolName: "invoke_agent",
+      state: "input-available",
+      input: {
+        agent_id: "case-ingest",
+        description: "Fetch and redact cases",
+      },
+    };
+
+    const html = renderToString(<ToolCall tool={tool} />);
+
+    assertStringIncludes(html, "Case Ingest");
+    assertStringIncludes(html, "Running");
+    assertStringIncludes(html, "Fetch and redact cases");
+    assertEquals(html.includes("Parameters"), false);
+  });
+
+  it("surfaces a failed child run without exposing raw tool JSON", () => {
+    const tool: ChatDynamicToolPart = {
+      type: "dynamic-tool",
+      toolCallId: "tool-invoke-agent-failed",
+      toolName: "invoke_agent",
+      state: "output-available",
+      input: { agent_id: "case-ingest" },
+      output: {
+        structuredContent: {
+          ok: false,
+          status: "error",
+          terminalErrorMessage: "The child agent run failed before returning a usable result.",
+        },
+      },
+    };
+
+    const html = renderToString(<ToolCall tool={tool} />);
+
+    assertStringIncludes(html, "Case Ingest");
+    assertStringIncludes(html, "Failed");
+    assertStringIncludes(html, "The child agent run failed before returning a usable result.");
+    assertEquals(html.includes("structuredContent"), false);
+  });
+
   it("renders a completed tool with null output as a compact status row", () => {
     const tool: ChatDynamicToolPart = {
       type: "dynamic-tool",

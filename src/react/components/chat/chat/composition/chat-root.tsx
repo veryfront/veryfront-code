@@ -26,6 +26,7 @@ import type { Source } from "../components/sources.tsx";
 import type { BranchInfo } from "#veryfront/agent/react";
 import { ChatContextProvider } from "../contexts/chat-context.tsx";
 import type { ChatContextValue } from "../contexts/chat-context.tsx";
+import type { ToolCallRenderer } from "../components/tool-ui.tsx";
 
 /** Props accepted by chat root. */
 export interface ChatRootProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "children"> {
@@ -78,6 +79,9 @@ export interface ChatRootProps extends Omit<React.HTMLAttributes<HTMLDivElement>
   // Sources
   onSourceClick?: (source: Source, index: number) => void;
 
+  // Tool calls
+  renderTool?: ToolCallRenderer;
+
   // Theme
   theme?: Partial<ChatTheme>;
   maxHeight?: string;
@@ -109,6 +113,7 @@ export function ChatRoot(
     switchBranch,
     onFeedback,
     onSourceClick,
+    renderTool,
     theme: userTheme,
     maxHeight = "100%",
     className,
@@ -154,6 +159,7 @@ export function ChatRoot(
       switchBranch,
       onFeedback,
       onSourceClick,
+      renderTool,
       isEmpty: messages.length === 0,
       isAtBottom,
       scrollToBottom,
@@ -182,6 +188,7 @@ export function ChatRoot(
       switchBranch,
       onFeedback,
       onSourceClick,
+      renderTool,
       isAtBottom,
       scrollToBottom,
       theme,

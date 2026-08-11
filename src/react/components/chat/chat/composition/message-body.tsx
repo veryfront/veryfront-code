@@ -12,11 +12,12 @@ import { ChatMarkdown } from "../../chat-markdown.tsx";
 import type { PartGroup } from "../utils/message-parts.ts";
 import { useMessageContext } from "../contexts/message-context.tsx";
 import { Reasoning } from "../components/reasoning.tsx";
-import { ToolCall } from "../components/tool-ui.tsx";
+import { ToolCall, type ToolCallRenderer } from "../components/tool-ui.tsx";
 import { StepIndicator } from "../components/step-indicator.tsx";
 import { AttachmentPill } from "../components/attachment-pill.tsx";
 import { SourcePill, useSourcesOptional } from "../components/sources.tsx";
 import type { Source } from "../components/sources.tsx";
+import { useChatContextOptional } from "../contexts/chat-context.tsx";
 
 /** Options shared by the default part renderer and `Message.Part`. */
 interface RenderPartOptions {
@@ -25,6 +26,15 @@ interface RenderPartOptions {
   codeBlock?: (props: CodeBlockProps) => React.ReactNode;
   /** Element overrides forwarded to the installed Markdown renderer. */
   markdownComponents?: Components;
+}
+
+function RenderToolCall(
+  { tool }: { tool: Parameters<ToolCallRenderer>[0] },
+): React.ReactElement {
+  const renderTool = useChatContextOptional()?.renderTool;
+  const defaultRenderer = <ToolCall tool={tool} />;
+  const rendered = renderTool?.(tool, defaultRenderer);
+  return <>{rendered === undefined ? defaultRenderer : rendered}</>;
 }
 
 /**
@@ -85,7 +95,7 @@ export function renderAnswerPart(
   }
   // ToolCall renders the compact skill row for skill tools and the full
   // params/result card for everything else — one component either way.
-  return <ToolCall tool={group.tool} />;
+  return <RenderToolCall tool={group.tool} />;
 }
 
 // ---------------------------------------------------------------------------
