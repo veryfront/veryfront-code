@@ -201,8 +201,10 @@ describe("guide content contracts", () => {
     // A verification step written as a bare `curl -sSf <environment-url>`
     // therefore exits 0 with an empty body whether or not the deployment
     // works, so the page has to name the redirect and print the status code.
+    // Resolved from the module, not the process cwd: test files share one
+    // process under --parallel and src/testing/cwd.ts chdirs it.
     const doc = await Deno.readTextFile(
-      "docs/getting-started/deploy-project.md",
+      new URL("../../docs/getting-started/deploy-project.md", import.meta.url),
     );
     const prose = doc.replace(/\s+/g, " ");
 
