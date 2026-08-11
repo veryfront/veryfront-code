@@ -1,7 +1,7 @@
 ---
 title: "veryfront/schedule"
 description: "Source-defined recurring schedules for Veryfront projects."
-order: 30
+order: 31
 ---
 
 ## Import

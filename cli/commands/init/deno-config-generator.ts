@@ -15,6 +15,14 @@ const DENO_CONFIG = {
 };
 
 /**
+ * Render the scaffold's `deno.json`. Pure, so the disk-writing CLI path and
+ * `materializeScaffold` emit the same bytes.
+ */
+export function buildDenoConfig(): string {
+  return JSON.stringify(DENO_CONFIG, null, 2) + "\n";
+}
+
+/**
  * Write a thin `deno.json` to the scaffolded project directory. Relies on
  * exact-version `npm:` specs so task execution stays hosted by Deno without
  * drifting to a newer CLI than the scaffolded dependencies.
@@ -28,5 +36,5 @@ export async function createDenoConfig(projectDir: string): Promise<void> {
   if (await fs.exists(target)) {
     throw new Error(`Refusing to overwrite existing deno.json at ${target}`);
   }
-  await fs.writeTextFile(target, JSON.stringify(DENO_CONFIG, null, 2) + "\n");
+  await fs.writeTextFile(target, buildDenoConfig());
 }
