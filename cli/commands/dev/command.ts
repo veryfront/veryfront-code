@@ -3,7 +3,7 @@
  */
 
 import { compileAllMDX, watchMDX } from "veryfront/build";
-import { CONFIG_NOT_FOUND, INITIALIZATION_ERROR } from "veryfront/errors";
+import { CONFIG_NOT_FOUND, PORT_IN_USE } from "veryfront/errors";
 import { join } from "veryfront/platform/path";
 import { runtime } from "veryfront/platform";
 import { getConfig } from "veryfront/config";
@@ -24,6 +24,7 @@ import { pullCommand } from "../pull/index.ts";
 import { createStagedPushOptions, pushCommand, type PushOptions } from "../push/index.ts";
 import { createProjectSelector } from "./project-selector.ts";
 import { createDevLogController } from "./log-controller.ts";
+import { findAvailablePort, isPortInUseError } from "./port-fallback.ts";
 
 export interface DevOptions {
   port: number;
@@ -141,29 +142,36 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       let projects: RemoteProject[] = [];
       let selectedProject: RemoteProject | null = null;
 
+      // Port 3000 is the most contended port on a developer machine, and the docs
+      // tell readers to run a bare `veryfront dev`. Scan forward rather than dying.
+      const boundPort = await findAvailablePort(finalPort);
+      if (boundPort !== finalPort) {
+        console.log();
+        console.log(`  ${warning("!")} Port ${finalPort} is in use, using ${boundPort} instead`);
+      }
+
       try {
         devServer = await startDevServer({
-          port: finalPort,
+          port: boundPort,
           projectDir,
           enableHMR,
           enableFastRefresh: true,
           signal: shutdownController.signal,
         });
       } catch (error) {
-        if (error instanceof Error) {
-          const msg = error.message.toLowerCase();
-          if (msg.includes("eaddrinuse") || msg.includes("address already in use")) {
-            throw INITIALIZATION_ERROR.create({
-              detail: `Port ${finalPort} is already in use`,
-              context: { port: finalPort },
-            });
-          }
+        // Lost the race between probing the port and binding it.
+        if (isPortInUseError(error)) {
+          throw PORT_IN_USE.create({
+            detail: `Port ${boundPort} is already in use`,
+            cause: error,
+            context: { port: boundPort },
+          });
         }
         throw error;
       }
 
       const DEV_MCP_PORT_OFFSET = 2;
-      const mcpPort = finalPort + DEV_MCP_PORT_OFFSET;
+      const mcpPort = boundPort + DEV_MCP_PORT_OFFSET;
       try {
         mcpServer = await createMCPServer({ httpPort: mcpPort });
       } catch {
@@ -244,7 +252,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         };
       }
 
-      const serverUrl = `http://veryfront.me:${finalPort}`;
+      const serverUrl = `http://veryfront.me:${boundPort}`;
       const elapsed = Date.now() - startTime;
 
       console.log();
