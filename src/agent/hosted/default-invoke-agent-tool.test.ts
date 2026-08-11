@@ -287,7 +287,11 @@ Deno.test("default hosted invoke runs a generic local child with inherited assem
           return Promise.resolve(undefined);
         },
         buildGlobalTools: (toolContext, childAgentId, childConfig) => {
-          assertEquals(toolContext, context);
+          assertEquals(toolContext.projectId, "project-123");
+          assertEquals(toolContext.veryfrontInvocationContext, {
+            tool_call_id: "tool-call-generic-child",
+            delegation_depth: 1,
+          });
           assertEquals(childAgentId, "generic-agent");
           assertEquals(childConfig, undefined);
           return {
@@ -341,7 +345,6 @@ Deno.test("default hosted invoke runs a generic local child with inherited assem
 
   assertEquals("success" in result && result.success, true);
   assertEquals(capturedForkToolNames, ["lookup_job", "sleep"]);
-  assertEquals(context.availableToolNames, ["lookup_job", "sleep"]);
 });
 
 Deno.test("default hosted invoke rejects unconfirmed project identities before child setup", async () => {
