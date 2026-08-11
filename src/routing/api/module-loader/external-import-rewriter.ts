@@ -194,6 +194,9 @@ export async function rewriteNodeExternalImports(
   projectDir: string,
   fs: SourceReader,
   userDeps: Map<string, string>,
+  options: {
+    loadRunningPackage?: () => Promise<RunningVeryfrontPackage | null>;
+  } = {},
 ): Promise<string> {
   const { pathToFileURL } = await import("node:url");
   const replacements = new Map<string, string>();
@@ -226,25 +229,39 @@ export async function rewriteNodeExternalImports(
     replacements.set(specifier, resolvedUrl);
   }
 
-  const vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
-  const exportsMap = await loadVeryfrontExportsMap(projectDir, fs);
+  const veryfrontSpecifiers = [...importedSpecifiers].filter(
+    (specifier) => specifier === "veryfront" || specifier.startsWith("veryfront/"),
+  );
 
-  for (const specifier of importedSpecifiers) {
-    if (specifier === "veryfront") {
-      const exportEntry = exportsMap["."];
-      if (!exportEntry?.import) continue;
+  // A route's `veryfront/*` import must land on the SAME module instance the
+  // server is running, or the route gets a second, empty copy of every registry
+  // (`toolRegistry.get()` returns undefined for tools the server has loaded).
+  // The project's node_modules copy is only the same instance by coincidence —
+  // a global install, an npx cache, or a hoisted monorepo store all break it.
+  // The Deno path already resolves against the running package; do the same here.
+  const runningPackage = veryfrontSpecifiers.length > 0
+    ? await (options.loadRunningPackage ?? loadRunningVeryfrontPackage)()
+    : null;
 
-      const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
-      logger.debug(`Resolved veryfront -> ${resolvedPath}`);
-      replacements.set(specifier, pathToFileURL(resolvedPath).href);
-      continue;
+  if (runningPackage) {
+    for (const specifier of veryfrontSpecifiers) {
+      try {
+        const resolved = resolveVeryfrontPackageExport(specifier, runningPackage);
+        logger.debug(`Resolved ${specifier} -> ${resolved} (running package)`);
+        replacements.set(specifier, resolved);
+      } catch (error) {
+        logger.warn(`No running-package export for ${specifier}: ${String(error)}`);
+      }
     }
+  } else if (veryfrontSpecifiers.length > 0) {
+    const vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
+    const exportsMap = await loadVeryfrontExportsMap(projectDir, fs);
 
-    if (specifier.startsWith("veryfront/")) {
-      const subpath = "./" + specifier.replace("veryfront/", "");
+    for (const specifier of veryfrontSpecifiers) {
+      const subpath = specifier === "veryfront" ? "." : "./" + specifier.slice("veryfront/".length);
       const exportEntry = exportsMap[subpath];
       if (!exportEntry?.import) {
-        logger.warn(`No export found for ${subpath}`);
+        if (subpath !== ".") logger.warn(`No export found for ${subpath}`);
         continue;
       }
 
@@ -284,18 +301,32 @@ export function rewriteDenoNodeBuiltinImports(code: string): string {
   return rewriteDenoNodeBuiltinsForRoute(code);
 }
 
-interface RunningVeryfrontPackage {
+export interface RunningVeryfrontPackage {
   packageUrl: URL;
   exports: Record<string, unknown>;
 }
 
 let runningVeryfrontPackage: Promise<RunningVeryfrontPackage | null> | null = null;
 
+/**
+ * Read the package.json of the veryfront copy that is currently executing.
+ * Deno reads it directly; Node needs `node:fs`, and Node is exactly where this
+ * matters — the npm CLI falls back to the packaged ESM build.
+ */
+async function readRunningPackageJson(packageUrl: URL): Promise<string> {
+  if (isDeno) return await Deno.readTextFile(packageUrl);
+  const [{ readFile }, { fileURLToPath }] = await Promise.all([
+    import("node:fs/promises"),
+    import("node:url"),
+  ]);
+  return await readFile(fileURLToPath(packageUrl), "utf8");
+}
+
 function loadRunningVeryfrontPackage(): Promise<RunningVeryfrontPackage | null> {
   runningVeryfrontPackage ??= (async () => {
     const packageUrl = new URL("../../../../../package.json", import.meta.url);
     try {
-      const raw = await Deno.readTextFile(packageUrl);
+      const raw = await readRunningPackageJson(packageUrl);
       const pkg = JSON.parse(raw) as { name?: unknown; exports?: unknown };
       if (pkg.name !== "veryfront" || !pkg.exports || typeof pkg.exports !== "object") {
         return null;
