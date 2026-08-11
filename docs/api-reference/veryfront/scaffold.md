@@ -54,4 +54,4 @@ for (const file of files) {
 | ---------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | `MaterializedScaffold`       | A new project: every file it starts with, plus anything worth telling the author. | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L625) |
 | `MaterializeScaffoldRequest` | What to build: which starter, under what name, for which runtime.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L608) |
-| `TemplateFile`               |                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/templates/types.ts#L17)          |
+| `TemplateFile`               |                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/templates/types.ts#L17)              |

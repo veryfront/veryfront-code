@@ -96,7 +96,7 @@ async function lintScaffold(projectDir: string): Promise<string[]> {
  * `fromFileUrl`, not `URL.pathname`: on Windows the latter yields
  * `/C:/repo/deno.json`, which `deno` cannot open.
  */
-const REPO_CONFIG = fromFileUrl(new URL("../../deno.json", import.meta.url));
+const REPO_CONFIG = fromFileUrl(new URL("../deno.json", import.meta.url));
 
 /** Server-side template code: agents, tools, workflows and evals. */
 async function serverSourceFiles(projectDir: string): Promise<string[]> {
