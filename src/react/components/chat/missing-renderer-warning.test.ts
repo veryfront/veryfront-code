@@ -1,4 +1,4 @@
-import { assert, assertStringIncludes } from "#veryfront/testing/assert";
+import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { MISSING_MARKDOWN_RENDERER_WARNING } from "./missing-renderer-warning.ts";
 
@@ -9,14 +9,11 @@ import { MISSING_MARKDOWN_RENDERER_WARNING } from "./missing-renderer-warning.ts
  * (`#render-markdown-directly`); `/docs/guides/chat-ui` is a 404.
  */
 describe("missing Markdown renderer warning — documentation link", () => {
-  it("points at the published chat-ui guide, not the legacy 404 path", () => {
-    assertStringIncludes(
-      MISSING_MARKDOWN_RENDERER_WARNING,
+  it("carries exactly one link, and it is the published chat-ui guide", () => {
+    const links = MISSING_MARKDOWN_RENDERER_WARNING.match(/https:\/\/\S+/g) ?? [];
+
+    assertEquals(links, [
       "https://veryfront.com/docs/code/guides/chat-ui#render-markdown-directly",
-    );
-    assert(
-      !MISSING_MARKDOWN_RENDERER_WARNING.includes("https://veryfront.com/docs/guides/"),
-      "the warning must not link under /docs/, which 404s; guides live under /docs/code/",
-    );
+    ]);
   });
 });
