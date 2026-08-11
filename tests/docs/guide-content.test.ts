@@ -165,7 +165,9 @@ describe("guide content contracts", () => {
   it("documents a CLI teardown path for cloud projects", async () => {
     // `veryfront push` creates a billable cloud project, so the docs must show
     // how to remove one without driving the Studio UI.
-    const guide = await Deno.readTextFile("docs/guides/deploying.md");
+    const guide = await Deno.readTextFile(
+      new URL("../../docs/guides/deploying.md", import.meta.url),
+    );
 
     assertStringIncludes(guide, "veryfront project delete");
     assertStringIncludes(guide, "Tear a project down");
