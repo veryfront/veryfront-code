@@ -33,12 +33,21 @@ export function isPortInUseError(error: unknown): boolean {
     message.includes("eaddrinuse") || message.includes("address already in use");
 }
 
-/** Binds `port` and releases it again, to see whether the dev server could have it. */
-export async function isPortAvailable(port: number): Promise<boolean> {
+/** True when the current machine cannot bind the requested network address. */
+function isAddressUnavailableError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as { code?: string }).code ?? "";
+  const message = error.message.toLowerCase();
+  return error.name === "AddrNotAvailable" || code === "EADDRNOTAVAIL" ||
+    message.includes("eaddrnotavail") || message.includes("address not available");
+}
+
+/** Binds one local address and releases it again. */
+async function isHostPortAvailable(hostname: string, port: number): Promise<boolean> {
   if (isDeno) {
     try {
       // @ts-ignore - Deno global
-      Deno.listen({ hostname: LOCALHOST.IPV4, port }).close();
+      Deno.listen({ hostname, port }).close();
       return true;
     } catch (error) {
       if (isPortInUseError(error)) return false;
@@ -54,10 +63,25 @@ export async function isPortAvailable(port: number): Promise<boolean> {
       if (isPortInUseError(error)) resolve(false);
       else reject(error);
     });
-    server.listen({ port, host: LOCALHOST.IPV4, exclusive: true }, () => {
+    server.listen({ port, host: hostname, exclusive: true }, () => {
       server.close(() => resolve(true));
     });
   });
+}
+
+/** Binds `port` on IPv4 and IPv6 to see whether either local address is busy. */
+export async function isPortAvailable(port: number): Promise<boolean> {
+  for (const hostname of [LOCALHOST.IPV4, LOCALHOST.IPV6]) {
+    try {
+      if (!await isHostPortAvailable(hostname, port)) return false;
+    } catch (error) {
+      // IPv6 may be disabled on the host. In that case only the IPv4 probe is
+      // relevant, but all other unexpected listener failures must still escape.
+      if (hostname === LOCALHOST.IPV6 && isAddressUnavailableError(error)) continue;
+      throw error;
+    }
+  }
+  return true;
 }
 
 /**

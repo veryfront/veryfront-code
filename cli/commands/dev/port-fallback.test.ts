@@ -125,6 +125,17 @@ describe("cli/commands/dev/port-fallback", () => {
 
       assertEquals(await isPortAvailable(freePort), true);
     });
+
+    it("skips a port held by the IPv6 MCP listener", async () => {
+      const held = Deno.listen({ hostname: "::1", port: 0 });
+      const heldPort = (held.addr as Deno.NetAddr).port;
+
+      try {
+        assertEquals(await isPortAvailable(heldPort), false);
+      } finally {
+        held.close();
+      }
+    });
   });
 
   describe("isPortInUseError", () => {
