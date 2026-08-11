@@ -83,3 +83,9 @@ details, see [API reference](../api-reference/index.md).
 | Run agents as separate services         | [Agent service runtime](./agent-service-runtime.md)             |
 | Enable reusable runtime infrastructure  | [Extensions](./extensions.md)                                   |
 | Write, test, and package an extension   | [Author extensions](./extension-authoring.md)                   |
+
+## Troubleshoot
+
+| Goal                                | Guide                             |
+| ----------------------------------- | --------------------------------- |
+| Look up an error slug you were shown | [Error reference](./errors.md)   |

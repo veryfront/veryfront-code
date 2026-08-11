@@ -70,7 +70,7 @@ infrastructure details in user-facing fields.
 `type` field is the stable documentation URL:
 
 ```text
-https://veryfront.com/docs/errors/<slug>
+https://veryfront.com/docs/code/guides/errors#<slug>
 ```
 
 Choose the response helper based on the boundary:

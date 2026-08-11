@@ -230,7 +230,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
         assertEquals(result?.headers.get("content-type"), "application/problem+json");
         assertEquals(
           (await result?.json() as { type?: string }).type,
-          "https://veryfront.com/docs/errors/project-execution-unavailable",
+          "https://veryfront.com/docs/code/guides/errors#project-execution-unavailable",
         );
       });
     }

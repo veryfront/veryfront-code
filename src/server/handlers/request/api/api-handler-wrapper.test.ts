@@ -333,7 +333,7 @@ describe("ApiHandlerWrapper", () => {
     const problem = await result.response!.json();
     assertEquals(
       problem.type,
-      "https://veryfront.com/docs/errors/project-execution-unavailable",
+      "https://veryfront.com/docs/code/guides/errors#project-execution-unavailable",
     );
   });
 

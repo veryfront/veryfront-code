@@ -158,7 +158,7 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
       assertEquals(
         (await result.response?.json() as { type?: string }).type,
-        "https://veryfront.com/docs/errors/project-execution-unavailable",
+        "https://veryfront.com/docs/code/guides/errors#project-execution-unavailable",
       );
       assertEquals(renderCalls, 0);
     });

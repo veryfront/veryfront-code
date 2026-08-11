@@ -307,6 +307,10 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: ["../api-reference/veryfront/extensions.md"],
     snippets: ["defineConfig", "extRedis", "First-party extension areas"],
   },
+  "guides/errors.md": {
+    references: [],
+    snippets: ["### port-in-use", "**HTTP status:**", "**What to do:**"],
+  },
   "guides/evals.md": {
     references: ["../api-reference/veryfront/eval.md"],
     snippets: [
@@ -811,6 +815,8 @@ describe("published guide contracts", () => {
         !CONCEPT_FILES.has(filename) &&
         filename !== "getting-started/index.md" &&
         filename !== "guides/index.md" &&
+        // A generated lookup table of error slugs, not a procedure to follow.
+        filename !== "guides/errors.md" &&
         filename !== "getting-started/installation.md"
       ) {
         assertStringIncludes(guide, "## Verify it worked");
