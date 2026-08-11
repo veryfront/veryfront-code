@@ -93,8 +93,8 @@ Use [Coding agents](../guides/coding-agents.md) for setup details.
 
 ## Verify it worked
 
-Open the URL `veryfront dev` printed — `http://localhost:3000` unless the port
-moved — and ask:
+Open the URL `veryfront dev` printed. Unless the port moved, that is
+`http://localhost:3000`. Ask:
 
 ```text
 What is 128 divided by 8?
