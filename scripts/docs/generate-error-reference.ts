@@ -174,9 +174,18 @@ async function formatMarkdown(path: string): Promise<void> {
   const command = new Deno.Command("deno", {
     args: ["fmt", `--config=${ROOT}/deno.json`, path],
     stdout: "null",
-    stderr: "null",
+    stderr: "piped",
   });
-  await command.output();
+  const output = await command.output();
+  if (!output.success) {
+    // Silently skipping this would write an unformatted page and, in --check
+    // mode, compare against an unformatted expectation -- reporting "current"
+    // for a page that fails `deno fmt --check`.
+    const stderr = new TextDecoder().decode(output.stderr).trim();
+    throw new Error(
+      `deno fmt failed for ${path} (exit code ${output.code})${stderr ? `:\n${stderr}` : ""}`,
+    );
+  }
 }
 
 // Importing this module (the regression test reuses escapeMdxText) must not

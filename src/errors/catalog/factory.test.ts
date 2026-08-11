@@ -435,12 +435,12 @@ describe("factory", () => {
           "Use useEffect for client-only code",
         ],
         relatedErrors: ["render-error", "component-error"],
-        docs: "https://veryfront.com/docs/code/guides/errors#hydration-mismatch#hydration",
+        docs: "https://veryfront.com/docs/code/guides/errors#hydration-mismatch",
       });
 
       expect(runtimeError.relatedErrors?.length).toBe(2);
       expect(runtimeError.docs).toBe(
-        "https://veryfront.com/docs/code/guides/errors#hydration-mismatch#hydration",
+        "https://veryfront.com/docs/code/guides/errors#hydration-mismatch",
       );
     });
   });
