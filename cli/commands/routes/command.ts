@@ -69,7 +69,10 @@ export async function routesCommand(
     cliLogger.info(`  ${p.pattern} -> ${p.file}`);
   }
 
-  cliLogger.info("\nAPI:");
+  // Emit the section break directly: a leading "\n" inside the message would be
+  // prefixed by the CLI logger, printing a bare glyph line and a flush-left heading.
+  console.log("");
+  cliLogger.info("API:");
   for (const a of apis) {
     cliLogger.info(`  ${a.pattern} -> ${a.file}`);
   }
