@@ -94,13 +94,26 @@ container example.
 
 ## Verify it worked
 
-After Deploy completes, run:
+Deploy prints the environment URL. Request that URL and confirm the deployed
+page responds:
 
 ```bash
-veryfront open
+curl -sSf <environment-url>
 ```
 
-The deployed page and API routes respond.
+Then request an API route the project serves. For the agent route from
+[Create API](./create-api.md):
+
+```bash
+curl -sSf -N -X POST <environment-url>/api/ag-ui \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"What is Veryfront in one sentence?"}]}]}'
+```
+
+`veryfront open` opens the project in the Cloud dashboard, where the deployment
+is listed; `veryfront open --env production` opens that environment's dashboard
+page. Neither opens the deployed site, so use the environment URL Deploy printed
+to check the running deployment.
 
 For an automated production workflow, see
 [Deploy from CI](../guides/deploy-from-ci.md).

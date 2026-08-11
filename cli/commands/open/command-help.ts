@@ -10,7 +10,10 @@ export const openHelp: CommandHelp = {
       flag: "-p, --project <slug>",
       description: "Project slug to open (overrides inferred project)",
     },
-    { flag: "--env <name>", description: "Open a specific environment URL" },
+    {
+      flag: "--env <name>",
+      description: "Open a specific environment's dashboard page",
+    },
     { flag: "--studio", description: "Open Veryfront Studio" },
     { flag: "--json", description: "Output URL as JSON instead of opening" },
   ],

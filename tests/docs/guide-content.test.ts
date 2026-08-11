@@ -162,6 +162,33 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "npx veryfront@latest open");
   });
 
+  it("points post-deploy verification at the environment URL, not at open", async () => {
+    // `veryfront open` builds Cloud dashboard URLs
+    // (https://veryfront.com/projects/<slug>[/environments/<env>]). It never
+    // resolves the deployed site, so the deploy docs must not send readers to
+    // it to confirm the deployment responds.
+    const docs = [
+      "docs/getting-started/deploy-project.md",
+      "docs/guides/deploying.md",
+    ];
+
+    for (const path of docs) {
+      const text = await Deno.readTextFile(path);
+
+      assertStringIncludes(text, "open` opens the project in the Cloud dashboard");
+      assertEquals(text.includes("open` opens the deployed"), false);
+    }
+
+    const gettingStarted = await Deno.readTextFile(
+      "docs/getting-started/deploy-project.md",
+    );
+    assertStringIncludes(gettingStarted, "Deploy prints the environment URL");
+    assertEquals(
+      gettingStarted.includes("The deployed page and API routes respond."),
+      false,
+    );
+  });
+
   it("uses serve for local production builds", async () => {
     const docs = [
       "docs/getting-started/deploy-project.md",
