@@ -289,10 +289,25 @@ describe("styles-builder CSS provider sessions", () => {
     // internal registration hook, as the test above pins.
     const message = records.find((entry) => entry.message.includes("unminified CSS"))
       ?.message ?? "";
+    // Spelled out rather than derived from the formatter, so a formatter that
+    // starts emitting something unrunnable cannot satisfy this assertion by
+    // agreeing with itself. Which of the three appears depends on the manifest
+    // in the working directory, which a unit test must not depend on; the
+    // mapping from manifest to command is pinned in install-command.test.ts.
+    const runnableCommands = [
+      "deno add npm:@veryfront/ext-css-lightning",
+      "bun add @veryfront/ext-css-lightning",
+      "npm install @veryfront/ext-css-lightning",
+    ];
+    assertEquals(
+      runnableCommands.some((command) => message.includes(command)),
+      true,
+      `hint must carry a runnable install command, got: ${message}`,
+    );
     assertEquals(
       message.includes(formatInstallCommand("@veryfront/ext-css-lightning")),
       true,
-      `hint must carry a runnable install command, got: ${message}`,
+      `hint must use the command for this project, got: ${message}`,
     );
     assertEquals(
       message.includes("deno add @veryfront/"),
