@@ -4,7 +4,7 @@ export const installHelp: CommandHelp = {
   name: "install",
   category: "project",
   description: "Install AI assistant integrations (Cursor, Claude Code, etc.)",
-  usage: "veryfront install [options]",
+  usage: "veryfront install [tools] [options]",
   options: [
     {
       flag: "--target <tools>",
@@ -22,6 +22,7 @@ export const installHelp: CommandHelp = {
   ],
   examples: [
     "veryfront install                              # Interactive multi-select",
+    "veryfront install agents                       # Same as --target agents",
     "veryfront install --target cursor",
     "veryfront install --target all",
     "veryfront install --target cursor,claude-code --force",
@@ -38,7 +39,7 @@ export const uninstallHelp: CommandHelp = {
   name: "uninstall",
   category: "project",
   description: "Remove AI assistant integrations",
-  usage: "veryfront uninstall [options]",
+  usage: "veryfront uninstall [tools] [options]",
   options: [
     {
       flag: "--target <tools>",
@@ -52,6 +53,7 @@ export const uninstallHelp: CommandHelp = {
   ],
   examples: [
     "veryfront uninstall                            # Interactive multi-select",
+    "veryfront uninstall agents                     # Same as --target agents",
     "veryfront uninstall --target cursor",
     "veryfront uninstall --target all",
     "veryfront uninstall --global",
