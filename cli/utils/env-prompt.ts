@@ -178,7 +178,7 @@ export function generateGitignoreContent(existingContent?: string): string {
       "dist/",
       ".veryfront/",
       "",
-      "# Local AI model cache",
+      "# Local build cache",
       ".cache/",
       "",
       "# IDE",

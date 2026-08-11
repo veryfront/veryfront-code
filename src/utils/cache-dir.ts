@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "#veryfront/compat/path/index.ts";
 import { cwd, getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { isNode } from "#veryfront/platform/compat/runtime.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 import { serverLogger } from "./logger/index.ts";
@@ -103,6 +104,46 @@ export function getMdxEsmCacheDir(): string {
 
 export function getHttpBundleCacheDir(): string {
   return join(getCacheBaseDir(), "veryfront-http-bundle");
+}
+
+const CACHE_DIR_IGNORE_CONTENT = [
+  "# Created by Veryfront. Holds generated bundles only — safe to delete.",
+  "*",
+  "",
+].join("\n");
+
+/**
+ * Mark the cache base directory as ignored by version control.
+ *
+ * Outside production the cache root is `<project>/.cache`, so every dev server
+ * run drops generated `.mjs` bundles into the user's project. `veryfront init`
+ * scaffolds a `.gitignore` with a `.cache/` entry, but a project that adopted
+ * Veryfront into an existing tree keeps its own `.gitignore` and never gets
+ * one — the bundles then show up as untracked files and `git add -A` commits
+ * them. A `.gitignore` written *inside* the cache root ignores its contents
+ * (and itself) no matter what the project's own `.gitignore` says.
+ *
+ * Best-effort: an unwritable cache root must not fail server startup, and an
+ * existing `.gitignore` is never overwritten.
+ */
+export async function ensureCacheDirIgnored(): Promise<void> {
+  const cacheBase = getCacheBaseDir();
+
+  try {
+    const fs = createFileSystem();
+    const ignorePath = join(cacheBase, ".gitignore");
+    if (await fs.exists(ignorePath)) return;
+    await fs.mkdir(cacheBase, { recursive: true });
+    await fs.writeTextFile(ignorePath, CACHE_DIR_IGNORE_CONTENT);
+  } catch (error) {
+    logger.debug("Cache dir ignore marker not written", {
+      cacheRoot: describeCacheRoot(cacheBase),
+      reason: redactCachePathDetails(
+        error instanceof Error ? error.message : String(error),
+        cacheBase,
+      ),
+    });
+  }
 }
 
 /**
