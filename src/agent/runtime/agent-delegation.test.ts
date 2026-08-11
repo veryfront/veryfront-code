@@ -192,6 +192,32 @@ describe("invoke_agent", () => {
 
     assertEquals(streamedInput, "Draft it.");
   });
+
+  it("forwards the parent abort signal to the invoked agent", async () => {
+    let streamedAbortSignal: AbortSignal | undefined;
+    const writer = {
+      id: "writer",
+      config: {},
+      stream: (input: {
+        abortSignal?: AbortSignal;
+        onFinish?: (response: unknown) => void;
+      }) => {
+        streamedAbortSignal = input.abortSignal;
+        input.onFinish?.({ text: "done", toolCalls: [], status: "completed" });
+        return Promise.resolve({ toDataStreamResponse: () => new Response("") });
+      },
+    } as unknown as Agent;
+    const invokeAgent = createInvokeAgentTool({ resolveAgent: () => writer });
+    const abortController = new AbortController();
+
+    await invokeAgent.execute({
+      agent_id: "writer",
+      description: "Draft reply",
+      prompt: "Draft it.",
+    }, { abortSignal: abortController.signal });
+
+    assertEquals(streamedAbortSignal, abortController.signal);
+  });
 });
 
 it("delegate agent execution inherits the exact project source restriction", async () => {
