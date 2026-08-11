@@ -1,4 +1,8 @@
-import { assertEquals, assertMatch, assertStringIncludes } from "#std/assert";
+import {
+  assertEquals,
+  assertMatch,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#std/testing/bdd";
 import { compile } from "npm:@mdx-js/mdx@3.1.1";
 
