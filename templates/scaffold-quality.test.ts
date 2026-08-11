@@ -10,16 +10,25 @@
  * `no-explicit-any` and `no-unused-vars` violations that every scaffolded
  * project inherited on its first `veryfront lint`.
  *
- * This scaffolds each starter exactly the way `veryfront init` does and runs
- * the same `deno lint` that `veryfront lint` shells out to, so a template can
- * never again reach a user with a lint error in it.
+ * The same exclusion hid type errors: `step()` was handed an `execute`
+ * callback `StepOptions` does not accept, `getAgentsAsTools` a list of ids
+ * where it takes a description map, and `readDir`'s async iterable was
+ * filtered like an array — three templates failed `tsc --noEmit` on a fresh
+ * `npm install`.
+ *
+ * This scaffolds each starter exactly the way `veryfront init` does, then runs
+ * the same `deno lint` that `veryfront lint` shells out to, and type-checks
+ * the agents, tools and workflows against the framework's real declarations —
+ * so a template can never again reach a user with an error in it.
  *
  * @module templates/scaffold-quality.test
  */
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
+import { exists, makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
+import { join } from "#veryfront/compat/path/index.ts";
+import { walk } from "#std/fs.ts";
 import { runCommand } from "#veryfront/compat/process.ts";
 import { createProject } from "../cli/shared/project-creation.ts";
 import { STARTER_TEMPLATE_NAMES } from "./types.ts";
@@ -81,8 +90,52 @@ async function lintScaffold(projectDir: string): Promise<string[]> {
   return (report.diagnostics ?? []).map((diagnostic) => describeDiagnostic(diagnostic, projectDir));
 }
 
+/** Repo config, so `veryfront/*` resolves to the framework's own declarations. */
+const REPO_CONFIG = new URL("../../deno.json", import.meta.url).pathname;
+
+/** Server-side template code: agents, tools, workflows and evals. */
+async function serverSourceFiles(projectDir: string): Promise<string[]> {
+  const files: string[] = [];
+  for (const directory of ["agents", "tools", "workflows", "evals"]) {
+    const root = join(projectDir, directory);
+    if (!await exists(root)) continue;
+    for await (const entry of walk(root, { includeDirs: false, exts: [".ts"] })) {
+      files.push(entry.path);
+    }
+  }
+  return files.sort();
+}
+
+/** Type-check a scaffold's server code against the framework declarations. */
+async function typeCheckScaffold(projectDir: string): Promise<string> {
+  const files = await serverSourceFiles(projectDir);
+  if (files.length === 0) return "";
+
+  const result = await runCommand("deno", {
+    args: ["check", "--config", REPO_CONFIG, ...files],
+    cwd: projectDir,
+    capture: true,
+  });
+
+  return result.code === 0 ? "" : (result.stderr ?? result.stdout ?? "type check failed");
+}
+
 describe("scaffolded starter templates", () => {
   for (const template of STARTER_TEMPLATE_NAMES) {
+    it(`type-checks against the framework: ${template}`, async () => {
+      const projectDir = await makeTempDir({ prefix: `veryfront-types-${template}-` });
+      try {
+        await scaffold(template, projectDir);
+        assertEquals(
+          await typeCheckScaffold(projectDir),
+          "",
+          `a fresh ${template} project must type-check against the framework it installs`,
+        );
+      } finally {
+        await remove(projectDir, { recursive: true }).catch(() => {});
+      }
+    });
+
     it(`lints clean: ${template}`, async () => {
       const projectDir = await makeTempDir({ prefix: `veryfront-scaffold-${template}-` });
       try {
