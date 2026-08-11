@@ -320,6 +320,39 @@ describe("first-party extension imports", () => {
       );
     });
 
+    it("parses the Deno npm-referrer missing-package shape", () => {
+      // Deno reports an unresolvable npm package differently when the importer
+      // itself lives inside the npm cache, which is exactly what a scaffolded
+      // `deno task dev` hits while probing optional first-party extensions.
+      const denoNpmReferrer = Object.assign(
+        new Error(
+          `Could not find package '@veryfront/ext-auth-jwt' from referrer 'file:///app/node_modules/.deno/veryfront@0.1.0/node_modules/veryfront/esm/src/extensions/first-party-import.js'.`,
+        ),
+        { code: "ERR_MODULE_NOT_FOUND" },
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(denoNpmReferrer, [
+          "@veryfront/ext-auth-jwt",
+        ]),
+        true,
+      );
+
+      // A broken transitive dependency of an installed extension must still be
+      // surfaced rather than swallowed as "extension not installed".
+      const transitiveFailure = Object.assign(
+        new Error(
+          `Could not find package 'jose' from referrer 'file:///app/node_modules/@veryfront/ext-auth-jwt/esm/src/index.js'.`,
+        ),
+        { code: "ERR_MODULE_NOT_FOUND" },
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(transitiveFailure, [
+          "@veryfront/ext-auth-jwt",
+        ]),
+        false,
+      );
+    });
+
     it("parses Bun relative, package, and object-shaped missing-module errors", () => {
       const relativeError = Object.assign(
         new Error(
