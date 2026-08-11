@@ -93,13 +93,14 @@ Use [Coding agents](../guides/coding-agents.md) for setup details.
 
 ## Verify it worked
 
-Open `http://localhost:3000` and ask:
+Open the URL `veryfront dev` printed — `http://localhost:3000` unless the port
+moved — and ask:
 
 ```text
 What is 128 divided by 8?
 ```
 
-To test the route without the UI:
+To test the route without the UI, using that same port:
 
 ```bash
 curl -N -X POST http://localhost:3000/api/ag-ui \
