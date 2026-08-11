@@ -233,41 +233,51 @@ export async function rewriteNodeExternalImports(
     (specifier) => specifier === "veryfront" || specifier.startsWith("veryfront/"),
   );
 
-  // A route's `veryfront/*` import must land on the SAME module instance the
-  // server is running, or the route gets a second, empty copy of every registry
-  // (`toolRegistry.get()` returns undefined for tools the server has loaded).
-  // The project's node_modules copy is only the same instance by coincidence —
-  // a global install, an npx cache, or a hoisted monorepo store all break it.
-  // The Deno path already resolves against the running package; do the same here.
-  const runningPackage = veryfrontSpecifiers.length > 0
-    ? await (options.loadRunningPackage ?? loadRunningVeryfrontPackage)()
-    : null;
+  if (veryfrontSpecifiers.length > 0) {
+    // A route's `veryfront/*` import must land on the SAME module instance the
+    // server is running, or the route gets a second, empty copy of every
+    // registry (`toolRegistry.get()` returns undefined for tools the server has
+    // loaded). The project's node_modules copy is only the same instance by
+    // coincidence — a global install, an npx cache, or a hoisted monorepo store
+    // all break it. The Deno path already resolves against the running package.
+    const runningPackage = await (options.loadRunningPackage ?? loadRunningVeryfrontPackage)();
+    let projectExports: Record<string, { import?: string }> | undefined;
 
-  if (runningPackage) {
-    for (const specifier of veryfrontSpecifiers) {
-      try {
-        const resolved = resolveVeryfrontPackageExport(specifier, runningPackage);
-        logger.debug(`Resolved ${specifier} -> ${resolved} (running package)`);
-        replacements.set(specifier, resolved);
-      } catch (error) {
-        logger.warn(`No running-package export for ${specifier}: ${String(error)}`);
-      }
-    }
-  } else if (veryfrontSpecifiers.length > 0) {
-    const vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
-    const exportsMap = await loadVeryfrontExportsMap(projectDir, fs);
-
-    for (const specifier of veryfrontSpecifiers) {
-      const subpath = specifier === "veryfront" ? "." : "./" + specifier.slice("veryfront/".length);
-      const exportEntry = exportsMap[subpath];
+    // Fallback for a subpath the running copy does not export — an older global
+    // CLI against a newer project dependency. A split instance still beats a
+    // bare specifier the temp handler module cannot resolve at all.
+    const resolveFromProjectCopy = async (specifier: string, subpath: string): Promise<void> => {
+      projectExports ??= await loadVeryfrontExportsMap(projectDir, fs);
+      const exportEntry = projectExports[subpath];
       if (!exportEntry?.import) {
         if (subpath !== ".") logger.warn(`No export found for ${subpath}`);
-        continue;
+        return;
       }
 
+      const vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
       const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
       logger.debug(`Resolved ${specifier} -> ${resolvedPath}`);
       replacements.set(specifier, pathToFileURL(resolvedPath).href);
+    };
+
+    for (const specifier of veryfrontSpecifiers) {
+      const subpath = specifier === "veryfront" ? "." : "./" + specifier.slice("veryfront/".length);
+
+      if (runningPackage) {
+        try {
+          const resolved = resolveVeryfrontPackageExport(specifier, runningPackage);
+          logger.debug(`Resolved ${specifier} -> ${resolved} (running package)`);
+          replacements.set(specifier, resolved);
+          continue;
+        } catch (error) {
+          logger.warn(
+            `Running package does not export ${specifier} (${String(error)}); ` +
+              `falling back to the project copy`,
+          );
+        }
+      }
+
+      await resolveFromProjectCopy(specifier, subpath);
     }
   }
 
