@@ -21,7 +21,9 @@
  *   const chat = useChat();
  *   return (
  *     <Chat.Root messages={chat.messages} input={chat.input}>
- *       <Chat.Empty title="Ask me anything" />
+ *       <Chat.If condition={(ctx) => ctx.isEmpty}>
+ *         <Chat.Empty title="Ask me anything" />
+ *       </Chat.If>
  *       <Chat.MessageList messages={chat.messages} />
  *       <Chat.Input input={chat.input} onChange={chat.handleInputChange} onSubmit={chat.handleSubmit} />
  *     </Chat.Root>

@@ -171,6 +171,13 @@ export default function CustomLayout() {
       <header className="border-b p-4">
         <h1>Assistant</h1>
       </header>
+      <Chat.If condition={(ctx) => ctx.isEmpty}>
+        <Chat.Empty
+          title="What can I help with?"
+          suggestions={["Explain React hooks", "Write a regex"]}
+          onSuggestionSelect={(suggestion) => chat.setInput(suggestion.prompt)}
+        />
+      </Chat.If>
       <Chat.MessageList messages={chat.messages} />
       <Chat.Input.Root
         input={chat.input}
@@ -184,15 +191,17 @@ export default function CustomLayout() {
           <Chat.Input.Send />
         </Chat.Input.Toolbar>
       </Chat.Input.Root>
-      <Chat.Empty
-        title="What can I help with?"
-        suggestions={["Explain React hooks", "Write a regex"]}
-        onSuggestionSelect={(suggestion) => chat.setInput(suggestion.prompt)}
-      />
     </Chat.Root>
   );
 }
 ```
+
+`<Chat.Empty>` renders whatever it is given; it does not hide itself. The preset
+`<Chat>` decides when to show its empty state for you, but a custom layout owns
+that decision, so gate the empty state on the thread being empty. `<Chat.If>`
+reads the nearest `<Chat.Root>`, where `ctx.isEmpty` is true only while
+`messages` is empty. Without the gate, the empty state stays mounted below the
+conversation once the first message is sent.
 
 Use `Message` when individual message rendering needs custom structure:
 
@@ -480,6 +489,8 @@ Run `veryfront dev` and open the page that renders the chat UI:
 - The preset renders its default controls.
 - Custom layouts keep the message list and composer wired to the same AG-UI
   stream.
+- In a custom layout, the empty state disappears after the first message is
+  sent and does not reappear below the conversation.
 - A persisted conversation remains in the sidebar after a page reload.
 - A conversation persistence failure renders an alert with the failed
   operation.
