@@ -27,7 +27,7 @@ export function getInitTemplates(): string {
 }
 
 export function getPostDeployTips(): string {
-  return `\n  ${dim("Open:")} ${cyan("veryfront open")}\n`;
+  return `\n  ${dim("Dashboard:")} ${cyan("veryfront open")}\n`;
 }
 
 const COMMAND_TIPS: Record<string, () => string> = {

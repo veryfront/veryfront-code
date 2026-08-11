@@ -87,9 +87,12 @@ npx veryfront@latest deploy --branch feature-x --env staging
 Deploy uses the last verified Push receipt and verifies the release was built
 from that exact source digest before assigning it to the environment. If no Push
 receipt exists, Deploy first runs a quiet Push so the first deployment still
-works as one command. Use `npx veryfront@latest open` after deployment to open
-the project. Deploy prints the environment URL; use
-`npx veryfront@latest open --json` when automation needs the same URL later.
+works as one command. Deploy prints the environment URL; record it when
+automation needs the deployed URL later. Use `npx veryfront@latest open` after
+deployment to open the project in the Cloud dashboard, and
+`npx veryfront@latest open --json` to print that dashboard URL. `open` resolves
+the same project reference Push and Deploy use, including the local
+`.veryfront/project.json` link.
 
 Project reference precedence is `VERYFRONT_PROJECT_SLUG` or environment
 configuration, then `veryfront.config.ts`, then legacy `veryfront.json`, then
@@ -141,7 +144,9 @@ After `veryfront deploy`:
 - The CLI reports whether every shared proxy acknowledged the active release. An
   unconfirmed data-plane update is a warning after commit, not a failed deploy;
   do not retry solely because of that warning.
-- `veryfront open` opens the deployed project.
+- The environment URL Deploy printed serves the deployed page and API routes.
+- `veryfront open` opens the project in the Cloud dashboard, not the deployed
+  site.
 - The same page, API route, agent, workflow, task, or run path works in
   production.
 - The Cloud dashboard lists the deployment under the project.

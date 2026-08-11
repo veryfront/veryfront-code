@@ -82,13 +82,17 @@ For a non-Cloud target, run `veryfront build` and ship the `dist/` output. See
 
 ## Verify it worked
 
-After Deploy completes, run:
+Deploy prints the environment URL. Request that URL and confirm the deployed
+page and API routes respond:
 
 ```bash
-veryfront open
+curl -sSf <environment-url>
 ```
 
-The deployed page and API routes respond.
+`veryfront open` opens the project in the Cloud dashboard, where the deployment
+is listed; `veryfront open --env production` opens that environment's dashboard
+page. Neither opens the deployed site, so use the environment URL Deploy printed
+to check the running deployment.
 
 For an automated production workflow, see
 [Deploy from CI](../guides/deploy-from-ci.md).

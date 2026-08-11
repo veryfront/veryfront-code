@@ -67,6 +67,12 @@ describe("cli/help/tips", () => {
       assertEquals(getPostDeployTips().includes("npx"), false);
     });
 
+    it("labels veryfront open as the dashboard, not the deployed site", () => {
+      // `open` builds https://veryfront.com/projects/<slug> URLs, so a bare
+      // "Open:" label reads as an offer to open the deployment itself.
+      assertEquals(getPostDeployTips().includes("Dashboard:"), true);
+    });
+
     it("does not add a generic next-steps block", () => {
       assertEquals(getPostDeployTips().includes("Next steps"), false);
     });
