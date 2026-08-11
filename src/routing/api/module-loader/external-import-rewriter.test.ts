@@ -19,6 +19,7 @@ import {
   rewriteDenoNodeBuiltinImports,
   rewriteDenoNpmDependencyImports,
   rewriteDenoVeryfrontImports,
+  rewriteNodeExternalImports,
 } from "./external-import-rewriter.ts";
 
 function createFakeFileSystem(files: Record<string, string>): FileSystem {
@@ -394,6 +395,92 @@ describe("external-import-rewriter", () => {
       assertStringIncludes(shim, "var require = function(id)");
       assertStringIncludes(shim, "__vf_interopDefault");
       assert(shim.length > 0);
+    });
+  });
+
+  describe("Node Veryfront package imports", () => {
+    // An API route that imports `veryfront/tool` must reach the SAME module
+    // instance the running server uses, or `toolRegistry.get()` looks into a
+    // second, empty registry and every tool reads as "not found" (the Tools
+    // guide's own verify route). That happens whenever the CLI runs from a
+    // different veryfront copy than the project's node_modules — a global
+    // `npm install -g veryfront`, an `npx` cache, or a hoisted monorepo store.
+    it("resolves veryfront route imports against the running package, not the project copy", async () => {
+      const runningPackage = {
+        packageUrl: new URL("file:///opt/cli/node_modules/veryfront/package.json"),
+        exports: {
+          "./tool": { import: "./esm/src/tool/index.js" },
+        },
+      };
+      const fs = createFakeFileSystem({
+        "/srv/app/node_modules/veryfront/package.json": JSON.stringify({
+          exports: { "./tool": { import: "./esm/src/tool/index.js" } },
+        }),
+      });
+
+      const out = await rewriteNodeExternalImports(
+        `import { toolRegistry } from "veryfront/tool";`,
+        "/srv/app",
+        fs,
+        new Map(),
+        { loadRunningPackage: () => Promise.resolve(runningPackage) },
+      );
+
+      assertStringIncludes(out, "file:///opt/cli/node_modules/veryfront/esm/src/tool/index.js");
+      assertEquals(out.includes("/srv/app/node_modules/veryfront"), false);
+    });
+
+    it("falls back to the project copy for a subpath the running package lacks", async () => {
+      // An older global CLI against a newer project dependency: the running copy
+      // cannot serve `veryfront/knowledge`, and leaving the bare specifier in the
+      // temp handler module would break a route that used to work.
+      const runningPackage = {
+        packageUrl: new URL("file:///opt/cli/node_modules/veryfront/package.json"),
+        exports: {
+          "./tool": { import: "./esm/src/tool/index.js" },
+        },
+      };
+      const fs = createFakeFileSystem({
+        "/srv/app/node_modules/veryfront/package.json": JSON.stringify({
+          exports: {
+            "./tool": { import: "./esm/src/tool/index.js" },
+            "./knowledge": { import: "./esm/src/knowledge/index.js" },
+          },
+        }),
+      });
+
+      const out = await rewriteNodeExternalImports(
+        [
+          `import { toolRegistry } from "veryfront/tool";`,
+          `import { ingest } from "veryfront/knowledge";`,
+        ].join("\n"),
+        "/srv/app",
+        fs,
+        new Map(),
+        { loadRunningPackage: () => Promise.resolve(runningPackage) },
+      );
+
+      assertStringIncludes(out, "file:///opt/cli/node_modules/veryfront/esm/src/tool/index.js");
+      assertStringIncludes(out, "/srv/app/node_modules/veryfront/esm/src/knowledge/index.js");
+      assertEquals(out.includes(`"veryfront/knowledge"`), false);
+    });
+
+    it("falls back to the project copy when no running package is discoverable", async () => {
+      const fs = createFakeFileSystem({
+        "/srv/app/node_modules/veryfront/package.json": JSON.stringify({
+          exports: { "./tool": { import: "./esm/src/tool/index.js" } },
+        }),
+      });
+
+      const out = await rewriteNodeExternalImports(
+        `import { toolRegistry } from "veryfront/tool";`,
+        "/srv/app",
+        fs,
+        new Map(),
+        { loadRunningPackage: () => Promise.resolve(null) },
+      );
+
+      assertStringIncludes(out, "/srv/app/node_modules/veryfront/esm/src/tool/index.js");
     });
   });
 });
