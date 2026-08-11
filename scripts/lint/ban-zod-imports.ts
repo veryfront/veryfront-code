@@ -8,7 +8,7 @@ export interface IllegalImport {
 export function shouldCheckZodImportPath(path: string): boolean {
   const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "");
   if (normalized.startsWith("extensions/ext-schema-zod/")) return false;
-  if (normalized.startsWith("cli/templates/")) return false;
+  if (normalized.startsWith("templates/")) return false;
   return normalized.startsWith("src/") || normalized.startsWith("cli/");
 }
 

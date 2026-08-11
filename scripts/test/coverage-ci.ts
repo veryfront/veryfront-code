@@ -15,7 +15,7 @@ interface LcovLineRecord {
   line: number;
 }
 
-const UNIT_COVERAGE_ROOTS = ["src", "cli"];
+const UNIT_COVERAGE_ROOTS = ["src", "cli", "templates"];
 const UNIT_COVERAGE_ENV = {
   DENO_TESTING: "1",
   VF_DISABLE_LRU_INTERVAL: "1",

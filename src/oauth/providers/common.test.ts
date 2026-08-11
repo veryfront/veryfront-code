@@ -61,28 +61,28 @@ const PROVIDER_ADAPTER_REQUIRED_CONFIGS = [
 
 async function readSlackConnectorScopes(): Promise<string[]> {
   const connector = JSON.parse(
-    await Deno.readTextFile("cli/templates/integrations/slack/connector.json"),
+    await Deno.readTextFile("templates/integrations/slack/connector.json"),
   ) as { auth: { scopes: string[] } };
   return connector.auth.scopes;
 }
 
 async function readConnectorScopes(name: string): Promise<string[]> {
   const connector = JSON.parse(
-    await Deno.readTextFile(`cli/templates/integrations/${name}/connector.json`),
+    await Deno.readTextFile(`templates/integrations/${name}/connector.json`),
   ) as { auth: { scopes: string[] } };
   return connector.auth.scopes;
 }
 
 async function readHubSpotConnectorScopes(): Promise<string[]> {
   const connector = JSON.parse(
-    await Deno.readTextFile("cli/templates/integrations/hubspot/connector.json"),
+    await Deno.readTextFile("templates/integrations/hubspot/connector.json"),
   ) as { auth: { scopes: string[] } };
   return connector.auth.scopes;
 }
 
 async function readHubSpotConnectorOptionalScopes(): Promise<string[]> {
   const connector = JSON.parse(
-    await Deno.readTextFile("cli/templates/integrations/hubspot/connector.json"),
+    await Deno.readTextFile("templates/integrations/hubspot/connector.json"),
   ) as { auth: { optionalScopes: string[] } };
   return connector.auth.optionalScopes;
 }
@@ -177,10 +177,10 @@ describe("oauth provider configs", () => {
 
   it("keeps Slack setup documentation aligned with runtime OAuth scopes", async () => {
     const setupMarkdown = await Deno.readTextFile(
-      "cli/templates/integrations/_base/files/SETUP.md",
+      "templates/integrations/_base/files/SETUP.md",
     );
     const setupHelpers = await Deno.readTextFile(
-      "cli/templates/integrations/_base/files/app/setup/page-helpers.tsx",
+      "templates/integrations/_base/files/app/setup/page-helpers.tsx",
     );
 
     for (const scope of slackConfig.defaultScopes) {

@@ -36,7 +36,7 @@ async function collectTemplateTsFiles(dir: URL): Promise<URL[]> {
   return files;
 }
 
-describe("cli/templates", () => {
+describe("templates", () => {
   it("keeps starter npm dependencies out of root package template files", async () => {
     const offenders: string[] = [];
 

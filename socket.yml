@@ -84,4 +84,4 @@ projectIgnorePaths:
   - "coverage_data/**"
   - "npm/node_modules/**"
   - "tests/e2e/node_modules/**"
-  - "cli/templates/manifest.json"
+  - "templates/manifest.json"

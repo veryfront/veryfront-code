@@ -52,7 +52,7 @@ export function shouldCheckCoreSourceImportPath(path: string): boolean {
   if (!normalized.startsWith("src/") && !normalized.startsWith("cli/")) {
     return false;
   }
-  if (normalized.startsWith("cli/templates/")) return false;
+  if (normalized.startsWith("templates/")) return false;
   if (
     normalized.includes("/__fixtures__/") || normalized.includes("/fixtures/")
   ) return false;

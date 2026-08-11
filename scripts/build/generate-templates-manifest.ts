@@ -67,8 +67,8 @@ async function collectSortedFiles(root: string): Promise<Array<{ path: string }>
 }
 
 async function generateManifest(): Promise<TemplateManifest> {
-	const templatesDir = "./cli/templates/files";
-	const integrationsDir = "./cli/templates/integrations";
+	const templatesDir = "./templates/files";
+	const integrationsDir = "./templates/integrations";
 	const manifest: TemplateManifest = {
 		version: 1,
 		templates: {},
@@ -121,7 +121,7 @@ async function generateManifest(): Promise<TemplateManifest> {
 	}
 
 	// Process ai-rules templates (used by `veryfront install`)
-	const aiRulesDir = "./cli/templates/ai-rules";
+	const aiRulesDir = "./templates/ai-rules";
 	for (const entry of await collectSortedDirectoryEntries(aiRulesDir)) {
 		if (!entry.isFile || !entry.name.endsWith(".md")) continue;
 		const content = await Deno.readTextFile(`${aiRulesDir}/${entry.name}`);
@@ -132,7 +132,7 @@ async function generateManifest(): Promise<TemplateManifest> {
 }
 
 const manifest = await generateManifest();
-const outputPath = "./cli/templates/manifest.json";
+const outputPath = "./templates/manifest.json";
 const output = JSON.stringify(manifest, null, 2) + "\n";
 
 const templateCount = Object.keys(manifest.templates).length;

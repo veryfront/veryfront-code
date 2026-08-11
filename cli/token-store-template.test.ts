@@ -7,7 +7,7 @@ import {
   createDefaultTokenStore,
   createTokenStore,
   getRefreshableAccessToken,
-} from "./templates/integrations/_base/files/lib/token-store.ts";
+} from "../templates/integrations/_base/files/lib/token-store.ts";
 
 describe("generated OAuth token store", () => {
   const originalNodeEnv = Deno.env.get("NODE_ENV");

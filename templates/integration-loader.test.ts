@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { EXPERIMENTAL_INTEGRATIONS_ENV } from "../../src/integrations/feature-flags.ts";
+import { EXPERIMENTAL_INTEGRATIONS_ENV } from "../src/integrations/feature-flags.ts";
 import {
   ALL_AVAILABLE_INTEGRATIONS,
   getAvailableIntegrations,
@@ -9,7 +9,7 @@ import {
   validateIntegrations,
 } from "./integration-loader.ts";
 
-describe("cli/templates/integration-loader feature gates", () => {
+describe("templates/integration-loader feature gates", () => {
   afterEach(() => Deno.env.delete(EXPERIMENTAL_INTEGRATIONS_ENV));
 
   it("keeps unsupported integrations declared but unavailable by default", () => {
@@ -37,7 +37,7 @@ describe("cli/templates/integration-loader feature gates", () => {
   });
 });
 
-describe("cli/templates/integration-loader file namespacing", () => {
+describe("templates/integration-loader file namespacing", () => {
   it("keeps both tool modules when two integrations ship the same tool filename", async () => {
     const { files, errors } = await loadIntegrations(["github", "bitbucket"]);
 

@@ -180,7 +180,7 @@ describe("findCoreThirdPartySourceImports", () => {
           content: 'import { z } from "zod";',
         },
         {
-          path: "cli/templates/files/app/tool.ts",
+          path: "templates/files/app/tool.ts",
           content: 'import { z } from "zod";',
         },
       ],
