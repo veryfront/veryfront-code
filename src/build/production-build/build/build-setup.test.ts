@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { setupBuildDirectories } from "./build-setup.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -24,16 +24,22 @@ function createMockAdapter(): RuntimeAdapter {
 }
 
 /**
- * The shared mock stubs `remove` out, so it cannot observe what the setup step
- * deletes. This adapter deletes for real.
+ * The shared mock stubs `remove` out and reports every directory as empty, so
+ * it cannot observe what the setup step deletes or what it found first. This
+ * adapter reads and deletes for real.
  */
 function createDeletingAdapter(): RuntimeAdapter {
   const adapter = createMockAdapter();
-  (adapter.fs as unknown as {
+  const fs = adapter.fs as unknown as {
     remove: (path: string, opts?: { recursive?: boolean }) => Promise<void>;
-  }).remove = async (path, opts) => {
+    exists: (path: string) => Promise<boolean>;
+    readDir: (path: string) => AsyncIterable<{ name: string }>;
+  };
+  fs.remove = async (path, opts) => {
     await Deno.remove(path, opts).catch(() => undefined);
   };
+  fs.exists = exists;
+  fs.readDir = (path) => Deno.readDir(path);
   return adapter;
 }
 
@@ -129,15 +135,100 @@ describe("build/production-build/build/build-setup", () => {
       }
     });
 
+    it("refuses to clear an output directory no Veryfront build produced", async () => {
+      // `veryfront build` deleted whatever already lived in dist/ without a
+      // word: a host project that keeps its own build output there lost it,
+      // and the CLI still printed a plain success. The output directory is
+      // only ours to empty once a Veryfront build has claimed it.
+      const tmpDir = await Deno.makeTempDir();
+      const outputDir = `${tmpDir}/foreign-output`;
+      const adapter = createDeletingAdapter();
+
+      try {
+        await Deno.mkdir(`${outputDir}/nested`, { recursive: true });
+        await Deno.writeTextFile(`${outputDir}/index.js`, "PRECIOUS-HOST-ARTIFACT");
+        await Deno.writeTextFile(`${outputDir}/IMPORTANT.txt`, "do not delete");
+        await Deno.writeTextFile(`${outputDir}/nested/deep.txt`, "keepme");
+
+        const error = await assertRejects(
+          () => setupBuildDirectories(adapter, outputDir, false),
+        );
+
+        const message = error instanceof Error ? error.message : String(error);
+        assertStringIncludes(message, outputDir);
+        assertStringIncludes(message, "outDir");
+
+        assertEquals(
+          await Deno.readTextFile(`${outputDir}/index.js`),
+          "PRECIOUS-HOST-ARTIFACT",
+          "a foreign output directory must survive the build",
+        );
+        assertEquals(
+          await Deno.readTextFile(`${outputDir}/nested/deep.txt`),
+          "keepme",
+          "a foreign output directory must survive the build, nested files included",
+        );
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("does not try to clear an output directory that does not exist", async () => {
+      // Removing a path that was never there failed every first build into
+      // `! Operation failed, using fallback err=NotFound ... remove '.../dist'`,
+      // one line above a green build.
+      const tmpDir = await Deno.makeTempDir();
+      const outputDir = `${tmpDir}/absent-output`;
+      const adapter = createDeletingAdapter();
+      const removed: string[] = [];
+      const fs = adapter.fs as unknown as {
+        remove: (path: string, opts?: { recursive?: boolean }) => Promise<void>;
+      };
+      const remove = fs.remove;
+      fs.remove = (path, opts) => {
+        removed.push(path);
+        return remove(path, opts);
+      };
+
+      try {
+        await setupBuildDirectories(adapter, outputDir, false);
+
+        assertEquals(removed, [], "nothing to clear when the directory is absent");
+        assertEquals((await Deno.stat(`${outputDir}/assets`)).isDirectory, true);
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("clears an empty pre-existing output directory", async () => {
+      // Nothing to lose, so nothing to refuse: an empty dist/ (or one the
+      // project's own tooling only mkdir'd) must not block a build.
+      const tmpDir = await Deno.makeTempDir();
+      const outputDir = `${tmpDir}/empty-output`;
+      const adapter = createDeletingAdapter();
+
+      try {
+        await Deno.mkdir(outputDir, { recursive: true });
+
+        await setupBuildDirectories(adapter, outputDir, false);
+
+        assertEquals((await Deno.stat(`${outputDir}/assets`)).isDirectory, true);
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
     it("still clears the output directory for a real build", async () => {
       // The dry-run guard must not disable the clean step that keeps stale
-      // artifacts from a previous build out of the new one.
+      // artifacts from a previous build out of the new one. `_veryfront/` is
+      // the marker every Veryfront build leaves behind, so this directory is
+      // a previous build's output and is ours to replace.
       const tmpDir = await Deno.makeTempDir();
       const outputDir = `${tmpDir}/real-build`;
       const adapter = createDeletingAdapter();
 
       try {
-        await Deno.mkdir(outputDir, { recursive: true });
+        await Deno.mkdir(`${outputDir}/_veryfront`, { recursive: true });
         await Deno.writeTextFile(`${outputDir}/stale.html`, "stale");
 
         await setupBuildDirectories(adapter, outputDir, false);
