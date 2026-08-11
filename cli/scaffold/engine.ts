@@ -1,7 +1,8 @@
 import { dirname, join } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
 import { ensureDir, fileExists } from "../utils/fs.ts";
-import { toCamelCaseId, toComponentName, toSlug } from "../utils/string.ts";
+import { toComponentName, toSlug } from "../utils/string.ts";
+import { filenameToId } from "veryfront/discovery";
 
 export type ScaffoldRouter = "app-router" | "pages-router";
 export const SCAFFOLD_TYPES = [
@@ -94,7 +95,10 @@ const SCAFFOLD_DEFINITIONS: Record<ScaffoldType, ScaffoldDefinition> = {
   },
   tool: {
     getPath: ({ projectDir, slug }) => join(projectDir, "tools", `${slug}.ts`),
-    getContent: ({ slug }) => generateToolTemplate(toCamelCaseId(slug)),
+    // Discovery derives a tool's id from its filename, and an explicit `id`
+    // overrides that. Declare the id discovery would have derived so the
+    // generated tool registers under the name the filename promises.
+    getContent: ({ slug }) => generateToolTemplate(filenameToId(`${slug}.ts`)),
   },
   agent: {
     getPath: ({ projectDir, slug }) => join(projectDir, "agents", `${slug}.ts`),
