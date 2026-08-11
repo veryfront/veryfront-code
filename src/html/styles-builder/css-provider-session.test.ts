@@ -239,7 +239,7 @@ describe("styles-builder CSS provider sessions", () => {
       __resetLogRecordEmitterForTests();
     }
 
-    const reports = records.filter((entry) => entry.message.includes("not minified"));
+    const reports = records.filter((entry) => entry.message.includes("unminified CSS"));
     assertEquals(reports.length, 1);
     const report = reports[0]?.message ?? "";
     assertEquals(reports[0]?.level, "warn");

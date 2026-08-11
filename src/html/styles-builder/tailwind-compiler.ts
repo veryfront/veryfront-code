@@ -165,8 +165,8 @@ export function acquireCSSGenerationSession(minify: boolean): CSSGenerationSessi
     const recommendation = getRecommendation(CSSOptimizationEngineName);
     logger.warn(
       recommendation === undefined
-        ? "CSS is not minified: no CSS optimizer is active"
-        : `CSS is not minified: no CSS optimizer is active. Install ${recommendation}, then add it to "extensions" in veryfront.config.ts`,
+        ? "Veryfront emits unminified CSS because no CSS optimizer is active"
+        : `Veryfront emits unminified CSS because no CSS optimizer is active. Install ${recommendation}, then add it to "extensions" in veryfront.config.ts`,
     );
   }
   const optimizationEngine = optimizationProvider === undefined
