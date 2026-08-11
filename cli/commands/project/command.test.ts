@@ -1,9 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ApiClient } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
-import { buildProjectDeleteUrl, deleteRemoteProject, parseProjectDeleteArgs } from "./command.ts";
+import {
+  buildProjectDeleteUrl,
+  deleteRemoteProject,
+  parseProjectDeleteArgs,
+  projectCommand,
+} from "./command.ts";
 
 function fakeClient(calls: string[]): ApiClient {
   return {
@@ -66,6 +71,19 @@ describe("cli/commands/project", () => {
       const calls: string[] = [];
       await assertRejects(() => deleteRemoteProject(fakeClient(calls), "  "));
       assertEquals(calls, []);
+    });
+  });
+
+  describe("projectCommand", () => {
+    it("fails a misspelled subcommand instead of exiting zero", async () => {
+      // A cleanup script that runs `veryfront project delet app` must not read
+      // printed usage plus exit code 0 as a completed teardown.
+      const error = await assertRejects(() =>
+        projectCommand({ _: ["project", "delet", "app"], force: true } as ParsedArgs)
+      );
+
+      assertStringIncludes(String(error), "Unknown project subcommand: delet");
+      assertEquals((error as { exitCode?: number }).exitCode, 2);
     });
   });
 });

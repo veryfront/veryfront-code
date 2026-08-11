@@ -7,10 +7,11 @@ type SafeParseResult<T> = { success: true; data: T } | {
 };
 
 import { withSpan } from "veryfront/observability/otlp-setup";
+import { INVALID_ARGUMENT } from "veryfront/errors";
 import { cliLogger, confirmPrompt } from "#cli/utils";
 import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
-import { printJson } from "../../shared/json-output.ts";
+import { createSuccessEnvelope, outputJson } from "../../shared/json-output.ts";
 import { getBooleanArg, getStringArg } from "../../shared/parsed-args.ts";
 
 const getProjectDeleteArgsSchema = defineSchema((v) =>
@@ -95,7 +96,11 @@ export async function projectCommand(args: ParsedArgs): Promise<void> {
           );
           if (!confirmed) {
             if (options.json) {
-              printJson({ success: false, project: projectSlug, cancelled: true });
+              await outputJson(createSuccessEnvelope("project", {
+                project: projectSlug,
+                deleted: false,
+                cancelled: true,
+              }));
               return;
             }
             cliLogger.info("Delete cancelled.");
@@ -107,7 +112,10 @@ export async function projectCommand(args: ParsedArgs): Promise<void> {
         await deleteRemoteProject(client, projectSlug);
 
         if (options.json) {
-          printJson({ success: true, project: projectSlug });
+          await outputJson(createSuccessEnvelope("project", {
+            project: projectSlug,
+            deleted: true,
+          }));
           return;
         }
 
@@ -118,7 +126,12 @@ export async function projectCommand(args: ParsedArgs): Promise<void> {
       }
 
       default:
-        showProjectUsage();
+        // A cleanup script must not read a typo as a successful teardown, so an
+        // unknown subcommand is a usage error rather than a printed usage block.
+        throw INVALID_ARGUMENT.create({
+          detail:
+            `Unknown project subcommand: ${subcommand}. Usage: veryfront project delete [slug]`,
+        });
     }
   });
 }
