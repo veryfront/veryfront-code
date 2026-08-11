@@ -42,6 +42,19 @@ function normalizeSlug(value: string | undefined): string | undefined {
   return normalized ? normalized : undefined;
 }
 
+/**
+ * Run one teardown callback, isolating a throw so it cannot strand the teardown
+ * steps that follow it. Callers must clear the handle before calling this.
+ */
+function release(callback: (() => void) | undefined, label: string): void {
+  if (!callback) return;
+  try {
+    callback();
+  } catch (error) {
+    devServerLog.debug(`${label} cleanup error (non-critical)`, error);
+  }
+}
+
 function deriveProjectSlug(projectDir: string): string {
   const dirName = basename(projectDir);
   const slug = dirName
@@ -500,17 +513,22 @@ export class DevServer {
   async stop(): Promise<void> {
     logger.debug("Shutting down dev server");
 
-    // Cleared after release so stop() is safe to call twice — a failed start()
-    // already tore itself down, and a caller holding the instance may still
-    // call stop(). Releasing the broadcast source twice is not harmless: it
-    // decrements a process-wide counter, which would suppress HMR broadcasts
-    // for an unrelated dev server in the same process.
-    this.reloadUnsubscribe?.();
+    // Every handle is cleared *before* anything is invoked, so stop() is safe to
+    // call twice even if a release throws — a failed start() already tore itself
+    // down, and a caller holding the instance may still call stop(). Releasing
+    // the broadcast source twice is not harmless: it decrements a process-wide
+    // counter, which would suppress HMR broadcasts for an unrelated dev server
+    // in the same process.
+    const reloadUnsubscribe = this.reloadUnsubscribe;
+    const invalidateUnsubscribe = this.invalidateUnsubscribe;
+    const releaseExternalBroadcastSource = this.releaseExternalBroadcastSource;
     this.reloadUnsubscribe = undefined;
-    this.invalidateUnsubscribe?.();
     this.invalidateUnsubscribe = undefined;
-    this.releaseExternalBroadcastSource?.();
     this.releaseExternalBroadcastSource = undefined;
+
+    release(reloadUnsubscribe, "ReloadNotifier reload subscription");
+    release(invalidateUnsubscribe, "ReloadNotifier invalidate subscription");
+    release(releaseExternalBroadcastSource, "HMR external broadcast source");
 
     if (this.fileWatchSetup) {
       const metrics = this.fileWatchSetup.getMetrics();
