@@ -22,6 +22,7 @@ import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __cacheDirInternals,
+  ensureCacheDirIgnored,
   ensureCacheNodeModules,
   getCacheBaseDir,
   getCacheDirFromContext,
@@ -259,6 +260,27 @@ describe("cache-dir", () => {
       const result = runWithCacheDir("/tmp/test", getHttpBundleCacheDir);
       assert(result.startsWith("/tmp/test"));
       assert(result.endsWith("veryfront-http-bundle"));
+    });
+  });
+
+  describe("ensureCacheDirIgnored", () => {
+    it("creates a self-ignoring .gitignore inside the cache root", async () => {
+      const cacheRoot = makeNodeCacheRoot();
+
+      await runWithCacheDir(cacheRoot, ensureCacheDirIgnored);
+
+      const contents = readFileSync(join(cacheRoot, ".gitignore"), "utf8");
+      assert(contents.split(/\r?\n/).includes("*"));
+    });
+
+    it("never overwrites a .gitignore the user already put there", async () => {
+      const cacheRoot = makeNodeCacheRoot();
+      const ignorePath = join(cacheRoot, ".gitignore");
+      writeFileSync(ignorePath, "!keep-me\n");
+
+      await runWithCacheDir(cacheRoot, ensureCacheDirIgnored);
+
+      assertEquals(readFileSync(ignorePath, "utf8"), "!keep-me\n");
     });
   });
 
