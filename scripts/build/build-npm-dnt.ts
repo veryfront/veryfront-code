@@ -285,6 +285,12 @@ await build({
 		await Deno.mkdir("./npm/bin", { recursive: true });
 		await Deno.copyFile("./scripts/build/bin-wrapper.js", "./npm/bin/veryfront.js");
 		await Deno.chmod("./npm/bin/veryfront.js", 0o755);
+		// The shim imports this before any framework module, so it has to sit
+		// beside it and stay loadable on Node releases below the supported floor.
+		await Deno.copyFile(
+			"./scripts/build/node-engine-precondition.js",
+			"./npm/bin/node-engine-precondition.js",
+		);
 
 		// Copy package documentation files (must exist at repo root)
 		await Deno.mkdir("./npm/assets", { recursive: true });
