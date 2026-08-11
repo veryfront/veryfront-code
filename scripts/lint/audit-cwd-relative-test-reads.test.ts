@@ -6,6 +6,7 @@ import {
   findCwdRelativeReads,
   parseBaseline,
   ParseFailure,
+  toRepoRelative,
 } from "./audit-cwd-relative-test-reads.ts";
 
 const scopesOf = (source: string) =>
@@ -65,6 +66,37 @@ class Fixtures {
 }
 `;
     assertEquals(scopesOf(source), ["module"]);
+  });
+
+  it("reports a read in a directly invoked function expression as module scope", () => {
+    // An IIFE is a function node, but it runs during module evaluation, so a
+    // throw inside it is still an uncaught module error. Treating it as a
+    // deferred callback would let the baseline tier absorb a shard-killer.
+    const source = `
+const workflow = (() => Deno.readTextFileSync("deno.json"))();
+`;
+    assertEquals(scopesOf(source), ["module"]);
+  });
+
+  it("reports a read in an async IIFE as module scope", () => {
+    const source = `
+await (async function () {
+  await Deno.readTextFile("deno.json");
+})();
+`;
+    assertEquals(scopesOf(source), ["module"]);
+  });
+
+  it("keeps a callback passed to a directly invoked function deferred", () => {
+    // The IIFE itself runs now; a function it merely receives does not.
+    const source = `
+(() => {
+  Deno.test("x", async () => {
+    await Deno.readTextFile("deno.json");
+  });
+})();
+`;
+    assertEquals(scopesOf(source), ["callback"]);
   });
 
   it("classifies a read in an inline single-line test callback as callback scope", () => {
@@ -237,6 +269,24 @@ describe("compareCallbackBaseline", () => {
     assertEquals(
       compareCallbackBaseline({}, { "a.test.ts": 2 }).improvements,
       ["a.test.ts: 2 -> 0"],
+    );
+  });
+});
+
+describe("toRepoRelative", () => {
+  it("strips the repo root", () => {
+    assertEquals(
+      toRepoRelative("/repo/src/a.test.ts", "/repo/"),
+      "src/a.test.ts",
+    );
+  });
+
+  it("reports posix separators so the baseline is portable", () => {
+    // The baseline is committed and compared by key, so a Windows checkout must
+    // produce the same keys a Linux one does.
+    assertEquals(
+      toRepoRelative("C:\\repo\\src\\a.test.ts", "C:\\repo\\"),
+      "src/a.test.ts",
     );
   });
 });

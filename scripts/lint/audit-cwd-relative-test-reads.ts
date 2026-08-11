@@ -57,6 +57,7 @@
  */
 
 import { parse } from "npm:@babel/parser@7.29.2";
+import { fromFileUrl } from "#std/path";
 
 /** Filesystem reads whose first argument resolves against the process cwd. */
 const READ_METHODS = new Set([
@@ -251,13 +252,16 @@ export class ParseFailure extends Error {}
 /**
  * Report every cwd-relative filesystem read in `source`, tagged with its scope.
  *
- * A read is `callback` scope when it sits inside any function body, because
- * that body runs after module evaluation; everything else — including top-level
- * object initializers, class static blocks, and `await`ed module statements —
- * is `module` scope. A function *declared* at module scope and *called* at
- * module scope is reported as `callback`, which under-reports rather than
- * over-reports; the callback tier is gated by baseline, so it cannot grow
- * silently either way.
+ * A read is `callback` scope when it sits inside a function body that runs
+ * later; everything that runs during module evaluation — top-level object
+ * initializers, class static blocks, `await`ed module statements, and the body
+ * of a directly invoked function expression — is `module` scope, whatever its
+ * nesting depth.
+ *
+ * The one case this under-reports is a function *declared* at module scope and
+ * *called* at module scope through a binding, which is reported as `callback`.
+ * That errs towards the baselined tier rather than the hard-failure one, and
+ * the baseline holds a per-file count, so it cannot grow silently either way.
  */
 export function findCwdRelativeReads(
   source: string,
@@ -282,7 +286,18 @@ export function findCwdRelativeReads(
   const bindings = collectCompatFsBindings(program);
   const reads: CwdRelativeRead[] = [];
 
-  const visit = (node: Node, inFunction: boolean): void => {
+  /**
+   * `invokedHere` marks a function node that is the callee of the call it sits
+   * in — an IIFE. Its body runs during the enclosing evaluation rather than
+   * later, so it must not open a callback boundary; otherwise a top-level
+   * `(async () => { read })()` would be filed under the baseline tier while
+   * still being able to throw an uncaught module error.
+   */
+  const visit = (
+    node: Node,
+    inFunction: boolean,
+    invokedHere = false,
+  ): void => {
     if (node.type === "CallExpression") {
       const call = readCallName(node, bindings);
       const path = call === undefined ? undefined : staticPathArgument(node);
@@ -297,14 +312,16 @@ export function findCwdRelativeReads(
       }
     }
 
-    const nested = inFunction || FUNCTION_TYPES.has(node.type);
+    const opensCallback = FUNCTION_TYPES.has(node.type) && !invokedHere;
+    const nested = inFunction || opensCallback;
     for (const key of Object.keys(node)) {
       if (key === "loc" || COMMENT_KEYS.has(key)) continue;
       const value = node[key];
+      const immediate = node.type === "CallExpression" && key === "callee";
       if (Array.isArray(value)) {
         for (const item of value) if (isNode(item)) visit(item, nested);
       } else if (isNode(value)) {
-        visit(value, nested);
+        visit(value, nested, immediate);
       }
     }
   };
@@ -376,6 +393,16 @@ export function parseBaseline(value: unknown, path: string): CallbackBaseline {
   return Object.fromEntries(entries) as CallbackBaseline;
 }
 
+/**
+ * Baseline key for a scanned file: repo-relative, always posix separators.
+ *
+ * The baseline is committed and compared by key, so a Windows checkout has to
+ * produce the same keys a Linux one does.
+ */
+export function toRepoRelative(file: string, repoRoot: string): string {
+  return file.slice(repoRoot.length).replaceAll("\\", "/");
+}
+
 const BASELINE_PATH = "scripts/lint/cwd-relative-test-reads-baseline.json";
 const SCAN_ROOTS = ["src", "cli", "tests", "scripts"] as const;
 
@@ -408,13 +435,16 @@ function printFindings(title: string, findings: readonly string[]): void {
 }
 
 async function main(): Promise<void> {
-  const repoRoot = new URL("../../", import.meta.url).pathname;
+  // `fromFileUrl`, not `URL.pathname`: pathname keeps the URL's leading slash
+  // and percent encoding, so a Windows checkout would scan `/C:/...` and find
+  // nothing.
+  const repoRoot = fromFileUrl(new URL("../../", import.meta.url));
   const reads: CwdRelativeRead[] = [];
   const parseFailures: string[] = [];
 
   for (const root of SCAN_ROOTS) {
     for (const file of await collectTestFiles(`${repoRoot}${root}`)) {
-      const relative = file.slice(repoRoot.length);
+      const relative = toRepoRelative(file, repoRoot);
       const source = await Deno.readTextFile(file);
       try {
         reads.push(...findCwdRelativeReads(source, relative));
