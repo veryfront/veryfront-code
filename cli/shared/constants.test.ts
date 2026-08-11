@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  API_KEYS_URL,
   CONFIG_DIR_NAME,
   DEFAULT_API_URL,
   DEFAULT_CALLBACK_PORT,
@@ -11,6 +12,7 @@ import {
   TOKEN_FILE_NAME,
   TOKEN_FILE_PERMISSIONS,
 } from "./constants.ts";
+import { readTextFile } from "#veryfront/platform/compat/fs.ts";
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 
 describe("cli/shared/constants", () => {
@@ -42,6 +44,35 @@ describe("cli/shared/constants", () => {
 
     it("should have TOKEN_FILE_NAME", () => {
       assertEquals(TOKEN_FILE_NAME, "token");
+    });
+  });
+
+  describe("API_KEYS_URL", () => {
+    // Regression: the token prompts printed veryfront.com/settings/api-keys,
+    // which 301-redirects to veryfront.com/account/api-keys.
+    it("points at the current dashboard API keys page", () => {
+      assertEquals(API_KEYS_URL, "veryfront.com/account/api-keys");
+    });
+
+    it("is the only API keys URL cited by the interactive token prompts", async () => {
+      const promptSources = ["../auth/login.ts", "../commands/demo/demo.ts"];
+
+      for (const source of promptSources) {
+        const contents = await readTextFile(
+          new URL(source, import.meta.url).pathname,
+        );
+
+        assertStringIncludes(
+          contents,
+          "You can get a token from ",
+          `${source} should still print the API token hint`,
+        );
+        assertEquals(
+          contents.includes("veryfront.com/settings/api-keys"),
+          false,
+          `${source} must not cite the redirecting veryfront.com/settings/api-keys path`,
+        );
+      }
     });
   });
 
