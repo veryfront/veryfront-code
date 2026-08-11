@@ -1,8 +1,15 @@
 import { assert, assertEquals, assertStringIncludes } from "#std/assert";
 
-const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
-const denoJson = JSON.parse(await Deno.readTextFile("deno.json"));
-const coverageCiScript = await Deno.readTextFile("scripts/test/coverage-ci.ts");
+const repoRoot = new URL("../../", import.meta.url);
+const workflow = await Deno.readTextFile(
+  new URL(".github/workflows/cicd.yml", repoRoot),
+);
+const denoJson = JSON.parse(
+  await Deno.readTextFile(new URL("deno.json", repoRoot)),
+);
+const coverageCiScript = await Deno.readTextFile(
+  new URL("scripts/test/coverage-ci.ts", repoRoot),
+);
 
 Deno.test("CI shards Deno unit coverage as portable lcov artifacts", () => {
   assertStringIncludes(workflow, "coverage-shards:");
