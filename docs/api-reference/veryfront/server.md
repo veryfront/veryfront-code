@@ -61,7 +61,7 @@ await server.fetch(new Request("https://example.com/health"));
 
 | Name             | Description           | Source                                                                                                       |
 | ---------------- | --------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `DevServer`      | Implement dev server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/dev-server/server.ts#L57)          |
+| `DevServer`      | Implement dev server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/dev-server/server.ts#L70)          |
 | `RouteDiscovery` |                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/dev-server/route-discovery.ts#L33) |
 
 ### Types
