@@ -479,6 +479,34 @@ describe("guide content contracts", () => {
     // existed and resolves to a JSR 404, so it must not be advertised.
     assertEquals(installation.includes("jsr:@veryfront/veryfront"), false);
   });
+
+  it("narrows the possibly-undefined getAgent() result in agents guide samples", async () => {
+    const guide = await Deno.readTextFile("docs/guides/agents.md");
+
+    // `getAgent()` returns `Agent | undefined`, and `veryfront init` writes a
+    // tsconfig with `"strict": true`, so any sample that touches the result
+    // without narrowing it fails typecheck (TS18048) when pasted verbatim.
+    const unnarrowed: string[] = [];
+    for (const fence of guide.matchAll(/```(?:ts|tsx)\n([\s\S]*?)```/g)) {
+      const code = fence[1];
+      if (code === undefined) continue;
+      for (const binding of code.matchAll(/const (\w+) = getAgent\(/g)) {
+        const name = binding[1];
+        if (name === undefined) continue;
+        const body = code.slice((binding.index ?? 0) + binding[0].length);
+        const firstUse = body.search(new RegExp(`\\b${name}\\s*[.?]`));
+        if (firstUse === -1) continue;
+        const guardAt = body.search(new RegExp(`if\\s*\\(\\s*!${name}\\b`));
+        if (guardAt === -1 || guardAt > firstUse) unnarrowed.push(name);
+      }
+    }
+
+    assertEquals(
+      unnarrowed,
+      [],
+      "agents guide samples must guard the getAgent() result before using it",
+    );
+  });
 });
 
 /**

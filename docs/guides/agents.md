@@ -345,12 +345,17 @@ its `id` matches the value passed to `createAgUiHandler()`.
 
 ## Non-streaming response
 
-For server-side generation (e.g., in `getServerData`), use `generate()`:
+For server-side generation (e.g., in `getServerData`), use `generate()`.
+`getAgent()` returns `Agent | undefined`, so narrow the result before calling
+it. Without the guard, the sample fails typecheck under the `"strict": true`
+tsconfig that `veryfront init` writes.
 
 ```ts
 import { getAgent } from "veryfront/agent";
 
 const agent = getAgent("assistant");
+if (!agent) throw new Error("Agent not found: assistant");
+
 const result = await agent.generate({
   input: "Summarize the latest news about AI.",
 });
@@ -451,6 +456,8 @@ Save the agent file, restart `veryfront dev`, and invoke it from server code:
 import { getAgent } from "veryfront/agent";
 
 const agent = getAgent("assistant");
+if (!agent) throw new Error("Agent not found: assistant");
+
 const result = await agent.generate({ input: "Hello" });
 console.log(result.text);
 ```
