@@ -96,6 +96,27 @@ export class DevServer {
   }
 
   async start(): Promise<void> {
+    try {
+      await this.startAndBind();
+    } catch (error) {
+      // File watchers and the ReloadNotifier subscriptions are registered
+      // before the port is bound, but callers only ever receive the instance
+      // *after* start() resolves — startDevServer() awaits start() and returns
+      // the server, so a rejection drops the half-built instance with no handle
+      // and nobody left to call stop(). Release here or those registrations
+      // outlive the process. stop() is null-safe at every step, so it tears
+      // down however far start() got, and stays the single teardown path.
+      //
+      // A cleanup failure must never mask the real reason start() failed —
+      // "port already in use" is what the developer needs to see.
+      await this.stop().catch((cleanupError: unknown) => {
+        devServerLog.debug("Cleanup after failed start errored (non-critical)", cleanupError);
+      });
+      throw error;
+    }
+  }
+
+  private async startAndBind(): Promise<void> {
     const baseAdapter = await runtime.get();
     logger.debug(`Using ${baseAdapter.name} runtime adapter`);
 
@@ -479,9 +500,17 @@ export class DevServer {
   async stop(): Promise<void> {
     logger.debug("Shutting down dev server");
 
+    // Cleared after release so stop() is safe to call twice — a failed start()
+    // already tore itself down, and a caller holding the instance may still
+    // call stop(). Releasing the broadcast source twice is not harmless: it
+    // decrements a process-wide counter, which would suppress HMR broadcasts
+    // for an unrelated dev server in the same process.
     this.reloadUnsubscribe?.();
+    this.reloadUnsubscribe = undefined;
     this.invalidateUnsubscribe?.();
+    this.invalidateUnsubscribe = undefined;
     this.releaseExternalBroadcastSource?.();
+    this.releaseExternalBroadcastSource = undefined;
 
     if (this.fileWatchSetup) {
       const metrics = this.fileWatchSetup.getMetrics();
