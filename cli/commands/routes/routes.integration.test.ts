@@ -142,8 +142,11 @@ describe("CLI routes command", () => {
 
       const glyphLine = /^ {2}\S /;
 
-      const pagesHeading = lines.find((line) => line.includes("Pages:"));
-      const apiHeading = lines.find((line) => line.includes("API:"));
+      const pagesIndex = lines.findIndex((line) => line.includes("Pages:"));
+      const apiIndex = lines.findIndex((line) => line.includes("API:"));
+
+      const pagesHeading = lines[pagesIndex];
+      const apiHeading = lines[apiIndex];
 
       assert(pagesHeading !== undefined, "expected a Pages: heading");
       assert(apiHeading !== undefined, "expected an API: heading");
@@ -154,6 +157,15 @@ describe("CLI routes command", () => {
       assert(
         glyphLine.test(apiHeading),
         `API heading is not indented/prefixed: ${JSON.stringify(apiHeading)}`,
+      );
+
+      // The blank separator is the other half of the fix: without it the two
+      // sections run together. Assert it explicitly so removing the
+      // `console.log("")` fails here rather than passing silently.
+      assert(apiIndex > pagesIndex, "expected the API section to follow the Pages section");
+      assert(
+        lines[apiIndex - 1] === "",
+        `expected a blank line before the API heading, got ${JSON.stringify(lines[apiIndex - 1])}`,
       );
 
       for (const line of lines) {
