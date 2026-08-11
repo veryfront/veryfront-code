@@ -3,7 +3,7 @@
  */
 
 import { compileAllMDX, watchMDX } from "veryfront/build";
-import { CONFIG_NOT_FOUND, INITIALIZATION_ERROR } from "veryfront/errors";
+import { CONFIG_NOT_FOUND, PORT_IN_USE } from "veryfront/errors";
 import { join } from "veryfront/platform/path";
 import { runtime } from "veryfront/platform";
 import { getConfig } from "veryfront/config";
@@ -24,6 +24,7 @@ import { pullCommand } from "../pull/index.ts";
 import { createStagedPushOptions, pushCommand, type PushOptions } from "../push/index.ts";
 import { createProjectSelector } from "./project-selector.ts";
 import { createDevLogController } from "./log-controller.ts";
+import { findAvailablePort, isPortInUseError } from "./port-fallback.ts";
 
 export interface DevOptions {
   port: number;
@@ -39,6 +40,13 @@ export type DevCommandOptions = DevOptions;
 export interface DevCommandResult {
   ready: Promise<void>;
   done: Promise<void>;
+  /**
+   * The port the server actually bound, which is not always the requested one:
+   * a taken port falls forward. Embedded callers must use this rather than the
+   * port they asked for, or they will point the user at the process that caused
+   * the collision.
+   */
+  port: number;
   /** Stop the dev server programmatically (for demo mode) */
   stop: () => Promise<void>;
 }
@@ -66,6 +74,45 @@ export function createSelectedProjectPushOptions(
   project: RemoteProject,
 ): PushOptions {
   return createStagedPushOptions(project.slug, projectDir);
+}
+
+/**
+ * Starts the dev server on the first free port at or after `requestedPort`.
+ *
+ * Port 3000 is the most contended port on a developer machine, and the docs
+ * tell readers to run a bare `veryfront dev`, so a taken port scans forward
+ * rather than killing the command. Everything downstream - the MCP port, the
+ * printed URL, the browser the demo opens - must key off the returned `port`
+ * rather than the requested one, or a fall-forward points the user at the
+ * process that caused the collision.
+ *
+ * Takes `start` as a callback so the whole scan costs one `DevServer.start()`:
+ * probing is a bare bind/release, and a failed `start()` has already registered
+ * watchers and reload subscriptions that only `stop()` releases.
+ */
+export async function startDevServerOnFreePort<T>(
+  requestedPort: number,
+  start: (port: number) => Promise<T>,
+): Promise<{ server: T; port: number }> {
+  const port = await findAvailablePort(requestedPort);
+  if (port !== requestedPort) {
+    console.log();
+    console.log(`  ${warning("!")} Port ${requestedPort} is in use, using ${port} instead`);
+  }
+
+  try {
+    return { server: await start(port), port };
+  } catch (error) {
+    // Lost the race between probing the port and binding it.
+    if (isPortInUseError(error)) {
+      throw PORT_IN_USE.create({
+        detail: `Port ${port} is already in use`,
+        cause: error,
+        context: { port },
+      });
+    }
+    throw error;
+  }
 }
 
 export function devCommand(options: DevOptions): Promise<DevCommandResult> {
@@ -141,29 +188,19 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       let projects: RemoteProject[] = [];
       let selectedProject: RemoteProject | null = null;
 
-      try {
-        devServer = await startDevServer({
-          port: finalPort,
+      const started = await startDevServerOnFreePort(finalPort, (port) =>
+        startDevServer({
+          port,
           projectDir,
           enableHMR,
           enableFastRefresh: true,
           signal: shutdownController.signal,
-        });
-      } catch (error) {
-        if (error instanceof Error) {
-          const msg = error.message.toLowerCase();
-          if (msg.includes("eaddrinuse") || msg.includes("address already in use")) {
-            throw INITIALIZATION_ERROR.create({
-              detail: `Port ${finalPort} is already in use`,
-              context: { port: finalPort },
-            });
-          }
-        }
-        throw error;
-      }
+        }));
+      devServer = started.server;
+      const boundPort = started.port;
 
       const DEV_MCP_PORT_OFFSET = 2;
-      const mcpPort = finalPort + DEV_MCP_PORT_OFFSET;
+      const mcpPort = boundPort + DEV_MCP_PORT_OFFSET;
       try {
         mcpServer = await createMCPServer({ httpPort: mcpPort });
       } catch {
@@ -240,11 +277,12 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         return {
           ready: devServer.ready,
           done,
+          port: boundPort,
           stop: shutdown,
         };
       }
 
-      const serverUrl = `http://veryfront.me:${finalPort}`;
+      const serverUrl = `http://veryfront.me:${boundPort}`;
       const elapsed = Date.now() - startTime;
 
       console.log();
@@ -338,6 +376,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       return {
         ready: devServer.ready,
         done,
+        port: boundPort,
         stop: shutdown,
       };
     },

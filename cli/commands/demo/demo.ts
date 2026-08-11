@@ -17,7 +17,6 @@ import {
   HIDE_CURSOR,
   muted,
   SHOW_CURSOR,
-  success,
   successBanner,
   typeCommand,
   typeLine,
@@ -47,6 +46,7 @@ import { resolveOrCreateProject } from "#cli/shared/project-resolution";
 import { getProjectTarget } from "../../shared/deployment-provenance.ts";
 import { reserveProjectSlug } from "#cli/shared/reserve-slug";
 import { DEMO_STEPS, type DemoStep } from "./steps.ts";
+import { runDemoDevStep } from "./dev-step.ts";
 
 // ANSI escape codes
 const ESC = "\x1b";
@@ -420,34 +420,18 @@ async function executeStepAction(
       console.log(`  ${dim("Starting dev server...")}`);
 
       try {
-        const result = await devCommand({
-          port: 3000,
-          projectDir,
-          hmr: true,
-          demoMode: true,
+        await runDemoDevStep({
+          start: () =>
+            devCommand({
+              port: 3000,
+              projectDir,
+              hmr: true,
+              demoMode: true,
+            }),
+          open: (url) => openBrowser(url),
+          waitForStop: () => waitForEnter(),
+          log: (line) => console.log(line),
         });
-
-        await result.ready;
-
-        console.log(`  ${success("●")} ${brand("http://localhost:3000/")}`);
-        console.log();
-
-        console.log(`  ${dim("Opening browser...")}`);
-        try {
-          await openBrowser("http://localhost:3000");
-        } catch {
-          // Ignore if browser can't be opened
-        }
-
-        console.log();
-        console.log(`  ${dim("Press Enter to stop the dev server and continue...")}`);
-
-        await waitForEnter();
-
-        console.log();
-        console.log(`  ${dim("Stopping dev server...")}`);
-        await result.stop();
-        await result.done;
       } catch (e) {
         console.log(`  ${error("✗")} ${e instanceof Error ? e.message : String(e)}`);
       }
