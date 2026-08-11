@@ -200,7 +200,6 @@ export {
   Suggestions,
   TabSwitcher,
   ToolCall,
-  type ToolCallRenderer,
   ToolStatusBadge,
   useReasoning,
   useToolCall,

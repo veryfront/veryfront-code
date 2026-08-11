@@ -6,7 +6,6 @@ import type { Source } from "./components/sources.tsx";
 import type { AttachmentInfo } from "./components/attachment-pill.tsx";
 import type { FeedbackValue } from "./components/message-feedback.tsx";
 import type { Conversation } from "./persistence/conversation-store.ts";
-import type { ToolCallRenderer } from "./components/tool-ui.tsx";
 
 // ---------------------------------------------------------------------------
 // ChatProps — Preset interface
@@ -75,8 +74,6 @@ export interface ChatProps {
   theme?: Partial<ChatTheme>;
   /** Custom renderer for a message; falls back to the default message rendering. */
   renderMessage?: (message: ChatMessage) => React.ReactNode;
-  /** Custom renderer for individual tool calls. Return `undefined` to use the default. */
-  renderTool?: ToolCallRenderer;
   /**
    * Prompt suggestions for an empty thread. Also fillable via
    * `agent.suggestions`. Strings become `{ label, prompt }`; pass

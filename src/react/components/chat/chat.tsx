@@ -222,7 +222,6 @@ export {
   ToolCall,
   type ToolCallContextValue,
   type ToolCallProps,
-  type ToolCallRenderer,
   type ToolCallTriggerProps,
   ToolStatusBadge,
   type UploadedFile,

@@ -42,6 +42,8 @@
  * @module react/components/chat
  */
 
+// Re-exports — sub-components
+
 export { FadeIn, Loader, Shimmer } from "./components/animations.tsx";
 export {
   Reasoning,
@@ -82,7 +84,6 @@ export {
   ToolCall,
   type ToolCallContextValue,
   type ToolCallProps,
-  type ToolCallRenderer,
   type ToolCallTriggerProps,
   ToolStatusBadge,
   useToolCall,

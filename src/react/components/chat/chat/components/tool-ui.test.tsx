@@ -23,20 +23,17 @@ const skillTool: ChatDynamicToolPart = {
   output: { loaded: true },
 };
 
+const invokeAgentTool: ChatDynamicToolPart = {
+  type: "dynamic-tool",
+  toolCallId: "tool-invoke-agent",
+  toolName: "invoke_agent",
+  state: "input-available",
+  input: { agent_id: "case-ingest", description: "Fetch and redact cases" },
+};
+
 describe("ToolCall", () => {
   it("renders invoke_agent as a child-agent card by default", () => {
-    const tool: ChatDynamicToolPart = {
-      type: "dynamic-tool",
-      toolCallId: "tool-invoke-agent",
-      toolName: "invoke_agent",
-      state: "input-available",
-      input: {
-        agent_id: "case-ingest",
-        description: "Fetch and redact cases",
-      },
-    };
-
-    const html = renderToString(<ToolCall tool={tool} />);
+    const html = renderToString(<ToolCall tool={invokeAgentTool} />);
 
     assertStringIncludes(html, "Case Ingest");
     assertStringIncludes(html, "Running");
@@ -145,6 +142,17 @@ describe("ToolCall", () => {
 // the card, inject a slot, and restyle a part. If these fail, `ToolCall` is not
 // composable — these tests ARE the definition.
 describe("ToolCall — composability contract", () => {
+  it("replaces invoke_agent anatomy with custom children", () => {
+    const html = renderToString(
+      <ToolCall tool={invokeAgentTool}>
+        <span>CUSTOM_AGENT_CARD</span>
+      </ToolCall>,
+    );
+
+    assertStringIncludes(html, "CUSTOM_AGENT_CARD");
+    assertEquals(html.includes("Case Ingest"), false);
+  });
+
   it("replaces compact anatomy with context-aware children", () => {
     function CustomSkill() {
       const { tool } = useToolCall();

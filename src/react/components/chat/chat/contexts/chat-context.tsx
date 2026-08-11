@@ -15,7 +15,6 @@ import type { AttachmentInfo } from "../components/attachment-pill.tsx";
 import type { FeedbackValue } from "../components/message-feedback.tsx";
 import type { Source } from "../components/sources.tsx";
 import type { BranchInfo } from "#veryfront/agent/react";
-import type { ToolCallRenderer } from "../components/tool-ui.tsx";
 
 /** Public API contract for chat context value. */
 export interface ChatContextValue {
@@ -68,9 +67,6 @@ export interface ChatContextValue {
 
   // Sources
   onSourceClick?: (source: Source, index: number) => void;
-
-  // Tool calls
-  renderTool?: ToolCallRenderer;
 
   // UI State
   isEmpty: boolean;

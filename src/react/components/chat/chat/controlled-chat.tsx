@@ -14,7 +14,10 @@ import { ConversationScrollButton } from "./components/empty-state.tsx";
 import { InferenceBadge } from "./components/inference-badge.tsx";
 import type { ChatProps } from "./chat-props.ts";
 
-// Chat preset with sensible defaults; use the building blocks for custom layouts.
+// Chat — Preset component
+// Composes ChatRoot, ChatMessageList, ChatInput, ChatEmpty, etc. into a
+// full-featured chat UI with sensible defaults. For custom layouts, use the
+// building blocks directly.
 
 interface ControlledChatProps extends Omit<ChatProps, "chat"> {
   chat: UseChatResult;
@@ -31,7 +34,6 @@ export function ControlledChat(
     className,
     theme: userTheme,
     renderMessage,
-    renderTool,
     suggestions: suggestionsProp,
     onSuggestionClick,
     onSuggestionSelect,
@@ -165,7 +167,6 @@ export function ControlledChat(
       switchBranch={switchBranch}
       onFeedback={onFeedback}
       onSourceClick={onSourceClick}
-      renderTool={renderTool}
       theme={userTheme}
       maxHeight={maxHeight}
       className={className}
