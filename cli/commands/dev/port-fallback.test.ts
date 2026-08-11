@@ -127,6 +127,30 @@ describe("cli/commands/dev/port-fallback", () => {
     });
   });
 
+  describe("npm build safety", () => {
+    it("never reaches the runtime through the binding dnt rewrites", async () => {
+      // dnt rewrites every bare `Deno.<member>` access in the npm build to
+      // `dntShim.Deno.<member>`, i.e. `@deno/shim-deno`. That shim implements
+      // its TCP listen as `net.createServer()` followed by an immediate read of
+      // `server._handle.fd`, and Deno's own `node:net` compat leaves `_handle`
+      // null at that point. So under a Deno-installed CLI the probe threw
+      // `TypeError: Cannot read properties of null (reading 'fd')` and
+      // `veryfront dev` died before the dev server could bind - while the very
+      // same package ran fine under Node, where the shim is not used.
+      //
+      // The runtime has to be reached through `getDenoRuntime()`, whose
+      // `Reflect.get(globalThis, "Deno")` dnt leaves alone.
+      const source = await Deno.readTextFile(new URL("./port-fallback.ts", import.meta.url));
+      const rewrittenByDnt = source.match(/(?<![.\w$])Deno\.\w+/g) ?? [];
+
+      assertEquals(
+        rewrittenByDnt,
+        [],
+        `dnt would rewrite ${rewrittenByDnt.join(", ")} to the broken @deno/shim-deno namespace`,
+      );
+    });
+  });
+
   describe("isPortInUseError", () => {
     it("recognises the address-in-use error the runtime actually throws", () => {
       const held = Deno.listen({ hostname: "127.0.0.1", port: 0 });

@@ -14,7 +14,7 @@
 
 import { LOCALHOST } from "veryfront/config";
 import { PORT_IN_USE } from "veryfront/errors";
-import { isDeno } from "veryfront/platform";
+import { getDenoRuntime, isDeno } from "veryfront/platform";
 
 /** How many consecutive ports to try before giving up. */
 export const MAX_PORT_FALLBACK_ATTEMPTS = 10;
@@ -33,12 +33,22 @@ export function isPortInUseError(error: unknown): boolean {
     message.includes("eaddrinuse") || message.includes("address already in use");
 }
 
-/** Binds `port` and releases it again, to see whether the dev server could have it. */
+/**
+ * Binds `port` and releases it again, to see whether the dev server could have it.
+ *
+ * The Deno namespace comes from `getDenoRuntime()` rather than the bare global:
+ * in the npm build dnt rewrites every bare `Deno` member access to
+ * `@deno/shim-deno`, whose TCP listen reads `server._handle.fd` straight after
+ * `net.createServer().listen()`. Deno's own `node:net` compat has not populated
+ * `_handle` by then, so a Deno-installed CLI crashed here with
+ * `Cannot read properties of null (reading 'fd')` before the dev server could
+ * bind. `getDenoRuntime()` reads the global reflectively, which dnt leaves alone.
+ */
 export async function isPortAvailable(port: number): Promise<boolean> {
-  if (isDeno) {
+  const denoRuntime = isDeno ? getDenoRuntime() : undefined;
+  if (denoRuntime) {
     try {
-      // @ts-ignore - Deno global
-      Deno.listen({ hostname: LOCALHOST.IPV4, port }).close();
+      denoRuntime.listen({ hostname: LOCALHOST.IPV4, port }).close();
       return true;
     } catch (error) {
       if (isPortInUseError(error)) return false;
