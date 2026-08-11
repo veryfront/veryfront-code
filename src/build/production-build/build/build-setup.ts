@@ -11,16 +11,21 @@ export async function setupBuildDirectories(
 ): Promise<void> {
   logger.debug("Setting up build directories...");
 
+  // A dry run touches nothing at all. Clearing the output directory first
+  // deleted the project's previous build output — and anything else the
+  // project kept in dist/ — while the CLI was printing "no files will be
+  // written", leaving the developer with neither the old artifact nor a new
+  // one.
+  if (dryRun) {
+    logger.debug("Build directories ready");
+    return;
+  }
+
   await handleErrorWithFallback(
     () => adapter.fs.remove(outputDir, { recursive: true }),
     undefined,
     logger,
   );
-
-  if (dryRun) {
-    logger.debug("Build directories ready");
-    return;
-  }
 
   const fs = createFileSystem();
   const dirs = [
