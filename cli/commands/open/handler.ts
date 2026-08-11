@@ -23,11 +23,24 @@ export const PROJECT_NOT_FOUND_ERROR: ErrorEnvelope["error"] = {
 };
 
 /**
+ * Environment references that name a project by slug. `VERYFRONT_PROJECT_ID`
+ * and `TENANT_PROJECT_ID` name it by ID instead, and `buildUrl` produces
+ * `https://veryfront.com/projects/<slug>` — `push` resolves an ID through the
+ * API before printing that URL, which `open` cannot do without a token. So an
+ * ID-only reference is skipped rather than pasted in as a slug, and resolution
+ * keeps walking to the local link `push`/`deploy` wrote for that same project.
+ */
+const SLUG_ENVIRONMENT_REFERENCE_NAMES: ReadonlySet<string> = new Set([
+  "VERYFRONT_PROJECT_SLUG",
+  "TENANT_PROJECT_SLUG",
+]);
+
+/**
  * The project `open` targets, in the precedence the deploy docs publish:
  * `--project`, then `VERYFRONT_PROJECT_SLUG` or environment configuration,
  * then `veryfront.config.ts`, then legacy `veryfront.json`, then lower-level
- * tenant or project-ID environment references, then the local project link
- * `push` and `deploy` write into the directory.
+ * tenant slug environment references, then the local project link `push` and
+ * `deploy` write into the directory.
  */
 export async function resolveOpenProjectSlug(
   projectDir: string,
@@ -40,8 +53,11 @@ export async function resolveOpenProjectSlug(
 
   const env = getEnvironmentConfig();
   const fileConfig = await readConfigFile(projectDir);
+  const environmentReference = resolveEnvironmentProjectReference();
   const referenced = env.projectSlug ?? fileConfig?.projectSlug ??
-    resolveEnvironmentProjectReference()?.reference;
+    (environmentReference && SLUG_ENVIRONMENT_REFERENCE_NAMES.has(environmentReference.name)
+      ? environmentReference.reference
+      : undefined);
   if (referenced) return referenced;
 
   const { resolveCliApiUrl } = await import("../../shared/constants.ts");

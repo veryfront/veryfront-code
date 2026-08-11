@@ -83,10 +83,19 @@ For a non-Cloud target, run `veryfront build` and ship the `dist/` output. See
 ## Verify it worked
 
 Deploy prints the environment URL. Request that URL and confirm the deployed
-page and API routes respond:
+page responds:
 
 ```bash
 curl -sSf <environment-url>
+```
+
+Then request an API route the project serves. For the agent route from
+[Create API](./create-api.md):
+
+```bash
+curl -sSf -N -X POST <environment-url>/api/ag-ui \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"What is Veryfront in one sentence?"}]}]}'
 ```
 
 `veryfront open` opens the project in the Cloud dashboard, where the deployment

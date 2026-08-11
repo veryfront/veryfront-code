@@ -92,7 +92,9 @@ automation needs the deployed URL later. Use `npx veryfront@latest open` after
 deployment to open the project in the Cloud dashboard, and
 `npx veryfront@latest open --json` to print that dashboard URL. `open` resolves
 the same project reference Push and Deploy use, including the local
-`.veryfront/project.json` link.
+`.veryfront/project.json` link. Dashboard URLs are built from the project slug,
+so `open` skips an ID-only `VERYFRONT_PROJECT_ID` or `TENANT_PROJECT_ID`
+reference and uses the link instead.
 
 Project reference precedence is `VERYFRONT_PROJECT_SLUG` or environment
 configuration, then `veryfront.config.ts`, then legacy `veryfront.json`, then

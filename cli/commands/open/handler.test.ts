@@ -202,6 +202,32 @@ describe("Open Command", () => {
       });
     });
 
+    it("skips an ID-only reference rather than opening /projects/<id>", async () => {
+      // `buildUrl` pastes what it is given into the dashboard path, and the
+      // dashboard wants the canonical slug — `push` calls the API to turn a
+      // project ID into one. `open` has no token, so the ID must not be used.
+      await withSavedEnv(async () => {
+        Deno.env.set("VERYFRONT_PROJECT_ID", "project-123");
+        await withTempProject(async (projectDir) => {
+          await writeProjectLink(projectDir, "linked-project");
+
+          assertEquals(
+            await resolveOpenProjectSlug(projectDir),
+            "linked-project",
+          );
+        });
+      });
+    });
+
+    it("reports no project when only a project ID is set", async () => {
+      await withSavedEnv(async () => {
+        Deno.env.set("TENANT_PROJECT_ID", "project-123");
+        await withTempProject(async (projectDir) => {
+          assertEquals(await resolveOpenProjectSlug(projectDir), undefined);
+        });
+      });
+    });
+
     it("rejects a local link that targets a different control plane", async () => {
       await withSavedEnv(async () => {
         await withTempProject(async (projectDir) => {
