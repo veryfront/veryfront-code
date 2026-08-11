@@ -163,6 +163,41 @@ describe("cli/commands/dev/port-fallback", () => {
     });
   });
 
+  describe("npm build safety", () => {
+    it("never reaches the runtime through the binding dnt rewrites", async () => {
+      // dnt rewrites every bare `Deno.<member>` access in the npm build to
+      // `dntShim.Deno.<member>`, i.e. `@deno/shim-deno`. That shim implements
+      // its TCP listen as `net.createServer()` followed by an immediate read of
+      // `server._handle.fd`, and Deno's own `node:net` compat leaves `_handle`
+      // null at that point. So under a Deno-installed CLI the probe threw
+      // `TypeError: Cannot read properties of null (reading 'fd')` and
+      // `veryfront dev` died before the dev server could bind - while the very
+      // same package ran fine under Node, where the shim is not used.
+      //
+      // The test above proves the probe survives a poisoned ambient namespace.
+      // This one guards the whole file, including paths that test never runs:
+      // any bare `Deno.` member access reintroduced anywhere here is a rewrite
+      // target. Reach the runtime through `getDenoRuntime()` instead, whose
+      // `Reflect.get(globalThis, "Deno")` dnt leaves alone.
+      const source = await Deno.readTextFile(new URL("./port-fallback.ts", import.meta.url));
+      // dnt rewrites code, not prose, and the fix's own doc comment has to be
+      // free to name `Deno.listen` as the thing it stopped calling. Strip
+      // comments first - `(?<![:\\])` keeps the `//` of a `https://` inside one
+      // from ending it early. String literals are left in, so a `"Deno.foo"`
+      // would be a false positive: it fails towards rewording, never silence.
+      const code = source
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/(?<![:\\])\/\/.*$/gm, "");
+      const rewrittenByDnt = code.match(/(?<![.\w$])Deno\.\w+/g) ?? [];
+
+      assertEquals(
+        rewrittenByDnt,
+        [],
+        `dnt would rewrite ${rewrittenByDnt.join(", ")} to the broken @deno/shim-deno namespace`,
+      );
+    });
+  });
+
   describe("isPortInUseError", () => {
     it("recognises the address-in-use error the runtime actually throws", () => {
       const held = Deno.listen({ hostname: "127.0.0.1", port: 0 });
