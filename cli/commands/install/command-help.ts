@@ -53,6 +53,7 @@ export const uninstallHelp: CommandHelp = {
   ],
   examples: [
     "veryfront uninstall                            # Interactive multi-select",
+    "veryfront uninstall agents                     # Same as --target agents",
     "veryfront uninstall --target cursor",
     "veryfront uninstall --target all",
     "veryfront uninstall --global",

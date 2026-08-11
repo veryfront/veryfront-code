@@ -192,6 +192,14 @@ describe("install command integration", () => {
       await assertFileExists(join(tempDir, ".cursorrules"));
       await assertFileNotExists(join(tempDir, "AGENTS.md"));
     });
+
+    it("fails instead of installing something else for an unknown target", async () => {
+      const { code } = await runInstallArgs(["unknown-tool", "--force", "--no-input"]);
+      assertEquals(code, 1);
+
+      await assertFileNotExists(join(tempDir, "SKILL.md"));
+      await assertFileNotExists(join(tempDir, "AGENTS.md"));
+    });
   });
 
   describe("all targets", () => {
