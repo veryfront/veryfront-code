@@ -12,6 +12,7 @@ import { tool, toolRegistry } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { getEffectiveAgentSystem } from "./runtime/effective-agent-system.ts";
+import { getAvailableTools } from "./runtime/tool-helpers.ts";
 import { agentRegistry } from "./composition/index.ts";
 import { agent } from "./factory.ts";
 import type { AgentConfig, AgentResponse } from "./types.ts";
@@ -373,6 +374,22 @@ description: Excluded skill
     assertEquals(typeof assistant.config.tools["agent_ingestion-agent"], "object");
     assertEquals(assistant.config.delegates, ["ingestion-agent"]);
     assertEquals(toolRegistry.has("agent_ingestion-agent"), false);
+  });
+
+  it("materializes explicitly requested invoke_agent for direct runtimes", async () => {
+    const assistant = agent({
+      id: "generic-orchestrator",
+      system: "Invoke registered specialist agents.",
+      skills: [],
+      tools: { invoke_agent: true },
+    });
+
+    const definitions = await getAvailableTools(assistant.config.tools, {
+      callerAgentId: assistant.id,
+      includeIntegrationTools: false,
+    });
+
+    assertEquals(definitions.map((definition) => definition.name), ["invoke_agent"]);
   });
 
   it("rejects delegates combined with the implicit all-tools selector", () => {

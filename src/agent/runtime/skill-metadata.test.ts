@@ -971,7 +971,7 @@ Research carefully.`,
   assertEquals(response.references, ["references/guide.md"]);
 });
 
-Deno.test("buildRuntimeLoadedSkillResponse omits override forwarding without legacy invoke_agent", () => {
+Deno.test("buildRuntimeLoadedSkillResponse omits override forwarding without invoke_agent", () => {
   const response = buildRuntimeLoadedSkillResponse({
     skillId: "research",
     instructions: `---

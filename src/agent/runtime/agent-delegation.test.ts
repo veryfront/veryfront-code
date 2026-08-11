@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import {
   AGENT_DELEGATE_TOOL_PREFIX,
   buildAgentDelegateTools,
+  createInvokeAgentTool,
   isProviderSafeDelegateId,
 } from "./agent-delegation.ts";
 import type { Agent } from "../types.ts";
@@ -116,6 +117,78 @@ Deno.test("delegate tool reports an error when the target agent is unavailable",
     toolCalls: 0,
     status: "error",
   });
+});
+
+Deno.test("invoke_agent resolves and runs a registered project agent", async () => {
+  let streamedInput: string | undefined;
+  const writer = {
+    id: "writer",
+    config: {},
+    stream: (input: { input?: string; onFinish?: (response: unknown) => void }) => {
+      streamedInput = input.input;
+      input.onFinish?.({ text: "drafted copy", toolCalls: [], status: "completed" });
+      return Promise.resolve({ toDataStreamResponse: () => new Response("") });
+    },
+  } as unknown as Agent;
+  const invokeAgent = createInvokeAgentTool({
+    selfId: "orchestrator",
+    resolveAgent: (id) => id === "writer" ? writer : undefined,
+  });
+
+  const result = await invokeAgent.execute({
+    agent_id: "writer",
+    description: "Draft support reply",
+    prompt: "Draft a concise reply.",
+    context: { case_id: "500-test" },
+  });
+
+  assertEquals(
+    streamedInput,
+    'Draft a concise reply.\n\n<structured_context>\n{"case_id":"500-test"}\n</structured_context>',
+  );
+  assertEquals(result, { text: "drafted copy", toolCalls: 0, status: "completed" });
+});
+
+Deno.test("invoke_agent rejects self-invocation", async () => {
+  const invokeAgent = createInvokeAgentTool({
+    selfId: "orchestrator",
+    resolveAgent: () => ({ id: "orchestrator" } as unknown as Agent),
+  });
+
+  const result = await invokeAgent.execute({
+    agent_id: "orchestrator",
+    description: "Loop forever",
+    prompt: "Invoke yourself.",
+    context: {},
+  });
+
+  assertEquals(result, {
+    text: 'Agent "orchestrator" cannot invoke itself.',
+    toolCalls: 0,
+    status: "error",
+  });
+});
+
+Deno.test("invoke_agent accepts omitted optional context", async () => {
+  let streamedInput: string | undefined;
+  const writer = {
+    id: "writer",
+    config: {},
+    stream: (input: { input?: string; onFinish?: (response: unknown) => void }) => {
+      streamedInput = input.input;
+      input.onFinish?.({ text: "done", toolCalls: [], status: "completed" });
+      return Promise.resolve({ toDataStreamResponse: () => new Response("") });
+    },
+  } as unknown as Agent;
+  const invokeAgent = createInvokeAgentTool({ resolveAgent: () => writer });
+
+  await invokeAgent.execute({
+    agent_id: "writer",
+    description: "Draft reply",
+    prompt: "Draft it.",
+  });
+
+  assertEquals(streamedInput, "Draft it.");
 });
 
 Deno.test("delegate agent execution inherits the exact project source restriction", async () => {

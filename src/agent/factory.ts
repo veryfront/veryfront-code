@@ -38,7 +38,11 @@ import {
 } from "#veryfront/security/input-validation/limits.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-schema-validator.ts";
-import { buildAgentDelegateTools } from "./runtime/agent-delegation.ts";
+import {
+  buildAgentDelegateTools,
+  createInvokeAgentTool,
+  INVOKE_AGENT_TOOL_ID,
+} from "./runtime/agent-delegation.ts";
 import { normalizeAgentDelegateIds } from "./runtime/agent-delegation-names.ts";
 import { buildAgentCallContext } from "./runtime/call-context.ts";
 import type { RuntimeSkillDefinition } from "./runtime/skill-metadata.ts";
@@ -309,6 +313,9 @@ function resolveToolsConfiguration(input: {
 
   if (config.tools !== true) {
     const configuredTools = { ...(config.tools ?? {}) };
+    if (configuredTools[INVOKE_AGENT_TOOL_ID] === true) {
+      configuredTools[INVOKE_AGENT_TOOL_ID] = createInvokeAgentTool({ selfId: id });
+    }
     for (const registration of SKILL_TOOL_REGISTRATIONS) {
       if (!exposeSkillTools) {
         delete configuredTools[registration.id];
