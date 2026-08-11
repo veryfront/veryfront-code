@@ -2,8 +2,8 @@
  * Alert — soft-fill status callout, forked dependency-light from Veryfront
  * Studio's `Alert`. Studio uses `--alert-{variant}-bg` + `--alert-{variant}-border`
  * tokens; we only ship the `-bg` tokens, so the 1px border is derived from the
- * fill via `color-mix` (no new tokens needed). The fill is a mode-invariant light
- * pastel, so text stays dark in both themes (`dark:text-[var(--background)]`).
+ * fill via `color-mix` (no new tokens needed). Each color mode provides its own
+ * fill token, so content can consistently use the theme foreground.
  *
  * @module react/components/ui/alert
  */
@@ -36,7 +36,7 @@ export function Alert({
       className={cn(
         // 14px: Inter renders larger than Studio's Söhne, so `vf-type-base`
         // (16px) reads too big here — step down to `text-sm`.
-        "flex items-center gap-3 rounded-md border px-4 py-2.5 text-sm text-[var(--foreground)] dark:text-[var(--background)]",
+        "flex items-center gap-3 rounded-md border px-4 py-2.5 text-sm text-[var(--foreground)]",
         alertVariants[variant],
         className,
       )}
@@ -56,7 +56,7 @@ export function AlertIcon({
   return (
     <div
       className={cn(
-        "shrink-0 text-[var(--foreground)] dark:text-[var(--background)]",
+        "shrink-0 text-[var(--foreground)]",
         className,
       )}
       {...props}
@@ -75,7 +75,7 @@ export function AlertContent({
   return (
     <p
       className={cn(
-        "flex-1 text-sm text-[var(--foreground)] dark:text-[var(--background)]",
+        "flex-1 text-sm text-[var(--foreground)]",
         className,
       )}
       {...props}
