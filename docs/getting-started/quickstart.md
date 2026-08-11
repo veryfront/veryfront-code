@@ -49,6 +49,7 @@ support-agent/
   public/
     favicon.svg
   globals.css
+  globals.d.ts
   package.json
   tsconfig.json
 ```

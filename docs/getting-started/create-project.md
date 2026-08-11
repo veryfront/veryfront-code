@@ -121,6 +121,7 @@ test-app/
   public/
     favicon.svg
   package.json
+  tsconfig.json
 ```
 
 The `ai-agent` template creates:
@@ -146,6 +147,7 @@ test-app/
   public/
     favicon.svg
   globals.css
+  globals.d.ts
   package.json
   tsconfig.json
 ```
