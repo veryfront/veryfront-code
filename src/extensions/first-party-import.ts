@@ -318,8 +318,10 @@ function reportedMissingSpecifier(message: string): string | undefined {
     const pattern of [
       /^Cannot find module\s+["']([^"']+)["']\nRequire stack:(?:\n- [^\r\n]+)+$/,
       /^(?:Cannot find package|Cannot find module|Module not found)\s+["']([^"']+)["'](?:(?:\s+imported from\s+.+)|\.)?$/,
-      // Deno, when the importer itself resolves out of the npm cache.
-      /^Could not find package\s+["']([^"']+)["']\s+from referrer\s+["'][^"']+["']\.?$/,
+      // Deno, when the importer itself resolves out of the npm cache. The
+      // trailing parenthetical names the owning package when the referrer
+      // lives in the global Deno npm cache (`deno add npm:veryfront`).
+      /^Could not find package\s+["']([^"']+)["']\s+from referrer\s+["'][^"']+["'](?:\s+\([^()]*\))?\.?$/,
       /^Import\s+["']([^"']+)["']\s+not a dependency(?: and not in import map)?(?:\s+from\s+.+)?$/,
       /^Unable to resolve\s+["']([^"']+)["'](?:\s+from\s+.+)?$/,
     ]
