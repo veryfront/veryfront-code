@@ -1,10 +1,8 @@
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ERROR_REGISTRY, getAllSlugs } from "../../src/errors/error-registry.ts";
-import {
-  buildErrorDocsUrl,
-  ERROR_DOCS_BASE_URL,
-} from "../../src/errors/diagnostic-policy.ts";
+import { buildErrorDocsUrl, ERROR_DOCS_BASE_URL } from "../../src/errors/diagnostic-policy.ts";
+import { escapeMdxText } from "../../scripts/docs/generate-error-reference.ts";
 
 /**
  * Every error slug the registry can emit is printed to users as a docs URL by
@@ -110,6 +108,23 @@ describe("error docs links", () => {
     assertEquals(stale, [], `documented slugs no longer in the registry: ${stale.join(", ")}`);
   });
 
+  it("escapes registry text that MDX would parse as markup", async () => {
+    // The published page renders as MDX. Registry text like "--port <number>"
+    // parses as an unclosed JSX tag and fails the docs build, so the whole
+    // page must carry no unescaped "<" or "{".
+    const docFile = localFileForDocsBaseUrl(ERROR_DOCS_BASE_URL);
+    const markdown = await Deno.readTextFile(docFile);
+    const unescaped: string[] = [];
+    markdown.split("\n").forEach((line, index) => {
+      if (/(^|[^\\])[<{]/.test(line)) unescaped.push(`${docFile}:${index + 1}: ${line.trim()}`);
+    });
+    assertEquals(
+      unescaped,
+      [],
+      `unescaped MDX markup characters would break the docs build:\n${unescaped.join("\n")}`,
+    );
+  });
+
   it("builds every shipped error docs link through the shared builder", async () => {
     // A hardcoded link bypasses buildErrorDocsUrl and so bypasses every check
     // above -- it can rot into a 404 on its own.
@@ -144,8 +159,10 @@ describe("error docs links", () => {
         title: string;
         suggestion?: string;
       }>)[slug];
-      if (!markdown.includes(entry.title)) missing.push(`${slug}: title`);
-      if (entry.suggestion && !markdown.includes(entry.suggestion)) {
+      // Registry text is MDX-escaped on the page (see escapeMdxText), so
+      // compare against the escaped form the reader actually gets.
+      if (!markdown.includes(escapeMdxText(entry.title))) missing.push(`${slug}: title`);
+      if (entry.suggestion && !markdown.includes(escapeMdxText(entry.suggestion))) {
         missing.push(`${slug}: suggestion`);
       }
     }
