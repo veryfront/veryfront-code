@@ -21,21 +21,21 @@ import {
   loadIntegrationBaseFilesFromDirectory,
   loadIntegrations,
   validateIntegrations,
-} from "../templates/integration-loader.ts";
+} from "../../templates/integration-loader.ts";
 import {
   loadFeature,
   mergeFiles,
   resolveFeatures,
   validateFeatures,
-} from "../templates/feature-loader.ts";
-import { STARTER_TEMPLATE_NAMES } from "../templates/types.ts";
+} from "../../templates/feature-loader.ts";
+import { STARTER_TEMPLATE_NAMES } from "../../templates/types.ts";
 import type {
   EnvVarConfig,
   FeatureName,
   IntegrationName,
   ResolvedIntegration,
   TemplateFile,
-} from "../templates/types.ts";
+} from "../../templates/types.ts";
 import { validateProjectName } from "./project-name.ts";
 
 export interface CreateProjectRequest {
@@ -219,7 +219,7 @@ async function loadTemplateFiles(
   }
 > {
   const { getAiRuleTemplate, getTemplate, getTemplateConfig } = await import(
-    "../templates/index.ts"
+    "../../templates/index.ts"
   );
 
   let files = await getTemplate(template);

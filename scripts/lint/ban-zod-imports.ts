@@ -8,7 +8,8 @@ export interface IllegalImport {
 export function shouldCheckZodImportPath(path: string): boolean {
   const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "");
   if (normalized.startsWith("extensions/ext-schema-zod/")) return false;
-  if (normalized.startsWith("cli/templates/")) return false;
+  // `templates/` needs no clause of its own: scaffolded project sources sit
+  // outside `src/` and `cli/`, so they are excluded by this return.
   return normalized.startsWith("src/") || normalized.startsWith("cli/");
 }
 

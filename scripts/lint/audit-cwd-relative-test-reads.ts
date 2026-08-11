@@ -404,7 +404,7 @@ export function toRepoRelative(file: string, repoRoot: string): string {
 }
 
 const BASELINE_PATH = "scripts/lint/cwd-relative-test-reads-baseline.json";
-const SCAN_ROOTS = ["src", "cli", "tests", "scripts"] as const;
+const SCAN_ROOTS = ["src", "cli", "templates", "tests", "scripts"] as const;
 
 async function collectTestFiles(root: string): Promise<string[]> {
   const files: string[] = [];

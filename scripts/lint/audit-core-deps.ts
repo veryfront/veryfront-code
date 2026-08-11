@@ -49,10 +49,11 @@ function normalizePath(path: string): string {
 
 export function shouldCheckCoreSourceImportPath(path: string): boolean {
   const normalized = normalizePath(path);
+  // `templates/` is deliberately absent: scaffolded project sources are not
+  // framework source and are excluded by living outside `src/` and `cli/`.
   if (!normalized.startsWith("src/") && !normalized.startsWith("cli/")) {
     return false;
   }
-  if (normalized.startsWith("cli/templates/")) return false;
   if (
     normalized.includes("/__fixtures__/") || normalized.includes("/fixtures/")
   ) return false;

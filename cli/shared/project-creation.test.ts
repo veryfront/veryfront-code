@@ -10,7 +10,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import { join } from "veryfront/platform/path";
 import { formatCLIError, VeryfrontError } from "veryfront/errors";
-import { STARTER_TEMPLATE_NAMES } from "../templates/types.ts";
+import { STARTER_TEMPLATE_NAMES } from "../../templates/types.ts";
 import {
   createProject,
   type CreateProjectRequest,

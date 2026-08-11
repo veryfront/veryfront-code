@@ -560,12 +560,12 @@ describe("integration endpoint specs", () => {
   });
 
   it("keeps source connector template tool IDs prefixed before generation", async () => {
-    for await (const entry of Deno.readDir("cli/templates/integrations")) {
+    for await (const entry of Deno.readDir("templates/integrations")) {
       if (!entry.isDirectory || entry.name === "_base") continue;
 
       try {
         const raw = await Deno.readTextFile(
-          `cli/templates/integrations/${entry.name}/connector.json`,
+          `templates/integrations/${entry.name}/connector.json`,
         );
         const connector = JSON.parse(raw) as {
           name?: string;
@@ -1337,7 +1337,7 @@ describe("integration endpoint specs", () => {
 
     for await (
       const entry of Deno.readDir(
-        "cli/templates/integrations/airtable/files/tools",
+        "templates/integrations/airtable/files/tools",
       )
     ) {
       if (entry.isFile && entry.name.endsWith(".ts")) {
@@ -1355,10 +1355,10 @@ describe("integration endpoint specs", () => {
     const createRecords = getTool("airtable", "create_records");
     const createTable = getTool("airtable", "create_table");
     const createRecordsTool = await Deno.readTextFile(
-      "cli/templates/integrations/airtable/files/tools/create-records.ts",
+      "templates/integrations/airtable/files/tools/create-records.ts",
     );
     const createTableTool = await Deno.readTextFile(
-      "cli/templates/integrations/airtable/files/tools/create-table.ts",
+      "templates/integrations/airtable/files/tools/create-table.ts",
     );
 
     assertStringIncludes(
@@ -1380,7 +1380,7 @@ describe("integration endpoint specs", () => {
 
     for await (
       const entry of Deno.readDir(
-        "cli/templates/integrations/github/files/tools",
+        "templates/integrations/github/files/tools",
       )
     ) {
       if (entry.isFile && entry.name.endsWith(".ts")) {
@@ -1401,7 +1401,7 @@ describe("integration endpoint specs", () => {
 
     for await (
       const entry of Deno.readDir(
-        "cli/templates/integrations/gmail/files/tools",
+        "templates/integrations/gmail/files/tools",
       )
     ) {
       if (entry.isFile && entry.name.endsWith(".ts")) {
@@ -1426,7 +1426,7 @@ describe("integration endpoint specs", () => {
 
     for (const fileName of requiredToolFiles) {
       const source = await Deno.readTextFile(
-        `cli/templates/integrations/outlook/files/tools/${fileName}`,
+        `templates/integrations/outlook/files/tools/${fileName}`,
       );
       assertStringIncludes(source, "tool({");
     }
@@ -1458,7 +1458,7 @@ describe("integration endpoint specs", () => {
     const toolFiles: string[] = [];
     for await (
       const entry of Deno.readDir(
-        "cli/templates/integrations/sheets/files/tools",
+        "templates/integrations/sheets/files/tools",
       )
     ) {
       if (entry.isFile && entry.name.endsWith(".ts")) {

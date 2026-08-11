@@ -15,7 +15,7 @@ import { VERSION } from "#cli/utils";
 import { join } from "#veryfront/compat/path/index.ts";
 import { exists, makeTempDir, readTextFile, remove, stat } from "#veryfront/testing/deno-compat.ts";
 import { runCommand } from "#veryfront/compat/process.ts";
-import { STARTER_TEMPLATE_NAMES } from "../../templates/types.ts";
+import { STARTER_TEMPLATE_NAMES } from "../../../templates/types.ts";
 import type { InitOptions } from "./types.ts";
 
 const TEST_DIR = await makeTempDir({ prefix: "veryfront-init-test-" });

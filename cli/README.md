@@ -35,9 +35,12 @@ cli/
 ├── ui/                  # Colors, ANSI, box drawing
 ├── utils/               # General utilities
 ├── help/                # Command definitions, help formatting
-├── discovery/           # User project file discovery (tools, agents)
-└── templates/           # Project and integration templates
+└── discovery/           # User project file discovery (tools, agents)
 ```
+
+Project, feature, integration, and ai-rules templates live at the repository root
+under `../templates/`. They are no longer a CLI-only concern: the framework and
+the API read the same generated manifest.
 
 CLI integration-test support lives outside the shipped package under `tests/support/`.
 

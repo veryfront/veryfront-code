@@ -2,7 +2,7 @@ import type {
   EnvVarConfig,
   IntegrationConfig,
   IntegrationName,
-} from "../../src/integrations/schema.ts";
+} from "../src/integrations/schema.ts";
 
 export type {
   EnvVarConfig,
@@ -12,7 +12,7 @@ export type {
   IntegrationToolMeta,
   OAuthConfig,
   OAuthField,
-} from "../../src/integrations/schema.ts";
+} from "../src/integrations/schema.ts";
 
 export interface TemplateFile {
   path: string;

@@ -3,7 +3,7 @@
  * Single source of truth for all CLI template/integration data
  */
 
-import type { IntegrationName } from "../../templates/types.ts";
+import type { IntegrationName } from "../../../templates/types.ts";
 import type { InitTemplate } from "./types.ts";
 import type { SelectOption } from "../../utils/terminal-select.ts";
 import {
