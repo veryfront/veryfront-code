@@ -6,6 +6,7 @@ export const getOpenArgsSchema = defineSchema((v) =>
   v.object({
     env: v.string().optional(),
     studio: v.boolean().default(false),
+    site: v.boolean().optional(),
     projectSlug: v.string().optional(),
   })
 );
@@ -17,12 +18,30 @@ export type OpenOptions = InferSchema<ReturnType<typeof getOpenArgsSchema>>;
 export const parseOpenArgs = createArgParser(OpenArgsSchema, {
   env: { keys: ["env"], type: "string" },
   studio: { keys: ["studio"], type: "boolean" },
+  site: { keys: ["site"], type: "boolean" },
   projectSlug: { keys: ["project", "project-slug", "p"], type: "string" },
 });
 
 const DASHBOARD_BASE = "https://veryfront.com";
 
+/** The environment `--site` targets when `--env` is absent. */
+const DEFAULT_SITE_ENVIRONMENT = "production";
+
+/**
+ * The canonical Veryfront Cloud address of a deployed environment, the same
+ * `https://<slug>.<environment>.veryfront.com` form `deploy` falls back to when
+ * an environment carries no custom domain. `open` has no API token, so it
+ * cannot look a custom domain up; a project that has one reaches the same
+ * deployment through both names.
+ */
+function buildSiteUrl(projectSlug: string, environment: string): string {
+  return `https://${projectSlug}.${environment}.veryfront.com`;
+}
+
 export function buildUrl(projectSlug: string, options: OpenOptions): string {
+  if (options.site) {
+    return buildSiteUrl(projectSlug, options.env ?? DEFAULT_SITE_ENVIRONMENT);
+  }
   if (options.studio) {
     return `${DASHBOARD_BASE}/studio/${projectSlug}`;
   }

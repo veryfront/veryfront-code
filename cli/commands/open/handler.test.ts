@@ -122,6 +122,21 @@ describe("Open Command", () => {
       const url = buildUrl("custom-slug", { studio: false });
       assertEquals(url, "https://veryfront.com/projects/custom-slug");
     });
+
+    it("builds the deployed site URL with --site", () => {
+      const url = buildUrl("my-app", { studio: false, site: true });
+      assertEquals(url, "https://my-app.production.veryfront.com");
+    });
+
+    it("builds the deployed site URL for a named environment", () => {
+      const url = buildUrl("my-app", { env: "staging", studio: false, site: true });
+      assertEquals(url, "https://my-app.staging.veryfront.com");
+    });
+
+    it("keeps --site on the deployed site rather than a dashboard page", () => {
+      const url = buildUrl("my-app", { studio: true, site: true });
+      assertEquals(url, "https://my-app.production.veryfront.com");
+    });
   });
 
   describe("JSON output", () => {
@@ -145,6 +160,12 @@ describe("Open Command", () => {
       const result = parseOpenArgs(parseCliArgs(["open", "--project-slug", "my-project"]));
       assertSuccess(result);
       assertEquals(result.data.projectSlug, "my-project");
+    });
+
+    it("parses --site from raw open argv", () => {
+      const result = parseOpenArgs(parseCliArgs(["open", "--site"]));
+      assertSuccess(result);
+      assertEquals(result.data.site, true);
     });
   });
 

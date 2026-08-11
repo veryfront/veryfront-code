@@ -110,10 +110,20 @@ curl -sSf -N -X POST <environment-url>/api/ag-ui \
   -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"What is Veryfront in one sentence?"}]}]}'
 ```
 
-`veryfront open` opens the project in the Cloud dashboard, where the deployment
-is listed; `veryfront open --env production` opens the project's Environments
-panel. Neither opens the deployed site, so use the environment URL Deploy printed
-to check the running deployment.
+If you did not record the URL Deploy printed, `veryfront open --site` opens the
+deployed site, and `veryfront open --site --json` prints that URL for scripts:
+
+```bash
+veryfront open --site --json
+```
+
+```json
+{ "success": true, "command": "open", "data": { "url": "https://<slug>.production.veryfront.com" } }
+```
+
+Without `--site`, `veryfront open` opens the project in the Cloud dashboard,
+where the deployment is listed, and `veryfront open --env production` opens the
+project's Environments panel. Neither opens the deployed site.
 
 For an automated production workflow, see
 [Deploy from CI](../guides/deploy-from-ci.md).
