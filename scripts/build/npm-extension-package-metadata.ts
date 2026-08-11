@@ -80,6 +80,19 @@ const TEST_ONLY_IMPORTS = new Set([
 
 const NODE_ENGINE_PATTERN = /^>=(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
 
+/**
+ * Native npm dependencies must be pinned to a release that ships prebuilt
+ * binaries for every supported Node release. Extension imports become exact
+ * pins in the published package, so an older pin never resolves forward: it
+ * falls back to `node-gyp rebuild`, which cannot compile against the V8
+ * headers of newer Node majors and leaves the extension uninstallable.
+ */
+const PREBUILT_NATIVE_DEPENDENCY_FLOORS: Record<string, string> = {
+  // 13.0.0 is the first release whose npm tarball carries Node-API prebuilds
+  // for every platform, so installs never invoke node-gyp.
+  "better-sqlite3": "13.0.0",
+};
+
 function compareVersions(left: string, right: string): number {
   const leftParts = left.split(".").map(Number);
   const rightParts = right.split(".").map(Number);
@@ -123,6 +136,16 @@ export function extensionNameFromPackageName(packageName: string): string {
   return packageName.replace(/^@veryfront\//, "");
 }
 
+function assertPrebuiltNativeDependency(name: string, version: string): void {
+  const floor = PREBUILT_NATIVE_DEPENDENCY_FLOORS[name];
+  if (!floor || compareVersions(version, floor) >= 0) return;
+
+  throw new Error(
+    `${name}@${version} predates ${floor}, the first release that ships prebuilt binaries. ` +
+      `Older pins fall back to node-gyp and cannot install on every supported Node release.`,
+  );
+}
+
 export function manifestDependencies(
   manifest: ExtensionManifest,
 ): Record<string, string> {
@@ -134,6 +157,7 @@ export function manifestDependencies(
     const parsed = parseNpmImport(target);
     if (!parsed) continue;
 
+    assertPrebuiltNativeDependency(parsed.name, parsed.version);
     dependencies[parsed.name] = parsed.version;
   }
 

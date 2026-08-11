@@ -1597,7 +1597,7 @@
       "extensions/ext-db-sqlite": {
         "dependencies": [
           "npm:@types/better-sqlite3@7.6.13",
-          "npm:better-sqlite3@9.6.0"
+          "npm:better-sqlite3@13.0.3"
         ]
       },
       "extensions/ext-dev-ui-react": {

@@ -48,7 +48,7 @@ describe("npm dependency source helpers", () => {
 		assertEquals(npmDependencyRange(configs, "@types/react"), "19.2.14");
 		assertEquals(npmDependencyRange(configs, "@types/react-dom"), "19.2.3");
 		assertEquals(npmDependencyRange(configs, "@kreuzberg/node"), "4.4.2");
-		assertEquals(npmDependencyRange(configs, "better-sqlite3", ""), "9.6.0");
+		assertEquals(npmDependencyRange(configs, "better-sqlite3", ""), "13.0.3");
 	});
 
 	it("fails when an explicit npm dependency has no config source", () => {
