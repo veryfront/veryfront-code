@@ -5,9 +5,10 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { withTempDir } from "#veryfront/testing";
+import { withEnv, withTempDir } from "#veryfront/testing";
 import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
 import { join } from "#veryfront/compat/path";
+import { clearConfigCache } from "#veryfront/config";
 import { checkAIConfig } from "./ai-checks.ts";
 
 describe("doctor/ai-checks", () => {
@@ -70,6 +71,54 @@ describe("doctor/ai-checks", () => {
         assertStringIncludes(aiFeatureResult.message, "agents/");
         assertStringIncludes(aiFeatureResult.message, "tools/");
       }, { prefix: "doctor-ai-surfaces-" });
+    });
+
+    it("accepts a provider whose API key comes from the environment", async () => {
+      await withTempDir(async (projectDir) => {
+        clearConfigCache();
+        await mkdir(join(projectDir, "agents"), { recursive: true });
+        await writeTextFile(join(projectDir, "agents", "assistant.ts"), "export default {};\n");
+        await writeTextFile(
+          join(projectDir, "veryfront.config.js"),
+          'export default { ai: { providers: { openai: { defaultModel: "gpt-4o-mini" } } } };\n',
+        );
+
+        const results = await withEnv(
+          { OPENAI_API_KEY: "sk-test-doctor" },
+          () => checkAIConfig(projectDir),
+        );
+        const providerResult = results.find((result) => result.name === "AI Provider: openai");
+
+        assertExists(providerResult);
+        assertEquals(
+          providerResult.status,
+          "pass",
+          "a provider whose credential is in the environment is not a doctor failure",
+        );
+        assertStringIncludes(providerResult.message, "OPENAI_API_KEY");
+      }, { prefix: "doctor-ai-env-key-" });
+    });
+
+    it("still fails a provider with no API key in config or environment", async () => {
+      await withTempDir(async (projectDir) => {
+        clearConfigCache();
+        await mkdir(join(projectDir, "agents"), { recursive: true });
+        await writeTextFile(join(projectDir, "agents", "assistant.ts"), "export default {};\n");
+        await writeTextFile(
+          join(projectDir, "veryfront.config.js"),
+          'export default { ai: { providers: { openai: { defaultModel: "gpt-4o-mini" } } } };\n',
+        );
+
+        const results = await withEnv(
+          { OPENAI_API_KEY: "" },
+          () => checkAIConfig(projectDir),
+        );
+        const providerResult = results.find((result) => result.name === "AI Provider: openai");
+
+        assertExists(providerResult);
+        assertEquals(providerResult.status, "fail");
+        assertEquals(providerResult.message, "Missing API Key");
+      }, { prefix: "doctor-ai-no-key-" });
     });
   });
 });
