@@ -6,6 +6,11 @@ import {
   type CSSProcessor,
   CSSProcessorName,
 } from "#veryfront/extensions/css/index.ts";
+import {
+  __resetLogRecordEmitterForTests,
+  __subscribeLogRecordEmitter,
+  type LogEntry,
+} from "#veryfront/utils/logger/index.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -201,6 +206,40 @@ describe("styles-builder CSS provider sessions", () => {
 
     const generated = await generateTailwindCSS("sheet", ["alpha"], { minify: true });
     assertEquals(generated.css, "missing-optimizer|sheet|alpha");
+  });
+
+  it("reports a missing optimizer once, with the package that provides one", () => {
+    // `regenerateCSSByHash` acquires a session per request, so warning on every
+    // acquisition made this line the most frequent entry in a hosted project's
+    // logs -- once per render, at warn level, naming a registration hook with no
+    // documented way to act on it. State the package that registers an engine,
+    // and say it once while the engine stays absent.
+    installProcessor(createProcessor("warn-rearm"));
+    register(CSSOptimizationEngineName, createOptimizer("warn-rearm"));
+    // Observing an engine re-arms the warning, so this test does not depend on
+    // whether an earlier test in this file already reported the absence.
+    acquireCSSGenerationSession(true);
+    resetContracts();
+    installProcessor(createProcessor("warn-once"));
+
+    const records: LogEntry[] = [];
+    __resetLogRecordEmitterForTests();
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+      records.push(entry);
+    });
+    try {
+      acquireCSSGenerationSession(true);
+      acquireCSSGenerationSession(true);
+      acquireCSSGenerationSession(true);
+    } finally {
+      unsubscribe();
+      __resetLogRecordEmitterForTests();
+    }
+
+    const reports = records.filter((entry) => entry.message.includes("CSSOptimizationEngine"));
+    assertEquals(reports.length, 1);
+    assertEquals(reports[0]?.level, "warn");
+    assertEquals(reports[0]?.message.includes("@veryfront/ext-css-lightning"), true);
   });
 
   it("keeps minified and unminified output in separate cache identities", async () => {

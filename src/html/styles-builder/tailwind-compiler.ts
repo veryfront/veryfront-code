@@ -7,6 +7,7 @@
  */
 
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import { getRecommendation } from "#veryfront/extensions/recommendations.ts";
 import {
   captureCSSOptimizationEngine,
   type CSSOptimizationEngine,
@@ -70,6 +71,7 @@ const weakSetAdd = WeakSet.prototype.add;
 const weakSetHas = WeakSet.prototype.has;
 const CSS_PIPELINE_IDENTITY_SCHEMA = "veryfront.css-pipeline.v2";
 const cssGenerationSessions = new WeakSet<object>();
+let reportedMissingOptimizationEngine = false;
 const inFlightProjectCSS = new Map<
   string,
   Promise<{ css: string; hash: string; fromCache: boolean }>
@@ -137,11 +139,25 @@ export function acquireCSSGenerationSession(minify: boolean): CSSGenerationSessi
   // an engine the CSS is emitted unminified and the identity below records it
   // as such, so no cache can serve a stale minified entry in its place.
   const optimizationProvider = minify ? tryResolve<unknown>(CSSOptimizationEngineName) : undefined;
-  if (minify && optimizationProvider === undefined) {
+  if (optimizationProvider !== undefined) {
+    // Re-arm: an engine that disappears later is a new regression to report.
+    reportedMissingOptimizationEngine = false;
+  } else if (minify && !reportedMissingOptimizationEngine) {
     // Warn, not debug: this is a silent quality regression for a project that
     // did select an optimizer and whose registration failed. It must not be
     // indistinguishable from a project that never wanted one.
-    logger.warn("No CSSOptimizationEngine registered; emitting unminified CSS");
+    //
+    // Once per process, not once per acquisition: regenerateCSSByHash acquires
+    // a session on every cold-cache request, which made this the single most
+    // frequent line in a hosted project's logs. Name the package that registers
+    // an engine, or the message asks for a hook with no way to reach it.
+    reportedMissingOptimizationEngine = true;
+    const recommendation = getRecommendation(CSSOptimizationEngineName);
+    logger.warn(
+      recommendation === undefined
+        ? "No CSSOptimizationEngine registered; emitting unminified CSS"
+        : `No CSSOptimizationEngine registered; emitting unminified CSS. Install one with: deno add ${recommendation}`,
+    );
   }
   const optimizationEngine = optimizationProvider === undefined
     ? undefined
