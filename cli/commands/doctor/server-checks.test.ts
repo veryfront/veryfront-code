@@ -5,7 +5,16 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { checkRSCCounters, checkRSCEndpoints, checkRSCFlag } from "./server-checks.ts";
+import { withTempDir } from "#veryfront/testing";
+import { writeTextFile } from "#veryfront/compat/fs.ts";
+import { join } from "#veryfront/compat/path";
+import { clearConfigCache } from "#veryfront/config";
+import {
+  checkRSCCounters,
+  checkRSCEndpoints,
+  checkRSCFlag,
+  isRscDiagnosticsEnabled,
+} from "./server-checks.ts";
 
 async function withUnreachableFetch<T>(fn: () => Promise<T>): Promise<T> {
   const originalFetch = globalThis.fetch;
@@ -33,6 +42,33 @@ describe("doctor/server-checks", () => {
       assertExists(result.message);
       assertEquals(result.name, "RSC Flag");
       assertEquals(["pass", "warn", "fail"].includes(result.status), true);
+    });
+
+    it("honors experimental.rsc from the project config, like the server does", async () => {
+      await withTempDir(async (projectDir) => {
+        clearConfigCache();
+        await writeTextFile(
+          join(projectDir, "veryfront.config.js"),
+          "export default { experimental: { rsc: true } };\n",
+        );
+
+        // The env flag is off here; the server would still serve RSC because
+        // `isRSCEnabled` lets an explicit project setting win.
+        assertEquals(await isRscDiagnosticsEnabled(projectDir), true);
+        assertEquals((await checkRSCFlag(projectDir)).message, "enabled");
+      }, { prefix: "doctor-rsc-config-" });
+    });
+
+    it("reports RSC as opt-in when neither config nor env enables it", async () => {
+      await withTempDir(async (projectDir) => {
+        clearConfigCache();
+
+        assertEquals(await isRscDiagnosticsEnabled(projectDir), false);
+        assertEquals(
+          (await checkRSCFlag(projectDir)).message,
+          "disabled (experimental, opt-in)",
+        );
+      }, { prefix: "doctor-rsc-default-" });
     });
   });
 

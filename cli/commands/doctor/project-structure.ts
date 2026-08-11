@@ -1,18 +1,8 @@
 import { exists } from "#std/fs.ts";
 import { join } from "veryfront/platform/path";
 import { getConfig } from "veryfront/config";
-import type { VeryfrontConfig } from "veryfront/config";
 import type { DiagnosticResult } from "./types.ts";
-
-async function loadConfigOrNull(projectDir: string): Promise<VeryfrontConfig | null> {
-  try {
-    const { runtime } = await import("veryfront/platform");
-    const adapter = await runtime.get();
-    return await getConfig(projectDir, adapter);
-  } catch {
-    return null;
-  }
-}
+import { loadConfigOrNull } from "./project-config.ts";
 
 /**
  * Reports which router directory the project uses.

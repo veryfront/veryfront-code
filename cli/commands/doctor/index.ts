@@ -224,7 +224,7 @@ export async function doctorCommand(
 
   // RSC endpoints only exist behind the experimental flag; probing them
   // otherwise reports unreachable endpoints as project health problems.
-  const rscEnabled = await isRscDiagnosticsEnabled();
+  const rscEnabled = await isRscDiagnosticsEnabled(projectDir);
 
   if (isJsonMode()) {
     const results: DiagnosticResult[] = [
@@ -233,7 +233,7 @@ export async function doctorCommand(
       await checkConfiguration(projectDir),
       await checkCacheSystem(),
       await checkReactCompatibility(),
-      await checkRSCFlag(),
+      await checkRSCFlag(projectDir),
       ...(rscEnabled ? await checkRSCEndpoints(port) : []),
       ...(rscEnabled ? [await checkRSCCounters(port)] : []),
       ...(await checkAIConfig(projectDir)),
@@ -258,7 +258,7 @@ export async function doctorCommand(
   await streamCheck(() => checkConfiguration(projectDir), results);
   await streamCheck(checkCacheSystem, results);
   await streamCheck(checkReactCompatibility, results);
-  await streamCheck(checkRSCFlag, results);
+  await streamCheck(() => checkRSCFlag(projectDir), results);
   if (rscEnabled) {
     await streamCheck(() => checkRSCEndpoints(port), results);
     await streamCheck(() => checkRSCCounters(port), results);
