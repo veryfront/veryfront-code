@@ -35,6 +35,23 @@ function getHashFromManifest(json: unknown): string | null {
   return typeof hash === "string" ? hash : null;
 }
 
+/**
+ * Whether the experimental RSC surface is opted into.
+ *
+ * The RSC endpoint probes only mean something when the flag is on, so doctor
+ * uses this to skip them rather than warn about endpoints the server never
+ * serves.
+ */
+export async function isRscDiagnosticsEnabled(): Promise<boolean> {
+  try {
+    const { isRscExperimentalEnabled } = await import("veryfront/config");
+    return isRscExperimentalEnabled();
+  } catch (error) {
+    cliLogger.debug("Failed to read the RSC experimental flag:", error);
+    return false;
+  }
+}
+
 export async function checkRSCFlag(): Promise<DiagnosticResult> {
   try {
     const { isRscExperimentalEnabled } = await import("veryfront/config");
@@ -42,8 +59,8 @@ export async function checkRSCFlag(): Promise<DiagnosticResult> {
 
     return {
       name: "RSC Flag",
-      status: isEnabled ? "pass" : "warn",
-      message: isEnabled ? "enabled" : "VERYFRONT_EXPERIMENTAL_RSC not set",
+      status: "pass",
+      message: isEnabled ? "enabled" : "disabled (experimental, opt-in)",
     };
   } catch (error) {
     return {

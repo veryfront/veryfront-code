@@ -8,7 +8,12 @@ import {
   checkConfiguration,
   checkProjectStructure,
 } from "./project-structure.ts";
-import { checkRSCCounters, checkRSCEndpoints, checkRSCFlag } from "./server-checks.ts";
+import {
+  checkRSCCounters,
+  checkRSCEndpoints,
+  checkRSCFlag,
+  isRscDiagnosticsEnabled,
+} from "./server-checks.ts";
 import { checkAIConfig } from "./ai-checks.ts";
 import {
   bold,
@@ -217,6 +222,10 @@ export async function doctorCommand(
   const port = await resolveDoctorPort(projectDir, opts.port);
   const startTime = Date.now();
 
+  // RSC endpoints only exist behind the experimental flag; probing them
+  // otherwise reports unreachable endpoints as project health problems.
+  const rscEnabled = await isRscDiagnosticsEnabled();
+
   if (isJsonMode()) {
     const results: DiagnosticResult[] = [
       await checkDenoVersion(),
@@ -225,8 +234,8 @@ export async function doctorCommand(
       await checkCacheSystem(),
       await checkReactCompatibility(),
       await checkRSCFlag(),
-      ...(await checkRSCEndpoints(port)),
-      await checkRSCCounters(port),
+      ...(rscEnabled ? await checkRSCEndpoints(port) : []),
+      ...(rscEnabled ? [await checkRSCCounters(port)] : []),
       ...(await checkAIConfig(projectDir)),
     ];
     await reportDoctorResults(results, {
@@ -250,8 +259,10 @@ export async function doctorCommand(
   await streamCheck(checkCacheSystem, results);
   await streamCheck(checkReactCompatibility, results);
   await streamCheck(checkRSCFlag, results);
-  await streamCheck(() => checkRSCEndpoints(port), results);
-  await streamCheck(() => checkRSCCounters(port), results);
+  if (rscEnabled) {
+    await streamCheck(() => checkRSCEndpoints(port), results);
+    await streamCheck(() => checkRSCCounters(port), results);
+  }
   await streamCheck(() => checkAIConfig(projectDir), results);
 
   console.log();

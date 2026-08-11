@@ -5,6 +5,9 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withTempDir } from "#veryfront/testing";
+import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
+import { join } from "#veryfront/compat/path";
 import {
   checkCacheSystem,
   checkConfiguration,
@@ -34,12 +37,51 @@ describe("doctor/project-structure", () => {
       }
     });
 
-    it("checks for pages directory", async () => {
+    it("warns when the project has no router directory at all", async () => {
       const results = await checkProjectStructure("/non-existent-path");
-      const pagesCheck = results.find((r) => r.name.includes("pages"));
+      const structureCheck = results.find((r) => r.name.startsWith("Project Structure"));
 
-      assertExists(pagesCheck);
-      assertEquals(pagesCheck.status, "warn"); // Should be warn since path doesn't exist
+      assertExists(structureCheck);
+      assertEquals(structureCheck.status, "warn"); // Should be warn since path doesn't exist
+    });
+
+    it("passes for an app router project without warning about pages/", async () => {
+      await withTempDir(async (projectDir) => {
+        await mkdir(join(projectDir, "app"), { recursive: true });
+        await writeTextFile(
+          join(projectDir, "app", "page.tsx"),
+          "export default function Page() {\n  return <div />;\n}\n",
+        );
+
+        const results = await checkProjectStructure(projectDir);
+
+        assertEquals(
+          results.filter((result) => result.status !== "pass"),
+          [],
+          "app router projects must not be warned about the pages router",
+        );
+        assertEquals(results.length > 0, true, "structure check must report something");
+        assertEquals(
+          results.some((result) => result.message.includes("app")),
+          true,
+          "structure check should name the router it found",
+        );
+      }, { prefix: "doctor-app-router-" });
+    });
+
+    it("passes for a pages router project", async () => {
+      await withTempDir(async (projectDir) => {
+        await mkdir(join(projectDir, "pages"), { recursive: true });
+        await writeTextFile(join(projectDir, "pages", "index.mdx"), "# Hello\n");
+
+        const results = await checkProjectStructure(projectDir);
+
+        assertEquals(
+          results.filter((result) => result.status !== "pass"),
+          [],
+          "pages router projects remain supported",
+        );
+      }, { prefix: "doctor-pages-router-" });
     });
   });
 
