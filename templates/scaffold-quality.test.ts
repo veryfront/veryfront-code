@@ -27,7 +27,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
-import { join } from "#veryfront/compat/path/index.ts";
+import { fromFileUrl, join } from "#veryfront/compat/path/index.ts";
 import { walk } from "#std/fs.ts";
 import { runCommand } from "#veryfront/compat/process.ts";
 import { createProject } from "../cli/shared/project-creation.ts";
@@ -90,8 +90,13 @@ async function lintScaffold(projectDir: string): Promise<string[]> {
   return (report.diagnostics ?? []).map((diagnostic) => describeDiagnostic(diagnostic, projectDir));
 }
 
-/** Repo config, so `veryfront/*` resolves to the framework's own declarations. */
-const REPO_CONFIG = new URL("../../deno.json", import.meta.url).pathname;
+/**
+ * Repo config, so `veryfront/*` resolves to the framework's own declarations.
+ *
+ * `fromFileUrl`, not `URL.pathname`: on Windows the latter yields
+ * `/C:/repo/deno.json`, which `deno` cannot open.
+ */
+const REPO_CONFIG = fromFileUrl(new URL("../../deno.json", import.meta.url));
 
 /** Server-side template code: agents, tools, workflows and evals. */
 async function serverSourceFiles(projectDir: string): Promise<string[]> {
