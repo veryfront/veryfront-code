@@ -30,20 +30,33 @@ The `ai-agent` template creates a runnable chat app:
 
 ```text
 support-agent/
+  .gitignore
   AGENTS.md
+  README.md
   agents/
     assistant.ts
   tools/
     calculator.ts
+  evals/
+    assistant.eval.ts
   app/
+    layout.tsx
     page.tsx
+    markdown-renderer.tsx
     api/
       ag-ui/
         route.ts
+  public/
+    favicon.svg
+  globals.css
+  globals.d.ts
+  package.json
+  tsconfig.json
 ```
 
-The template includes the agent, calculator tool, chat page, AG-UI route, and
-`AGENTS.md` project guide for coding agents.
+The template includes the agent, calculator tool, chat page, AG-UI route, a
+smoke eval you run with `veryfront eval` (see [Evals](../guides/evals.md)), and
+the `AGENTS.md` project guide for coding agents.
 
 ## Authenticate
 

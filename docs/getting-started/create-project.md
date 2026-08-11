@@ -108,37 +108,52 @@ browser.
 
 The `minimal` template creates:
 
-```
+```text
 test-app/
-  AGENTS.md        # Project guide for coding agents
+  .gitignore
+  AGENTS.md         # Project guide for coding agents
+  README.md
   app/
     layout.tsx      # Root layout wrapping all pages
     page.tsx        # Home page (/)
     about/
       page.mdx      # /about (MDX page)
+  public/
+    favicon.svg
   package.json
-  README.md
+  tsconfig.json
 ```
 
-The `ai-agent` template also creates:
+The `ai-agent` template creates:
 
-```
+```text
 test-app/
+  .gitignore
   AGENTS.md         # Project guide for coding agents
+  README.md
   agents/
     assistant.ts    # AI agent definition
   tools/
     calculator.ts   # Tool the agent can call
+  evals/
+    assistant.eval.ts   # Smoke eval for the agent, run with `veryfront eval`
   app/
     layout.tsx
     page.tsx        # Chat UI
+    markdown-renderer.tsx   # Renders assistant replies as markdown
     api/
       ag-ui/
         route.ts    # AG-UI streaming chat endpoint
+  public/
+    favicon.svg
+  globals.css
+  globals.d.ts
+  package.json
+  tsconfig.json
 ```
 
-Pages live in `app/`. The agent template also adds root-level `agents/` and
-`tools/`. For the convention behind these directories, see
+Pages live in `app/`. The agent template also adds root-level `agents/`,
+`tools/`, and `evals/`. For the convention behind these directories, see
 [Framework conventions](../concepts/framework-conventions.md).
 
 Generate additional app and AI primitives from the project root:
