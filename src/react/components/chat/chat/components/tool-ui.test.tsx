@@ -33,11 +33,13 @@ const invokeAgentTool: ChatDynamicToolPart = {
 
 describe("ToolCall", () => {
   it("renders invoke_agent as a child-agent card by default", () => {
-    const html = renderToString(<ToolCall tool={invokeAgentTool} />);
+    const html = renderToString(<ToolCall tool={invokeAgentTool} className="custom-card" />);
 
     assertStringIncludes(html, "Case Ingest");
     assertStringIncludes(html, "Running");
-    assertStringIncludes(html, "Fetch and redact cases");
+    assertStringIncludes(html, "custom-card");
+    assertStringIncludes(html, 'aria-expanded="false"');
+    assertEquals(html.includes("Fetch and redact cases"), false);
     assertEquals(html.includes("Parameters"), false);
   });
 
@@ -61,8 +63,18 @@ describe("ToolCall", () => {
 
     assertStringIncludes(html, "Case Ingest");
     assertStringIncludes(html, "Failed");
-    assertStringIncludes(html, "The child agent run failed before returning a usable result.");
+    assertStringIncludes(html, 'aria-expanded="false"');
+    assertEquals(
+      html.includes("The child agent run failed before returning a usable result."),
+      false,
+    );
     assertEquals(html.includes("structuredContent"), false);
+
+    const expandedHtml = renderToString(<ToolCall tool={tool} defaultExpanded />);
+    assertStringIncludes(
+      expandedHtml,
+      "The child agent run failed before returning a usable result.",
+    );
   });
 
   it("renders a completed tool with null output as a compact status row", () => {

@@ -274,7 +274,9 @@ function isInvokeAgentTool(tool: ChatToolPart | ChatDynamicToolPart): boolean {
 }
 
 /** Studio-style child-agent card used by the automatic `invoke_agent` renderer. */
-function InvokeAgentToolCall(): React.ReactElement {
+function InvokeAgentToolCall(
+  { className, icon, ref }: Pick<ToolCallProps, "className" | "icon" | "ref">,
+): React.ReactElement {
   const { tool, isExpanded, toggle } = useToolCall();
   const input = jsonRecord(tool.input);
   const rawOutput = jsonRecord(tool.output);
@@ -302,10 +304,16 @@ function InvokeAgentToolCall(): React.ReactElement {
   const detail = failed
     ? (result ?? "The child agent run failed before returning a usable result.")
     : (result ?? stringValue(input, "description"));
-  const showDetail = Boolean(detail) && (failed || !completed || isExpanded);
+  const showDetail = Boolean(detail) && isExpanded;
 
   return (
-    <div className="not-prose w-full rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-transparent p-4">
+    <div
+      ref={ref}
+      className={cn(
+        "not-prose w-full rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-transparent p-4",
+        className,
+      )}
+    >
       <button
         type="button"
         onClick={toggle}
@@ -314,7 +322,7 @@ function InvokeAgentToolCall(): React.ReactElement {
       >
         <span className="flex min-w-0 items-center gap-2">
           <span className="mt-0 flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--muted)] text-sm font-medium text-[var(--foreground)]">
-            {title.charAt(0)}
+            {icon ?? title.charAt(0)}
           </span>
           <span className="min-w-0 truncate text-sm font-medium text-[var(--foreground)]">
             {title}
@@ -399,7 +407,7 @@ function ToolCallRoot(
   if (variant === undefined && children === undefined && isInvokeAgentTool(tool)) {
     return (
       <ToolCallContext.Provider value={context}>
-        <InvokeAgentToolCall />
+        <InvokeAgentToolCall className={className} icon={icon} ref={ref} />
       </ToolCallContext.Provider>
     );
   }
@@ -580,9 +588,10 @@ function ToolCallError(
 ToolCallError.displayName = "ToolCall.Error";
 
 /**
- * ToolCall — render `<ToolCall tool={part} />` for the default card, or compose
- * `ToolCall.Trigger` / `Body` / `Input` / `Output` / `Error` for a custom
- * layout. Mirrors the `Message` compound: render it, or compose it.
+ * ToolCall — render `<ToolCall tool={part} />` for the default card. `invoke_agent`
+ * calls use a child-agent card by default. Pass children to replace the default,
+ * or compose `ToolCall.Trigger` / `Body` / `Input` / `Output` / `Error` for a
+ * custom layout. Mirrors the `Message` compound: render it, or compose it.
  */
 export const ToolCall = Object.assign(ToolCallRoot, {
   Root: ToolCallRoot,
