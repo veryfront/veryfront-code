@@ -24,7 +24,7 @@ import {
 	readDenoConfigSet,
 } from "./npm-dependency-sources.ts";
 import { buildExtensionPackages } from "./build-npm-extension-packages.ts";
-import { patchDntArgvPolyfill } from "./dnt-polyfill.ts";
+import { patchDntArgvPolyfill, patchDntDenoShim } from "./dnt-polyfill.ts";
 import { normalizeNpmPackageMetadata } from "./npm-package-metadata.ts";
 import { assertNpmRuntimeHelperContract } from "./npm-runtime-helper-contract.ts";
 import { normalizeEsmShReactNpmShims } from "./npm-react-shims.ts";
@@ -229,6 +229,16 @@ await build({
 		// Fix dnt polyfill bug: process.argv[1] can be undefined in dynamic imports
 		await patchDntArgvPolyfill(
 			"./npm/esm/_dnt.polyfills.js",
+			{ required: true },
+		);
+
+		// dnt re-exports `@deno/shim-deno` unconditionally, so `deno run -A
+		// npm:veryfront` ran the Node reimplementations of Deno APIs instead of
+		// the runtime's own. Deno.listen in particular reads `server._handle.fd`
+		// off a node:net server, which is null under Deno's node compatibility
+		// layer, so every command that binds a port died before starting.
+		await patchDntDenoShim(
+			"./npm/esm/_dnt.shims.js",
 			{ required: true },
 		);
 
