@@ -436,6 +436,22 @@ describe("guide content contracts", () => {
       );
     }
   });
+
+  it("gives Deno an install path on every surface the installation guide offers", async () => {
+    const installation = await Deno.readTextFile(
+      "docs/getting-started/installation.md",
+    );
+
+    // The page lists Deno as a supported runtime floor, so each install
+    // surface it documents for npm needs a Deno counterpart that works.
+    assertStringIncludes(installation, "### deno");
+    assertStringIncludes(installation, "deno install -gArf npm:veryfront");
+    assertStringIncludes(installation, "deno init --npm veryfront");
+
+    // The CLI is published to npm only. `jsr:@veryfront/veryfront` has never
+    // existed and resolves to a JSR 404, so it must not be advertised.
+    assertEquals(installation.includes("jsr:@veryfront/veryfront"), false);
+  });
 });
 
 /**

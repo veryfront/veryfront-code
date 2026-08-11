@@ -61,6 +61,10 @@ yarn create veryfront
 bun create veryfront
 ```
 
+```bash deno
+deno init --npm veryfront
+```
+
 </CodeGroup>
 
 ## Install the CLI
@@ -93,6 +97,18 @@ yarn global add veryfront
 ```bash
 bun add -g veryfront
 ```
+
+### deno
+
+```bash
+deno install -gArf npm:veryfront
+```
+
+The CLI is published to npm only, so install it through Deno's `npm:`
+specifier. Deno resolves that specifier from the current working directory, so
+inside a project that depends on `veryfront` the global binary runs that
+project's version instead. Run `veryfront --version` outside any project
+directory to see the globally installed version.
 
 ## One-shot CLI usage
 
