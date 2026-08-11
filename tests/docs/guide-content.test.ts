@@ -559,7 +559,11 @@ describe("guide content contracts", () => {
   });
 
   it("documents the .cache root the CLI writes into the project", async () => {
-    const guide = await Deno.readTextFile("docs/guides/project-structure.md");
+    // Resolved from import.meta.url, not the process cwd: test files share one
+    // process under --parallel and a sibling isolate can hold a chdir.
+    const guide = await Deno.readTextFile(
+      new URL("../../docs/guides/project-structure.md", import.meta.url),
+    );
 
     // `veryfront dev` and `veryfront build` both create `<project>/.cache`.
     // Before this section existed the only explanation a developer got was the
