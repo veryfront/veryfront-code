@@ -22,9 +22,7 @@
  * @example Custom layout (composition)
  * ```tsx
  * <Chat.Root messages={messages} input={input}>
- *   <Chat.If condition={(ctx) => ctx.isEmpty}>
- *     <Chat.Empty title="Ask anything" />
- *   </Chat.If>
+ *   <Chat.Empty title="Ask anything" />
  *   <Chat.MessageList messages={messages} />
  *   <Chat.Input input={input} onChange={onChange} />
  * </Chat.Root>
