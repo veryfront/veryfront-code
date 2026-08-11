@@ -47,8 +47,21 @@ Choose a different output directory explicitly:
 veryfront build --output build-output
 ```
 
-`build.outDir` and `build.trailingSlash` remain accepted configuration fields
-for compatibility, but the production builder does not consume them.
+Or set it once in `veryfront.config.ts`, which `--output` overrides when both
+are present:
+
+```ts
+export default defineConfig({
+  build: { outDir: "build-output" },
+});
+```
+
+A relative `outDir` resolves against the project directory. The build clears
+its output directory before writing, so point it somewhere the project does not
+keep files of its own.
+
+`build.trailingSlash` remains an accepted configuration field for
+compatibility, but the production builder does not consume it.
 
 ## Run the build locally
 

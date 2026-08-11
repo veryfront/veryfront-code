@@ -23,6 +23,29 @@ function createMockAdapter(): RuntimeAdapter {
   } as unknown as RuntimeAdapter;
 }
 
+/**
+ * The shared mock stubs `remove` out, so it cannot observe what the setup step
+ * deletes. This adapter deletes for real.
+ */
+function createDeletingAdapter(): RuntimeAdapter {
+  const adapter = createMockAdapter();
+  (adapter.fs as unknown as {
+    remove: (path: string, opts?: { recursive?: boolean }) => Promise<void>;
+  }).remove = async (path, opts) => {
+    await Deno.remove(path, opts).catch(() => undefined);
+  };
+  return adapter;
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await Deno.stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 describe("build/production-build/build/build-setup", () => {
   describe("setupBuildDirectories", () => {
     it("should create output directories", async () => {
@@ -70,6 +93,61 @@ describe("build/production-build/build/build-setup", () => {
           exists = false;
         }
         assertEquals(exists, false);
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("leaves an existing output directory untouched in dry run", async () => {
+      // `--dry-run` promises "no files will be written". Clearing the output
+      // directory before the dry-run guard broke that promise in the most
+      // damaging direction: it deleted the project's previous build output
+      // (and anything else living in dist/) and then wrote nothing back.
+      const tmpDir = await Deno.makeTempDir();
+      const outputDir = `${tmpDir}/dry-run-existing`;
+      const adapter = createDeletingAdapter();
+
+      try {
+        await Deno.mkdir(`${outputDir}/nested`, { recursive: true });
+        await Deno.writeTextFile(`${outputDir}/index.js`, "PRECIOUS-HOST-ARTIFACT");
+        await Deno.writeTextFile(`${outputDir}/nested/deep.txt`, "keepme");
+
+        await setupBuildDirectories(adapter, outputDir, true);
+
+        assertEquals(
+          await Deno.readTextFile(`${outputDir}/index.js`),
+          "PRECIOUS-HOST-ARTIFACT",
+          "dry run must not delete existing output",
+        );
+        assertEquals(
+          await Deno.readTextFile(`${outputDir}/nested/deep.txt`),
+          "keepme",
+          "dry run must not delete nested output",
+        );
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("still clears the output directory for a real build", async () => {
+      // The dry-run guard must not disable the clean step that keeps stale
+      // artifacts from a previous build out of the new one.
+      const tmpDir = await Deno.makeTempDir();
+      const outputDir = `${tmpDir}/real-build`;
+      const adapter = createDeletingAdapter();
+
+      try {
+        await Deno.mkdir(outputDir, { recursive: true });
+        await Deno.writeTextFile(`${outputDir}/stale.html`, "stale");
+
+        await setupBuildDirectories(adapter, outputDir, false);
+
+        assertEquals(
+          await exists(`${outputDir}/stale.html`),
+          false,
+          "a real build must clear stale artifacts",
+        );
+        assertEquals((await Deno.stat(`${outputDir}/assets`)).isDirectory, true);
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
       }

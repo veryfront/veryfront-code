@@ -1,6 +1,6 @@
 import { join, relative, resolve } from "veryfront/platform/path";
 import { runtime } from "veryfront/platform";
-import { getConfig } from "veryfront/config";
+import { getConfig, type VeryfrontConfig } from "veryfront/config";
 import { buildProduction } from "veryfront/build";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { cliLogger } from "#cli/utils";
@@ -69,11 +69,34 @@ export function formatBuildOutputPath(projectDir: string, outputDir: string): st
   return relative(projectDir, resolve(projectDir, outputDir)).replace(/\\/g, "/");
 }
 
+/**
+ * Decide where the build writes.
+ *
+ * `-o/--output` wins, then `build.outDir` from veryfront.config.ts, then
+ * `dist`. `build.outDir` used to be read into the config object and dropped:
+ * the build wrote (and cleared) `dist` regardless, with no warning, so the
+ * documented way to keep the framework out of a project's own `dist/` did
+ * nothing. A relative `outDir` resolves against the project directory, which
+ * is how a config file naturally reads.
+ */
+export function resolveBuildOutputDir(
+  projectDir: string,
+  explicitOutputDir: string | undefined,
+  config: Pick<VeryfrontConfig, "build">,
+): string {
+  if (explicitOutputDir !== undefined) return explicitOutputDir;
+  const configured = config.build?.outDir;
+  if (configured === undefined || configured === "") return join(projectDir, "dist");
+  return resolve(projectDir, configured);
+}
+
 export function buildCommand(options: BuildOptions): Promise<void> {
   return withSpan(
     "cli.command.build",
     async () => {
-      const outputDir = options.outputDir ?? join(options.projectDir, "dist");
+      // Placeholder until the config is loaded; every path that reports or
+      // writes the output directory runs after resolveBuildOutputDir below.
+      let outputDir = options.outputDir ?? join(options.projectDir, "dist");
       const startTime = Date.now();
       const dryRun = options.dryRun ?? false;
       let extensions: Awaited<ReturnType<typeof setupBuildCliExtensions>> | undefined;
@@ -88,13 +111,15 @@ export function buildCommand(options: BuildOptions): Promise<void> {
       try {
         if (isJsonMode()) {
           streamJsonLine({ type: "step", name: "config", status: "started" });
-        } else {
-          displayBuildConfig({ ...options, outputDir });
         }
 
         const stats = await runWithBundlerShutdown(async () => {
           const adapter = await runtime.get();
           const config = await getConfig(options.projectDir, adapter);
+          // Resolved from the loaded config, so the displayed, reported and
+          // written output directory are the same one.
+          outputDir = resolveBuildOutputDir(options.projectDir, options.outputDir, config);
+          if (!isJsonMode()) displayBuildConfig({ ...options, outputDir });
           // Compose the project's extensions before anything that resolves a
           // contract. Only server bootstrap used to do this, so the build ran
           // with whatever one-off shims had been added and failed on the rest.

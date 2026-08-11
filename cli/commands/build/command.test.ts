@@ -5,6 +5,7 @@ import {
   buildCommand,
   formatBuildOutputPath,
   releaseBuildExtensions,
+  resolveBuildOutputDir,
   runWithBundlerShutdown,
 } from "./command.ts";
 import type { BuildOptions } from "./types.ts";
@@ -99,6 +100,45 @@ describe("commands/build/command", () => {
       assertEquals(
         formatBuildOutputPath("/workspace/project", "/workspace/shared/dist"),
         "../shared/dist",
+      );
+    });
+  });
+
+  describe("resolveBuildOutputDir", () => {
+    it("honors build.outDir from veryfront.config.ts", () => {
+      // build.outDir was parsed into the config and then ignored: the build
+      // wrote and cleared dist/ anyway, so a project could not move the
+      // framework's output away from its own dist/.
+      assertEquals(
+        resolveBuildOutputDir("/workspace/project", undefined, {
+          build: { outDir: "custom-out" },
+        }),
+        "/workspace/project/custom-out",
+      );
+    });
+
+    it("lets -o/--output override build.outDir", () => {
+      assertEquals(
+        resolveBuildOutputDir("/workspace/project", "flagout", {
+          build: { outDir: "custom-out" },
+        }),
+        "flagout",
+      );
+    });
+
+    it("falls back to dist when no output is configured", () => {
+      assertEquals(
+        resolveBuildOutputDir("/workspace/project", undefined, {}),
+        "/workspace/project/dist",
+      );
+    });
+
+    it("keeps an absolute build.outDir absolute", () => {
+      assertEquals(
+        resolveBuildOutputDir("/workspace/project", undefined, {
+          build: { outDir: "/var/www/site" },
+        }),
+        "/var/www/site",
       );
     });
   });
