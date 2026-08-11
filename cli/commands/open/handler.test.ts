@@ -93,12 +93,24 @@ describe("Open Command", () => {
       assertEquals(url, "https://veryfront.com/studio/my-app");
     });
 
-    it("builds environment URL", () => {
+    it("builds environment URL that opens the Environments panel", () => {
+      // `/projects/<slug>/environments/<name>` is not a Studio route — it is a
+      // hard 404. Environments are a panel on the project page, addressed by the
+      // `?panels=` query param.
       const url = buildUrl("my-app", { env: "staging", studio: false });
       assertEquals(
         url,
-        "https://veryfront.com/projects/my-app/environments/staging",
+        "https://veryfront.com/projects/my-app?panels=environments",
       );
+    });
+
+    it("never builds an /environments/ path segment for any env name", () => {
+      // Regression guard: the dashboard has no `/environments/` route at all,
+      // so no env name may produce one.
+      for (const env of ["production", "staging", "preview"]) {
+        const url = buildUrl("my-app", { env, studio: false });
+        assertEquals(url.includes("/environments/"), false, `env=${env}`);
+      }
     });
 
     it("studio flag takes precedence over env", () => {

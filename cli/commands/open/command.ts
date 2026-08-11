@@ -26,8 +26,13 @@ export function buildUrl(projectSlug: string, options: OpenOptions): string {
   if (options.studio) {
     return `${DASHBOARD_BASE}/studio/${projectSlug}`;
   }
+  // Environments are a panel on the project page, not a route of their own —
+  // `/projects/<slug>/environments/<name>` is a hard 404. The panel is opened
+  // with `?panels=<panelId>`. The panel's own deep link seeds a selection by
+  // environment *id* (`?environments=edit:<id>`), which `open` cannot resolve
+  // from a name without an API token, so the env name selects the panel only.
   if (options.env) {
-    return `${DASHBOARD_BASE}/projects/${projectSlug}/environments/${options.env}`;
+    return `${DASHBOARD_BASE}/projects/${projectSlug}?panels=environments`;
   }
   return `${DASHBOARD_BASE}/projects/${projectSlug}`;
 }
