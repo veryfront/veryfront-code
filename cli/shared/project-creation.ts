@@ -607,7 +607,10 @@ export function listScaffoldTemplates(): string[] {
 export interface MaterializeScaffoldRequest {
   /** Canonical template name or a slug from {@link SCAFFOLD_TEMPLATE_ALIASES}. */
   template: string;
-  /** Written into `package.json#name`. */
+  /**
+   * Written into `package.json#name`. Validated exactly as `veryfront init`
+   * validates it, so neither path can produce a project the other rejects.
+   */
   projectName?: string;
   runtime?: InitRuntime;
   features?: FeatureName[];
@@ -645,6 +648,11 @@ export async function materializeScaffold(
         listScaffoldTemplates().join(", ")
       }`,
     });
+  }
+
+  if (request.projectName !== undefined) {
+    const nameError = validateProjectName(request.projectName);
+    if (nameError) throw createConfigError(nameError);
   }
 
   const features = request.features ?? [];

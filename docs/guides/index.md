@@ -86,6 +86,6 @@ details, see [API reference](../api-reference/index.md).
 
 ## Troubleshoot
 
-| Goal                                | Guide                             |
-| ----------------------------------- | --------------------------------- |
-| Look up an error slug you were shown | [Error reference](./errors.md)   |
+| Goal                                 | Guide                          |
+| ------------------------------------ | ------------------------------ |
+| Look up an error slug you were shown | [Error reference](./errors.md) |

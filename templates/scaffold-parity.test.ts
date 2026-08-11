@@ -131,5 +131,16 @@ describe("scaffold parity", () => {
       assertEquals(resolveScaffoldTemplate("nope"), null);
       await assertRejects(() => materializeScaffold({ template: "nope" }));
     });
+
+    it("rejects a project name the CLI would reject", async () => {
+      for (const name of ["", "   ", "../escape", "nested/name", ".."]) {
+        await assertRejects(
+          () => materializeScaffold({ template: "minimal", projectName: name }),
+          undefined,
+          undefined,
+          `"${name}" must be rejected here as well as by \`veryfront init\``,
+        );
+      }
+    });
   });
 });
