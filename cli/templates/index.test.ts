@@ -102,6 +102,34 @@ describe("cli/templates", () => {
     }
   });
 
+  it("scaffolds an ambient CSS module declaration beside the stylesheet import", async () => {
+    // `import "../globals.css"` is framework-authored, so without an ambient
+    // declaration the very first `tsc --noEmit` on an untouched scaffold is red:
+    // `app/layout.tsx(1,8): error TS2882: Cannot find module or type
+    // declarations for side-effect import of '../globals.css'`.
+    //
+    // Discovered from the scaffolded files, not from a list: a starter that
+    // starts importing a stylesheet later needs the declaration just as much.
+    // Read through `getTemplate` rather than off disk, because a declaration
+    // that exists in `files/` but never reaches the manifest leaves the
+    // developer with the same red compiler.
+    const CSS_SIDE_EFFECT_IMPORT = /^\s*import\s+["'][^"']+\.css["']/m;
+    const AMBIENT_CSS_MODULE = /declare\s+module\s+["']\*\.css["']/;
+
+    for (const templateName of STARTER_TEMPLATE_NAMES) {
+      const files = await getTemplate(templateName);
+      assertExists(files, `${templateName} should load from the template registry`);
+
+      if (!files.some((file) => CSS_SIDE_EFFECT_IMPORT.test(file.content))) continue;
+
+      assertEquals(
+        files.some((file) => file.path.endsWith(".d.ts") && AMBIENT_CSS_MODULE.test(file.content)),
+        true,
+        `${templateName} imports a stylesheet and must scaffold a "*.css" module declaration`,
+      );
+    }
+  });
+
   it("keeps the ai-agent calculator template lint-clean", async () => {
     const calculatorPath = new URL("./files/ai-agent/tools/calculator.ts", import.meta.url);
     const calculator = await Deno.readTextFile(calculatorPath);
