@@ -749,7 +749,7 @@ Deno.test("hosted generic invocation is only replaced by explicit delegates", ()
         "get_file",
       ],
     }),
-    { kind: "legacy" },
+    { kind: "generic" },
   );
   assertEquals(
     veryfrontCloudAgentServiceInternals.resolveHostedDelegationBinding({
@@ -760,7 +760,7 @@ Deno.test("hosted generic invocation is only replaced by explicit delegates", ()
       skills: ["legacy-workflow"],
       tools: ["get_file"],
     }),
-    { kind: "legacy" },
+    { kind: "generic" },
   );
   assertEquals(
     veryfrontCloudAgentServiceInternals.resolveHostedDelegationBinding({

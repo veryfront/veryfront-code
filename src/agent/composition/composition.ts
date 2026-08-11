@@ -25,11 +25,13 @@ async function runAgentAsStreamingTool(
   agent: Agent,
   input: string,
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest | undefined,
+  abortSignal?: AbortSignal,
 ): Promise<AgentResponse> {
   const execute = async (): Promise<AgentResponse> => {
     let finalResponse: AgentResponse | undefined;
     const stream = await agent.stream({
       input,
+      abortSignal,
       onFinish: (response) => {
         finalResponse = response;
       },
@@ -74,6 +76,7 @@ export function agentAsTool(agent: Agent, description: string): Tool {
             agent,
             input,
             getRuntimeSourceIntegrationPolicyFromContext(context),
+            context?.abortSignal,
           );
 
           setActiveSpanAttributes({

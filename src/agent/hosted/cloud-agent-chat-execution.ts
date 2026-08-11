@@ -108,8 +108,8 @@ export function buildLocalTools(
         }),
       );
     } else {
-      // Agents authored before declarative delegates retain the legacy hosted
-      // child-fork tool. Explicit scoped delegate bindings opt out.
+      // Generic invoke_agent remains the platform tool for dynamic agent
+      // selection. Explicit scoped delegate bindings opt into fixed targets.
       tools.invoke_agent = createInvokeAgentTool(
         context,
         taskContext,

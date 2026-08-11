@@ -1539,6 +1539,10 @@ export class AgentRuntime {
                 tc.toolName,
                 toolCall.args,
                 hasToolReplacements ? undefined : skillState.activeSkillDelegationOverrides,
+                hasToolReplacements
+                  ? undefined
+                  : resolveConfiguredTool(runtimeToolsConfig, tc.toolName, { agentId: this.id }) ??
+                    undefined,
               );
               const executionContext = {
                 toolCallId: tc.toolCallId,
@@ -2165,6 +2169,7 @@ export class AgentRuntime {
             tc.name,
             toolCall.args,
             skillState.activeSkillDelegationOverrides,
+            resolveConfiguredTool(this.config.tools, tc.name, { agentId: this.id }) ?? undefined,
           );
 
           callbacks?.onToolCall?.(toolCall);
