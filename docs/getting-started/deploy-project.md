@@ -10,8 +10,8 @@ order: 7
   [Create project](./create-project.md)).
 - For Veryfront Cloud: run `veryfront login` or set `VERYFRONT_API_TOKEN`. See
   [Configuration](../guides/configuration.md).
-- For another host: any container or Node-compatible runtime that can serve the
-  build output.
+- For another host: any container or Node-compatible runtime that can run
+  `veryfront serve` from the project directory.
 
 ## Build
 
@@ -21,7 +21,9 @@ Create a production build:
 veryfront build
 ```
 
-This writes the production output to `dist/`.
+This writes the browser build to `dist/`: HTML, client bundles, CSS, and static
+assets. API routes, agents, workflows, and tasks are not compiled into `dist/`.
+`veryfront serve` loads them from the project source at request time.
 
 ## Run the production build locally
 
@@ -77,8 +79,15 @@ link.
 
 ## Deploy somewhere else
 
-For a non-Cloud target, run `veryfront build` and ship the `dist/` output. See
-[Building and deploying](../guides/deploying.md).
+For a non-Cloud target, ship the whole project directory, not just `dist/`. Copy
+the project to the host and run `veryfront build` there (or ship the `dist/` you
+built locally alongside the source), then run `veryfront serve` from the project
+directory.
+
+A host that receives only `dist/` serves the pages and returns 404 for every API
+route, so the chat UI from the default scaffold loads with a dead `/api/ag-ui`
+backend. See [Building and deploying](../guides/deploying.md) for a container
+example.
 
 ## Verify it worked
 
