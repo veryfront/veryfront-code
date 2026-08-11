@@ -25,6 +25,7 @@ import type {
   UseChatResult,
 } from "#veryfront/agent/react/use-chat/types.ts";
 import { generateClientId } from "#veryfront/agent/react/use-chat/utils.ts";
+import { csrfMutationHeaders } from "#veryfront/security/csrf/browser-mutation-headers.ts";
 
 type UseChatStreamHandler = typeof handleAgUiStreamingResponse;
 
@@ -246,10 +247,13 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
 
         const response = await fetch(api, {
           method: "POST",
-          headers: {
+          // A production build turns `security.csrf` on by default, so this
+          // POST has to echo the `__Host-vf_csrf` cookie back or the server
+          // answers 403 — dev, where CSRF is off, would never show it.
+          headers: csrfMutationHeaders(api, {
             "Content-Type": "application/json",
             ...options.headers,
-          },
+          }),
           credentials: options.credentials,
           body: JSON.stringify({
             messages: allMessages,
