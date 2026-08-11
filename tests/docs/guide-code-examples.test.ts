@@ -925,7 +925,7 @@ describe("Guide: installation.md", () => {
       "yarn global add veryfront",
       "bun add -g veryfront",
       "npx veryfront@latest",
-      "veryfront install agents",
+      "veryfront install --target agents",
       "veryfront --version",
     ];
 
