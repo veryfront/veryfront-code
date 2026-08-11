@@ -57,6 +57,20 @@ interface IntegrationRequestSignalScope {
   dispose: () => void;
 }
 
+/**
+ * A non-2xx response from the integration tools API. Carries the status so
+ * discovery can tell an unusable request apart from a real service failure.
+ */
+class IntegrationToolListResponseError extends Error {
+  readonly status: number;
+
+  constructor(status: number, statusText: string) {
+    super(`Integration tools API returned ${status} ${statusText}`.trim());
+    this.name = "IntegrationToolListResponseError";
+    this.status = status;
+  }
+}
+
 interface RemoteIntegrationExecutionContext {
   readonly hasExplicitCredential: boolean;
   readonly authToken: unknown;
@@ -563,9 +577,7 @@ async function fetchToolList(
       // Throw so callers can distinguish a fetch failure from "no remote tools
       // available" (which returns an empty tools array with status 200).
       discardResponseBody(response);
-      throw new Error(
-        `Integration tools API returned ${response.status} ${response.statusText}`.trim(),
-      );
+      throw new IntegrationToolListResponseError(response.status, response.statusText);
     }
 
     const rawData = await readBoundedResponseJson(
@@ -587,6 +599,7 @@ async function fetchToolList(
 async function discoverRemoteIntegrationToolCatalog(
   baseUrl: string,
   token: string,
+  projectSlug: string | undefined,
   context: RemoteIntegrationExecutionContext,
 ): Promise<RemoteIntegrationToolCatalogResult> {
   try {
@@ -596,9 +609,23 @@ async function discoverRemoteIntegrationToolCatalog(
     };
   } catch (err) {
     context.abortSignal?.throwIfAborted();
-    logger.error("Failed to fetch remote integration tool definitions", {
-      error: err instanceof Error ? err.message : String(err),
-    });
+    const error = err instanceof Error ? err.message : String(err);
+    // The tools endpoint is project scoped. A runtime with no project slug and
+    // a credential that carries no project claim — an unlinked local project
+    // running on a `veryfront login` session — is rejected with 400. That is
+    // the expected state for a project with no integrations, not a failure the
+    // developer can act on, so it must not surface as an error.
+    if (
+      projectSlug === undefined &&
+      err instanceof IntegrationToolListResponseError &&
+      err.status === 400
+    ) {
+      logger.debug("Skipped remote integration tools: no project scope for this runtime", {
+        error,
+      });
+      return { status: "unavailable", reason: "request_failed" };
+    }
+    logger.error("Failed to fetch remote integration tool definitions", { error });
     return { status: "unavailable", reason: "request_failed" };
   }
 }
@@ -619,7 +646,7 @@ function getRemoteIntegrationToolCatalog(
     return cached.result;
   }
 
-  const result = discoverRemoteIntegrationToolCatalog(baseUrl, token, context);
+  const result = discoverRemoteIntegrationToolCatalog(baseUrl, token, projectSlug, context);
   if (scope) {
     const entry: RemoteIntegrationToolDiscoveryCacheEntry = {
       baseUrl,

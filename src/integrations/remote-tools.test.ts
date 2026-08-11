@@ -8,6 +8,13 @@ import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
+  __subscribeLogRecordEmitter,
+  type LogEntry,
+  LogLevel,
+  refreshLoggerConfig,
+  setLogLevel,
+} from "#veryfront/utils/logger/index.ts";
+import {
   executeRemoteIntegrationTool,
   getRemoteIntegrationToolDefinitions,
   getRemoteIntegrationToolDiscovery,
@@ -47,6 +54,30 @@ function setRemoteToolEnv(overrides: Record<string, string>): void {
   }
 
   refreshEnvironmentConfig();
+}
+
+/**
+ * Collect the integration tool discovery log records emitted while `run`
+ * executes. Debug records only reach subscribers when the debug level is
+ * active, so the level is forced for the duration of the call.
+ */
+async function captureIntegrationDiscoveryLogs(
+  run: () => Promise<unknown>,
+): Promise<LogEntry[]> {
+  const records: LogEntry[] = [];
+  const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+    if (entry.message.includes("integration tool")) records.push(entry);
+  });
+  setLogLevel(LogLevel.DEBUG);
+
+  try {
+    await run();
+  } finally {
+    unsubscribe();
+    refreshLoggerConfig();
+  }
+
+  return records;
 }
 
 afterEach(() => {
@@ -871,5 +902,55 @@ describe("integrations/remote-tools", () => {
       }), async () => await executeRemoteIntegrationTool("github__list_repos", {}));
 
     assertEquals(result, "plain result");
+  });
+
+  it("reports a projectless integration tools rejection below error level", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    const records = await captureIntegrationDiscoveryLogs(() =>
+      withMockFetch(
+        async () => new Response(undefined, { status: 400, statusText: "Bad Request" }),
+        () => getRemoteIntegrationToolDiscovery(),
+      )
+    );
+
+    assertEquals(records.filter((entry) => entry.level === "error"), []);
+    assertEquals(records.map((entry) => entry.level), ["debug"]);
+  });
+
+  it("still reports integration tool discovery failures for a project-scoped runtime", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+      VERYFRONT_PROJECT_SLUG: "environment-project",
+    });
+
+    const records = await captureIntegrationDiscoveryLogs(() =>
+      withMockFetch(
+        async () => new Response(undefined, { status: 400, statusText: "Bad Request" }),
+        () => getRemoteIntegrationToolDiscovery(),
+      )
+    );
+
+    assertEquals(records.map((entry) => entry.level), ["error"]);
+  });
+
+  it("still reports integration tool discovery server failures at error level", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    const records = await captureIntegrationDiscoveryLogs(() =>
+      withMockFetch(
+        async () => new Response(undefined, { status: 500, statusText: "Internal Server Error" }),
+        () => getRemoteIntegrationToolDiscovery(),
+      )
+    );
+
+    assertEquals(records.map((entry) => entry.level), ["error"]);
   });
 });
