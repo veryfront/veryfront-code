@@ -12,7 +12,7 @@ export const openHelp: CommandHelp = {
     },
     {
       flag: "--env <name>",
-      description: "Open a specific environment's dashboard page",
+      description: "Open the project's Environments panel",
     },
     { flag: "--studio", description: "Open Veryfront Studio" },
     { flag: "--json", description: "Output URL as JSON instead of opening" },
