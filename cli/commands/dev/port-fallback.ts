@@ -35,13 +35,10 @@ export function isPortInUseError(error: unknown): boolean {
 /**
  * Binds `port` and releases it again, to see whether the dev server could have it.
  *
- * `node:net` probes on every runtime rather than `Deno.listen` under Deno: the
- * npm build resolves a bare `Deno` to dnt's @deno/shim-deno even when the CLI
- * is running on Deno (`deno install -g npm:veryfront`), and that shim's
- * Node-backed `listen()` reads `server._handle.fd` synchronously - null on
- * Deno - so the probe died with "Cannot read properties of null (reading
- * 'fd')" before the dev server ever bound a port. One `node:net` path works on
- * Deno, on Node, and inside a compiled binary, and cannot reach the shim.
+ * One `node:net` path serves every runtime. A bare `Deno.listen` cannot: the
+ * npm build resolves bare `Deno` to dnt's @deno/shim-deno even when the CLI
+ * runs on Deno, and that shim reads `server._handle.fd` synchronously, which
+ * Deno leaves null - the crash that stopped `veryfront dev` binding at all.
  */
 export async function isPortAvailable(port: number): Promise<boolean> {
   const net = await import("node:net");
