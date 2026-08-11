@@ -43,12 +43,14 @@ of a bulleted list.
 
 ## Supply the Markdown renderer
 
-`veryfront init` already scaffolds `app/markdown-renderer.tsx`, so a project
-created with [Create project](./create-project.md) has this file. Create it
-yourself if you added Veryfront to an existing project:
+[Create project](./create-project.md) preselects the `ai-agent` template, and
+that starter, like the other chat starters, scaffolds
+`app/markdown-renderer.tsx`, so those projects already have this file. Create it
+yourself if yours does not: the `minimal` and `agentic-workflow` templates ship
+without a renderer, as does a project you added Veryfront to.
 
 ```bash
-npm install react-markdown@9.0.3 remark-gfm@4.0.1
+npm install --save-exact react-markdown@9.0.3 remark-gfm@4.0.1
 ```
 
 ```tsx
@@ -64,9 +66,9 @@ export function MarkdownRenderer({ source }: MarkdownRendererProps): React.JSX.E
 }
 ```
 
-Pin the parser to an exact version: these packages reach the browser through the
-module pipeline, where a floating range resolves to whatever is latest at
-request time. Your renderer owns parsing, sanitization, and link policy. See
+`--save-exact` matters: these packages reach the browser through the module
+pipeline, where a floating `^` range resolves to whatever is latest at request
+time. Your renderer owns parsing, sanitization, and link policy. See
 [Render Markdown in chat](../guides/chat-ui.md#render-markdown-in-chat) to swap
 in a different renderer.
 

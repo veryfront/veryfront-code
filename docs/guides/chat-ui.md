@@ -42,9 +42,10 @@ message list, loading state, and scroll behavior.
 The `MarkdownRendererProvider` wrapper is required for readable answers.
 Assistants reply in Markdown, and `veryfront/markdown` presents plain escaped
 source until a renderer is installed, so a `<Chat>` without one shows
-`## Heading` rather than a heading. Every starter scaffolds the
-`app/markdown-renderer.tsx` this sample imports; if you added Veryfront to an
-existing project, create it first. See
+`## Heading` rather than a heading. The chat starters scaffold the
+`app/markdown-renderer.tsx` this sample imports; the `minimal` and
+`agentic-workflow` templates do not. Create the file first if your project does
+not already have it. See
 [Render Markdown in chat](#render-markdown-in-chat). Wrap the other samples on
 this page the same way.
 
@@ -326,10 +327,12 @@ installed, so `<Chat>` shows raw Markdown on its own. Every chat starter
 scaffolds a renderer in `app/markdown-renderer.tsx` and installs it around
 `<Chat>`, so a new project renders assistant answers with no extra setup.
 
-Add the same two pieces to an existing project. Install the parser:
+Add the same two pieces to a project without one. Install the parser, pinned to
+an exact version: these packages reach the browser through the module pipeline,
+where a floating `^` range resolves to whatever is latest at request time.
 
 ```bash
-npm install react-markdown@9.0.3 remark-gfm@4.0.1
+npm install --save-exact react-markdown@9.0.3 remark-gfm@4.0.1
 ```
 
 Then create the renderer and install it for the chat subtree:
