@@ -199,6 +199,25 @@ describe("guide content contracts", () => {
     );
   });
 
+  it("does not offer the build output as a self-hosting target", async () => {
+    // The sibling guide is what the Getting Started page links to for a
+    // non-Cloud target, so it has to carry the same model: the host runs
+    // `veryfront serve` over the project, it does not serve `dist/` alone.
+    const guide = await Deno.readTextFile("docs/guides/deploying.md");
+    const prose = guide.replace(/\s+/g, " ");
+
+    assertEquals(prose.includes("can serve the build output"), false);
+    assertEquals(prose.includes("use the build output or a container"), false);
+    assertStringIncludes(
+      prose,
+      "ship the whole project directory, not just `dist/`",
+    );
+    assertStringIncludes(
+      prose,
+      "run `veryfront serve` from the project directory",
+    );
+  });
+
   it("documents single-command Deploy for interactive Veryfront Cloud paths", async () => {
     const docs = [
       "docs/getting-started/deploy-project.md",

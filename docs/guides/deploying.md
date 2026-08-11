@@ -12,8 +12,8 @@ Keep the first production path narrow: one route, one check, one deploy.
 - A Veryfront project that runs with `veryfront dev`.
 - Production credentials for providers, integrations, and deployment targets.
 - For Veryfront Cloud: run `veryfront login` or set `VERYFRONT_API_TOKEN`.
-- For self-hosting: the current Node.js LTS or a container host that can serve
-  the build output.
+- For self-hosting: the current Node.js LTS or a container host that can run
+  `veryfront serve` from the project directory.
 
 ## Pick one production path
 
@@ -111,7 +111,9 @@ deploying.
 
 ## Deploy somewhere else
 
-Self-hosted deployments can use the build output or a container:
+Self-hosted deployments ship the whole project directory, not just `dist/`. The
+container below copies the project, builds it in place, and serves it from the
+project directory:
 
 ```dockerfile
 FROM denoland/deno:2.6.0
@@ -124,8 +126,8 @@ EXPOSE 3000
 CMD ["deno", "task", "start"]
 ```
 
-Use infrastructure that supports your chosen runtime and can serve the build
-output.
+Use infrastructure that supports your chosen runtime and can run
+`veryfront serve` from the project directory.
 
 ## Verify it worked
 

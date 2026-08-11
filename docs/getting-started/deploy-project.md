@@ -84,10 +84,13 @@ the project to the host and run `veryfront build` there (or ship the `dist/` you
 built locally alongside the source), then run `veryfront serve` from the project
 directory.
 
-A host that receives only `dist/` serves the pages and returns 404 for every API
-route, so the chat UI from the default scaffold loads with a dead `/api/ag-ui`
-backend. See [Building and deploying](../guides/deploying.md) for a container
-example.
+A host that receives only `dist/` has no backend. The pages load, but every API
+route is absent, and the response depends on the host: running
+`veryfront serve` over a `dist/`-only directory returns 404, while a static host
+that honors the generated `_redirects` file returns the SPA `index.html` with a
+200. Either way the chat UI from the default scaffold loads with a dead
+`/api/ag-ui` backend. See [Building and deploying](../guides/deploying.md) for a
+container example.
 
 ## Verify it worked
 
