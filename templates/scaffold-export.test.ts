@@ -63,6 +63,7 @@ describe("scaffold export", () => {
   it("points at a module that exists", async () => {
     const exports = await readDenoExports();
     const source = exports[EXPORT_SUBPATH];
+    assert(source !== undefined, `${EXPORT_SUBPATH} is not exported`);
 
     const info = await stat(source.replace(/^\.\//, ""));
     assert(info.isFile, `${source} is not a file`);
