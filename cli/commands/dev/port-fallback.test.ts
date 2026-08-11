@@ -6,6 +6,7 @@ import {
   isPortAvailable,
   isPortInUseError,
   MAX_PORT_FALLBACK_ATTEMPTS,
+  MAX_TCP_PORT,
 } from "./port-fallback.ts";
 
 /** A probe reporting the given ports as taken, recording what was asked about. */
@@ -67,6 +68,35 @@ describe("cli/commands/dev/port-fallback", () => {
       assertStringIncludes(veryfrontError.message, "3000");
       assertStringIncludes(veryfrontError.message, "3002");
       assertStringIncludes(veryfrontError.suggestion ?? "", "--port");
+    });
+
+    it("stops at the last valid TCP port instead of probing past it", async () => {
+      const start = MAX_TCP_PORT - 2;
+      const { probe, probed } = probeBusyOn([start, start + 1, MAX_TCP_PORT]);
+
+      const error = await findAvailablePort(start, MAX_PORT_FALLBACK_ATTEMPTS, probe).then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+
+      // A runtime rejects 65536 as an invalid port, not as an address in use,
+      // so probing it would let a raw error escape instead of PORT_IN_USE.
+      assertEquals(probed, [start, start + 1, MAX_TCP_PORT]);
+      assert(error instanceof Error, "expected the exhausted scan to reject");
+      const veryfrontError = error as Error & { slug?: string };
+      assertEquals(veryfrontError.slug, "port-in-use");
+      assertStringIncludes(veryfrontError.message, String(MAX_TCP_PORT));
+    });
+
+    it("still probes an out-of-range requested port so the runtime can reject it", async () => {
+      const probed: number[] = [];
+
+      await findAvailablePort(MAX_TCP_PORT + 1, MAX_PORT_FALLBACK_ATTEMPTS, (port) => {
+        probed.push(port);
+        return Promise.resolve(true);
+      });
+
+      assertEquals(probed, [MAX_TCP_PORT + 1]);
     });
   });
 

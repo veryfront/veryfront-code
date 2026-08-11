@@ -429,12 +429,16 @@ async function executeStepAction(
 
         await result.ready;
 
-        console.log(`  ${success("●")} ${brand("http://localhost:3000/")}`);
+        // Not always 3000: a taken port falls forward, and pointing the demo at
+        // the requested port would open whatever caused the collision instead.
+        const serverUrl = `http://localhost:${result.port}`;
+
+        console.log(`  ${success("●")} ${brand(`${serverUrl}/`)}`);
         console.log();
 
         console.log(`  ${dim("Opening browser...")}`);
         try {
-          await openBrowser("http://localhost:3000");
+          await openBrowser(serverUrl);
         } catch {
           // Ignore if browser can't be opened
         }

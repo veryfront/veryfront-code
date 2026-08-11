@@ -68,15 +68,17 @@ describe("cli/commands/dev", () => {
   });
 
   describe("DevCommandResult type", () => {
-    it("should have ready, done, and stop properties", () => {
+    it("should have ready, done, port, and stop properties", () => {
       const result: DevCommandResult = {
         ready: Promise.resolve(),
         done: Promise.resolve(),
+        port: 3000,
         stop: async () => {},
       };
 
       assertEquals(typeof result.ready.then, "function");
       assertEquals(typeof result.done.then, "function");
+      assertEquals(result.port, 3000);
       assertEquals(typeof result.stop, "function");
     });
 
@@ -84,6 +86,7 @@ describe("cli/commands/dev", () => {
       const result: DevCommandResult = {
         ready: Promise.resolve(),
         done: new Promise(() => {}), // never resolves
+        port: 3000,
         stop: async () => {},
       };
 
@@ -96,6 +99,7 @@ describe("cli/commands/dev", () => {
       const result: DevCommandResult = {
         ready: Promise.resolve(),
         done: Promise.resolve(),
+        port: 3000,
         stop: () => {
           stopped = true;
           return Promise.resolve();

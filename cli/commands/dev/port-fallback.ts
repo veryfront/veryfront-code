@@ -19,6 +19,9 @@ import { isDeno } from "veryfront/platform";
 /** How many consecutive ports to try before giving up. */
 export const MAX_PORT_FALLBACK_ATTEMPTS = 10;
 
+/** The highest port a TCP listener can bind. */
+export const MAX_TCP_PORT = 65535;
+
 /** True when `error` means "that port is taken", on either Deno or Node. */
 export function isPortInUseError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
@@ -60,6 +63,12 @@ export async function isPortAvailable(port: number): Promise<boolean> {
 /**
  * Returns `requestedPort`, or the first free port after it.
  *
+ * The scan stops at `MAX_TCP_PORT`: a runtime rejects port 65536 as an invalid
+ * port rather than as an address in use, so scanning past the end of the range
+ * would let that raw error escape instead of the `PORT_IN_USE` below.
+ * `requestedPort` itself is always probed, so an out-of-range `--port` still
+ * surfaces the runtime's own complaint about the value the user passed.
+ *
  * Throws `PORT_IN_USE` - whose suggestion names `--port` - once the whole scan
  * range is taken.
  */
@@ -69,14 +78,17 @@ export async function findAvailablePort(
   probe: (port: number) => Promise<boolean> = isPortAvailable,
 ): Promise<number> {
   const attempts = Math.max(1, maxAttempts);
+  let lastPort = requestedPort;
 
   for (let attempt = 0; attempt < attempts; attempt++) {
     const port = requestedPort + attempt;
+    if (attempt > 0 && port > MAX_TCP_PORT) break;
     if (await probe(port)) return port;
+    lastPort = port;
   }
 
   throw PORT_IN_USE.create({
-    detail: `Ports ${requestedPort}-${requestedPort + attempts - 1} are all in use`,
-    context: { requestedPort, attempts },
+    detail: `Ports ${requestedPort}-${lastPort} are all in use`,
+    context: { requestedPort, lastPort, attempts },
   });
 }

@@ -40,6 +40,13 @@ export type DevCommandOptions = DevOptions;
 export interface DevCommandResult {
   ready: Promise<void>;
   done: Promise<void>;
+  /**
+   * The port the server actually bound, which is not always the requested one:
+   * a taken port falls forward. Embedded callers must use this rather than the
+   * port they asked for, or they will point the user at the process that caused
+   * the collision.
+   */
+  port: number;
   /** Stop the dev server programmatically (for demo mode) */
   stop: () => Promise<void>;
 }
@@ -248,6 +255,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         return {
           ready: devServer.ready,
           done,
+          port: boundPort,
           stop: shutdown,
         };
       }
@@ -346,6 +354,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       return {
         ready: devServer.ready,
         done,
+        port: boundPort,
         stop: shutdown,
       };
     },
