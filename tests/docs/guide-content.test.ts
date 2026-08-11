@@ -189,6 +189,30 @@ describe("guide content contracts", () => {
     );
   });
 
+  it("tells the reader a Cloud environment is protected before asking for a request", async () => {
+    // Veryfront Cloud environments are protected by default: an anonymous
+    // request to the environment URL gets a 302 to
+    // https://veryfront.com/sign-in on every path, API routes included, and
+    // VERYFRONT_API_TOKEN does not change that. Verified against published
+    // 0.1.1229:
+    //   curl -s -o /dev/null -w '%{http_code} %{redirect_url}' \
+    //     https://support-agent.production.veryfront.com/api/health
+    //   -> 302 https://veryfront.com/sign-in?from=...
+    // A verification step written as a bare `curl -sSf <environment-url>`
+    // therefore exits 0 with an empty body whether or not the deployment
+    // works, so the page has to name the redirect and print the status code.
+    const doc = await Deno.readTextFile(
+      "docs/getting-started/deploy-project.md",
+    );
+    const prose = doc.replace(/\s+/g, " ");
+
+    assertStringIncludes(prose, "protected by default");
+    assertStringIncludes(prose, "https://veryfront.com/sign-in");
+    assertStringIncludes(prose, "Public Environment");
+    assertStringIncludes(doc, "-w '%{http_code} %{redirect_url}\\n'");
+    assertEquals(doc.includes("```bash\ncurl -sSf <environment-url>\n```"), false);
+  });
+
   it("uses serve for local production builds", async () => {
     const docs = [
       "docs/getting-started/deploy-project.md",

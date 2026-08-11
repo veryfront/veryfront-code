@@ -59,6 +59,31 @@ For a preview deployment per branch:
 npx veryfront@latest push --branch feature-x
 ```
 
+## Environment access
+
+Veryfront Cloud creates `preview`, `staging`, and `production` as protected by
+default, so check the preview URL in a browser signed in to Veryfront as a
+member of the project.
+
+A protected environment serves only that signed-in browser. Every other request
+gets a `302` to `https://veryfront.com/sign-in`, on every path including API
+routes:
+
+```bash
+curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' \
+  https://<project>.production.veryfront.com/api/health
+302 https://veryfront.com/sign-in?from=https%3A%2F%2F...%2Fapi%2Fhealth
+```
+
+`VERYFRONT_API_TOKEN` does not open a protected environment. It authenticates
+the CLI against the Cloud API, not deployment traffic, so `curl`, a CI smoke
+test, or an uptime monitor sees the sign-in redirect either way.
+
+To serve an environment to everyone, open **Environments** in Veryfront Studio,
+select the environment, turn on **Public Environment**, and confirm
+**Make Public**. Keep protection on for environments that serve internal or
+unreleased work.
+
 ## Deploy to Veryfront Cloud
 
 After checking the preview, deploy the exact pushed source digest:
@@ -94,15 +119,22 @@ container example.
 
 ## Verify it worked
 
-Deploy prints the environment URL. Request that URL and confirm the deployed
-page responds:
+Deploy prints the environment URL. Request that URL and print the status line,
+so a sign-in redirect is visible instead of passing silently:
 
 ```bash
-curl -sSf <environment-url>
+curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' <environment-url>
 ```
 
-Then request an API route the project serves. For the agent route from
-[Create API](./create-api.md):
+A public environment answers `200`. A protected environment answers `302` to
+`https://veryfront.com/sign-in`; open the URL in a signed-in browser, or make
+the environment public, as described in
+[Environment access](#environment-access). Do not check with a bare
+`curl -sSf <environment-url>`: `curl` does not treat a `302` as a failure, so
+that command exits `0` with an empty body whether or not the deployment works.
+
+Once the environment is public, request an API route the project serves. For
+the agent route from [Create API](./create-api.md):
 
 ```bash
 curl -sSf -N -X POST <environment-url>/api/ag-ui \
