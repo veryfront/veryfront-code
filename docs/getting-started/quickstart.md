@@ -20,8 +20,8 @@ cd support-agent
 
 Passing `-- --template <template>` scaffolds straight away and is what the rest
 of this page assumes. Omit it and the command opens an interactive setup wizard
-that waits for three answers — starter template, runtime, and whether to
-initialize Git — before it writes anything. See
+that waits for three answers (starter template, runtime, and whether to
+initialize Git) before it writes anything. See
 [Create project](./create-project.md) for the wizard. The wizard only appears in
 a terminal; in CI, scripts, and other non-interactive shells the command falls
 back to `ai-agent` on Node.js without Git.

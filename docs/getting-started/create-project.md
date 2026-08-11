@@ -29,8 +29,8 @@ Initialize Git?              preselects Yes
 Press Enter three times to accept the preselected answers, or use the arrow keys
 to change one first.
 
-The wizard needs a terminal. In non-interactive environments — CI, piped stdin,
-scripts — `veryfront init` skips every prompt and uses `ai-agent` on Node.js
+The wizard needs a terminal. In non-interactive environments (CI, piped stdin,
+scripts), `veryfront init` skips every prompt and uses `ai-agent` on Node.js
 without initializing Git. Passing `--template` also skips the whole wizard,
 including the runtime and Git questions.
 
