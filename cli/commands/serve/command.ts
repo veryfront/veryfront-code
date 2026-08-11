@@ -5,6 +5,8 @@ import { exitProcess, registerTerminationSignals, showHeader } from "#cli/utils"
 import { generateDefaultProjectId } from "../../utils/project.ts";
 import { startCliProductionServer } from "#cli/shared/server-startup";
 import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
+import { isJsonMode } from "../../shared/json-output.ts";
+import { brand, success } from "../../ui/colors.ts";
 import { runStandaloneProxyRuntime } from "./proxy-runtime.ts";
 
 const STARTUP_ERROR_FLUSH_TIMEOUT_MS = 2_000;
@@ -183,6 +185,29 @@ function loadProductionSentryModule(): Promise<ProductionSentryModule> {
   return import("veryfront/observability/sentry");
 }
 
+const WILDCARD_BIND_ADDRESSES = new Set(["", "0.0.0.0", "::", "[::]"]);
+
+/**
+ * Browsable URL for a server bound to `bindAddress`.
+ *
+ * A wildcard bind is not an address a developer can open, so it is rendered as
+ * `localhost` — the host the deploy docs tell them to visit.
+ */
+export function serveReadyUrl(bindAddress: string, port: number): string {
+  const host = WILDCARD_BIND_ADDRESSES.has(bindAddress) ? "localhost" : bindAddress;
+  const formattedHost = host.includes(":") ? `[${host}]` : host;
+  return `http://${formattedHost}:${port}`;
+}
+
+/** Print the ready block with the URL to open, mirroring `veryfront dev`. */
+export function printServeReady(options: { port: number; bindAddress: string }): void {
+  if (isJsonMode()) return;
+  console.log();
+  console.log(`  ${success("✓")} Ready`);
+  console.log(`  ${brand(serveReadyUrl(options.bindAddress, options.port))}`);
+  console.log();
+}
+
 export async function runProductionServer(
   options: ServeOptions,
   dependencies: ProductionServerDependencies = {},
@@ -241,6 +266,8 @@ export async function runProductionServer(
     dependencies.ensureBundlerContracts ?? ensureCliBundlerContracts,
     initializeErrorReporting,
   );
+
+  printServeReady({ port: options.port, bindAddress: options.bindAddress });
 
   let shuttingDown = false;
   const shutdown = async (signal: "SIGINT" | "SIGTERM"): Promise<void> => {
