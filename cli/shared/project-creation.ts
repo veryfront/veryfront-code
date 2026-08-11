@@ -1,4 +1,4 @@
-import { createError, toError } from "veryfront/errors";
+import { createError, TEMPLATE_NOT_FOUND, toError } from "veryfront/errors";
 import { cliLogger as logger } from "#cli/utils";
 import { createFileSystem } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
@@ -28,6 +28,7 @@ import {
   resolveFeatures,
   validateFeatures,
 } from "../templates/feature-loader.ts";
+import { STARTER_TEMPLATE_NAMES } from "../templates/types.ts";
 import type {
   EnvVarConfig,
   FeatureName,
@@ -224,7 +225,13 @@ async function loadTemplateFiles(
   let files = await getTemplate(template);
   const templateConfig = getTemplateConfig(template);
 
-  if (!files) throw createConfigError(`Template ${template} not found`);
+  if (!files) {
+    throw TEMPLATE_NOT_FOUND.create({
+      detail: `Unknown template "${template}". Available templates: ${
+        STARTER_TEMPLATE_NAMES.join(", ")
+      }`,
+    });
+  }
 
   const agentsGuide = getAiRuleTemplate("agents.md");
   if (!agentsGuide) throw createConfigError("Project agent guide template not found");

@@ -96,6 +96,20 @@ export const TRIGGER_CONFIG_INVALID = defineError({
     "Check trigger ID format (lowercase, alphanumeric, dots/slashes/hyphens) and ensure all input values are JSON-serializable",
 });
 
+/**
+ * `veryfront init --template <name>` (and `npm create veryfront -- --template`)
+ * was given a name that is not in the starter catalog. The detail carries the
+ * list of valid names so a wrong guess is self-correcting.
+ */
+export const TEMPLATE_NOT_FOUND = defineError({
+  slug: "template-not-found",
+  category: "CONFIG",
+  status: 404,
+  title: "Unknown project template",
+  suggestion: "Run 'veryfront init --help' to see the available templates",
+  exitCode: 2,
+});
+
 /** Registry fragment for CONFIG errors (slug → definition). */
 export const CONFIG_REGISTRY = {
   "config-not-found": CONFIG_NOT_FOUND,
@@ -109,4 +123,5 @@ export const CONFIG_REGISTRY = {
   "webhook-config-invalid": WEBHOOK_CONFIG_INVALID,
   "schedule-config-invalid": SCHEDULE_CONFIG_INVALID,
   "trigger-config-invalid": TRIGGER_CONFIG_INVALID,
+  "template-not-found": TEMPLATE_NOT_FOUND,
 } as const;
