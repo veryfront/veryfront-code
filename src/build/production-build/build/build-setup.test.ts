@@ -155,8 +155,13 @@ describe("build/production-build/build/build-setup", () => {
         );
 
         const message = error instanceof Error ? error.message : String(error);
-        assertStringIncludes(message, outputDir);
+        assertStringIncludes(message, "foreign-output");
         assertStringIncludes(message, "outDir");
+        assertEquals(
+          message.includes(tmpDir),
+          false,
+          "the refusal must name the output directory without leaking the machine's paths",
+        );
 
         assertEquals(
           await Deno.readTextFile(`${outputDir}/index.js`),
@@ -167,6 +172,76 @@ describe("build/production-build/build/build-setup", () => {
           await Deno.readTextFile(`${outputDir}/nested/deep.txt`),
           "keepme",
           "a foreign output directory must survive the build, nested files included",
+        );
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("refuses to clear an output directory whose contents cannot be listed", async () => {
+      // Ownership is inferred from what the directory holds, so a listing that
+      // fails — no permission, a transient filesystem error, a path that turns
+      // out to be a file — proves nothing. Treating that as "ours" hands the
+      // deletion back to the case this guard exists to stop, so an output that
+      // cannot be inspected fails closed.
+      const tmpDir = await Deno.makeTempDir();
+      const outputDir = `${tmpDir}/unreadable-output`;
+      const adapter = createDeletingAdapter();
+      const removed: string[] = [];
+      const fs = adapter.fs as unknown as {
+        readDir: (path: string) => AsyncIterable<Deno.DirEntry>;
+        remove: (path: string, opts?: { recursive?: boolean }) => Promise<void>;
+      };
+      fs.readDir = () => {
+        throw new Deno.errors.PermissionDenied("readdir");
+      };
+      const remove = fs.remove;
+      fs.remove = (path, opts) => {
+        removed.push(path);
+        return remove(path, opts);
+      };
+
+      try {
+        await Deno.mkdir(outputDir, { recursive: true });
+        await Deno.writeTextFile(`${outputDir}/IMPORTANT.txt`, "do not delete");
+
+        const error = await assertRejects(
+          () => setupBuildDirectories(adapter, outputDir, false),
+        );
+
+        const message = error instanceof Error ? error.message : String(error);
+        assertStringIncludes(message, "unreadable-output");
+        assertEquals(removed, [], "an uninspectable output directory must not be deleted");
+        assertEquals(
+          await Deno.readTextFile(`${outputDir}/IMPORTANT.txt`),
+          "do not delete",
+          "an uninspectable output directory must survive the build",
+        );
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("refuses to clear a foreign directory holding a _veryfront file", async () => {
+      // Ownership is claimed by the `_veryfront/` directory the build creates.
+      // A plain file (or a symlink) of that name is not that directory, and
+      // matching on the name alone let any project that happens to keep one
+      // authorize the deletion of everything beside it.
+      const tmpDir = await Deno.makeTempDir();
+      const outputDir = `${tmpDir}/marker-file-output`;
+      const adapter = createDeletingAdapter();
+
+      try {
+        await Deno.mkdir(outputDir, { recursive: true });
+        await Deno.writeTextFile(`${outputDir}/_veryfront`, "not our directory");
+        await Deno.writeTextFile(`${outputDir}/IMPORTANT.txt`, "do not delete");
+
+        await assertRejects(() => setupBuildDirectories(adapter, outputDir, false));
+
+        assertEquals(
+          await Deno.readTextFile(`${outputDir}/IMPORTANT.txt`),
+          "do not delete",
+          "a name-only marker match must not authorize deleting a foreign directory",
         );
       } finally {
         await Deno.remove(tmpDir, { recursive: true });

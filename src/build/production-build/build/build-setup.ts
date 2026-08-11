@@ -1,13 +1,14 @@
 import { serverLogger as logger } from "#veryfront/utils";
-import { join } from "#veryfront/compat/path/index.ts";
+import { basename, isAbsolute, join, relative } from "#veryfront/compat/path/index.ts";
 import { BUILD_FAILED, handleErrorWithFallback } from "#veryfront/errors";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { DirEntry, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { cwd } from "#veryfront/platform/compat/process.ts";
 
 /**
- * Entry every Veryfront build creates in its output directory (below), and so
- * the marker that the directory is a build artifact rather than a directory
- * the project keeps for itself.
+ * Directory every Veryfront build creates inside its output directory (below),
+ * and so the marker that the output is a build artifact rather than a directory
+ * the project keeps for itself. Only a directory of this name counts.
  */
 const BUILD_OUTPUT_MARKER = "_veryfront";
 
@@ -75,48 +76,85 @@ export async function setupBuildDirectories(
  * have consented to, and it cannot be undone, so it has to be asked about
  * rather than guessed at.
  *
- * A directory holding `_veryfront/` is a previous build's output: this same
- * function creates that entry before anything else is written, so every
- * directory the build has ever owned carries it — including one left by an
- * older release or by a build that failed halfway. Ownership is therefore
+ * A directory holding a `_veryfront/` directory is a previous build's output:
+ * this same function creates that entry before anything else is written, so
+ * every directory the build has ever owned carries it — including one left by
+ * an older release or by a build that failed halfway. Ownership is therefore
  * inherited without a new marker file, and upgrading does not turn every
  * existing `dist/` into an error. An empty directory has nothing to lose and
  * is cleared as before; an absent one needs no clearing at all.
+ *
+ * Ownership that cannot be established is not ownership: a listing that fails
+ * — no permission, a transient filesystem error, a path that is a file rather
+ * than a directory — proves nothing about what is there, so it refuses too.
  */
 async function outputDirectoryNeedsClearing(
   adapter: RuntimeAdapter,
   outputDir: string,
 ): Promise<boolean> {
   const entries = await readOutputDirectoryEntries(adapter, outputDir);
-  // Could not be inspected: keep the previous behaviour and let the removal
-  // (which tolerates its own failures) report whatever the real problem is.
-  if (entries === "unreadable") return true;
   if (entries === "absent") return false;
-  if (entries.length === 0 || entries.includes(BUILD_OUTPUT_MARKER)) return true;
 
-  const preview = entries.slice(0, REFUSAL_PREVIEW_LIMIT).join(", ");
-  const more = entries.length > REFUSAL_PREVIEW_LIMIT
-    ? `, and ${entries.length - REFUSAL_PREVIEW_LIMIT} more`
+  if (entries === "unreadable") {
+    throw BUILD_FAILED.create({
+      message: `Refusing to clear ${describeOutputDir(outputDir)}: its contents could not be ` +
+        `listed, so there is no telling whether a Veryfront build wrote them. The build ` +
+        `empties its output directory before writing, which would delete whatever is there. ` +
+        `Check that it is a directory you can read, or build somewhere else with -o/--output ` +
+        `or \`build: { outDir }\` in veryfront.config.ts.`,
+    });
+  }
+
+  // A plain file or a symlink named `_veryfront` is not the directory this
+  // function creates, so it does not make the output ours to delete.
+  const owned = entries.some((entry) => entry.name === BUILD_OUTPUT_MARKER && entry.isDirectory);
+  if (entries.length === 0 || owned) return true;
+
+  const names = entries.map((entry) => entry.name);
+  const preview = names.slice(0, REFUSAL_PREVIEW_LIMIT).join(", ");
+  const more = names.length > REFUSAL_PREVIEW_LIMIT
+    ? `, and ${names.length - REFUSAL_PREVIEW_LIMIT} more`
     : "";
 
   throw BUILD_FAILED.create({
-    message: `Refusing to clear ${outputDir}: it holds files that no Veryfront build wrote ` +
-      `(${preview}${more}). The build empties its output directory before writing, which ` +
-      `would delete them. Move or delete that directory yourself, or build somewhere else ` +
-      `with -o/--output or \`build: { outDir }\` in veryfront.config.ts.`,
+    message: `Refusing to clear ${describeOutputDir(outputDir)}: it holds files that no ` +
+      `Veryfront build wrote (${preview}${more}). The build empties its output directory ` +
+      `before writing, which would delete them. Move or delete that directory yourself, or ` +
+      `build somewhere else with -o/--output or \`build: { outDir }\` in veryfront.config.ts.`,
   });
 }
 
-/** Entry names in `outputDir`, or why they could not be listed. */
+/**
+ * Name the output directory for a message a user reads.
+ *
+ * The CLI resolves the output to an absolute path before the build sees it, and
+ * printing that leaks the machine's filesystem layout into human and `--json`
+ * output alike. The project-relative path is what the developer configured and
+ * all they need to act on; an output outside the project falls back to its last
+ * segment rather than a chain of `../`.
+ */
+function describeOutputDir(outputDir: string): string {
+  try {
+    const relativePath = relative(cwd(), outputDir);
+    if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+      return basename(outputDir) || outputDir;
+    }
+    return relativePath;
+  } catch {
+    return basename(outputDir) || outputDir;
+  }
+}
+
+/** Entries in `outputDir`, or why they could not be listed. */
 async function readOutputDirectoryEntries(
   adapter: RuntimeAdapter,
   outputDir: string,
-): Promise<string[] | "absent" | "unreadable"> {
+): Promise<DirEntry[] | "absent" | "unreadable"> {
   try {
     if (!(await adapter.fs.exists(outputDir))) return "absent";
-    const names: string[] = [];
-    for await (const entry of adapter.fs.readDir(outputDir)) names.push(entry.name);
-    return names;
+    const entries: DirEntry[] = [];
+    for await (const entry of adapter.fs.readDir(outputDir)) entries.push(entry);
+    return entries;
   } catch (error) {
     logger.debug("Could not inspect the build output directory", { outputDir, error });
     return "unreadable";
