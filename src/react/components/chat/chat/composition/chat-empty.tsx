@@ -41,7 +41,12 @@ export interface ChatEmptyProps {
   ref?: React.Ref<HTMLDivElement>;
 }
 
-/** Render chat empty. */
+/**
+ * Render the chat empty state. It renders whatever it is given and never hides
+ * itself: in a custom layout, gate it on the thread being empty with
+ * `<Chat.If condition={(ctx) => ctx.isEmpty}>`. The `<Chat>` preset does this
+ * for you.
+ */
 export function ChatEmpty(
   {
     icon,

@@ -1,5 +1,6 @@
 import "../_helpers/contract-init.ts";
 import React from "react";
+import { renderToString } from "react-dom/server";
 import {
   assert,
   assertEquals,
@@ -388,6 +389,60 @@ describe("Guide: chat-ui.md", () => {
       ),
     );
     assertEquals(element.type, ChatRoot);
+  });
+
+  it("gates the custom layout's empty state so it cannot outlive an empty thread", async () => {
+    const guide = await readGuide("chat-ui.md");
+
+    // `<Chat.Empty>` is prop-driven and never hides itself. A custom layout
+    // that drops it straight into `<Chat.Root>` keeps the hero mounted under
+    // an active conversation, so the sample must gate it on `ctx.isEmpty`.
+    const layout = guide.slice(guide.indexOf("## Compose a custom layout"));
+    const gate = layout.indexOf("<Chat.If condition={(ctx) => ctx.isEmpty}>");
+    const empty = layout.indexOf("<Chat.Empty");
+    assert(gate !== -1, "custom layout sample gates the empty state with <Chat.If>");
+    assert(gate < empty, "the <Chat.If> gate wraps <Chat.Empty>");
+
+    const chatComponents = Chat as unknown as Record<
+      string,
+      React.ComponentType<Record<string, unknown>>
+    >;
+    const Root = chatComponents.Root;
+    const If = chatComponents.If;
+    const Empty = chatComponents.Empty;
+    const MessageList = chatComponents.MessageList;
+    assertExists(Root);
+    assertExists(If);
+    assertExists(Empty);
+    assertExists(MessageList);
+
+    const messages = [
+      { id: "u1", role: "user", parts: [{ type: "text", text: "128 / 8?" }] },
+      { id: "a1", role: "assistant", parts: [{ type: "text", text: "128 / 8 = 16" }] },
+    ];
+    const layoutElement = (msgs: unknown[]) =>
+      React.createElement(
+        Root,
+        { messages: msgs, input: "" },
+        React.createElement(
+          If,
+          { condition: (ctx: { isEmpty: boolean }) => ctx.isEmpty },
+          React.createElement(Empty, {
+            title: "What can I help with?",
+            suggestions: ["Explain React hooks", "Write a regex"],
+          }),
+        ),
+        React.createElement(MessageList, { messages: msgs }),
+      );
+
+    const active = renderToString(layoutElement(messages));
+    assertEquals(active.includes("What can I help with?"), false);
+    assertEquals(active.includes("Explain React hooks"), false);
+    assertStringIncludes(active, "128 / 8 = 16");
+
+    const fresh = renderToString(layoutElement([]));
+    assertStringIncludes(fresh, "What can I help with?");
+    assertStringIncludes(fresh, "Explain React hooks");
   });
 });
 
