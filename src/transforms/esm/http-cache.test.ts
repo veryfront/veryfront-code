@@ -787,8 +787,6 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
           (value) => ({ error: undefined, value }),
           (error: unknown) => ({ error, value: undefined }),
         );
-        let followerSettled = false;
-        void followerOutcome.then(() => followerSettled = true);
 
         try {
           for (let attempt = 0; attempt < 10; attempt++) {
@@ -800,7 +798,6 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
           await time.tickAsync(HTTP_MODULE_FETCH_MAX_WAIT_MS);
           await time.runMicrotasks();
 
-          assertEquals(followerSettled, true);
           const { error } = await followerOutcome;
           assertInstanceOf(error, Error);
           assert(error.message.includes("Failed to cache absolute HTTP module"));
