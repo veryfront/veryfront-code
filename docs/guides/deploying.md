@@ -171,6 +171,21 @@ After `veryfront deploy`:
   production.
 - The Cloud dashboard lists the deployment under the project.
 
+## Tear a project down
+
+`veryfront push` and `veryfront up` create a cloud project the first time they
+run. Delete that project, and the environments, releases, files, and uploads it
+owns, from the CLI:
+
+```bash
+veryfront project delete            # deletes the project this directory targets
+veryfront project delete my-app     # deletes a project by slug
+```
+
+The command asks for confirmation. In CI, pass `--yes` to answer the prompt or
+`--force` to skip it, and add `--json` for a machine-readable result. Deletion
+is permanent; there is no undo.
+
 ## Next
 
 - [Configuration](./configuration.md): Configure build and environment behavior

@@ -162,6 +162,15 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "npx veryfront@latest open");
   });
 
+  it("documents a CLI teardown path for cloud projects", async () => {
+    // `veryfront push` creates a billable cloud project, so the docs must show
+    // how to remove one without driving the Studio UI.
+    const guide = await Deno.readTextFile("docs/guides/deploying.md");
+
+    assertStringIncludes(guide, "veryfront project delete");
+    assertStringIncludes(guide, "Tear a project down");
+  });
+
   it("points post-deploy verification at the environment URL, not at open", async () => {
     // `veryfront open` builds Cloud dashboard URLs
     // (https://veryfront.com/projects/<slug>[/environments/<env>]). It never
