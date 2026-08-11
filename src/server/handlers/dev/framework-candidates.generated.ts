@@ -11710,7 +11710,7 @@ export const FRAMEWORK_CANDIDATES: readonly string[] = [
   "https://models.dev/logos/${key}.svg",
   "https://ui.shadcn.com/blocks).",
   "https://upload.invalid/",
-  "https://veryfront.com/docs/code/guides/chat-ui#render-markdown-directly",
+  "https://veryfront.com/docs/code/guides/chat-ui#render-markdown-in-chat",
   "hue",
   "hydration",
   "i)",
