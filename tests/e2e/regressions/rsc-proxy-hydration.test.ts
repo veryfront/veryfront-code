@@ -271,7 +271,7 @@ async function assertSharedRuntimeExecutionUnavailable(
   };
   assertEquals(
     problem.type,
-    "https://veryfront.com/docs/errors/project-execution-unavailable",
+    "https://veryfront.com/docs/code/guides/errors#project-execution-unavailable",
   );
   assertEquals(problem.status, 503);
   assertEquals(problem.detail?.startsWith("Shared runtimes"), true);

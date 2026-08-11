@@ -252,7 +252,7 @@ describe("error-registry", () => {
       const rfc9457 = error.toRFC9457();
 
       // Required fields
-      assertEquals(rfc9457.type, "https://veryfront.com/docs/errors/config-not-found");
+      assertEquals(rfc9457.type, "https://veryfront.com/docs/code/guides/errors#config-not-found");
       assertEquals(rfc9457.title, "Configuration file not found");
       assertEquals(rfc9457.status, 404);
       assertEquals(rfc9457.category, "CONFIG");
@@ -292,7 +292,7 @@ describe("error-registry", () => {
 
         assertEquals(
           rfc9457.type,
-          `https://veryfront.com/docs/errors/${slug}`,
+          `https://veryfront.com/docs/code/guides/errors#${slug}`,
           `RFC 9457 type URI mismatch for ${slug}`,
         );
       }
@@ -302,7 +302,10 @@ describe("error-registry", () => {
   describe("getDocsUrl", () => {
     it("should return correct documentation URL", () => {
       const error = CONFIG_NOT_FOUND.create();
-      assertEquals(error.getDocsUrl(), "https://veryfront.com/docs/errors/config-not-found");
+      assertEquals(
+        error.getDocsUrl(),
+        "https://veryfront.com/docs/code/guides/errors#config-not-found",
+      );
     });
 
     it("should match RFC 9457 type field", () => {

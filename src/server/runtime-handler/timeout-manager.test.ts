@@ -68,7 +68,7 @@ describe("timeout-manager", () => {
       assertEquals(response.status, 403);
       assertEquals(response.headers.get("content-type"), "application/problem+json");
       assertEquals(await response.json(), {
-        type: "https://veryfront.com/docs/errors/permission-denied",
+        type: "https://veryfront.com/docs/code/guides/errors#permission-denied",
         title: "File/resource permission denied",
         status: 403,
         detail: "Project credential is not authorized for the requested environment",

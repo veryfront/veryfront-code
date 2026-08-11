@@ -14,6 +14,9 @@ import {
 } from "./safe-diagnostics.ts";
 import { VeryfrontError } from "./types.ts";
 
+/** Path of the page error slugs anchor into; a slug must never change it. */
+const ERROR_DOCS_PATHNAME = new URL(ERROR_DOCS_BASE_URL).pathname;
+
 describe("safe-diagnostics", () => {
   it("should neutralize terminal controls and line injection in one diagnostic field", () => {
     const malicious = "before\x1b]2;owned\x07\x1b[2J\nFAKE SUCCESS";
@@ -33,7 +36,7 @@ describe("safe-diagnostics", () => {
     assertEquals(sanitized.includes("\r"), false);
   });
 
-  it("should encode a hostile slug as one credential-scrubbed docs path segment", () => {
+  it("should encode a hostile slug as one credential-scrubbed docs fragment", () => {
     const docsUrl = buildErrorDocsUrl(
       "../admin/path?token=secret#fragment%value\ud800",
     );
@@ -43,9 +46,14 @@ describe("safe-diagnostics", () => {
       docsUrl,
       `${ERROR_DOCS_BASE_URL}..%2Fadmin%2Fpath%3Ftoken%3D%5BREDACTED%5D%23fragment%25value%EF%BF%BD`,
     );
+    // The slug is confined to the fragment: it cannot traverse to another
+    // path, open a query, or start a second fragment.
     assertEquals(parsed.search, "");
-    assertEquals(parsed.hash, "");
-    assert(parsed.pathname.startsWith("/docs/errors/"));
+    assertEquals(parsed.pathname, ERROR_DOCS_PATHNAME);
+    assertEquals(
+      parsed.hash,
+      "#..%2Fadmin%2Fpath%3Ftoken%3D%5BREDACTED%5D%23fragment%25value%EF%BF%BD",
+    );
     assertEquals(docsUrl.includes("secret"), false);
   });
 
@@ -58,11 +66,11 @@ describe("safe-diagnostics", () => {
         docsUrl,
         `${ERROR_DOCS_BASE_URL}unknown-error`,
       );
-      assert(parsed.pathname.startsWith("/docs/errors/"));
+      assertEquals(parsed.pathname, ERROR_DOCS_PATHNAME);
     }
   });
 
-  it("should align the bounded boundary slug with its docs path segment", () => {
+  it("should align the bounded boundary slug with its docs fragment", () => {
     const error = new VeryfrontError("Vendor error", {
       slug: `vendor-${"x".repeat(ERROR_DOCS_SLUG_MAX_LENGTH_CHARS + 100)}`,
       category: "GENERAL",
@@ -70,12 +78,10 @@ describe("safe-diagnostics", () => {
       title: "Vendor error",
     });
     const snapshot = snapshotErrorForBoundary(error);
-    const docsSegment = new URL(buildErrorDocsUrl(error.slug)).pathname.slice(
-      "/docs/errors/".length,
-    );
+    const docsFragment = new URL(buildErrorDocsUrl(error.slug)).hash.slice(1);
 
     assertEquals(snapshot.slug.length, ERROR_DOCS_SLUG_MAX_LENGTH_CHARS);
-    assertEquals(decodeURIComponent(docsSegment), snapshot.slug);
+    assertEquals(decodeURIComponent(docsFragment), snapshot.slug);
   });
 
   it("should preserve an explicit CLI exit code at the boundary", () => {

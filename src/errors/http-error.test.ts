@@ -26,7 +26,7 @@ describe("http-error", () => {
 
     assertEquals(response.status, 500);
     assertEquals(response.headers.get("Content-Type"), PROBLEM_JSON_CONTENT_TYPE);
-    assertEquals(body.type, "https://veryfront.com/docs/errors/unknown-error");
+    assertEquals(body.type, "https://veryfront.com/docs/code/guides/errors#unknown-error");
     assertEquals(body.instance, "/api/build");
     assertEquals(body.detail, undefined);
     assertEquals(JSON.stringify(body).includes("super-secret"), false);
@@ -142,7 +142,7 @@ describe("http-error", () => {
     const body = await response.json();
 
     assertEquals(response.status, 404);
-    assertEquals(body.type, "https://veryfront.com/docs/errors/config-not-found");
+    assertEquals(body.type, "https://veryfront.com/docs/code/guides/errors#config-not-found");
     assertEquals(body.instance, undefined);
   });
 
@@ -158,7 +158,7 @@ describe("http-error", () => {
     const body = await response.json();
 
     assertEquals(response.status, 404);
-    assertEquals(body.type, "https://veryfront.com/docs/errors/config-not-found");
+    assertEquals(body.type, "https://veryfront.com/docs/code/guides/errors#config-not-found");
     assertEquals(body.instance, undefined);
   });
 
@@ -195,7 +195,7 @@ describe("http-error", () => {
       const body = await response.json();
 
       assertEquals(response.status, 500);
-      assertEquals(body.type, "https://veryfront.com/docs/errors/unknown-error");
+      assertEquals(body.type, "https://veryfront.com/docs/code/guides/errors#unknown-error");
     }
   });
 
@@ -211,7 +211,7 @@ describe("http-error", () => {
     const body = await response.json();
 
     assertEquals(response.status, 500);
-    assertEquals(body.type, "https://veryfront.com/docs/errors/unknown-error");
+    assertEquals(body.type, "https://veryfront.com/docs/code/guides/errors#unknown-error");
     assertEquals(body.instance, "/safe");
   });
 

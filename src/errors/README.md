@@ -70,7 +70,7 @@ infrastructure details in user-facing fields.
 `type` field is the stable documentation URL:
 
 ```text
-https://veryfront.com/docs/errors/<slug>
+https://veryfront.com/docs/code/guides/errors#<slug>
 ```
 
 Choose the response helper based on the boundary:
@@ -97,10 +97,9 @@ try {
 HTTP problem responses use `application/problem+json`.
 
 Custom error slugs are credential-scrubbed and encoded as one documentation URL
-path segment. Separators, query and fragment markers, percent signs, and
-malformed Unicode cannot escape that segment. Exact `.` and `..` slugs fall back
-to `unknown-error` so URL normalization cannot leave the error documentation
-path.
+fragment. Separators, query and fragment markers, percent signs, and malformed
+Unicode cannot escape that fragment, so a slug can never change the page the
+link points at. Exact `.` and `..` slugs fall back to `unknown-error`.
 
 Diagnostic fields, stacks, structured context, serialized problem responses,
 production log records, and terminal renderings use shared size limits.
