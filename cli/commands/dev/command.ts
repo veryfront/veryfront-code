@@ -76,6 +76,45 @@ export function createSelectedProjectPushOptions(
   return createStagedPushOptions(project.slug, projectDir);
 }
 
+/**
+ * Starts the dev server on the first free port at or after `requestedPort`.
+ *
+ * Port 3000 is the most contended port on a developer machine, and the docs
+ * tell readers to run a bare `veryfront dev`, so a taken port scans forward
+ * rather than killing the command. Everything downstream - the MCP port, the
+ * printed URL, the browser the demo opens - must key off the returned `port`
+ * rather than the requested one, or a fall-forward points the user at the
+ * process that caused the collision.
+ *
+ * Takes `start` as a callback so the whole scan costs one `DevServer.start()`:
+ * probing is a bare bind/release, and a failed `start()` has already registered
+ * watchers and reload subscriptions that only `stop()` releases.
+ */
+export async function startDevServerOnFreePort<T>(
+  requestedPort: number,
+  start: (port: number) => Promise<T>,
+): Promise<{ server: T; port: number }> {
+  const port = await findAvailablePort(requestedPort);
+  if (port !== requestedPort) {
+    console.log();
+    console.log(`  ${warning("!")} Port ${requestedPort} is in use, using ${port} instead`);
+  }
+
+  try {
+    return { server: await start(port), port };
+  } catch (error) {
+    // Lost the race between probing the port and binding it.
+    if (isPortInUseError(error)) {
+      throw PORT_IN_USE.create({
+        detail: `Port ${port} is already in use`,
+        cause: error,
+        context: { port },
+      });
+    }
+    throw error;
+  }
+}
+
 export function devCommand(options: DevOptions): Promise<DevCommandResult> {
   return withSpan(
     "cli.command.dev",
@@ -149,33 +188,16 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       let projects: RemoteProject[] = [];
       let selectedProject: RemoteProject | null = null;
 
-      // Port 3000 is the most contended port on a developer machine, and the docs
-      // tell readers to run a bare `veryfront dev`. Scan forward rather than dying.
-      const boundPort = await findAvailablePort(finalPort);
-      if (boundPort !== finalPort) {
-        console.log();
-        console.log(`  ${warning("!")} Port ${finalPort} is in use, using ${boundPort} instead`);
-      }
-
-      try {
-        devServer = await startDevServer({
-          port: boundPort,
+      const started = await startDevServerOnFreePort(finalPort, (port) =>
+        startDevServer({
+          port,
           projectDir,
           enableHMR,
           enableFastRefresh: true,
           signal: shutdownController.signal,
-        });
-      } catch (error) {
-        // Lost the race between probing the port and binding it.
-        if (isPortInUseError(error)) {
-          throw PORT_IN_USE.create({
-            detail: `Port ${boundPort} is already in use`,
-            cause: error,
-            context: { port: boundPort },
-          });
-        }
-        throw error;
-      }
+        }));
+      devServer = started.server;
+      const boundPort = started.port;
 
       const DEV_MCP_PORT_OFFSET = 2;
       const mcpPort = boundPort + DEV_MCP_PORT_OFFSET;
