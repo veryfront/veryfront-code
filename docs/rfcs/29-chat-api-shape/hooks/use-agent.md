@@ -2,7 +2,12 @@
 
 Binds an agent to the session with lifecycle callbacks for tool activity and errors.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `useAgent`
+> - **Not exported today:** none
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 > **⚠ Reusability flag** (see [generic core vs veryfront adapter](../../29-chat-api-shape.md)): this POSTs veryfront's `/api/agents/:id` and returns veryfront agent-SDK types, and its role overlaps `useChat`'s transport. It belongs in the veryfront adapter, not the generic core - its place in a generic chat library is doubtful.
 

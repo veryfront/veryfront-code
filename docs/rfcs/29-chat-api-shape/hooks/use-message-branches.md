@@ -2,7 +2,20 @@
 
 Branch position and navigation for the current message - a thin layer over `getBranches` / `switchBranch` on `useChat`.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - partly landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `useMessageBranches`, `UseMessageBranchesResult`, `BranchPicker`
+> - **Not exported today:** none
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+
+## Landed so far
+
+### `useMessageBranches` - `new` - `shipped` (src/react/components/chat/chat/contexts/message-context.tsx:87)
+
+This hook shipped whole in [#3277](https://github.com/veryfront/veryfront-code/pull/3277): `{ index, count, previous, next }` exactly as specified, read from the nearest `Message` context, thin over the session's existing branch state. It also returns `hasPrevious` / `hasNext`, which the RFC did not name - additive, and what `BranchPicker.Previous` / `.Next` use to disable themselves.
+
+**Still proposed:** the `BranchPicker` leaves' own deltas (see [`BranchPicker`](../components/branch-picker.md)) - the hook landing did not reshape them.
 
 ## Import
 

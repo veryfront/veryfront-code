@@ -2,7 +2,12 @@
 
 The transcript - one scroll container with an accessible log region and a scroll-to-bottom button, driven by the `useChatScroll` contract.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `ChatMessageList`, `ChatMessageList.Content`
+> - **Not exported today:** `ChatMessageList.Root`, `ChatMessageList.ScrollButton`
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 

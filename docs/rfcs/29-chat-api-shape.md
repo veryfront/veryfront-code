@@ -2,7 +2,18 @@
 
 > **Per-piece documentation:** every proposed component and hook has a user-facing docs page under [`29-chat-api-shape/`](./29-chat-api-shape/README.md) - 25 components, 34 hooks, helpers, providers.
 
-**Status:** draft for discussion. **North star: `veryfront/ui`.** Chat should be a
+> **Status: RFC 29 - partly landed.** This RFC proposes a reset of a library that already shipped, and it is landing piecemeal. Per-symbol truth for this document, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `mergeProps`, `useChatInput`, `useChatInputContext`, `useChatScroll`, `useMessageBranches`
+> - **Not exported today:** `formatSize`, `getAgentPromptSuggestionItems`
+>
+> The per-piece pages carry the same block plus per-delta `shipped` badges; the roll-up of everything that has landed lives in [the reference index](./29-chat-api-shape/README.md#what-has-landed---shipped-srcreactcomponentschatchathooksuse-chat-inputts85).
+
+### Already landed - `shipped` (src/react/components/chat/chat/hooks/use-chat-input.ts:85)
+
+[#3277](https://github.com/veryfront/veryfront-code/pull/3277) shipped the L3 prop-getter surface (`useChatInput` with `getFormProps` / `getFieldProps` / `getSubmitProps` / `getAttachProps` / `getVoiceProps`), made **`mergeProps` public**, landed the IME-composition guard behind `ChatInput.Field`, and added `useChatScroll`, `useMessageBranches`, and the `ChatInputContext*` names. Nothing else in this document has been implemented; the ledgers on the per-piece pages are the authority, and the lint fails if any of them drifts.
+
+**North star: `veryfront/ui`.** Chat should be a
 **regular component library built exactly like `veryfront/ui`** - each component a
 single, fully-controllable node. `veryfront/ui` already nails this (it's a Radix-API
 fork + `cva`, `asChild`, `extends HTMLAttributes`); `veryfront/chat` should follow
@@ -873,7 +884,7 @@ providers render zero nodes; every `use*Context` has an `Optional` variant.
 | `extractChatMessageMetadata(value)`                                    | typed metadata off a message                          |
 | `formatSize(bytes)`                                                    | human-readable byte size (`B`/`KB`/`MB`)              |
 | `agentsToPickerOptions(agents)`                                        | picker option mapping                                 |
-| `mergeProps(...propsObjects)`                                          | **new** - the normative merge, public                 |
+| `mergeProps(...propsObjects)`                                          | `shipped` - the normative merge, public               |
 
 ---
 

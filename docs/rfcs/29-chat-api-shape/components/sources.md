@@ -2,7 +2,12 @@
 
 The citation list for a message, extracted from its source parts. Render it whole, or compose the parts.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `Sources`, `Sources.List`, `Sources.Pill`, `Sources.Root`
+> - **Not exported today:** none
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 `Sources` is the same component as `Message.Sources` - a namespace re-export for use outside a `Message`, never a parallel implementation. `Message.*` is canonical. The children contract is the same on both names: node children recompose via `Sources.List` / `Sources.Pill` (as documented here), and a **function child** - `(source, index) => ReactNode` - maps each source, as documented on [`Message.Sources`](./message.md).
 

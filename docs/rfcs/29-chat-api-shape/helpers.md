@@ -2,7 +2,12 @@
 
 Pure functions - no DOM, no hooks. The primitives several hooks and components are built on, exported for L3 use.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../29-chat-api-shape.md).
+> **Status: RFC 29 - partly landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `agentsToPickerOptions`, `downloadMarkdown`, `exportAsMarkdown`, `extractChatMessageMetadata`, `extractSourcesFromParts`, `getAgentPromptSuggestions`, `getTextContent`, `groupPartsInOrder`, `isReasoningPart`, `isSkillToolPart`, `isToolPart`, `mergeProps`, `normalizeAgentMetadata`, `normalizeAgentsListResponse`
+> - **Not exported today:** `formatSize`, `getAgentPromptSuggestionItems`
+>
+> An exported symbol is not a landed delta - see [reading the status block](./README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../29-chat-api-shape.md).
 
 Every helper is a plain function you can call anywhere - in your own part renderers, export buttons, or server code. Where a hook is "thin over" a helper, the helper is the exported primitive so L3 consumers never re-implement it.
 
@@ -25,7 +30,15 @@ Every helper is a plain function you can call anywhere - in your own part render
 | `extractChatMessageMetadata(value)`     | Typed metadata off a message.                                                                                                                        |
 | `formatSize(bytes)`                     | `string` - human-readable byte size (`B` / `KB` / `MB`); the primitive under [`AttachmentsPanel`](./components/attachments-panel.md)'s `.Item.Size`. |
 | `agentsToPickerOptions(agents)`         | Maps agents to picker options - used by [`ChatAgentPicker`](./components/chat-agent-picker.md).                                                      |
-| `mergeProps(...propsObjects)`           | **New, public** - the normative merge used internally by every prop getter and `asChild` (React Aria model).                                         |
+| `mergeProps(...propsObjects)`           | `shipped` - the normative merge used internally by every prop getter and `asChild` (React Aria model).                                               |
+
+## Landed so far
+
+### `mergeProps` - `new` - `shipped` (src/react/components/chat/chat/hooks/use-chat-input.ts:85)
+
+Shipped in [#3277](https://github.com/veryfront/veryfront-code/pull/3277). It is a real public export of `veryfront/chat`, re-exported from `src/chat/index.ts`, and it is the merge every `useChatInput` getter calls - so the getters and the exported helper cannot drift.
+
+What has _not_ landed with it: `formatSize` and `getAgentPromptSuggestionItems` are still internal, so the "public helpers" list below is the proposal, not today's barrel.
 
 ## Notes
 

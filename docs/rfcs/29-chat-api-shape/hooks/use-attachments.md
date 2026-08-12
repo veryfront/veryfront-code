@@ -2,7 +2,12 @@
 
 Headless state and actions for durable uploaded files.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `useAttachments`
+> - **Not exported today:** none
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 > **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): owns the durable-list domain that rides with [`AttachmentsPanel`](../components/attachments-panel.md) - proposed for the same optional module, not core v1. Also the clearest proliferation smell: `useUpload` (pending) and `useAttachments` (durable) have near-identical shapes; consider collapsing toward one transport-pluggable primitive parameterized by persistence.
 

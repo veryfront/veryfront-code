@@ -2,7 +2,12 @@
 
 Application shell layout - dockable sidebars, main pane, header - from `veryfront/ui`. Chat consumes it; it does not own it.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `AppShell`, `AppShell.Content`, `AppShell.Header`, `AppShell.Main`, `AppShell.Sidebar`, `AppShell.SidebarContent`, `AppShell.SidebarFooter`, `AppShell.SidebarHeader`, `AppShell.Trigger`
+> - **Not exported today:** none
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Reference only
 

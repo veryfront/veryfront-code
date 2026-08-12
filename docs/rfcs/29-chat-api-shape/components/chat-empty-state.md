@@ -2,7 +2,12 @@
 
 The zero-messages view: hero agent avatar, heading, and a wrapping row of typed prompt-suggestion chips.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `ChatEmptyState`, `ChatEmptyState.Avatar`, `ChatEmptyState.Heading`, `ChatEmptyState.Root`, `ChatEmptyState.Suggestion`, `ChatEmptyState.Suggestions`
+> - **Not exported today:** none
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 > **⚠ Reusability flag** (see [generic core vs veryfront adapter](../../29-chat-api-shape.md)): `Avatar` defaults `alt="Veryfront Agent"` - a brand string a generic consumer would ship to screen readers. Use a neutral default (`"Agent"`), or make `alt` required with no brand default.
 

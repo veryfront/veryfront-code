@@ -57,6 +57,23 @@ describe("audit-chat-composability", () => {
     assertEquals(findCompositionLies(stories, compounds).length, 0);
   });
 
+  // `Object.assign(ChatBase, { Message, ErrorBanner })` — shorthand keys are
+  // real sub-parts, and missing them made honest anatomy read as a lie.
+  it("collects shorthand properties as sub-parts", () => {
+    const compounds = collectCompoundParts([{
+      path: "chat-preset.tsx",
+      content: `
+        export const Chat: ChatComponent = Object.assign(ChatBase, {
+          Root: ChatRoot,
+          Message,
+          ErrorBanner,
+        });
+      `,
+    }]);
+
+    assertEquals(compounds.get("Chat"), new Set(["Root", "Message", "ErrorBanner"]));
+  });
+
   it("ignores tokens whose base is not a known compound", () => {
     const compounds = collectCompoundParts(SOURCE);
     const stories = [{
