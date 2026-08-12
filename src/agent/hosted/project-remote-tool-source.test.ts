@@ -95,6 +95,12 @@ async function resolveTestHeaders(
   return typeof headers === "function" ? await headers(context) : headers;
 }
 
+async function resolveTestEndpoint(
+  endpoint: RemoteMCPToolSourceConfig["endpoint"],
+): Promise<string> {
+  return typeof endpoint === "function" ? await endpoint() : endpoint;
+}
+
 Deno.test("hosted remote tool sources do not carry legacy end-user identity plumbing", async () => {
   const forbidden = [
     ["get", "End", "User", "Id"].join(""),
@@ -673,8 +679,8 @@ Deno.test("createHostedProjectRemoteToolSources defaults to first-party MCP serv
   });
 
   assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp"]);
-  assertEquals(configs.map((config) => config.endpoint), [
-    "https://api.example/mcp",
+  assertEquals(await Promise.all(configs.map((config) => resolveTestEndpoint(config.endpoint))), [
+    "https://api.example/projects/project-1/mcp",
     "https://studio.example/mcp",
   ]);
 });
@@ -790,8 +796,8 @@ Deno.test("createHostedProjectRemoteToolSources builds API and explicit gated St
   });
 
   assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp"]);
-  assertEquals(configs.map((config) => config.endpoint), [
-    "https://api.example/mcp",
+  assertEquals(await Promise.all(configs.map((config) => resolveTestEndpoint(config.endpoint))), [
+    "https://api.example/projects/project-1/mcp",
     "https://studio.example/mcp",
   ]);
   assertEquals(await resolveTestHeaders(configs[0]?.headers), {
@@ -802,6 +808,10 @@ Deno.test("createHostedProjectRemoteToolSources builds API and explicit gated St
   });
 
   activeProjectId = "project-2";
+  assertEquals(
+    await resolveTestEndpoint(configs[0]?.endpoint ?? ""),
+    "https://api.example/projects/project-2/mcp",
+  );
   assertEquals(await resolveTestHeaders(configs[1]?.headers), {
     Authorization: "Bearer token-1",
     "x-conversation-id": "conversation-1",
@@ -885,8 +895,8 @@ Deno.test("createHostedProjectRemoteToolSources infers Studio MCP from allowed S
   });
 
   assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp"]);
-  assertEquals(configs.map((config) => config.endpoint), [
-    "https://api.example/mcp",
+  assertEquals(await Promise.all(configs.map((config) => resolveTestEndpoint(config.endpoint))), [
+    "https://api.example/projects/project-1/mcp",
     "https://studio.example/mcp",
   ]);
   assertEquals(
@@ -895,7 +905,7 @@ Deno.test("createHostedProjectRemoteToolSources infers Studio MCP from allowed S
   );
 });
 
-Deno.test("createHostedProjectRemoteToolSources does not infer Studio when explicit API-only MCP is set", () => {
+it("does not infer Studio when explicit API-only MCP is set", async () => {
   const configs: RemoteMCPToolSourceConfig[] = [];
   const sources = createHostedProjectRemoteToolSources({
     authToken: "token-1",
@@ -920,7 +930,9 @@ Deno.test("createHostedProjectRemoteToolSources does not infer Studio when expli
   });
 
   assertEquals(sources.map((source) => source.id), ["veryfront-mcp"]);
-  assertEquals(configs.map((config) => config.endpoint), ["https://api.example/mcp"]);
+  assertEquals(await Promise.all(configs.map((config) => resolveTestEndpoint(config.endpoint))), [
+    "https://api.example/projects/project-1/mcp",
+  ]);
 });
 
 Deno.test("createHostedProjectRemoteToolSources preserves an explicit MCP opt-out", () => {
@@ -1027,8 +1039,8 @@ Deno.test("createHostedProjectRemoteToolSources builds explicit MCP server lists
   });
 
   assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp", "linear"]);
-  assertEquals(configs.map((config) => config.endpoint), [
-    "https://api.example/mcp",
+  assertEquals(await Promise.all(configs.map((config) => resolveTestEndpoint(config.endpoint))), [
+    "https://api.example/projects/project-1/mcp",
     "https://studio.example/mcp",
     "https://linear.example/mcp",
   ]);

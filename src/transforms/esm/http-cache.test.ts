@@ -113,23 +113,51 @@ async function runNextFakeTimer(time: FakeTime, tempDir: string): Promise<void> 
   throw new Error("Expected a fake timer to be scheduled");
 }
 
-/** Iterations of {@linkcode runFakeTimersUntil} before it reports a stuck wait. */
+/** Iterations either driving helper takes before it reports a stuck wait. */
 const MAX_FAKE_TIMER_STEPS = 200;
+
+/**
+ * Give pending real filesystem work turns, without moving the clock, until
+ * `isReady` reports done.
+ *
+ * A caller reaches the shared-fetch registry through real filesystem work, so
+ * which of two concurrent callers registers the shared flight is decided by
+ * I/O completion order, not by call order. Draining microtasks once assumes the
+ * first caller already won that race; on a loaded runner it can lose, the two
+ * callers swap roles, and a test written around one of them then exercises the
+ * other. Waiting on the registry itself makes the roles explicit.
+ */
+async function runRealTurnsUntil(
+  time: FakeTime,
+  tempDir: string,
+  isReady: () => boolean,
+  description: string,
+): Promise<void> {
+  for (let step = 0; step < MAX_FAKE_TIMER_STEPS; step++) {
+    if (isReady()) return;
+    await Deno.stat(tempDir);
+    await time.runMicrotasks();
+  }
+  throw new Error(
+    `${description} did not happen within ${MAX_FAKE_TIMER_STEPS} filesystem turns`,
+  );
+}
 
 /**
  * Run scheduled fake timers, one at a time, until `isSettled` reports done.
  *
  * A caller whose only release is its own bounded-wait timer arms that timer
  * once its real I/O reaches the wait. Advancing the fake clock by a fixed span
- * instead assumes the timer already exists: on a loaded runner the caller can
- * arm it after the clock has moved past its due time, and no later advance ever
- * runs it. Awaiting that caller then blocks forever with nothing left on the
+ * instead assumes the timer already exists, and a timer armed after that span
+ * is never run. Awaiting such a caller blocks forever with nothing left on the
  * event loop, which Deno reports as "Promise resolution is still pending but
  * the event loop has already resolved" — a whole test file silently dropped.
  *
  * Stepping from the settled state keeps the wait reachable whenever it is
  * armed, and the step budget turns a genuinely stuck wait into a failure
- * instead of a hang.
+ * instead of a hang. The budget is a stuck detector, not a patience dial: a
+ * caller that re-arms a fresh bounded wait after every timeout exhausts any
+ * budget, and the answer is to stop it re-arming, never to raise the budget.
  */
 async function runFakeTimersUntil(
   time: FakeTime,
@@ -849,7 +877,22 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
         });
         const ownerOutcome = owner.catch((error) => error);
 
-        await time.runMicrotasks();
+        // The follower must join the owner's flight, not start its own. Both
+        // calls reach the registry through real filesystem work, so the owner
+        // owns the flight only once it is registered. Starting the follower
+        // before that lets the roles invert: the signal-less call becomes the
+        // owner and parks on the distributed read that never resolves, while
+        // the signal-bearing call keeps its waiter lease and re-arms a fresh
+        // bounded wait after every timeout — one fake timer per step, forever.
+        await runRealTurnsUntil(
+          time,
+          tempDir,
+          () => inFlightHttpFetches.size === 1,
+          "The owner's shared flight",
+        );
+        assertEquals(inFlightHttpFetches.size, 1);
+        const [ownerFlight] = [...inFlightHttpFetches.values()];
+
         const follower = cacheHttpImportsToLocal(source, options);
         let followerSettled = false;
         const followerOutcome = follower.then(
@@ -864,14 +907,17 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
         );
 
         try {
-          for (let attempt = 0; attempt < 20; attempt++) {
-            if (__getMaxInFlightHttpFetchWaiterCountForTests() >= 2) break;
-            // The follower reaches the shared flight through real filesystem
-            // work, which draining microtasks alone never advances.
-            await Deno.stat(tempDir);
-            await time.runMicrotasks();
-          }
+          // The follower reaches the shared flight through real filesystem
+          // work, which draining microtasks alone never advances.
+          await runRealTurnsUntil(
+            time,
+            tempDir,
+            () => __getMaxInFlightHttpFetchWaiterCountForTests() >= 2,
+            "The follower joining the owner's flight",
+          );
           assertEquals(__getMaxInFlightHttpFetchWaiterCountForTests(), 2);
+          // Both callers share one generation, and it is still the owner's.
+          assertEquals([...inFlightHttpFetches.values()], [ownerFlight]);
 
           await runFakeTimersUntil(
             time,

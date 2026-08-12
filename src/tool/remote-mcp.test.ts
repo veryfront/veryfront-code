@@ -87,7 +87,7 @@ describe("tool/remote-mcp", () => {
     assertEquals(transportCalls, 0);
   });
 
-  it("keeps unmatched and dynamic endpoints on guarded transport", async () => {
+  it("keeps unmatched endpoints on guarded transport", async () => {
     let transportCalls = 0;
     const createSource = createRemoteMCPToolSourceFactoryWithTransport({
       trustedEndpoints: ["http://veryfront-api/mcp"],
@@ -100,7 +100,7 @@ describe("tool/remote-mcp", () => {
     for (
       const endpoint of [
         "http://169.254.169.254/latest/meta-data",
-        () => "http://veryfront-api/mcp",
+        () => "http://169.254.169.254/latest/meta-data",
       ]
     ) {
       const source = createSource({ id: "untrusted", endpoint });
@@ -111,6 +111,68 @@ describe("tool/remote-mcp", () => {
       );
     }
     assertEquals(transportCalls, 0);
+  });
+
+  it("uses host transport for dynamic project-scoped endpoints with query parameters", async () => {
+    let transportCalls = 0;
+    const requestUrls: string[] = [];
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: ["http://veryfront-api/mcp"],
+      requestFetch: async (input, init) => {
+        transportCalls++;
+        requestUrls.push(String(input));
+        const body = JSON.parse(String(init && "body" in init ? init.body : undefined)) as {
+          id: string;
+        };
+        return Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [] } });
+      },
+    });
+    let projectId = "project-1";
+    const source = createSource({
+      endpoint: () => `http://veryfront-api/projects/${projectId}/mcp?environment=staging`,
+    });
+
+    assertEquals(await source.listTools(), []);
+    projectId = "project-2";
+    assertEquals(await source.listTools(), []);
+    assertEquals(transportCalls, 2);
+    assertEquals(requestUrls, [
+      "http://veryfront-api/projects/project-1/mcp?environment=staging",
+      "http://veryfront-api/projects/project-2/mcp?environment=staging",
+    ]);
+  });
+
+  it("uses the request URL's origin and path, not query values, for trusted transport", async () => {
+    let transportCalls = 0;
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: ["http://veryfront-api/mcp"],
+      requestFetch: async (_input, init) => {
+        transportCalls++;
+        const body = JSON.parse(String(init && "body" in init ? init.body : undefined)) as {
+          id: string;
+        };
+        return Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [] } });
+      },
+    });
+
+    await createSource({
+      endpoint: "http://veryfront-api/mcp?redirect=http://169.254.169.254/latest/meta-data",
+    }).listTools();
+    assertEquals(transportCalls, 1);
+
+    for (
+      const endpoint of [
+        "http://veryfront-api.evil.com/mcp?target=http://veryfront-api/mcp",
+        "http://veryfront-api/mcp/../../../admin?target=/mcp",
+      ]
+    ) {
+      await assertRejects(
+        () => createSource({ endpoint }).listTools(),
+        Error,
+        "Outbound network egress blocked",
+      );
+    }
+    assertEquals(transportCalls, 1);
   });
 
   it("rejects invalid trusted endpoints when the factory is created", () => {
@@ -331,6 +393,39 @@ describe("tool/remote-mcp", () => {
           _meta: { agent_id: "gmail-agent" },
         },
       });
+    });
+  });
+
+  it("omits non-binding run ids from project-scoped control-plane MCP metadata", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    await withEnv({ VERYFRONT_API_BASE_URL: "https://93.184.216.34" }, async () => {
+      const source = createRemoteMCPToolSource({
+        id: "veryfront-mcp",
+        endpoint: "https://93.184.216.34/projects/project-1/mcp?environment=staging",
+      });
+
+      await withMockFetch(
+        async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          requestBody = await request.json();
+          return Response.json({
+            jsonrpc: "2.0",
+            id: "veryfront-mcp:tools:call:gmail__get_profile",
+            result: { content: [], structuredContent: { ok: true } },
+          });
+        },
+        async () =>
+          await source.executeTool("gmail__get_profile", {}, {
+            runId: "run-local",
+            runIdBindsToolAuthorization: false,
+            agentId: "gmail-agent",
+          }),
+      );
+
+      assertEquals(
+        (requestBody as { params?: { _meta?: Record<string, unknown> } }).params?._meta,
+        { agent_id: "gmail-agent" },
+      );
     });
   });
 
