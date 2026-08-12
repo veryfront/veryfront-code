@@ -10,8 +10,6 @@ import {
 import { buildRendererBridgeRequest } from "./websocket-bridge.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 
-const TEST_PORT = 45913;
-
 interface UpstreamServer {
   readonly url: URL;
   readonly seenHeaders: Promise<Record<string, string | null>>;
@@ -27,8 +25,11 @@ function startUpstreamServer(options: { rejectWith?: number } = {}): UpstreamSer
   });
   const sockets = new Set<WebSocket>();
 
+  // Bind ephemerally (port 0) so parallel test modules never collide on a fixed
+  // port, and to 127.0.0.1 to avoid IPv6 flakiness — same shape as the other
+  // proxy tests (see server-resolver.test.ts, token-manager.test.ts).
   const server = Deno.serve(
-    { port: TEST_PORT, signal: controller.signal, onListen: () => {} },
+    { hostname: "127.0.0.1", port: 0, signal: controller.signal, onListen: () => {} },
     (req) => {
       resolveHeaders({
         "x-token": req.headers.get("x-token"),
@@ -51,8 +52,10 @@ function startUpstreamServer(options: { rejectWith?: number } = {}): UpstreamSer
     },
   );
 
+  const addr = server.addr as Deno.NetAddr;
+
   return {
-    url: new URL(`ws://127.0.0.1:${TEST_PORT}/_ws`),
+    url: new URL(`ws://${addr.hostname}:${addr.port}/_ws`),
     seenHeaders,
     async close() {
       for (const socket of sockets) {
@@ -133,7 +136,7 @@ describe("upstream WebSocket client", () => {
           parsedDomain: parseProjectDomain("support-agent-agodnc.preview.veryfront.com"),
           isLocalProject: false,
         },
-        "http://127.0.0.1:" + TEST_PORT,
+        `http://${server.url.host}`,
       );
 
       const socket = connectUpstreamWebSocket(server.url, bridge.headers);
