@@ -15,6 +15,7 @@ import type { Agent, AgentResponse, AgentStreamResult } from "../types.ts";
 
 // Side-effect import: registers the globalThis bridges
 import { agentAsTool, agentRegistry, registerAgent } from "./composition.ts";
+import { createInvokeAgentTool } from "../runtime/agent-delegation.ts";
 
 const BRIDGE_KEYS = ["__vfGetAgent", "__vfRegisterAgent", "__vfGetAllAgentIds"] as const;
 
@@ -240,10 +241,15 @@ describe("agentAsTool", () => {
       });
     };
     const events: unknown[] = [];
-    const tool = agentAsTool(childAgent, "Run case ingest");
+    const tool = createInvokeAgentTool({ resolveAgent: () => childAgent });
 
     await tool.execute(
-      { input: "Fetch cases" },
+      {
+        agent_id: "case-ingest",
+        description: "Run case ingest",
+        prompt: "Fetch cases",
+        context: {},
+      },
       {
         toolCallId: "parent-tool-call",
         publishDataEvent: (event) => {
@@ -272,6 +278,21 @@ describe("agentAsTool", () => {
         },
       },
     ]);
+  });
+
+  it("does not publish child events for fixed agent wrappers", async () => {
+    const childAgent = createMinimalAgent("case-ingest");
+    const events: unknown[] = [];
+    await agentAsTool(childAgent, "Run case ingest").execute(
+      { input: "Fetch cases" },
+      {
+        toolCallId: "fixed-agent-tool-call",
+        publishDataEvent: (event) => {
+          events.push(event);
+        },
+      },
+    );
+    assertEquals(events, []);
   });
 
   it("publishes child content while the child tool execution is still running", async () => {

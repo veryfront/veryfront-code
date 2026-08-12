@@ -27,6 +27,7 @@ async function runAgentAsStreamingTool(
   input: string,
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest | undefined,
   context?: ToolExecutionContext,
+  publishChildStream = false,
 ): Promise<AgentResponse> {
   const execute = async (): Promise<AgentResponse> => {
     let finalResponse: AgentResponse | undefined;
@@ -41,7 +42,7 @@ async function runAgentAsStreamingTool(
     const response = stream.toDataStreamResponse();
     if (response.body) {
       for await (const event of streamDataStreamEvents(response.body)) {
-        if (context?.toolCallId && context.publishDataEvent) {
+        if (publishChildStream && context?.toolCallId && context.publishDataEvent) {
           await context.publishDataEvent(buildInvokeAgentStreamDataEvent({
             toolCallId: context.toolCallId,
             agentId: agent.id,
@@ -71,7 +72,11 @@ async function runAgentAsStreamingTool(
     : execute();
 }
 
-export function agentAsTool(agent: Agent, description: string): Tool {
+export function agentAsTool(
+  agent: Agent,
+  description: string,
+  options: { publishChildStream?: boolean } = {},
+): Tool {
   return {
     id: `agent_${agent.id}`,
     type: "function",
@@ -86,6 +91,7 @@ export function agentAsTool(agent: Agent, description: string): Tool {
             input,
             getRuntimeSourceIntegrationPolicyFromContext(context),
             context,
+            options.publishChildStream,
           );
 
           setActiveSpanAttributes({

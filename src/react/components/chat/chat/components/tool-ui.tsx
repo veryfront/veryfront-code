@@ -23,8 +23,8 @@ import { isSkillToolPart } from "../utils/message-parts.ts";
 import { getSkillToolProps, SkillTool } from "./skill-tool.tsx";
 import { useMessageContextOptional } from "../contexts/message-context.tsx";
 import {
+  getInvokeAgentStreamEvents,
   INVOKE_AGENT_STREAM_EVENT_NAME,
-  parseInvokeAgentStreamValue,
 } from "#veryfront/chat/invoke-agent-stream.ts";
 import { ChatMarkdown } from "../../chat-markdown.tsx";
 
@@ -412,8 +412,10 @@ function useInvokeAgentStreamView(toolCallId: string): InvokeAgentStreamView {
   return React.useMemo(() => {
     const events = (message?.parts ?? []).flatMap((part) => {
       if (part.type !== `data-${INVOKE_AGENT_STREAM_EVENT_NAME}`) return [];
-      const value = parseInvokeAgentStreamValue(part.data);
-      return value?.toolCallId === toolCallId ? [value.event] : [];
+      if (!part.data || typeof part.data !== "object") return [];
+      return (part.data as Record<string, unknown>).toolCallId === toolCallId
+        ? getInvokeAgentStreamEvents(part.data)
+        : [];
     });
     return reduceInvokeAgentStream(events);
   }, [message?.parts, toolCallId]);
@@ -453,7 +455,7 @@ function InvokeAgentToolCall(
     : result;
   const instructions = stringValue(input, "prompt") ?? stringValue(input, "description");
   const hasStreamedText = childStream.items.some((item) => item.type === "text");
-  const response = hasStreamedText ? undefined : fallbackResponse;
+  const response = hasStreamedText && !failed ? undefined : fallbackResponse;
   const phase = completed || failed || stopped
     ? "result"
     : childStream.items.length > 0

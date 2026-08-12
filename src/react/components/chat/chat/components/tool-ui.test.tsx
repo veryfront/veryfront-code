@@ -278,6 +278,39 @@ describe("ToolCall", () => {
     );
   });
 
+  it("keeps the child error visible after partial streamed prose", () => {
+    const tool: ChatDynamicToolPart = {
+      ...invokeAgentTool,
+      state: "output-error",
+      errorText: "Salesforce credentials expired.",
+    };
+    const message = {
+      id: "assistant-message",
+      role: "assistant" as const,
+      metadata: {},
+      parts: [
+        tool,
+        {
+          type: "data-veryfront.invoke_agent.stream" as const,
+          data: {
+            toolCallId: tool.toolCallId,
+            agentId: "case-ingest",
+            event: { type: "text-delta", delta: "I found the first case." },
+          },
+        },
+      ],
+    };
+
+    const html = renderToString(
+      <Message.Root message={message}>
+        <ToolCall tool={tool} defaultExpanded />
+      </Message.Root>,
+    );
+
+    assertStringIncludes(html, "I found the first case.");
+    assertStringIncludes(html, "Salesforce credentials expired.");
+  });
+
   it("renders a completed tool with null output as a compact status row", () => {
     const tool: ChatDynamicToolPart = {
       type: "dynamic-tool",
