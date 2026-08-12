@@ -200,13 +200,16 @@ project guide with `--target agents`:
 veryfront install --target agents
 ```
 
-Then run `veryfront dev`. It starts an HTTP MCP server on your dev `--port` plus
-2 (default `3002`), always at the path `/mcp`. Point your MCP-aware coding agent
-at `http://veryfront.me:3002/mcp`.
+Then run `veryfront dev`. It starts an HTTP MCP server two ports above the port
+the dev server actually bound, always at the path `/mcp`. With the default port
+3000 that is `http://veryfront.me:3002/mcp`, so point your MCP-aware coding
+agent there.
 
-The dev server lists this address only under `--verbose`, so derive it from the
-port rule rather than waiting for it to appear. `veryfront dev --help` restates
-the rule. See [Coding agents](../guides/coding-agents.md).
+Read the port off the URL the dev server printed rather than off the `--port`
+you asked for. When the requested port is taken, `veryfront dev` moves to the
+next free one, and MCP follows it: a dev server that falls forward to 3001
+serves MCP on 3003. The dev server lists the MCP address itself only under
+`--verbose`. See [Coding agents](../guides/coding-agents.md).
 
 ## Verify the CLI
 

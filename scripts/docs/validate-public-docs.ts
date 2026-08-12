@@ -102,13 +102,22 @@ const RULES: Rule[] = [
 /**
  * Rules that must survive prose wrapping, so they run against a line joined
  * with the one after it.
+ *
+ * The pattern below is deliberately byte-identical to the wrapped rule in
+ * veryfront-docs' `scripts/check-code-docs-quality.mjs`. This validator exists
+ * to predict that one, so narrowing the pattern here alone would let a page
+ * pass in this repo and still fail the sync downstream, which is the exact
+ * silent breakage this check was added to prevent. It is broad enough to reject
+ * an accurate sentence about `--verbose` output; phrase such a sentence around
+ * what the flag lists rather than what the server "prints", or change both
+ * repositories in the same change.
  */
 const WRAPPED_RULES: Rule[] = [
   {
     pattern:
       /printed MCP (?:endpoint|URL|address)|prints the MCP (?:endpoint|URL|address)/i,
     message:
-      "`veryfront dev` does not print the MCP endpoint by default. State the address instead: `--port` + 2 (default 3002), path `/mcp`.",
+      "`veryfront dev` does not print the MCP endpoint by default. State the address instead: two ports above the port the dev server bound (3002 for the default 3000), path `/mcp`.",
   },
 ];
 
