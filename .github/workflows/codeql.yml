@@ -29,6 +29,68 @@ jobs:
           languages: javascript-typescript
           queries: security-and-quality
 
-      - uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3  # v4.37.6
+      # A merge-queue batch can dissolve while this job is still running. GitHub
+      # then deletes the ephemeral gh-readonly-queue ref, and the SARIF upload —
+      # which starts ~10 minutes in, after the analysis itself has already
+      # succeeded — fails with "ref ... not found in this repository". Nothing is
+      # being merged at that point, so the run is moot rather than failing, but
+      # the queue reads the red check as the PR's fault and ejects it.
+      #
+      # github/codeql-action offers no supported way to express "this run is
+      # moot" (github/codeql-action#1572, open since March 2023 with no fix), so
+      # the outcome is captured here and re-raised by the guard below. The guard
+      # fails closed: only a target ref that has provably gone away — or moved to
+      # a different SHA, meaning the batch was rebuilt without us — is tolerated.
+      - id: analyze
+        uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3  # v4.37.6
+        continue-on-error: true
         with:
           category: "/language:javascript-typescript"
+
+      - name: Re-raise CodeQL failure unless the target ref is gone
+        if: ${{ steps.analyze.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          TARGET_REF: ${{ github.ref }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # Only merge-queue refs are ephemeral. Every other event keeps its ref,
+          # so a CodeQL failure there is always the build's problem.
+          if [ "$EVENT_NAME" != "merge_group" ]; then
+            echo "::error::CodeQL failed on a ${EVENT_NAME} run. Failing the build."
+            exit 1
+          fi
+
+          body="$(mktemp)"
+          status="$(curl -sS -o "$body" -w '%{http_code}' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/git/ref/${TARGET_REF#refs/}" \
+            || echo "000")"
+
+          case "$status" in
+            404)
+              echo "::notice::${TARGET_REF} no longer exists: the merge-queue batch dissolved" \
+                "while CodeQL was uploading. Nothing is being merged from this run, so its" \
+                "result cannot gate anything. Treating it as moot."
+              ;;
+            200)
+              current="$(jq -r '.object.sha // empty' "$body")"
+              if [ "$current" = "$TARGET_SHA" ]; then
+                echo "::error::${TARGET_REF} still points at ${TARGET_SHA}, so this run is live." \
+                  "The CodeQL failure is genuine. Failing the build."
+                exit 1
+              fi
+              echo "::notice::${TARGET_REF} has moved from ${TARGET_SHA} to ${current}: the batch" \
+                "was rebuilt without this run. Its result cannot gate the new head. Treating it as moot."
+              ;;
+            *)
+              echo "::error::Could not determine whether ${TARGET_REF} still exists (HTTP ${status})." \
+                "Failing closed."
+              exit 1
+              ;;
+          esac
