@@ -214,6 +214,8 @@ The signature-keyed bypass is narrow. It applies only to a request that both add
 
 Three run-lifecycle routes are a longstanding exception and bypass middleware whether or not they are signed: `POST /api/control-plane/runs/{runId}/stream`, `POST /api/control-plane/runs/{runId}/resume`, and `DELETE /api/control-plane/runs/{runId}`. Do not rely on middleware to gate those three paths.
 
+A signed channel dispatch bypasses root middleware on the same terms. This is the request the platform sends to `POST /channels/invoke` to run one of your agents on a message from Slack or Discord, and it carries its own envelope under its own header, verified by the channel handler rather than by the control-plane signature check. Your middleware does not run for your project's channel traffic. An unsigned request to `POST /channels/invoke` still runs your middleware.
+
 Production loading is fail-closed. If a declared middleware file cannot be read, compiled, or validated as a middleware export, a dedicated server does not start and a shared server returns an error only for the affected project request. Failed shared loads are not cached, so a corrected deployment can recover without restarting unrelated projects. Development loading remains nonfatal and reports the loading error in the server log.
 
 ## Verify it worked

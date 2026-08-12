@@ -88,11 +88,30 @@ export function isControlPlaneSurfaceRoute(
  * cannot be replayed against another.
  *
  * Callers use this to keep gates that assume a browser client, such as CSRF
- * double-submit validation, from standing in front of platform dispatch. A
- * browser cannot attach the signature header to a cross-origin request without
- * a preflight the runtime does not grant, so a forged cross-site request never
- * satisfies this predicate. Neither does a project route that merely sits at a
- * look-alike path.
+ * double-submit validation, from standing in front of platform dispatch.
+ *
+ * Do not read a true result as evidence that the caller is the platform, and do
+ * not argue the exemption is safe because the header is hard to attach. It is
+ * not hard to attach. A project can configure a permissive `security.cors`, and
+ * on the default path `resolveNormalizedCORSPreflightPolicy` reflects whatever
+ * `Access-Control-Request-Headers` asked for, so the runtime will advertise this
+ * header to a cross-origin caller. The proxy likewise forwards an unverified
+ * `x-veryfront-*-jws` from a public request rather than stripping it. Assume an
+ * attacker can set this header at will.
+ *
+ * The exemption is safe for a narrower reason that does not depend on who can
+ * set the header. Skipping the gate concedes only the browser-credential check;
+ * authority still comes from the signature the receiving handler verifies, which
+ * an attacker cannot forge. And every route this predicate admits is owned by a
+ * handler registered ahead of `ApiHandlerWrapper` and instantiated
+ * unconditionally, so an admitted request always terminates at that verification
+ * and can never fall through to project code. A forged header buys a different
+ * rejection, nothing more. That ordering is the load-bearing part; it is pinned
+ * by `server/runtime-handler/dispatch-exemption-ordering.test.ts`, and the
+ * behaviour it protects by `security/http/dispatch-exemption-matrix.test.ts`.
+ *
+ * A project route that merely sits at a look-alike path is not a registered
+ * surface and does not satisfy this predicate at all.
  *
  * This is not authentication. It only reports that authority for the request
  * comes from a signature the handler checks, never from ambient credentials.
@@ -140,9 +159,16 @@ export function isChannelDispatchRoute(
  * double-submit validation, from standing in front of platform dispatch. The
  * channel dispatcher and the runtime-owner re-dispatch in
  * `resolveRuntimeOwnerInvokeUrl` hold no `__Host-vf_csrf` cookie to echo and
- * derive no authority from one. A browser cannot attach the signature header to
- * a cross-origin request without a preflight the runtime does not grant, so a
- * forged cross-site request never satisfies this predicate.
+ * derive no authority from one.
+ *
+ * As with {@link isSignedControlPlaneDispatch}, assume an attacker can set this
+ * header: a permissive project `security.cors` makes the runtime advertise it on
+ * a preflight, and the proxy forwards an unverified one. The exemption is safe
+ * because it concedes only the browser-credential check (authority still comes
+ * from the envelope `ChannelInvokeHandler` verifies, which an attacker cannot
+ * forge), and because `ChannelInvokeHandler` is registered ahead of
+ * `ApiHandlerWrapper` and instantiated unconditionally, so an admitted request
+ * always terminates at that verification rather than at project code.
  *
  * This is not authentication. It only reports that authority for the request
  * comes from a signature the handler checks, never from ambient credentials.
