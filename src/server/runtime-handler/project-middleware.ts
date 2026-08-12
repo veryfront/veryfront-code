@@ -3,6 +3,7 @@ import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts"
 import { registerLRUCache } from "#veryfront/cache";
 import {
   isConfigOptionalControlPlaneRunRequest,
+  isSignedChannelDispatch,
   isSignedControlPlaneDispatch,
 } from "#veryfront/channels/control-plane.ts";
 import { MiddlewareContext } from "#veryfront/middleware/core/context.ts";
@@ -120,15 +121,41 @@ export class ProjectMiddlewareRuntime {
     // therefore has no choice but to reject its own deploy, which surfaces
     // only as `deploy` timing out with `last state: missing`.
     //
-    // The bypass is keyed on the request being a real dispatch, not on it
-    // being path-shaped like one: `isSignedControlPlaneDispatch` requires both
-    // a method/path pair a control-plane handler owns and the signature header
-    // that handler verifies. It concedes nothing to an unauthenticated caller,
-    // because the only routes it can reach answer 401 without a valid envelope
+    // The bypass is keyed on a registered surface, not on a path shape:
+    // `isSignedControlPlaneDispatch` requires both a method/path pair a
+    // control-plane handler owns and the signature header that handler
+    // verifies. The predicate cannot tell a genuine dispatch from a set header
+    // and does not try to; it concedes nothing to an unauthenticated caller
+    // because the only routes it can reach are owned by handlers registered
+    // ahead of `ApiHandlerWrapper`, which answer 401 without a valid envelope
     // and never fall through to project code. Every other request, including
     // an unsigned one to the same path and a project route that merely sits
     // inside the reserved namespace, still traverses project middleware.
     if (isSignedControlPlaneDispatch(request)) {
+      return next();
+    }
+
+    // A platform channel dispatch is not the project's traffic either. It
+    // addresses `ChannelInvokeHandler`, carries a signed dispatch envelope
+    // rather than a user session, and asks the runtime to run one of the
+    // project's own agents on a message that arrived from Slack, Discord or a
+    // sibling runtime instance that owns the run.
+    //
+    // The same impossibility applies: `createApplicationRequest` withholds
+    // every `x-veryfront-*` header from project code, so the dispatch signature
+    // is invisible to middleware, and a root `middleware.ts` that gates
+    // requests has no choice but to reject the project's own channels. The
+    // symptom is that the channel simply goes quiet.
+    //
+    // Two predicates, not one: a channel dispatch is verified by
+    // `verifyDispatchJws` against the dispatch id, platform, project id and
+    // body hash, not by `verifyControlPlaneJws` against a method and path. What
+    // is shared is the set of gates each dispatch kind is exempt from. See
+    // `security/http/dispatch-exemption-matrix.test.ts`. The bypass concedes
+    // nothing: `POST /channels/invoke` without a valid envelope answers 401 at
+    // the handler and never falls through to project code, and an unsigned
+    // request to the same path still traverses project middleware.
+    if (isSignedChannelDispatch(request)) {
       return next();
     }
 
