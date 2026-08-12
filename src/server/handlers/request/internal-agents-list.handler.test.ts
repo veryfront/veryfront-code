@@ -4,6 +4,9 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES } from "#veryfront/internal-agents/request-body.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
+import { AuthHandler } from "#veryfront/security/http/auth.ts";
+import type { HandlerContext, SecurityConfig } from "#veryfront/types";
 import { InternalAgentsListHandler } from "./internal-agents-list.handler.ts";
 import { runWithProjectEnv } from "../../project-env/storage.ts";
 import {
@@ -523,5 +526,94 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
     );
 
     assertEquals(result.response, undefined);
+  });
+});
+
+/**
+ * Regression: Studio's agent listing must survive a project that configures
+ * `security.auth`.
+ *
+ * `AuthHandler` runs at priority 0 with an empty pattern list, and the registry
+ * calls every handler in priority order rather than consulting
+ * `metadata.patterns`, so it stands in front of this surface. The control plane
+ * sends no `Authorization` header on this call at all — it authorizes with the
+ * signed envelope `verifyControlPlaneRequest` checks — so a project that turned
+ * on Basic or Bearer auth answered its own agent listing with 401 and Studio
+ * showed no agents.
+ */
+describe("server/handlers/request/internal-agents-list.handler auth gate", () => {
+  function createListHandler(): InternalAgentsListHandler {
+    return new InternalAgentsListHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+      getAgent: (id) => id === "assistant-1" ? createAgentWithConfig("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+    });
+  }
+
+  async function listAgentsThroughChain(
+    auth: SecurityConfig["auth"],
+    options: { readonly signed?: boolean; readonly path?: string } = {},
+  ): Promise<{ status: number }> {
+    const path = options.path ?? "/api/control-plane/agents/list";
+    const body = JSON.stringify({
+      requestId: "agents-1",
+      projectId: "proj-1",
+      surface: "studio",
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "agents-1",
+      requestPath: path,
+    });
+
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    // The control plane sends no `Authorization` header on this call; the
+    // request below carries exactly what `runtime-agent-client` sends.
+    if (options.signed !== false) headers["x-veryfront-control-plane-jws"] = jws;
+
+    const ctx = createCtx(publicKeyPem);
+    ctx.securityConfig = { auth } as HandlerContext["securityConfig"];
+
+    const registry = new RouteRegistry();
+    registry.registerAll([new AuthHandler(), createListHandler()]);
+
+    const response = await registry.execute(
+      new Request(`https://example.com${path}`, { method: "POST", headers, body }),
+      ctx,
+    );
+
+    return { status: response?.status ?? 0 };
+  }
+
+  it("lists agents for a signed dispatch behind basic auth", async () => {
+    const { status } = await listAgentsThroughChain({
+      basic: { username: "admin", password: "secret" },
+    });
+    assertEquals(status, 200);
+  });
+
+  it("lists agents for a signed dispatch behind bearer auth", async () => {
+    const { status } = await listAgentsThroughChain({
+      bearer: { token: "project-authored-token" },
+    });
+    assertEquals(status, 200);
+  });
+
+  it("still challenges the same surface without the signature header", async () => {
+    const { status } = await listAgentsThroughChain(
+      { basic: { username: "admin", password: "secret" } },
+      { signed: false },
+    );
+    assertEquals(status, 401);
+  });
+
+  it("still challenges a project route inside the control-plane namespace", async () => {
+    // `/api/control-plane/agents/list/all` is not a registered surface; it
+    // falls through to project code, which the auth gate must keep protecting
+    // even when the caller attaches a signature header.
+    const { status } = await listAgentsThroughChain(
+      { basic: { username: "admin", password: "secret" } },
+      { path: "/api/control-plane/agents/list/all" },
+    );
+    assertEquals(status, 401);
   });
 });
