@@ -6,6 +6,7 @@ import {
   toNativeResponse,
 } from "../../../compat/http/native-response.ts";
 import { getEnvOverlayStorage } from "../../../compat/process.ts";
+import { isErrorAcrossRealms } from "../../../compat/error-introspection.ts";
 import { INITIALIZATION_ERROR, NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { recordRequestPeerFromTransport } from "../shared/request-peer.ts";
@@ -42,7 +43,7 @@ export interface DenoServeRuntime {
 }
 
 function abortError(signal: AbortSignal): Error {
-  return signal.reason instanceof Error
+  return isErrorAcrossRealms(signal.reason)
     ? signal.reason
     : new DOMException("Deno server startup was aborted", "AbortError");
 }

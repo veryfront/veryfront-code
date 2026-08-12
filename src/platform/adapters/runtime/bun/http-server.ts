@@ -7,6 +7,7 @@ import {
   dispatchBunRequest,
 } from "./websocket-adapter.ts";
 import { DEFAULT_PORT } from "../../../compat/constants.ts";
+import { isErrorAcrossRealms } from "../../../compat/error-introspection.ts";
 import { INITIALIZATION_ERROR, NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
 import { serverLogger } from "#veryfront/utils";
 import { recordRequestPeerFromTransport } from "../shared/request-peer.ts";
@@ -24,7 +25,7 @@ type BoundNativeBunServer = NativeBunServer<BunWebSocketData> & {
 };
 
 function abortError(signal: AbortSignal): Error {
-  return signal.reason instanceof Error
+  return isErrorAcrossRealms(signal.reason)
     ? signal.reason
     : new DOMException("Bun server startup was aborted", "AbortError");
 }

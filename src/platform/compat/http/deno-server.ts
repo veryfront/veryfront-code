@@ -1,6 +1,7 @@
 import type { Handler, HttpServer, ServeOptions } from "./types.ts";
 import { LOCALHOST } from "../constants.ts";
 import { getNativeDeno, getNativeResponse, toNativeResponse } from "./native-response.ts";
+import { isErrorAcrossRealms } from "../error-introspection.ts";
 import {
   INITIALIZATION_ERROR,
   INVALID_ARGUMENT,
@@ -21,7 +22,7 @@ interface ActiveDenoServer {
 }
 
 function abortError(signal: AbortSignal): Error {
-  return signal.reason instanceof Error
+  return isErrorAcrossRealms(signal.reason)
     ? signal.reason
     : new DOMException("Deno HTTP server startup was aborted", "AbortError");
 }

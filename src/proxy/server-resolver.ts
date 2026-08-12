@@ -8,6 +8,7 @@
 
 import { getErrorMessage } from "#veryfront/errors";
 import { unrefTimer } from "#veryfront/platform/compat/process.ts";
+import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 import { encodeBase64 } from "#veryfront/utils";
 import {
   hasProjectIdentityControlCharacters,
@@ -239,7 +240,7 @@ function parseResponse(value: unknown): string | null {
 }
 
 function abortReason(signal: AbortSignal): Error {
-  return signal.reason instanceof Error
+  return isErrorAcrossRealms(signal.reason)
     ? signal.reason
     : new DOMException("Dedicated server lookup was aborted", "AbortError");
 }

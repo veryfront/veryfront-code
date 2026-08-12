@@ -9,6 +9,7 @@
  */
 
 import { createProjectEnvSnapshot } from "./snapshot.ts";
+import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 import {
   CACHE_ERROR,
   SERVICE_OVERLOADED,
@@ -131,7 +132,7 @@ function abortReason(signal: AbortSignal): Error {
   const reason = signal.reason;
   // Every internal abort passes a typed Error, but the typed error contract
   // must hold even for an unexpected non-Error reason.
-  if (reason instanceof Error) return reason;
+  if (isErrorAcrossRealms(reason)) return reason;
   return CACHE_ERROR.create({
     detail: "Project environment fetch was cancelled",
     ...(reason === undefined || reason === null ? {} : { cause: reason }),
