@@ -268,6 +268,31 @@ export interface DrawerParts {
 }
 
 /**
+ * Role-tagged slots an adapter provides for the Tabs primitive: a
+ * `role="tablist"` owning the selected value, and `role="tab"` items that select
+ * on click and publish `aria-selected` + `data-state="active"|"inactive"`. The
+ * builtin is panel-less (the consumer renders content by value); the skin owns
+ * the size variant + visual look via `asChild`.
+ */
+export interface TabsParts {
+  /** Owns the selected value + provides context; renders the `role="tablist"` node. */
+  Root: React.FC<
+    & React.HTMLAttributes<HTMLDivElement>
+    & {
+      value: string;
+      onValueChange: (value: string) => void;
+      children: React.ReactNode;
+      ref?: React.Ref<HTMLDivElement>;
+    }
+  >;
+  /** A tab; sets `aria-selected` / `data-state`, selects its value on click. */
+  Tab: React.FC<
+    & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "value">
+    & { value: string; asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }
+  >;
+}
+
+/**
  * The adapter surface. Each new primitive must also be added to the explicit
  * composition in `context.tsx`, which prevents `undefined` overrides from
  * erasing inherited or builtin slots.
@@ -281,6 +306,7 @@ export interface UIAdapter {
   toolbar: ToolbarParts;
   dialog: DialogParts;
   drawer: DrawerParts;
+  tabs: TabsParts;
 }
 
 /**
