@@ -1,6 +1,7 @@
 /**
  * Regression: a project's own request gates must not block its release asset
- * manifest build. Two of them have: `security.csrf`, and a root `middleware.ts`.
+ * manifest build. Three of them have: `security.auth`, `security.csrf`, and a
+ * root `middleware.ts`.
  *
  * The release asset manifest is built by the project runtime, not by the CLI:
  * the control plane POSTs a signed operation envelope to
@@ -18,12 +19,22 @@
  * Nothing downstream can see it: the run fails before the manifest row is
  * created, and the deploy timeout names neither CSRF nor config.
  *
+ * `security.auth` is the same failure with a different gate. `AuthHandler` runs
+ * at priority 0 — ahead of `CsrfHandler` — and also matches every path, and the
+ * credential it demands is one the platform structurally cannot hold: the
+ * control plane sends a per-run service `Bearer` JWT the Basic branch can never
+ * match and the Bearer branch compares against a project-authored secret.
+ *
  * `projectMiddlewareRuntime.execute` wraps the entire handler chain, so a root
  * `middleware.ts` sits in front of the same dispatch and fails it the same way.
  * It has no way to pass: `createApplicationRequest` withholds every
  * `x-veryfront-*` header from project code, so the signature the platform
  * authenticates with is not visible to the middleware that would have to trust
  * it.
+ *
+ * All three gates are assembled here in the order the runtime assembles them —
+ * project middleware outermost, then the security handlers, then the run
+ * executor — so that a fix for one gate is exercised with the others standing.
  *
  * @module release-assets/build-dispatch-security.test
  */
@@ -32,9 +43,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
+import { AuthHandler } from "#veryfront/security/http/auth.ts";
 import { CsrfHandler } from "#veryfront/security/http/csrf/csrf-handler.ts";
 import { deriveSecurityContext } from "#veryfront/security/http/config.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import type { SecurityConfig } from "#veryfront/types";
 import {
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
@@ -61,16 +74,37 @@ interface DispatchOutcome {
 }
 
 /**
- * Drive the real handler chain the runtime uses for a control-plane run
- * dispatch: the security handlers first, then the run executor.
+ * Everything about a dispatch other than the CSRF setting.
+ *
+ * One options bag, not one positional parameter per gate. Every fix that
+ * exempts this dispatch from another gate widens this harness, and positional
+ * parameters grown on separate branches merge into a signature that still
+ * compiles while existing calls bind their argument to the wrong slot: a
+ * `{ projectMiddleware }` argument lands in an `auth` parameter, no middleware
+ * is installed, and the test that proves the middleware bypass works keeps
+ * passing without ever exercising it. A named field cannot merge that way.
+ */
+interface DispatchOptions {
+  /** A `security.auth` policy the project put in front of its own site. */
+  readonly auth?: SecurityConfig["auth"];
+  /** A root `middleware.ts`, which wraps the whole handler chain. */
+  readonly projectMiddleware?: MiddlewareFunction[];
+  /** Send the request without the control-plane signature header. */
+  readonly unsigned?: boolean;
+}
+
+/**
+ * Drive the real chain the runtime uses for a control-plane run dispatch: the
+ * project's root middleware, then the security handlers, then the run executor.
  */
 async function dispatchReleaseAssetBuild(
   csrf: CsrfSetting | undefined,
-  options: { projectMiddleware?: MiddlewareFunction[]; unsigned?: boolean } = {},
+  options: DispatchOptions = {},
 ): Promise<DispatchOutcome> {
-  const config = {
-    security: csrf === undefined ? {} : { csrf },
-  } as VeryfrontConfig;
+  const security: Record<string, unknown> = {};
+  if (csrf !== undefined) security.csrf = csrf;
+  if (options.auth !== undefined) security.auth = options.auth;
+  const config = { security } as VeryfrontConfig;
   const { securityConfig } = deriveSecurityContext(config, {
     // The task rail dispatches to the project's main-branch runtime, which
     // resolves as a preview environment. Production defaults are therefore off
@@ -122,7 +156,11 @@ async function dispatchReleaseAssetBuild(
   ctx.securityConfig = securityConfig;
 
   const registry = new RouteRegistry();
-  registry.registerAll([new CsrfHandler(), new ProjectRunExecuteHandler(deps)]);
+  registry.registerAll([
+    new AuthHandler(),
+    new CsrfHandler(),
+    new ProjectRunExecuteHandler(deps),
+  ]);
 
   // The runtime wraps the whole handler chain in the project's own root
   // middleware, so a dispatch meets `middleware.ts` before it meets any
@@ -139,7 +177,7 @@ async function dispatchReleaseAssetBuild(
   return {
     begun,
     status: response?.status ?? 0,
-    body: response ? await response.text() : "",
+    body: response === undefined ? "" : await response.text(),
   };
 }
 
