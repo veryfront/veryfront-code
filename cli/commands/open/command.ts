@@ -1,6 +1,7 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { createArgParser } from "#cli/shared/args";
+import { INVALID_ARGUMENT } from "veryfront/errors";
 
 export const getOpenArgsSchema = defineSchema((v) =>
   v.object({
@@ -28,6 +29,35 @@ const DASHBOARD_BASE = "https://veryfront.com";
 const DEFAULT_SITE_ENVIRONMENT = "production";
 
 /**
+ * A single DNS label. `--site` is the only `open` path that puts a resolved
+ * value in the URL *authority* rather than its path, so it is the only one
+ * where a stray `/`, `?`, or `#` changes the origin: `evil.example/x` would
+ * build `https://evil.example/x.production.veryfront.com`, pushing the
+ * hard-coded suffix into the path and leaving a link Veryfront does not own.
+ * The slug is not always typed by the person running the command — it also
+ * comes from `veryfront.json` and the local project link, which arrive with a
+ * cloned repository — so it is validated rather than trusted.
+ */
+const SITE_HOSTNAME_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i;
+
+/** The longest a single DNS label may be, as `push` also enforces. */
+const MAX_HOSTNAME_LABEL_LENGTH = 63;
+
+function assertSiteHostnameLabel(value: string, label: string): void {
+  if (
+    SITE_HOSTNAME_LABEL_PATTERN.test(value) &&
+    value.length <= MAX_HOSTNAME_LABEL_LENGTH
+  ) {
+    return;
+  }
+
+  throw INVALID_ARGUMENT.create({
+    detail: `The ${label} "${value}" is not a DNS label, so it cannot name a deployed site. ` +
+      `Use letters, digits, and hyphens only.`,
+  });
+}
+
+/**
  * The canonical Veryfront Cloud address of a deployed environment, the same
  * `https://<slug>.<environment>.veryfront.com` form `deploy` falls back to when
  * an environment carries no custom domain. `open` has no API token, so it
@@ -35,6 +65,8 @@ const DEFAULT_SITE_ENVIRONMENT = "production";
  * deployment through both names.
  */
 function buildSiteUrl(projectSlug: string, environment: string): string {
+  assertSiteHostnameLabel(projectSlug, "project slug");
+  assertSiteHostnameLabel(environment, "environment");
   return `https://${projectSlug}.${environment}.veryfront.com`;
 }
 

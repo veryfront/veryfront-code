@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "veryfront/platform/path";
 import { parseCliArgs } from "#cli/shared/args";
@@ -136,6 +136,38 @@ describe("Open Command", () => {
     it("keeps --site on the deployed site rather than a dashboard page", () => {
       const url = buildUrl("my-app", { studio: true, site: true });
       assertEquals(url, "https://my-app.production.veryfront.com");
+    });
+
+    it("refuses a project slug that would change the site origin", () => {
+      // `--site` is the only `open` path that interpolates into the URL
+      // authority, so a slug carrying `/`, `?`, or `#` pushes the hard-coded
+      // `.veryfront.com` suffix into the path and leaves an origin Veryfront
+      // does not own. The slug can come from a cloned repo's `veryfront.json`,
+      // so it is never trusted.
+      for (const slug of ["evil.example/x", "evil.example?x", "evil.example#x"]) {
+        assertThrows(
+          () => buildUrl(slug, { studio: false, site: true }),
+          Error,
+          "DNS label",
+        );
+      }
+    });
+
+    it("refuses an environment that would change the site origin", () => {
+      for (const env of ["attacker.example/", "a?b", "a#b"]) {
+        assertThrows(
+          () => buildUrl("my-app", { env, studio: false, site: true }),
+          Error,
+          "DNS label",
+        );
+      }
+    });
+
+    it("still builds dashboard URLs for a slug --site would reject", () => {
+      // Dashboard URLs put the slug in the path, where it cannot move the
+      // origin, so validation is scoped to `--site` and does not change them.
+      const url = buildUrl("evil.example/x", { studio: false });
+      assertEquals(url, "https://veryfront.com/projects/evil.example/x");
     });
   });
 
