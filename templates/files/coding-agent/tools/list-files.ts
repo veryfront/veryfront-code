@@ -37,16 +37,14 @@ export default tool({
       return { error: `Path escapes project directory: ${directory}` };
     }
 
-    const entries = await readDir(absolute);
-
-    let files = entries
-      .filter((e) => e.isFile)
-      .map((e) => e.name);
+    // `readDir` streams entries, so collect the files before filtering.
+    let files: string[] = [];
+    for await (const entry of readDir(absolute)) {
+      if (entry.isFile) files.push(entry.name);
+    }
 
     if (extensions?.length) {
-      files = files.filter((f) =>
-        extensions.some((ext) => f.endsWith(ext))
-      );
+      files = files.filter((file) => extensions.some((ext) => file.endsWith(ext)));
     }
 
     return { directory, files, count: files.length };

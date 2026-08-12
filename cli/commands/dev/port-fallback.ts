@@ -14,7 +14,7 @@
 
 import { LOCALHOST } from "veryfront/config";
 import { PORT_IN_USE } from "veryfront/errors";
-import { isDeno } from "veryfront/platform";
+import { getDenoRuntime } from "veryfront/platform";
 
 /** How many consecutive ports to try before giving up. */
 export const MAX_PORT_FALLBACK_ATTEMPTS = 10;
@@ -33,12 +33,22 @@ export function isPortInUseError(error: unknown): boolean {
     message.includes("eaddrinuse") || message.includes("address already in use");
 }
 
-/** Binds `port` and releases it again, to see whether the dev server could have it. */
+/**
+ * Binds `port` and releases it again, to see whether the dev server could have it.
+ *
+ * The Deno runtime is read through `getDenoRuntime()` rather than through the
+ * `Deno` global directly: dnt rewrites every bare `Deno.` reference in the
+ * published npm build into `@deno/shim-deno`, whose Node-backed `listen()`
+ * reads `server._handle.fd` - null under Deno's `node:net`. A CLI installed
+ * with `deno install -gArf npm:veryfront` runs that build on a real Deno, so
+ * the shim was reached and `veryfront dev` died on "Cannot read properties of
+ * null (reading 'fd')" before it ever printed a URL.
+ */
 export async function isPortAvailable(port: number): Promise<boolean> {
-  if (isDeno) {
+  const deno = getDenoRuntime();
+  if (deno) {
     try {
-      // @ts-ignore - Deno global
-      Deno.listen({ hostname: LOCALHOST.IPV4, port }).close();
+      deno.listen({ hostname: LOCALHOST.IPV4, port }).close();
       return true;
     } catch (error) {
       if (isPortInUseError(error)) return false;

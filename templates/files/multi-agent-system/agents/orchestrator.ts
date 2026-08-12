@@ -1,4 +1,4 @@
-import { agent, getAgentsAsTools } from "veryfront/agent";
+import { agent } from "veryfront/agent";
 
 export default agent({
   id: "orchestrator",
@@ -8,7 +8,9 @@ export default agent({
     "You coordinate a team of AI agents. " +
     "Delegate research tasks to the researcher and writing tasks to the writer. " +
     "Combine their outputs into a polished response.",
-  tools: getAgentsAsTools(["researcher", "writer"]),
+  // Each id becomes an `agent_<id>` tool. The specialists are looked up when
+  // the run happens, so it does not matter which agent file loads first.
+  delegates: ["researcher", "writer"],
   maxSteps: 10,
   suggestions: [
     {

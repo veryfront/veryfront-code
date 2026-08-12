@@ -1,6 +1,6 @@
 import { build, emptyDir } from "#dnt";
 import { basename, dirname, join, relative, toFileUrl } from "#std/path";
-import { patchDntArgvPolyfill } from "./dnt-polyfill.ts";
+import { patchDntArgvPolyfill, patchDntDenoShim } from "./dnt-polyfill.ts";
 import {
   bareImportPackageNames,
   createExtensionPackageSpecs,
@@ -90,6 +90,7 @@ async function buildExtensionPackage(
           rootConfig: options.rootConfig,
         });
         await patchDntArgvPolyfill(`${outDir}/esm/_dnt.polyfills.js`);
+        await patchDntDenoShim(`${outDir}/esm/_dnt.shims.js`);
 
         await Deno.copyFile(`${options.rootDir}/LICENSE`, `${outDir}/LICENSE`);
         await Deno.copyFile(`${options.rootDir}/NOTICE`, `${outDir}/NOTICE`);

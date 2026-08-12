@@ -9,7 +9,7 @@ export default tool({
       query: v.string().describe("Search query"),
     })
   )(),
-  execute: async ({ query }) => {
+  execute: ({ query }) => {
     // Replace with your domain-specific search logic
     return {
       results: [],

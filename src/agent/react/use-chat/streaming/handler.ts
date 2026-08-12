@@ -10,6 +10,10 @@ import type { ChatStreamEvent } from "../../../../chat/protocol.ts";
 import type { ChatMessagePart, ChatToolPart } from "#veryfront/agent/react/use-chat/types.ts";
 import { createAssistantMessage, generateClientId } from "#veryfront/agent/react/use-chat/utils.ts";
 import { buildCurrentParts } from "#veryfront/agent/react/use-chat/streaming/parts-builder.ts";
+import {
+  appendInvokeAgentStreamSnapshot,
+  INVOKE_AGENT_STREAM_EVENT_NAME,
+} from "#veryfront/chat/invoke-agent-stream.ts";
 import type {
   OrderedMessagePart,
   OrderedReasoning,
@@ -506,6 +510,30 @@ function handleDataPart(
 
   if (!state.messageId) {
     state.messageId = generateClientId("msg");
+  }
+
+  if (parsed.type === `data-${INVOKE_AGENT_STREAM_EVENT_NAME}`) {
+    const existing = state.dataParts.find(({ part }) => {
+      const dataPart = part as { type: string; data?: unknown };
+      if (dataPart.type !== parsed.type || !dataPart.data || typeof dataPart.data !== "object") {
+        return false;
+      }
+      const existingData = dataPart.data as Record<string, unknown>;
+      const nextData = parsed.data as Record<string, unknown> | undefined;
+      return existingData.toolCallId === nextData?.toolCallId &&
+        existingData.agentId === nextData?.agentId;
+    });
+    if (existing) {
+      const snapshot = appendInvokeAgentStreamSnapshot(
+        (existing.part as { data?: unknown }).data,
+        parsed.data,
+      );
+      if (snapshot) {
+        existing.part = { type: parsed.type as `data-${string}`, data: snapshot };
+        emitUpdate(state, onUpdate, getBuildParts);
+        return;
+      }
+    }
   }
 
   state.dataParts.push({

@@ -5,7 +5,8 @@ A team of specialized agents that collaborate on tasks.
 ## What's included
 
 - Orchestrator that delegates to researcher and writer agents
-- Agent-as-tool composition via `getAgentsAsTools()`
+- Delegation via `delegates: ["researcher", "writer"]`, which the runtime
+  resolves into `agent_researcher` and `agent_writer` tools when a run starts
 - Web search tool (placeholder, configure your own API)
 
 ## Structure

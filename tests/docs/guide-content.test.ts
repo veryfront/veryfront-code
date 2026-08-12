@@ -162,6 +162,17 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "npx veryfront@latest open");
   });
 
+  it("documents a CLI teardown path for cloud projects", async () => {
+    // `veryfront push` creates a billable cloud project, so the docs must show
+    // how to remove one without driving the Studio UI.
+    const guide = await Deno.readTextFile(
+      new URL("../../docs/guides/deploying.md", import.meta.url),
+    );
+
+    assertStringIncludes(guide, "veryfront project delete");
+    assertStringIncludes(guide, "Tear a project down");
+  });
+
   it("points post-deploy verification at the environment URL, not at open", async () => {
     // `veryfront open` builds Cloud dashboard URLs
     // (https://veryfront.com/projects/<slug>[/environments/<env>]). It never
@@ -216,6 +227,97 @@ describe("guide content contracts", () => {
     assertStringIncludes(prose, "not a member of the project gets a `403`");
     assertStringIncludes(doc, "-w '%{http_code} %{redirect_url}\\n'");
     assertEquals(doc.includes("```bash\ncurl -sSf <environment-url>\n```"), false);
+  });
+
+  it("does not promise one sign-in apex for every protected environment", async () => {
+    // buildProxyAuthRedirectUrl picks the sign-in apex from the host the
+    // request arrived on (src/proxy/proxy-access-control.ts:202, via
+    // resolveSignInApex at :187). A preview host on *.preview.veryfront.org is
+    // sent to https://veryfront.org/sign-in, not .com — asserted at
+    // src/proxy/proxy-access-control.test.ts:102. Stating a single apex sends a
+    // reader to sign in on a domain whose cookie the deployment host never
+    // receives, so the redirect loop never closes.
+    //
+    // Structural, not a keyword check: it collects every sign-in URL the page
+    // prints and requires both apexes to appear. Prose that names only
+    // veryfront.com cannot satisfy it, which is exactly the defect. A plain
+    // `assertStringIncludes(prose, "https://veryfront.com/sign-in")` passes on
+    // the broken page and so cannot stand in for this.
+    const doc = await Deno.readTextFile(
+      new URL("../../docs/getting-started/deploy-project.md", import.meta.url),
+    );
+    const prose = doc.replace(/\s+/g, " ");
+
+    const signInApexes = new Set(
+      [...doc.matchAll(/https:\/\/(veryfront\.(?:com|org))\/sign-in/g)].map((match) => match[1]),
+    );
+    assertEquals(signInApexes.has("veryfront.com"), true);
+    assertEquals(signInApexes.has("veryfront.org"), true);
+
+    // The page has to say the apex varies and name the host class that varies,
+    // so the reader knows to read the redirect rather than memorize one URL.
+    assertStringIncludes(prose, "depends on the host serving the environment");
+    assertStringIncludes(prose, "`*.preview.veryfront.org`");
+
+    // The two sentences that previously asserted a universal .com apex.
+    assertEquals(
+      prose.includes("request gets a `302` to `https://veryfront.com/sign-in`"),
+      false,
+    );
+    assertEquals(
+      prose.includes("answers `302` to `https://veryfront.com/sign-in`"),
+      false,
+    );
+  });
+
+  it("does not require a 200 from the environment root to call a deploy verified", async () => {
+    // Deployment selects a readiness route only from static page routes and
+    // leaves it null when the project has none
+    // (cli/shared/deployment/deploy-project.ts:1293), and
+    // buildEnvironmentReadinessProbes returns zero probes for a null route
+    // (:875) — so an API-only deployment is verified without any page ever
+    // answering 200, as asserted at
+    // cli/shared/deployment/deploy-project.test.ts:635. A page that presents
+    // 200 at <environment-url> as the universal success signal tells the owner
+    // of such a project their working deployment failed.
+    const doc = await Deno.readTextFile(
+      new URL("../../docs/getting-started/deploy-project.md", import.meta.url),
+    );
+    const prose = doc.replace(/\s+/g, " ");
+
+    // Structural: the verification command must carry a route placeholder. A
+    // command ending at the bare environment URL is the defect itself, so
+    // pinning the command shape is what makes this test able to fail.
+    assertStringIncludes(
+      doc,
+      "-w '%{http_code} %{redirect_url}\\n' <environment-url>/<route>",
+    );
+    assertEquals(
+      doc.includes("-w '%{http_code} %{redirect_url}\\n' <environment-url>\n"),
+      false,
+    );
+
+    // And the prose must tell the reader to validate that route's own status
+    // rather than a blanket 200.
+    assertStringIncludes(prose, "Probe a route your project actually serves");
+    assertStringIncludes(prose, "Validate the status that route is expected to return");
+    assertStringIncludes(prose, "skips the browser readiness probe");
+    assertEquals(prose.includes("A public environment answers `200`."), false);
+  });
+
+  it("offers open --site as the way back to the deployed environment URL", async () => {
+    // The deploy docs tell readers to use the URL Deploy printed. A reader who
+    // did not record it needs a command that reproduces it, so both deploy
+    // pages must name `open --site` alongside the dashboard-only `open`.
+    for (
+      const path of [
+        "docs/getting-started/deploy-project.md",
+        "docs/guides/deploying.md",
+      ]
+    ) {
+      const text = await Deno.readTextFile(path);
+      assertStringIncludes(text, "open --site");
+    }
   });
 
   it("uses serve for local production builds", async () => {
@@ -535,6 +637,39 @@ describe("guide content contracts", () => {
       [],
       "agents guide samples must guard the getAgent() result before using it",
     );
+  });
+
+  it("tells getting-started readers how to choose the dev server port", async () => {
+    // Port 3000 is the most contended port on a developer machine. `veryfront
+    // dev` no longer hard-fails on it: it falls forward to the next free port
+    // and announces the switch. Both halves are invisible to a doc-only
+    // reader, who then opens the 3000 the page prints and reaches whatever
+    // process took it. `--port` exists but lives only in `veryfront dev
+    // --help`, so the getting-started pages that start the dev server have to
+    // name it and describe the fallback.
+    const repoRoot = new URL("../../", import.meta.url);
+    const help = await Deno.readTextFile(
+      new URL("cli/commands/dev/command-help.ts", repoRoot),
+    );
+    const portFlag = help.match(/flag: "(--port [^"]*)"/)?.[1];
+    assert(
+      portFlag !== undefined,
+      "veryfront dev must declare a --port flag in its command help",
+    );
+
+    for (
+      const path of [
+        "docs/getting-started/create-project.md",
+        "docs/getting-started/quickstart.md",
+      ]
+    ) {
+      const page = await Deno.readTextFile(new URL(path, repoRoot));
+
+      assertStringIncludes(page, "veryfront dev --port");
+      // The exact notice `veryfront dev` prints, so a reader who lands on a
+      // different port than the page's examples recognizes what happened.
+      assertStringIncludes(page, "is in use, using");
+    }
   });
 });
 

@@ -1,7 +1,7 @@
 ---
 title: "veryfront/task"
 description: "Source-defined tasks for Veryfront projects."
-order: 35
+order: 36
 ---
 
 ## Import

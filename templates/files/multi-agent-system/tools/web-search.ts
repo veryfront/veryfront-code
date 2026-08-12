@@ -7,7 +7,7 @@ export default tool({
   inputSchema: defineSchema((v) => v.object({
     query: v.string().describe("Search query"),
   }))(),
-  execute: async ({ query: _query }) => {
+  execute: ({ query: _query }) => {
     // Connect a real search API to use this tool.
     // Popular options: Tavily, SerpAPI, Brave Search
     throw new Error(

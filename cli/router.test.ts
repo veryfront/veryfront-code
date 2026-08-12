@@ -74,6 +74,7 @@ describe("cli/command-definitions integrity", () => {
       "uploads",
       "files",
       "knowledge",
+      "project",
     ];
 
     for (const cmd of expectedCommands) {

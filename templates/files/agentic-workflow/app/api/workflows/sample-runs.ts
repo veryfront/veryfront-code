@@ -1,7 +1,10 @@
-export interface DemoWorkflowStep {
-  id: string;
-  name: string;
-  status: "pending" | "running" | "completed" | "waiting_for_approval" | "failed";
+/** Node statuses the framework reports; the UI keys its icons off these. */
+export type DemoNodeStatus = "pending" | "running" | "completed" | "failed" | "skipped";
+
+export interface DemoNodeState {
+  nodeId: string;
+  status: DemoNodeStatus;
+  attempt: number;
   output?: string | Record<string, unknown>;
 }
 
@@ -12,9 +15,8 @@ export interface DemoWorkflowRun {
   input: { topic: string };
   createdAt: string;
   currentNodes: string[];
-  nodeStates: Record<string, { status: DemoWorkflowStep["status"] }>;
+  nodeStates: Record<string, DemoNodeState>;
   pendingApprovals: Array<{ id: string; status: "pending" | "approved" | "rejected" }>;
-  steps: DemoWorkflowStep[];
 }
 
 const globalStore = globalThis as typeof globalThis & {
@@ -38,37 +40,31 @@ export function createDemoWorkflowRun(
     createdAt: new Date().toISOString(),
     currentNodes: [],
     nodeStates: {
-      research: { status: "completed" },
-      "write-article": { status: "completed" },
-      "editorial-review": { status: "completed" },
-      publish: { status: "completed" },
-    },
-    pendingApprovals: [],
-    steps: [
-      {
-        id: "research",
-        name: "Research",
+      research: {
+        nodeId: "research",
         status: "completed",
+        attempt: 1,
         output: "Found key points and source material.",
       },
-      {
-        id: "write-article",
-        name: "Write article",
+      "write-article": {
+        nodeId: "write-article",
         status: "completed",
+        attempt: 1,
         output: "Drafted a concise article from the research notes.",
       },
-      {
-        id: "editorial-review",
-        name: "Editorial review",
+      "editorial-review": {
+        nodeId: "editorial-review",
         status: "completed",
+        attempt: 1,
       },
-      {
-        id: "publish",
-        name: "Publish",
+      publish: {
+        nodeId: "publish",
         status: "completed",
+        attempt: 1,
         output: { published: true },
       },
-    ],
+    },
+    pendingApprovals: [],
   };
 }
 

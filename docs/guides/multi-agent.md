@@ -6,10 +6,10 @@ order: 28
 
 Veryfront supports two agent composition patterns:
 
-- Wrap agents as tools with `agentAsTool` or `getAgentsAsTools`.
+- Let one agent call others by naming them in `delegates`.
 - Run agents as ordered workflow steps.
 
-Use agent-as-tool when the parent should choose the order at runtime. Use a workflow when the order is known in advance.
+Use delegation when the parent should choose the order at runtime. Use a workflow when the order is known in advance.
 
 Each agent can omit `model` and use `openai/gpt-5.4-nano`, set `"auto"` for runtime selection, or set an explicit `provider/model` override when you need one.
 
@@ -51,21 +51,20 @@ export default agent({
 
 ```ts
 // agents/orchestrator.ts
-import { agent, getAgentsAsTools } from "veryfront/agent";
+import { agent } from "veryfront/agent";
 
 export default agent({
   id: "orchestrator",
   system:
     "You coordinate research and writing. Use the researcher to gather facts, then the writer to produce the article.",
-  tools: getAgentsAsTools({
-    researcher: "Research a topic using web search",
-    writer: "Write an article from research notes",
-  }),
+  delegates: ["researcher", "writer"],
   maxSteps: 10,
 });
 ```
 
-`getAgentsAsTools()` wraps each agent as a tool. The orchestrator decides when to call each agent based on its system prompt. Each sub-agent runs its own tool loop independently.
+Each id in `delegates` becomes an `agent_<id>` tool. The orchestrator decides when to call each agent based on its system prompt, and each sub-agent runs its own tool loop independently.
+
+Name the delegates rather than building the tools yourself. Discovery loads `agents/` in filename order, so a top-level `getAgentsAsTools()` in `orchestrator.ts` runs before `researcher.ts` and `writer.ts` have registered and returns nothing. `delegates` resolves each agent when the run starts, so load order cannot matter. Reach for `agentAsTool()` or `getAgentsAsTools()` only where you register the agents yourself and control the order.
 
 ### Invoke the orchestrator
 

@@ -32,6 +32,7 @@ import {
 import { canOpenBrowser, openBrowser } from "../../auth/browser.ts";
 import { getCallbackUrl, startCallbackServer } from "../../auth/callback-server.ts";
 import {
+  API_KEYS_URL,
   DEFAULT_CALLBACK_PORT,
   DEFAULT_LOGIN_TIMEOUT_MS,
   resolveCliApiUrl,
@@ -165,7 +166,7 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
 
   if (method === "token") {
     console.log(`  ${brand("Enter your API token")}`);
-    console.log(`  ${dim("You can get a token from veryfront.com/settings/api-keys")}`);
+    console.log(`  ${dim(`You can get a token from ${API_KEYS_URL}`)}`);
     console.log();
 
     const tokenInput = promptSync("  API token:") ?? "";

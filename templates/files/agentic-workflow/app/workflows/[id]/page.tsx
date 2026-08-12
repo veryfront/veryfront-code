@@ -8,8 +8,15 @@ const STEP_ICONS: Record<string, string> = {
   completed: '\u2713',
   running: '\u25C9',
   pending: '\u25CB',
-  waiting_for_approval: '\u23F8',
+  skipped: '\u23F8',
   failed: '\u2717',
+}
+
+/** A run's input is workflow-defined, so narrow it before reading `topic`. */
+function topicOf(input: unknown): string {
+  return typeof input === 'object' && input !== null && 'topic' in input
+    ? String((input as { topic: unknown }).topic)
+    : ''
 }
 
 export default function WorkflowDetail(): React.JSX.Element {
@@ -52,21 +59,21 @@ export default function WorkflowDetail(): React.JSX.Element {
       <div className="max-w-2xl mx-auto px-4 py-12">
         <a href="/" className="text-sm text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 mb-6 inline-block">&larr; Back</a>
 
-        <h1 className="text-2xl font-bold text-neutral-900 dark:text-white mb-1">{run.input?.topic || 'Workflow'}</h1>
+        <h1 className="text-2xl font-bold text-neutral-900 dark:text-white mb-1">{topicOf(run.input) || 'Workflow'}</h1>
         <p className="text-sm text-neutral-500 dark:text-neutral-400 mb-8">Started {new Date(run.createdAt).toLocaleString()}</p>
 
-        {/* Steps */}
+        {/* One card per workflow node, in definition order */}
         <div className="space-y-4 mb-8">
-          {run.steps?.map((step: any) => (
-            <div key={step.id} className="flex items-start gap-3 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl p-4">
-              <span className="text-lg mt-0.5">{STEP_ICONS[step.status] || '\u25CB'}</span>
+          {Object.entries(run.nodeStates).map(([nodeId, node]) => (
+            <div key={nodeId} className="flex items-start gap-3 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl p-4">
+              <span className="text-lg mt-0.5">{STEP_ICONS[node.status] || '\u25CB'}</span>
               <div className="flex-1">
-                <p className="font-medium text-neutral-900 dark:text-white text-sm">{step.name}</p>
-                {step.output && (
-                  <p className="text-xs text-neutral-500 mt-1 line-clamp-2">{typeof step.output === 'string' ? step.output : JSON.stringify(step.output)}</p>
+                <p className="font-medium text-neutral-900 dark:text-white text-sm">{nodeId}</p>
+                {node.output !== undefined && (
+                  <p className="text-xs text-neutral-500 mt-1 line-clamp-2">{typeof node.output === 'string' ? node.output : JSON.stringify(node.output)}</p>
                 )}
               </div>
-              <span className="text-xs text-neutral-400">{step.status}</span>
+              <span className="text-xs text-neutral-400">{node.status}</span>
             </div>
           ))}
         </div>
@@ -78,6 +85,7 @@ export default function WorkflowDetail(): React.JSX.Element {
             <p className="text-sm text-amber-700 dark:text-amber-300 mb-4">Review the draft before publishing.</p>
             <div className="flex gap-3">
               <button
+                type="button"
                 onClick={() => handleApproval(pendingApprovals[0].id, true)}
                 disabled={isSubmitting}
                 className="px-4 py-2 bg-emerald-500 text-white font-medium rounded-lg hover:bg-emerald-600 disabled:opacity-50 transition-colors text-sm"
@@ -85,6 +93,7 @@ export default function WorkflowDetail(): React.JSX.Element {
                 Approve
               </button>
               <button
+                type="button"
                 onClick={() => handleApproval(pendingApprovals[0].id, false)}
                 disabled={isSubmitting}
                 className="px-4 py-2 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 font-medium rounded-lg hover:bg-neutral-50 dark:hover:bg-neutral-700 disabled:opacity-50 transition-colors text-sm"

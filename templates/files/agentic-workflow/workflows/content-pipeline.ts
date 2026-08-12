@@ -1,6 +1,11 @@
 import { workflow, step, parallel, waitForApproval } from "veryfront/workflow";
 
-export default workflow({
+/** Typing the input makes `input.topic` available to every step below. */
+interface ContentPipelineInput {
+  topic: string;
+}
+
+export default workflow<ContentPipelineInput>({
   id: "content-pipeline",
   description: "Research, write, review, and publish content",
   steps: ({ input }) => [
@@ -19,11 +24,8 @@ export default workflow({
       timeout: "24h",
     }),
 
-    step("publish", {
-      execute: async ({ previous }) => {
-        // Replace with your publishing logic
-        return { published: true, url: `/articles/${Date.now()}` };
-      },
-    }),
+    // Every step runs an agent or a tool. `tools/publish.ts` is where the
+    // publishing logic lives.
+    step("publish", { tool: "publish" }),
   ],
 });

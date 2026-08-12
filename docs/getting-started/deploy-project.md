@@ -66,8 +66,8 @@ default, so check the preview URL in a browser signed in to Veryfront as a
 member of the project.
 
 A protected environment serves only that signed-in member. An unauthenticated
-request gets a `302` to `https://veryfront.com/sign-in`, on every path
-including API routes:
+request gets a `302` to a Veryfront sign-in page, on every path including API
+routes:
 
 ```bash
 curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' \
@@ -77,6 +77,14 @@ curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' \
 ```text
 302 https://veryfront.com/sign-in?from=https%3A%2F%2F...%2Fapi%2Fhealth
 ```
+
+Which sign-in apex you get depends on the host serving the environment, so read
+it out of the printed `redirect_url` instead of assuming one. A
+`*.veryfront.com` environment signs in at `https://veryfront.com/sign-in`, while
+a preview host on `*.preview.veryfront.org` signs in at
+`https://veryfront.org/sign-in`. The apex matters because a session cookie is
+scoped to the domain that issued it: sign in on the wrong apex and the
+deployment host never receives the cookie, so the redirect just repeats.
 
 A request signed in as a user who is not a member of the project gets a `403`
 instead. A `403` means the account is wrong, not the URL.
@@ -125,20 +133,29 @@ container example.
 
 ## Verify it worked
 
-Deploy prints the environment URL. Request that URL and print the status line,
-so a sign-in redirect is visible instead of passing silently:
+Deploy prints the environment URL. Probe a route your project actually serves,
+and print the status line so a sign-in redirect is visible instead of passing
+silently:
 
 ```bash
-curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' <environment-url>
+curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' <environment-url>/<route>
 ```
 
-A public environment answers `200`. A protected environment answers `302` to
-`https://veryfront.com/sign-in`, or `403` for a signed-in non-member. In that
-case open the URL in a member's browser, or make the environment public, as
-described in [Environment access](#environment-access). Do not check with a
-bare `curl -sSf <environment-url>`: `curl` does not treat a `302` as a failure,
-so that command exits `0` with an empty body whether or not the deployment
-works.
+Validate the status that route is expected to return, rather than expecting a
+`200` from the environment root. The root answers `200` only when the project
+has a static page route at `/`. A deployment whose routes are all API routes, or
+whose only pages are dynamic like `/blog/[slug]`, has no root page to answer
+with, so probe one of its API routes and check that route's own status. Deploy
+draws the same line: it picks a readiness route only from the project's static
+page routes and skips the browser readiness probe entirely when there is none,
+so a successful deploy does not imply a `200` anywhere.
+
+A protected environment answers `302` to the sign-in page — see
+[Environment access](#environment-access) for which apex serves it — or `403`
+for a signed-in non-member. In that case open the URL in a member's browser, or
+make the environment public. Do not check with a bare
+`curl -sSf <environment-url>`: `curl` does not treat a `302` as a failure, so
+that command exits `0` with an empty body whether or not the deployment works.
 
 Once the environment is public, request an API route the project serves. For
 the agent route from [Create API](./create-api.md):
@@ -149,10 +166,20 @@ curl -sSf -N -X POST <environment-url>/api/ag-ui \
   -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"What is Veryfront in one sentence?"}]}]}'
 ```
 
-`veryfront open` opens the project in the Cloud dashboard, where the deployment
-is listed; `veryfront open --env production` opens that environment's dashboard
-page. Neither opens the deployed site, so use the environment URL Deploy printed
-to check the running deployment.
+If you did not record the URL Deploy printed, `veryfront open --site` opens the
+deployed site, and `veryfront open --site --json` prints that URL for scripts:
+
+```bash
+veryfront open --site --json
+```
+
+```json
+{ "success": true, "command": "open", "data": { "url": "https://<slug>.production.veryfront.com" } }
+```
+
+Without `--site`, `veryfront open` opens the project in the Cloud dashboard,
+where the deployment is listed, and `veryfront open --env production` opens the
+project's Environments panel. Neither opens the deployed site.
 
 For an automated production workflow, see
 [Deploy from CI](../guides/deploy-from-ci.md).

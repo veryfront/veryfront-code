@@ -77,6 +77,15 @@ also set `VERYFRONT_API_TOKEN` directly. Direct provider keys such as
 veryfront dev
 ```
 
+The dev server binds port 3000. When that port is already taken, `veryfront dev`
+prints `! Port 3000 is in use, using 3001 instead` and serves on the first free
+port after 3000, so open the URL the CLI prints. Pass `--port` to pin one
+yourself:
+
+```bash
+veryfront dev --port 4000
+```
+
 `veryfront dev` also starts the development MCP server on the app port plus 2.
 With the default app port, coding agents can connect to
 `http://localhost:3002/mcp` and call `vf_bootstrap` once at session start.
@@ -84,13 +93,14 @@ Use [Coding agents](../guides/coding-agents.md) for setup details.
 
 ## Verify it worked
 
-Open `http://localhost:3000` and ask:
+Open the URL `veryfront dev` printed. Unless the port moved, that is
+`http://localhost:3000`. Ask:
 
 ```text
 What is 128 divided by 8?
 ```
 
-To test the route without the UI:
+To test the route without the UI, using that same port:
 
 ```bash
 curl -N -X POST http://localhost:3000/api/ag-ui \

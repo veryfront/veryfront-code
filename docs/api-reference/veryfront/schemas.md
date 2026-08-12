@@ -1,7 +1,7 @@
 ---
 title: "veryfront/schemas"
 description: "Reusable validation schemas and the `defineSchema` helper. Schema materialization requires a registered `SchemaValidator`. Veryfront runtime bootstrap registers the built-in validator before handlers run. `lazySchema` keeps module-scope schema constants import-safe before bootstrap."
-order: 31
+order: 32
 ---
 
 ## Import

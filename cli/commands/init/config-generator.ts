@@ -31,20 +31,22 @@ export interface CreatePackageJsonOptions {
   }>;
 }
 
-export async function createPackageJson(
-  projectDir: string,
-  projectName?: string,
-  options: CreatePackageJsonOptions = {},
-): Promise<void> {
-  const fs = createFileSystem();
-
-  // Read any existing package.json (e.g. from template) to merge dependencies
-  const templateDeps: Record<string, string> = { ...(options.dependencies ?? {}) };
-  const pkgPath = join(projectDir, "package.json");
-  if (await fs.exists(pkgPath)) {
-    const existing = JSON.parse(await fs.readTextFile(pkgPath));
-    Object.assign(templateDeps, existing.dependencies ?? {});
-  }
+/**
+ * Render the scaffold's `package.json`.
+ *
+ * Pure so that both the disk-writing CLI path and
+ * {@link ../../shared/project-creation.ts | materializeScaffold} emit the same
+ * bytes for the same template — the parity the CLI and Studio scaffolds are
+ * required to hold.
+ */
+export function buildPackageJson(
+  projectName: string,
+  options: CreatePackageJsonOptions & { existingDependencies?: Record<string, string> } = {},
+): string {
+  const templateDeps: Record<string, string> = {
+    ...(options.dependencies ?? {}),
+    ...(options.existingDependencies ?? {}),
+  };
 
   // Merge per-integration deps. First declaration wins; collisions are logged.
   const integrationDeps: Record<string, string> = {};
@@ -64,7 +66,6 @@ export async function createPackageJson(
     }
   }
 
-  const dirName = projectDir.split(/[/\\]/).pop();
   const veryfrontVersionRange = `^${VERSION}`;
   const firstPartyExtensionPackages = options.firstPartyExtensions ?? [];
   const requiredExtensionDeps = Object.fromEntries(
@@ -74,7 +75,7 @@ export async function createPackageJson(
     ]),
   );
   const packageJson = {
-    name: projectName ?? dirName ?? "veryfront-project",
+    name: projectName,
     version: "0.1.0",
     type: "module",
     scripts: {
@@ -103,9 +104,34 @@ export async function createPackageJson(
     },
   };
 
+  return JSON.stringify(packageJson, null, 2);
+}
+
+/** Default project name when neither a name nor a directory name is available. */
+export const FALLBACK_PROJECT_NAME = "veryfront-project";
+
+export async function createPackageJson(
+  projectDir: string,
+  projectName?: string,
+  options: CreatePackageJsonOptions = {},
+): Promise<void> {
+  const fs = createFileSystem();
+
+  // Read any existing package.json (e.g. from template) to merge dependencies
+  const pkgPath = join(projectDir, "package.json");
+  let existingDependencies: Record<string, string> | undefined;
+  if (await fs.exists(pkgPath)) {
+    const existing = JSON.parse(await fs.readTextFile(pkgPath));
+    existingDependencies = existing.dependencies ?? {};
+  }
+
+  const dirName = projectDir.split(/[/\\]/).pop();
   await fs.writeTextFile(
-    join(projectDir, "package.json"),
-    JSON.stringify(packageJson, null, 2),
+    pkgPath,
+    buildPackageJson(projectName ?? dirName ?? FALLBACK_PROJECT_NAME, {
+      ...options,
+      existingDependencies,
+    }),
   );
 
   logger.debug('Created package.json with "type": "module"');

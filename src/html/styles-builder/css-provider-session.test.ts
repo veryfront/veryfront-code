@@ -208,12 +208,15 @@ describe("styles-builder CSS provider sessions", () => {
     assertEquals(generated.css, "missing-optimizer|sheet|alpha");
   });
 
-  it("reports a missing optimizer once, with the package that provides one", () => {
+  it("reports a missing optimizer once, with the steps that actually enable one", () => {
     // `regenerateCSSByHash` acquires a session per request, so warning on every
     // acquisition made this line the most frequent entry in a hosted project's
-    // logs -- once per render, at warn level, naming a registration hook with no
-    // documented way to act on it. State the package that registers an engine,
-    // and say it once while the engine stays absent.
+    // logs -- once per render, at warn level. Say it once while the engine stays
+    // absent, and give the whole recipe: `@veryfront/ext-css-lightning` declares
+    // `activation: "explicit"`, so installing the package registers nothing on
+    // its own. Only a `veryfront.config.ts` `extensions` entry activates it, and
+    // advice that stops at the install leaves the developer with unminified CSS
+    // and no next step.
     installProcessor(createProcessor("warn-rearm"));
     register(CSSOptimizationEngineName, createOptimizer("warn-rearm"));
     // Observing an engine re-arms the warning, so this test does not depend on
@@ -236,10 +239,19 @@ describe("styles-builder CSS provider sessions", () => {
       __resetLogRecordEmitterForTests();
     }
 
-    const reports = records.filter((entry) => entry.message.includes("CSSOptimizationEngine"));
+    const reports = records.filter((entry) => entry.message.includes("unminified CSS"));
     assertEquals(reports.length, 1);
+    const report = reports[0]?.message ?? "";
     assertEquals(reports[0]?.level, "warn");
-    assertEquals(reports[0]?.message.includes("@veryfront/ext-css-lightning"), true);
+    assertEquals(report.includes("@veryfront/ext-css-lightning"), true);
+    assertEquals(report.includes("veryfront.config.ts"), true);
+    assertEquals(report.includes("extensions"), true);
+    // `deno add` is wrong twice over: scaffolded projects are npm projects, and
+    // no package manager can activate an explicit-activation extension.
+    assertEquals(report.includes("deno add"), false);
+    // The contract name is an internal registration hook the guides never
+    // mention, so it cannot appear as the developer-facing instruction.
+    assertEquals(report.includes("CSSOptimizationEngine"), false);
   });
 
   it("keeps minified and unminified output in separate cache identities", async () => {

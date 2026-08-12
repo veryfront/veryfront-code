@@ -11,6 +11,13 @@ const STATUS_STYLES: Record<string, string> = {
   pending: 'bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400',
 }
 
+/** A run's input is workflow-defined, so narrow it before reading `topic`. */
+function topicOf(input: unknown): string {
+  return typeof input === 'object' && input !== null && 'topic' in input
+    ? String((input as { topic: unknown }).topic)
+    : ''
+}
+
 export default function WorkflowDashboard(): React.JSX.Element {
   const [topic, setTopic] = useState('')
   const { start, isStarting } = useWorkflowStart({ workflowId: 'content-pipeline' })
@@ -72,7 +79,7 @@ export default function WorkflowDashboard(): React.JSX.Element {
                 >
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="font-medium text-neutral-900 dark:text-white text-sm">{wf.input?.topic || 'Untitled'}</p>
+                      <p className="font-medium text-neutral-900 dark:text-white text-sm">{topicOf(wf.input) || 'Untitled'}</p>
                       <p className="text-xs text-neutral-500 mt-1">{new Date(wf.createdAt).toLocaleString()}</p>
                     </div>
                     <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${STATUS_STYLES[wf.status] || STATUS_STYLES.pending}`}>

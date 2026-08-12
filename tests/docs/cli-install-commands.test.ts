@@ -7,10 +7,10 @@
  * unpublished notes (`docs/internal`, `docs/rfcs`, `docs/evidence`) are out of
  * scope — they may quote a broken invocation deliberately.
  *
- * The install command reads its target from `--target` only. A bare positional
- * (`veryfront install agents`) is silently ignored and the command falls back to
- * auto-detection, which in a fresh project writes `SKILL.md` instead of the
- * `AGENTS.md` the docs describe.
+ * The install command takes its target from `--target` or from the first
+ * positional argument (`veryfront install agents`). A command line that selects
+ * neither falls back to auto-detection, which in a fresh project writes
+ * `SKILL.md` instead of the `AGENTS.md` the docs describe.
  */
 
 import "#veryfront/schemas/_test-setup.ts";
