@@ -2,10 +2,12 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   auditPage,
+  auditRollup,
   collectBarrelExports,
   collectDeclarations,
   collectIdentifiers,
   collectObjectLiteralCompounds,
+  parseRollupRows,
   type PublicSurface,
   resolvesOnSurface,
 } from "./audit-rfc-status.ts";
@@ -59,6 +61,31 @@ const anyFile = (path: string) => path === "src/real.ts" ? 200 : null;
 function page(body: string) {
   return { path: "docs/rfcs/29-chat-api-shape/components/chat-input.md", content: body };
 }
+
+function rollupPage(body: string) {
+  return { path: "docs/rfcs/29-chat-api-shape/README.md", content: body };
+}
+
+/** A roll-up table with two rows, plus prose and a link that is not a row. */
+const ROLLUP = [
+  "# Reference index",
+  "",
+  "See [the helpers page](./helpers.md) for the full list.",
+  "",
+  "| Delta | Status | Landed in |",
+  "| --- | --- | --- |",
+  "| [`mergeProps` made public](./helpers.md#mergeprops---new---shipped) | `shipped` | `src/real.ts:85` |",
+  "| [`useChatScroll`](./hooks/use-chat-scroll.md) | `partly shipped` | `src/real.ts:177` |",
+].join("\n");
+
+const BADGED_HELPERS = {
+  path: "docs/rfcs/29-chat-api-shape/helpers.md",
+  content: "### `mergeProps` - `new` - `shipped` (src/real.ts:85)",
+};
+const BADGED_SCROLL = {
+  path: "docs/rfcs/29-chat-api-shape/hooks/use-chat-scroll.md",
+  content: "### `useChatScroll` - `new` - `partly shipped` (src/real.ts:177)",
+};
 
 const LEDGER = [
   "> **Status: RFC 29 - proposed; nothing on this page has landed.** ok:",
@@ -135,8 +162,64 @@ describe("audit-rfc-status", () => {
       "### `ChatInput.Field` - `changed` - `shipped` (src/real.ts:1)",
     ].join("\n");
     const violations = auditPage(page(body), SURFACE, anyFile);
-    assertEquals(violations.length, 1);
+    // A duplicated block duplicates its lists too, so all three are reported:
+    // the banner on line 8 and the two repeated list lines below it.
+    assertEquals(violations.map((v) => v.line), [8, 10, 11]);
     assertEquals(violations[0].message.includes("a second status block"), true);
+    assertEquals(violations[1].message.includes('a second "**Exported from'), true);
+    assertEquals(violations[2].message.includes('a second "**Not exported today:**"'), true);
+  });
+
+  // Rule 2, one level down. Rejecting only duplicate *banners* left the same
+  // hole open on the symbol lists: each list is overwritten by the last match,
+  // so a false line hides behind a clean one further down and the page audits
+  // clean. The banner is single here - only the lists repeat.
+  it("rejects a duplicated `Not exported today` line hiding a false claim", () => {
+    const body = [
+      "# Helpers",
+      "",
+      "> **Status: RFC 29 - proposed; nothing on this page has landed.** ok:",
+      ">",
+      "> - **Exported from `veryfront/chat` today:** none",
+      "> - **Not exported today:** `mergeProps`",
+      "> - **Not exported today:** none",
+    ].join("\n");
+    const violations = auditPage(page(body), SURFACE, anyFile);
+    assertEquals(violations.length, 1);
+    assertEquals(violations[0].message.includes('a second "**Not exported today:**"'), true);
+    assertEquals(violations[0].line, 7);
+  });
+
+  it("rejects a duplicated `Exported from` line hiding a false claim", () => {
+    const body = [
+      "# ChatInput",
+      "",
+      "> **Status: RFC 29 - proposed; nothing on this page has landed.** ok:",
+      ">",
+      "> - **Exported from `veryfront/chat` today:** `ChatInput.Preview`",
+      "> - **Exported from `veryfront/chat` today:** `ChatInput`",
+      "> - **Not exported today:** none",
+    ].join("\n");
+    const violations = auditPage(page(body), SURFACE, anyFile);
+    assertEquals(violations.length, 1);
+    assertEquals(violations[0].message.includes('a second "**Exported from'), true);
+    assertEquals(violations[0].line, 6);
+  });
+
+  it("rejects a duplicated `Not in `src/` today` line", () => {
+    const body = [
+      "# ChatInput",
+      "",
+      "> **Status: RFC 29 - proposed; nothing on this page has landed.** ok:",
+      ">",
+      "> - **Exported from `veryfront/chat` today:** none",
+      "> - **Not exported today:** none",
+      "> - **Not in `src/` today:** `ChatInputRoot`",
+      "> - **Not in `src/` today:** `neverAppearsAnywhere`",
+    ].join("\n");
+    const violations = auditPage(page(body), SURFACE, anyFile);
+    assertEquals(violations.length, 1);
+    assertEquals(violations[0].message.includes('a second "**Not in'), true);
     assertEquals(violations[0].line, 8);
   });
 
@@ -282,6 +365,41 @@ describe("audit-rfc-status", () => {
     const violations = auditPage(page(body), SURFACE, anyFile);
     assertEquals(violations.length, 1);
     assertEquals(violations[0].message.includes("Switch the banner"), true);
+  });
+
+  // Rule 7. The index table calls itself "the complete set", which is the same
+  // corpus-wide claim the blanket banners made - so it is checked, not trusted.
+  it("reads the roll-up table's rows, ignoring the prose around them", () => {
+    assertEquals(parseRollupRows(ROLLUP), [
+      { line: 7, page: "docs/rfcs/29-chat-api-shape/helpers.md" },
+      { line: 8, page: "docs/rfcs/29-chat-api-shape/hooks/use-chat-scroll.md" },
+    ]);
+  });
+
+  it("accepts a roll-up matching the pages that badge a delta", () => {
+    assertEquals(auditRollup(rollupPage(ROLLUP), [BADGED_HELPERS, BADGED_SCROLL]), []);
+  });
+
+  it("rejects a badged page the roll-up never lists", () => {
+    const extra = {
+      path: "docs/rfcs/29-chat-api-shape/hooks/use-chat.md",
+      content: "### `useChat` - `new` - `shipped` (src/real.ts:12)",
+    };
+    const violations = auditRollup(rollupPage(ROLLUP), [BADGED_HELPERS, BADGED_SCROLL, extra]);
+    assertEquals(violations.length, 1);
+    assertEquals(violations[0].message.includes("has no row in this table"), true);
+    assertEquals(violations[0].message.includes("hooks/use-chat.md"), true);
+  });
+
+  it("rejects a roll-up row for a page that badges nothing", () => {
+    const unbadged = {
+      path: "docs/rfcs/29-chat-api-shape/hooks/use-chat-scroll.md",
+      content: "### `useChatScroll` - `new`\n\nStill proposed.",
+    };
+    const violations = auditRollup(rollupPage(ROLLUP), [BADGED_HELPERS, unbadged]);
+    assertEquals(violations.length, 1);
+    assertEquals(violations[0].message.includes("has landed, but that page badges"), true);
+    assertEquals(violations[0].line, 8);
   });
 
   it("reads `none` as an empty list, not a symbol named none", () => {

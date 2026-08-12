@@ -38,6 +38,8 @@
  *   5. A `shipped` badge must cite a source anchor (`path:line`) that resolves.
  *   6. The banner's landed-ness word must agree with the page's `shipped`
  *      badges, so the page-level summary can never drift from its deltas again.
+ *   7. The reference index's roll-up table is the complete set of landed
+ *      deltas, and must agree exactly with the pages that badge one.
  */
 
 import { walk } from "#std/fs";
@@ -60,6 +62,15 @@ const CHAT_SRC_DIRS = [
  * un-checkable document-wide negative, phrased around "nothing else" instead of
  * "not yet". Matching the shape rather than a fixed string is what stops the
  * next paraphrase getting through.
+ *
+ * The fourth is that same negative inverted into the positive voice, which is
+ * how it survived the first three: "Every other delta is still a proposal",
+ * "Everything else in this corpus is still a proposal". Naming what *has*
+ * landed and then sweeping the rest into one word is the identical
+ * un-checkable claim - it just reads like a summary rather than a status. The
+ * quantifier must be a residual one (`every other`, `everything else`), so the
+ * pattern cannot reach the per-page banners, which say "proposed" of a single
+ * named page and never "everything else … proposal".
  */
 const BLANKET_CLAIMS: Array<{ label: string; pattern: RegExp }> = [
   { label: "not yet implemented", pattern: /not yet implemented/i },
@@ -67,6 +78,10 @@ const BLANKET_CLAIMS: Array<{ label: string; pattern: RegExp }> = [
   {
     label: "nothing else … implemented / shipped / landed",
     pattern: /nothing else\b[^.]*\b(?:implemented|shipped|landed)\b/i,
+  },
+  {
+    label: "everything else / every other … is still a proposal",
+    pattern: /\b(?:everything|anything|every|all)\s+(?:else|other)\b[^.]*\bproposals?\b/i,
   },
 ];
 
@@ -221,6 +236,17 @@ interface Ledger {
   exported: string[];
   absent: string[];
   unbuilt: string[];
+  /**
+   * The same accounting for each symbol list, and for the same reason one level
+   * down. Rejecting only duplicate banners left this hole open: each list is
+   * overwritten by the last line that matches its label, so a page could put a
+   * false `Not exported today:` line first and a clean one below it and audit
+   * clean - exactly the drift the ledger exists to catch, hidden inside a
+   * single well-formed status block.
+   */
+  exportedLines: number[];
+  absentLines: number[];
+  unbuiltLines: number[];
 }
 
 /** Inline-code tokens (`` `Foo.Bar` ``) in a ledger line, in order. */
@@ -232,6 +258,9 @@ function ledgerSymbols(line: string): string[] {
 export function parseLedger(content: string): Ledger | null {
   const lines = content.split("\n");
   const bannerLines: number[] = [];
+  const exportedLines: number[] = [];
+  const absentLines: number[] = [];
+  const unbuiltLines: number[] = [];
   let bannerLine = -1;
   let landed = false;
   let exported: string[] | null = null;
@@ -249,16 +278,29 @@ export function parseLedger(content: string): Ledger | null {
       bannerLine = i + 1;
       landed = false;
     } else if (line.includes(EXPORTED_LABEL)) {
+      exportedLines.push(i + 1);
       exported = ledgerSymbols(line);
     } else if (line.includes(UNBUILT_LABEL)) {
+      unbuiltLines.push(i + 1);
       unbuilt = ledgerSymbols(line);
     } else if (line.includes(ABSENT_LABEL)) {
+      absentLines.push(i + 1);
       absent = ledgerSymbols(line);
     }
   }
 
   if (bannerLine === -1 || exported === null || absent === null) return null;
-  return { bannerLine, bannerLines, landed, exported, absent, unbuilt };
+  return {
+    bannerLine,
+    bannerLines,
+    landed,
+    exported,
+    absent,
+    unbuilt,
+    exportedLines,
+    absentLines,
+    unbuiltLines,
+  };
 }
 
 export interface ShippedBadge {
@@ -311,6 +353,76 @@ export interface AuditInput {
   content: string;
 }
 
+/** The reference index, whose table rolls up every delta that has landed. */
+const ROLLUP_PAGE = `${RFC_DIR}/README.md`;
+
+/**
+ * A roll-up row: `| [text](./page.md#anchor) | ` + "`shipped`" + ` | … |`.
+ *
+ * Requiring the status-badge cell is what scopes this to the roll-up table
+ * instead of any other table that might join the page later.
+ */
+const ROLLUP_ROW_RE =
+  /^\|[^|]*\]\((\.\/[\w./-]+?\.md)(?:#[\w-]*)?\)[^|]*\|[^|]*`(?:partly )?shipped`/;
+
+export function parseRollupRows(content: string): Array<{ line: number; page: string }> {
+  const rows: Array<{ line: number; page: string }> = [];
+  const lines = content.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const m = ROLLUP_ROW_RE.exec(lines[i]);
+    if (m) rows.push({ line: i + 1, page: `${RFC_DIR}/${m[1].slice(2)}` });
+  }
+  return rows;
+}
+
+/**
+ * Rule 7 - the roll-up is the complete set, and is checked as one.
+ *
+ * The index table says "the complete set, as of `main`". That is the same
+ * corpus-wide claim the blanket banners made, so it gets the same treatment:
+ * the set is machine-readable (one row per landed delta, each linking its
+ * page), and it must agree exactly with the pages that actually carry a
+ * `shipped` badge. Without this, deleting the blanket sentence would only hide
+ * the claim - the table would still assert completeness, unchecked, and a
+ * delta could land with a badge that the index never mentions.
+ */
+export function auditRollup(rollup: AuditInput, deltaPages: AuditInput[]): StatusViolation[] {
+  const out: StatusViolation[] = [];
+  const rows = parseRollupRows(rollup.content);
+  const listed = new Map(rows.map((r) => [r.page, r.line]));
+  const anchorLine = rows[0]?.line ?? 1;
+
+  const badged = new Set(
+    deltaPages
+      .filter((p) => parseShippedBadges(p.content).badges.length > 0)
+      .map((p) => p.path),
+  );
+
+  for (const page of [...badged].sort()) {
+    if (!listed.has(page)) {
+      out.push({
+        path: rollup.path,
+        line: anchorLine,
+        message:
+          `"${page}" badges a delta \`shipped\` but has no row in this table, ` +
+          `which claims to be the complete set. Add the delta or drop its badge.`,
+      });
+    }
+  }
+  for (const [page, line] of listed) {
+    if (!badged.has(page)) {
+      out.push({
+        path: rollup.path,
+        line,
+        message:
+          `this row says a delta on "${page}" has landed, but that page badges ` +
+          `nothing \`shipped\`. Badge the delta on its own page or drop this row.`,
+      });
+    }
+  }
+  return out;
+}
+
 export function auditPage(
   page: AuditInput,
   surface: PublicSurface,
@@ -355,6 +467,26 @@ export function auditPage(
         "can disagree, and only the last one is read - which is how a page-level " +
         "summary drifts from its own deltas.",
     });
+  }
+  // One banner is not enough: each symbol list must be single too. Only the
+  // last line matching a label is read, so a repeated list lets a false claim
+  // sit above a clean one and audit clean.
+  const symbolLists: Array<{ label: string; lines: number[] }> = [
+    { label: EXPORTED_LABEL, lines: ledger.exportedLines },
+    { label: ABSENT_LABEL, lines: ledger.absentLines },
+    { label: UNBUILT_LABEL, lines: ledger.unbuiltLines },
+  ];
+  for (const list of symbolLists) {
+    for (const extra of list.lines.slice(1)) {
+      out.push({
+        path: page.path,
+        line: extra,
+        message:
+          `a second "${list.label}" line in this status block. Exactly one of ` +
+          `each: only the last is read, so a false line above a clean one would ` +
+          `never be checked.`,
+      });
+    }
   }
 
   // Rules 3 + 4 - the ledger's two lists must both be true.
@@ -496,7 +628,18 @@ if (import.meta.main) {
     return lineCache.get(path) ?? null;
   };
 
-  const violations = pages.flatMap((page) => auditPage(page, surface, lineCountOf));
+  const rollup = pages.find((page) => page.path === ROLLUP_PAGE);
+  const violations = [
+    ...pages.flatMap((page) => auditPage(page, surface, lineCountOf)),
+    // The roll-up's own "shipped" heading is a section title, not a delta, and
+    // neither is the RFC root's - only the per-piece pages carry real badges.
+    ...(rollup
+      ? auditRollup(
+        rollup,
+        pages.filter((page) => page.path !== ROLLUP_PAGE && page.path !== RFC_ROOT),
+      )
+      : []),
+  ];
 
   if (violations.length === 0) {
     console.log(

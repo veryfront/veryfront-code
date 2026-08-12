@@ -31,7 +31,7 @@ Every anchor is checked: the file must exist and the line must be in it. So must
 
 ### What has landed - `shipped` (src/react/components/chat/chat/hooks/use-chat-input.ts:85)
 
-The complete set, as of `main`. Everything else in this corpus is still a proposal.
+The complete set, as of `main`, and checked as one: `deno task lint:rfc-status` fails if a page badges a delta `shipped` that this table omits, or if a row here names a page that badges nothing.
 
 | Delta                                                                                                                 | Status           | Landed in                                                         |
 | --------------------------------------------------------------------------------------------------------------------- | ---------------- | ----------------------------------------------------------------- |
