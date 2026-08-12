@@ -633,16 +633,23 @@ const RELEASE_ASSET_BUILD_NEVER_STARTED_HINT =
   "release, and any request gate in front of it such as the project's middleware.ts or a " +
   "security policy in veryfront.config.";
 
-function releaseAssetPollingTimeoutError(
-  timeoutMs: number,
-  lastState: string,
-  lastTransientFailure: string | null,
-  observedManifest: boolean,
-): Error {
-  const timeoutSeconds = Math.ceil(timeoutMs / 1000);
+function releaseAssetPollingTimeoutError(options: {
+  timeoutMs: number;
+  lastState: string;
+  /** The most recent retryable read failure, or `null` if the last read succeeded. */
+  lastTransientFailure: string | null;
+  /** Whether any read ever returned a manifest row. */
+  observedManifest: boolean;
+  /** Whether any read ever failed retryably, including reads a later success followed. */
+  observedTransientFailure: boolean;
+}): Error {
+  const { lastState, lastTransientFailure, observedManifest, observedTransientFailure } = options;
+  const timeoutSeconds = Math.ceil(options.timeoutMs / 1000);
   // Only claim the dispatch never landed when nothing else can explain the
-  // silence: a manifest read that kept failing leaves the build state unknown.
-  const neverStarted = !observedManifest && lastTransientFailure === null;
+  // silence: a manifest read that failed leaves the build state unknown for
+  // that window, so it rules out the stronger claim even if later reads
+  // succeeded and returned no row.
+  const neverStarted = !observedManifest && !observedTransientFailure;
   return new Error(
     `Release assets were not ready within ${timeoutSeconds}s (last state: ${lastState}${
       lastTransientFailure === null ? "" : `; last control-plane failure: ${lastTransientFailure}`
@@ -699,15 +706,17 @@ export async function waitForReleaseAssetManifest(
   let lastState = "missing";
   let lastTransientFailure: string | null = null;
   let observedManifest = false;
+  let observedTransientFailure = false;
 
   for (;;) {
     const remainingMs = deadline - Date.now();
-    const timeoutError = releaseAssetPollingTimeoutError(
+    const timeoutError = releaseAssetPollingTimeoutError({
       timeoutMs,
       lastState,
       lastTransientFailure,
       observedManifest,
-    );
+      observedTransientFailure,
+    });
     if (remainingMs <= 0) throw timeoutError;
 
     let raw: Awaited<ReturnType<DeployControlPlane["getReleaseAssetManifest"]>> = null;
@@ -727,6 +736,7 @@ export async function waitForReleaseAssetManifest(
       lastTransientFailure = status === undefined
         ? "a transient connection failure"
         : `HTTP ${status}`;
+      observedTransientFailure = true;
     }
     if (raw !== null) {
       observedManifest = true;

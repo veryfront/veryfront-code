@@ -1499,6 +1499,46 @@ describe("release asset manifest", () => {
     assertEquals(reads, 3);
   });
 
+  it("does not name the refused dispatch once any manifest read has failed", async () => {
+    // A read that failed leaves the build state unknown for that window: the
+    // manifest may well have existed and simply not been readable. Later reads
+    // returning no row cannot restore the stronger claim, so the evidence that
+    // rules it out has to be monotonic rather than only the last failure.
+    using time = new FakeTime();
+    let reads = 0;
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () => {
+        reads++;
+        if (reads === 1) {
+          return Promise.reject(Object.assign(new Error("service unavailable"), { status: 503 }));
+        }
+        return Promise.resolve(null);
+      },
+    });
+
+    const rejection = assertRejects(
+      () =>
+        waitForReleaseAssetManifest(controlPlane, PROJECT_SLUG, "release-1", {
+          ...polling,
+          timeoutMs: 250,
+        }),
+      Error,
+      "Check the release asset build and run deploy again.",
+    );
+    await time.tickAsync(0);
+    await time.tickAsync(100);
+    await time.tickAsync(100);
+    await time.tickAsync(50);
+
+    const error = await rejection as Error;
+    assertStringIncludes(error.message, "last state: missing");
+    assertEquals(error.message.includes("never reached the builder"), false);
+    // The last read succeeded, so the last-failure text is correctly absent
+    // even though the run as a whole saw a failure.
+    assertEquals(error.message.includes("last control-plane failure"), false);
+    assertEquals(reads, 3);
+  });
+
   it("reports missing when a manifest disappears after building", async () => {
     using time = new FakeTime();
     const responses = [{ state: "building" }, null];
