@@ -28,6 +28,8 @@
 
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import {
+  CHANNEL_INVOKE_PATH,
+  isChannelDispatchRoute,
   isControlPlaneSurfaceRoute,
   verifyControlPlaneJwsRequestSignature,
   verifyControlPlaneJwsSignature,
@@ -75,7 +77,7 @@ export function classifyInternalControlPlaneRequest(
   pathname: string,
 ): InternalControlPlaneRouteKind {
   const normalizedMethod = method.toUpperCase();
-  if (pathname === "/channels/invoke" && normalizedMethod === "POST") {
+  if (isChannelDispatchRoute(normalizedMethod, pathname)) {
     return "dispatch";
   }
   if (isControlPlaneSurfaceRoute(normalizedMethod, pathname)) {
@@ -89,8 +91,8 @@ export function classifyInternalControlPlaneRequest(
     pathname.startsWith("/internal/tasks/") ||
     pathname === "/internal/workflows" ||
     pathname.startsWith("/internal/workflows/") ||
-    pathname === "/channels/invoke" ||
-    pathname.startsWith("/channels/invoke/")
+    pathname === CHANNEL_INVOKE_PATH ||
+    pathname.startsWith(`${CHANNEL_INVOKE_PATH}/`)
   ) {
     return "reserved";
   }

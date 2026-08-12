@@ -174,6 +174,119 @@ describe("security/http/csrf/csrf-handler", () => {
     });
   });
 
+  describe("signed channel dispatch", () => {
+    const SIGNED_DISPATCH = { "x-veryfront-dispatch-jws": "header.payload.signature" };
+    const SIGNED_CONTROL_PLANE = { "x-veryfront-control-plane-jws": "header.payload.signature" };
+
+    it("passes the channel invoke route through for every enabled csrf shape", async () => {
+      // The platform channel dispatcher, and the runtime-owner re-dispatch that
+      // forwards to the instance owning the run, both POST this route with a
+      // signed dispatch envelope and no browser cookie. Gating them here stops
+      // a project's own Slack and Discord channels from answering.
+      for (const csrf of [true, { excludePaths: ["/api/ag-ui"] }]) {
+        const result = await handler.handle(
+          new Request("https://acme.example.test/channels/invoke", {
+            method: "POST",
+            headers: SIGNED_DISPATCH,
+            body: "{}",
+          }),
+          createCtx(csrf),
+        );
+
+        assertEquals(result.response, undefined, "POST /channels/invoke was gated");
+      }
+    });
+
+    it("still enforces CSRF on the invoke route with no signature header", async () => {
+      const result = await handler.handle(
+        new Request("https://acme.example.test/channels/invoke", {
+          method: "POST",
+          body: "{}",
+        }),
+        createCtx(true),
+      );
+
+      assertEquals(result.response?.status, 403);
+    });
+
+    it("does not accept a control-plane envelope on the invoke route", async () => {
+      // The two envelopes are verified by different code against different
+      // claims. `ChannelInvokeHandler` reads only the dispatch header, so a
+      // control-plane header here would buy an exemption no handler redeems.
+      const result = await handler.handle(
+        new Request("https://acme.example.test/channels/invoke", {
+          method: "POST",
+          headers: SIGNED_CONTROL_PLANE,
+          body: "{}",
+        }),
+        createCtx(true),
+      );
+
+      assertEquals(result.response?.status, 403);
+    });
+
+    it("does not accept a dispatch envelope on a control-plane surface", async () => {
+      // Symmetric to the above: the run execute handler verifies a
+      // control-plane envelope and never reads the dispatch header.
+      const result = await handler.handle(
+        new Request("https://acme.example.test/api/control-plane/runs/run_1/execute", {
+          method: "POST",
+          headers: SIGNED_DISPATCH,
+          body: "{}",
+        }),
+        createCtx(true),
+      );
+
+      assertEquals(result.response?.status, 403);
+    });
+
+    it("still enforces CSRF on look-alike and sibling channel routes", async () => {
+      // `/channels/` is reserved but not exclusively routed. A project App or
+      // Pages API route can sit beside or beneath the one dispatch route, is
+      // cookie authenticated, and must keep CSRF enforced even when the caller
+      // sets the signature header itself.
+      const projectRoutes = [
+        { method: "POST", path: "/channels/invoke/application-route" },
+        { method: "POST", path: "/channels/invoker" },
+        { method: "POST", path: "/channels/invoke-mirror/run" },
+        { method: "POST", path: "/channels" },
+        { method: "POST", path: "/api/channels/invoke" },
+        { method: "PUT", path: "/channels/invoke" },
+        { method: "DELETE", path: "/channels/invoke" },
+      ];
+
+      for (const route of projectRoutes) {
+        const result = await handler.handle(
+          new Request(`https://acme.example.test${route.path}`, {
+            method: route.method,
+            headers: SIGNED_DISPATCH,
+            body: "{}",
+          }),
+          createCtx(true),
+        );
+
+        assertEquals(
+          result.response?.status,
+          403,
+          `${route.method} ${route.path} skipped the CSRF gate`,
+        );
+      }
+    });
+
+    it("still enforces CSRF when the signature header is empty", async () => {
+      const result = await handler.handle(
+        new Request("https://acme.example.test/channels/invoke", {
+          method: "POST",
+          headers: { "x-veryfront-dispatch-jws": "" },
+          body: "{}",
+        }),
+        createCtx(true),
+      );
+
+      assertEquals(result.response?.status, 403);
+    });
+  });
+
   describe("when CSRF is not configured", () => {
     it("should pass through all requests when securityConfig is null", async () => {
       const ctx = createCtx();
