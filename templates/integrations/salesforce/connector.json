@@ -355,7 +355,7 @@
     {
       "id": "salesforce__update_case",
       "name": "Update Case",
-      "description": "Update status, priority, Type classification, owner, or resolution fields on a Service Cloud case",
+      "description": "Update case details, classification, ownership, or resolution fields on a Service Cloud case",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -369,6 +369,10 @@
           }
         },
         "body": {
+          "Subject": {
+            "type": "string",
+            "description": "Updated case subject"
+          },
           "Status": {
             "type": "string",
             "description": "New case status"
@@ -376,6 +380,18 @@
           "Priority": {
             "type": "string",
             "description": "New case priority"
+          },
+          "Origin": {
+            "type": "string",
+            "description": "Case origin"
+          },
+          "ContactId": {
+            "type": "string",
+            "description": "Related Salesforce Contact ID"
+          },
+          "AccountId": {
+            "type": "string",
+            "description": "Related Salesforce Account ID"
           },
           "OwnerId": {
             "type": "string",
