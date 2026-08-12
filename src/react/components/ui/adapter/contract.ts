@@ -293,6 +293,28 @@ export interface TabsParts {
 }
 
 /**
+ * Role-tagged slots an adapter provides for the Popover primitive: an anchored
+ * floating surface with a toggle trigger. The builtin wraps
+ * `createAnchoredSurfaceParts` (collision-aware positioning, Escape / outside
+ * dismiss, focus return, token-scope portal); an engine maps these onto its own
+ * Popover parts.
+ */
+export interface PopoverParts {
+  /** Owns open state + the positioning anchor; renders no public node of its own. */
+  Root: React.FC<DisclosureProps & { children: React.ReactNode }>;
+  /** Toggles the surface; `asChild` merges behaviour onto the consumer's element. */
+  Trigger: React.FC<
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }
+  >;
+  /** The floating surface, portalled into the token scope while open. */
+  Content: React.FC<
+    & React.HTMLAttributes<HTMLDivElement>
+    & { align?: "start" | "end"; ref?: React.Ref<HTMLDivElement> }
+  >;
+}
+
+/**
  * The adapter surface. Each new primitive must also be added to the explicit
  * composition in `context.tsx`, which prevents `undefined` overrides from
  * erasing inherited or builtin slots.
@@ -307,6 +329,7 @@ export interface UIAdapter {
   dialog: DialogParts;
   drawer: DrawerParts;
   tabs: TabsParts;
+  popover: PopoverParts;
 }
 
 /**

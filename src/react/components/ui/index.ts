@@ -371,6 +371,7 @@ export {
   type NavigationMenuTriggerProps,
 } from "./navigation-menu.tsx";
 export { UIAdapterProvider, useAdapter } from "./adapter/context.tsx";
+export { useTokenScope } from "./adapter/token-scope.tsx";
 export type {
   DisclosureParts,
   DisclosureProps,

@@ -212,6 +212,7 @@ const expectedRuntimeExports = [
   "useColorModeOptional",
   "useDocumentNonce",
   "useToast",
+  "useTokenScope",
 ];
 
 describe("react/components/ui/index.ts exports", () => {

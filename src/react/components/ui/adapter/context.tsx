@@ -35,6 +35,7 @@ export function UIAdapterProvider(
       dialog: adapter.dialog ?? parent.dialog,
       drawer: adapter.drawer ?? parent.drawer,
       tabs: adapter.tabs ?? parent.tabs,
+      popover: adapter.popover ?? parent.popover,
     }),
     [
       adapter.disclosure,
@@ -45,6 +46,7 @@ export function UIAdapterProvider(
       adapter.dialog,
       adapter.drawer,
       adapter.tabs,
+      adapter.popover,
       parent,
     ],
   );
