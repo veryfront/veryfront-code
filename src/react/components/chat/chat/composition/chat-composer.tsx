@@ -139,7 +139,7 @@ export function ChatInputAttach(
             type="button"
             variant="icon-tertiary"
             size="icon-lg"
-            aria-label="Add document"
+            aria-label={c.onAttach ? "Add photos & files" : "Add document"}
             className="shrink-0"
           >
             {icon ?? <PlusIcon />}

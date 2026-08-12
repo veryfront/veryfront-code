@@ -413,7 +413,9 @@ function reduceInvokeAgentStream(
         toolCallId,
         toolName: existing?.toolName ?? "tool",
         state: "output-available",
-        input: existing?.input ?? parseChildInputText(existing?.inputText) ?? {},
+        // Prefer parsed streamed input over the `{}` placeholder set by
+        // `tool-input-start` when no `tool-input-available` event arrived.
+        input: parseChildInputText(existing?.inputText) ?? existing?.input ?? {},
         output: Object.hasOwn(event, "output") ? event.output : null,
       });
       continue;

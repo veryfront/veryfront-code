@@ -26,11 +26,11 @@ describe("ErrorBanner", () => {
       <ErrorBanner
         error={new Error("boom")}
         onRetry={() => {}}
-        retryLabel="Try again"
+        retryLabel="Retry now"
         icon={<span data-testid="custom-icon">!</span>}
       />,
     );
-    assertStringIncludes(html, "Try again");
+    assertStringIncludes(html, "Retry now");
     assertStringIncludes(html, "custom-icon");
   });
 

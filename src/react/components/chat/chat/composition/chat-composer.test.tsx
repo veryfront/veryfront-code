@@ -330,8 +330,10 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       flushSync(() => headlessAttach.click());
       assertEquals(filePickerCalls, 1, "the headless getter opens the upload picker");
 
-      const attachButton = document.querySelector(
-        'button[aria-label="Add document"]',
+      // `&` in a CSS attribute selector trips jsdom's selector engine, so match
+      // the accessible name via getAttribute instead.
+      const attachButton = Array.from(document.querySelectorAll("button")).find(
+        (button) => button.getAttribute("aria-label") === "Add photos & files",
       );
       assert(attachButton, "Expected attachment button to exist");
 

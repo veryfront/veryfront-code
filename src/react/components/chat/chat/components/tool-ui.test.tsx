@@ -162,6 +162,62 @@ describe("ToolCall", () => {
     }
   });
 
+  it("recovers streamed child tool input (start → delta → output) into Parameters", async () => {
+    const { host, restore } = installDom();
+    const root = createRoot(host);
+    const tool: ChatDynamicToolPart = { ...invokeAgentTool, input: { agent_id: "case-ingest" } };
+    const streamPart = (event: Record<string, unknown>) => ({
+      type: "data-veryfront.invoke_agent.stream" as const,
+      data: { toolCallId: tool.toolCallId, agentId: "case-ingest", event },
+    });
+    try {
+      // No `tool-input-available` — the input only ever arrives as buffered
+      // delta text, so the reducer must parse `inputText` into `input`.
+      flushSync(() =>
+        root.render(
+          <Message.Root
+            isStreaming
+            message={{
+              id: "assistant-message",
+              role: "assistant",
+              metadata: {},
+              parts: [
+                tool,
+                streamPart({
+                  type: "tool-input-start",
+                  toolCallId: "child",
+                  toolName: "salesforce__list_cases",
+                }),
+                streamPart({
+                  type: "tool-input-delta",
+                  toolCallId: "child",
+                  inputTextDelta: '{"status":"open"}',
+                }),
+                streamPart({
+                  type: "tool-output-available",
+                  toolCallId: "child",
+                  output: { ok: true },
+                }),
+              ],
+            }}
+          >
+            <ToolCall tool={tool} defaultExpanded />
+          </Message.Root>,
+        )
+      );
+      const childButton = Array.from(host.querySelectorAll("button")).find((button) =>
+        button.textContent?.includes("salesforce__list_cases")
+      );
+      assert(childButton, "expected the child tool row to render");
+      flushSync(() => (childButton as HTMLButtonElement).click());
+      assert(host.textContent?.includes("status"), "expected the parsed child input key");
+      assert(host.textContent?.includes("open"), "expected the parsed child input value");
+    } finally {
+      await unmountReactRoot(root);
+      restore();
+    }
+  });
+
   it("freezes a running child as Stopped once the turn stops streaming", () => {
     const skillStreamPart = {
       type: "data-veryfront.invoke_agent.stream" as const,
