@@ -33,11 +33,13 @@ import {
 } from "./retry.ts";
 import {
   authorizeWebSocketRequest,
+  buildRendererBridgeRequest,
   closeBridgePeer,
   createProxyClientWebSocketUpgradeOptions,
   getClientWebSocketErrorLogLevel,
   getServerWebSocketErrorLogLevel,
 } from "./websocket-bridge.ts";
+import { connectUpstreamWebSocket, type UpstreamWebSocket } from "./websocket-client.ts";
 import { register } from "../extensions/contracts.ts";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
 import { ENV_VAR_MISSING, INITIALIZATION_ERROR } from "#veryfront/errors";
@@ -282,11 +284,12 @@ async function handleWebSocketUpgrade(req: Request, url: URL): Promise<Response>
   const scope = context.environment;
   const projectSlug = context.projectSlug;
 
-  const serverWsUrl = PRODUCTION_SERVER_URL.replace(/^http/, "ws");
-  const safePath = url.pathname.replace(/^\/\/+/, "/");
-  const targetUrl = new URL(`${serverWsUrl}${safePath}${url.search}`);
-  targetUrl.searchParams.set("x-project-slug", projectSlug || "");
-  targetUrl.searchParams.set("x-environment", scope);
+  const { url: targetUrl, headers: bridgeHeaders } = buildRendererBridgeRequest(
+    req,
+    url,
+    context,
+    PRODUCTION_SERVER_URL,
+  );
 
   proxyLogger.info("[WebSocket] Upgrade request received", {
     host,
@@ -302,7 +305,7 @@ async function handleWebSocketUpgrade(req: Request, url: URL): Promise<Response>
     createProxyClientWebSocketUpgradeOptions(),
   );
 
-  let serverSocket: WebSocket | null = null;
+  let serverSocket: UpstreamWebSocket | null = null;
   let connectTimeoutId: ReturnType<typeof setTimeout> | null = null;
   let timedOut = false;
 
@@ -318,7 +321,10 @@ async function handleWebSocketUpgrade(req: Request, url: URL): Promise<Response>
     });
 
     try {
-      serverSocket = new WebSocket(targetUrl.toString());
+      // Headered hop: the renderer's proxy guard requires the same identity
+      // every other forwarded request carries, and a bare WebSocket cannot
+      // send it.
+      serverSocket = connectUpstreamWebSocket(targetUrl, bridgeHeaders);
     } catch (error) {
       proxyLogger.error("[WebSocket] Failed to create server WebSocket", {
         error: error instanceof Error ? error.message : String(error),
