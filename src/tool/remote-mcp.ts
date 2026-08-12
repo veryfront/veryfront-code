@@ -813,11 +813,24 @@ function normalizeCallToolResult(input: {
 function endpointBindsToolAuthorization(endpoint: string): boolean {
   const apiBaseUrl = getApiBaseUrlEnv();
   if (typeof apiBaseUrl !== "string" || apiBaseUrl.length === 0) return false;
-  const normalizedEndpoint = normalizeTrustedEndpoint(endpoint);
-  const controlPlaneEndpoint = normalizeTrustedEndpoint(
-    `${apiBaseUrl.replace(/\/+$/, "")}/mcp`,
-  );
-  return normalizedEndpoint !== undefined && normalizedEndpoint === controlPlaneEndpoint;
+  const endpointUrl = parseMcpRequestEndpoint(endpoint);
+  if (!endpointUrl) return false;
+
+  try {
+    const apiBase = new URL(apiBaseUrl);
+    if (endpointUrl.origin !== apiBase.origin) return false;
+
+    const basePath = apiBase.pathname.replace(/\/+$/, "");
+    const controlPlanePath = `${basePath}/mcp`;
+    if (endpointUrl.pathname === controlPlanePath) return true;
+
+    const projectPathPrefix = `${basePath}/projects/`;
+    if (!endpointUrl.pathname.startsWith(projectPathPrefix)) return false;
+    const projectScopedPath = endpointUrl.pathname.slice(projectPathPrefix.length);
+    return /^[^/]+\/mcp\/?$/.test(projectScopedPath);
+  } catch {
+    return false;
+  }
 }
 
 function buildRunContextMeta(
@@ -843,7 +856,7 @@ function buildRunContextMeta(
 
 function createRemoteMCPToolSourceWithFetch(
   config: RemoteMCPToolSourceConfig,
-  requestFetch: typeof fetch,
+  getRequestFetch: (endpoint: string) => typeof fetch,
 ): RemoteToolSource {
   const id = config.id ?? "remote-mcp";
   const listMethod = config.listMethod ?? "tools/list";
@@ -870,7 +883,7 @@ function createRemoteMCPToolSourceWithFetch(
             method: listMethod,
             ...(cursor !== undefined ? { params: { cursor } } : {}),
           },
-          requestFetch,
+          getRequestFetch(endpoint),
           context?.abortSignal,
           MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
         );
@@ -938,7 +951,7 @@ function createRemoteMCPToolSourceWithFetch(
               ...(meta ? { _meta: meta } : {}),
             },
           },
-          requestFetch,
+          getRequestFetch(endpoint),
           context?.abortSignal,
           MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
         );
@@ -970,10 +983,10 @@ function createRemoteMCPToolSourceWithFetch(
 export function createRemoteMCPToolSource(
   config: RemoteMCPToolSourceConfig,
 ): RemoteToolSource {
-  return createRemoteMCPToolSourceWithFetch(config, guardedOutboundFetch);
+  return createRemoteMCPToolSourceWithFetch(config, () => guardedOutboundFetch);
 }
 
-/** Deployment-owned transport policy for exact, immutable MCP endpoints. */
+/** Deployment-owned transport policy for trusted MCP endpoint roots. */
 export interface RemoteMCPToolSourceTransportOptions {
   /** Complete endpoint URLs allowed to use {@link requestFetch}. */
   trustedEndpoints: readonly string[];
@@ -981,46 +994,97 @@ export interface RemoteMCPToolSourceTransportOptions {
   requestFetch: typeof fetch;
 }
 
-function normalizeTrustedEndpoint(value: string): string | undefined {
+function parseTrustedEndpoint(value: string): URL | undefined {
   try {
     const url = new URL(value);
     if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
     if (url.username || url.password || url.search || url.hash) return undefined;
-    return url.toString();
+    return url;
   } catch {
     return undefined;
   }
 }
 
 /**
+ * Parse a safe MCP request URL while preserving its query string.
+ *
+ * Trusted transport is selected from the parsed scheme, origin, and path only;
+ * query parameters remain part of the request URL and cannot change that target.
+ */
+function parseMcpRequestEndpoint(value: string): URL | undefined {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    if (url.username || url.password || url.hash) return undefined;
+    return url;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeMcpRequestEndpoint(value: string): string | undefined {
+  const url = parseMcpRequestEndpoint(value);
+  if (!url) return undefined;
+  url.search = "";
+  return url.toString();
+}
+
+/**
  * Create a remote MCP source factory with narrowly scoped host transport.
  *
- * Only static endpoint strings that exactly match a normalized deployment
- * allowlist use the supplied transport. Invalid, unmatched, or resolver-based
- * endpoints retain {@link createRemoteMCPToolSource}'s guarded outbound path.
+ * Exact trusted endpoints and their project-scoped MCP routes use the supplied
+ * transport. All other resolved endpoints retain the guarded outbound path.
  */
 export function createRemoteMCPToolSourceFactoryWithTransport(
   options: RemoteMCPToolSourceTransportOptions,
 ): (config: RemoteMCPToolSourceConfig) => RemoteToolSource {
   const trustedEndpoints = new Set<string>();
+  const trustedEndpointUrls: URL[] = [];
   for (const value of options.trustedEndpoints) {
-    const endpoint = normalizeTrustedEndpoint(value);
-    if (!endpoint) {
+    const endpointUrl = parseTrustedEndpoint(value);
+    if (!endpointUrl) {
       throw new TypeError("Invalid trusted endpoint");
     }
-    trustedEndpoints.add(endpoint);
+    trustedEndpoints.add(endpointUrl.toString());
+    trustedEndpointUrls.push(endpointUrl);
   }
 
-  return (config) => {
-    const endpoint = typeof config.endpoint === "string"
-      ? normalizeTrustedEndpoint(config.endpoint)
-      : undefined;
-    if (!endpoint || !trustedEndpoints.has(endpoint)) {
-      return createRemoteMCPToolSource(config);
-    }
-    return createRemoteMCPToolSourceWithFetch(
-      { ...config, endpoint },
-      options.requestFetch,
+  return (config) =>
+    createRemoteMCPToolSourceWithFetch(
+      config,
+      (endpoint) =>
+        isTrustedDeploymentMcpEndpoint(endpoint, trustedEndpoints, trustedEndpointUrls)
+          ? options.requestFetch
+          : guardedOutboundFetch,
     );
-  };
+}
+
+function isTrustedDeploymentMcpEndpoint(
+  endpoint: string,
+  trustedEndpoints: ReadonlySet<string>,
+  trustedEndpointUrls: readonly URL[],
+): boolean {
+  const normalizedEndpoint = normalizeMcpRequestEndpoint(endpoint);
+  if (!normalizedEndpoint) return false;
+  if (trustedEndpoints.has(normalizedEndpoint)) return true;
+
+  let endpointUrl: URL;
+  try {
+    endpointUrl = new URL(normalizedEndpoint);
+  } catch {
+    return false;
+  }
+
+  for (const trustedUrl of trustedEndpointUrls) {
+    if (endpointUrl.origin !== trustedUrl.origin) continue;
+
+    const trustedPath = trustedUrl.pathname.replace(/\/+$/, "");
+    if (!trustedPath.endsWith("/mcp")) continue;
+    const projectPathPrefix = `${trustedPath.slice(0, -4)}/projects/`;
+    if (!endpointUrl.pathname.startsWith(projectPathPrefix)) continue;
+    const projectScopedPath = endpointUrl.pathname.slice(projectPathPrefix.length);
+    if (/^[^/]+\/mcp\/?$/.test(projectScopedPath)) return true;
+  }
+
+  return false;
 }

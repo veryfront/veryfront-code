@@ -28,6 +28,9 @@
 
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import {
+  CHANNEL_INVOKE_PATH,
+  isChannelDispatchRoute,
+  isControlPlaneSurfaceRoute,
   verifyControlPlaneJwsRequestSignature,
   verifyControlPlaneJwsSignature,
   verifyDispatchJwsSignature,
@@ -60,30 +63,24 @@ const MAX_BRANCH_NAME_CODE_UNITS = 255;
 
 export type InternalControlPlaneRouteKind = "dispatch" | "control-plane" | "reserved" | "public";
 
-const CONTROL_PLANE_RUN_OPERATION_PATH =
-  /^\/api\/control-plane\/runs\/[^/]+\/(?:execute|stream|resume)$/u;
-const CONTROL_PLANE_RUN_PATH = /^\/api\/control-plane\/runs\/[^/]+$/u;
-
 /**
  * Classify the internal namespace against routes whose handlers always perform
  * authoritative downstream JWS verification.
+ *
+ * `control-plane` and `reserved` differ in exactly the way that matters to a
+ * caller deciding what to trust: `control-plane` names a route the runtime
+ * serves through a verifying handler, `reserved` names the rest of the
+ * namespace, which a project can occupy with its own routes.
  */
 export function classifyInternalControlPlaneRequest(
   method: string,
   pathname: string,
 ): InternalControlPlaneRouteKind {
   const normalizedMethod = method.toUpperCase();
-  if (pathname === "/channels/invoke" && normalizedMethod === "POST") {
+  if (isChannelDispatchRoute(normalizedMethod, pathname)) {
     return "dispatch";
   }
-  if (
-    normalizedMethod === "POST" &&
-    (pathname === "/api/control-plane/agents/list" ||
-      CONTROL_PLANE_RUN_OPERATION_PATH.test(pathname))
-  ) {
-    return "control-plane";
-  }
-  if (normalizedMethod === "DELETE" && CONTROL_PLANE_RUN_PATH.test(pathname)) {
+  if (isControlPlaneSurfaceRoute(normalizedMethod, pathname)) {
     return "control-plane";
   }
 
@@ -94,8 +91,8 @@ export function classifyInternalControlPlaneRequest(
     pathname.startsWith("/internal/tasks/") ||
     pathname === "/internal/workflows" ||
     pathname.startsWith("/internal/workflows/") ||
-    pathname === "/channels/invoke" ||
-    pathname.startsWith("/channels/invoke/")
+    pathname === CHANNEL_INVOKE_PATH ||
+    pathname.startsWith(`${CHANNEL_INVOKE_PATH}/`)
   ) {
     return "reserved";
   }

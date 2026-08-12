@@ -94,9 +94,9 @@ applySecurityHeaders(response.headers, false, generateNonce(), null);
 
 | Name                   | Description | Source                                                                                                     |
 | ---------------------- | ----------- | ---------------------------------------------------------------------------------------------------------- |
-| `AuthHandler`          |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/auth.ts#L156)             |
+| `AuthHandler`          |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/auth.ts#L157)             |
 | `BaseHandler`          |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/base-handler.ts#L45)      |
-| `CsrfHandler`          |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/csrf/csrf-handler.ts#L56) |
+| `CsrfHandler`          |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/csrf/csrf-handler.ts#L60) |
 | `ResponseBuilder`      |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/response/builder.ts#L9)   |
 | `SecureFs`             |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L645)             |
 | `SecurityConfigLoader` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/config.ts#L292)           |

@@ -77,6 +77,16 @@ also set `VERYFRONT_API_TOKEN` directly. Direct provider keys such as
 veryfront dev
 ```
 
+The CLI prints the URL it is serving on:
+
+```
+  ✓ Ready in 1.3s
+  http://veryfront.me:3000
+```
+
+`veryfront.me` resolves to `127.0.0.1`, so
+[http://localhost:3000](http://localhost:3000) reaches the same server.
+
 The dev server binds port 3000. When that port is already taken, `veryfront dev`
 prints `! Port 3000 is in use, using 3001 instead` and serves on the first free
 port after 3000, so open the URL the CLI prints. Pass `--port` to pin one
@@ -86,7 +96,8 @@ yourself:
 veryfront dev --port 4000
 ```
 
-`veryfront dev` also starts the development MCP server on the app port plus 2.
+`veryfront dev` also starts the development MCP server two ports above the port
+the dev server bound, so it moves with the app port when that falls forward.
 With the default app port, coding agents can connect to
 `http://localhost:3002/mcp` and call `vf_bootstrap` once at session start.
 Use [Coding agents](../guides/coding-agents.md) for setup details.
@@ -94,7 +105,7 @@ Use [Coding agents](../guides/coding-agents.md) for setup details.
 ## Verify it worked
 
 Open the URL `veryfront dev` printed. Unless the port moved, that is
-`http://localhost:3000`. Ask:
+[http://veryfront.me:3000](http://veryfront.me:3000). Ask:
 
 ```text
 What is 128 divided by 8?
@@ -132,6 +143,12 @@ npx veryfront@latest deploy --env production
 
 Deploy uses the last verified Push receipt. If no receipt exists yet, it first
 runs a quiet Push so the first production deploy still works as one command.
+
+Both URLs are protected by default: they open for a browser signed in to
+Veryfront as a member of the project, and redirect everyone else to the sign-in
+page. See
+[Environment access](./deploy-project.md#environment-access) before sharing a
+URL or pointing a smoke test at it.
 
 Project reference precedence is `VERYFRONT_PROJECT_SLUG` or environment
 configuration, then `veryfront.config.ts`, then legacy `veryfront.json`, then
