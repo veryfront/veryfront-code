@@ -10,10 +10,11 @@ components it re-exports live here.
 > generated or contract-tested files (below). A hand-written fourth copy beside
 > the source is the worst of the four: it looks authoritative because it sits
 > next to the code, and nothing checks it. The previous version of this README
-> was exactly that — it still advertised a `veryfront/react` module that has
-> never existed in `deno.json`'s `exports`, an `AgentCard` `theme` prop that was
-> removed, and a message-part `switch` that silently dropped every real tool
-> call. Keep this file to orientation: where things are, and which check keeps
+> was exactly that — every one of its examples imported from a path
+> `deno.json`'s `exports` has never published (`veryfront/react`,
+> `veryfront/agent/react`), it showed an `AgentCard` `theme` prop that
+> `AgentCardProps` does not have, and its headline renderer branched on a
+> message-part type that never arrives, silently dropping every real tool call. Keep this file to orientation: where things are, and which check keeps
 > which claim honest. If you want to write an example, put it where a test can
 > run it.
 
@@ -46,20 +47,53 @@ with `deno task docs` (CI pins Deno 2.7.7 — put it first on `PATH`).
 
 ## Barrels and the parity rule
 
-Three module specifiers reach this code, and they must expose the _same function
-objects_, not merely the same names:
+Three barrels re-export this code, and their export sets are deliberately
+_different_. The rule is identity on the shared subset, not one union:
 
 - `veryfront/chat` → [`src/chat/index.ts`](../../../chat/index.ts) — the only
-  one in `deno.json`'s `exports`, so the only one a consumer project can import.
+  one of the three in `deno.json`'s `exports`, so the only one a consumer
+  project can import. A curated public surface: it takes components from
+  [`chat.tsx`](./chat.tsx), adds names that don't live in this directory at all
+  (`useChat`, `useAgent`, `useCompletion`, `useStreaming`, `useVoiceInput` from
+  `src/agent/react/`; `AppShell`, `Tabs`, `CodeBlock` from [`../ui/`](../ui)),
+  and withholds others on purpose — `chatTokens`, `getChatTokensCSS`, and
+  `ColorModeProvider` are asserted _absent_ from it.
 - `veryfront/react/components/chat` and `veryfront/components/chat` →
-  [`index.ts`](./index.ts) — internal import-map aliases, re-exporting
-  [`chat.tsx`](./chat.tsx), which aggregates the subdirectories above.
+  [`index.ts`](./index.ts) — internal import-map aliases over the same
+  [`chat.tsx`](./chat.tsx), plus this directory's theme, token, style-provider
+  and color-mode exports that the public surface withholds.
+- [`../../public.ts`](../../public.ts) — the browser barrel served as
+  `veryfront/react` by the generated import map. Also internal: not in
+  `deno.json`'s `exports`.
 
-A new export has to be threaded through all of them.
-[`src/chat/index.test.ts`](../../../chat/index.test.ts) asserts identity across
-the barrels and that each `ChatInput` leaf is the same function as its compound
-sub-part; `deno task lint:chat-ratchets` type-checks
-[`src/react/chat-barrels.check.ts`](../../chat-barrels.check.ts) alongside it.
+What is actually enforced, and where:
+
+- **Presence in all three**, for one named subset only:
+  `CompoundChatRuntimeExport` in
+  [`../../chat-barrels.check.ts`](../../chat-barrels.check.ts) lists the 32
+  names (the `ChatInput` leaves, `AgentAvatar`, `ChatEmptyState`,
+  `ChatMessagesSkeleton`, `mergeProps`, the headless hooks) that must exist in
+  every barrel; that file also cross-checks `Reasoning`/`ToolCall`, the
+  conversation type family, and `ChatInputRootProps` compatibility.
+  `deno task lint:chat-ratchets` type-checks it.
+- **Identity** — the same function object, not just the same name — for the ten
+  `ChatInput` leaves across `veryfront/chat`, both component aliases and
+  `chat.tsx` (and against the matching `ChatInput.<Part>`), for
+  `useConversationChat` and the canonical hook/context set across both aliases,
+  and for the core re-exports (`Chat`, `useChat`, `useAgent`, `AgentCard`,
+  `ChatErrorBoundary`, …) against their defining modules. All in
+  [`src/chat/index.test.ts`](../../../chat/index.test.ts).
+- **The exact public key list**: the same test asserts `Object.keys` of
+  `veryfront/chat` equals a literal array, so adding or removing a public export
+  fails until that array is updated.
+
+So a new export does not automatically belong in all three — pick the surface.
+Public chat API goes in `src/chat/index.ts` plus its `expectedRuntimeExports`
+entry; something only the React components need belongs in the components
+barrel alone. Either way re-export it from the module that defines it rather
+than re-wrapping — every barrel reading the same source file is what keeps the
+shared names identical — and if it is part of a compound, add it to
+`CompoundChatRuntimeExport` so all three stay in step.
 
 Sub-parts are attached with `Object.assign` (`Chat.Root`, `Message.Content`,
 `ChatInput.Send`, …). The composability lint and
