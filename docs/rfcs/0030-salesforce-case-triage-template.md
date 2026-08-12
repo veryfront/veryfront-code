@@ -17,9 +17,10 @@ reads a Salesforce support case, PII-redacts it, classifies it against a
 checked-in taxonomy, then writes a `Reason` and a triage comment back to the
 case. The promise in the blog post is a straight line:
 
-> fork the template (or clone `veryfront/agentic-case-processing`) → sign in to
-> Veryfront → connect **your own** Salesforce org over OAuth → run "Triage latest
-> open cases" → it runs green.
+> fork the template (or clone `veryfront/agentic-case-processing` — **once it is
+> published**; it is private today, Open Q E) → sign in to Veryfront → connect
+> **your own** Salesforce org over OAuth → run "Triage latest open cases" → it
+> runs green.
 
 **The pipeline works today.** Against the reference org it ingests, redacts,
 classifies, and disposes a case end-to-end — `case-dispose` writes `Reason` and
@@ -31,8 +32,9 @@ The seams that would break "just works" for *those* cases are not in our code �
 they are in the **shape of the connecting org**. The canonical illustration is the
 `Type` incident (§3), which surfaced while exercising `update_case` *outside* the
 triage happy path (dispose only ever writes `Reason`): the agent tried to set a
-field that wasn't in the tool's static parameter schema, the tool silently
-returned an empty string, and the model theorised about Field-Level Security. That
+field that wasn't in the tool's static parameter schema, so the value never left
+the client — and the model then *mis*-diagnosed the update's empty response
+(a normal `204 No Content` for a PATCH) as evidence of a dropped field. That
 single field was patched by hand, but the class of problem it represents —
 **per-field static enumeration versus a live, customer-specific Salesforce
 schema** — is the thing this RFC is really about.
@@ -133,8 +135,9 @@ Static tools, dynamic policy — capability and authorization are separate layer
   │          delete_record,   │               │  discovered via describe()         │
   │          upsert_record    │               │  deny-by-default · searchable      │
   │ escape:  run_soql_query,  │               └────────────────────────────────────┘
-  │          describe_object  │                 delete_record is safe un-fenced:
-  └──────────────────────────┘                 the matrix denies Delete by default
+  │          describe_object  │                 generic tools ship ONLY once per-CRUD
+  └──────────────────────────┘                 enforcement is live (today: object-level
+                                                only) — until then delete_record is held
 ```
 
 One tool call, end to end (interpolation/transform/gating all server-side, §2.1):
@@ -151,7 +154,8 @@ One tool call, end to end (interpolation/transform/gating all server-side, §2.1
                                                └──────────────────────┘
 ```
 
-Fork → run (the blog's happy path; the one seam is the Connected App, Open Q A):
+Fork → run (the blog's happy path; the main *auth* seam is the Connected App,
+Open Q A — the org-config gates in §4 are handled by the baseline + describe):
 
 ```
   fork template          sign in            connect Salesforce         run "Triage
@@ -175,8 +179,11 @@ Triage itself completes without this field. The incident surfaced while probing
 
 Root cause: `update_case`'s `body` statically enumerated
 `Status`/`Priority`/`OwnerId`/`Reason`/`SuppliedEmail`/`Description`. `Type` was
-absent, so the LLM could not pass it, and the tool dropped it silently. Commit
-`598a26d` added `Type` to the body. That fixes *one* field.
+absent, so the LLM could not pass it — the value was dropped **client-side, before
+the request**. Note the model's inference was itself wrong: a Salesforce
+`PATCH /sobjects/Case/{id}` returns `204 No Content` on success, so the empty
+result was *not* a signal that `Type` was dropped. PR #3638 (merged) added `Type`
+(and more) to the body. That fixes *one* field.
 
 The lesson is the general one:
 
@@ -193,8 +200,12 @@ The lesson is the general one:
    `INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST` ("bad value for restricted picklist
    field"), case-sensitive. Either way an off-list value is bad triage data — the
    value must come from the org, via `describe`/`get_picklist_values`.
-3. **Silent empty returns read as success.** The tool should surface the write
-   result (id / errors), not an empty string.
+3. **Write success must be judged by HTTP status, not response body.** POST
+   (create) returns `{ id, success, errors }`; PATCH (update) and DELETE return
+   `204 No Content` — an empty body **is** success. The tool/adapter must map
+   status → an explicit result (`{ success: true, id? }`) and surface Salesforce's
+   non-2xx error JSON; it must never let the agent infer failure from emptiness
+   (as happened above). `id` is optional for update/delete.
 
 **Landed fix (PR #3638, merged).** The curated `create_case`/`update_case` bodies
 were expanded to the standard writable Case fields — `create_case` gains `Reason`,
@@ -285,6 +296,21 @@ whether "just works" is literally true or a ten-minute detour.
 `connector.json` pins `v61.0`; the legacy generated-project client
 `files/lib/salesforce-client.ts:3` pins `v59.0`. Reconcile to one version.
 
+### 4.8 The PII-redaction boundary must be specified before open-sourcing
+
+`case-ingest` redacts PII before handing off to `case-classify`, but the current
+policy is prompt-driven and denies nothing structurally. Before this is a public
+template, define it explicitly, and **fail closed**:
+
+- **Which fields** are passed downstream — an *allowlist* of non-PII operational
+  fields (Id, CaseNumber, Status, Priority, Reason, Origin, CreatedDate…), not a
+  denylist of PII patterns. Custom `__c` fields and any newly-appearing activity
+  fields must default to *excluded*, not forwarded raw.
+- **Failure mode** — if redaction is uncertain or errors, stop rather than forward
+  raw case data.
+- **Blast radius** — the same policy must cover child-run payloads, tool-error
+  messages, and telemetry/logs, or raw PII leaks around the redaction step.
+
 ## 5. Static vs dynamic tools — the design decision
 
 Given §2.1, tools **must** be static `connector.json` entries. We get
@@ -293,14 +319,20 @@ dynamic-*enough* behaviour from three levers that need no new platform machinery
 1. **Read is already dynamic.** `find_customer`, `list_cases`, `search_contacts`,
    etc. take an arbitrary SOQL `q`; `run_soql_query` is a universal read.
    Read coverage of standard *and* custom objects is effectively total already.
-2. **Passthrough writes.** The schema already supports
-   `bodyMode: "passthrough"` — and `src/integrations/schema.ts` cites *"Salesforce
-   sObject … writes"* as its motivating case. A passthrough `update_case` /
-   `create_case` / generic `update_record` accepts an **arbitrary field map**, so
-   `Type`, custom `__c` fields, and record types flow through without being
-   enumerated one-by-one. This is the real fix for §3, not adding fields by hand.
-   Trade-off: the LLM gets a looser JSON Schema and less inline guidance — mitigate
-   with a strong tool `description` and a describe preflight.
+2. **Passthrough writes — on the *generic* tools, not the least-privilege curated
+   ones.** The schema already supports `bodyMode: "passthrough"` — and
+   `src/integrations/schema.ts` cites *"Salesforce sObject … writes"* as its
+   motivating case. A passthrough `create_record` / `update_record` accepts an
+   **arbitrary field map**, so `Type`, custom `__c` fields, and record types flow
+   through without being enumerated one-by-one. This is the real fix for §3.
+   **Caveat (security):** do *not* make the curated `update_case` passthrough —
+   `case-dispose` is scoped to write only `Reason`, and a passthrough `update_case`
+   would let it (and the connected user) write *every* writable Case field. A tool
+   is authorization, a prompt is not. Keep `case-dispose` on a field-scoped tool
+   (a narrow curated `update_case`, or a dedicated `update_case_reason`); reserve
+   passthrough for the generic tier under the §16 matrix. Trade-off: passthrough's
+   looser JSON Schema gives the LLM less guidance — mitigate with a strong tool
+   `description` and a describe preflight.
 3. **Describe-driven preflight.** Before a write, the agent learns *this org's*
    real picklist values / required fields via `describe_object`, then only sends
    valid values. This turns "guess and fail" into "look, then write." It can be a
@@ -308,10 +340,14 @@ dynamic-*enough* behaviour from three levers that need no new platform machinery
    tool (a filtered describe).
 
 **Recommendation: hybrid.** Keep a comprehensive, ergonomic **static core** of
-curated tools (they make the demo legible and the agent fast), make every write
-tool **passthrough-capable**, and lean on `describe_object` + `run_soql_query` as
-the completeness escape hatch. Do **not** pursue runtime-registered/dynamic tools —
-it is out of platform scope and unnecessary.
+curated tools (they make the demo legible and the agent fast, and stay
+field-scoped for least-privilege agents), add a **passthrough generic tier** for
+breadth, and lean on `describe_object` + `run_soql_query` as the completeness
+escape hatch. Do **not** pursue runtime-registered/dynamic tools — out of platform
+scope and unnecessary. **Precondition (§16):** the generic tier ships only once the
+per-operation authorization matrix is *enforced* server-side (fail-closed) against
+the runtime `sobjectType` — not before. Until then the generic write/delete tools
+stay out of the shipped surface.
 
 ## 6. Proposed comprehensive tool surface
 
@@ -329,11 +365,21 @@ readability.
 `run_soql_query`. Add **`get_picklist_values`** (describe filtered to picklist
 fields) so `case-dispose` can validate `Reason` before writing.
 
-**Tier 3 — Generic sObject CRUD (add, for completeness):**
-`get_record` (sObjectType + id), `create_record` (sObjectType + passthrough body),
-`update_record` (sObjectType + id + passthrough body). With Tier 2 + Tier 3 you
-have ~6 tools that cover **any** standard or custom object; Tier 1 is the
-readable, low-friction surface on top.
+**Tier 3 — Generic sObject CRUD (add, gated on §16 enforcement):**
+`get_record`, `create_record`, `update_record`, `upsert_record` (Appendix B has
+the full spec), which cover **any** standard or custom object. `delete_record` is
+specified but **deferred out of v1** until per-CRUD Delete enforcement is live.
+
+**Tool tally (single source of truth; Appendix B is canonical):**
+
+| | Tools | Count |
+| --- | --- | --- |
+| **Existing** (curated + escape) | the 16 in `connector.json` today | 16 |
+| **Add — helpers** | `get_picklist_values`, `search` (SOSL) | +2 |
+| **Add — generic CRUD (v1)** | `get_record`, `create_record`, `update_record`, `upsert_record` | +4 |
+| **Add — generic CRUD (deferred)** | `delete_record` (pending Delete enforcement) | +1 |
+| **v1 total** | | **22** |
+| **Optional curated wrappers** | `create_contact`, `update_account`, `create/update_opportunity`, `create_task`, `convert_lead` — sugar, not counted in core | — |
 
 Coverage of the standard objects a "get-going" support/CRM demo needs:
 Account, Contact, Lead, Case, CaseComment, Opportunity — plus User/Group (owner &
@@ -346,15 +392,23 @@ generic tier. `salesforce__search_knowledge_articles` stays but is documented as
 A fresh org has no cases to triage, and its `Reason` picklist won't match the
 taxonomy. Ship a **reproducible baseline** so fork→run has something to act on:
 
-- **Golden path: a documented Developer Edition setup** (free, full API), plus
-- **A seed artefact** — an SFDX scratch-org definition **or** an unmanaged
-  package **or** a first-run seed step — that: creates a handful of Accounts /
-  Contacts / Cases with known subjects; and **installs a Case `Reason` picklist
-  that matches `case-triage-taxonomy.md` v5** (or, inversely, ship the taxonomy
-  aligned to Salesforce's default Reason set). The taxonomy and the org's picklist
-  must be authored together, not independently.
-- The evals (`evals/mock-tools.ts`) already let CI pass without a real org; the
-  seed closes the gap between "evals green" and "real org green."
+These are **two different environments** and must not be conflated — an SFDX
+scratch-org definition cannot seed an existing connected org, and automatically
+editing `Case.Reason` in a customer org mutates admin-owned picklists and
+record-type behaviour.
+
+- **Disposable orgs (Developer Edition / scratch org) — the golden path.** Here we
+  *may* fully automate: an SFDX scratch-org definition or unmanaged package that
+  creates a few Accounts / Contacts / Cases with known subjects **and** installs a
+  Case `Reason` picklist aligned to `case-triage-taxonomy.md` v5. Taxonomy and
+  picklist are authored together, never independently.
+- **Existing / customer orgs — no automatic schema changes.** The fork must *not*
+  silently alter picklists. Require an explicit admin-run deploy, or (preferred)
+  the "adapt to my org" step (§15) that maps the taxonomy to the org's *existing*
+  `Reason` values. Fail closed with a clear message if no mapping exists.
+- Until a seed artefact ships, the **"runs green"** claim is conditional — say so
+  in the blog. The evals (`evals/mock-tools.ts`) already let CI pass without a real
+  org; the seed closes the gap between "evals green" and "real org green."
 
 ## 8. Graceful degradation — make errors teach, not stall
 
@@ -364,7 +418,7 @@ is promptable in the agents.
 
 | Condition | Today | Proposed |
 | --- | --- | --- |
-| Write result | empty string (looked like failure in §3) | return `{ id, success, errors }` |
+| Write result | empty string (mis-read as failure in §3) | status-based: POST → `{ id, success, errors }`; PATCH/DELETE `204` → `{ success: true }`. Empty body ≠ failure |
 | API disabled for edition | raw 403 | "This Salesforce edition has no API access. Use a free Developer Edition org: <link>." |
 | Restricted picklist bad value | raw `INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST` | catch → describe → retry with a valid value, or report the allowed set |
 | Knowledge not enabled | raw `INVALID_TYPE` | `search_knowledge_articles` returns `[]` + a one-line hint |
@@ -424,7 +478,13 @@ into a ten-minute Salesforce-admin detour.
   "Knowledge enabled" check?
 - **D. API version.** Reconcile `v61.0` (connector) vs `v59.0` (legacy client).
 - **E. Repo parity.** Make `veryfront/agentic-case-processing` public and enforce
-  1:1 parity with the studio project (a drift check in CI?).
+  1:1 parity with the studio project (a drift check in CI?). Until it is public,
+  the clone-and-run path is documented as *future* (§1, §9).
+- **F. Per-CRUD enforcement.** The generic tier — especially `delete_record` — is
+  blocked until the #6364 `permissions` arrays are *enforced* fail-closed
+  server-side (§16). Who owns that, and what's the acceptance test?
+- **G. PII policy.** Ratify the fail-closed allowlist and its blast radius (child
+  runs, tool errors, logs) before open-sourcing (§4.8).
 
 ## 14. Appendix A — Baseline standard-object & field coverage
 
@@ -446,9 +506,12 @@ on every org — while treating picklist *values* and FLS as run-time unknowns.
 
 ### A.1 The three baseline rules
 
-1. **Read only standard fields.** A standard field always *exists*, so a `SELECT`
-   never throws `No such column` for schema reasons. (It can still be hidden by
-   FLS for a weak profile — rule 3.)
+1. **Read only standard fields — when the object is available.** A standard field
+   always *exists* on its object, so a `SELECT` never throws `No such column` for
+   schema reasons — *provided the object itself is present* (Case needs Service,
+   Opportunity/Lead need Sales; below that edition/cloud the whole object is absent
+   → handle as an unsupported-object case, rule 3). It can also be hidden by FLS
+   for a weak profile — rule 3.
 2. **Never blind-write a picklist value.** `Status`, `Priority`, `Origin`,
    `Reason`, `Type` (Case), `Status` (Lead), `StageName` (Opp), `Rating`,
    `Industry`, etc. carry **org-specific values** — not API-restricted by default,
@@ -579,10 +642,17 @@ max-rows cap, and customer mapping.
    `describe()` and appear in the matrix automatically; no tool or connector edit
    is needed. Custom objects are exercised through the **generic tool tier**
    (Appendix B), never through curated standard-object tools.
-2. **Capability (tools) and authorization (matrix) are separate layers.** A
-   generic `delete_record` is safe to ship because Delete is **deny-by-default**
-   per object in the matrix — the permission model fences it, not the tool.
-   Likewise `run_soql_query` should respect the `allowExpertSoql` guardrail.
+2. **Capability (tools) and authorization (matrix) are separate layers — but the
+   fence must actually be *enforced* before the generic tools ship.** Today only
+   `dataAccess.objects` (object-level) is enforced; the per-CRUD `permissions`
+   arrays are persisted but **not yet enforced**. So a generic `delete_record`
+   shipped now would let any object with *object-level* access be **deleted** under
+   that coarser grant — Delete is not actually fenced yet. Precondition: define a
+   **fail-closed precedence** (`permissions` denies beat `dataAccess.objects`
+   grants; unknown → deny), enforce it against the runtime `sobjectType` before
+   *every* generic CRUD call, scope `get_record`/`run_soql_query`/`search` to
+   permitted objects, and honour `allowExpertSoql`. `delete_record` stays out of
+   v1 until Delete enforcement is verified live.
 3. **"Tools are static" still holds** (§2.1) — but *objects* and *permissions* are
    dynamically discovered and enforced. The static generic tools are the fixed
    *execution surface*; the Configure matrix is the dynamic *policy surface* over
@@ -597,7 +667,20 @@ max-rows cap, and customer mapping.
 Modeled on the shipped ServiceNow passthrough pair
 (`servicenow__create_table_record` / `update_table_record`), which is the proven
 `bodyMode: "passthrough"` shape. Five tools give complete CRUD over **any** object
-— standard or custom — governed by the §16 matrix.
+— standard or custom — governed by the §16 matrix. **Two hard preconditions gate
+these tools (do not ship without both):** (1) per-operation authorization is
+*enforced* server-side, fail-closed, against the runtime `sobjectType` (§16) —
+`delete_record` waits for verified Delete enforcement and is **out of v1**; and
+(2) server-side path validation (below).
+
+**Server-side path validation (before URL interpolation).** Validate `sobjectType`
+and `externalIdField` as Salesforce API names (`^[A-Za-z][A-Za-z0-9_]*$`, `__c`/`__r`
+allowed) and `recordId` as a 15- or 18-char Salesforce ID; **authorize the
+canonical `sobjectType` against the matrix first**, then URL-encode each path
+segment exactly once (including `externalIdValue`). Reject query/fragment
+delimiters and path-traversal. The existing generated client already models this
+(`validateSalesforceId`, `validateFieldName` in
+`templates/integrations/salesforce/files/lib/salesforce-client.ts`).
 
 **`bodyMode: "passthrough"` is production-proven, not speculative.** 16 passthrough
 write tools ship across 9 live integrations today — ServiceNow
@@ -614,7 +697,7 @@ behaviour is already exercised. Residual risk: near-zero.
 | `get_record` | GET | `/sobjects/{sobjectType}/{recordId}` (opt. `?fields=`) | — | false |
 | `create_record` | POST | `/sobjects/{sobjectType}` | `{ record: object }` | true |
 | `update_record` | PATCH | `/sobjects/{sobjectType}/{recordId}` | `{ record: object }` | true |
-| `delete_record` | DELETE | `/sobjects/{sobjectType}/{recordId}` | — | true (Delete deny-by-default in matrix) |
+| `delete_record` | DELETE | `/sobjects/{sobjectType}/{recordId}` | — | true — **deferred out of v1** until Delete enforcement is live (§16) |
 | `upsert_record` | PATCH | `/sobjects/{sobjectType}/{externalIdField}/{externalIdValue}` | `{ record: object }` | true |
 
 Full `create_record` entry:
@@ -664,7 +747,7 @@ this in the tool description or it will guess `__c`.
 ## Sources
 
 Standard object & field metadata (authoritative — createable/updateable/required/restricted flags in Appendix A were verified against this):
-- [Object Reference for the Salesforce Platform (PDF)](https://resources.docs.salesforce.com/latest/latest/en-us/sfdc/pdf/object_reference.pdf) — Account, Contact, Lead, Case, CaseComment, Opportunity, Task, Event field tables
+- [Object Reference for the Salesforce Platform (PDF)](https://resources.docs.salesforce.com/latest/latest/en-us/sfdc/pdf/object_reference.pdf) — Account, Contact, Lead, Case, CaseComment, Opportunity, Task, Event field tables. **Note:** this is a mutable `latest/latest` URL. The exact artefact used for Appendix A was retrieved **2026-08-12**, 22,456,943 bytes, `sha256 d0a5d6db2b830e2b8e856597776a18061154e08544ea3b577b707f0e3f47d4a7`. Re-verify (or check in a snapshot) if the baseline is disputed, since Salesforce may update the file in place.
 
 Salesforce edition / API access:
 - [Supported Editions & Required Permissions — REST API Developer Guide](https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/intro_rest_compatible_editions.htm)
