@@ -18,6 +18,13 @@
  * Nothing downstream can see it: the run fails before the manifest row is
  * created, and the deploy timeout names neither CSRF nor config.
  *
+ * `security.auth` is the same failure with a different gate. `AuthHandler` runs
+ * at priority 0 — ahead of `CsrfHandler` — and also matches every path, and the
+ * credential it demands is one the platform structurally cannot hold: the
+ * control plane sends a per-run service `Bearer` JWT the Basic branch can never
+ * match and the Bearer branch compares against a project-authored secret. Both
+ * gates are driven here against the real handler chain.
+ *
  * @module release-assets/build-dispatch-security.test
  */
 
@@ -25,9 +32,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
+import { AuthHandler } from "#veryfront/security/http/auth.ts";
 import { CsrfHandler } from "#veryfront/security/http/csrf/csrf-handler.ts";
 import { deriveSecurityContext } from "#veryfront/security/http/config.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import type { SecurityConfig } from "#veryfront/types";
 import {
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
@@ -57,10 +66,12 @@ interface DispatchOutcome {
  */
 async function dispatchReleaseAssetBuild(
   csrf: CsrfSetting | undefined,
+  auth?: SecurityConfig["auth"],
 ): Promise<DispatchOutcome> {
-  const config = {
-    security: csrf === undefined ? {} : { csrf },
-  } as VeryfrontConfig;
+  const security: Record<string, unknown> = {};
+  if (csrf !== undefined) security.csrf = csrf;
+  if (auth !== undefined) security.auth = auth;
+  const config = { security } as VeryfrontConfig;
   const { securityConfig } = deriveSecurityContext(config, {
     // The task rail dispatches to the project's main-branch runtime, which
     // resolves as a preview environment. Production defaults are therefore off
@@ -112,7 +123,11 @@ async function dispatchReleaseAssetBuild(
   ctx.securityConfig = securityConfig;
 
   const registry = new RouteRegistry();
-  registry.registerAll([new CsrfHandler(), new ProjectRunExecuteHandler(deps)]);
+  registry.registerAll([
+    new AuthHandler(),
+    new CsrfHandler(),
+    new ProjectRunExecuteHandler(deps),
+  ]);
 
   const response = await registry.execute(request, ctx);
   return {
@@ -149,6 +164,46 @@ describe("release assets: control-plane build dispatch", () => {
     // The shape that first surfaced this: keep CSRF enforced everywhere except
     // the agent endpoint the chat client posts to.
     const outcome = await dispatchReleaseAssetBuild({ excludePaths: ["/api/ag-ui"] });
+    assertEquals(
+      outcome.begun,
+      true,
+      `release asset build never started; runtime answered ${outcome.status}: ${outcome.body}`,
+    );
+    assertEquals(outcome.status, 200);
+  });
+
+  it("builds a manifest when the project puts the site behind basic auth", async () => {
+    // The platform cannot hold a project-authored Basic credential. It sends a
+    // per-run service `Bearer` JWT and the signed envelope, so `checkBasicAuth`
+    // could only ever answer 401 — and 401 is not retryable, so the run dies
+    // and the manifest row is never created.
+    const outcome = await dispatchReleaseAssetBuild(undefined, {
+      basic: { username: "admin", password: "secret" },
+    });
+    assertEquals(
+      outcome.begun,
+      true,
+      `release asset build never started; runtime answered ${outcome.status}: ${outcome.body}`,
+    );
+    assertEquals(outcome.status, 200);
+  });
+
+  it("builds a manifest when the project puts the site behind bearer auth", async () => {
+    const outcome = await dispatchReleaseAssetBuild(undefined, {
+      bearer: { token: "project-authored-token" },
+    });
+    assertEquals(
+      outcome.begun,
+      true,
+      `release asset build never started; runtime answered ${outcome.status}: ${outcome.body}`,
+    );
+    assertEquals(outcome.status, 200);
+  });
+
+  it("builds a manifest when the project enables both gates at once", async () => {
+    const outcome = await dispatchReleaseAssetBuild(true, {
+      basic: { username: "admin", password: "secret" },
+    });
     assertEquals(
       outcome.begun,
       true,

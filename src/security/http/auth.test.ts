@@ -458,3 +458,205 @@ describe("AuthHandler realm sanitization", () => {
     }
   });
 });
+
+/**
+ * Regression: a project that configures `security.auth` must still answer the
+ * control plane's own dispatch.
+ *
+ * `AuthHandler` runs at priority 0 with an empty pattern list, and the registry
+ * never consults `metadata.patterns` — it calls every handler in priority
+ * order — so the gate sits in front of every control-plane surface. The
+ * platform authorizes those calls with a signed operation envelope, not with a
+ * project-authored Basic or Bearer credential it cannot know, so a configured
+ * project answered its own run dispatch with 401.
+ */
+describe("AuthHandler signed control-plane dispatch", () => {
+  const SIGNED = { "x-veryfront-control-plane-jws": "header.payload.signature" };
+
+  const SURFACES = [
+    { method: "POST", path: "/api/control-plane/agents/list" },
+    { method: "POST", path: "/api/control-plane/runs/run_1/execute" },
+    { method: "POST", path: "/api/control-plane/runs/run_1/stream" },
+    { method: "POST", path: "/api/control-plane/runs/run_1/resume" },
+    { method: "DELETE", path: "/api/control-plane/runs/run_1" },
+  ] as const;
+
+  const AUTH_CONFIGS: readonly unknown[] = [
+    { basic: { username: "admin", password: "secret" } },
+    { bearer: { token: "project-token" } },
+  ];
+
+  function createCtx(auth: unknown): HandlerContext {
+    return {
+      projectDir: "/tmp/auth-test",
+      securityConfig: { auth } as unknown as SecurityConfig,
+      adapter: {
+        env: { get: () => undefined },
+      } as unknown as HandlerContext["adapter"],
+      isLocalProject: false,
+    };
+  }
+
+  function createEnvCtx(credentials: Record<string, string>): HandlerContext {
+    return {
+      projectDir: "/tmp/auth-test",
+      securityConfig: null,
+      adapter: {
+        env: { get: (name: string) => credentials[name] },
+      } as unknown as HandlerContext["adapter"],
+      isLocalProject: false,
+    };
+  }
+
+  it("passes every registered surface through for every configured auth shape", async () => {
+    const handler = new AuthHandler();
+
+    for (const auth of AUTH_CONFIGS) {
+      for (const surface of SURFACES) {
+        const result = await handler.handle(
+          new Request(`https://acme.example.test${surface.path}`, {
+            method: surface.method,
+            headers: SIGNED,
+          }),
+          createCtx(auth),
+        );
+
+        expect(
+          [surface.method, surface.path, result.response?.status ?? "continue"],
+        ).toEqual([surface.method, surface.path, "continue"]);
+      }
+    }
+  });
+
+  it("passes a registered surface through for env-configured auth", async () => {
+    // `VERYFRONT_BASIC_USER`/`VERYFRONT_BEARER_TOKEN` reach the same gate as the
+    // config shape, so the deploy breaks identically when they are set.
+    const handler = new AuthHandler();
+
+    for (
+      const credentials of [
+        { VERYFRONT_BASIC_USER: "admin", VERYFRONT_BASIC_PASS: "secret" },
+        { VERYFRONT_BEARER_TOKEN: "project-token" },
+      ]
+    ) {
+      const result = await handler.handle(
+        new Request("https://acme.example.test/api/control-plane/runs/run_1/execute", {
+          method: "POST",
+          headers: SIGNED,
+        }),
+        createEnvCtx(credentials),
+      );
+
+      expect(result.response).toBe(undefined);
+    }
+  });
+
+  it("still challenges a path that merely starts alike", async () => {
+    const handler = new AuthHandler();
+
+    const result = await handler.handle(
+      new Request("https://acme.example.test/api/control-plane-mirror/runs/run_1/execute", {
+        method: "POST",
+        headers: SIGNED,
+      }),
+      createCtx({ basic: { username: "admin", password: "secret" } }),
+    );
+
+    expect(result.response?.status).toBe(401);
+  });
+
+  it("still challenges a project route inside the control-plane namespace", async () => {
+    // The reserved namespace is not exclusively routed: only five method/path
+    // shapes reach a handler that verifies a signed envelope, and anything else
+    // falls through to `ApiHandlerWrapper` and runs project code. Exempting the
+    // prefix would let a project turn its own auth gate off by choosing a path.
+    const handler = new AuthHandler();
+    const projectRoutes = [
+      { method: "POST", path: "/api/control-plane/checkout" },
+      { method: "POST", path: "/api/control-plane/runs" },
+      { method: "POST", path: "/api/control-plane/runs/run_1" },
+      { method: "POST", path: "/api/control-plane/runs/run_1/execute/extra" },
+      { method: "POST", path: "/api/control-plane/agents/list/all" },
+      { method: "PUT", path: "/api/control-plane/runs/run_1/execute" },
+      { method: "DELETE", path: "/api/control-plane/runs/run_1/execute" },
+      { method: "GET", path: "/api/control-plane/runs/run_1/execute" },
+    ];
+
+    for (const route of projectRoutes) {
+      const result = await handler.handle(
+        new Request(`https://acme.example.test${route.path}`, {
+          method: route.method,
+          headers: SIGNED,
+        }),
+        createCtx({ basic: { username: "admin", password: "secret" } }),
+      );
+
+      expect(
+        [route.method, route.path, result.response?.status ?? "continue"],
+      ).toEqual([route.method, route.path, 401]);
+    }
+  });
+
+  it("still challenges a registered surface with no signature header", async () => {
+    // A caller with no envelope has nothing verified downstream, so the gate
+    // must hold. This is what keeps the exemption from being a bypass.
+    const handler = new AuthHandler();
+
+    for (const surface of SURFACES) {
+      const result = await handler.handle(
+        new Request(`https://acme.example.test${surface.path}`, {
+          method: surface.method,
+        }),
+        createCtx({ basic: { username: "admin", password: "secret" } }),
+      );
+
+      expect(
+        [surface.method, surface.path, result.response?.status ?? "continue"],
+      ).toEqual([surface.method, surface.path, 401]);
+    }
+  });
+
+  it("still challenges a registered surface with an empty signature header", async () => {
+    const handler = new AuthHandler();
+
+    const result = await handler.handle(
+      new Request("https://acme.example.test/api/control-plane/runs/run_1/execute", {
+        method: "POST",
+        headers: { "x-veryfront-control-plane-jws": "" },
+      }),
+      createCtx({ basic: { username: "admin", password: "secret" } }),
+    );
+
+    expect(result.response?.status).toBe(401);
+  });
+
+  it("dispatches a signed surface even when the auth config is unresolvable", async () => {
+    // An auth config the runtime cannot resolve fails closed for every browser
+    // request, and that stays true — the two assertions below share one config.
+    // A control-plane dispatch is not browser shaped: the receiving handler
+    // verifies its envelope before acting, so a project typo must not brick the
+    // platform's own run dispatch the way it must brick project content.
+    const handler = new AuthHandler();
+    const unresolvable = {
+      basic: { username: "admin", password: "secret" },
+      bearer: { token: "project-token" },
+    };
+
+    const dispatch = await handler.handle(
+      new Request("https://acme.example.test/api/control-plane/runs/run_1/execute", {
+        method: "POST",
+        headers: SIGNED,
+      }),
+      createCtx(unresolvable),
+    );
+    expect(dispatch.response).toBe(undefined);
+
+    const browser = await handler.handle(
+      new Request("https://acme.example.test/api/control-plane/runs/run_1/execute", {
+        method: "POST",
+      }),
+      createCtx(unresolvable),
+    );
+    expect(browser.response?.status).toBe(401);
+  });
+});
