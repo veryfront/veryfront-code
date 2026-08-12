@@ -7,6 +7,7 @@
 import type { ClientRequest, IncomingMessage, RequestOptions } from "node:http";
 import type { Readable } from "node:stream";
 import { VERSION } from "#veryfront/utils/version-constant.ts";
+import { isErrorAcrossRealms } from "../error-introspection.ts";
 
 const NULL_BODY_STATUSES = new Set([204, 205, 304]);
 
@@ -290,8 +291,8 @@ export async function fetchWithPinnedAddresses(
     const abort = () => {
       const reason = init.signal?.reason ??
         new DOMException("The operation was aborted", "AbortError");
-      responseMessage?.destroy(reason instanceof Error ? reason : undefined);
-      request.destroy(reason instanceof Error ? reason : undefined);
+      responseMessage?.destroy(isErrorAcrossRealms(reason) ? reason : undefined);
+      request.destroy(isErrorAcrossRealms(reason) ? reason : undefined);
       if (!settled) rejectBeforeResponse(reason);
     };
     init.signal?.addEventListener("abort", abort, { once: true });

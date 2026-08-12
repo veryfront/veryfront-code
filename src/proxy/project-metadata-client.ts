@@ -3,6 +3,7 @@ import {
   isCanonicalProjectSlug,
 } from "#veryfront/utils/project-identity.ts";
 import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
+import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
 import { readProxyResponseJson, settleProxyResponseBody } from "./response-body.ts";
 
@@ -409,7 +410,7 @@ function requireToken(value: string): string {
 }
 
 function abortReason(signal: AbortSignal): Error {
-  return signal.reason instanceof Error
+  return isErrorAcrossRealms(signal.reason)
     ? signal.reason
     : new DOMException("Proxy metadata lookup was aborted", "AbortError");
 }

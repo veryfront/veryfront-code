@@ -1,4 +1,5 @@
 import { TokenManager, type TokenScope } from "./token-manager.ts";
+import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 import {
   isHostedVeryfrontDomain,
   type ParsedDomain,
@@ -197,7 +198,7 @@ function getScope(environment: string | null): TokenScope {
 }
 
 function requestAbortReason(signal: AbortSignal): Error {
-  return signal.reason instanceof Error
+  return isErrorAcrossRealms(signal.reason)
     ? signal.reason
     : new DOMException("Proxy request was aborted", "AbortError");
 }

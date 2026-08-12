@@ -13,6 +13,7 @@ import {
   PERMISSION_DENIED,
 } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 import { createProjectEnvSnapshot } from "./snapshot.ts";
 
 const baseLogger = getBaseLogger("PROJECT-ENV");
@@ -149,7 +150,7 @@ async function fetchEnvironmentVariables(
       error: error instanceof Error ? error.message : String(error),
     });
     if (signal?.aborted) {
-      throw signal.reason instanceof Error
+      throw isErrorAcrossRealms(signal.reason)
         ? signal.reason
         : new DOMException("Project environment request was cancelled", "AbortError");
     }
