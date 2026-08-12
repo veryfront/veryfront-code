@@ -2,7 +2,12 @@
 
 Renders streamed markdown content - the one sanctioned multi-node primitive, tamed by a full `components` override map.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `CodeBlock`, `Markdown`, `RichCodeBlock`
+> - **Not exported today:** none
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -68,7 +73,8 @@ With no `components` overrides, a typical assistant message renders this tree to
       <!-- body sits behind a border-t under the header -->
       <pre
         class="overflow-x-auto p-3"
-      >                       <!-- the ONLY horizontal scroller for code -->
+      >
+                       <!-- the ONLY horizontal scroller for code -->
         <code class="language-tsx">…highlighted…</code>
       </pre>
     </div>

@@ -2,7 +2,12 @@
 
 The chat composer - a single `<form>` with composable leaves for the field, attachments, model selection, voice, and submit.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - partly landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `ChatInput`, `ChatInput.Attach`, `ChatInput.Export`, `ChatInput.Field`, `ChatInput.Model`, `ChatInput.Root`, `ChatInput.Send`, `ChatInput.Stop`, `ChatInput.Submit`, `ChatInput.Toolbar`, `ChatInput.Voice`
+> - **Not exported today:** none
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -12,10 +17,16 @@ import { ChatInput } from "veryfront/chat";
 import { ChatInput, ChatInputField, type ChatInputFieldProps } from "veryfront/chat";
 ```
 
+### `ChatInput` flat sub-part exports - `new` - `shipped` (src/chat/index.ts:250)
+
+The flat sub-part exports above are **not** a proposal: `ChatInputRoot`, `ChatInputField`, `ChatInputToolbar`, `ChatInputAttach`, `ChatInputModel`, `ChatInputVoice`, `ChatInputSubmit`, `ChatInputSend`, `ChatInputStop`, and `ChatInputExport` (with their `Props` types) all ship from `veryfront/chat` today, alongside the `ChatInput.*` namespace aliases. What each leaf _does_ is still the proposal - see the per-delta badges below.
+
+This is the one page where "every sub-part is also a flat named export" has actually landed; on every other component page it is still proposed.
+
 ## Parts index
 
 - [`.Root`](#chatinputroot---changed) - `changed`: two hidden wrapper divs deleted - one `<form>`; ~19 state props collapse into `chat`/`upload`/`voice`
-- [`.Field`](#chatinputfield---changed) - `changed`: IME guard + `submitMode` + paste-to-attach added; full native surface opened
+- [`.Field`](#chatinputfield---changed---partly-shipped-srcreactcomponentschatchatcompositionchat-composertypests18) - `changed`, **`partly shipped`**: the IME guard and the full native surface landed; `submitMode` and paste-to-attach have not
 - [`.Submit`](#chatinputsubmit---changed) - `changed`: single always-rendered node (no Send-delegation null-render); `icon`/`stopIcon` removed
 - [`.Send`](#chatinputsend---changed) - `changed`: `icon` + `WrapClick` `onClick` removed
 - [`.Stop`](#chatinputstop---changed) - `changed`: `icon` + `WrapClick` `onClick` removed
@@ -170,9 +181,16 @@ One `<form>` + the compound's scoped context (`ChatInputContextProvider`). Nativ
 boolean toggling border classes), `data-compact` (present when the form's inline
 size is below 560px or the field has a single visual line).
 
-### `ChatInput.Field` - `changed`
+### `ChatInput.Field` - `changed` - `partly shipped` (src/react/components/chat/chat/composition/chat-composer.types.ts:18)
 
 _Changed: `submitMode`-driven, IME-guarded Enter and paste-to-attach are added, and the full native textarea surface + `asChild` open up (today only `placeholder`/`className`/`aria-label`)._
+
+**Landed** in [#3277](https://github.com/veryfront/veryfront-code/pull/3277), in **two files** - this delta has two halves, so the badge above and the [roll-up row](../README.md#what-has-landed---shipped-srcreactcomponentschatchathooksuse-chat-inputts85) each cite one of them:
+
+- **Native surface** (`src/react/components/chat/chat/composition/chat-composer.types.ts:18`, the badge's anchor): `ChatInputFieldProps` now extends `React.TextareaHTMLAttributes<HTMLTextAreaElement>` (minus the controlled trio), so the full native surface and `ref` are already the consumer's.
+- **IME guard** (`src/react/primitives/input-box.tsx:37`, the roll-up's anchor): `handleInputBoxKeyDown` checks native `isComposing`, synthetic `isComposing`, and the `keyCode === 229` fallback before Enter submits. `.Field` and `useChatInput().getFieldProps()` both route through it, so a custom textarea cannot diverge from the primitive.
+
+**Still proposed:** `submitMode`, paste-to-attach, and `asChild` on this leaf.
 
 One `<textarea>` (today: the `InputBox` primitive in multiline mode).
 
@@ -180,11 +198,12 @@ One `<textarea>` (today: the `InputBox` primitive in multiline mode).
 
 Default content: the input value - while dictating, the live transcript replaces it (`transcript || value`). Enter submits per `submitMode`, with an IME-composition guard so CJK input never double-submits. **Paste-to-attach (proposed):** pasting files into the field adds them to the pending attachments (requires `upload` on the Root). **Always renders.** Disabled while streaming or listening (today via the `disabled` attribute; the proposal also surfaces `data-disabled`).
 
-| Prop                            | Type                                                        | Default                    | Description                                                                                                    |
-| ------------------------------- | ----------------------------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `placeholder`                   | `string`                                                    | `"Type a message..."`      | Placeholder text.                                                                                              |
-| `aria-label`                    | `string`                                                    | `placeholder ?? "Message"` | Accessible name.                                                                                               |
-| `asChild` _(proposed)_ + native | `React.TextareaHTMLAttributes<HTMLTextAreaElement>` · `ref` | -                          | Today the field takes only `placeholder`/`className`/`aria-label`; the proposal opens the full native surface. |
+| Prop                       | Type                                                        | Default                    | Description                                                                                                    |
+| -------------------------- | ----------------------------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `placeholder`              | `string`                                                    | `"Type a message..."`      | Placeholder text.                                                                                              |
+| `aria-label`               | `string`                                                    | `placeholder ?? "Message"` | Accessible name.                                                                                               |
+| native + `ref` (`shipped`) | `React.TextareaHTMLAttributes<HTMLTextAreaElement>` · `ref` | -                          | Already open: `ChatInputFieldProps` extends the native textarea surface (minus `value`/`onChange`/`onSubmit`). |
+| `asChild` _(proposed)_     | `boolean`                                                   | `false`                    | Not landed - `.Field` still renders the `InputBox` primitive rather than merging onto your element.            |
 
 ### `ChatInput.Submit` - `changed`
 

@@ -2,7 +2,12 @@
 
 The message action buttons - a namespace re-export of the `Message.Actions` family.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `Message.Actions`, `Message.CopyAction`, `Message.EditAction`, `Message.RegenerateAction`, `MessageActionBar`, `MessageActionBar.Copied`
+> - **Not exported today:** `MessageActionBar.Actions`, `MessageActionBar.CopyAction`, `MessageActionBar.EditAction`, `MessageActionBar.RegenerateAction`
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 > **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): `MessageActionBar` **is** `Message.Actions` (one implementation, re-exported), yet this page re-documents `.Actions` / `.CopyAction` / `.RegenerateAction` / `.EditAction` verbatim - two authoritative copies invite drift. **Proposed:** trim to a thin alias stub (import + "canonical home: `Message.Actions`" + the one local note: no controlled/context-free fallback).
 

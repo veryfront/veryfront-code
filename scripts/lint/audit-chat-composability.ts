@@ -14,6 +14,13 @@
  * (The runtime side of the contract — that each compound actually exposes its
  * parts and its hook throws outside a provider — lives in
  * `src/react/components/chat/chat/composability.contract.test.tsx`.)
+ *
+ * Where the rule comes from: RFC 29's node contract — "there is never an inner
+ * div you can't class, because you rendered it" — which only holds if the parts
+ * a doc names are parts you can actually reach.
+ * See `docs/rfcs/29-chat-api-shape.md` ("L2 - Primitives", node contract).
+ * `audit-rfc-status.ts` is the sibling lint that keeps that RFC's own pages
+ * honest about what has shipped.
  */
 
 import { walk } from "#std/fs";
@@ -24,6 +31,29 @@ const CHAT_STORIES_DIR = "storybook/stories/chat";
 export interface CompositionLie {
   path: string;
   token: string;
+}
+
+/**
+ * Blank out every character nested inside a further `{}` / `[]` / `()` so a
+ * property scan sees only the object's own keys. Length is preserved, so the
+ * masked body still lines up with the original.
+ */
+function maskNested(body: string): string {
+  const out = body.split("");
+  let depth = 0;
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c === "{" || c === "[" || c === "(") {
+      if (depth > 0) out[i] = " ";
+      depth++;
+    } else if (c === "}" || c === "]" || c === ")") {
+      depth = Math.max(0, depth - 1);
+      if (depth > 0) out[i] = " ";
+    } else if (depth > 0) {
+      out[i] = " ";
+    }
+  }
+  return out.join("");
 }
 
 /**
@@ -59,11 +89,20 @@ export function collectCompoundParts(
         }
       }
       if (end === -1) continue;
-      const body = f.content.slice(objStart + 1, end);
+      // Only the object's OWN properties are the compound's anatomy. Anything
+      // nested one level deeper is somebody else's key: without masking,
+      // `Object.assign(Base, { Config: { Message } })` reads as a real
+      // `Base.Message` part and `findCompositionLies` waves the token through.
+      const body = maskNested(f.content.slice(objStart + 1, end));
       const keys = compounds.get(name) ?? new Set<string>();
       const keyRe = /(?:^|[,{\s])([A-Za-z_]\w*)\s*:/g;
       let km: RegExpExecArray | null;
       while ((km = keyRe.exec(body)) !== null) keys.add(km[1]);
+      // Shorthand properties (`Object.assign(Base, { Message, ErrorBanner })`)
+      // are real sub-parts too — missing them made real anatomy read as a lie.
+      const shorthandRe = /(?:^|[,{])\s*([A-Z]\w*)\s*(?=[,}])/g;
+      let sm: RegExpExecArray | null;
+      while ((sm = shorthandRe.exec(body)) !== null) keys.add(sm[1]);
       compounds.set(name, keys);
     }
   }

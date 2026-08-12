@@ -2,7 +2,12 @@
 
 A searchable popover for choosing a model - provider-logo trigger, provider-grouped list - with `models` configured on the leaf that uses it.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `ModelSelector`, `ModelSelector.Content`, `ModelSelector.Item`, `ModelSelector.List`, `ModelSelector.Root`, `ModelSelector.Search`, `ModelSelector.Trigger`
+> - **Not exported today:** none
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 > **⚠ Reusability flag** (see [generic core vs veryfront adapter](../../29-chat-api-shape.md)): the provider logo is hardcoded to `https://models.dev/logos/${key}.svg` with no override - an undocumented external network dependency baked into a "generic" component. Add a logo-source slot/override and document the dependency.
 

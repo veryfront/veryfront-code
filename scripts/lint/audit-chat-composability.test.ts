@@ -1,5 +1,5 @@
-import { assertEquals } from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { collectCompoundParts, findCompositionLies } from "./audit-chat-composability.ts";
 
 const SOURCE = [{
@@ -55,6 +55,48 @@ describe("audit-chat-composability", () => {
       content: "const compositionTree = `ToolCall\n  +-- ToolCall.Trigger\n  +-- ToolCall.Body`;",
     }];
     assertEquals(findCompositionLies(stories, compounds).length, 0);
+  });
+
+  // `Object.assign(ChatBase, { Message, ErrorBanner })` — shorthand keys are
+  // real sub-parts, and missing them made honest anatomy read as a lie.
+  it("collects shorthand properties as sub-parts", () => {
+    const compounds = collectCompoundParts([{
+      path: "chat-preset.tsx",
+      content: `
+        export const Chat: ChatComponent = Object.assign(ChatBase, {
+          Root: ChatRoot,
+          Message,
+          ErrorBanner,
+        });
+      `,
+    }]);
+
+    assertEquals(compounds.get("Chat"), new Set(["Root", "Message", "ErrorBanner"]));
+  });
+
+  // Only the compound's OWN properties are its anatomy. A key one level deeper
+  // belongs to that inner object, and treating it as a direct part would let
+  // `Chat.Message` through on a compound that has no `Message`.
+  it("ignores keys nested inside a further object literal", () => {
+    const source = [{
+      path: "nested.tsx",
+      content: `
+        export const Chat = Object.assign(ChatBase, {
+          Root: ChatRoot,
+          config: { Message, Inner: InnerThing },
+        });
+      `,
+    }];
+    const compounds = collectCompoundParts(source);
+
+    assertEquals(compounds.get("Chat"), new Set(["Root", "config"]));
+    assertEquals(
+      findCompositionLies(
+        [{ path: "chat.stories.tsx", content: "const compositionTree = `<Chat.Message />`;" }],
+        compounds,
+      ),
+      [{ path: "chat.stories.tsx", token: "Chat.Message" }],
+    );
   });
 
   it("ignores tokens whose base is not a known compound", () => {

@@ -15,6 +15,12 @@
  *
  * Scope: chat component source only (`src/react/components/chat`), excluding
  * tests and stories.
+ *
+ * Where the rules come from: these are RFC 29's hard rules, mechanised.
+ * See `docs/rfcs/29-chat-api-shape.md` — rule 1 ("No `xxxClassName` /
+ * `xxxProps` bags. Ever."), rule 7 ("Style state via `data-*`, not props"),
+ * the resolved decision banning `icon` slot props, and "React 19: ref as a
+ * prop". Change a baseline here only alongside that RFC.
  */
 
 const SCAN_ROOT = "src/react/components/chat";

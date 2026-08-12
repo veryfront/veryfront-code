@@ -2,7 +2,14 @@
 
 The base chat session hook - messages, status, streaming state, and session actions. Input state is _not_ here (it lives in `useChatInput`).
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `useChat`, `UseChatOptions`, `UseChatResult`
+> - **Not exported today:** none
+>
+> The RFC's headline delta here is a **removal**, which no symbol list can express: `useChat` still owns `input` / `setInput` / `handleInputChange` on `main`, so it is not yet true that "input state has one owner". That removal is batched into the one breaking release.
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
