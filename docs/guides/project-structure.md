@@ -215,9 +215,10 @@ The cache root keeps itself out of version control. When the file is absent,
 both commands create a `.gitignore` in the cache root containing `*`, which
 ignores the directory's contents and the file itself, so a project that adopted
 Veryfront into an existing tree does not have to edit its own `.gitignore`. A
-`.cache/.gitignore` you wrote yourself is never overwritten, so keep the
-generated bundles ignored there if you replace it. `veryfront init` also lists
-`.cache/` in the `.gitignore` it scaffolds.
+marker you wrote yourself — a `.cache/.gitignore` of your own, say — is never
+overwritten in either root, so keep the generated bundles ignored there if you
+replace it. `veryfront init` also lists `.cache/` in the `.gitignore` it
+scaffolds.
 
 Deleting the cache root costs only time. The next run recompiles the pages and
 refetches the remote dependencies it needs.
