@@ -38,6 +38,9 @@ describe("runtime model capabilities", () => {
   it("applies the temperature policy to the full current model matrix", () => {
     const temperatureMatrix = [
       ["anthropic/claude-opus-4-8", undefined],
+      ["anthropic/claude-opus-5", undefined],
+      ["anthropic/claude-opus-5-20260801", undefined],
+      ["anthropic/claude-opus-5.1", undefined],
       ["anthropic/claude-opus-4-6", 0.2],
       ["anthropic/claude-sonnet-4-6", 0.2],
       ["anthropic/claude-haiku-4-5-20251001", 0.2],
