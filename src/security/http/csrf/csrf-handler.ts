@@ -42,7 +42,10 @@
  */
 
 import { isCspReportRequest } from "#veryfront/security/http/csp-report-endpoint.ts";
-import { isSignedControlPlaneDispatch } from "#veryfront/channels/control-plane.ts";
+import {
+  isSignedChannelDispatch,
+  isSignedControlPlaneDispatch,
+} from "#veryfront/channels/control-plane.ts";
 import { BaseHandler } from "../base-handler.ts";
 import { validateCsrf } from "../../csrf/helpers.ts";
 import type {
@@ -96,6 +99,22 @@ export class CsrfHandler extends BaseHandler {
     // can sit under it in a custom runtime; such a route is cookie
     // authenticated, is not a registered surface, and keeps CSRF enforced.
     if (isSignedControlPlaneDispatch(req)) return this.continue();
+
+    // A platform channel dispatch is not a browser request either. A Slack or
+    // Discord message reaches an agent because the channel dispatcher POSTs
+    // `/channels/invoke` carrying a signed dispatch envelope, and the runtime
+    // re-dispatches to the same route when another instance owns the run.
+    // Neither caller holds a `__Host-vf_csrf` cookie, so gating them here does
+    // not stop a cross-site request; it silently stops the project's own
+    // channels from answering at all.
+    //
+    // This is a separate predicate rather than another entry in the
+    // control-plane route table on purpose. A channel dispatch carries a
+    // different envelope under a different header, verified by
+    // `verifyDispatchJws` against the dispatch id, platform, project id and
+    // body hash, so the two are not interchangeable and neither header may
+    // stand in for the other.
+    if (isSignedChannelDispatch(req)) return this.continue();
 
     // Check exclude paths
     if (typeof csrfConfig === "object" && csrfConfig.excludePaths?.length) {

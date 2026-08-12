@@ -30,6 +30,12 @@ const CONTROL_PLANE_RUNS_REGEX_PREFIX = CONTROL_PLANE_RUNS_PATH_PREFIX.replaceAl
 /** Request header the control plane carries its signed operation envelope in. */
 export const CONTROL_PLANE_JWS_HEADER = "x-veryfront-control-plane-jws";
 
+/** Request header a platform channel dispatch carries its signed envelope in. */
+export const DISPATCH_JWS_HEADER = "x-veryfront-dispatch-jws";
+
+/** The one route that accepts a signed channel dispatch envelope. */
+export const CHANNEL_INVOKE_PATH = "/channels/invoke";
+
 const CONTROL_PLANE_RUN_OPERATION_PATH =
   /^\/api\/control-plane\/runs\/[^/]+\/(?:execute|stream|resume)$/u;
 const CONTROL_PLANE_RUN_PATH = /^\/api\/control-plane\/runs\/[^/]+$/u;
@@ -96,6 +102,56 @@ export function isSignedControlPlaneDispatch(req: Request): boolean {
   if (signature === null || signature.length === 0) return false;
 
   return isControlPlaneSurfaceRoute(req.method, new SafeURL(req.url).pathname);
+}
+
+/**
+ * True when a method and path pair addresses the channel dispatch handler.
+ *
+ * `POST /channels/invoke` is the one route `ChannelInvokeHandler` registers,
+ * and the only route that verifies a channel dispatch envelope. It is
+ * deliberately not part of {@link isControlPlaneSurfaceRoute}: the control
+ * plane's `channels` surface names a product surface inside a control-plane
+ * envelope, not this HTTP route, and this route carries a different envelope.
+ *
+ * The `/channels/` namespace is reserved but not exclusively routed, so any
+ * sibling or child path is matched exactly rather than by prefix. Match this
+ * against `URL.pathname`, which resolves dot segments.
+ */
+export function isChannelDispatchRoute(
+  method: string,
+  pathname: string | undefined,
+): boolean {
+  return method.toUpperCase() === "POST" && pathname === CHANNEL_INVOKE_PATH;
+}
+
+/**
+ * True for a request that is a platform channel dispatch rather than a browser one.
+ *
+ * Both conditions must hold. The method and path must be the one route the
+ * channel invoke handler owns (see {@link isChannelDispatchRoute}), and the
+ * request must carry a dispatch signature header. The handler then verifies
+ * that envelope with `verifyDispatchJws`, which binds the Ed25519 signature to
+ * the issuer, the project audience, the project id, the dispatch id, the
+ * platform and a SHA-256 hash of the body, with expiry and skew bounds; the
+ * handler additionally rejects an envelope whose claims do not match the
+ * dispatch id, platform and project id in the payload it acts on.
+ *
+ * Callers use this to keep gates that assume a browser client, such as CSRF
+ * double-submit validation, from standing in front of platform dispatch. The
+ * channel dispatcher and the runtime-owner re-dispatch in
+ * `resolveRuntimeOwnerInvokeUrl` hold no `__Host-vf_csrf` cookie to echo and
+ * derive no authority from one. A browser cannot attach the signature header to
+ * a cross-origin request without a preflight the runtime does not grant, so a
+ * forged cross-site request never satisfies this predicate.
+ *
+ * This is not authentication. It only reports that authority for the request
+ * comes from a signature the handler checks, never from ambient credentials.
+ */
+export function isSignedChannelDispatch(req: Request): boolean {
+  const signature = req.headers.get(DISPATCH_JWS_HEADER);
+  if (signature === null || signature.length === 0) return false;
+
+  return isChannelDispatchRoute(req.method, new SafeURL(req.url).pathname);
 }
 
 /**
