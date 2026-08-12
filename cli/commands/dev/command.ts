@@ -29,6 +29,14 @@ import { findAvailablePort, isPortAvailable, isPortInUseError } from "./port-fal
 
 export interface DevOptions {
   port: number;
+  /**
+   * True when the port was set explicitly by a `--port` / `-p` flag or by a
+   * valid `PORT` / `VERYFRONT_PORT` env var.  When false (or absent) the port
+   * value fell through to the hardcoded default and `config.dev.port` should
+   * take precedence.  Defaults to `port !== DEFAULT_DEV_PORT` for callers that
+   * do not set this field, preserving backward-compatible behaviour.
+   */
+  portExplicit?: boolean;
   projectDir: string;
   hmr?: boolean;
   open?: boolean;
@@ -152,6 +160,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
     async () => {
       const {
         port,
+        portExplicit,
         projectDir,
         hmr = true,
         open = false,
@@ -181,7 +190,14 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       }
 
       const DEFAULT_DEV_PORT = 3000;
-      const finalPort = port !== DEFAULT_DEV_PORT ? port : (config?.dev?.port ?? port);
+      // Use `portExplicit` when provided so that `PORT=3000` is honoured even
+      // though 3000 equals the default — the old sentinel `port !== 3000` would
+      // silently discard an explicit env-var request that happens to equal the
+      // default value.  Fall back to the sentinel for callers that predate this
+      // field.
+      const finalPort = (portExplicit ?? port !== DEFAULT_DEV_PORT)
+        ? port
+        : (config?.dev?.port ?? port);
       const enableHMR = config?.dev?.hmr !== false && hmr;
 
       if (clearLocalCaches) await clearLocalCachesIfPortFree(finalPort);

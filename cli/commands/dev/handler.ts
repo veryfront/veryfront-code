@@ -48,6 +48,22 @@ function readPortEnv(name: string, fallback: number): number {
 }
 
 /**
+ * Returns true when the named env var holds a valid port number (all-digit
+ * string within 1–65535).  This is a pure predicate — it never emits warnings,
+ * because those were already emitted by `parsePortEnv` during arg parsing.
+ * Used to determine whether the port came from an explicit env var rather than
+ * falling through to the hardcoded default.
+ */
+function isValidPortEnv(name: string): boolean {
+  const raw = getEnv(name);
+  if (!raw) return false;
+  const t = raw.trim();
+  if (!/^\d+$/.test(t)) return false;
+  const n = Number(t);
+  return n >= 1 && n <= 65535;
+}
+
+/**
  * The default port to use for `veryfront dev`, resolved from env vars.
  *
  * Priority (highest → lowest):
@@ -136,8 +152,17 @@ export async function handleDevCommand(args: ParsedArgs): Promise<void> {
   // original defect this fixes. Only `PORT` is surfaced here (not
   // `VERYFRONT_PORT`) because `PORT` is the near-universal convention that
   // developers arriving from Next.js, Vite, Heroku, and Railway expect to work.
-  const portExplicit = args.port !== undefined || args.p !== undefined;
-  if (portExplicit) {
+  //
+  // `portExplicit` is also used to carry provenance into devCommand so that
+  // `PORT=3000` is honoured even when 3000 equals the hardcoded default — the
+  // sentinel `port !== 3000` check in devCommand must not swallow an explicit
+  // env var that happens to equal the default value.
+  const portExplicit =
+    args.port !== undefined ||
+    args.p !== undefined ||
+    isValidPortEnv("PORT") ||
+    isValidPortEnv("VERYFRONT_PORT");
+  if (args.port !== undefined || args.p !== undefined) {
     const portFromEnv = parsePortEnv("PORT");
     if (portFromEnv !== undefined && opts.port !== portFromEnv) {
       logWarning(
@@ -159,6 +184,7 @@ export async function handleDevCommand(args: ParsedArgs): Promise<void> {
   const { devCommand } = await import("./index.ts");
   const { done } = await devCommand({
     port: opts.port,
+    portExplicit,
     projectDir,
     hmr: opts.hmr && !opts.noHmr,
     open: opts.open,
