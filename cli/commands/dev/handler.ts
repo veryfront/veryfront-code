@@ -157,8 +157,7 @@ export async function handleDevCommand(args: ParsedArgs): Promise<void> {
   // `PORT=3000` is honoured even when 3000 equals the hardcoded default — the
   // sentinel `port !== 3000` check in devCommand must not swallow an explicit
   // env var that happens to equal the default value.
-  const portExplicit =
-    args.port !== undefined ||
+  const portExplicit = args.port !== undefined ||
     args.p !== undefined ||
     isValidPortEnv("PORT") ||
     isValidPortEnv("VERYFRONT_PORT");
