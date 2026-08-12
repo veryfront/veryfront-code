@@ -89,6 +89,11 @@ runs:
           checksums_manifest_sha256="0019dfc4b32d63c1392aa264aed2253c1e0c2fb09216f8e2cc269bbfb8bb49b5"
           archive_checksum_path="${deno_dir}/archive-checksum.txt"
 
+          # Deliberately no --retry-all-errors here: this URL 404s on every real
+          # release, and --retry-all-errors retries 4xx too, so every job in the
+          # repo would pay a full retry budget for a guaranteed miss. The
+          # required downloads below carry it instead, because they have no
+          # fallback and their 404 would be genuinely anomalous.
           checksums_manifest_http_code="$(curl --fail --location --show-error --retry 5 --retry-delay 2 \
             --retry-max-time 120 \
             --remove-on-error \
@@ -97,12 +102,13 @@ runs:
             --write-out "%{http_code}" \
             --output "${checksums_manifest_path}")" || true
           if [ "${checksums_manifest_http_code}" != "200" ]; then
-            if [ "${checksums_manifest_http_code}" != "404" ]; then
-              echo "Failed to download checksums manifest for v${version} (HTTP ${checksums_manifest_http_code})" >&2
-              exit 1
-            fi
-
-            echo "Checksums manifest not published for v${version}; falling back to archive checksum file" >&2
+            # No Deno release publishes checksums.txt, so this is the path every
+            # run takes. A 404, a 5xx and a died connection are indistinguishable
+            # here -- all of them mean "no manifest to verify against" -- so an
+            # upstream blip must not fail the job. This costs no integrity: the
+            # archive is still verified against ${archive}.sha256sum below, which
+            # is the same check the 404 path has always relied on.
+            echo "Checksums manifest unavailable for v${version} (HTTP ${checksums_manifest_http_code}); falling back to archive checksum file" >&2
             checksum_parse_path="${archive_checksum_path}"
           else
             checksums_manifest_actual_sha256="$(compute_sha256 "${checksums_manifest_path}")"
@@ -116,18 +122,48 @@ runs:
             checksum_parse_path="${checksums_manifest_path}"
           fi
 
-          if ! curl --fail --location --show-error --retry 5 --retry-delay 2 \
-            --retry-max-time 120 \
+          # These two downloads are REQUIRED -- there is no fallback for either,
+          # so their retry budget is the only thing between an upstream blip and
+          # a red job, and setup-deno runs in every job (~30 per merge_group).
+          #
+          # --retry-all-errors is the load-bearing flag. Plain --retry only
+          # treats 5xx and timeouts as transient, so a dead connection (exit 56)
+          # or a rate-limited 4xx (exit 22) ends the transfer outright: in
+          # merge-queue run 31625521721 the .sha256sum below took one 503, waited
+          # its 2s, hit a dead connection and gave up 2.0 seconds in, with four
+          # of its five retries unspent.
+          #
+          # The window, not the count, is the real number: 150s covers an outage
+          # measured in minutes, and 20 x 8s of backoff is what it takes to fill
+          # it. 8s rather than 2s because ~30 concurrent jobs retrying a degraded
+          # endpoint every 2s is a retry storm of its own.
+          #
+          # Failing fast is what makes the longer window affordable. A connect to
+          # the release CDN that has not completed in 10s has failed, and a slow
+          # attempt now costs a retry inside the window rather than a third of
+          # the budget; a --max-time of 30s still covers two 10s connects (the
+          # release URL redirects) plus a 107-byte body, and overrunning it is
+          # itself just another retry.
+          #
+          # Worst case is bounded on purpose. A new attempt can start at the end
+          # of the window and run a full --max-time, so an upstream that is
+          # simply gone fails at 150+30s here and 150+120s below -- 7.5 minutes
+          # total, inside the tightest setup-deno job (10 min) so the error says
+          # what went wrong instead of timing out the job.
+          if ! curl --fail --location --show-error --retry 20 --retry-delay 8 \
+            --retry-all-errors \
+            --retry-max-time 150 \
             --remove-on-error \
-            --connect-timeout 20 --max-time 120 \
+            --connect-timeout 10 --max-time 30 \
             "https://github.com/denoland/deno/releases/download/v${version}/${archive}.sha256sum" \
             --output "${archive_checksum_path}"; then
             echo "Failed to download Deno archive checksum for ${archive}" >&2
             exit 1
           fi
 
-          if ! curl --fail --location --show-error --retry 5 --retry-delay 2 \
-            --retry-max-time 120 \
+          if ! curl --fail --location --show-error --retry 20 --retry-delay 8 \
+            --retry-all-errors \
+            --retry-max-time 150 \
             --remove-on-error \
             --connect-timeout 20 --max-time 120 \
             "https://github.com/denoland/deno/releases/download/v${version}/${archive}" \
