@@ -248,28 +248,48 @@ describe("cli/commands/dev/port-fallback", () => {
     // Probing both loopback families must not make a genuinely free port look
     // busy on a host that has only one of them - an IPv4-only container would
     // otherwise report every port as taken and never fall forward at all.
-    it("recognises the error an address this host does not have throws", () => {
-      let thrown: unknown;
-      try {
-        // ::2 is assigned to no interface, so binding it fails the same way
-        // binding ::1 fails on a host with IPv6 switched off.
-        Deno.listen({ hostname: "::2", port: 0 }).close();
-      } catch (error) {
-        thrown = error;
-      }
-
-      assert(thrown !== undefined, "listening on an unassigned address must throw");
-      assert(
-        isAddressFamilyUnavailableError(thrown),
-        `the runtime's own error must be recognised, got ${String(thrown)}`,
+    // The shapes are constructed rather than provoked from a real bind. There
+    // is no address a test can rely on being unbindable: `::2` is unassigned on
+    // most hosts but bindable on some, and on Linux with
+    // `net.ipv6.ip_nonlocal_bind=1` the bind simply succeeds. Depending on that
+    // would be the same ambient-state assumption this file just removed from
+    // "accepts a port nothing is holding". Constructing the shapes also reaches
+    // the Node branch, which a live bind on a Deno host cannot exercise at all.
+    it("recognises the error class Deno itself raises", () => {
+      // Deno's own constructor, not a hand-rolled Error with a spoofed name: if
+      // the runtime ever renames this class the test fails loudly here rather
+      // than drifting silently away from what the probe actually catches.
+      const error = new Deno.errors.AddrNotAvailable(
+        "Can't assign requested address (os error 49)",
       );
-      assert(!isPortInUseError(thrown), "an absent address is not a port collision");
+
+      assert(isAddressFamilyUnavailableError(error), "Deno's AddrNotAvailable must be recognised");
+      assert(!isPortInUseError(error), "an absent address is not a port collision");
     });
 
     it("recognises the Node error shapes", () => {
       for (const code of ["EADDRNOTAVAIL", "EAFNOSUPPORT"]) {
         const error = Object.assign(new Error(`listen ${code} ::1`), { code });
         assert(isAddressFamilyUnavailableError(error), `${code} must be recognised`);
+      }
+    });
+
+    it("recognises a missing family reported only in the message", () => {
+      // Some runtimes surface the failure with neither a `code` nor a
+      // distinguishing `name` - EAFNOSUPPORT reaches Deno this way.
+      const messages = [
+        "Cannot assign requested address (os error 99)",
+        "Can't assign requested address (os error 49)",
+        "listen EADDRNOTAVAIL: address not available",
+        "Address family not supported by protocol (os error 97)",
+        "listen EAFNOSUPPORT ::1",
+      ];
+
+      for (const message of messages) {
+        assert(
+          isAddressFamilyUnavailableError(new Error(message)),
+          `must be recognised from the message alone: ${message}`,
+        );
       }
     });
 
