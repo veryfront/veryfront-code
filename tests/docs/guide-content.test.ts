@@ -200,6 +200,112 @@ describe("guide content contracts", () => {
     );
   });
 
+  it("tells the reader a Cloud environment is protected before asking for a request", async () => {
+    // Veryfront Cloud environments are protected by default: an anonymous
+    // request to the environment URL gets a 302 to a Veryfront sign-in page on
+    // every path, API routes included, and VERYFRONT_API_TOKEN does not change
+    // that. A signed-in non-member gets a 403 instead, per
+    // checkProtectedProxyAccess in src/proxy/proxy-access-control.ts. Which
+    // apex serves that sign-in page varies by deployment host — see the
+    // sign-in-apex case below, which owns that half. Verified against a live
+    // protected environment on published 0.1.1229:
+    //   curl -s -o /dev/null -w '%{http_code} %{redirect_url}' \
+    //     https://<project>.production.veryfront.com/api/health
+    //   -> 302 https://veryfront.com/sign-in?from=...
+    // A verification step written as a bare `curl -sSf <environment-url>`
+    // therefore exits 0 with an empty body whether or not the deployment
+    // works, so the page has to name the redirect and print the status code.
+    // Resolved from the module, not the process cwd: test files share one
+    // process under --parallel and src/testing/cwd.ts chdirs it.
+    const doc = await Deno.readTextFile(
+      new URL("../../docs/getting-started/deploy-project.md", import.meta.url),
+    );
+    const prose = doc.replace(/\s+/g, " ");
+
+    assertStringIncludes(prose, "protected by default");
+    assertStringIncludes(prose, "https://veryfront.com/sign-in");
+    assertStringIncludes(prose, "Public Environment");
+    assertStringIncludes(prose, "not a member of the project gets a `403`");
+    assertStringIncludes(doc, "-w '%{http_code} %{redirect_url}\\n'");
+    assertEquals(doc.includes("```bash\ncurl -sSf <environment-url>\n```"), false);
+  });
+
+  it("does not promise one sign-in apex for every protected environment", async () => {
+    // buildProxyAuthRedirectUrl picks the sign-in apex from the host the
+    // request arrived on (src/proxy/proxy-access-control.ts:202, via
+    // resolveSignInApex at :187). A preview host on *.preview.veryfront.org is
+    // sent to https://veryfront.org/sign-in, not .com — asserted at
+    // src/proxy/proxy-access-control.test.ts:102. Stating a single apex sends a
+    // reader to sign in on a domain whose cookie the deployment host never
+    // receives, so the redirect loop never closes.
+    //
+    // Structural, not a keyword check: it collects every sign-in URL the page
+    // prints and requires both apexes to appear. Prose that names only
+    // veryfront.com cannot satisfy it, which is exactly the defect. A plain
+    // `assertStringIncludes(prose, "https://veryfront.com/sign-in")` passes on
+    // the broken page and so cannot stand in for this.
+    const doc = await Deno.readTextFile(
+      new URL("../../docs/getting-started/deploy-project.md", import.meta.url),
+    );
+    const prose = doc.replace(/\s+/g, " ");
+
+    const signInApexes = new Set(
+      [...doc.matchAll(/https:\/\/(veryfront\.(?:com|org))\/sign-in/g)].map((match) => match[1]),
+    );
+    assertEquals(signInApexes.has("veryfront.com"), true);
+    assertEquals(signInApexes.has("veryfront.org"), true);
+
+    // The page has to say the apex varies and name the host class that varies,
+    // so the reader knows to read the redirect rather than memorize one URL.
+    assertStringIncludes(prose, "depends on the host serving the environment");
+    assertStringIncludes(prose, "`*.preview.veryfront.org`");
+
+    // The two sentences that previously asserted a universal .com apex.
+    assertEquals(
+      prose.includes("request gets a `302` to `https://veryfront.com/sign-in`"),
+      false,
+    );
+    assertEquals(
+      prose.includes("answers `302` to `https://veryfront.com/sign-in`"),
+      false,
+    );
+  });
+
+  it("does not require a 200 from the environment root to call a deploy verified", async () => {
+    // Deployment selects a readiness route only from static page routes and
+    // leaves it null when the project has none
+    // (cli/shared/deployment/deploy-project.ts:1293), and
+    // buildEnvironmentReadinessProbes returns zero probes for a null route
+    // (:875) — so an API-only deployment is verified without any page ever
+    // answering 200, as asserted at
+    // cli/shared/deployment/deploy-project.test.ts:635. A page that presents
+    // 200 at <environment-url> as the universal success signal tells the owner
+    // of such a project their working deployment failed.
+    const doc = await Deno.readTextFile(
+      new URL("../../docs/getting-started/deploy-project.md", import.meta.url),
+    );
+    const prose = doc.replace(/\s+/g, " ");
+
+    // Structural: the verification command must carry a route placeholder. A
+    // command ending at the bare environment URL is the defect itself, so
+    // pinning the command shape is what makes this test able to fail.
+    assertStringIncludes(
+      doc,
+      "-w '%{http_code} %{redirect_url}\\n' <environment-url>/<route>",
+    );
+    assertEquals(
+      doc.includes("-w '%{http_code} %{redirect_url}\\n' <environment-url>\n"),
+      false,
+    );
+
+    // And the prose must tell the reader to validate that route's own status
+    // rather than a blanket 200.
+    assertStringIncludes(prose, "Probe a route your project actually serves");
+    assertStringIncludes(prose, "Validate the status that route is expected to return");
+    assertStringIncludes(prose, "skips the browser readiness probe");
+    assertEquals(prose.includes("A public environment answers `200`."), false);
+  });
+
   it("offers open --site as the way back to the deployed environment URL", async () => {
     // The deploy docs tell readers to use the URL Deploy printed. A reader who
     // did not record it needs a command that reproduces it, so both deploy
