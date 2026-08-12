@@ -11,7 +11,7 @@
  * `Release assets were not ready within 120s (last state: missing)`.
  *
  * That dispatch is a POST, and it carries a JWS envelope rather than a CSRF
- * double-submit token — the control plane is not a browser and has no
+ * double-submit token. The control plane is not a browser and has no
  * `__Host-vf_csrf` cookie to echo. `CsrfHandler` runs at priority 5, ahead of
  * `ProjectRunExecuteHandler`, and matches every path, so a project whose
  * config enables CSRF at all turns its own release asset builds into 403s.
@@ -82,7 +82,7 @@ async function dispatchReleaseAssetBuild(
     requestMethod: "POST",
     requestPath: EXECUTE_PATH,
   });
-  const request = new Request(`https://sales-demo.veryfront.com${EXECUTE_PATH}`, {
+  const request = new Request(`https://example-project.example.test${EXECUTE_PATH}`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -146,8 +146,8 @@ describe("release assets: control-plane build dispatch", () => {
   });
 
   it("builds a manifest when the project excludes a path from csrf", async () => {
-    // The shape the sales-demo project needed: keep CSRF enforced everywhere
-    // except the agent endpoint the chat client posts to.
+    // The shape that first surfaced this: keep CSRF enforced everywhere except
+    // the agent endpoint the chat client posts to.
     const outcome = await dispatchReleaseAssetBuild({ excludePaths: ["/api/ag-ui"] });
     assertEquals(
       outcome.begun,

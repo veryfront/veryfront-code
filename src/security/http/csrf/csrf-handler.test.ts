@@ -63,26 +63,107 @@ describe("security/http/csrf/csrf-handler", () => {
   });
 
   describe("signed control-plane surfaces", () => {
-    it("passes a run dispatch through for every enabled csrf shape", async () => {
+    const SIGNED = { "x-veryfront-control-plane-jws": "header.payload.signature" };
+
+    it("passes every registered surface through for every enabled csrf shape", async () => {
       // The control plane holds no `__Host-vf_csrf` cookie and authorizes from
       // a signed envelope the receiving handler verifies. Gating it here left a
       // project that configured CSRF unable to build its own release assets.
-      for (const csrf of [true, { excludePaths: ["/api/ag-ui"] }]) {
-        const result = await handler.handle(
-          new Request(
-            "https://acme.veryfront.com/api/control-plane/runs/run_1/execute",
-            { method: "POST", body: "{}" },
-          ),
-          createCtx(csrf),
-        );
+      const surfaces = [
+        { method: "POST", path: "/api/control-plane/agents/list" },
+        { method: "POST", path: "/api/control-plane/runs/run_1/execute" },
+        { method: "POST", path: "/api/control-plane/runs/run_1/stream" },
+        { method: "POST", path: "/api/control-plane/runs/run_1/resume" },
+        { method: "DELETE", path: "/api/control-plane/runs/run_1" },
+      ];
 
-        assertEquals(result.response, undefined);
+      for (const csrf of [true, { excludePaths: ["/api/ag-ui"] }]) {
+        for (const surface of surfaces) {
+          const result = await handler.handle(
+            new Request(`https://acme.example.test${surface.path}`, {
+              method: surface.method,
+              headers: SIGNED,
+              body: "{}",
+            }),
+            createCtx(csrf),
+          );
+
+          assertEquals(
+            result.response,
+            undefined,
+            `${surface.method} ${surface.path} was gated`,
+          );
+        }
       }
     });
 
     it("still rejects a token-less POST to a path that merely starts alike", async () => {
       const result = await handler.handle(
-        new Request("https://acme.veryfront.com/api/control-plane-mirror/runs", {
+        new Request("https://acme.example.test/api/control-plane-mirror/runs", {
+          method: "POST",
+          body: "{}",
+        }),
+        createCtx(true),
+      );
+
+      assertEquals(result.response?.status, 403);
+    });
+
+    it("still enforces CSRF on a project route inside the control-plane namespace", async () => {
+      // The reserved namespace is not exclusively routed. In a custom runtime
+      // served with `createHandler`, an App or Pages API route under
+      // `/api/control-plane/*` that no control-plane handler claims falls
+      // through to `ApiHandlerWrapper` and runs project code authenticated by
+      // cookies. Exempting the prefix would let any project disable CSRF on its
+      // own state-changing routes by choosing a path.
+      const projectRoutes = [
+        { method: "POST", path: "/api/control-plane/checkout" },
+        { method: "POST", path: "/api/control-plane/runs" },
+        { method: "POST", path: "/api/control-plane/runs/run_1" },
+        { method: "POST", path: "/api/control-plane/runs/run_1/execute/extra" },
+        { method: "POST", path: "/api/control-plane/agents/list/all" },
+        { method: "PUT", path: "/api/control-plane/runs/run_1/execute" },
+        { method: "DELETE", path: "/api/control-plane/runs/run_1/execute" },
+      ];
+
+      for (const route of projectRoutes) {
+        const result = await handler.handle(
+          new Request(`https://acme.example.test${route.path}`, {
+            method: route.method,
+            body: "{}",
+          }),
+          createCtx(true),
+        );
+
+        assertEquals(
+          result.response?.status,
+          403,
+          `${route.method} ${route.path} skipped the CSRF gate`,
+        );
+      }
+    });
+
+    it("does not let a signature header alone exempt a project route", async () => {
+      // A same-origin caller can set any header it likes. The signature only
+      // earns an exemption on a path a verifying handler owns, so an
+      // unrecognized path stays gated even when the header is present.
+      const result = await handler.handle(
+        new Request("https://acme.example.test/api/control-plane/checkout", {
+          method: "POST",
+          headers: SIGNED,
+          body: "{}",
+        }),
+        createCtx(true),
+      );
+
+      assertEquals(result.response?.status, 403);
+    });
+
+    it("still enforces CSRF on a registered surface with no signature header", async () => {
+      // A cross-site form POST cannot attach the signature header. Without it
+      // the request is browser shaped and must present a CSRF token.
+      const result = await handler.handle(
+        new Request("https://acme.example.test/api/control-plane/runs/run_1/execute", {
           method: "POST",
           body: "{}",
         }),
