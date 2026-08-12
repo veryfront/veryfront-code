@@ -105,8 +105,8 @@ The CLI MCP server supports two transports. Most agents work with HTTP.
 | HTTP      | Your agent supports remote MCP URLs (Claude Code, Cursor, Codex). | Auto-starts with `veryfront dev`.   |
 | stdio     | Your agent only supports stdio MCP servers.                       | Run `veryfront mcp` from the agent. |
 
-When you run `veryfront dev`, the HTTP MCP server listens on `--port + 2`
-(default `3002`). The endpoint is always `/mcp`.
+When you run `veryfront dev`, the HTTP MCP server listens two ports above the
+port the dev server bound (default `3002`). The endpoint is always `/mcp`.
 
 ```
 http://localhost:3002/mcp        # dev
@@ -209,7 +209,7 @@ is active.
 
 ### Port already in use
 
-The dev MCP port follows the dev server port (`--port + 2`). If you start the dev server with `--port 4000`, the MCP server moves to `4002`. Update the URL in your agent config to match.
+The dev MCP port is always two above the port the dev server bound, so a dev server that bound `4000` serves MCP at `http://localhost:4002/mcp`. Take that port from the URL the dev server printed, not from the `--port` you passed: this section is exactly the case where the two differ, because a requested port that is already in use falls forward to the next free one and MCP moves with it. Update the URL in your agent config to match.
 
 ### CORS error from a browser-based agent
 
