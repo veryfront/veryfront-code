@@ -21,20 +21,10 @@ describe("Skills Command", () => {
     }).output();
     const decoder = new TextDecoder();
 
-    // Strip Deno runtime download/compile progress lines so assertions about
-    // application stderr are not sensitive to a cold npm package cache.
-    // "Download https://..." is written by Deno when an npm dependency (e.g.
-    // `yaml`) is not yet cached; it is not application output.
-    const rawStderr = decoder.decode(result.stderr);
-    const stderr = rawStderr
-      .split("\n")
-      .filter((line) => !line.startsWith("Download "))
-      .join("\n");
-
     return {
       code: result.code,
       stdout: decoder.decode(result.stdout),
-      stderr,
+      stderr: decoder.decode(result.stderr),
     };
   }
 

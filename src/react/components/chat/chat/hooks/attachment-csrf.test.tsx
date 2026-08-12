@@ -219,10 +219,7 @@ function renderAttachments(
   };
 }
 
-describe("chat attachment CSRF", {
-  sanitizeOps: false,
-  sanitizeResources: false,
-}, () => {
+describe("chat attachment CSRF", () => {
   // `<Chat uploadApi>` wires exactly this hook, so this is the transport the
   // advertised chat-with-attachments flow actually 403s on.
   it("sends the double-submit token on a <Chat uploadApi> upload", async () => {

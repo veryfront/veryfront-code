@@ -138,6 +138,27 @@ describe("commands/dev/handler", () => {
       if (result.success) assertEquals(result.data.port, 3000);
     });
 
+    it("rejects PORT with trailing garbage (PORT=3001abc) — full string must be digits", () => {
+      Deno.env.set("PORT", "3001abc");
+      const result = parseDevArgs(parseCliArgs(["dev"]));
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.port, 3000);
+    });
+
+    it("rejects PORT=0 as outside the valid range (1-65535)", () => {
+      Deno.env.set("PORT", "0");
+      const result = parseDevArgs(parseCliArgs(["dev"]));
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.port, 3000);
+    });
+
+    it("rejects PORT=65536 as outside the valid range (1-65535)", () => {
+      Deno.env.set("PORT", "65536");
+      const result = parseDevArgs(parseCliArgs(["dev"]));
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.port, 3000);
+    });
+
     it("uses default 3000 when neither PORT nor VERYFRONT_PORT are set", () => {
       const result = parseDevArgs(parseCliArgs(["dev"]));
       assertEquals(result.success, true);

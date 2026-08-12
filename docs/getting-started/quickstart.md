@@ -88,7 +88,7 @@ The CLI prints the URL it is serving on:
 [http://localhost:3000](http://localhost:3000) reaches the same server.
 
 The dev server uses port 3000 by default. You can also set the `PORT` env var
-instead of the flag — `veryfront dev` reads it as a lower-precedence default,
+instead of the flag; `veryfront dev` reads it as a lower-precedence default,
 the same way Next.js, Vite, Heroku, and Railway all treat `PORT`:
 
 ```bash

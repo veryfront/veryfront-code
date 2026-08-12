@@ -35,6 +35,6 @@ export const devHelp: CommandHelp = {
     "  4. Default: 3000",
     "",
     "When the requested port is taken, the server falls forward to the next",
-    "free port and prints a warning naming both the requested and actual port.",
+    "free port. Open the URL the CLI prints to reach the running server.",
   ],
 };

@@ -13,14 +13,38 @@ import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
 import type { ParsedArgs } from "#cli/shared/types";
 
 /**
+ * Parse a port from an env var string.  Returns `undefined` when the var is
+ * absent, empty, not an all-digit integer, or outside the valid port range
+ * 1–65535.  Invalid values emit a warning so the developer sees exactly what
+ * was rejected rather than getting a silent fallback.
+ *
+ * `Number.parseInt("3001abc")` silently returns 3001, so this function requires
+ * the entire trimmed string to be digits before converting — no prefix parsing.
+ */
+function parsePortEnv(name: string): number | undefined {
+  const raw = getEnv(name);
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  if (trimmed === "") return undefined;
+  if (!/^\d+$/.test(trimmed)) {
+    logWarning(`${name}=${JSON.stringify(raw)} is not a valid port number; ignoring`);
+    return undefined;
+  }
+  const port = Number(trimmed);
+  if (port < 1 || port > 65535) {
+    logWarning(`${name}=${port} is outside the valid port range (1-65535); ignoring`);
+    return undefined;
+  }
+  return port;
+}
+
+/**
  * Read a numeric port from an env var, returning `fallback` when the var is
- * absent or contains a value that is not a valid integer.
+ * absent or contains a value that fails strict validation (non-integer string,
+ * trailing garbage, or a value outside the 1-65535 range).
  */
 function readPortEnv(name: string, fallback: number): number {
-  const value = getEnv(name);
-  if (value === undefined) return fallback;
-  const port = Number.parseInt(value, 10);
-  return Number.isNaN(port) ? fallback : port;
+  return parsePortEnv(name) ?? fallback;
 }
 
 /**
@@ -114,14 +138,11 @@ export async function handleDevCommand(args: ParsedArgs): Promise<void> {
   // developers arriving from Next.js, Vite, Heroku, and Railway expect to work.
   const portExplicit = args.port !== undefined || args.p !== undefined;
   if (portExplicit) {
-    const portEnvValue = getEnv("PORT");
-    if (portEnvValue !== undefined && portEnvValue.trim() !== "") {
-      const portFromEnv = Number.parseInt(portEnvValue, 10);
-      if (!Number.isNaN(portFromEnv) && opts.port !== portFromEnv) {
-        logWarning(
-          `PORT=${portFromEnv} is set but --port ${opts.port} takes precedence`,
-        );
-      }
+    const portFromEnv = parsePortEnv("PORT");
+    if (portFromEnv !== undefined && opts.port !== portFromEnv) {
+      logWarning(
+        `PORT=${portFromEnv} is set but --port ${opts.port} takes precedence`,
+      );
     }
   }
 
