@@ -183,11 +183,16 @@ The lesson is the general one:
 1. **Static per-field enumeration always lags the org.** Custom `__c` fields,
    record types, and standard fields we didn't list are all unreachable until
    someone edits `connector.json`.
-2. **Even a listed field can fail**, because `Type`, `Status`, `Priority`,
-   `Origin`, and `Reason` are **restricted picklists**. Sending `Type = "Question"`
-   to an org whose picklist doesn't contain "Question" returns
+2. **Even a listed field can fail on its value.** `Type`, `Status`, `Priority`,
+   `Origin`, and `Reason` are **picklists with org-defined values**. Per the
+   Object Reference these Case fields are *not* API-`Restricted picklist` by
+   default (the only restricted Case picklists are `Language`/`ArticleLanguage`),
+   so a vanilla org may *accept* an off-list value — but the moment an admin turns
+   on "Restrict picklist to the values defined in the value set" (common), or a
+   record-type/dependency scopes the values, sending `Type = "Question"` returns
    `INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST` ("bad value for restricted picklist
-   field") — case-sensitive, and scoped per record type.
+   field"), case-sensitive. Either way an off-list value is bad triage data — the
+   value must come from the org, via `describe`/`get_picklist_values`.
 3. **Silent empty returns read as success.** The tool should surface the write
    result (id / errors), not an empty string.
 
@@ -199,12 +204,15 @@ fork.
 ### 4.1 Case.Reason picklist ↔ taxonomy mismatch — the #1 breaker for *this* pipeline
 
 `case-dispose` is instructed to set `Case.Reason` to the taxonomy's
-`reason_api_name` (`agents/case-dispose.ts`). `Reason` is a restricted picklist.
-The shipped `knowledge/case-triage-taxonomy.md` (v5) maps categories to specific
-`reason_api_name` values. **If the forker's org does not have those exact Reason
-values, every dispose write fails.** Salesforce's *default* Case Reason values
-(Installation, Equipment Complexity, Performance, Breakdown, Equipment Design,
-Feedback, Other) are themselves an oddity most orgs have already customised.
+`reason_api_name` (`agents/case-dispose.ts`). `Reason` is a picklist whose values
+are org-defined (createable + updateable, and commonly *restricted* by the admin
+setting above). The shipped `knowledge/case-triage-taxonomy.md` (v5) maps
+categories to specific `reason_api_name` values. **If the forker's org's `Reason`
+picklist doesn't contain those values, dispose writes either fail (restricted org)
+or silently create mismatched data (unrestricted org) — both break the demo.**
+Salesforce's *default* Case Reason values (Installation, Equipment Complexity,
+Performance, Breakdown, Equipment Design, Feedback, Other) are themselves an
+oddity most orgs have already customised.
 
 This is the sharpest edge and it is entirely ours to design around (§5, §6, §7).
 
@@ -412,16 +420,27 @@ The point of a baseline is to let *many* example agents (not just triage) run
 against a vanilla org with **no custom fields and no schema edits**. The way to
 guarantee that is to constrain every default SOQL query and every write tool to
 **standard fields on standard objects** — those cannot be deleted, so they exist
-on every org — while treating restricted picklists and FLS as run-time unknowns.
+on every org — while treating picklist *values* and FLS as run-time unknowns.
+
+> Field flags below are verified against the Salesforce **Object Reference** PDF
+> (§Sources). Note the API's `Restricted picklist` flag is *narrow*: on Case, only
+> `Language`/`ArticleLanguage` carry it — `Status`/`Priority`/`Origin`/`Reason`/
+> `Type` do **not** by default. But orgs routinely enable "restrict to defined
+> values," and off-list values are bad data regardless — so treat every picklist
+> as describe-first. The authoritative per-field `createable`/`updateable`/
+> `required`/restricted flags should come from `describe()` at run time (the #6364
+> matrix already surfaces `queryable`/`createable`/`updateable`/`deletable`), not
+> from a hard-coded list.
 
 ### A.1 The three baseline rules
 
 1. **Read only standard fields.** A standard field always *exists*, so a `SELECT`
    never throws `No such column` for schema reasons. (It can still be hidden by
    FLS for a weak profile — rule 3.)
-2. **Never blind-write a restricted picklist.** `Status`, `Priority`, `Origin`,
-   `Reason`, `Type` (Case), `LeadStatus`, `StageName` (Opp), `Rating`,
-   `Industry`, etc. carry **org-specific values**. Either omit them, or
+2. **Never blind-write a picklist value.** `Status`, `Priority`, `Origin`,
+   `Reason`, `Type` (Case), `Status` (Lead), `StageName` (Opp), `Rating`,
+   `Industry`, etc. carry **org-specific values** — not API-restricted by default,
+   but frequently restricted by admins and always meaningful. Either omit them, or
    `describe`/`get_picklist_values` first and send a value the org actually has.
    Safe blind-write targets are **text, textarea, number, date, checkbox, and
    lookup-Id** fields.
@@ -432,18 +451,25 @@ on every org — while treating restricted picklists and FLS as run-time unknown
 
 ### A.2 Baseline objects (the "get-going" set)
 
-| Object | Cloud / edition needs | Required on create | Safe blind-write fields (non-picklist) | Handle-via-describe (restricted picklist) |
+| Object | Cloud / edition needs | Required on create | Safe blind-write fields (non-picklist) | Picklists — validate via describe |
 | --- | --- | --- | --- | --- |
 | **Account** | any | `Name` | `Name`, `Phone`, `Website`, `Billing*`, `Shipping*`, `NumberOfEmployees`, `AnnualRevenue`, `Description`, `AccountNumber` | `Type`, `Industry`, `Rating`, `Ownership` |
 | **Contact** | any | `LastName` | `FirstName`, `LastName`, `Email`, `Phone`, `MobilePhone`, `Title`, `Department`, `AccountId`, `Mailing*`, `Description` | `LeadSource`, `Salutation` |
-| **Lead** | Sales | `LastName`, `Company` | `FirstName`, `LastName`, `Company`, `Email`, `Phone`, `Title`, `Website`, `Street/City/State/PostalCode/Country`, `NumberOfEmployees`, `Description` | `Status`, `LeadSource`, `Industry`, `Rating` |
+| **Lead** | Sales | `LastName`, `Company` ¹ | `FirstName`, `LastName`, `Company`, `Email`, `Phone`, `Title`, `Website`, `Street/City/State/PostalCode/Country`, `NumberOfEmployees`, `Description` | `Status`, `LeadSource`, `Industry`, `Rating` |
 | **Case** | Service | *(none system-required)* | `Subject`, `Description`, `SuppliedName/Email/Phone/Company`, `ContactId`, `AccountId`, `ParentId` | `Status`, `Priority`, `Origin`, `Reason`, `Type` |
-| **CaseComment** | Service | `ParentId`, `CommentBody` | `CommentBody`, `IsPublished` (bool) | — |
-| **Opportunity** | Sales | `Name`, `StageName`, `CloseDate` | `Name`, `Amount`, `CloseDate`, `AccountId`, `Description`, `NextStep`, `Probability` | `StageName`, `Type`, `LeadSource`, `ForecastCategory` |
-| **Task** (activity) | any | `Status` has default | `Subject`, `ActivityDate`, `WhoId`, `WhatId`, `Description`, `OwnerId` | `Status`, `Priority`, `TaskSubtype` |
-| **Event** (activity) | any | `DurationInMinutes`, `ActivityDateTime` (or `StartDateTime`+`EndDateTime`) | `Subject`, `WhoId`, `WhatId`, `Location`, `Description`, `OwnerId` | `ShowAs`, `EventSubtype` |
+| **CaseComment** | Service | `ParentId` (CommentBody effectively required) | `CommentBody` (createable **and** updateable), `IsPublished` (bool) | — |
+| **Opportunity** | Sales | `Name`, `StageName`, `CloseDate` | `Name`, `Amount`, `CloseDate`, `AccountId`, `Description`, `NextStep`, `Probability` | `StageName`, `Type`, `LeadSource` (`ForecastCategory` is **read-only**, derived from `StageName`) |
+| **Task** (activity) | any | *(none — `Status`/`Priority` defaulted)* | `Subject`, `ActivityDate`, `WhoId`, `WhatId`, `Description`, `OwnerId` | `Status`, `Priority`, `TaskSubtype` (restricted) |
+| **Event** (activity) | any | conditional: `DurationInMinutes`+`ActivityDateTime` **or** `StartDateTime`+`EndDateTime` ² | `Subject`, `WhoId`, `WhatId`, `Location`, `Description`, `OwnerId` | `ShowAs`, `EventSubtype` |
 | **User** | any (read-only for lookups) | — | *(don't create)* | — |
 | **Group** (queues) | any (read-only for lookups) | — | *(don't create)* | — |
+
+¹ `Lead.Company` is marked `Nillable` in metadata but the Object Reference labels
+it *Required*; a null `Company` with a person-account record type converts the lead
+to a Person Account (out of baseline, §A.5). Treat it as required.
+² `Event`'s duration/time fields are `Nillable` in metadata; the requirement is
+conditional (duration+start **or** start+end), enforced by the app, not a hard
+API flag — so supply a valid pair rather than assuming one field is required.
 
 ### A.3 Standard read-field sets (safe default `SELECT`s)
 
@@ -624,6 +650,9 @@ the `__r` suffix (e.g. `SELECT Ticket__r.Owner.Name FROM Case`); the agent needs
 this in the tool description or it will guess `__c`.
 
 ## Sources
+
+Standard object & field metadata (authoritative — createable/updateable/required/restricted flags in Appendix A were verified against this):
+- [Object Reference for the Salesforce Platform (PDF)](https://resources.docs.salesforce.com/latest/latest/en-us/sfdc/pdf/object_reference.pdf) — Account, Contact, Lead, Case, CaseComment, Opportunity, Task, Event field tables
 
 Salesforce edition / API access:
 - [Supported Editions & Required Permissions — REST API Developer Guide](https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/intro_rest_compatible_editions.htm)
