@@ -473,7 +473,9 @@ export function createHostedProjectRemoteToolSources(
     const remoteConfig = createAgentServiceRemoteMcpConfig({
       server,
       authToken: input.authToken,
-      apiMcpUrl: input.apiMcpUrl,
+      apiMcpUrl: server.kind === "veryfront-api"
+        ? createProjectScopedMcpUrl(input.apiMcpUrl, input.getProjectId())
+        : input.apiMcpUrl,
       studioMcpUrl: input.studioMcpUrl,
       clientProfile: input.clientProfile,
       getProjectId: input.getProjectId,
@@ -497,4 +499,19 @@ export function createHostedProjectRemoteToolSources(
   }
 
   return sources;
+}
+
+export function createProjectScopedMcpUrl(
+  apiMcpUrl: string,
+  projectId: string | null | undefined,
+): string {
+  if (!projectId) {
+    return apiMcpUrl;
+  }
+
+  const url = new URL(apiMcpUrl);
+  url.pathname = `${url.pathname.replace(/\/mcp\/?$/, "")}/projects/${
+    encodeURIComponent(projectId)
+  }/mcp`;
+  return url.toString();
 }

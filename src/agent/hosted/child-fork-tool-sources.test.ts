@@ -165,7 +165,7 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
   assertEquals(
     fixtures.createdConfigs.map((config) => [config.id, config.endpoint]),
     [
-      ["veryfront-mcp-fork", "https://api.example/mcp"],
+      ["veryfront-mcp-fork", "https://api.example/projects/project-1/mcp"],
       ["studio-mcp-live-tools", "https://studio.example/mcp"],
     ],
   );
