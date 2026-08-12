@@ -320,7 +320,7 @@ describe("agentAsTool", () => {
         },
       });
     };
-    const tool = agentAsTool(childAgent, "Run case ingest");
+    const tool = agentAsTool(childAgent, "Run case ingest", { publishChildStream: true });
     let settled = false;
     const execution = tool.execute(
       { input: "Fetch cases" },
