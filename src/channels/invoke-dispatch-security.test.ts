@@ -149,6 +149,11 @@ interface DispatchOverrides {
   readonly path?: string;
   /** Replaces the dispatch signature header name, or drops it when null. */
   readonly signatureHeader?: string | null;
+  /**
+   * Replaces the signed envelope with an arbitrary value, keeping the real
+   * verification key in context so the handler genuinely rejects it.
+   */
+  readonly signatureValue?: string;
 }
 
 /**
@@ -169,7 +174,8 @@ async function dispatchChannelInvoke(
 
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (overrides.signatureHeader !== null) {
-    headers[overrides.signatureHeader ?? "x-veryfront-dispatch-jws"] = jws;
+    headers[overrides.signatureHeader ?? "x-veryfront-dispatch-jws"] = overrides.signatureValue ??
+      jws;
   }
 
   const request = new Request(
@@ -260,6 +266,33 @@ describe("channels: signed channel dispatch vs a project CSRF policy", () => {
     });
     assertEquals(outcome.status, 403);
     assertEquals(outcome.answered, false);
+  });
+
+  it("still rejects an invoke POST whose dispatch signature does not verify", async () => {
+    // The exemption is granted on the header being present, so the whole of its
+    // safety rests on the handler behind it verifying the envelope. Drive the
+    // full chain to prove the request that takes the exemption is still
+    // rejected: `CsrfHandler` steps aside (no 403), `ChannelInvokeHandler`
+    // fails `verifyDispatchJws` and answers 401, and the agent never runs.
+    const foreign = await createDispatchSignature(createInvokeBody());
+
+    for (
+      const signatureValue of [
+        // Not a JWS at all.
+        "not-a-dispatch-envelope",
+        // Well formed and correctly bound to this body, but signed by a key the
+        // runtime does not trust.
+        foreign.jws,
+      ]
+    ) {
+      const outcome = await dispatchChannelInvoke(true, { signatureValue });
+      assertEquals(
+        outcome.status,
+        401,
+        `an unverifiable envelope was answered ${outcome.status}: ${outcome.body}`,
+      );
+      assertEquals(outcome.answered, false);
+    }
   });
 
   it("still rejects a genuinely signed dispatch aimed at a look-alike route", async () => {
