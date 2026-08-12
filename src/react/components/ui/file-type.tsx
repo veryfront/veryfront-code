@@ -236,24 +236,27 @@ export function getFileTypeLabel(ext: string, mediaType?: string): string {
 }
 
 /** Props accepted by `<FileType>` / `<FileTypeThumb>`. */
-export interface FileTypeProps {
+export interface FileTypeProps extends React.HTMLAttributes<HTMLDivElement> {
   extension: string;
-  className?: string;
+  /** React 19: ref is a regular prop, forwarded to the root node. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** Soft-fill badge — rounded square, tinted background, extension label. */
 export function FileType(
-  { extension, className }: FileTypeProps,
+  { extension, className, ref, ...props }: FileTypeProps,
 ): React.ReactElement {
   const { bg, text } = lookup(extension);
   return (
     <div
+      ref={ref}
+      data-testid="file-type-badge"
+      {...props}
       className={cn(
         "size-9 shrink-0 rounded-lg flex items-center justify-center",
         bg,
         className,
       )}
-      data-testid="file-type-badge"
     >
       <span className={cn("text-xs font-medium leading-none", text)}>
         {extension.toUpperCase()}
@@ -264,17 +267,19 @@ export function FileType(
 
 /** Solid-fill thumbnail — full-saturation square with white `.ext` text. */
 export function FileTypeThumb(
-  { extension, className }: FileTypeProps,
+  { extension, className, ref, ...props }: FileTypeProps,
 ): React.ReactElement {
   const { solid } = lookup(extension);
   return (
     <div
+      ref={ref}
+      data-testid="file-type-thumb"
+      {...props}
       className={cn(
         "flex size-10 shrink-0 items-center justify-center rounded-md text-xs font-medium text-white",
         solid,
         className,
       )}
-      data-testid="file-type-thumb"
     >
       <span>.{extension}</span>
     </div>
