@@ -202,12 +202,13 @@ describe("guide content contracts", () => {
 
   it("tells the reader a Cloud environment is protected before asking for a request", async () => {
     // Veryfront Cloud environments are protected by default: an anonymous
-    // request to the environment URL gets a 302 to
-    // https://veryfront.com/sign-in on every path, API routes included, and
-    // VERYFRONT_API_TOKEN does not change that. A signed-in non-member gets a
-    // 403 instead, per checkProtectedProxyAccess in
-    // src/proxy/proxy-access-control.ts. Verified against a live protected
-    // environment on published 0.1.1229:
+    // request to the environment URL gets a 302 to a Veryfront sign-in page on
+    // every path, API routes included, and VERYFRONT_API_TOKEN does not change
+    // that. A signed-in non-member gets a 403 instead, per
+    // checkProtectedProxyAccess in src/proxy/proxy-access-control.ts. Which
+    // apex serves that sign-in page varies by deployment host — see the
+    // sign-in-apex case below, which owns that half. Verified against a live
+    // protected environment on published 0.1.1229:
     //   curl -s -o /dev/null -w '%{http_code} %{redirect_url}' \
     //     https://<project>.production.veryfront.com/api/health
     //   -> 302 https://veryfront.com/sign-in?from=...
