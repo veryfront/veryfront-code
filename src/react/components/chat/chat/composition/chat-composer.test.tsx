@@ -340,7 +340,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       });
 
       const uploadAction = Array.from(document.querySelectorAll("button")).find(
-        (button) => button.textContent?.trim() === "Attach files to chat",
+        (button) => button.textContent?.trim() === "Add photos & files",
       );
       const menu = document.querySelector('[role="menu"]');
       assert(uploadAction, "Expected upload action to render");

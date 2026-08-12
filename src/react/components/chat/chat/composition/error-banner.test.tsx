@@ -17,7 +17,7 @@ describe("ErrorBanner", () => {
   it("renders a retry button with the default label and icon when onRetry is given", () => {
     const html = renderToString(<ErrorBanner error={new Error("boom")} onRetry={() => {}} />);
     assertStringIncludes(html, "<button");
-    assertStringIncludes(html, "Retry");
+    assertStringIncludes(html, "Try again");
     assertStringIncludes(html, "<svg");
   });
 

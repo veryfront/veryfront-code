@@ -5,6 +5,10 @@ export const INVOKE_AGENT_STREAM_EVENT_NAME = "veryfront.invoke_agent.stream";
 export interface InvokeAgentStreamValue {
   toolCallId: string;
   agentId: string;
+  /** Child agent display name, for the card header (falls back to the id). */
+  agentName?: string;
+  /** Child agent avatar URL, so the card header matches the main chat header. */
+  avatarUrl?: string;
   event: Record<string, unknown> & { type: string };
 }
 
@@ -12,7 +16,25 @@ export interface InvokeAgentStreamValue {
 export interface InvokeAgentStreamSnapshot {
   toolCallId: string;
   agentId: string;
+  agentName?: string;
+  avatarUrl?: string;
   events: Array<Record<string, unknown> & { type: string }>;
+}
+
+/** The child agent's identity carried alongside its event stream. */
+export interface InvokeAgentStreamIdentity {
+  agentName?: string;
+  avatarUrl?: string;
+}
+
+/** Read the child agent's display identity from a live value or a snapshot. */
+export function getInvokeAgentStreamIdentity(value: unknown): InvokeAgentStreamIdentity {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const record = value as Record<string, unknown>;
+  return {
+    agentName: typeof record.agentName === "string" ? record.agentName : undefined,
+    avatarUrl: typeof record.avatarUrl === "string" ? record.avatarUrl : undefined,
+  };
 }
 
 /** Build the generic tool data event consumed by the chat renderer. */
@@ -47,6 +69,8 @@ export function parseInvokeAgentStreamValue(value: unknown): InvokeAgentStreamVa
   return {
     toolCallId: record.toolCallId,
     agentId: record.agentId,
+    ...(typeof record.agentName === "string" ? { agentName: record.agentName } : {}),
+    ...(typeof record.avatarUrl === "string" ? { avatarUrl: record.avatarUrl } : {}),
     event: event as InvokeAgentStreamValue["event"],
   };
 }
@@ -108,9 +132,17 @@ export function appendInvokeAgentStreamSnapshot(
   ) {
     return null;
   }
+  const identity: InvokeAgentStreamIdentity = {
+    agentName: nextValue.agentName ??
+      (typeof existingRecord.agentName === "string" ? existingRecord.agentName : undefined),
+    avatarUrl: nextValue.avatarUrl ??
+      (typeof existingRecord.avatarUrl === "string" ? existingRecord.avatarUrl : undefined),
+  };
   return {
     toolCallId: nextValue.toolCallId,
     agentId: nextValue.agentId,
+    ...(identity.agentName ? { agentName: identity.agentName } : {}),
+    ...(identity.avatarUrl ? { avatarUrl: identity.avatarUrl } : {}),
     events: mergeConsecutiveDeltas([...existingEvents, nextValue.event]),
   };
 }

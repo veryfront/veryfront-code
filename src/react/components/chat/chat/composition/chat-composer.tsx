@@ -96,9 +96,10 @@ export function ChatInputModel(
 }
 
 /**
- * Attachment `+` control — a portalled `+` menu (Studio `PromptForm`'s
- * `PlusMenu`). The menu leads with "Attach files to chat" (opens the file
- * dialog) and adds "Select document" when `onSelectAttachment` is set.
+ * Attachment `+` control. When attaching files is the only action, `+` opens
+ * the file dialog directly. When `onSelectAttachment` is also set it becomes a
+ * portalled `+` menu (Studio `PromptForm`'s `PlusMenu`) with "Add photos &
+ * files" and "Select document".
  */
 export function ChatInputAttach(
   { icon, onClick, ref }: ChatInputAttachProps,
@@ -110,6 +111,25 @@ export function ChatInputAttach(
   const openDialog = () => c.onOpenAttachmentPicker?.();
   const runUpload = (event: React.MouseEvent<HTMLButtonElement>) =>
     onClick ? onClick(event, openDialog) : openDialog();
+
+  // When attaching files is the only action, the `+` opens the file dialog
+  // directly — a single-item dropdown is needless chrome (matches ChatGPT).
+  if (c.onAttach && !c.onSelectAttachment) {
+    return (
+      <div ref={ref} className="relative flex shrink-0 items-center">
+        <Button
+          type="button"
+          variant="icon-tertiary"
+          size="icon-lg"
+          aria-label="Add photos & files"
+          className="shrink-0"
+          onClick={runUpload}
+        >
+          {icon ?? <PlusIcon />}
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div ref={ref} className="relative flex shrink-0 items-center">
@@ -129,7 +149,7 @@ export function ChatInputAttach(
           {c.onAttach && (
             <DropdownMenuItem onSelect={runUpload}>
               <PaperclipIcon />
-              Attach files to chat
+              Add photos &amp; files
             </DropdownMenuItem>
           )}
           {c.onSelectAttachment && (
@@ -313,18 +333,6 @@ function ChatInputBase(
                 {children}
               </div>
             )}
-            {attachments && attachments.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2 pb-4">
-                {attachments.map((file) => (
-                  <AttachmentPill
-                    key={file.id}
-                    attachment={file}
-                    onRemove={onRemoveAttachment}
-                    className="w-[200px]"
-                  />
-                ))}
-              </div>
-            )}
             <ChatInputForm onSubmit={contextValue.onSubmit}>
               <div
                 onDragEnter={onDragEnter}
@@ -339,6 +347,23 @@ function ChatInputBase(
               >
                 {/* Drag overlay — files dragged onto the card (Studio PromptForm) */}
                 <DropZoneOverlay visible={isDragActive} />
+
+                {
+                  /* Pending attachments — inside the composer card, above the
+                    editor (Studio PromptForm), not floating as a separate row. */
+                }
+                {attachments && attachments.length > 0 && (
+                  <div className="mb-2.5 flex flex-wrap items-center gap-2">
+                    {attachments.map((file) => (
+                      <AttachmentPill
+                        key={file.id}
+                        attachment={file}
+                        onRemove={onRemoveAttachment}
+                        className="w-[200px]"
+                      />
+                    ))}
+                  </div>
+                )}
 
                 {/* Editor — occupies the top of the card (Studio PromptForm) */}
                 <ChatInputField placeholder={placeholder} className={theme?.input} />

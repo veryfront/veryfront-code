@@ -53,9 +53,13 @@
   --status-warning: #f99100;
   --status-error: #d40924;
   --alert-warning-bg: #f1e3cd;
+  --alert-warning-border: #f5ba67;
   --alert-error-bg: #ecd3d1;
+  --alert-error-border: #e06e7b;
   --alert-success-bg: #d4e2d2;
+  --alert-success-border: #6fb57c;
   --alert-info-bg: #e6e6e0;
+  --alert-info-border: #adadaa;
   --faint: oklch(from var(--foreground) l c h / 0.25);
   --soft: oklch(from var(--foreground) l c h / 0.7);
   --tint: oklch(from var(--foreground) l c h / 0.04);

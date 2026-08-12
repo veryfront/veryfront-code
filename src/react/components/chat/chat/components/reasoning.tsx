@@ -141,7 +141,7 @@ function ReasoningRoot(
 
   return (
     <ReasoningContext.Provider value={context}>
-      <div ref={ref} className={cn("not-prose mb-3", className)}>
+      <div ref={ref} className={cn("not-prose", className)}>
         {children ?? (
           <>
             <ReasoningTrigger icon={icon} labels={labels} />

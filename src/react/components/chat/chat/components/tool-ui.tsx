@@ -14,16 +14,19 @@ import {
   XCircleIcon,
 } from "../../../ui/icons/index.ts";
 import { Alert, AlertContent, AlertIcon } from "../../../ui/alert.tsx";
+import { Avatar } from "../../../ui/avatar.tsx";
 import { Status } from "../../../ui/status.tsx";
 import { createStrictContext } from "../../../create-strict-context.ts";
 import type { ChatDynamicToolPart, ChatToolPart } from "#veryfront/agent/react";
 import { type ChatJsonValue, toChatJsonValue } from "#veryfront/chat/json-value.ts";
 import { escapeHtml } from "#veryfront/utils/html-escape.ts";
 import { isSkillToolPart } from "../utils/message-parts.ts";
-import { getSkillToolProps, SkillTool } from "./skill-tool.tsx";
+import { CHILD_TOOL_STOPPED_STATE, getSkillToolProps, SkillTool } from "./skill-tool.tsx";
+import { Reasoning } from "./reasoning.tsx";
 import { useMessageContextOptional } from "../contexts/message-context.tsx";
 import {
   getInvokeAgentStreamEvents,
+  getInvokeAgentStreamIdentity,
   INVOKE_AGENT_STREAM_EVENT_NAME,
 } from "#veryfront/chat/invoke-agent-stream.ts";
 import { ChatMarkdown } from "../../chat-markdown.tsx";
@@ -67,6 +70,11 @@ const TOOL_STATUS_CONFIG: Record<
   "output-denied": {
     label: "Denied",
     icon: <XCircleIcon className="size-3.5 text-orange-600" />,
+  },
+  // Synthetic: a still-running child tool frozen once the turn was stopped.
+  [CHILD_TOOL_STOPPED_STATE]: {
+    label: "Stopped",
+    icon: <CircleIcon className="size-3.5 text-[var(--faint)]" />,
   },
   // Legacy states
   call: {
@@ -289,6 +297,10 @@ type InvokeAgentChildTool = ChatDynamicToolPart & { inputText?: string };
 interface InvokeAgentStreamView {
   reasoning: string;
   reasoningActive: boolean;
+  /** Child agent display name streamed from the runtime (falls back to the id). */
+  agentName?: string;
+  /** Child agent avatar URL streamed from the runtime. */
+  avatarUrl?: string;
   items: Array<
     | { type: "text"; text: string }
     | { type: "tool"; toolCallId: string }
@@ -299,6 +311,20 @@ interface InvokeAgentStreamView {
 function childEventString(event: Record<string, unknown>, key: string): string {
   const value = event[key];
   return typeof value === "string" ? value : "";
+}
+
+/**
+ * Best-effort parse of a streamed `inputText` JSON string into an object, so a
+ * child tool's `Parameters` block highlights the same way the top-level tool
+ * card does even when the runtime only streamed the raw input text.
+ */
+function parseChildInputText(inputText: string | undefined): unknown {
+  if (!inputText || !inputText.trim()) return undefined;
+  try {
+    return JSON.parse(inputText);
+  } catch {
+    return undefined;
+  }
 }
 
 function reduceInvokeAgentStream(
@@ -374,7 +400,9 @@ function reduceInvokeAgentStream(
         toolCallId,
         toolName: childEventString(event, "toolName") || existing?.toolName || "tool",
         state: "input-available",
-        input: Object.hasOwn(event, "input") ? event.input : existing?.input ?? {},
+        input: Object.hasOwn(event, "input")
+          ? event.input
+          : parseChildInputText(existing?.inputText) ?? existing?.input ?? {},
       });
       continue;
     }
@@ -385,7 +413,7 @@ function reduceInvokeAgentStream(
         toolCallId,
         toolName: existing?.toolName ?? "tool",
         state: "output-available",
-        input: existing?.input ?? {},
+        input: existing?.input ?? parseChildInputText(existing?.inputText) ?? {},
         output: Object.hasOwn(event, "output") ? event.output : null,
       });
       continue;
@@ -410,14 +438,21 @@ function reduceInvokeAgentStream(
 function useInvokeAgentStreamView(toolCallId: string): InvokeAgentStreamView {
   const message = useMessageContextOptional()?.message;
   return React.useMemo(() => {
+    let agentName: string | undefined;
+    let avatarUrl: string | undefined;
     const events = (message?.parts ?? []).flatMap((part) => {
       if (part.type !== `data-${INVOKE_AGENT_STREAM_EVENT_NAME}`) return [];
       if (!part.data || typeof part.data !== "object") return [];
-      return (part.data as Record<string, unknown>).toolCallId === toolCallId
-        ? getInvokeAgentStreamEvents(part.data)
-        : [];
+      if ((part.data as Record<string, unknown>).toolCallId !== toolCallId) return [];
+      const identity = getInvokeAgentStreamIdentity(part.data);
+      agentName = identity.agentName ?? agentName;
+      avatarUrl = identity.avatarUrl ?? avatarUrl;
+      return getInvokeAgentStreamEvents(part.data);
     });
-    return reduceInvokeAgentStream(events);
+    const view = reduceInvokeAgentStream(events);
+    view.agentName = agentName;
+    view.avatarUrl = avatarUrl;
+    return view;
   }, [message?.parts, toolCallId]);
 }
 
@@ -426,6 +461,7 @@ function InvokeAgentToolCall(
   { className, icon, ref }: Pick<ToolCallProps, "className" | "icon" | "ref">,
 ): React.ReactElement {
   const { tool, isExpanded, toggle } = useToolCall();
+  const messageContext = useMessageContextOptional();
   const childStream = useInvokeAgentStreamView(tool.toolCallId);
   const input = jsonRecord(tool.input);
   const rawOutput = jsonRecord(tool.output);
@@ -433,9 +469,18 @@ function InvokeAgentToolCall(
   const status = stringValue(output, "status")?.toLowerCase();
   const failed = tool.state === "output-error" || status === "failed" || status === "error" ||
     output?.ok === false;
-  const stopped = status === "cancelled" || status === "canceled" || status === "stopped";
+  const explicitStopped = status === "cancelled" || status === "canceled" ||
+    status === "stopped";
   const completed = tool.state === "output-available" || status === "completed" ||
     output?.ok === true;
+  // The turn stopped (user hit Stop / the stream aborted) before this child
+  // produced a terminal result: the enclosing message is no longer streaming
+  // yet the tool never resolved. Render it (and its live child rows) as Stopped
+  // instead of a forever-"Running" card. `messageContext == null` means we're
+  // outside a live transcript (e.g. a standalone card), so never infer a stop.
+  const interruptedByStop = messageContext != null && !messageContext.isStreaming &&
+    !completed && !failed && !explicitStopped;
+  const stopped = explicitStopped || interruptedByStop;
   const statusProps = failed
     ? { label: "Failed", color: "red" as const }
     : stopped
@@ -444,9 +489,12 @@ function InvokeAgentToolCall(
     ? { label: "Completed", color: "green" as const }
     : { label: "Running", color: "blue" as const, pulse: true };
   const agentId = stringValue(input, "agent_id") ?? stringValue(output, "agentId");
-  const title = agentId
+  const humanizedId = agentId
     ? agentId.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
     : "Child agent";
+  // Prefer the runtime-streamed display name; fall back to a humanized id.
+  const title = childStream.agentName ?? humanizedId;
+  const avatarUrl = childStream.avatarUrl ?? stringValue(output, "avatarUrl");
   const summary = jsonRecord(output?.summary);
   const result = tool.errorText ?? stringValue(output, "text") ?? stringValue(output, "error") ??
     stringValue(output, "terminalErrorMessage") ?? stringValue(summary, "text");
@@ -464,18 +512,10 @@ function InvokeAgentToolCall(
     ? "reasoning"
     : "instructions";
   const [instructionsOpen, setInstructionsOpen] = React.useState(phase === "instructions");
-  const [reasoningOpen, setReasoningOpen] = React.useState(
-    phase === "reasoning" && childStream.reasoningActive,
-  );
   const previousPhaseRef = React.useRef(phase);
   if (previousPhaseRef.current !== phase) {
     previousPhaseRef.current = phase;
     setInstructionsOpen(phase === "instructions");
-  }
-  const previousReasoningActiveRef = React.useRef(childStream.reasoningActive);
-  if (previousReasoningActiveRef.current !== childStream.reasoningActive) {
-    previousReasoningActiveRef.current = childStream.reasoningActive;
-    setReasoningOpen(phase === "reasoning" && childStream.reasoningActive);
   }
   const showBody = isExpanded && Boolean(
     instructions || childStream.reasoning || response || childStream.items.length,
@@ -496,9 +536,13 @@ function InvokeAgentToolCall(
         className="flex w-full items-center justify-between gap-3 text-left"
       >
         <span className="flex min-w-0 items-center gap-2">
-          <span className="mt-0 flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--muted)] text-sm font-medium text-[var(--foreground)]">
-            {icon ?? title.charAt(0)}
-          </span>
+          {icon
+            ? (
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-sm font-medium text-[var(--foreground)]">
+                {icon}
+              </span>
+            )
+            : <Avatar name={title} avatarSrc={avatarUrl} tone="muted" className="size-8" />}
           <span className="min-w-0 truncate text-sm font-medium text-[var(--foreground)]">
             {title}
           </span>
@@ -516,32 +560,24 @@ function InvokeAgentToolCall(
       {showBody && (
         <div className="mt-3 space-y-3 border-t border-[var(--edge)] pt-3">
           {instructions && (
-            <details
-              className="group/instructions"
+            // Reuse the main chat's reasoning disclosure so the child card's
+            // "Instructions" reads identically to a "Thought process" toggle.
+            <Reasoning.Root
+              text={instructions}
               open={instructionsOpen}
-              onToggle={(event) => setInstructionsOpen(event.currentTarget.open)}
+              onOpenChange={setInstructionsOpen}
             >
-              <summary className="cursor-pointer text-sm font-medium text-[var(--soft)]">
-                Instructions
-              </summary>
-              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--foreground)]">
+              <Reasoning.Trigger labels={{ thinking: "Instructions", thought: "Instructions" }} />
+              <Reasoning.Content className="whitespace-pre-wrap">
                 {instructions}
-              </p>
-            </details>
+              </Reasoning.Content>
+            </Reasoning.Root>
           )}
           {childStream.reasoning && (
-            <details
-              className="group/reasoning"
-              open={reasoningOpen}
-              onToggle={(event) => setReasoningOpen(event.currentTarget.open)}
-            >
-              <summary className="cursor-pointer text-sm font-medium text-[var(--soft)]">
-                Thought process
-              </summary>
-              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--soft)]">
-                {childStream.reasoning}
-              </p>
-            </details>
+            <Reasoning
+              text={childStream.reasoning}
+              isStreaming={childStream.reasoningActive}
+            />
           )}
           {childStream.items.map((item, index) => {
             if (item.type === "text") {
@@ -555,7 +591,13 @@ function InvokeAgentToolCall(
               );
             }
             const childTool = childStream.tools.get(item.toolCallId);
-            return childTool ? <ToolCallRoot key={childTool.toolCallId} tool={childTool} /> : null;
+            if (!childTool) return null;
+            // Freeze a child tool that was still running when the turn stopped,
+            // so its row (or skill shimmer) doesn't claim to be running forever.
+            const frozen = stopped && isToolRunning(childTool)
+              ? { ...childTool, state: CHILD_TOOL_STOPPED_STATE as ChatDynamicToolPart["state"] }
+              : childTool;
+            return <ToolCallRoot key={childTool.toolCallId} tool={frozen} />;
           })}
           {response && (
             <ChatMarkdown className="text-sm leading-6 text-[var(--foreground)]">

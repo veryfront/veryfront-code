@@ -24,6 +24,13 @@ const skillToolRow = cva(
   "flex min-w-0 items-center gap-2 truncate text-sm text-[var(--foreground)]",
 );
 
+/**
+ * Synthetic tool-call state a parent card assigns to a still-running child tool
+ * once the turn is interrupted, so the row freezes (no shimmer) instead of
+ * claiming to be running forever. Not a wire state — presentation only.
+ */
+export const CHILD_TOOL_STOPPED_STATE: string = "stopped";
+
 /** Props accepted by {@link SkillTool}. */
 export interface SkillToolProps {
   /** The skill being loaded (id or filename). Renders in the row label. */
@@ -32,9 +39,11 @@ export interface SkillToolProps {
    * Tool-call state.
    * - `loading` — Sparkles pulses, label shimmers.
    * - `loaded` — Check appears, label is solid.
+   * - `stopped` — the run was interrupted mid-load: static Sparkles, solid
+   *   label, no animation (so a stopped turn never keeps shimmering).
    * @default "loaded"
    */
-  state?: "loading" | "loaded";
+  state?: "loading" | "loaded" | "stopped";
   className?: string;
 }
 
@@ -45,13 +54,16 @@ export function SkillTool({
   className,
 }: SkillToolProps): React.JSX.Element {
   const isLoading = state === "loading";
-  const label = isLoading ? `Loading skill: ${skill}` : `Loaded skill: ${skill}`;
+  const isLoaded = state === "loaded";
+  const label = isLoaded ? `Loaded skill: ${skill}` : `Loading skill: ${skill}`;
 
   return (
     <p className={cn(skillToolRow(), className)}>
-      {isLoading
-        ? <SparklesIcon className="size-3.5! shrink-0 animate-pulse" />
-        : <CheckIcon className="size-3.5! shrink-0" />}
+      {isLoaded ? <CheckIcon className="size-3.5! shrink-0" /> : (
+        <SparklesIcon
+          className={cn("size-3.5! shrink-0", isLoading && "animate-pulse")}
+        />
+      )}
       {isLoading
         ? (
           <Shimmer as="span" duration={1} className="min-w-0 truncate">
@@ -76,6 +88,10 @@ export function getSkillToolProps(
     "unknown") as string;
   return {
     skill,
-    state: tool.state === "output-available" ? "loaded" : "loading",
+    state: tool.state === "output-available"
+      ? "loaded"
+      : (tool.state as string) === CHILD_TOOL_STOPPED_STATE
+      ? "stopped"
+      : "loading",
   };
 }

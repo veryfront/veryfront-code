@@ -111,6 +111,7 @@ describe("ToolCall", () => {
       flushSync(() =>
         root.render(
           <Message.Root
+            isStreaming
             message={{
               id: "assistant-message",
               role: "assistant",
@@ -123,21 +124,23 @@ describe("ToolCall", () => {
         )
       );
     };
-    const detailsFor = (label: string) =>
-      Array.from(host.querySelectorAll("details")).find((details) =>
-        details.querySelector("summary")?.textContent === label
-      );
+    // The child sections reuse the main-chat `Reasoning` disclosure (a button +
+    // conditionally-rendered content), so "open" is detected by whether the
+    // section's body text is in the DOM rather than a `<details open>` flag.
+    const shows = (text: string) => host.textContent?.includes(text) ?? false;
 
     try {
       renderWithEvents([]);
-      assertEquals(detailsFor("Instructions")?.open, true);
+      // Instructions phase: its body is visible.
+      assertEquals(shows("Fetch the newest cases."), true);
 
       renderWithEvents([
         { type: "reasoning-start", id: "child-reasoning" },
         { type: "reasoning-delta", id: "child-reasoning", delta: "I should query first." },
       ]);
-      assertEquals(detailsFor("Instructions")?.open, false);
-      assertEquals(detailsFor("Thought process")?.open, true);
+      // Reasoning began: instructions collapse, the thought process is visible.
+      assertEquals(shows("Fetch the newest cases."), false);
+      assertEquals(shows("I should query first."), true);
 
       renderWithEvents([
         { type: "reasoning-start", id: "child-reasoning" },
@@ -150,12 +153,54 @@ describe("ToolCall", () => {
           input: { status: "open" },
         },
       ]);
-      assertEquals(detailsFor("Instructions")?.open, false);
-      assertEquals(detailsFor("Thought process")?.open, false);
+      // Work phase: instructions stay collapsed and the child tool renders.
+      assertEquals(shows("Fetch the newest cases."), false);
+      assertEquals(shows("salesforce__list_cases"), true);
     } finally {
       await unmountReactRoot(root);
       restore();
     }
+  });
+
+  it("freezes a running child as Stopped once the turn stops streaming", () => {
+    const skillStreamPart = {
+      type: "data-veryfront.invoke_agent.stream" as const,
+      data: {
+        toolCallId: invokeAgentTool.toolCallId,
+        agentId: "case-ingest",
+        event: {
+          type: "tool-input-available",
+          toolCallId: "child-load-skill",
+          toolName: "load_skill",
+          input: { skillId: "case-normalise-redact" },
+        },
+      },
+    };
+    const message = {
+      id: "assistant-message",
+      role: "assistant" as const,
+      metadata: {},
+      parts: [invokeAgentTool, skillStreamPart],
+    };
+
+    // While the turn streams, the running child reads as Running.
+    const streamingHtml = renderToString(
+      <Message.Root message={message} isStreaming>
+        <ToolCall tool={invokeAgentTool} defaultExpanded />
+      </Message.Root>,
+    );
+    assertStringIncludes(streamingHtml, "Running");
+
+    // Once the turn stops streaming with no terminal output, the card and its
+    // still-running child freeze to Stopped instead of a forever-Running card.
+    const stoppedHtml = renderToString(
+      <Message.Root message={message} isStreaming={false}>
+        <ToolCall tool={invokeAgentTool} defaultExpanded />
+      </Message.Root>,
+    );
+    assertStringIncludes(stoppedHtml, "Stopped");
+    assertEquals(stoppedHtml.includes("Running"), false);
+    assertStringIncludes(stoppedHtml, "Loading skill: case-normalise-redact");
   });
 
   it("renders the child prompt in an Instructions disclosure", () => {
@@ -172,7 +217,6 @@ describe("ToolCall", () => {
 
     assertStringIncludes(html, "Instructions");
     assertStringIncludes(html, "Fetch the five newest open cases and redact PII.");
-    assertStringIncludes(html, "text-[var(--soft)]");
     assertEquals(html.includes("text-black"), false);
     assertEquals(html.includes("text-white"), false);
   });
@@ -230,7 +274,9 @@ describe("ToolCall", () => {
       </Message.Root>,
     );
 
-    assertStringIncludes(html, "Thought process");
+    // Reasoning is still streaming (no reasoning-end), so the shared Reasoning
+    // disclosure shows its "Thinking..." label and stays open.
+    assertStringIncludes(html, "Thinking...");
     assertStringIncludes(html, "I should query Salesforce first.");
     assertStringIncludes(html, "Fetching the newest cases now.");
     assertStringIncludes(html, "salesforce__list_cases");

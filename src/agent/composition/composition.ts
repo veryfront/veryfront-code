@@ -46,6 +46,10 @@ async function runAgentAsStreamingTool(
           await context.publishDataEvent(buildInvokeAgentStreamDataEvent({
             toolCallId: context.toolCallId,
             agentId: agent.id,
+            ...(agent.config.name ? { agentName: agent.config.name } : {}),
+            ...(agent.config.avatarUrl ?? agent.config.avatar_url
+              ? { avatarUrl: agent.config.avatarUrl ?? agent.config.avatar_url }
+              : {}),
             event,
           }));
         }
