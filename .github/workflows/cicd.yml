@@ -227,7 +227,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
-      - name: Configure apt retries and mirrors
+      - name: Configure apt sources, retries, and mirrors
         run: |
           sudo sed -i \
             -e 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
@@ -239,6 +239,29 @@ jobs:
             echo 'Acquire::http::Timeout "30";'
             echo 'Acquire::https::Timeout "30";'
           } | sudo tee /etc/apt/apt.conf.d/99veryfront-ci-retries
+
+          # `playwright install --with-deps` shells out to `apt-get update`, which
+          # consults every repository configured on the runner image and fails the
+          # whole install when any single one of them is unreachable. The image
+          # ships third-party repositories (packages.microsoft.com/repos/azure-cli,
+          # packages.microsoft.com/ubuntu/24.04/prod, dl.google.com, ...) that
+          # Chromium's system libraries never come from, so an outage there is pure
+          # noise -- and because it is a persistent 403 rather than a blip, retrying
+          # cannot clear it. Park every non-Ubuntu source for the life of this job so
+          # only the archive that actually serves the dependencies can gate us.
+          if grep -rqE '\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
+            sudo mkdir -p /etc/apt/sources.list.d.disabled
+            for source_file in /etc/apt/sources.list.d/*; do
+              [ -f "${source_file}" ] || continue
+              if grep -qE '\.ubuntu\.com' "${source_file}"; then
+                continue
+              fi
+              sudo mv "${source_file}" /etc/apt/sources.list.d.disabled/
+              echo "Disabled apt source unrelated to Chromium deps: ${source_file}"
+            done
+          else
+            echo "::warning::No Ubuntu archive apt source detected; leaving apt sources untouched"
+          fi
       - name: Install Chromium
         timeout-minutes: 15
         run: |
@@ -296,7 +319,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
-      - name: Configure apt retries and mirrors
+      - name: Configure apt sources, retries, and mirrors
         run: |
           sudo sed -i \
             -e 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
@@ -308,6 +331,29 @@ jobs:
             echo 'Acquire::http::Timeout "30";'
             echo 'Acquire::https::Timeout "30";'
           } | sudo tee /etc/apt/apt.conf.d/99veryfront-ci-retries
+
+          # `playwright install --with-deps` shells out to `apt-get update`, which
+          # consults every repository configured on the runner image and fails the
+          # whole install when any single one of them is unreachable. The image
+          # ships third-party repositories (packages.microsoft.com/repos/azure-cli,
+          # packages.microsoft.com/ubuntu/24.04/prod, dl.google.com, ...) that
+          # Chromium's system libraries never come from, so an outage there is pure
+          # noise -- and because it is a persistent 403 rather than a blip, retrying
+          # cannot clear it. Park every non-Ubuntu source for the life of this job so
+          # only the archive that actually serves the dependencies can gate us.
+          if grep -rqE '\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
+            sudo mkdir -p /etc/apt/sources.list.d.disabled
+            for source_file in /etc/apt/sources.list.d/*; do
+              [ -f "${source_file}" ] || continue
+              if grep -qE '\.ubuntu\.com' "${source_file}"; then
+                continue
+              fi
+              sudo mv "${source_file}" /etc/apt/sources.list.d.disabled/
+              echo "Disabled apt source unrelated to Chromium deps: ${source_file}"
+            done
+          else
+            echo "::warning::No Ubuntu archive apt source detected; leaving apt sources untouched"
+          fi
       - name: Install Chromium
         timeout-minutes: 15
         run: |
