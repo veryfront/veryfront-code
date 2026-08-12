@@ -146,7 +146,7 @@ Deno.test("root and child runtimes use the deployment-owned remote MCP factory",
   assertEquals(
     createdConfigs.map(({ id, endpoint }) => ({ id, endpoint })),
     [
-      { id: "veryfront-mcp", endpoint: "https://api.example/mcp" },
+      { id: "veryfront-mcp", endpoint: "https://api.example/projects/project-1/mcp" },
       { id: "studio-mcp", endpoint: "https://studio.example/mcp" },
     ],
   );
@@ -168,7 +168,7 @@ Deno.test("root and child runtimes use the deployment-owned remote MCP factory",
   assertEquals(
     createdConfigs.map(({ id, endpoint }) => ({ id, endpoint })),
     [
-      { id: "veryfront-mcp-fork", endpoint: "https://api.example/mcp" },
+      { id: "veryfront-mcp-fork", endpoint: "https://api.example/projects/project-1/mcp" },
       { id: "studio-mcp-live-tools", endpoint: "https://studio.example/mcp" },
     ],
   );
