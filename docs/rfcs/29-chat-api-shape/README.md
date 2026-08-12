@@ -19,7 +19,7 @@ Read a status block like this:
 - **Not exported today** - these symbols genuinely do not exist. `deno task lint:rfc-status` fails if any of them starts shipping without this list being updated.
 - **Not in `src/` today** - the same guarantee for props and hook members, which are not exports (`submitMode`, `getDropTargetProps`).
 
-The **Import** block on each page shows the shape this RFC _proposes_, not today's barrel - so where the two differ, the status block wins. The most common difference: "every sub-part is also a flat named export" is a proposal on every page except [`ChatInput`](./components/chat-input.md), where it has actually landed (`src/chat/index.ts:250`).
+The **Import** block on each page shows the shape this RFC _proposes_, not today's barrel - so where the two differ, the status block wins. The most common difference: "every sub-part is also a flat named export" is a proposal on every page except [`ChatInput`](./components/chat-input.md#chatinput-flat-sub-part-exports---new---shipped-srcchatindexts250), where it has actually landed (`src/chat/index.ts:250`).
 
 What actually landed is marked **per delta**, on the delta's own heading:
 
