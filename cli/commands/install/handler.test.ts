@@ -151,6 +151,17 @@ describe("commands/install/handler", () => {
     it("reads the positional for uninstall too", () => {
       assertEquals(parseCommandLine(["uninstall", "agents"]).target, "agents");
     });
+
+    it("fails argument parsing for an unknown positional tool id", () => {
+      const result = parseInstallArgs(parseCliArgs(["install", "not-a-tool"]));
+      assertEquals(result.success, false);
+      assertEquals(result.error?.message.includes("Valid targets"), true);
+    });
+
+    it("fails argument parsing for an unknown --target too", () => {
+      const result = parseInstallArgs(parseCliArgs(["install", "--target", "not-a-tool"]));
+      assertEquals(result.success, false);
+    });
   });
 
   describe("uninstall argument extraction", () => {

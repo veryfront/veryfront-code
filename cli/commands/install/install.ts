@@ -37,6 +37,14 @@ export function parseTargetFlag(target: string): AIToolId[] {
   return TargetFlagSchema.parse(target);
 }
 
+/** Valid target values, for messages and argument validation. */
+export const VALID_TARGET_VALUES = [...AI_TOOLS.map((t) => t.id), "all"].join(", ");
+
+/** True when the value names at least one known tool (or `all`). */
+export function isValidTargetSpec(target: string): boolean {
+  return TargetFlagSchema.safeParse(target).success;
+}
+
 const getAIToolIdArraySchema = defineSchema((v) => v.array(AIToolIdSchema).min(1));
 
 const AIToolIdArraySchema = lazySchema(getAIToolIdArraySchema);
