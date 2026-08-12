@@ -27,6 +27,77 @@ export const CONTROL_PLANE_RUN_STREAM_PATH = "/api/control-plane/runs/:runId/str
 const CONTROL_PLANE_RUN_ID_PATH_SEGMENT = "[^/]+";
 const CONTROL_PLANE_RUNS_REGEX_PREFIX = CONTROL_PLANE_RUNS_PATH_PREFIX.replaceAll("/", "\\/");
 
+/** Request header the control plane carries its signed operation envelope in. */
+export const CONTROL_PLANE_JWS_HEADER = "x-veryfront-control-plane-jws";
+
+const CONTROL_PLANE_RUN_OPERATION_PATH =
+  /^\/api\/control-plane\/runs\/[^/]+\/(?:execute|stream|resume)$/u;
+const CONTROL_PLANE_RUN_PATH = /^\/api\/control-plane\/runs\/[^/]+$/u;
+
+/**
+ * True when a method and path pair addresses a registered control-plane handler.
+ *
+ * The reserved namespace is wider than the set of routes the runtime actually
+ * serves. Only these shapes reach a handler that authenticates a signed
+ * operation envelope through `verifyControlPlaneRequest`:
+ *
+ * - `POST /api/control-plane/agents/list`
+ * - `POST /api/control-plane/runs/{runId}/execute`
+ * - `POST /api/control-plane/runs/{runId}/stream`
+ * - `POST /api/control-plane/runs/{runId}/resume`
+ * - `DELETE /api/control-plane/runs/{runId}`
+ *
+ * Any other path under the prefix falls through to project code, so treating
+ * the prefix as proof of a control-plane request would hand a project's own
+ * routes whatever exemption the caller grants.
+ *
+ * Match this against `URL.pathname`, which resolves dot segments, so a path
+ * cannot be smuggled past the anchored patterns.
+ */
+export function isControlPlaneSurfaceRoute(
+  method: string,
+  pathname: string | undefined,
+): boolean {
+  const normalizedMethod = method.toUpperCase();
+  const requestPath = pathname ?? "";
+
+  if (normalizedMethod === "POST") {
+    return requestPath === CONTROL_PLANE_AGENTS_LIST_PATH ||
+      CONTROL_PLANE_RUN_OPERATION_PATH.test(requestPath);
+  }
+  if (normalizedMethod === "DELETE") {
+    return CONTROL_PLANE_RUN_PATH.test(requestPath);
+  }
+  return false;
+}
+
+/**
+ * True for a request that is a control-plane dispatch rather than a browser one.
+ *
+ * Both conditions must hold. The method and path must address a registered
+ * control-plane handler (see {@link isControlPlaneSurfaceRoute}), and the
+ * request must carry a control-plane signature header. The receiving handler
+ * verifies that envelope against the dispatch signing key, and the signature
+ * covers the request method and path, so an envelope minted for one surface
+ * cannot be replayed against another.
+ *
+ * Callers use this to keep gates that assume a browser client, such as CSRF
+ * double-submit validation, from standing in front of platform dispatch. A
+ * browser cannot attach the signature header to a cross-origin request without
+ * a preflight the runtime does not grant, so a forged cross-site request never
+ * satisfies this predicate. Neither does a project route that merely sits at a
+ * look-alike path.
+ *
+ * This is not authentication. It only reports that authority for the request
+ * comes from a signature the handler checks, never from ambient credentials.
+ */
+export function isSignedControlPlaneDispatch(req: Request): boolean {
+  const signature = req.headers.get(CONTROL_PLANE_JWS_HEADER);
+  if (signature === null || signature.length === 0) return false;
+
+  return isControlPlaneSurfaceRoute(req.method, new SafeURL(req.url).pathname);
+}
+
 /**
  * True for control-plane run surfaces that can dispatch without project config.
  *
