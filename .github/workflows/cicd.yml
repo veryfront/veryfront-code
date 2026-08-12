@@ -674,6 +674,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
+          deno run -A scripts/ci/prepare-rc-build.ts
           deno task build:npm
           scripts/ci/publish-npm-packages.sh rc-publish
 
