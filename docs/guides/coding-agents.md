@@ -209,7 +209,7 @@ is active.
 
 ### Port already in use
 
-The dev MCP port is always two above the port the dev server bound, so a dev server that bound `4000` serves MCP at `http://localhost:4002/mcp`. Take that port from the URL the dev server printed, not from the `--port` you passed: this section is exactly the case where the two differ, because a requested port that is already in use falls forward to the next free one and MCP moves with it. Update the URL in your agent config to match.
+The dev MCP port is always two above the port the dev server bound, so a dev server that bound `4000` serves MCP at `http://localhost:4002/mcp`. When the port you requested is already in use, the dev server falls forward to the next free one and MCP moves with it. Take the port from the URL the dev server printed rather than the `--port` you passed, then update the URL in your agent config to match.
 
 ### CORS error from a browser-based agent
 
