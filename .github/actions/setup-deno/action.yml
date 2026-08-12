@@ -97,12 +97,13 @@ runs:
             --write-out "%{http_code}" \
             --output "${checksums_manifest_path}")" || true
           if [ "${checksums_manifest_http_code}" != "200" ]; then
-            if [ "${checksums_manifest_http_code}" != "404" ]; then
-              echo "Failed to download checksums manifest for v${version} (HTTP ${checksums_manifest_http_code})" >&2
-              exit 1
-            fi
-
-            echo "Checksums manifest not published for v${version}; falling back to archive checksum file" >&2
+            # No Deno release publishes checksums.txt, so this is the path every
+            # run takes. A 404, a 5xx and a died connection are indistinguishable
+            # here -- all of them mean "no manifest to verify against" -- so an
+            # upstream blip must not fail the job. This costs no integrity: the
+            # archive is still verified against ${archive}.sha256sum below, which
+            # is the same check the 404 path has always relied on.
+            echo "Checksums manifest unavailable for v${version} (HTTP ${checksums_manifest_http_code}); falling back to archive checksum file" >&2
             checksum_parse_path="${archive_checksum_path}"
           else
             checksums_manifest_actual_sha256="$(compute_sha256 "${checksums_manifest_path}")"

@@ -93,6 +93,194 @@ async function workflowPathsUsingSetupDeno(): Promise<string[]> {
   return paths.sort();
 }
 
+/**
+ * Runs the real "Install pinned Deno" script from the action, unmodified, with
+ * `curl` and `unzip` replaced by stubs on PATH. Nothing touches the network, so
+ * every upstream response — including the transport failures that redden CI —
+ * is reproducible locally.
+ */
+type ManifestMode =
+  | "http-200-bad-hash"
+  | "http-404"
+  | "http-503"
+  | "transport-failure";
+type ArchiveMode = "ok" | "corrupt";
+
+interface InstallerResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+async function installerScript(): Promise<string> {
+  const action = await parseYamlFile(ACTION_PATH);
+  const runs = asRecord(action.runs, `${ACTION_PATH}.runs`);
+  const step = asSteps(runs.steps, `${ACTION_PATH}.runs.steps`).find((entry) =>
+    entry.name === "Install pinned Deno"
+  );
+  assert(step, "setup-deno must install Deno explicitly");
+  return String(step.run);
+}
+
+const CURL_STUB = `#!/usr/bin/env bash
+set -uo pipefail
+
+sha_of_stdin() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+  else
+    shasum -a 256 | awk '{print $1}'
+  fi
+}
+
+url=""
+output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output) output="$2"; shift 2 ;;
+    --write-out) shift 2 ;;
+    https://*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+
+case "\${url}" in
+  */checksums.txt)
+    case "\${VF_TEST_MANIFEST_MODE}" in
+      http-200-bad-hash)
+        # A manifest that downloads cleanly but is not the pinned artifact.
+        printf 'tampered-checksums-manifest\\n' > "\${output}"
+        printf '200'
+        exit 0
+        ;;
+      http-404) printf '404'; exit 22 ;;
+      http-503) printf '503'; exit 22 ;;
+      transport-failure) printf '000'; exit 56 ;;
+    esac
+    ;;
+  *.sha256sum)
+    archive_name="\$(basename "\${url}" .sha256sum)"
+    printf '%s  %s\\n' \\
+      "\$(printf '%s' "\${VF_TEST_ARCHIVE_BODY}" | sha_of_stdin)" \\
+      "\${archive_name}" > "\${output}"
+    exit 0
+    ;;
+  *.zip)
+    if [ "\${VF_TEST_ARCHIVE_MODE}" = "corrupt" ]; then
+      printf 'tampered-archive-bytes' > "\${output}"
+    else
+      printf '%s' "\${VF_TEST_ARCHIVE_BODY}" > "\${output}"
+    fi
+    exit 0
+    ;;
+esac
+
+printf '000'
+exit 1
+`;
+
+const UNZIP_STUB = `#!/usr/bin/env bash
+set -euo pipefail
+dest=""
+prev=""
+for arg in "$@"; do
+  if [ "\${prev}" = "-d" ]; then dest="\${arg}"; fi
+  prev="\${arg}"
+done
+mkdir -p "\${dest}"
+printf '#!/usr/bin/env bash\\necho "deno 2.7.7 (stub)"\\n' > "\${dest}/deno"
+printf '#!/usr/bin/env bash\\necho "deno 2.7.7 (stub)"\\n' > "\${dest}/deno.exe"
+`;
+
+async function runInstaller(
+  { manifest, archive = "ok" }: { manifest: ManifestMode; archive?: ArchiveMode },
+): Promise<InstallerResult> {
+  const root = await Deno.makeTempDir({ prefix: "setup-deno-installer-" });
+  try {
+    const bin = `${root}/bin`;
+    await Deno.mkdir(bin);
+    await Deno.mkdir(`${root}/runner-temp`);
+    await Deno.writeTextFile(`${bin}/curl`, CURL_STUB, { mode: 0o755 });
+    await Deno.writeTextFile(`${bin}/unzip`, UNZIP_STUB, { mode: 0o755 });
+    await Deno.writeTextFile(`${root}/install.sh`, await installerScript());
+    await Deno.writeTextFile(`${root}/github-path`, "");
+    // Exporting inside the wrapper keeps the test free of --allow-env.
+    await Deno.writeTextFile(
+      `${root}/wrapper.sh`,
+      [
+        "#!/usr/bin/env bash",
+        `export PATH="${bin}:\${PATH}"`,
+        `export RUNNER_TEMP="${root}/runner-temp"`,
+        `export GITHUB_PATH="${root}/github-path"`,
+        `export VF_TEST_MANIFEST_MODE="${manifest}"`,
+        `export VF_TEST_ARCHIVE_MODE="${archive}"`,
+        'export VF_TEST_ARCHIVE_BODY="stub-deno-archive-payload"',
+        `exec bash "${root}/install.sh"`,
+        "",
+      ].join("\n"),
+    );
+
+    const { code, stdout, stderr } = await new Deno.Command("bash", {
+      args: [`${root}/wrapper.sh`],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    return {
+      code,
+      stdout: new TextDecoder().decode(stdout),
+      stderr: new TextDecoder().decode(stderr),
+    };
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+}
+
+describe("setup-deno installer resilience", () => {
+  // The pinned manifest is not published by any Deno release, so every real run
+  // takes the "manifest unavailable" path. A transport blip on a URL that is
+  // guaranteed to 404 must not be able to redden a job.
+  for (
+    const [label, manifest] of [
+      ["a 503 from the manifest URL", "http-503"],
+      ["a died connection (HTTP 000)", "transport-failure"],
+      ["a 404 from the manifest URL", "http-404"],
+    ] as const satisfies readonly (readonly [string, ManifestMode])[]
+  ) {
+    it(`falls back to the archive checksum file on ${label}`, async () => {
+      const result = await runInstaller({ manifest });
+
+      assertEquals(
+        result.code,
+        0,
+        `installer must not fail on ${label}\n${result.stderr}`,
+      );
+      assertStringIncludes(result.stderr, "falling back to archive checksum");
+      assertStringIncludes(result.stdout, "deno 2.7.7 (stub)");
+    });
+  }
+
+  // The guard that must survive the fix: a manifest that really does download
+  // but does not match its pin is an integrity signal, not a transport blip.
+  it("still fails when a downloaded manifest does not match its pinned hash", async () => {
+    const result = await runInstaller({ manifest: "http-200-bad-hash" });
+
+    assert(result.code !== 0, "a mismatched manifest must fail the job");
+    assertStringIncludes(result.stderr, "Checksums manifest checksum mismatch");
+  });
+
+  // Falling back must never mean skipping verification: the archive is still
+  // checked against ${archive}.sha256sum on the fallback path.
+  it("still verifies the archive against its checksum file on the fallback path", async () => {
+    const result = await runInstaller({
+      manifest: "http-503",
+      archive: "corrupt",
+    });
+
+    assert(result.code !== 0, "a tampered archive must fail the job");
+    assertStringIncludes(result.stderr, "Deno archive checksum mismatch");
+  });
+});
+
 describe("setup-deno CI contract", () => {
   it("skips only valid reusable-workflow jobs without steps", () => {
     assertEquals(
@@ -254,13 +442,22 @@ describe("setup-deno CI contract", () => {
       install,
       '  if [ "${checksums_manifest_http_code}" != "200" ]; then',
     );
-    assertStringIncludes(
-      install,
-      'if [ "${checksums_manifest_http_code}" != "404" ]; then',
+    // Any non-200 must fall back to the archive checksum file. Singling out 404
+    // turned every upstream blip on a URL that always 404s into a red job, and
+    // because setup-deno runs in every job, one blip reddened many at once.
+    assertEquals(
+      install.includes('!= "404"'),
+      false,
+      "an unavailable manifest must fall back regardless of why it was unavailable",
+    );
+    assertEquals(
+      install.includes("Failed to download checksums manifest"),
+      false,
+      "failing to reach an unpublished manifest must not fail the job",
     );
     assertStringIncludes(
       install,
-      'Checksums manifest not published for v${version}; falling back to archive checksum file',
+      'Checksums manifest unavailable for v${version} (HTTP ${checksums_manifest_http_code}); falling back to archive checksum file',
     );
     assertStringIncludes(
       install,
@@ -435,8 +632,8 @@ jobs:
     );
     assertStringIncludes(
       String(tasks["lint:ci"]),
-      "--allow-read --allow-write scripts/ci/setup-deno-workflow.test.ts",
-      "required lint shard must allow temporary workflow fixtures",
+      "--allow-read --allow-write --allow-run=bash scripts/ci/setup-deno-workflow.test.ts",
+      "required lint shard must allow temporary workflow fixtures and running the installer under stubbed curl",
     );
     assertStringIncludes(
       String(tasks["lint:ci"]),
