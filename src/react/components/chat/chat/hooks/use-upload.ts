@@ -13,6 +13,7 @@
  * @module react/components/chat/hooks/use-upload
  */
 import * as React from "react";
+import { csrfMutationHeaders } from "#veryfront/security/csrf/browser-mutation-headers.ts";
 import {
   scopeCommitRequiresRenderPublication,
   useScopeCommitEffect,
@@ -332,7 +333,11 @@ export function useUpload(
         const xhr = new XMLHttpRequest();
         operation.xhr = xhr;
         xhr.open("POST", api);
-        for (const [key, value] of headerEntries) {
+        // A production build turns `security.csrf` on by default, so this POST
+        // has to echo the `__Host-vf_csrf` cookie back or the server answers
+        // 403 — dev, where CSRF is off, would never show it. The helper keeps
+        // any caller-supplied header and skips cross-origin endpoints.
+        for (const [key, value] of csrfMutationHeaders(api, [...headerEntries])) {
           xhr.setRequestHeader(key, value);
         }
         xhr.upload.onprogress = (event) => {
