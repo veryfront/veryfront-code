@@ -7,13 +7,12 @@
  */
 
 // Runtime heuristic: detects a write to an already-closed ReadableStream controller.
-// The matched message is a Deno/browser engine implementation detail and may change
-// across runtime versions. If the wording ever changes, writes to closed controllers
-// will throw instead of being silently tolerated — this is the safe failure mode
-// (the stream is already gone) but it will appear as an unhandled error.
+// Browser/Node and Deno use different messages for the same Web Streams state error.
+// Keep this narrow so unrelated TypeErrors still surface.
 function isClosedStreamControllerError(error: unknown): error is TypeError {
   return error instanceof TypeError &&
-    error.message.includes("The stream controller cannot close or enqueue");
+    (error.message.includes("The stream controller cannot close or enqueue") ||
+      error.message.includes("Controller is already closed"));
 }
 
 /**

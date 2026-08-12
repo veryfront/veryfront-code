@@ -259,6 +259,42 @@ describe("use-chat streaming handler", () => {
     ]);
   });
 
+  it("upserts a child-agent stream into one durable message part", async () => {
+    const rec = recorder();
+    const childEvents = Array.from({ length: 1_001 }, (_, index) => ({
+      type: "data-veryfront.invoke_agent.stream",
+      data: {
+        toolCallId: "parent-invoke",
+        agentId: "case-ingest",
+        event: { type: "text-delta", id: "child-text", delta: String(index % 10) },
+      },
+    }));
+
+    await handleStreamingResponse(
+      sseStream([
+        { type: "message-start", messageId: "msg-child-stream" },
+        ...childEvents,
+        { type: "message-finish" },
+      ]),
+      rec.callbacks,
+    );
+
+    const childParts = rec.messages[0]!.parts.filter((part) =>
+      part.type === "data-veryfront.invoke_agent.stream"
+    );
+    assertEquals(childParts.length, 1);
+    assertEquals(
+      (childParts[0] as {
+        data: { events: Array<{ type: string; id: string; delta: string }> };
+      }).data.events,
+      [{
+        type: "text-delta",
+        id: "child-text",
+        delta: Array.from({ length: 1_001 }, (_, index) => String(index % 10)).join(""),
+      }],
+    );
+  });
+
   it("skips malformed JSON lines without throwing", async () => {
     const encoder = new TextEncoder();
     const rec = recorder();

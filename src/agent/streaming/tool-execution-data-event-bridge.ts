@@ -42,11 +42,10 @@ export function createToolExecutionDataEventBridgeStream(
   input: ToolExecutionDataEventBridgeStreamInput,
 ): ReadableStream<Uint8Array> {
   let baseReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  let closed = false;
 
   return new ReadableStream<Uint8Array>({
     start(controller) {
-      let closed = false;
-
       input.installPublisher((event) => {
         if (closed) {
           return;
@@ -69,11 +68,15 @@ export function createToolExecutionDataEventBridgeStream(
             controller.enqueue(toUint8ArrayChunk(value));
           }
 
-          closed = true;
-          controller.close();
+          if (!closed) {
+            closed = true;
+            controller.close();
+          }
         } catch (error) {
-          closed = true;
-          controller.error(error);
+          if (!closed) {
+            closed = true;
+            controller.error(error);
+          }
         } finally {
           input.installPublisher(() => {});
           reader.releaseLock();
@@ -84,6 +87,8 @@ export function createToolExecutionDataEventBridgeStream(
       })();
     },
     async cancel(reason) {
+      closed = true;
+      input.installPublisher(() => {});
       // Cancellation is best-effort teardown (the client disconnected / hit
       // Stop). Forwarding the cancel to the base reader can reject — e.g. the
       // upstream agent runtime aborts an in-flight signal whose rejection

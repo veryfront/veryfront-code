@@ -15,6 +15,7 @@ import type { Agent, AgentResponse, AgentStreamResult } from "../types.ts";
 
 // Side-effect import: registers the globalThis bridges
 import { agentAsTool, agentRegistry, registerAgent } from "./composition.ts";
+import { createInvokeAgentTool } from "../runtime/agent-delegation.ts";
 
 const BRIDGE_KEYS = ["__vfGetAgent", "__vfRegisterAgent", "__vfGetAllAgentIds"] as const;
 
@@ -214,5 +215,136 @@ describe("agentAsTool", () => {
       Error,
       "Veryfront API MCP is unavailable",
     );
+  });
+
+  it("publishes child stream events against the parent invoke_agent tool call", async () => {
+    const childResponse: AgentResponse = {
+      text: "streamed child result",
+      messages: [],
+      toolCalls: [],
+      status: "completed",
+    };
+    const childAgent = createMinimalAgent("case-ingest");
+    childAgent.stream = (input) => {
+      input.onFinish?.(childResponse);
+      return Promise.resolve({
+        toDataStreamResponse() {
+          return new Response(
+            [
+              'data: {"type":"message-start","messageId":"child-message"}',
+              'data: {"type":"text-delta","id":"child-text","delta":"Fetching cases"}',
+              "",
+            ].join("\n\n"),
+            { headers: { "Content-Type": "text/event-stream" } },
+          );
+        },
+      });
+    };
+    const events: unknown[] = [];
+    const tool = createInvokeAgentTool({ resolveAgent: () => childAgent });
+
+    await tool.execute(
+      {
+        agent_id: "case-ingest",
+        description: "Run case ingest",
+        prompt: "Fetch cases",
+        context: {},
+      },
+      {
+        toolCallId: "parent-tool-call",
+        publishDataEvent: (event) => {
+          events.push(event);
+        },
+      },
+    );
+
+    assertEquals(events, [
+      {
+        type: "veryfront.invoke_agent.stream",
+        name: "veryfront.invoke_agent.stream",
+        value: {
+          toolCallId: "parent-tool-call",
+          agentId: "case-ingest",
+          event: { type: "message-start", messageId: "child-message" },
+        },
+      },
+      {
+        type: "veryfront.invoke_agent.stream",
+        name: "veryfront.invoke_agent.stream",
+        value: {
+          toolCallId: "parent-tool-call",
+          agentId: "case-ingest",
+          event: { type: "text-delta", id: "child-text", delta: "Fetching cases" },
+        },
+      },
+    ]);
+  });
+
+  it("does not publish child events for fixed agent wrappers", async () => {
+    const childAgent = createMinimalAgent("case-ingest");
+    const events: unknown[] = [];
+    await agentAsTool(childAgent, "Run case ingest").execute(
+      { input: "Fetch cases" },
+      {
+        toolCallId: "fixed-agent-tool-call",
+        publishDataEvent: (event) => {
+          events.push(event);
+        },
+      },
+    );
+    assertEquals(events, []);
+  });
+
+  it("publishes child content while the child tool execution is still running", async () => {
+    let childController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let finishChild: (() => void) | undefined;
+    let resolvePublished: (() => void) | undefined;
+    const published = new Promise<void>((resolve) => {
+      resolvePublished = resolve;
+    });
+    const childAgent = createMinimalAgent("case-ingest");
+    childAgent.stream = (input) => {
+      finishChild = () => {
+        input.onFinish?.({ text: "done", messages: [], toolCalls: [], status: "completed" });
+      };
+      return Promise.resolve({
+        toDataStreamResponse() {
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                childController = controller;
+              },
+            }),
+            { headers: { "Content-Type": "text/event-stream" } },
+          );
+        },
+      });
+    };
+    const tool = agentAsTool(childAgent, "Run case ingest", { publishChildStream: true });
+    let settled = false;
+    const execution = tool.execute(
+      { input: "Fetch cases" },
+      {
+        toolCallId: "parent-tool-call",
+        publishDataEvent: () => {
+          resolvePublished?.();
+        },
+      },
+    ).then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+    childController?.enqueue(
+      new TextEncoder().encode(
+        'data: {"type":"text-delta","id":"child-text","delta":"Fetching cases"}\n\n',
+      ),
+    );
+    await published;
+
+    assertEquals(settled, false);
+    finishChild?.();
+    childController?.close();
+    await execution;
   });
 });

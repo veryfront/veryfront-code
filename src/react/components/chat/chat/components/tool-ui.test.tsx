@@ -1,8 +1,13 @@
 import { renderToString } from "react-dom/server";
+import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
+import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import type { ChatDynamicToolPart } from "#veryfront/agent/react";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { ToolCall, useToolCall } from "./tool-ui.tsx";
+import { Message } from "../composition/message.tsx";
 
 /** A fully-populated card tool (input + output) — the composable `card` path. */
 const cardTool: ChatDynamicToolPart = {
@@ -31,6 +36,29 @@ const invokeAgentTool: ChatDynamicToolPart = {
   input: { agent_id: "case-ingest", description: "Fetch and redact cases" },
 };
 
+function installDom(): { host: HTMLElement; restore: () => void } {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
+  const window = dom.window;
+  const keys = ["window", "document", "navigator", "Node", "Element", "HTMLElement"] as const;
+  const previous: Record<string, unknown> = {};
+  for (const key of keys) previous[key] = (globalThis as Record<string, unknown>)[key];
+  Object.assign(globalThis, {
+    window,
+    document: window.document,
+    navigator: window.navigator,
+    Node: window.Node,
+    Element: window.Element,
+    HTMLElement: window.HTMLElement,
+  });
+  return {
+    host: window.document.getElementById("root") as unknown as HTMLElement,
+    restore: () => {
+      Object.assign(globalThis, previous);
+      dom.window.close();
+    },
+  };
+}
+
 describe("ToolCall", () => {
   it("renders invoke_agent as a child-agent card by default", () => {
     const html = renderToString(<ToolCall tool={invokeAgentTool} className="custom-card" />);
@@ -38,9 +66,182 @@ describe("ToolCall", () => {
     assertStringIncludes(html, "Case Ingest");
     assertStringIncludes(html, "Running");
     assertStringIncludes(html, "custom-card");
-    assertStringIncludes(html, 'aria-expanded="false"');
-    assertEquals(html.includes("Fetch and redact cases"), false);
+    assertStringIncludes(html, 'aria-expanded="true"');
+    assertStringIncludes(html, "Fetch and redact cases");
     assertEquals(html.includes("Parameters"), false);
+  });
+
+  it("auto-expands a running child and collapses when it completes", async () => {
+    const { host, restore } = installDom();
+    const root = createRoot(host);
+    try {
+      flushSync(() => root.render(<ToolCall tool={invokeAgentTool} />));
+      assertEquals(host.querySelector("button")?.getAttribute("aria-expanded"), "true");
+
+      flushSync(() =>
+        root.render(
+          <ToolCall
+            tool={{
+              ...invokeAgentTool,
+              state: "output-available",
+              output: { status: "completed", text: "Done" },
+            }}
+          />,
+        )
+      );
+      assertEquals(host.querySelector("button")?.getAttribute("aria-expanded"), "false");
+    } finally {
+      await unmountReactRoot(root);
+      restore();
+    }
+  });
+
+  it("advances the open child section from instructions to live reasoning", async () => {
+    const { host, restore } = installDom();
+    const root = createRoot(host);
+    const tool: ChatDynamicToolPart = {
+      ...invokeAgentTool,
+      input: { agent_id: "case-ingest", prompt: "Fetch the newest cases." },
+    };
+    const streamPart = (event: Record<string, unknown>) => ({
+      type: "data-veryfront.invoke_agent.stream" as const,
+      data: { toolCallId: tool.toolCallId, agentId: "case-ingest", event },
+    });
+    const renderWithEvents = (events: Record<string, unknown>[]) => {
+      flushSync(() =>
+        root.render(
+          <Message.Root
+            message={{
+              id: "assistant-message",
+              role: "assistant",
+              metadata: {},
+              parts: [tool, ...events.map(streamPart)],
+            }}
+          >
+            <ToolCall tool={tool} />
+          </Message.Root>,
+        )
+      );
+    };
+    const detailsFor = (label: string) =>
+      Array.from(host.querySelectorAll("details")).find((details) =>
+        details.querySelector("summary")?.textContent === label
+      );
+
+    try {
+      renderWithEvents([]);
+      assertEquals(detailsFor("Instructions")?.open, true);
+
+      renderWithEvents([
+        { type: "reasoning-start", id: "child-reasoning" },
+        { type: "reasoning-delta", id: "child-reasoning", delta: "I should query first." },
+      ]);
+      assertEquals(detailsFor("Instructions")?.open, false);
+      assertEquals(detailsFor("Thought process")?.open, true);
+
+      renderWithEvents([
+        { type: "reasoning-start", id: "child-reasoning" },
+        { type: "reasoning-delta", id: "child-reasoning", delta: "I should query first." },
+        { type: "reasoning-end", id: "child-reasoning" },
+        {
+          type: "tool-input-available",
+          toolCallId: "child-tool-call",
+          toolName: "salesforce__list_cases",
+          input: { status: "open" },
+        },
+      ]);
+      assertEquals(detailsFor("Instructions")?.open, false);
+      assertEquals(detailsFor("Thought process")?.open, false);
+    } finally {
+      await unmountReactRoot(root);
+      restore();
+    }
+  });
+
+  it("renders the child prompt in an Instructions disclosure", () => {
+    const tool: ChatDynamicToolPart = {
+      ...invokeAgentTool,
+      input: {
+        agent_id: "case-ingest",
+        description: "Fetch and redact cases",
+        prompt: "Fetch the five newest open cases and redact PII.",
+      },
+    };
+
+    const html = renderToString(<ToolCall tool={tool} defaultExpanded />);
+
+    assertStringIncludes(html, "Instructions");
+    assertStringIncludes(html, "Fetch the five newest open cases and redact PII.");
+    assertStringIncludes(html, "text-[var(--soft)]");
+    assertEquals(html.includes("text-black"), false);
+    assertEquals(html.includes("text-white"), false);
+  });
+
+  it("renders streamed child response content before invoke_agent completes", () => {
+    const message = {
+      id: "assistant-message",
+      role: "assistant" as const,
+      metadata: {},
+      parts: [
+        invokeAgentTool,
+        {
+          type: "data-veryfront.invoke_agent.stream" as const,
+          data: {
+            toolCallId: "tool-invoke-agent",
+            agentId: "case-ingest",
+            event: { type: "reasoning-delta", delta: "I should query Salesforce first." },
+          },
+        },
+        {
+          type: "data-veryfront.invoke_agent.stream" as const,
+          data: {
+            toolCallId: "tool-invoke-agent",
+            agentId: "case-ingest",
+            event: { type: "text-delta", delta: "I will query Salesforce now." },
+          },
+        },
+        {
+          type: "data-veryfront.invoke_agent.stream" as const,
+          data: {
+            toolCallId: "tool-invoke-agent",
+            agentId: "case-ingest",
+            event: {
+              type: "tool-input-available",
+              toolCallId: "child-tool-call",
+              toolName: "salesforce__list_cases",
+              input: { status: "open" },
+            },
+          },
+        },
+        {
+          type: "data-veryfront.invoke_agent.stream" as const,
+          data: {
+            toolCallId: "tool-invoke-agent",
+            agentId: "case-ingest",
+            event: { type: "text-delta", delta: "Fetching the newest cases now." },
+          },
+        },
+      ],
+    };
+
+    const html = renderToString(
+      <Message.Root message={message}>
+        <ToolCall tool={invokeAgentTool} defaultExpanded />
+      </Message.Root>,
+    );
+
+    assertStringIncludes(html, "Thought process");
+    assertStringIncludes(html, "I should query Salesforce first.");
+    assertStringIncludes(html, "Fetching the newest cases now.");
+    assertStringIncludes(html, "salesforce__list_cases");
+    assert(
+      html.indexOf("I will query Salesforce now.") < html.indexOf("salesforce__list_cases"),
+      "expected child text emitted before a tool to render before that tool",
+    );
+    assert(
+      html.indexOf("salesforce__list_cases") < html.indexOf("Fetching the newest cases now."),
+      "expected child text emitted after a tool to render after that tool",
+    );
   });
 
   it("surfaces a failed child run without exposing raw tool JSON", () => {
@@ -75,6 +276,39 @@ describe("ToolCall", () => {
       expandedHtml,
       "The child agent run failed before returning a usable result.",
     );
+  });
+
+  it("keeps the child error visible after partial streamed prose", () => {
+    const tool: ChatDynamicToolPart = {
+      ...invokeAgentTool,
+      state: "output-error",
+      errorText: "Salesforce credentials expired.",
+    };
+    const message = {
+      id: "assistant-message",
+      role: "assistant" as const,
+      metadata: {},
+      parts: [
+        tool,
+        {
+          type: "data-veryfront.invoke_agent.stream" as const,
+          data: {
+            toolCallId: tool.toolCallId,
+            agentId: "case-ingest",
+            event: { type: "text-delta", delta: "I found the first case." },
+          },
+        },
+      ],
+    };
+
+    const html = renderToString(
+      <Message.Root message={message}>
+        <ToolCall tool={tool} defaultExpanded />
+      </Message.Root>,
+    );
+
+    assertStringIncludes(html, "I found the first case.");
+    assertStringIncludes(html, "Salesforce credentials expired.");
   });
 
   it("renders a completed tool with null output as a compact status row", () => {
