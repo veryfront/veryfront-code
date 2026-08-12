@@ -1,5 +1,5 @@
-import { assertEquals } from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   auditPage,
   collectBarrelExports,
@@ -100,6 +100,44 @@ describe("audit-rfc-status", () => {
     );
     assertEquals(violations.length, 1);
     assertEquals(violations[0].message.includes("blanket status claim"), true);
+  });
+
+  // The wording that slipped past the first two patterns: a document-wide
+  // negative phrased around "nothing else" instead of "not yet".
+  it("rejects a blanket 'nothing else … has been implemented' claim", () => {
+    const violations = auditPage(
+      page(
+        `# ChatInput\n\nNothing else in this document has been implemented.\n\n${LEDGER}\n`,
+      ),
+      SURFACE,
+      anyFile,
+    );
+    assertEquals(violations.length, 1);
+    assertEquals(violations[0].message.includes("blanket status claim"), true);
+  });
+
+  // Rule 2. Only the last banner is parsed, so a second one resolves silently
+  // and rule 6 then checks the wrong claim.
+  it("rejects a page carrying a second status block", () => {
+    const body = [
+      "# ChatInput",
+      "",
+      "> **Status: RFC 29 - proposed; nothing on this page has landed.** ok:",
+      ">",
+      "> - **Exported from `veryfront/chat` today:** `ChatInput`",
+      "> - **Not exported today:** none",
+      "",
+      "> **Status: RFC 29 - partly landed.** ok:",
+      ">",
+      "> - **Exported from `veryfront/chat` today:** `ChatInput`",
+      "> - **Not exported today:** none",
+      "",
+      "### `ChatInput.Field` - `changed` - `shipped` (src/real.ts:1)",
+    ].join("\n");
+    const violations = auditPage(page(body), SURFACE, anyFile);
+    assertEquals(violations.length, 1);
+    assertEquals(violations[0].message.includes("a second status block"), true);
+    assertEquals(violations[0].line, 8);
   });
 
   it("rejects a page with no status ledger at all", () => {

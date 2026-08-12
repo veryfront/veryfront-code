@@ -7,7 +7,7 @@ Reference pages for the proposed `veryfront/chat` surface, accompanying the RFC 
 > - **Exported from `veryfront/chat` today:** `mergeProps`, `useChatInput`, `useChatInputContext`, `useChatScroll`, `useMessageBranches`
 > - **Not exported today:** `formatSize`, `getAgentPromptSuggestionItems`
 >
-> Those five are the pieces of this RFC that have actually shipped - see [reading the status block](#reading-the-status-block).
+> Those five symbols resolve on the public surface today. That is **not** the same as a landed delta - see [reading the status block](#reading-the-status-block). For the deltas that have actually landed, see [what has landed](#what-has-landed---shipped-srcreactcomponentschatchathooksuse-chat-inputts85).
 
 ## Reading the status block
 
@@ -18,6 +18,8 @@ Read a status block like this:
 - **Exported from `veryfront/chat` today** - these symbols resolve on the real public surface (barrel exports plus compound sub-parts). **This does not mean the page's delta for them has landed.** `ChatInput.Submit` ships; the RFC's reshape of it does not.
 - **Not exported today** - these symbols genuinely do not exist. `deno task lint:rfc-status` fails if any of them starts shipping without this list being updated.
 - **Not in `src/` today** - the same guarantee for props and hook members, which are not exports (`submitMode`, `getDropTargetProps`).
+
+The **Import** block on each page shows the shape this RFC _proposes_, not today's barrel - so where the two differ, the status block wins. The most common difference: "every sub-part is also a flat named export" is a proposal on every page except [`ChatInput`](./components/chat-input.md), where it has actually landed (`src/chat/index.ts:250`).
 
 What actually landed is marked **per delta**, on the delta's own heading:
 
@@ -38,7 +40,7 @@ The complete set, as of `main`. Everything else in this corpus is still a propos
 | [`useChatInputContext` naming](./hooks/use-chat-input-context.md)                                                     | `shipped`        | `src/react/components/chat/chat/contexts/composer-context.tsx:83` |
 | [`useChatInput` + prop getters](./hooks/use-chat-input.md)                                                            | `partly shipped` | `src/react/components/chat/chat/hooks/use-chat-input.ts:155`      |
 | [`useChatScroll`](./hooks/use-chat-scroll.md)                                                                         | `partly shipped` | `src/react/components/chat/chat/hooks/use-stick-to-bottom.ts:177` |
-| [`ChatInput.Field` IME guard + native surface](./components/chat-input.md)                                            | `partly shipped` | `src/react/primitives/input-box.tsx:37`                           |
+| [`ChatInput.Field` IME guard + native surface](./components/chat-input.md)                                            | `partly shipped` | `src/react/primitives/input-box.tsx:37` (guard); the native surface landed in `src/react/components/chat/chat/composition/chat-composer.types.ts:18` |
 | [`ChatInput` flat sub-part exports](./components/chat-input.md)                                                       | `shipped`        | `src/chat/index.ts:253`                                           |
 
 ## The three layers

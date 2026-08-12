@@ -9,9 +9,9 @@
 >
 > The per-piece pages carry the same block plus per-delta `shipped` badges; the roll-up of everything that has landed lives in [the reference index](./29-chat-api-shape/README.md#what-has-landed---shipped-srcreactcomponentschatchathooksuse-chat-inputts85).
 
-### Already landed - `shipped` (src/react/components/chat/chat/hooks/use-chat-input.ts:85)
+## Already landed - `shipped` (src/react/components/chat/chat/hooks/use-chat-input.ts:85)
 
-[#3277](https://github.com/veryfront/veryfront-code/pull/3277) shipped the L3 prop-getter surface (`useChatInput` with `getFormProps` / `getFieldProps` / `getSubmitProps` / `getAttachProps` / `getVoiceProps`), made **`mergeProps` public**, landed the IME-composition guard behind `ChatInput.Field`, and added `useChatScroll`, `useMessageBranches`, and the `ChatInputContext*` names. Nothing else in this document has been implemented; the ledgers on the per-piece pages are the authority, and the lint fails if any of them drifts.
+[#3277](https://github.com/veryfront/veryfront-code/pull/3277) shipped the L3 prop-getter surface (`useChatInput` with `getFormProps` / `getFieldProps` / `getSubmitProps` / `getAttachProps` / `getVoiceProps`), made **`mergeProps` public**, landed the IME-composition guard behind `ChatInput.Field`, and added `useChatScroll`, `useMessageBranches`, and the `ChatInputContext*` names. Every other delta is still a proposal; the per-piece ledgers are the authority on what is real, and the lint fails if any of them drifts.
 
 **North star: `veryfront/ui`.** Chat should be a
 **regular component library built exactly like `veryfront/ui`** - each component a

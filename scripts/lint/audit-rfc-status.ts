@@ -52,10 +52,22 @@ const CHAT_SRC_DIRS = [
   "src/react/components/ui",
 ];
 
-/** Page-wide claims no machine can check. Their whole point was to rot. */
-const BLANKET_CLAIMS = [
-  "not yet implemented",
-  "none of it is implemented yet",
+/**
+ * Page-wide claims no machine can check. Their whole point was to rot.
+ *
+ * The third pattern is the wording that slipped past the first two: the RFC's
+ * own body said "Nothing else in this document has been implemented" - the same
+ * un-checkable document-wide negative, phrased around "nothing else" instead of
+ * "not yet". Matching the shape rather than a fixed string is what stops the
+ * next paraphrase getting through.
+ */
+const BLANKET_CLAIMS: Array<{ label: string; pattern: RegExp }> = [
+  { label: "not yet implemented", pattern: /not yet implemented/i },
+  { label: "none of it is implemented yet", pattern: /none of it is implemented yet/i },
+  {
+    label: "nothing else … implemented / shipped / landed",
+    pattern: /nothing else\b[^.]*\b(?:implemented|shipped|landed)\b/i,
+  },
 ];
 
 const EXPORTED_LABEL = "**Exported from `veryfront/chat` today:**";
@@ -198,6 +210,13 @@ export function resolvesOnSurface(symbol: string, surface: PublicSurface): boole
 
 interface Ledger {
   bannerLine: number;
+  /**
+   * Every line carrying a status banner. Rule 2 is "exactly one status block
+   * per page": with two, the parse keeps only the last, so a second banner
+   * saying the opposite would resolve silently and rule 6 would then check the
+   * wrong claim.
+   */
+  bannerLines: number[];
   landed: boolean;
   exported: string[];
   absent: string[];
@@ -212,6 +231,7 @@ function ledgerSymbols(line: string): string[] {
 
 export function parseLedger(content: string): Ledger | null {
   const lines = content.split("\n");
+  const bannerLines: number[] = [];
   let bannerLine = -1;
   let landed = false;
   let exported: string[] | null = null;
@@ -221,9 +241,11 @@ export function parseLedger(content: string): Ledger | null {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (line.includes(LANDED_BANNER)) {
+      bannerLines.push(i + 1);
       bannerLine = i + 1;
       landed = true;
     } else if (line.includes(UNLANDED_BANNER)) {
+      bannerLines.push(i + 1);
       bannerLine = i + 1;
       landed = false;
     } else if (line.includes(EXPORTED_LABEL)) {
@@ -236,7 +258,7 @@ export function parseLedger(content: string): Ledger | null {
   }
 
   if (bannerLine === -1 || exported === null || absent === null) return null;
-  return { bannerLine, landed, exported, absent, unbuilt };
+  return { bannerLine, bannerLines, landed, exported, absent, unbuilt };
 }
 
 export interface ShippedBadge {
@@ -300,12 +322,12 @@ export function auditPage(
   // Rule 1 - blanket claims are banned outright.
   for (let i = 0; i < lines.length; i++) {
     for (const claim of BLANKET_CLAIMS) {
-      if (lines[i].toLowerCase().includes(claim)) {
+      if (claim.pattern.test(lines[i])) {
         out.push({
           path: page.path,
           line: i + 1,
           message:
-            `blanket status claim "${claim}" - no machine can check it, so it rots. ` +
+            `blanket status claim "${claim.label}" - no machine can check it, so it rots. ` +
             `State per-symbol status in the page's status ledger instead.`,
         });
       }
@@ -323,6 +345,16 @@ export function auditPage(
         `"${EXPORTED_LABEL}" and "${ABSENT_LABEL}" lines.`,
     });
     return out;
+  }
+  for (const extra of ledger.bannerLines.slice(1)) {
+    out.push({
+      path: page.path,
+      line: extra,
+      message:
+        "a second status block on this page. Exactly one per page: two banners " +
+        "can disagree, and only the last one is read - which is how a page-level " +
+        "summary drifts from its own deltas.",
+    });
   }
 
   // Rules 3 + 4 - the ledger's two lists must both be true.

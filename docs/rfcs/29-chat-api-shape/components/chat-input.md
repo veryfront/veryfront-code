@@ -181,7 +181,10 @@ size is below 560px or the field has a single visual line).
 
 _Changed: `submitMode`-driven, IME-guarded Enter and paste-to-attach are added, and the full native textarea surface + `asChild` open up (today only `placeholder`/`className`/`aria-label`)._
 
-**Landed** in [#3277](https://github.com/veryfront/veryfront-code/pull/3277): `ChatInputFieldProps` now extends `React.TextareaHTMLAttributes<HTMLTextAreaElement>` (minus the controlled trio), so the full native surface and `ref` are already the consumer's; and the IME-composition guard is real - `handleInputBoxKeyDown` (`src/react/primitives/input-box.tsx:37`) checks native `isComposing`, synthetic `isComposing`, and the `keyCode === 229` fallback before Enter submits. `.Field` and `useChatInput().getFieldProps()` both route through it, so a custom textarea cannot diverge from the primitive.
+**Landed** in [#3277](https://github.com/veryfront/veryfront-code/pull/3277), in **two files** - this delta has two halves, so the badge above and the [roll-up row](../README.md#what-has-landed---shipped-srcreactcomponentschatchathooksuse-chat-inputts85) each cite one of them:
+
+- **Native surface** (`src/react/components/chat/chat/composition/chat-composer.types.ts:18`, the badge's anchor): `ChatInputFieldProps` now extends `React.TextareaHTMLAttributes<HTMLTextAreaElement>` (minus the controlled trio), so the full native surface and `ref` are already the consumer's.
+- **IME guard** (`src/react/primitives/input-box.tsx:37`, the roll-up's anchor): `handleInputBoxKeyDown` checks native `isComposing`, synthetic `isComposing`, and the `keyCode === 229` fallback before Enter submits. `.Field` and `useChatInput().getFieldProps()` both route through it, so a custom textarea cannot diverge from the primitive.
 
 **Still proposed:** `submitMode`, paste-to-attach, and `asChild` on this leaf.
 

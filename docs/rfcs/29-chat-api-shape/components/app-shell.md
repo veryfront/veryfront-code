@@ -11,7 +11,7 @@ Application shell layout - dockable sidebars, main pane, header - from `veryfron
 
 ## Reference only
 
-`AppShell` lives in **`veryfront/ui`**, not `veryfront/chat` - it is already shipped and already close to the convention this RFC applies to chat (single nodes, native spread, `ref` props, compound parts). This page documents its _real, current_ surface so chat compositions can be judged against it; changes to `AppShell` itself (e.g. `asChild`, the icon-slot ban on `.Trigger`) are out of scope for this chat RFC.
+`AppShell`'s home is **`veryfront/ui`**, which is what the import below shows; `veryfront/chat` re-exports it (`src/chat/index.ts:311`) so a chat app can compose its shell from one import, which is why it also resolves in the status block above. It is already shipped and already close to the convention this RFC applies to chat (single nodes, native spread, `ref` props, compound parts). This page documents its _real, current_ surface so chat compositions can be judged against it; changes to `AppShell` itself (e.g. `asChild`, the icon-slot ban on `.Trigger`) are out of scope for this chat RFC.
 
 ## Import
 

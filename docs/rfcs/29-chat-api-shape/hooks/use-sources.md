@@ -4,7 +4,7 @@ The citation list for a message, derived from its source parts.
 
 > **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
 >
-> - **Exported from `veryfront/chat` today:** `useSources`
+> - **Exported from `veryfront/chat` today:** `extractSourcesFromParts`, `useSources`
 > - **Not exported today:** none
 >
 > An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).

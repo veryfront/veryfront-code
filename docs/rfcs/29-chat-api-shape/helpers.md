@@ -38,7 +38,7 @@ Every helper is a plain function you can call anywhere - in your own part render
 
 Shipped in [#3277](https://github.com/veryfront/veryfront-code/pull/3277). It is a real public export of `veryfront/chat`, re-exported from `src/chat/index.ts`, and it is the merge every `useChatInput` getter calls - so the getters and the exported helper cannot drift.
 
-What has _not_ landed with it: `formatSize` and `getAgentPromptSuggestionItems` are still internal, so the "public helpers" list below is the proposal, not today's barrel.
+What has _not_ landed with it: `formatSize` and `getAgentPromptSuggestionItems` are still internal, so the reference table above is the proposal, not today's barrel.
 
 ## Notes
 
