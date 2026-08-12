@@ -14,7 +14,7 @@ The examples use the default app router. Set `router: "pages"` in
 
 ## Prerequisites
 
-- A project created with `veryfront init` (see [Create project](../getting-started/create-project.md)).
+- A project created with `veryfront init` (see [Create project](../getting-started/create-project.md)), or a blank project with `veryfront` installed (see [Installation](../getting-started/installation.md)). Veryfront discovers these directories by convention either way.
 - Familiarity with how a file path maps to a route in modern React frameworks.
 
 ## Directory layout
@@ -232,6 +232,35 @@ refetches the remote dependencies it needs.
 | `app/not-found.tsx`   | Custom 404 page                |
 | `veryfront.config.ts` | Framework configuration        |
 | `package.json`        | Dependencies and metadata      |
+
+## Generated directories
+
+The CLI writes these directories into the project root. They hold derived
+output only, so deleting them is safe: the next command regenerates whatever it
+needs.
+
+| Directory | Written by                         | Contents                                                                                                 |
+| --------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `.cache/` | `veryfront dev`, `veryfront build` | Compiled page modules in `veryfront-mdx-esm/` and bundled remote dependencies in `veryfront-http-bundle/` |
+| `dist/`   | `veryfront build`                  | The build output. `-o/--output` and `build.outDir` change the location                                    |
+
+`.cache/` keeps itself out of version control. When the file is absent, both
+commands create a `.cache/.gitignore` containing `*`, which ignores the
+directory's contents and the file itself, so a project that adopted Veryfront
+into an existing tree does not have to edit its own `.gitignore`. A
+`.cache/.gitignore` you wrote yourself is never overwritten, so keep the
+generated bundles ignored there if you replace it. `veryfront init` also lists
+`.cache/` in the `.gitignore` it scaffolds.
+
+Set `VERYFRONT_CACHE_DIR` to keep generated bundles out of the project tree
+entirely:
+
+```bash
+VERYFRONT_CACHE_DIR=/tmp/veryfront-cache veryfront dev
+```
+
+Deleting `.cache/` costs only time. The next run recompiles the pages and
+refetches the remote dependencies it needs.
 
 ## Verify it worked
 

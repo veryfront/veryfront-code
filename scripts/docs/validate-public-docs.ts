@@ -92,6 +92,106 @@ const RULES: Rule[] = [
     pattern: staleGettingStartedPath,
     message: "Use /docs/code/getting-started/ for moved Getting Started pages.",
   },
+  {
+    pattern: /Ready on\s+`?\[?https?:\/\//i,
+    message:
+      "veryfront dev prints a '✓ Ready in <duration>' line followed by the URL on its own line. Do not document a 'Ready on <url>' line the CLI never prints.",
+  },
+];
+
+/**
+ * Rules that must survive prose wrapping, so they run against a line joined
+ * with the one after it.
+ */
+const WRAPPED_RULES: Rule[] = [
+  {
+    pattern:
+      /printed MCP (?:endpoint|URL|address)|prints the MCP (?:endpoint|URL|address)/i,
+    message:
+      "`veryfront dev` does not print the MCP endpoint by default. State the address instead: `--port` + 2 (default 3002), path `/mcp`.",
+  },
+];
+
+interface CoverageRequirement {
+  label: string;
+  pattern: RegExp;
+}
+
+interface CoveragePage {
+  path: string;
+  requirements: CoverageRequirement[];
+}
+
+/**
+ * Veryfront Cloud seeds production, staging, and preview as protected
+ * environments, so an anonymous request to a fresh deployment is redirected to
+ * the Veryfront sign-in page instead of the app. Every page that tells a reader
+ * to deploy has to say so, or the reader ships a URL nobody else can open.
+ *
+ * These mirror the deploy-access coverage checks veryfront-docs runs against
+ * the synced `docs/code/**` tree. Keeping them here as well means a PR that
+ * drops the coverage fails in this repo, instead of silently breaking the docs
+ * sync in a downstream repository nobody is watching.
+ */
+const DEPLOY_ACCESS_COVERAGE: CoveragePage[] = [
+  {
+    path: "docs/getting-started/deploy-project.md",
+    requirements: [
+      {
+        label:
+          "state that Veryfront Cloud environments are protected by default",
+        pattern: /protected by default/i,
+      },
+      {
+        label:
+          "state that an unauthenticated request is redirected to sign-in",
+        pattern: /sign-in/i,
+      },
+      {
+        label:
+          "state that VERYFRONT_API_TOKEN does not open a protected environment",
+        pattern: /VERYFRONT_API_TOKEN[^.]{0,120}does not open/i,
+      },
+      {
+        label: "name the Studio switch that makes an environment public",
+        pattern: /Public Environment/,
+      },
+    ],
+  },
+  {
+    path: "docs/guides/deploying.md",
+    requirements: [
+      {
+        label:
+          "state that Veryfront Cloud environments are protected by default",
+        pattern: /protected by default/i,
+      },
+      {
+        label: "name the Studio switch that makes an environment public",
+        pattern: /Public Environment/,
+      },
+    ],
+  },
+  {
+    path: "docs/getting-started/quickstart.md",
+    requirements: [
+      {
+        label: "state that the deployed environment is protected by default",
+        pattern: /protected by default/i,
+      },
+    ],
+  },
+];
+
+/**
+ * `veryfront dev` prints `http://veryfront.me:<port>` and no other URL. Pages
+ * that run the dev server and then tell the reader to open the app must name
+ * that host, or the reader hits a banner that matches nothing in the doc.
+ */
+const PRINTED_DEV_SERVER_URL = "http://veryfront.me:3000";
+const DEV_SERVER_PAGES = [
+  "docs/getting-started/quickstart.md",
+  "docs/getting-started/create-project.md",
 ];
 
 async function* walkMarkdownFiles(path: string): AsyncGenerator<string> {
@@ -132,6 +232,52 @@ function collectIssues(path: string, content: string): PublicDocIssue[] {
       });
     }
   }
+
+  for (const rule of WRAPPED_RULES) {
+    const hit = lines.findIndex((line, index) =>
+      rule.pattern.test(`${line} ${lines[index + 1] ?? ""}`.replace(/\s+/g, " "))
+    );
+    if (hit === -1) continue;
+    issues.push({
+      path,
+      line: hit + 1,
+      message: rule.message,
+      text: lines[hit].trim(),
+    });
+  }
+
+  return issues;
+}
+
+async function collectCoverageIssues(): Promise<PublicDocIssue[]> {
+  const issues: PublicDocIssue[] = [];
+
+  for (const page of DEPLOY_ACCESS_COVERAGE) {
+    const content = await Deno.readTextFile(`${ROOT}/${page.path}`);
+    const flattened = content.replace(/\s+/g, " ");
+    for (const requirement of page.requirements) {
+      if (requirement.pattern.test(flattened)) continue;
+      issues.push({
+        path: page.path,
+        line: 1,
+        message: `Deploy pages must ${requirement.label}.`,
+        text: String(requirement.pattern),
+      });
+    }
+  }
+
+  for (const page of DEV_SERVER_PAGES) {
+    const content = await Deno.readTextFile(`${ROOT}/${page}`);
+    if (content.includes(PRINTED_DEV_SERVER_URL)) continue;
+    issues.push({
+      path: page,
+      line: 1,
+      message:
+        `\`veryfront dev\` prints ${PRINTED_DEV_SERVER_URL}. Show that URL before sending the reader to the app.`,
+      text: "Missing the dev server URL the CLI prints.",
+    });
+  }
+
   return issues;
 }
 
@@ -148,6 +294,7 @@ async function main(): Promise<void> {
     const content = await Deno.readTextFile(`${ROOT}/${file}`);
     issues.push(...collectIssues(file, content));
   }
+  issues.push(...await collectCoverageIssues());
 
   if (issues.length === 0) {
     console.log(`Validated public docs quality across ${files.size} file(s).`);

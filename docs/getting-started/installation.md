@@ -39,6 +39,75 @@ deno add npm:veryfront
 
 </CodeGroup>
 
+Installing the package adds the framework, the CLI, and `react` / `react-dom`,
+which ship as dependencies of `veryfront`. It does not scaffold any files or
+touch your `package.json` beyond the dependency entry. Add the four pieces
+below yourself. `veryfront init` writes all of them for you, see
+[Create project](./create-project.md).
+
+### Set the module type
+
+Veryfront emits ES modules. Set `"type": "module"` in `package.json`:
+
+```json title="package.json"
+{
+  "type": "module"
+}
+```
+
+`npm init -y` writes `"type": "commonjs"`, and an existing project may have no
+`type` field at all. Without `"type": "module"`, `veryfront build` fails with
+`SyntaxError: Cannot use import statement outside a module`.
+
+### Add the CLI scripts
+
+```json title="package.json"
+{
+  "scripts": {
+    "dev": "veryfront dev",
+    "build": "veryfront build",
+    "start": "veryfront serve"
+  }
+}
+```
+
+### Extend the base TypeScript config
+
+The `veryfront` package ships a base `tsconfig.json` with the compiler options
+Veryfront expects, including `"jsx": "react-jsx"` and
+`"moduleResolution": "Bundler"`. Extend it:
+
+```json title="tsconfig.json"
+{
+  "extends": "veryfront/tsconfig.json",
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules"]
+}
+```
+
+### Add a page and run it
+
+Veryfront discovers routes under `app/`. Create a home page:
+
+```tsx title="app/page.tsx"
+export default function Home() {
+  return <h1>Hello from Veryfront</h1>;
+}
+```
+
+Then start the dev server:
+
+```bash
+npm run dev
+```
+
+Open the URL the CLI prints, `http://veryfront.me:3000` by default, to see the
+page.
+
+For where the remaining files go, see
+[Project structure](../guides/project-structure.md). To add an API route under
+`app/api/`, see [Create API](./create-api.md).
+
 ## New scaffolded project
 
 Create a new Veryfront Code project when you want scaffolding and starter files.
@@ -131,8 +200,13 @@ project guide with `--target agents`:
 veryfront install --target agents
 ```
 
-Then run `veryfront dev` and connect your MCP-aware coding agent to the printed
-MCP endpoint. See [Coding agents](../guides/coding-agents.md).
+Then run `veryfront dev`. It starts an HTTP MCP server on your dev `--port` plus
+2 (default `3002`), always at the path `/mcp`. Point your MCP-aware coding agent
+at `http://veryfront.me:3002/mcp`.
+
+The dev server lists this address only under `--verbose`, so derive it from the
+port rule rather than waiting for it to appear. `veryfront dev --help` restates
+the rule. See [Coding agents](../guides/coding-agents.md).
 
 ## Verify the CLI
 

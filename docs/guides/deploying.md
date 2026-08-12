@@ -60,8 +60,8 @@ export default defineConfig({
 
 A relative `outDir` resolves against the project directory. The build clears
 its output directory before writing, so point it somewhere the project does not
-keep files of its own — an `outDir` that is the project directory or contains
-it is rejected before the build starts.
+keep files of its own. An `outDir` that is the project directory or contains it
+is rejected before the build starts.
 
 `build.trailingSlash` remains an accepted configuration field for
 compatibility, but the production builder does not consume it.
@@ -129,6 +129,21 @@ lower-level tenant or project-ID environment references, then the ignored local
 link. Keep `.veryfront/project.json` ignored unless you intentionally use
 committed configuration instead.
 
+## Check who can reach the environment
+
+Veryfront Cloud creates `production`, `staging`, and `preview` as protected by
+default, and Deploy prints `Protected` or `Public` next to the release version.
+A protected environment serves requests only to a browser signed in to
+Veryfront as a member of the project. Anonymous requests, including requests to
+API routes and requests carrying `VERYFRONT_API_TOKEN`, are redirected to the
+Veryfront sign-in page.
+
+Plan for that before a launch or an external smoke test. To make an environment
+reachable by anyone with the URL, open Environments in Veryfront Studio, select
+the environment, turn on **Public Environment**, and confirm **Make Public**.
+See [Deploy project](../getting-started/deploy-project.md#environment-access)
+for the redirect a protected environment returns.
+
 ## Set production environment variables
 
 Set provider and integration credentials on the deployment platform:
@@ -181,7 +196,8 @@ After `veryfront deploy`:
 - `veryfront open` opens the project in the Cloud dashboard, not the deployed
   site.
 - The same page, API route, agent, workflow, task, or run path works in
-  production.
+  production. Test it from a browser signed in to Veryfront while the
+  environment is protected.
 - The Cloud dashboard lists the deployment under the project.
 
 ## Tear a project down
