@@ -150,8 +150,8 @@ draws the same line: it picks a readiness route only from the project's static
 page routes and skips the browser readiness probe entirely when there is none,
 so a successful deploy does not imply a `200` anywhere.
 
-A protected environment answers `302` to the sign-in page — see
-[Environment access](#environment-access) for which apex serves it — or `403`
+A protected environment answers `302` to the sign-in page (see
+[Environment access](#environment-access) for which apex serves it) or `403`
 for a signed-in non-member. In that case open the URL in a member's browser, or
 make the environment public. Do not check with a bare
 `curl -sSf <environment-url>`: `curl` does not treat a `302` as a failure, so

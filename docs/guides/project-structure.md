@@ -185,7 +185,7 @@ These directories are not auto-discovered. They are common project conventions.
 These directories hold derived output only, so deleting them is safe: the next
 command regenerates whatever it needs. `dist/` is always written into the
 project root. `.cache/` is too during development, but not under a production
-runtime — see "Where the cache root lives" below.
+runtime. See "Where the cache root lives" below.
 
 | Directory | Written by                         | Contents                                                                                                  |
 | --------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------- |
@@ -215,7 +215,7 @@ The cache root keeps itself out of version control. When the file is absent,
 both commands create a `.gitignore` in the cache root containing `*`, which
 ignores the directory's contents and the file itself, so a project that adopted
 Veryfront into an existing tree does not have to edit its own `.gitignore`. A
-marker you wrote yourself — a `.cache/.gitignore` of your own, say — is never
+marker you wrote yourself (a `.cache/.gitignore` of your own, say) is never
 overwritten in either root, so keep the generated bundles ignored there if you
 replace it. `veryfront init` also lists `.cache/` in the `.gitignore` it
 scaffolds.
