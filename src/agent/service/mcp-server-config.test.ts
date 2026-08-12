@@ -1,4 +1,5 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createAgentServiceRemoteMcpConfig,
   createProjectScopedMcpUrl,
@@ -56,26 +57,28 @@ Deno.test("createAgentServiceRemoteMcpConfig builds Veryfront API MCP config", a
   );
 });
 
-Deno.test("createProjectScopedMcpUrl normalizes and replaces the project segment", () => {
-  assertEquals(
-    createProjectScopedMcpUrl("https://api.example", " project/1 "),
-    "https://api.example/projects/project%2F1/mcp",
-  );
-  assertEquals(
-    createProjectScopedMcpUrl("https://api.example/projects/old/mcp", "new"),
-    "https://api.example/projects/new/mcp",
-  );
-  assertEquals(
-    createProjectScopedMcpUrl("https://api.example/mcp", "  "),
-    "https://api.example/mcp",
-  );
-  assertEquals(
-    createProjectScopedMcpUrl(
-      "https://api.example/mcp/?environment=staging",
-      "project-1",
-    ),
-    "https://api.example/projects/project-1/mcp?environment=staging",
-  );
+describe("createProjectScopedMcpUrl", () => {
+  it("normalizes and replaces the project segment", () => {
+    assertEquals(
+      createProjectScopedMcpUrl("https://api.example", " project/1 "),
+      "https://api.example/projects/project%2F1/mcp",
+    );
+    assertEquals(
+      createProjectScopedMcpUrl("https://api.example/projects/old/mcp", "new"),
+      "https://api.example/projects/new/mcp",
+    );
+    assertEquals(
+      createProjectScopedMcpUrl("https://api.example/mcp", "  "),
+      "https://api.example/mcp",
+    );
+    assertEquals(
+      createProjectScopedMcpUrl(
+        "https://api.example/mcp/?environment=staging",
+        "project-1",
+      ),
+      "https://api.example/projects/project-1/mcp?environment=staging",
+    );
+  });
 });
 
 Deno.test("createAgentServiceRemoteMcpConfig builds generic MCP config without dropping options", () => {

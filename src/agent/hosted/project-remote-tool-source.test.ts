@@ -905,7 +905,7 @@ Deno.test("createHostedProjectRemoteToolSources infers Studio MCP from allowed S
   );
 });
 
-Deno.test("createHostedProjectRemoteToolSources does not infer Studio when explicit API-only MCP is set", async () => {
+it("does not infer Studio when explicit API-only MCP is set", async () => {
   const configs: RemoteMCPToolSourceConfig[] = [];
   const sources = createHostedProjectRemoteToolSources({
     authToken: "token-1",

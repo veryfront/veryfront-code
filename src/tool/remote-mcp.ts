@@ -813,11 +813,10 @@ function normalizeCallToolResult(input: {
 function endpointBindsToolAuthorization(endpoint: string): boolean {
   const apiBaseUrl = getApiBaseUrlEnv();
   if (typeof apiBaseUrl !== "string" || apiBaseUrl.length === 0) return false;
-  const normalizedEndpoint = normalizeTrustedEndpoint(endpoint);
-  if (!normalizedEndpoint) return false;
+  const endpointUrl = parseMcpRequestEndpoint(endpoint);
+  if (!endpointUrl) return false;
 
   try {
-    const endpointUrl = new URL(normalizedEndpoint);
     const apiBase = new URL(apiBaseUrl);
     if (endpointUrl.origin !== apiBase.origin) return false;
 
@@ -1006,6 +1005,25 @@ function normalizeTrustedEndpoint(value: string): string | undefined {
   }
 }
 
+/** Parse a safe MCP request URL while preserving its query string. */
+function parseMcpRequestEndpoint(value: string): URL | undefined {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    if (url.username || url.password || url.hash) return undefined;
+    return url;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeMcpRequestEndpoint(value: string): string | undefined {
+  const url = parseMcpRequestEndpoint(value);
+  if (!url) return undefined;
+  url.search = "";
+  return url.toString();
+}
+
 /**
  * Create a remote MCP source factory with narrowly scoped host transport.
  *
@@ -1038,7 +1056,7 @@ function isTrustedDeploymentMcpEndpoint(
   endpoint: string,
   trustedEndpoints: ReadonlySet<string>,
 ): boolean {
-  const normalizedEndpoint = normalizeTrustedEndpoint(endpoint);
+  const normalizedEndpoint = normalizeMcpRequestEndpoint(endpoint);
   if (!normalizedEndpoint) return false;
   if (trustedEndpoints.has(normalizedEndpoint)) return true;
 

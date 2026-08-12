@@ -113,12 +113,14 @@ describe("tool/remote-mcp", () => {
     assertEquals(transportCalls, 0);
   });
 
-  it("uses host transport for a dynamic project-scoped trusted endpoint", async () => {
+  it("uses host transport for dynamic project-scoped endpoints with query parameters", async () => {
     let transportCalls = 0;
+    const requestUrls: string[] = [];
     const createSource = createRemoteMCPToolSourceFactoryWithTransport({
       trustedEndpoints: ["http://veryfront-api/mcp"],
-      requestFetch: async (_input, init) => {
+      requestFetch: async (input, init) => {
         transportCalls++;
+        requestUrls.push(String(input));
         const body = JSON.parse(String(init && "body" in init ? init.body : undefined)) as {
           id: string;
         };
@@ -127,13 +129,17 @@ describe("tool/remote-mcp", () => {
     });
     let projectId = "project-1";
     const source = createSource({
-      endpoint: () => `http://veryfront-api/projects/${projectId}/mcp`,
+      endpoint: () => `http://veryfront-api/projects/${projectId}/mcp?environment=staging`,
     });
 
     assertEquals(await source.listTools(), []);
     projectId = "project-2";
     assertEquals(await source.listTools(), []);
     assertEquals(transportCalls, 2);
+    assertEquals(requestUrls, [
+      "http://veryfront-api/projects/project-1/mcp?environment=staging",
+      "http://veryfront-api/projects/project-2/mcp?environment=staging",
+    ]);
   });
 
   it("rejects invalid trusted endpoints when the factory is created", () => {
@@ -362,7 +368,7 @@ describe("tool/remote-mcp", () => {
     await withEnv({ VERYFRONT_API_BASE_URL: "https://93.184.216.34" }, async () => {
       const source = createRemoteMCPToolSource({
         id: "veryfront-mcp",
-        endpoint: "https://93.184.216.34/projects/project-1/mcp",
+        endpoint: "https://93.184.216.34/projects/project-1/mcp?environment=staging",
       });
 
       await withMockFetch(
