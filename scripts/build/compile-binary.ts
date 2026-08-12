@@ -106,10 +106,30 @@ export function createCompileArgs(options: CompileBinaryOptions): string[] {
   ];
 
   if (profile === "proxy") {
-    // The workspace lock contains every framework dependency, and Deno embeds
-    // every locked npm package in a compiled binary. Use the graph-specific
-    // frozen lock so the proxy carries only its statically anchored providers.
-    // Refresh it with `deno task build:proxy-lock` after provider changes.
+    // Why a dedicated proxy binary exists at all.
+    //
+    // The universal binary grew from 887,756,293 to 951,154,705 bytes between
+    // v0.1.1185 and v0.1.1186, and staging proxy pods began exiting 137
+    // (OOMKilled) under their 1536 MiB limit. Renderer pods ran the same binary
+    // and survived only because their limit was 4 GiB. Commit 339367a6d
+    // ("move asset processors behind explicit extensions") added the Sharp,
+    // Lightning CSS, and PurgeCSS includes above; that alone measured about
+    // +78 MB of ARM64 artifact and about +234 MB of startup peak memory.
+    //
+    // A bare `--version` invocation reproduced the OOM before any proxy
+    // traffic, Redis, or Sentry work started. That is the load-bearing detail:
+    // the cost is Deno mapping the embedded module and dependency archive at
+    // startup, not the JavaScript heap. Lowering V8 old-space or disabling
+    // Sentry therefore does not help, and raising the memory limit only buys
+    // headroom until the next include lands. The fix has to be a smaller
+    // embedded graph.
+    //
+    // So do not "simplify" this branch back onto the workspace lock or the
+    // universal include list. The workspace lock contains every framework
+    // dependency, and Deno embeds every locked npm package in a compiled
+    // binary. Use the graph-specific frozen lock so the proxy carries only its
+    // statically anchored providers. Refresh it with
+    // `deno task build:proxy-lock` after provider changes.
     args.push(
       "--node-modules-dir=none",
       "--lock",

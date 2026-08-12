@@ -325,6 +325,65 @@ module into three frame classes:
 Local tool execution occurs after a `tool_handoff` Stream Outcome in the outer
 agent loop; a provider-attempt boundary never terminates the agent run.
 
+### Provider wait accounting
+
+Source: [`src/agent/streaming/lifecycle/deadlines.ts`](../../src/agent/streaming/lifecycle/deadlines.ts).
+
+The first-progress, semantic-idle, tool-input-idle, and commit-grace deadlines
+measure _provider_ wait time, not wall-clock time. They accrue only while the
+lifecycle is actually awaiting a pending provider read. The runner calls
+`resumeProviderWait` immediately before racing a read and `pauseProviderWait`
+immediately after the race returns, so the interval in which the consumer holds
+a yielded frame is not charged to the provider.
+
+Resuming does not hand back a fresh budget. `pauseProviderWait` subtracts the
+elapsed wait from `remainingMs`; `resumeProviderWait` re-arms the deadline as
+`now + remainingMs`. A slow consumer therefore cannot buy the provider extra
+idle time by stalling. Two things do reset the budget to its full policy value,
+both deliberately:
+
+- A change of deadline kind. `resumeProviderWait` selects the kind from the
+  current snapshot and refills only when `kind !== activeKind`, so entering
+  tool-input-idle or commit-grace starts that phase's own budget rather than
+  inheriting a partly consumed one.
+- Semantic progress. `noteSemanticProgress` refills after any signal the
+  reducer classifies as semantic. Telemetry cannot do this. When status wins
+  the race, `raceProviderRead` only sets `statusEmitted`; the runner then calls
+  `pauseProviderWait`, which clears `deadlineAbsMs`, and the next
+  `resumeProviderWait` both schedules the following status time and re-arms
+  `deadlineAbsMs` from the carried-over `remainingMs`. The invariant is about
+  the budget, not the timestamp: `deadlineAbsMs` is recomputed on every resume,
+  but only a kind change or semantic progress refills `remainingMs`.
+
+The absolute attempt limit and external cancellation deliberately do **not**
+pause under consumer backpressure. `attemptDeadlineMs` is fixed at attempt
+start and is additionally armed as a real timer (`createAbsoluteDeadline` in
+the runner), so it fires and settles the outcome even while the consumer is
+holding a non-terminal frame. The reasoning: the absolute limit bounds total
+wall-clock ownership of an attempt, not provider availability. A read that
+resolves while the consumer holds a telemetry frame is cached by
+`trackProviderRead` and consumed on resume, but if the attempt limit wins
+first, the cached result is discarded and the failure is classified
+`STREAM_ATTEMPT_TIMEOUT` with `source: "runtime"`, never as provider semantic
+idle. Delivery latency belongs to Stream Delivery.
+
+When a provider part and a deadline become ready together, `raceProviderRead`
+resolves the tie in a fixed order, which is what makes the race tests
+deterministic:
+
+1. Disposal or external cancellation -> `cancelled`.
+2. `nowMs() >= attemptDeadlineMs` -> `attempt_timeout`. Checked before any
+   pending part is reduced, so the attempt deadline wins its ties.
+3. A settled read -> `part` / `read_error`, but only if it settled at or before
+   the active deadline (`settledAtMs <= deadlineAbsMs`). A read that landed
+   after the deadline elapsed does not retroactively win.
+4. `nowMs() >= deadlineAbsMs` -> `provider_deadline`.
+5. `nowMs() >= statusDueMs` -> `status` telemetry.
+
+The lifecycle never opens a second provider read to cover a stalled one, and a
+telemetry frame does not trigger prefetch: the next read starts only after
+every frame derived from the current part has been consumed.
+
 ```text
 provider attempt
   RuntimeStreamPart -> Provider Adapter -> Stream Lifecycle -> Live Adapter -> Data Stream bytes

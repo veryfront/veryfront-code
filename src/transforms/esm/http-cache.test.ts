@@ -113,6 +113,42 @@ async function runNextFakeTimer(time: FakeTime, tempDir: string): Promise<void> 
   throw new Error("Expected a fake timer to be scheduled");
 }
 
+/** Iterations of {@linkcode runFakeTimersUntil} before it reports a stuck wait. */
+const MAX_FAKE_TIMER_STEPS = 200;
+
+/**
+ * Run scheduled fake timers, one at a time, until `isSettled` reports done.
+ *
+ * A caller whose only release is its own bounded-wait timer arms that timer
+ * once its real I/O reaches the wait. Advancing the fake clock by a fixed span
+ * instead assumes the timer already exists: on a loaded runner the caller can
+ * arm it after the clock has moved past its due time, and no later advance ever
+ * runs it. Awaiting that caller then blocks forever with nothing left on the
+ * event loop, which Deno reports as "Promise resolution is still pending but
+ * the event loop has already resolved" — a whole test file silently dropped.
+ *
+ * Stepping from the settled state keeps the wait reachable whenever it is
+ * armed, and the step budget turns a genuinely stuck wait into a failure
+ * instead of a hang.
+ */
+async function runFakeTimersUntil(
+  time: FakeTime,
+  tempDir: string,
+  isSettled: () => boolean,
+  description: string,
+): Promise<void> {
+  for (let step = 0; step < MAX_FAKE_TIMER_STEPS; step++) {
+    if (isSettled()) return;
+    // A real filesystem call lets pending I/O reach its bounded wait; only
+    // then can the timer that releases it exist.
+    await Deno.stat(tempDir);
+    if (await time.nextAsync()) await time.runMicrotasks();
+  }
+  throw new Error(
+    `${description} did not settle within ${MAX_FAKE_TIMER_STEPS} fake timer steps`,
+  );
+}
+
 describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, () => {
   it("keeps the full fetch retry window within the module-loading idle deadline", () => {
     assert(HTTP_MODULE_FETCH_MAX_WAIT_MS <= MODULE_LOAD_TIMEOUT_MS);
@@ -756,6 +792,38 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     });
   });
 
+  it("runs a bounded wait whose timer landed past a fixed clock advance", async () => {
+    using time = new FakeTime();
+    const tempDir = await makeTempDir({ prefix: "vf-esm-late-armed-wait-" });
+
+    try {
+      let settled = false;
+      // A follower that only reaches its bounded wait after real filesystem
+      // work can arm that wait once the clock has already moved, leaving the
+      // timer past the span the test advanced. Encode that end state directly:
+      // a wait no single HTTP_MODULE_FETCH_MAX_WAIT_MS advance can reach.
+      const work = (async () => {
+        await Deno.stat(tempDir);
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, HTTP_MODULE_FETCH_MAX_WAIT_MS * 3);
+        });
+        settled = true;
+      })();
+
+      await runFakeTimersUntil(
+        time,
+        tempDir,
+        () => settled,
+        "The late-armed bounded wait",
+      );
+
+      assertEquals(settled, true);
+      await work;
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("returns a signal-less cache follower after its bounded wait", async () => {
     using time = new FakeTime();
     const distributedRead = Promise.withResolvers<string | null>();
@@ -783,20 +851,34 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
 
         await time.runMicrotasks();
         const follower = cacheHttpImportsToLocal(source, options);
+        let followerSettled = false;
         const followerOutcome = follower.then(
-          (value) => ({ error: undefined, value }),
-          (error: unknown) => ({ error, value: undefined }),
+          (value) => {
+            followerSettled = true;
+            return { error: undefined, value };
+          },
+          (error: unknown) => {
+            followerSettled = true;
+            return { error, value: undefined };
+          },
         );
 
         try {
-          for (let attempt = 0; attempt < 10; attempt++) {
+          for (let attempt = 0; attempt < 20; attempt++) {
             if (__getMaxInFlightHttpFetchWaiterCountForTests() >= 2) break;
+            // The follower reaches the shared flight through real filesystem
+            // work, which draining microtasks alone never advances.
+            await Deno.stat(tempDir);
             await time.runMicrotasks();
           }
           assertEquals(__getMaxInFlightHttpFetchWaiterCountForTests(), 2);
 
-          await time.tickAsync(HTTP_MODULE_FETCH_MAX_WAIT_MS);
-          await time.runMicrotasks();
+          await runFakeTimersUntil(
+            time,
+            tempDir,
+            () => followerSettled,
+            "The signal-less follower's bounded wait",
+          );
 
           const { error } = await followerOutcome;
           assertInstanceOf(error, Error);

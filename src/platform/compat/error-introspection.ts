@@ -231,6 +231,36 @@ export function isNativeErrorWithoutHooks(value: unknown): value is Error {
   return nativeErrorBrandCheck(value);
 }
 
+/**
+ * Identify an Error whose prototype chain may have been minted somewhere else.
+ *
+ * `value instanceof Error` compares against the `Error.prototype` of whichever
+ * realm this module was evaluated in. An Error produced in a worker, a `vm`
+ * context, or a second instance of this module graph — which the Node and Bun
+ * loaders both produce, one per package copy or per transpiled entry — carries
+ * a different `Error.prototype` and fails that comparison even though it is a
+ * genuine Error. Code that branches on `instanceof` to decide whether to keep
+ * an error therefore discards real errors at exactly those boundaries.
+ *
+ * The native brand check reads the runtime's own `[[ErrorData]]` internal slot,
+ * which no realm boundary changes, so it recognizes those errors. `instanceof`
+ * stays as a second branch because Bun does not report `DOMException` as a
+ * native error, and a DOMException — the shape every unattributed `AbortSignal`
+ * cancellation reason takes — must keep being recognized there.
+ *
+ * Values that merely look like errors (a plain object carrying `name` and
+ * `message`, or one tagged `[object Error]` through `Symbol.toStringTag`) are
+ * rejected by both branches, so this stays a brand check rather than a shape
+ * check.
+ *
+ * Unlike {@link isNativeErrorWithoutHooks} this can run project code: the
+ * `instanceof` branch consults `Symbol.hasInstance`. Callers that must not
+ * execute foreign hooks use the brand check directly.
+ */
+export function isErrorAcrossRealms(value: unknown): value is Error {
+  return nativeErrorBrandCheck(value) || value instanceof NativeError;
+}
+
 function readOwnDataString(
   value: object,
   key: PropertyKey,

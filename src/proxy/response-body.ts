@@ -1,3 +1,5 @@
+import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
+
 const MAX_RESPONSE_BODY_CHUNKS = 65_536;
 const INITIAL_RESPONSE_BUFFER_BYTES = 8 * 1024;
 const strictTextDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -198,7 +200,7 @@ export async function readProxyResponseJson(
 }
 
 function abortReason(signal: AbortSignal): Error {
-  return signal.reason instanceof Error
+  return isErrorAcrossRealms(signal.reason)
     ? signal.reason
     : new DOMException("Proxy upstream response read was aborted", "AbortError");
 }

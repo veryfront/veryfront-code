@@ -3,6 +3,10 @@ import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  formatUnsupportedNodeMessage,
+  meetsMinimumNodeVersion,
+} from "./node-engine-precondition.js";
 
 await import("../esm/_dnt.polyfills.js");
 
@@ -13,6 +17,14 @@ const nativeBinary = join(
 );
 
 async function runJsFallback() {
+  // Only the bundled JS CLI needs a modern Node: the compat layer reads
+  // process.getBuiltinModule (Node 22.3.0+) while its module graph loads and
+  // otherwise throws an internal assertion with no version, fix or docs link.
+  // The native binary above is self-contained, so it stays ungated.
+  if (!meetsMinimumNodeVersion(process.versions.node)) {
+    console.error(formatUnsupportedNodeMessage(process.versions.node));
+    process.exit(1);
+  }
   await import("../esm/cli/main.js");
 }
 
