@@ -14,7 +14,6 @@ import type {
 import {
   createHostedProjectRemoteToolSource,
   createHostedProjectRemoteToolSources,
-  createProjectScopedMcpUrl,
 } from "./project-remote-tool-source.ts";
 import { NETWORK_ERROR, PERMISSION_DENIED, VeryfrontError } from "#veryfront/errors";
 import { createUnconfirmedProjectContextSwitchResult } from "../project/context.ts";
@@ -89,27 +88,17 @@ function createRemoteSource(input: {
   };
 }
 
-describe("createProjectScopedMcpUrl", () => {
-  it("adds the project path without changing the origin or query", () => {
-    assertEquals(
-      createProjectScopedMcpUrl("https://api.example/mcp?environment=staging", "project/1"),
-      "https://api.example/projects/project%2F1/mcp?environment=staging",
-    );
-  });
-
-  it("keeps the configured MCP URL when no project is active", () => {
-    assertEquals(
-      createProjectScopedMcpUrl("https://api.example/mcp", null),
-      "https://api.example/mcp",
-    );
-  });
-});
-
 async function resolveTestHeaders(
   headers: RemoteMCPToolSourceConfig["headers"],
   context?: ToolExecutionContext,
 ): Promise<HeadersInit | undefined> {
   return typeof headers === "function" ? await headers(context) : headers;
+}
+
+async function resolveTestEndpoint(
+  endpoint: RemoteMCPToolSourceConfig["endpoint"],
+): Promise<string> {
+  return typeof endpoint === "function" ? await endpoint() : endpoint;
 }
 
 Deno.test("hosted remote tool sources do not carry legacy end-user identity plumbing", async () => {
@@ -690,7 +679,7 @@ Deno.test("createHostedProjectRemoteToolSources defaults to first-party MCP serv
   });
 
   assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp"]);
-  assertEquals(configs.map((config) => config.endpoint), [
+  assertEquals(await Promise.all(configs.map((config) => resolveTestEndpoint(config.endpoint))), [
     "https://api.example/projects/project-1/mcp",
     "https://studio.example/mcp",
   ]);
@@ -807,7 +796,7 @@ Deno.test("createHostedProjectRemoteToolSources builds API and explicit gated St
   });
 
   assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp"]);
-  assertEquals(configs.map((config) => config.endpoint), [
+  assertEquals(await Promise.all(configs.map((config) => resolveTestEndpoint(config.endpoint))), [
     "https://api.example/projects/project-1/mcp",
     "https://studio.example/mcp",
   ]);
@@ -819,6 +808,10 @@ Deno.test("createHostedProjectRemoteToolSources builds API and explicit gated St
   });
 
   activeProjectId = "project-2";
+  assertEquals(
+    await resolveTestEndpoint(configs[0]?.endpoint ?? ""),
+    "https://api.example/projects/project-2/mcp",
+  );
   assertEquals(await resolveTestHeaders(configs[1]?.headers), {
     Authorization: "Bearer token-1",
     "x-conversation-id": "conversation-1",
@@ -902,7 +895,7 @@ Deno.test("createHostedProjectRemoteToolSources infers Studio MCP from allowed S
   });
 
   assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp"]);
-  assertEquals(configs.map((config) => config.endpoint), [
+  assertEquals(await Promise.all(configs.map((config) => resolveTestEndpoint(config.endpoint))), [
     "https://api.example/projects/project-1/mcp",
     "https://studio.example/mcp",
   ]);
@@ -912,7 +905,7 @@ Deno.test("createHostedProjectRemoteToolSources infers Studio MCP from allowed S
   );
 });
 
-Deno.test("createHostedProjectRemoteToolSources does not infer Studio when explicit API-only MCP is set", () => {
+Deno.test("createHostedProjectRemoteToolSources does not infer Studio when explicit API-only MCP is set", async () => {
   const configs: RemoteMCPToolSourceConfig[] = [];
   const sources = createHostedProjectRemoteToolSources({
     authToken: "token-1",
@@ -937,7 +930,7 @@ Deno.test("createHostedProjectRemoteToolSources does not infer Studio when expli
   });
 
   assertEquals(sources.map((source) => source.id), ["veryfront-mcp"]);
-  assertEquals(configs.map((config) => config.endpoint), [
+  assertEquals(await Promise.all(configs.map((config) => resolveTestEndpoint(config.endpoint))), [
     "https://api.example/projects/project-1/mcp",
   ]);
 });
@@ -1046,7 +1039,7 @@ Deno.test("createHostedProjectRemoteToolSources builds explicit MCP server lists
   });
 
   assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp", "linear"]);
-  assertEquals(configs.map((config) => config.endpoint), [
+  assertEquals(await Promise.all(configs.map((config) => resolveTestEndpoint(config.endpoint))), [
     "https://api.example/projects/project-1/mcp",
     "https://studio.example/mcp",
     "https://linear.example/mcp",

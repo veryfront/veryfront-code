@@ -45,6 +45,23 @@ export function defaultAgentServiceMcpServers(): AgentServiceMcpServerConfig[] {
   return [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }];
 }
 
+/** Build the project-scoped control-plane MCP URL for the active project. */
+export function createProjectScopedMcpUrl(
+  apiMcpUrl: string,
+  projectId: string | null | undefined,
+): string {
+  const normalizedProjectId = projectId?.trim();
+  if (!normalizedProjectId) return apiMcpUrl;
+
+  const url = new URL(apiMcpUrl);
+  const basePath = url.pathname
+    .replace(/\/projects\/[^/]+\/mcp\/?$/, "")
+    .replace(/\/mcp\/?$/, "")
+    .replace(/\/+$/, "");
+  url.pathname = `${basePath}/projects/${encodeURIComponent(normalizedProjectId)}/mcp`;
+  return url.toString();
+}
+
 function createGenericRemoteMcpConfig(
   server: AgentServiceGenericMcpServerConfig,
 ): RemoteMCPToolSourceConfig {
@@ -63,13 +80,13 @@ function createGenericRemoteMcpConfig(
 function createVeryfrontApiRemoteMcpConfig(
   input: Pick<
     CreateAgentServiceRemoteMcpConfigInput,
-    "apiMcpUrl" | "authToken" | "defaultSourceId"
+    "apiMcpUrl" | "authToken" | "defaultSourceId" | "getProjectId"
   >,
   server: AgentServiceVeryfrontApiMcpServerConfig,
 ): RemoteMCPToolSourceConfig {
   return {
     id: server.id ?? input.defaultSourceId ?? "veryfront-mcp",
-    endpoint: input.apiMcpUrl,
+    endpoint: () => createProjectScopedMcpUrl(input.apiMcpUrl, input.getProjectId?.()),
     headers: (context) => {
       const authToken = typeof context?.authToken === "string" && context.authToken.length > 0
         ? context.authToken

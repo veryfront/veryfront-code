@@ -31,10 +31,7 @@ import {
 } from "./child-requested-tools.ts";
 import { createMcpToolPolicyGate, wrapHostToolSetWithMcpPolicy } from "../mcp-tool-policy.ts";
 import { filterVeryfrontApiToolDefinitionsWithAccessProfile } from "./veryfront-api-tool-access.ts";
-import {
-  createHostedMcpToolPolicySource,
-  createProjectScopedMcpUrl,
-} from "./project-remote-tool-source.ts";
+import { createHostedMcpToolPolicySource } from "./project-remote-tool-source.ts";
 
 /** Public API contract for hosted child fork tool sources logger. */
 export type HostedChildForkToolSourcesLogger = {
@@ -132,9 +129,8 @@ export async function prepareDefaultHostedChildForkToolSources(
       const remoteConfig = createAgentServiceRemoteMcpConfig({
         server,
         authToken: input.authToken,
-        apiMcpUrl: server.kind === "veryfront-api"
-          ? createProjectScopedMcpUrl(input.apiMcpUrl, input.getProjectId())
-          : input.apiMcpUrl,
+        apiMcpUrl: input.apiMcpUrl,
+        getProjectId: input.getProjectId,
         defaultSourceId: "veryfront-mcp-fork",
       });
       if (!remoteConfig) {

@@ -1,6 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import {
   createAgentServiceRemoteMcpConfig,
+  createProjectScopedMcpUrl,
   defaultAgentServiceMcpServers,
 } from "./mcp-server-config.ts";
 
@@ -12,13 +13,23 @@ Deno.test("defaultAgentServiceMcpServers enables first-party MCP servers", () =>
 });
 
 Deno.test("createAgentServiceRemoteMcpConfig builds Veryfront API MCP config", async () => {
+  let projectId = "project-1";
   const config = createAgentServiceRemoteMcpConfig({
     server: { kind: "veryfront-api" },
     authToken: "token-1",
     apiMcpUrl: "https://api.example/mcp",
+    getProjectId: () => projectId,
   });
   assertEquals(config?.id, "veryfront-mcp");
-  assertEquals(config?.endpoint, "https://api.example/mcp");
+  assertEquals(
+    typeof config?.endpoint === "function" ? await config.endpoint() : config?.endpoint,
+    "https://api.example/projects/project-1/mcp",
+  );
+  projectId = "project-2";
+  assertEquals(
+    typeof config?.endpoint === "function" ? await config.endpoint() : config?.endpoint,
+    "https://api.example/projects/project-2/mcp",
+  );
   assertEquals(
     typeof config?.headers === "function" ? await config.headers() : config?.headers,
     {
@@ -42,6 +53,28 @@ Deno.test("createAgentServiceRemoteMcpConfig builds Veryfront API MCP config", a
       defaultSourceId: "veryfront-mcp-fork",
     })?.id,
     "veryfront-child",
+  );
+});
+
+Deno.test("createProjectScopedMcpUrl normalizes and replaces the project segment", () => {
+  assertEquals(
+    createProjectScopedMcpUrl("https://api.example", " project/1 "),
+    "https://api.example/projects/project%2F1/mcp",
+  );
+  assertEquals(
+    createProjectScopedMcpUrl("https://api.example/projects/old/mcp", "new"),
+    "https://api.example/projects/new/mcp",
+  );
+  assertEquals(
+    createProjectScopedMcpUrl("https://api.example/mcp", "  "),
+    "https://api.example/mcp",
+  );
+  assertEquals(
+    createProjectScopedMcpUrl(
+      "https://api.example/mcp/?environment=staging",
+      "project-1",
+    ),
+    "https://api.example/projects/project-1/mcp?environment=staging",
   );
 });
 

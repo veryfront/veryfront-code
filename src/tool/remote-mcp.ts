@@ -814,10 +814,24 @@ function endpointBindsToolAuthorization(endpoint: string): boolean {
   const apiBaseUrl = getApiBaseUrlEnv();
   if (typeof apiBaseUrl !== "string" || apiBaseUrl.length === 0) return false;
   const normalizedEndpoint = normalizeTrustedEndpoint(endpoint);
-  const controlPlaneEndpoint = normalizeTrustedEndpoint(
-    `${apiBaseUrl.replace(/\/+$/, "")}/mcp`,
-  );
-  return normalizedEndpoint !== undefined && normalizedEndpoint === controlPlaneEndpoint;
+  if (!normalizedEndpoint) return false;
+
+  try {
+    const endpointUrl = new URL(normalizedEndpoint);
+    const apiBase = new URL(apiBaseUrl);
+    if (endpointUrl.origin !== apiBase.origin) return false;
+
+    const basePath = apiBase.pathname.replace(/\/+$/, "");
+    const controlPlanePath = `${basePath}/mcp`;
+    if (endpointUrl.pathname === controlPlanePath) return true;
+
+    const projectPathPrefix = `${basePath}/projects/`;
+    if (!endpointUrl.pathname.startsWith(projectPathPrefix)) return false;
+    const projectScopedPath = endpointUrl.pathname.slice(projectPathPrefix.length);
+    return /^[^/]+\/mcp\/?$/.test(projectScopedPath);
+  } catch {
+    return false;
+  }
 }
 
 function buildRunContextMeta(
@@ -843,7 +857,7 @@ function buildRunContextMeta(
 
 function createRemoteMCPToolSourceWithFetch(
   config: RemoteMCPToolSourceConfig,
-  requestFetch: typeof fetch,
+  getRequestFetch: (endpoint: string) => typeof fetch,
 ): RemoteToolSource {
   const id = config.id ?? "remote-mcp";
   const listMethod = config.listMethod ?? "tools/list";
@@ -870,7 +884,7 @@ function createRemoteMCPToolSourceWithFetch(
             method: listMethod,
             ...(cursor !== undefined ? { params: { cursor } } : {}),
           },
-          requestFetch,
+          getRequestFetch(endpoint),
           context?.abortSignal,
           MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
         );
@@ -938,7 +952,7 @@ function createRemoteMCPToolSourceWithFetch(
               ...(meta ? { _meta: meta } : {}),
             },
           },
-          requestFetch,
+          getRequestFetch(endpoint),
           context?.abortSignal,
           MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
         );
@@ -970,10 +984,10 @@ function createRemoteMCPToolSourceWithFetch(
 export function createRemoteMCPToolSource(
   config: RemoteMCPToolSourceConfig,
 ): RemoteToolSource {
-  return createRemoteMCPToolSourceWithFetch(config, guardedOutboundFetch);
+  return createRemoteMCPToolSourceWithFetch(config, () => guardedOutboundFetch);
 }
 
-/** Deployment-owned transport policy for exact, immutable MCP endpoints. */
+/** Deployment-owned transport policy for trusted MCP endpoint roots. */
 export interface RemoteMCPToolSourceTransportOptions {
   /** Complete endpoint URLs allowed to use {@link requestFetch}. */
   trustedEndpoints: readonly string[];
@@ -995,9 +1009,8 @@ function normalizeTrustedEndpoint(value: string): string | undefined {
 /**
  * Create a remote MCP source factory with narrowly scoped host transport.
  *
- * Only static endpoint strings that exactly match a normalized deployment
- * allowlist use the supplied transport. Invalid, unmatched, or resolver-based
- * endpoints retain {@link createRemoteMCPToolSource}'s guarded outbound path.
+ * Exact trusted endpoints and their project-scoped MCP routes use the supplied
+ * transport. All other resolved endpoints retain the guarded outbound path.
  */
 export function createRemoteMCPToolSourceFactoryWithTransport(
   options: RemoteMCPToolSourceTransportOptions,
@@ -1011,16 +1024,42 @@ export function createRemoteMCPToolSourceFactoryWithTransport(
     trustedEndpoints.add(endpoint);
   }
 
-  return (config) => {
-    const endpoint = typeof config.endpoint === "string"
-      ? normalizeTrustedEndpoint(config.endpoint)
-      : undefined;
-    if (!endpoint || !trustedEndpoints.has(endpoint)) {
-      return createRemoteMCPToolSource(config);
-    }
-    return createRemoteMCPToolSourceWithFetch(
-      { ...config, endpoint },
-      options.requestFetch,
+  return (config) =>
+    createRemoteMCPToolSourceWithFetch(
+      config,
+      (endpoint) =>
+        isTrustedDeploymentMcpEndpoint(endpoint, trustedEndpoints)
+          ? options.requestFetch
+          : guardedOutboundFetch,
     );
-  };
+}
+
+function isTrustedDeploymentMcpEndpoint(
+  endpoint: string,
+  trustedEndpoints: ReadonlySet<string>,
+): boolean {
+  const normalizedEndpoint = normalizeTrustedEndpoint(endpoint);
+  if (!normalizedEndpoint) return false;
+  if (trustedEndpoints.has(normalizedEndpoint)) return true;
+
+  let endpointUrl: URL;
+  try {
+    endpointUrl = new URL(normalizedEndpoint);
+  } catch {
+    return false;
+  }
+
+  for (const trustedEndpoint of trustedEndpoints) {
+    const trustedUrl = new URL(trustedEndpoint);
+    if (endpointUrl.origin !== trustedUrl.origin) continue;
+
+    const trustedPath = trustedUrl.pathname.replace(/\/+$/, "");
+    if (!trustedPath.endsWith("/mcp")) continue;
+    const projectPathPrefix = `${trustedPath.slice(0, -4)}/projects/`;
+    if (!endpointUrl.pathname.startsWith(projectPathPrefix)) continue;
+    const projectScopedPath = endpointUrl.pathname.slice(projectPathPrefix.length);
+    if (/^[^/]+\/mcp\/?$/.test(projectScopedPath)) return true;
+  }
+
+  return false;
 }
