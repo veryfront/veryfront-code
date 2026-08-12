@@ -994,18 +994,23 @@ export interface RemoteMCPToolSourceTransportOptions {
   requestFetch: typeof fetch;
 }
 
-function normalizeTrustedEndpoint(value: string): string | undefined {
+function parseTrustedEndpoint(value: string): URL | undefined {
   try {
     const url = new URL(value);
     if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
     if (url.username || url.password || url.search || url.hash) return undefined;
-    return url.toString();
+    return url;
   } catch {
     return undefined;
   }
 }
 
-/** Parse a safe MCP request URL while preserving its query string. */
+/**
+ * Parse a safe MCP request URL while preserving its query string.
+ *
+ * Trusted transport is selected from the parsed scheme, origin, and path only;
+ * query parameters remain part of the request URL and cannot change that target.
+ */
 function parseMcpRequestEndpoint(value: string): URL | undefined {
   try {
     const url = new URL(value);
@@ -1034,19 +1039,21 @@ export function createRemoteMCPToolSourceFactoryWithTransport(
   options: RemoteMCPToolSourceTransportOptions,
 ): (config: RemoteMCPToolSourceConfig) => RemoteToolSource {
   const trustedEndpoints = new Set<string>();
+  const trustedEndpointUrls: URL[] = [];
   for (const value of options.trustedEndpoints) {
-    const endpoint = normalizeTrustedEndpoint(value);
-    if (!endpoint) {
+    const endpointUrl = parseTrustedEndpoint(value);
+    if (!endpointUrl) {
       throw new TypeError("Invalid trusted endpoint");
     }
-    trustedEndpoints.add(endpoint);
+    trustedEndpoints.add(endpointUrl.toString());
+    trustedEndpointUrls.push(endpointUrl);
   }
 
   return (config) =>
     createRemoteMCPToolSourceWithFetch(
       config,
       (endpoint) =>
-        isTrustedDeploymentMcpEndpoint(endpoint, trustedEndpoints)
+        isTrustedDeploymentMcpEndpoint(endpoint, trustedEndpoints, trustedEndpointUrls)
           ? options.requestFetch
           : guardedOutboundFetch,
     );
@@ -1055,6 +1062,7 @@ export function createRemoteMCPToolSourceFactoryWithTransport(
 function isTrustedDeploymentMcpEndpoint(
   endpoint: string,
   trustedEndpoints: ReadonlySet<string>,
+  trustedEndpointUrls: readonly URL[],
 ): boolean {
   const normalizedEndpoint = normalizeMcpRequestEndpoint(endpoint);
   if (!normalizedEndpoint) return false;
@@ -1067,8 +1075,7 @@ function isTrustedDeploymentMcpEndpoint(
     return false;
   }
 
-  for (const trustedEndpoint of trustedEndpoints) {
-    const trustedUrl = new URL(trustedEndpoint);
+  for (const trustedUrl of trustedEndpointUrls) {
     if (endpointUrl.origin !== trustedUrl.origin) continue;
 
     const trustedPath = trustedUrl.pathname.replace(/\/+$/, "");

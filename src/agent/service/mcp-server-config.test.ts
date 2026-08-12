@@ -78,6 +78,10 @@ describe("createProjectScopedMcpUrl", () => {
       ),
       "https://api.example/projects/project-1/mcp?environment=staging",
     );
+    assertEquals(
+      createProjectScopedMcpUrl("not an absolute URL", "project-1"),
+      "not an absolute URL",
+    );
   });
 });
 

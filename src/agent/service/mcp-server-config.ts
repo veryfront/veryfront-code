@@ -53,7 +53,13 @@ export function createProjectScopedMcpUrl(
   const normalizedProjectId = projectId?.trim();
   if (!normalizedProjectId) return apiMcpUrl;
 
-  const url = new URL(apiMcpUrl);
+  let url: URL;
+  try {
+    url = new URL(apiMcpUrl);
+  } catch {
+    // Let the remote MCP boundary produce its standard configuration error.
+    return apiMcpUrl;
+  }
   const basePath = url.pathname
     .replace(/\/projects\/[^/]+\/mcp\/?$/, "")
     .replace(/\/mcp\/?$/, "")

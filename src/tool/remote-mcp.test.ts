@@ -142,6 +142,39 @@ describe("tool/remote-mcp", () => {
     ]);
   });
 
+  it("uses the request URL's origin and path, not query values, for trusted transport", async () => {
+    let transportCalls = 0;
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: ["http://veryfront-api/mcp"],
+      requestFetch: async (_input, init) => {
+        transportCalls++;
+        const body = JSON.parse(String(init && "body" in init ? init.body : undefined)) as {
+          id: string;
+        };
+        return Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [] } });
+      },
+    });
+
+    await createSource({
+      endpoint: "http://veryfront-api/mcp?redirect=http://169.254.169.254/latest/meta-data",
+    }).listTools();
+    assertEquals(transportCalls, 1);
+
+    for (
+      const endpoint of [
+        "http://veryfront-api.evil.com/mcp?target=http://veryfront-api/mcp",
+        "http://veryfront-api/mcp/../../../admin?target=/mcp",
+      ]
+    ) {
+      await assertRejects(
+        () => createSource({ endpoint }).listTools(),
+        Error,
+        "Outbound network egress blocked",
+      );
+    }
+    assertEquals(transportCalls, 1);
+  });
+
   it("rejects invalid trusted endpoints when the factory is created", () => {
     const error = assertThrows(
       () =>
