@@ -91,13 +91,19 @@ export class CsrfHandler extends BaseHandler {
     // building the project's own release asset manifest, which surfaces only as
     // `deploy` timing out with `last state: missing`.
     //
-    // The exemption is keyed on the request being a real dispatch, not on it
-    // being path-shaped like one: `isSignedControlPlaneDispatch` requires both a
-    // method/path pair that a control-plane handler owns and the signature
-    // header that handler verifies. The `/api/control-plane/` namespace is
-    // reserved but not exclusively routed, so a project App or Pages API route
-    // can sit under it in a custom runtime; such a route is cookie
-    // authenticated, is not a registered surface, and keeps CSRF enforced.
+    // The exemption is keyed on a registered surface, not on a path shape:
+    // `isSignedControlPlaneDispatch` requires both a method/path pair that a
+    // control-plane handler owns and the signature header that handler
+    // verifies. The `/api/control-plane/` namespace is reserved but not
+    // exclusively routed, so a project App or Pages API route can sit under it
+    // in a custom runtime; such a route is cookie authenticated, is not a
+    // registered surface, and keeps CSRF enforced.
+    //
+    // The predicate cannot tell a genuine dispatch from a set header, and it
+    // does not try to. Assume an attacker can set it. What bounds the
+    // exemption is that the routes it admits terminate at a handler that
+    // verifies the envelope, ahead of `ApiHandlerWrapper`, so a forged header
+    // reaches a 401 rather than project code.
     if (isSignedControlPlaneDispatch(req)) return this.continue();
 
     // A platform channel dispatch is not a browser request either. A Slack or
