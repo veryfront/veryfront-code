@@ -133,16 +133,21 @@ committed configuration instead.
 
 Veryfront Cloud creates `production`, `staging`, and `preview` as protected by
 default, and Deploy prints `Protected` or `Public` next to the release version.
-A protected environment serves requests only to a browser signed in to
-Veryfront as a member of the project. Anonymous requests, including requests to
-API routes and requests carrying `VERYFRONT_API_TOKEN`, are redirected to the
-Veryfront sign-in page.
+A protected environment serves a request only when it carries a Veryfront user
+session for a member of the project. A signed-in browser is the usual client,
+not the only one: the session travels in an `authToken` cookie, so `curl` or a
+CI smoke test reaches a protected environment by sending a project member's
+session token. An API key is not a session, so `VERYFRONT_API_TOKEN` does not
+open one. It authenticates the CLI against the Cloud API, not deployment
+traffic. A request with no session, or one carrying a credential the gate cannot
+verify, is redirected to the Veryfront sign-in page on every path including API
+routes. A session belonging to a non-member gets a `403` instead.
 
 Plan for that before a launch or an external smoke test. To make an environment
 reachable by anyone with the URL, open Environments in Veryfront Studio, select
 the environment, turn on **Public Environment**, and confirm **Make Public**.
 See [Deploy project](../getting-started/deploy-project.md#environment-access)
-for the redirect a protected environment returns.
+for the responses a protected environment returns.
 
 ## Set production environment variables
 
