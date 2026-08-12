@@ -104,12 +104,12 @@ Deploy uses the last verified Push receipt and verifies the release was built
 from that exact source digest before assigning it to the environment. If no Push
 receipt exists, Deploy first runs a quiet Push so the first deployment still
 works as one command. Deploy prints the environment URL.
-`npx veryfront@latest open --site` opens the deployed environment in a browser
-and `npx veryfront@latest open --site --json` prints its URL for automation,
-defaulting to `production` unless `--env` names another environment. Without
-`--site`, use `npx veryfront@latest open` after deployment to open the project in
-the Cloud dashboard, and `npx veryfront@latest open --json` to print that
-dashboard URL.
+`npx veryfront@latest open --site --env staging` opens that deployed environment
+in a browser, and `npx veryfront@latest open --site --env staging --json` prints
+its URL for automation. `--site` targets `production` unless `--env` names
+another environment, so name the environment you deployed. Without `--site`, use
+`npx veryfront@latest open` after deployment to open the project in the Cloud
+dashboard, and `npx veryfront@latest open --json` to print that dashboard URL.
 
 `--site` always builds the canonical
 `https://<slug>.<environment>.veryfront.com` address, because `open` has no API
