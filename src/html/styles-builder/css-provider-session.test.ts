@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { register, reset as resetContracts } from "#veryfront/extensions/contracts.ts";
+import { formatInstallCommand } from "#veryfront/extensions/install-command.ts";
 import {
   type CSSOptimizationEngine,
   CSSOptimizationEngineName,
@@ -246,12 +247,80 @@ describe("styles-builder CSS provider sessions", () => {
     assertEquals(report.includes("@veryfront/ext-css-lightning"), true);
     assertEquals(report.includes("veryfront.config.ts"), true);
     assertEquals(report.includes("extensions"), true);
-    // `deno add` is wrong twice over: scaffolded projects are npm projects, and
-    // no package manager can activate an explicit-activation extension.
-    assertEquals(report.includes("deno add"), false);
+    // An unprefixed `deno add @veryfront/…` resolves against JSR and fails. A
+    // `deno add npm:` command is legitimate here when a deno.json owns the
+    // project's dependencies, so only the bare-specifier form is excluded --
+    // and no package manager alone activates an explicit-activation extension,
+    // which is why the composition step above is asserted too.
+    assertEquals(report.includes("deno add @veryfront/"), false);
     // The contract name is an internal registration hook the guides never
     // mention, so it cannot appear as the developer-facing instruction.
     assertEquals(report.includes("CSSOptimizationEngine"), false);
+  });
+
+  it("suggests an install command that runs, and the composition step it needs", () => {
+    // Naming the package is not enough: the first shipped form of this hint,
+    // `deno add @veryfront/ext-css-lightning`, fails when a reader runs it.
+    // Deno resolves an unprefixed specifier against JSR, which hosts no
+    // `@veryfront` package, so the command exits with "is missing a prefix" --
+    // and it is a Deno command printed by a build that usually runs under
+    // Node. Installing the package alone is also insufficient: the extension
+    // is `selection: "explicit"` in first-party-defaults.ts, so it stays
+    // dormant until the project composes it. Both halves must be in the text.
+    installProcessor(createProcessor("hint-rearm"));
+    register(CSSOptimizationEngineName, createOptimizer("hint-rearm"));
+    acquireCSSGenerationSession(true);
+    resetContracts();
+    installProcessor(createProcessor("hint"));
+
+    const records: LogEntry[] = [];
+    __resetLogRecordEmitterForTests();
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+      records.push(entry);
+    });
+    try {
+      acquireCSSGenerationSession(true);
+    } finally {
+      unsubscribe();
+      __resetLogRecordEmitterForTests();
+    }
+
+    // Matched on the effect, not the contract name: the warning names no
+    // internal registration hook, as the test above pins.
+    const message = records.find((entry) => entry.message.includes("unminified CSS"))
+      ?.message ?? "";
+    // Spelled out rather than derived from the formatter, so a formatter that
+    // starts emitting something unrunnable cannot satisfy this assertion by
+    // agreeing with itself. Which of the five appears depends on the manifest
+    // and lockfile in the working directory, which a unit test must not depend
+    // on; that mapping is pinned in install-command.test.ts.
+    const runnableCommands = [
+      "deno add npm:@veryfront/ext-css-lightning",
+      "bun add @veryfront/ext-css-lightning",
+      "pnpm add @veryfront/ext-css-lightning",
+      "yarn add @veryfront/ext-css-lightning",
+      "npm install @veryfront/ext-css-lightning",
+    ];
+    assertEquals(
+      runnableCommands.some((command) => message.includes(command)),
+      true,
+      `hint must carry a runnable install command, got: ${message}`,
+    );
+    assertEquals(
+      message.includes(formatInstallCommand("@veryfront/ext-css-lightning")),
+      true,
+      `hint must use the command for this project, got: ${message}`,
+    );
+    assertEquals(
+      message.includes("deno add @veryfront/"),
+      false,
+      `an unprefixed \`deno add\` specifier resolves to JSR and fails, got: ${message}`,
+    );
+    assertEquals(
+      message.includes("veryfront.config.ts"),
+      true,
+      `hint must name the composition step an explicit extension needs, got: ${message}`,
+    );
   });
 
   it("keeps minified and unminified output in separate cache identities", async () => {

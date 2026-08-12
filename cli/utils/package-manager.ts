@@ -7,9 +7,16 @@
 import { join } from "veryfront/platform/path";
 import { cliLogger as logger } from "#cli/utils";
 import { getEnv, getOsType, runCommand } from "veryfront/platform";
+import { LOCKFILE_CLIENTS, type PackageClient } from "veryfront/utils/package-client";
 import { getFs } from "./fs.ts";
 
-export type PackageManager = "npm" | "yarn" | "pnpm" | "bun" | "deno";
+/**
+ * The client this CLI installs with.
+ *
+ * Shared with `src/extensions/install-command.ts`, which prints install hints:
+ * the client Veryfront tells a reader to run must be the client it ran itself.
+ */
+export type PackageManager = PackageClient;
 
 /**
  * Detect package manager from npm_config_user_agent environment variable
@@ -55,21 +62,13 @@ async function executeCommand(
   return result.code;
 }
 
-const LOCKFILES: Array<{ file: string; pm: PackageManager }> = [
-  { file: "bun.lockb", pm: "bun" },
-  { file: "deno.lock", pm: "deno" },
-  { file: "pnpm-lock.yaml", pm: "pnpm" },
-  { file: "yarn.lock", pm: "yarn" },
-  { file: "package-lock.json", pm: "npm" },
-];
-
 async function detectFromDir(
   dir: string,
 ): Promise<{ pm: PackageManager; file: string } | undefined> {
   const fs = getFs();
 
-  for (const lock of LOCKFILES) {
-    if (await fs.exists(join(dir, lock.file))) return lock;
+  for (const [file, pm] of LOCKFILE_CLIENTS) {
+    if (await fs.exists(join(dir, file))) return { pm, file };
   }
 
   return undefined;
