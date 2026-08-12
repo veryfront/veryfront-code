@@ -14,15 +14,8 @@
 import * as React from "react";
 import { InputBox } from "#veryfront/react/primitives/index.ts";
 import { cn } from "../../theme.ts";
-import { ArrowDownIcon, FileTextIcon, PaperclipIcon, PlusIcon } from "../../../ui/icons/index.ts";
-import { Button } from "../../../ui/button.tsx";
+import { ArrowDownIcon } from "../../../ui/icons/index.ts";
 import { IconButton } from "../../../ui/icon-button.tsx";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "../../../ui/dropdown-menu.tsx";
 import { ModelSelector } from "../../model-selector.tsx";
 import { AttachmentPill } from "../components/attachment-pill.tsx";
 import { DropZoneOverlay } from "../components/drop-zone.tsx";
@@ -33,9 +26,9 @@ import { useChatInputAttachmentPicker } from "./chat-input-attachment-picker.tsx
 import { ChatInputForm } from "./chat-input-form.tsx";
 import { ChatInputSend, ChatInputStop, ChatInputVoice } from "./chat-input-actions.tsx";
 import { ChatInputSubmit } from "./chat-input-submit.tsx";
+import { ChatInputAttach } from "./chat-input-attach.tsx";
 import { useComposerValue } from "./use-composer-value.ts";
 import type {
-  ChatInputAttachProps,
   ChatInputExportProps,
   ChatInputFieldProps,
   ChatInputModelProps,
@@ -45,7 +38,7 @@ import type {
 } from "./chat-composer.types.ts";
 
 export type * from "./chat-composer.types.ts";
-export { ChatInputSend, ChatInputStop, ChatInputSubmit, ChatInputVoice };
+export { ChatInputAttach, ChatInputSend, ChatInputStop, ChatInputSubmit, ChatInputVoice };
 
 // ---------------------------------------------------------------------------
 // Sub-parts — each reads from ChatInputContext (provided by ChatInput)
@@ -92,75 +85,6 @@ export function ChatInputModel(
       disabled={c.isLoading}
       className={className}
     />
-  );
-}
-
-/**
- * Attachment `+` control. When attaching files is the only action, `+` opens
- * the file dialog directly. When `onSelectAttachment` is also set it becomes a
- * portalled `+` menu (Studio `PromptForm`'s `PlusMenu`) with "Add photos &
- * files" and "Select document".
- */
-export function ChatInputAttach(
-  { icon, onClick, ref }: ChatInputAttachProps,
-): React.ReactElement | null {
-  const c = useChatInputContext();
-  const [menuOpen, setMenuOpen] = React.useState(false);
-  if (!c.onAttach && !c.onSelectAttachment) return null;
-
-  const openDialog = () => c.onOpenAttachmentPicker?.();
-  const runUpload = (event: React.MouseEvent<HTMLButtonElement>) =>
-    onClick ? onClick(event, openDialog) : openDialog();
-
-  // When attaching files is the only action, the `+` opens the file dialog
-  // directly — a single-item dropdown is needless chrome (matches ChatGPT).
-  if (c.onAttach && !c.onSelectAttachment) {
-    return (
-      <div ref={ref} className="relative flex shrink-0 items-center">
-        <Button
-          type="button"
-          variant="icon-tertiary"
-          size="icon-lg"
-          aria-label="Add photos & files"
-          className="shrink-0"
-          onClick={runUpload}
-        >
-          {icon ?? <PlusIcon />}
-        </Button>
-      </div>
-    );
-  }
-
-  return (
-    <div ref={ref} className="relative flex shrink-0 items-center">
-      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="icon-tertiary"
-            size="icon-lg"
-            aria-label={c.onAttach ? "Add photos & files" : "Add document"}
-            className="shrink-0"
-          >
-            {icon ?? <PlusIcon />}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start">
-          {c.onAttach && (
-            <DropdownMenuItem onSelect={runUpload}>
-              <PaperclipIcon />
-              Add photos &amp; files
-            </DropdownMenuItem>
-          )}
-          {c.onSelectAttachment && (
-            <DropdownMenuItem onSelect={c.onSelectAttachment}>
-              <FileTextIcon />
-              Select document
-            </DropdownMenuItem>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
   );
 }
 
