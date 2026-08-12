@@ -1,9 +1,9 @@
 const VERYFRONT_CLOUD_MODEL_PREFIX = "veryfront-cloud/";
 
-// MAINTENANCE: Update this set whenever a new model is released that does not
-// accept a temperature parameter. Models absent from this set are assumed to
-// support temperature; the consequence of a missing entry is an ignored parameter,
-// not a hard error.
+// MAINTENANCE: Update this set or family predicate whenever a new model is released
+// that does not accept a temperature parameter. Models absent from this policy are
+// assumed to support temperature; the consequence of a missing entry is an ignored
+// parameter, not a hard error.
 const MODELS_WITHOUT_TEMPERATURE_PARAMETER = new Set([
   "anthropic/claude-opus-4-7",
   "anthropic/claude-opus-4-8",
@@ -57,7 +57,10 @@ export function normalizeModelCapabilityId(modelString?: string): string | undef
 export function supportsTemperatureParameter(modelString?: string): boolean {
   const normalizedModel = normalizeModelCapabilityId(modelString);
   if (!normalizedModel) return true;
-  return !MODELS_WITHOUT_TEMPERATURE_PARAMETER.has(normalizedModel);
+  return (
+    !MODELS_WITHOUT_TEMPERATURE_PARAMETER.has(normalizedModel) &&
+    !/^anthropic\/claude-opus-5(?:[.-]|$)/.test(normalizedModel)
+  );
 }
 
 export function getFixedTemperatureParameter(
