@@ -32,6 +32,13 @@ type FetchCall = {
   init: RequestInit;
 };
 
+async function resolveRemoteEndpoint(
+  endpoint: RemoteMCPToolSourceConfig["endpoint"] | undefined,
+): Promise<string | undefined> {
+  if (endpoint === undefined) return undefined;
+  return typeof endpoint === "function" ? await endpoint() : endpoint;
+}
+
 function createMcpFetch(calls: FetchCall[]): typeof fetch {
   return ((url: string | URL | Request, init?: RequestInit) => {
     calls.push({ url: String(url), init: init ?? {} });
@@ -170,7 +177,10 @@ Deno.test("getRuntimeRemoteToolSources hydrates a Veryfront API MCP server from 
   );
 
   assertEquals(sources?.length, 1);
-  assertEquals(remoteConfig?.endpoint, "https://api.example/mcp");
+  assertEquals(
+    await resolveRemoteEndpoint(remoteConfig?.endpoint),
+    "https://api.example/projects/server-project/mcp",
+  );
   assertEquals(
     await (remoteConfig?.headers as (context?: ToolExecutionContext) => HeadersInit)?.({
       authToken: "browser-token",
@@ -322,7 +332,10 @@ Deno.test("getRuntimeRemoteToolSources implicitly connects unresolved named tool
     },
   );
 
-  assertEquals(remoteConfig?.endpoint, "https://api.example/mcp");
+  assertEquals(
+    await resolveRemoteEndpoint(remoteConfig?.endpoint),
+    "https://api.example/projects/server-project/mcp",
+  );
   assertEquals((await sources?.[0]?.listTools())?.map((tool) => tool.name), ["get_file"]);
 });
 

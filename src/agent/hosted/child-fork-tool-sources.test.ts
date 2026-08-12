@@ -132,6 +132,7 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
   const fixtures = createRemoteSourceFixtures();
   const switchedProjectIds: string[] = [];
   const switchedProjects: Array<{ projectId: string; projectSlug?: string }> = [];
+  let activeProjectId = "project-1";
 
   const result = await prepareDefaultHostedChildForkToolSources({
     authToken: "token-1",
@@ -139,7 +140,7 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
     mcpServers: [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }],
     studioMcpUrl: "https://studio.example/mcp",
     clientProfile: trustedStudioProfile,
-    getProjectId: () => "project-1",
+    getProjectId: () => activeProjectId,
     conversationId: "conversation-1",
     globalTools: {
       sleep: {
@@ -148,6 +149,7 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
       },
     },
     onConfirmedStudioProjectSwitch: (projectId, confirmedProject) => {
+      activeProjectId = projectId;
       switchedProjectIds.push(projectId);
       if (confirmedProject) {
         switchedProjects.push(confirmedProject);
@@ -163,9 +165,14 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
 
   assertEquals(Object.keys(result.forkTools), ["sleep", "studio_open_project", "update_file"]);
   assertEquals(
-    fixtures.createdConfigs.map((config) => [config.id, config.endpoint]),
+    await Promise.all(
+      fixtures.createdConfigs.map(async (config) => [
+        config.id,
+        typeof config.endpoint === "function" ? await config.endpoint() : config.endpoint,
+      ]),
+    ),
     [
-      ["veryfront-mcp-fork", "https://api.example/mcp"],
+      ["veryfront-mcp-fork", "https://api.example/projects/project-1/mcp"],
       ["studio-mcp-live-tools", "https://studio.example/mcp"],
     ],
   );
@@ -174,6 +181,11 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
 
   assertEquals(switchedProjectIds, ["project-2"]);
   assertEquals(switchedProjects, [{ projectId: "project-2", projectSlug: "project-two" }]);
+  const apiConfig = fixtures.createdConfigs.find((config) => config.id === "veryfront-mcp-fork");
+  assertEquals(
+    typeof apiConfig?.endpoint === "function" ? await apiConfig.endpoint() : apiConfig?.endpoint,
+    "https://api.example/projects/project-2/mcp",
+  );
   assertEquals(fixtures.executeCalls, [
     {
       sourceId: "veryfront-mcp-fork",

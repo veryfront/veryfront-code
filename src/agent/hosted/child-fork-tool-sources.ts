@@ -131,6 +131,7 @@ export async function prepareDefaultHostedChildForkToolSources(
         server,
         authToken: input.authToken,
         apiMcpUrl: input.apiMcpUrl,
+        getProjectId: input.getProjectId,
         defaultSourceId: "veryfront-mcp-fork",
       });
       if (!remoteConfig) {
