@@ -26,6 +26,12 @@ function probeBusyOn(busy: number[]): {
 }
 
 /**
+ * How many freshly reserved ports to try before calling a free-port rejection
+ * real rather than contention from a parallel job.
+ */
+const FREE_PORT_ATTEMPTS = 25;
+
+/**
  * Binds an ephemeral loopback port on one family, or returns null when the host
  * has no address in that family at all (CI containers are routinely IPv4-only).
  */
@@ -149,11 +155,32 @@ describe("cli/commands/dev/port-fallback", () => {
     });
 
     it("accepts a port nothing is holding", async () => {
-      const probeListener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-      const freePort = (probeListener.addr as Deno.NetAddr).port;
-      probeListener.close();
+      // Nothing can hold a port open and leave it free to bind at the same
+      // time, so a port this test releases is only free until some other
+      // process claims it - and CI runs ~30 jobs against one host, which is how
+      // asserting a single arbitrary port stays free ejected an unrelated PR
+      // from the merge queue.
+      //
+      // Retrying on a freshly reserved port drops that assumption without
+      // softening the assertion: a probe that rejects free ports rejects every
+      // one of these too, and still fails the test.
+      const rejected: number[] = [];
+      let accepted = false;
 
-      assertEquals(await isPortAvailable(freePort), true);
+      for (let attempt = 0; attempt < FREE_PORT_ATTEMPTS && !accepted; attempt++) {
+        const reserved = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+        const freePort = (reserved.addr as Deno.NetAddr).port;
+        reserved.close();
+
+        if (await isPortAvailable(freePort)) accepted = true;
+        else rejected.push(freePort); // lost the port to a parallel job - retry
+      }
+
+      assert(
+        accepted,
+        `isPortAvailable() rejected all ${FREE_PORT_ATTEMPTS} just-released ports: ` +
+          rejected.join(", "),
+      );
     });
   });
 
