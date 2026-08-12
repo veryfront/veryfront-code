@@ -5,6 +5,7 @@ import {
   assertMatch,
   assertRejects,
   assertStrictEquals,
+  assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
@@ -1459,6 +1460,42 @@ describe("release asset manifest", () => {
     await time.tickAsync(50);
 
     await rejection;
+    assertEquals(reads, 3);
+  });
+
+  it("names the refused dispatch when no manifest row is ever created", async () => {
+    // A manifest row appears the moment the project runtime begins the build.
+    // If none ever appears, the control plane's signed `task:release-asset-build`
+    // dispatch never reached the builder, which is a different failure from a
+    // build that is merely slow. Saying only `last state: missing` sends the
+    // operator to inspect a build that never started.
+    using time = new FakeTime();
+    let reads = 0;
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () => {
+        reads++;
+        return Promise.resolve(null);
+      },
+    });
+
+    const rejection = assertRejects(
+      () =>
+        waitForReleaseAssetManifest(controlPlane, PROJECT_SLUG, "release-1", {
+          ...polling,
+          timeoutMs: 250,
+        }),
+      Error,
+      "never reached the builder",
+    );
+    await time.tickAsync(0);
+    await time.tickAsync(100);
+    await time.tickAsync(100);
+    await time.tickAsync(50);
+
+    const error = await rejection as Error;
+    assertStringIncludes(error.message, "last state: missing");
+    assertStringIncludes(error.message, "/api/control-plane/runs/");
+    assertStringIncludes(error.message, "middleware.ts");
     assertEquals(reads, 3);
   });
 

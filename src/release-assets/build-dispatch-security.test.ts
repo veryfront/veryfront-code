@@ -1,6 +1,6 @@
 /**
- * Regression: a project that configures `security.csrf` must still be able to
- * publish a release asset manifest.
+ * Regression: a project's own request gates must not block its release asset
+ * manifest build. Two of them have: `security.csrf`, and a root `middleware.ts`.
  *
  * The release asset manifest is built by the project runtime, not by the CLI:
  * the control plane POSTs a signed operation envelope to
@@ -17,6 +17,13 @@
  * config enables CSRF at all turns its own release asset builds into 403s.
  * Nothing downstream can see it: the run fails before the manifest row is
  * created, and the deploy timeout names neither CSRF nor config.
+ *
+ * `projectMiddlewareRuntime.execute` wraps the entire handler chain, so a root
+ * `middleware.ts` sits in front of the same dispatch and fails it the same way.
+ * It has no way to pass: `createApplicationRequest` withholds every
+ * `x-veryfront-*` header from project code, so the signature the platform
+ * authenticates with is not visible to the middleware that would have to trust
+ * it.
  *
  * @module release-assets/build-dispatch-security.test
  */
@@ -36,6 +43,8 @@ import {
   createControlPlaneSignature,
   createCtx,
 } from "#veryfront/server/handlers/request/internal-agent-run.test-helpers.ts";
+import type { MiddlewareFunction } from "#veryfront/server/dev-server/middleware.ts";
+import { ProjectMiddlewareRuntime } from "#veryfront/server/runtime-handler/project-middleware.ts";
 
 const RUN_ID = "run_release_assets_1";
 const EXECUTE_PATH = `/api/control-plane/runs/${RUN_ID}/execute`;
@@ -57,6 +66,7 @@ interface DispatchOutcome {
  */
 async function dispatchReleaseAssetBuild(
   csrf: CsrfSetting | undefined,
+  options: { projectMiddleware?: MiddlewareFunction[]; unsigned?: boolean } = {},
 ): Promise<DispatchOutcome> {
   const config = {
     security: csrf === undefined ? {} : { csrf },
@@ -84,7 +94,7 @@ async function dispatchReleaseAssetBuild(
   });
   const request = new Request(`https://example-project.example.test${EXECUTE_PATH}`, {
     method: "POST",
-    headers: {
+    headers: options.unsigned ? { "content-type": "application/json" } : {
       "content-type": "application/json",
       "x-veryfront-control-plane-jws": jws,
     },
@@ -114,7 +124,18 @@ async function dispatchReleaseAssetBuild(
   const registry = new RouteRegistry();
   registry.registerAll([new CsrfHandler(), new ProjectRunExecuteHandler(deps)]);
 
-  const response = await registry.execute(request, ctx);
+  // The runtime wraps the whole handler chain in the project's own root
+  // middleware, so a dispatch meets `middleware.ts` before it meets any
+  // handler.
+  const middlewareRuntime = new ProjectMiddlewareRuntime({
+    loadMiddleware: () => Promise.resolve(options.projectMiddleware ?? []),
+  });
+  const response = await middlewareRuntime.execute({
+    request,
+    handlerContext: ctx,
+    isSharedProxy: false,
+    next: async () => (await registry.execute(request, ctx)) ?? undefined,
+  });
   return {
     begun,
     status: response?.status ?? 0,
@@ -143,6 +164,55 @@ describe("release assets: control-plane build dispatch", () => {
       `release asset build never started; runtime answered ${outcome.status}: ${outcome.body}`,
     );
     assertEquals(outcome.status, 200);
+  });
+
+  it("builds a manifest when the project's own middleware gates every request", async () => {
+    // A root `middleware.ts` that authorizes traffic is ordinary project code,
+    // and `projectMiddlewareRuntime.execute` wraps the entire handler chain, so
+    // it stands in front of the build dispatch as well. It cannot authorize
+    // that dispatch even in principle: `createApplicationRequest` strips every
+    // `x-veryfront-*` header before project code sees the request, so the
+    // signature the platform authenticates with is invisible to it.
+    let middlewareCalls = 0;
+    const outcome = await dispatchReleaseAssetBuild(undefined, {
+      projectMiddleware: [
+        (c, next) => {
+          middlewareCalls++;
+          if (!c.req.headers.get("authorization")) {
+            return Promise.resolve(new Response("Unauthorized", { status: 401 }));
+          }
+          return next();
+        },
+      ],
+    });
+
+    assertEquals(
+      outcome.begun,
+      true,
+      `release asset build never started; runtime answered ${outcome.status}: ${outcome.body}`,
+    );
+    assertEquals(outcome.status, 200);
+    assertEquals(middlewareCalls, 0);
+  });
+
+  it("keeps project middleware in front of an unsigned request to the same path", async () => {
+    // The bypass is keyed on a dispatch, not on a path. Without the signature
+    // header the request is project traffic, and the project's middleware
+    // answers it exactly as before.
+    let middlewareCalls = 0;
+    const outcome = await dispatchReleaseAssetBuild(undefined, {
+      unsigned: true,
+      projectMiddleware: [
+        () => {
+          middlewareCalls++;
+          return new Response("Unauthorized", { status: 401 });
+        },
+      ],
+    });
+
+    assertEquals(outcome.status, 401);
+    assertEquals(outcome.begun, false);
+    assertEquals(middlewareCalls, 1);
   });
 
   it("builds a manifest when the project excludes a path from csrf", async () => {

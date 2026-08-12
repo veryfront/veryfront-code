@@ -1,7 +1,10 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
-import { isConfigOptionalControlPlaneRunRequest } from "#veryfront/channels/control-plane.ts";
+import {
+  isConfigOptionalControlPlaneRunRequest,
+  isSignedControlPlaneDispatch,
+} from "#veryfront/channels/control-plane.ts";
 import { MiddlewareContext } from "#veryfront/middleware/core/context.ts";
 import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
 import { getProjectEnvSnapshot } from "#veryfront/server/project-env";
@@ -101,6 +104,31 @@ export class ProjectMiddlewareRuntime {
     const pathname = new URL(request.url).pathname;
 
     if (isWebSocketPath(pathname)) {
+      return next();
+    }
+
+    // A control-plane dispatch is not the project's traffic. It addresses a
+    // platform handler in the reserved control-plane namespace, carries a
+    // signed operation envelope rather than a user session, and asks the
+    // runtime to perform internal work such as building the release asset
+    // manifest for the project's own deploy.
+    //
+    // Project middleware cannot authorize such a request even in principle:
+    // `createApplicationRequest` withholds every `x-veryfront-*` header from
+    // project code, so the signature the receiving handler authenticates with
+    // is invisible to middleware. A root `middleware.ts` that gates requests
+    // therefore has no choice but to reject its own deploy, which surfaces
+    // only as `deploy` timing out with `last state: missing`.
+    //
+    // The bypass is keyed on the request being a real dispatch, not on it
+    // being path-shaped like one: `isSignedControlPlaneDispatch` requires both
+    // a method/path pair a control-plane handler owns and the signature header
+    // that handler verifies. It concedes nothing to an unauthenticated caller,
+    // because the only routes it can reach answer 401 without a valid envelope
+    // and never fall through to project code. Every other request, including
+    // an unsigned one to the same path and a project route that merely sits
+    // inside the reserved namespace, still traverses project middleware.
+    if (isSignedControlPlaneDispatch(request)) {
       return next();
     }
 

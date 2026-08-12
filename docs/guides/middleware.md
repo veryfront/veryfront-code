@@ -206,6 +206,8 @@ Root middleware has the same ordering and short-circuit contract in local develo
 
 Production middleware is cached by project, environment, and immutable release or preview branch. Preview cache invalidation reloads the file after source changes, and the cache has a fixed entry limit. A missing file passes through normally.
 
+Root middleware runs in front of your project's routes, not in front of the platform's. A control-plane dispatch, meaning the signed request the platform sends to your runtime to build a release asset manifest for a deploy or to start, resume, or cancel a run, bypasses root middleware and goes straight to the handler that verifies its signature. Middleware could not authorize one of these requests in any case: infrastructure headers, including the dispatch signature, are withheld from project code, so middleware that gates on a credential would reject the platform's request to build your own deploy. The bypass is narrow. It applies only to a request that both addresses one of those platform routes and carries the signature header the receiving handler verifies. An unsigned request to the same path, and any other path under `/api/control-plane/`, still runs your middleware.
+
 Production loading is fail-closed. If a declared middleware file cannot be read, compiled, or validated as a middleware export, a dedicated server does not start and a shared server returns an error only for the affected project request. Failed shared loads are not cached, so a corrected deployment can recover without restarting unrelated projects. Development loading remains nonfatal and reports the loading error in the server log.
 
 ## Verify it worked

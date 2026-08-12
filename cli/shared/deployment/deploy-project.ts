@@ -618,16 +618,39 @@ function assertReadyManifestCoversPageRoutes(
 /** Upper bound for a plausible manifest state value from the control plane. */
 const MAX_MANIFEST_STATE_LENGTH = 64;
 
+/**
+ * The manifest row appears the moment the project runtime begins the build, so
+ * never seeing one is a different failure from a build that is merely slow: the
+ * control plane's signed `task:release-asset-build` dispatch never reached the
+ * builder. Something in front of the runtime's control-plane handler answered
+ * it, and the operator needs to be told that rather than sent to inspect a
+ * build that never started.
+ */
+const RELEASE_ASSET_BUILD_NEVER_STARTED_HINT =
+  "No manifest was ever created for this release, so the release asset build " +
+  'dispatch (POST /api/control-plane/runs/{runId}/execute, target "task:release-asset-build") ' +
+  "never reached the builder on the deployed runtime. Check the runtime logs for this " +
+  "release, and any request gate in front of it such as the project's middleware.ts or a " +
+  "security policy in veryfront.config.";
+
 function releaseAssetPollingTimeoutError(
   timeoutMs: number,
   lastState: string,
   lastTransientFailure: string | null,
+  observedManifest: boolean,
 ): Error {
   const timeoutSeconds = Math.ceil(timeoutMs / 1000);
+  // Only claim the dispatch never landed when nothing else can explain the
+  // silence: a manifest read that kept failing leaves the build state unknown.
+  const neverStarted = !observedManifest && lastTransientFailure === null;
   return new Error(
     `Release assets were not ready within ${timeoutSeconds}s (last state: ${lastState}${
       lastTransientFailure === null ? "" : `; last control-plane failure: ${lastTransientFailure}`
-    }). Check the release asset build and run deploy again.`,
+    }). ${
+      neverStarted
+        ? RELEASE_ASSET_BUILD_NEVER_STARTED_HINT
+        : "Check the release asset build and run deploy again."
+    }`,
   );
 }
 
@@ -675,6 +698,7 @@ export async function waitForReleaseAssetManifest(
   const deadline = Date.now() + timeoutMs;
   let lastState = "missing";
   let lastTransientFailure: string | null = null;
+  let observedManifest = false;
 
   for (;;) {
     const remainingMs = deadline - Date.now();
@@ -682,6 +706,7 @@ export async function waitForReleaseAssetManifest(
       timeoutMs,
       lastState,
       lastTransientFailure,
+      observedManifest,
     );
     if (remainingMs <= 0) throw timeoutError;
 
@@ -704,6 +729,7 @@ export async function waitForReleaseAssetManifest(
         : `HTTP ${status}`;
     }
     if (raw !== null) {
+      observedManifest = true;
       const state = readUntrustedOwnDataProperty(raw, "state");
       if (!isSafeBoundedText(state, MAX_MANIFEST_STATE_LENGTH)) {
         throw new Error(`Release assets for ${releaseId} returned an invalid state response`);
