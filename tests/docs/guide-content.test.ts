@@ -1,5 +1,12 @@
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { basename } from "#veryfront/compat/path";
+import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  getCacheBaseDir,
+  getHttpBundleCacheDir,
+  getMdxEsmCacheDir,
+} from "#veryfront/utils/cache-dir.ts";
 import { MINIMUM_DENO_VERSION, MINIMUM_NODE_VERSION } from "../../scripts/build/runtime-support.ts";
 
 describe("guide content contracts", () => {
@@ -198,6 +205,127 @@ describe("guide content contracts", () => {
       gettingStarted.includes("The deployed page and API routes respond."),
       false,
     );
+  });
+
+  it("tells the reader a Cloud environment is protected before asking for a request", async () => {
+    // Veryfront Cloud environments are protected by default: an anonymous
+    // request to the environment URL gets a 302 to a Veryfront sign-in page on
+    // every path, API routes included, and VERYFRONT_API_TOKEN does not change
+    // that. A signed-in non-member gets a 403 instead, per
+    // checkProtectedProxyAccess in src/proxy/proxy-access-control.ts. Which
+    // apex serves that sign-in page varies by deployment host — see the
+    // sign-in-apex case below, which owns that half. Verified against a live
+    // protected environment on published 0.1.1229:
+    //   curl -s -o /dev/null -w '%{http_code} %{redirect_url}' \
+    //     https://<project>.production.veryfront.com/api/health
+    //   -> 302 https://veryfront.com/sign-in?from=...
+    // A verification step written as a bare `curl -sSf <environment-url>`
+    // therefore exits 0 with an empty body whether or not the deployment
+    // works, so the page has to name the redirect and print the status code.
+    // Resolved from the module, not the process cwd: test files share one
+    // process under --parallel and src/testing/cwd.ts chdirs it.
+    const doc = await Deno.readTextFile(
+      new URL("../../docs/getting-started/deploy-project.md", import.meta.url),
+    );
+    const prose = doc.replace(/\s+/g, " ");
+
+    assertStringIncludes(prose, "protected by default");
+    assertStringIncludes(prose, "https://veryfront.com/sign-in");
+    assertStringIncludes(prose, "Public Environment");
+    assertStringIncludes(prose, "not a member of the project gets a `403`");
+    assertStringIncludes(doc, "-w '%{http_code} %{redirect_url}\\n'");
+    assertEquals(doc.includes("```bash\ncurl -sSf <environment-url>\n```"), false);
+  });
+
+  it("does not promise one sign-in apex for every protected environment", async () => {
+    // buildProxyAuthRedirectUrl picks the sign-in apex from the host the
+    // request arrived on (src/proxy/proxy-access-control.ts:202, via
+    // resolveSignInApex at :187). A preview host on *.preview.veryfront.org is
+    // sent to https://veryfront.org/sign-in, not .com — asserted at
+    // src/proxy/proxy-access-control.test.ts:102. Stating a single apex sends a
+    // reader to sign in on a domain whose cookie the deployment host never
+    // receives, so the redirect loop never closes.
+    //
+    // Structural, not a keyword check: it collects every sign-in URL the page
+    // prints and requires both apexes to appear. Prose that names only
+    // veryfront.com cannot satisfy it, which is exactly the defect. A plain
+    // `assertStringIncludes(prose, "https://veryfront.com/sign-in")` passes on
+    // the broken page and so cannot stand in for this.
+    const doc = await Deno.readTextFile(
+      new URL("../../docs/getting-started/deploy-project.md", import.meta.url),
+    );
+    const prose = doc.replace(/\s+/g, " ");
+
+    const signInApexes = new Set(
+      [...doc.matchAll(/https:\/\/(veryfront\.(?:com|org))\/sign-in/g)].map((match) => match[1]),
+    );
+    assertEquals(signInApexes.has("veryfront.com"), true);
+    assertEquals(signInApexes.has("veryfront.org"), true);
+
+    // The page has to say the apex varies and name the host class that varies,
+    // so the reader knows to read the redirect rather than memorize one URL.
+    assertStringIncludes(prose, "depends on the host serving the environment");
+    assertStringIncludes(prose, "`*.preview.veryfront.org`");
+
+    // The two sentences that previously asserted a universal .com apex.
+    assertEquals(
+      prose.includes("request gets a `302` to `https://veryfront.com/sign-in`"),
+      false,
+    );
+    assertEquals(
+      prose.includes("answers `302` to `https://veryfront.com/sign-in`"),
+      false,
+    );
+  });
+
+  it("does not require a 200 from the environment root to call a deploy verified", async () => {
+    // Deployment selects a readiness route only from static page routes and
+    // leaves it null when the project has none
+    // (cli/shared/deployment/deploy-project.ts:1293), and
+    // buildEnvironmentReadinessProbes returns zero probes for a null route
+    // (:875) — so an API-only deployment is verified without any page ever
+    // answering 200, as asserted at
+    // cli/shared/deployment/deploy-project.test.ts:635. A page that presents
+    // 200 at <environment-url> as the universal success signal tells the owner
+    // of such a project their working deployment failed.
+    const doc = await Deno.readTextFile(
+      new URL("../../docs/getting-started/deploy-project.md", import.meta.url),
+    );
+    const prose = doc.replace(/\s+/g, " ");
+
+    // Structural: the verification command must carry a route placeholder. A
+    // command ending at the bare environment URL is the defect itself, so
+    // pinning the command shape is what makes this test able to fail.
+    assertStringIncludes(
+      doc,
+      "-w '%{http_code} %{redirect_url}\\n' <environment-url>/<route>",
+    );
+    assertEquals(
+      doc.includes("-w '%{http_code} %{redirect_url}\\n' <environment-url>\n"),
+      false,
+    );
+
+    // And the prose must tell the reader to validate that route's own status
+    // rather than a blanket 200.
+    assertStringIncludes(prose, "Probe a route your project actually serves");
+    assertStringIncludes(prose, "Validate the status that route is expected to return");
+    assertStringIncludes(prose, "skips the browser readiness probe");
+    assertEquals(prose.includes("A public environment answers `200`."), false);
+  });
+
+  it("offers open --site as the way back to the deployed environment URL", async () => {
+    // The deploy docs tell readers to use the URL Deploy printed. A reader who
+    // did not record it needs a command that reproduces it, so both deploy
+    // pages must name `open --site` alongside the dashboard-only `open`.
+    for (
+      const path of [
+        "docs/getting-started/deploy-project.md",
+        "docs/guides/deploying.md",
+      ]
+    ) {
+      const text = await Deno.readTextFile(path);
+      assertStringIncludes(text, "open --site");
+    }
   });
 
   it("uses serve for local production builds", async () => {
@@ -551,7 +679,132 @@ describe("guide content contracts", () => {
       assertStringIncludes(page, "is in use, using");
     }
   });
+
+  it("documents the cache root in both development and production", async () => {
+    // Resolved from import.meta.url, not the process cwd: test files share one
+    // process under --parallel and a sibling isolate can hold a chdir.
+    const repoRoot = new URL("../../", import.meta.url);
+    const guide = await Deno.readTextFile(
+      new URL("docs/guides/project-structure.md", repoRoot),
+    );
+
+    // `veryfront dev` and `veryfront build` both create a cache root. Before
+    // this section existed the only explanation a developer got was the
+    // comment inside the generated `.gitignore` marker.
+    assertStringIncludes(guide, "## Generated directories");
+    assertStringIncludes(guide, "`.cache/`");
+    assertStringIncludes(guide, "`.cache/.gitignore`");
+    assertStringIncludes(guide, "VERYFRONT_CACHE_DIR");
+
+    // The location is not one place. `getDefaultCacheBaseDir()` sends the
+    // cache to `$HOME/.cache/veryfront` under a production runtime and to
+    // `<project>/.cache` otherwise, so a guide that describes only the project
+    // root is wrong for every deployed run. Both branches are resolved here by
+    // calling the real function under each mode rather than by forcing a cache
+    // context, which would answer with the forced path in both modes and pass
+    // no matter what the guide says.
+    const home = "/tmp/veryfront-guide-content-home";
+    const noOverride = { VERYFRONT_CACHE_DIR: undefined, VF_CACHE_DIR: undefined };
+    const resolveRoots = (mode: string | undefined) =>
+      withHostEnv(
+        { ...noOverride, HOME: home, NODE_ENV: mode, VERYFRONT_MODE: mode },
+        () => ({
+          base: getCacheBaseDir(),
+          mdxEsm: basename(getMdxEsmCacheDir()),
+          httpBundle: basename(getHttpBundleCacheDir()),
+        }),
+      );
+
+    const development = resolveRoots("development");
+    const production = resolveRoots("production");
+
+    // Guard the guard: if these ever resolve to the same place, the two
+    // assertions below stop distinguishing anything and this test would keep
+    // passing while the guide describes a mode that no longer exists.
+    assert(
+      development.base !== production.base,
+      "development and production must resolve to different cache roots",
+    );
+    assertEquals(basename(development.base), ".cache");
+    assertStringIncludes(production.base, home);
+
+    // `.cache/veryfront` — the production root with the home prefix removed, so
+    // the guide has to name the real deployed location and not just `.cache/`.
+    const productionUnderHome = production.base
+      .slice(home.length + 1)
+      .replaceAll("\\", "/");
+    assertStringIncludes(guide, productionUnderHome);
+
+    // Every variable the production branch reads has to appear in the guide, so
+    // renaming a trigger fails here instead of leaving readers checking a
+    // variable the code stopped consulting.
+    for (
+      const key of productionCacheTriggerEnvKeys(
+        await Deno.readTextFile(
+          new URL("src/utils/cache-dir.ts", repoRoot),
+        ),
+      )
+    ) {
+      assertStringIncludes(guide, key);
+    }
+
+    // Pinned to the real layout in both modes, so renaming a cache
+    // subdirectory fails here instead of leaving the guide describing a tree
+    // that no longer exists.
+    for (const { mdxEsm, httpBundle } of [development, production]) {
+      assertStringIncludes(guide, mdxEsm);
+      assertStringIncludes(guide, httpBundle);
+    }
+  });
 });
+
+/**
+ * Run `fn` with host environment variables set, restoring the previous values
+ * afterwards. `undefined` unsets a variable for the duration of the call.
+ */
+function withHostEnv<T>(
+  vars: Readonly<Record<string, string | undefined>>,
+  fn: () => T,
+): T {
+  const previous = Object.keys(vars).map(
+    (key) => [key, getHostEnv(key)] as const,
+  );
+  const apply = (entries: readonly (readonly [string, string | undefined])[]) => {
+    for (const [key, value] of entries) {
+      if (value === undefined) deleteEnv(key);
+      else setEnv(key, value);
+    }
+  };
+
+  apply(Object.entries(vars));
+  try {
+    return fn();
+  } finally {
+    apply(previous);
+  }
+}
+
+/**
+ * Environment variables `getDefaultCacheBaseDir()` reads to choose between the
+ * project cache root and the home cache root, read out of the source so the
+ * guide's list of triggers cannot drift away from the code's.
+ */
+function productionCacheTriggerEnvKeys(source: string): string[] {
+  const start = source.indexOf("function getDefaultCacheBaseDir(");
+  assert(start !== -1, "cache-dir.ts must define getDefaultCacheBaseDir()");
+  const open = source.indexOf("{", start);
+  let depth = 0;
+  let end = open;
+  for (; end < source.length; end++) {
+    if (source[end] === "{") depth++;
+    else if (source[end] === "}" && --depth === 0) break;
+  }
+
+  const body = source.slice(open, end);
+  const keys = [...body.matchAll(/getHostEnv\("([A-Z_]+)"\)/g)].map((m) => m[1]!);
+  assert(keys.length > 0, "getDefaultCacheBaseDir() must read the host env");
+  return [...new Set(keys)];
+}
 
 /**
  * Body of the guide's "Verify it worked" section, up to the next heading, with
