@@ -7,6 +7,7 @@ import {
   collectDeclarations,
   collectIdentifiers,
   collectObjectLiteralCompounds,
+  headingSlug,
   parseRollupRows,
   type PublicSurface,
   resolvesOnSurface,
@@ -66,7 +67,12 @@ function rollupPage(body: string) {
   return { path: "docs/rfcs/29-chat-api-shape/README.md", content: body };
 }
 
-/** A roll-up table with two rows, plus prose and a link that is not a row. */
+/**
+ * A roll-up table with two rows, plus prose and a link that is not a row.
+ *
+ * Each row's anchor is the slug of the delta heading it claims, so the table is
+ * checkable one delta at a time rather than one page at a time.
+ */
 const ROLLUP = [
   "# Reference index",
   "",
@@ -74,8 +80,8 @@ const ROLLUP = [
   "",
   "| Delta | Status | Landed in |",
   "| --- | --- | --- |",
-  "| [`mergeProps` made public](./helpers.md#mergeprops---new---shipped) | `shipped` | `src/real.ts:85` |",
-  "| [`useChatScroll`](./hooks/use-chat-scroll.md) | `partly shipped` | `src/real.ts:177` |",
+  "| [`mergeProps` made public](./helpers.md#mergeprops---new---shipped-srcrealts85) | `shipped` | `src/real.ts:85` |",
+  "| [`useChatScroll`](./hooks/use-chat-scroll.md#usechatscroll---new---partly-shipped-srcrealts177) | `partly shipped` | `src/real.ts:177` |",
 ].join("\n");
 
 const BADGED_HELPERS = {
@@ -85,6 +91,15 @@ const BADGED_HELPERS = {
 const BADGED_SCROLL = {
   path: "docs/rfcs/29-chat-api-shape/hooks/use-chat-scroll.md",
   content: "### `useChatScroll` - `new` - `partly shipped` (src/real.ts:177)",
+};
+/** The same page carrying a *second* landed delta the roll-up does not name. */
+const TWO_BADGE_SCROLL = {
+  path: "docs/rfcs/29-chat-api-shape/hooks/use-chat-scroll.md",
+  content: [
+    "### `useChatScroll` - `new` - `partly shipped` (src/real.ts:177)",
+    "",
+    "### `useChatScroll` stick-to-bottom primitive - `new` - `shipped` (src/real.ts:180)",
+  ].join("\n"),
 };
 
 const LEDGER = [
@@ -371,9 +386,57 @@ describe("audit-rfc-status", () => {
   // corpus-wide claim the blanket banners made - so it is checked, not trusted.
   it("reads the roll-up table's rows, ignoring the prose around them", () => {
     assertEquals(parseRollupRows(ROLLUP), [
-      { line: 7, page: "docs/rfcs/29-chat-api-shape/helpers.md" },
-      { line: 8, page: "docs/rfcs/29-chat-api-shape/hooks/use-chat-scroll.md" },
+      {
+        line: 7,
+        page: "docs/rfcs/29-chat-api-shape/helpers.md",
+        anchor: "mergeprops---new---shipped-srcrealts85",
+      },
+      {
+        line: 8,
+        page: "docs/rfcs/29-chat-api-shape/hooks/use-chat-scroll.md",
+        anchor: "usechatscroll---new---partly-shipped-srcrealts177",
+      },
     ]);
+  });
+
+  // A row that links its page without a `./` prefix, or reaches the RFC root
+  // with `../`, links the same document. Dropping it from the parse would
+  // excuse the row instead of checking it.
+  it("reads roll-up rows whose links are bare or `../`-relative", () => {
+    const rollup = [
+      "| Delta | Status | Landed in |",
+      "| --- | --- | --- |",
+      "| [`mergeProps`](helpers.md#mergeprops---new---shipped-srcrealts85) | `shipped` | `src/real.ts:85` |",
+      "| [root](../29-chat-api-shape.md#already-landed) | `shipped` | `src/real.ts:1` |",
+    ].join("\n");
+    assertEquals(parseRollupRows(rollup), [
+      {
+        line: 3,
+        page: "docs/rfcs/29-chat-api-shape/helpers.md",
+        anchor: "mergeprops---new---shipped-srcrealts85",
+      },
+      { line: 4, page: "docs/rfcs/29-chat-api-shape.md", anchor: "already-landed" },
+    ]);
+  });
+
+  it("derives a delta's identity from its heading anchor", () => {
+    assertEquals(
+      headingSlug("`mergeProps` - `new` - `shipped` (src/real.ts:85)"),
+      "mergeprops---new---shipped-srcrealts85",
+    );
+  });
+
+  it("rejects a roll-up row that links a page without naming a delta", () => {
+    const rollup = [
+      "| Delta | Status | Landed in |",
+      "| --- | --- | --- |",
+      "| [`mergeProps` made public](./helpers.md) | `shipped` | `src/real.ts:85` |",
+    ].join("\n");
+    const violations = auditRollup(rollupPage(rollup), [BADGED_HELPERS]);
+    // The row names no delta, and the badge it meant is left unclaimed.
+    assertEquals(violations.length, 2);
+    assertEquals(violations[0].message.includes("without naming a delta"), true);
+    assertEquals(violations[1].message.includes("has no ") && violations[1].message.includes("row in this table"), true);
   });
 
   it("accepts a roll-up matching the pages that badge a delta", () => {
@@ -400,6 +463,42 @@ describe("audit-rfc-status", () => {
     assertEquals(violations.length, 1);
     assertEquals(violations[0].message.includes("has landed, but that page badges"), true);
     assertEquals(violations[0].line, 8);
+  });
+
+  // Rule 7, per delta. Collapsing both sides to a set of page paths accepts any
+  // row for a page that badges *something*, so a page with two landed deltas is
+  // covered by one row, and a row may name a delta that does not exist.
+  it("rejects a page whose second badged delta has no row of its own", () => {
+    const violations = auditRollup(rollupPage(ROLLUP), [BADGED_HELPERS, TWO_BADGE_SCROLL]);
+    assertEquals(violations.length, 1);
+    assertEquals(violations[0].message.includes("has no row in this table"), true);
+    assertEquals(violations[0].message.includes("stick-to-bottom"), true);
+  });
+
+  it("rejects a roll-up row whose anchor names no badge on the target page", () => {
+    const rollup = [
+      "| Delta | Status | Landed in |",
+      "| --- | --- | --- |",
+      "| [`mergeProps` made public](./helpers.md#mergeprops---new---shipped-srcrealts85) | `shipped` | `src/real.ts:85` |",
+      "| [`mergeProps` renamed](./helpers.md#mergeprops---renamed---shipped-srcrealts99) | `shipped` | `src/real.ts:99` |",
+    ].join("\n");
+    const violations = auditRollup(rollupPage(rollup), [BADGED_HELPERS]);
+    assertEquals(violations.length, 1);
+    assertEquals(violations[0].message.includes("names no `shipped` delta"), true);
+    assertEquals(violations[0].line, 4);
+  });
+
+  it("rejects two roll-up rows pointing at the same badge", () => {
+    const rollup = [
+      "| Delta | Status | Landed in |",
+      "| --- | --- | --- |",
+      "| [`mergeProps` made public](./helpers.md#mergeprops---new---shipped-srcrealts85) | `shipped` | `src/real.ts:85` |",
+      "| [`mergeProps` again](./helpers.md#mergeprops---new---shipped-srcrealts85) | `shipped` | `src/real.ts:85` |",
+    ].join("\n");
+    const violations = auditRollup(rollupPage(rollup), [BADGED_HELPERS]);
+    assertEquals(violations.length, 1);
+    assertEquals(violations[0].message.includes("a second row for"), true);
+    assertEquals(violations[0].line, 4);
   });
 
   it("reads `none` as an empty list, not a symbol named none", () => {

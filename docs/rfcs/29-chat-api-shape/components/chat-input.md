@@ -17,7 +17,11 @@ import { ChatInput } from "veryfront/chat";
 import { ChatInput, ChatInputField, type ChatInputFieldProps } from "veryfront/chat";
 ```
 
+### `ChatInput` flat sub-part exports - `new` - `shipped` (src/chat/index.ts:250)
+
 The flat sub-part exports above are **not** a proposal: `ChatInputRoot`, `ChatInputField`, `ChatInputToolbar`, `ChatInputAttach`, `ChatInputModel`, `ChatInputVoice`, `ChatInputSubmit`, `ChatInputSend`, `ChatInputStop`, and `ChatInputExport` (with their `Props` types) all ship from `veryfront/chat` today, alongside the `ChatInput.*` namespace aliases. What each leaf _does_ is still the proposal - see the per-delta badges below.
+
+This is the one page where "every sub-part is also a flat named export" has actually landed; on every other component page it is still proposed.
 
 ## Parts index
 

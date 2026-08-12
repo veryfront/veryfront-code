@@ -39,7 +39,8 @@
  *   6. The banner's landed-ness word must agree with the page's `shipped`
  *      badges, so the page-level summary can never drift from its deltas again.
  *   7. The reference index's roll-up table is the complete set of landed
- *      deltas, and must agree exactly with the pages that badge one.
+ *      deltas, and must agree exactly with the badges - one row per badge,
+ *      paired by the delta's own heading anchor, not merely by page.
  */
 
 import { walk } from "#std/fs";
@@ -308,6 +309,23 @@ export interface ShippedBadge {
   heading: string;
   anchorPath: string;
   anchorLine: number;
+  /**
+   * The heading's own GitHub anchor. This is the delta's identity: the roll-up
+   * names a delta by linking this slug, so the table can be checked one delta
+   * at a time instead of one page at a time.
+   */
+  slug: string;
+}
+
+/**
+ * GitHub's heading-anchor slug: lowercase, drop everything that is not a word
+ * character, space, or hyphen, then spaces to hyphens. Backticks, parentheses,
+ * and the `path.ts:12` punctuation in a badge all fall away, which is why
+ * `` ### `mergeProps` - `new` - `shipped` (src/a.ts:85) `` anchors as
+ * `mergeprops---new---shipped-srcats85`.
+ */
+export function headingSlug(heading: string): string {
+  return heading.toLowerCase().replace(/[^\w\- ]/g, "").replace(/ /g, "-");
 }
 
 /**
@@ -343,6 +361,7 @@ export function parseShippedBadges(content: string): {
       heading: m[1],
       anchorPath: m[2],
       anchorLine: Number(m[3]),
+      slug: headingSlug(line.replace(/^#+\s+/, "")),
     });
   }
   return { badges, malformed };
@@ -361,62 +380,139 @@ const ROLLUP_PAGE = `${RFC_DIR}/README.md`;
  *
  * Requiring the status-badge cell is what scopes this to the roll-up table
  * instead of any other table that might join the page later.
+ *
+ * The target is deliberately not pinned to a `./` prefix. A row written
+ * `[…](helpers.md)` or `[…](../29-chat-api-shape.md)` links the same document,
+ * and dropping it from the parse would have silently excused the row rather
+ * than checked it - a completeness rule that stops looking at a row because of
+ * how its link is spelled is no completeness rule at all.
  */
 const ROLLUP_ROW_RE =
-  /^\|[^|]*\]\((\.\/[\w./-]+?\.md)(?:#[\w-]*)?\)[^|]*\|[^|]*`(?:partly )?shipped`/;
+  /^\|[^|]*\]\(([\w./-]+?\.md)(?:#([\w-]*))?\)[^|]*\|[^|]*`(?:partly )?shipped`/;
 
-export function parseRollupRows(content: string): Array<{ line: number; page: string }> {
-  const rows: Array<{ line: number; page: string }> = [];
+export interface RollupRow {
+  line: number;
+  page: string;
+  /** The `#…` fragment, naming which delta on that page this row claims. */
+  anchor: string;
+}
+
+/** Resolve a row's link target against the index's own directory. */
+function resolveRowTarget(target: string): string {
+  const out: string[] = [];
+  for (const segment of `${RFC_DIR}/${target}`.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") out.pop();
+    else out.push(segment);
+  }
+  return out.join("/");
+}
+
+export function parseRollupRows(content: string): RollupRow[] {
+  const rows: RollupRow[] = [];
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const m = ROLLUP_ROW_RE.exec(lines[i]);
-    if (m) rows.push({ line: i + 1, page: `${RFC_DIR}/${m[1].slice(2)}` });
+    if (m) rows.push({ line: i + 1, page: resolveRowTarget(m[1]), anchor: m[2] ?? "" });
   }
   return rows;
 }
 
 /**
- * Rule 7 - the roll-up is the complete set, and is checked as one.
+ * Rule 7 - the roll-up is the complete set of landed *deltas*, checked one
+ * delta at a time.
  *
  * The index table says "the complete set, as of `main`". That is the same
  * corpus-wide claim the blanket banners made, so it gets the same treatment:
  * the set is machine-readable (one row per landed delta, each linking its
- * page), and it must agree exactly with the pages that actually carry a
- * `shipped` badge. Without this, deleting the blanket sentence would only hide
- * the claim - the table would still assert completeness, unchecked, and a
- * delta could land with a badge that the index never mentions.
+ * delta's own heading), and it must agree exactly with the `shipped` badges
+ * that exist. Without this, deleting the blanket sentence would only hide the
+ * claim - the table would still assert completeness, unchecked.
+ *
+ * The pairing is per delta, not per page, because per page is the same
+ * overwrite hole rules 2 and 6 already closed one level up. Reducing both sides
+ * to a set of page paths accepted any row for a page that badged *something*:
+ * `components/chat-input.md` carried one badge and the index carried two rows
+ * naming two different deltas on it, and the lint passed - the second delta
+ * ("`ChatInput` flat sub-part exports") had no badge anywhere, and the table's
+ * completeness claim was decorative. Matching the row's `#anchor` against each
+ * badge's own heading slug is what makes the claim bite.
  */
 export function auditRollup(rollup: AuditInput, deltaPages: AuditInput[]): StatusViolation[] {
   const out: StatusViolation[] = [];
   const rows = parseRollupRows(rollup.content);
-  const listed = new Map(rows.map((r) => [r.page, r.line]));
   const anchorLine = rows[0]?.line ?? 1;
 
-  const badged = new Set(
-    deltaPages
-      .filter((p) => parseShippedBadges(p.content).badges.length > 0)
-      .map((p) => p.path),
-  );
+  // page -> delta slug -> the badge's line, for every delta that really landed.
+  const badgesByPage = new Map<string, Map<string, number>>();
+  for (const page of deltaPages) {
+    const { badges } = parseShippedBadges(page.content);
+    if (badges.length === 0) continue;
+    badgesByPage.set(page.path, new Map(badges.map((b) => [b.slug, b.line])));
+  }
 
-  for (const page of [...badged].sort()) {
-    if (!listed.has(page)) {
+  /** `page#slug` -> the row that claimed it, so no delta is claimed twice. */
+  const claimed = new Map<string, number>();
+
+  for (const row of rows) {
+    const key = `${row.page}#${row.anchor}`;
+    if (claimed.has(key)) {
+      out.push({
+        path: rollup.path,
+        line: row.line,
+        message:
+          `a second row for "${key}" in this table. One row per landed delta: ` +
+          `two rows can disagree, and a duplicate silently pads a set that ` +
+          `claims to be exact.`,
+      });
+      continue;
+    }
+    claimed.set(key, row.line);
+
+    const badges = badgesByPage.get(row.page);
+    if (!badges) {
+      out.push({
+        path: rollup.path,
+        line: row.line,
+        message:
+          `this row says a delta on "${row.page}" has landed, but that page badges ` +
+          `nothing \`shipped\`. Badge the delta on its own page or drop this row.`,
+      });
+      continue;
+    }
+    if (row.anchor === "") {
+      out.push({
+        path: rollup.path,
+        line: row.line,
+        message:
+          `this row links "${row.page}" without naming a delta. Link the delta's ` +
+          `own heading anchor, so the row is checked against that badge rather ` +
+          `than against the page having any badge at all.`,
+      });
+      continue;
+    }
+    if (!badges.has(row.anchor)) {
+      out.push({
+        path: rollup.path,
+        line: row.line,
+        message:
+          `this row names no \`shipped\` delta: "${row.page}" has no heading ` +
+          `anchoring to "#${row.anchor}". Badge that delta on its page, or fix ` +
+          `the anchor to the delta this row really means.`,
+      });
+    }
+  }
+
+  for (const [page, badges] of [...badgesByPage].sort(([a], [b]) => a.localeCompare(b))) {
+    for (const [slug, line] of badges) {
+      if (claimed.has(`${page}#${slug}`)) continue;
       out.push({
         path: rollup.path,
         line: anchorLine,
         message:
-          `"${page}" badges a delta \`shipped\` but has no row in this table, ` +
-          `which claims to be the complete set. Add the delta or drop its badge.`,
-      });
-    }
-  }
-  for (const [page, line] of listed) {
-    if (!badged.has(page)) {
-      out.push({
-        path: rollup.path,
-        line,
-        message:
-          `this row says a delta on "${page}" has landed, but that page badges ` +
-          `nothing \`shipped\`. Badge the delta on its own page or drop this row.`,
+          `"${page}:${line}" badges the delta "#${slug}" \`shipped\` but it has no ` +
+          `row in this table, which claims to be the complete set. Add the delta ` +
+          `or drop its badge.`,
       });
     }
   }
