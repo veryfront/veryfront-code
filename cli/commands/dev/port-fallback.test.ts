@@ -3,6 +3,7 @@ import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/a
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   findAvailablePort,
+  isAddressFamilyUnavailableError,
   isPortAvailable,
   isPortInUseError,
   MAX_PORT_FALLBACK_ATTEMPTS,
@@ -22,6 +23,19 @@ function probeBusyOn(busy: number[]): {
       return Promise.resolve(!busy.includes(port));
     },
   };
+}
+
+/**
+ * Binds an ephemeral loopback port on one family, or returns null when the host
+ * has no address in that family at all (CI containers are routinely IPv4-only).
+ */
+function listenOnLoopback(hostname: string): Deno.Listener | null {
+  try {
+    return Deno.listen({ hostname, port: 0 });
+  } catch (error) {
+    if (isPortInUseError(error)) throw error;
+    return null;
+  }
 }
 
 describe("cli/commands/dev/port-fallback", () => {
@@ -118,6 +132,22 @@ describe("cli/commands/dev/port-fallback", () => {
       }
     });
 
+    it("skips a port held on IPv6 only", async () => {
+      // `veryfront dev` starts its MCP server on `localhost`, which resolves to
+      // ::1 wherever IPv6 is available - so a second dev server's port scan sees
+      // an IPv4-only probe succeed on a port the first instance already holds,
+      // and hands out a port that is not actually free.
+      const held = listenOnLoopback("::1");
+      if (!held) return; // no IPv6 on this host - nothing to collide with
+
+      const heldPort = (held.addr as Deno.NetAddr).port;
+      try {
+        assertEquals(await isPortAvailable(heldPort), false);
+      } finally {
+        held.close();
+      }
+    });
+
     it("accepts a port nothing is holding", async () => {
       const probeListener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
       const freePort = (probeListener.addr as Deno.NetAddr).port;
@@ -184,6 +214,47 @@ describe("cli/commands/dev/port-fallback", () => {
       assert(!isPortInUseError(new Error("boom")));
       assert(!isPortInUseError("EADDRINUSE"));
       assert(!isPortInUseError(undefined));
+    });
+  });
+
+  describe("isAddressFamilyUnavailableError", () => {
+    // Probing both loopback families must not make a genuinely free port look
+    // busy on a host that has only one of them - an IPv4-only container would
+    // otherwise report every port as taken and never fall forward at all.
+    it("recognises the error an address this host does not have throws", () => {
+      let thrown: unknown;
+      try {
+        // ::2 is assigned to no interface, so binding it fails the same way
+        // binding ::1 fails on a host with IPv6 switched off.
+        Deno.listen({ hostname: "::2", port: 0 }).close();
+      } catch (error) {
+        thrown = error;
+      }
+
+      assert(thrown !== undefined, "listening on an unassigned address must throw");
+      assert(
+        isAddressFamilyUnavailableError(thrown),
+        `the runtime's own error must be recognised, got ${String(thrown)}`,
+      );
+      assert(!isPortInUseError(thrown), "an absent address is not a port collision");
+    });
+
+    it("recognises the Node error shapes", () => {
+      for (const code of ["EADDRNOTAVAIL", "EAFNOSUPPORT"]) {
+        const error = Object.assign(new Error(`listen ${code} ::1`), { code });
+        assert(isAddressFamilyUnavailableError(error), `${code} must be recognised`);
+      }
+    });
+
+    it("does not treat a port collision or an unrelated failure as a missing family", () => {
+      const inUse = Object.assign(new Error("listen EADDRINUSE: address already in use"), {
+        code: "EADDRINUSE",
+      });
+
+      assert(!isAddressFamilyUnavailableError(inUse));
+      assert(!isAddressFamilyUnavailableError(new Error("boom")));
+      assert(!isAddressFamilyUnavailableError("EADDRNOTAVAIL"));
+      assert(!isAddressFamilyUnavailableError(undefined));
     });
   });
 });
