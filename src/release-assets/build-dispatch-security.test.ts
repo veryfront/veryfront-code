@@ -204,6 +204,55 @@ describe("release assets: control-plane build dispatch", () => {
     assertEquals(outcome.status, 200);
   });
 
+  it("builds a manifest when the project's own middleware gates every request", async () => {
+    // A root `middleware.ts` that authorizes traffic is ordinary project code,
+    // and `projectMiddlewareRuntime.execute` wraps the entire handler chain, so
+    // it stands in front of the build dispatch as well. It cannot authorize
+    // that dispatch even in principle: `createApplicationRequest` strips every
+    // `x-veryfront-*` header before project code sees the request, so the
+    // signature the platform authenticates with is invisible to it.
+    let middlewareCalls = 0;
+    const outcome = await dispatchReleaseAssetBuild(undefined, {
+      projectMiddleware: [
+        (c, next) => {
+          middlewareCalls++;
+          if (!c.req.headers.get("authorization")) {
+            return Promise.resolve(new Response("Unauthorized", { status: 401 }));
+          }
+          return next();
+        },
+      ],
+    });
+
+    assertEquals(
+      outcome.begun,
+      true,
+      `release asset build never started; runtime answered ${outcome.status}: ${outcome.body}`,
+    );
+    assertEquals(outcome.status, 200);
+    assertEquals(middlewareCalls, 0);
+  });
+
+  it("keeps project middleware in front of an unsigned request to the same path", async () => {
+    // The bypass is keyed on a dispatch, not on a path. Without the signature
+    // header the request is project traffic, and the project's middleware
+    // answers it exactly as before.
+    let middlewareCalls = 0;
+    const outcome = await dispatchReleaseAssetBuild(undefined, {
+      unsigned: true,
+      projectMiddleware: [
+        () => {
+          middlewareCalls++;
+          return new Response("Unauthorized", { status: 401 });
+        },
+      ],
+    });
+
+    assertEquals(outcome.status, 401);
+    assertEquals(outcome.begun, false);
+    assertEquals(middlewareCalls, 1);
+  });
+
   it("builds a manifest when the project excludes a path from csrf", async () => {
     // The shape that first surfaced this: keep CSRF enforced everywhere except
     // the agent endpoint the chat client posts to.

@@ -694,7 +694,116 @@ describe("ProjectMiddlewareRuntime", () => {
     assertEquals(routeCalls, 1);
   });
 
+  it("bypasses project middleware for signed control-plane dispatches", async () => {
+    // The control plane builds a release asset manifest by POSTing a signed
+    // operation envelope to the project's own runtime. That dispatch is not the
+    // project's traffic: it addresses a platform handler, and
+    // `createApplicationRequest` strips every `x-veryfront-*` header before
+    // project code sees the request, so middleware cannot even observe the
+    // credential it would have to trust. A project whose middleware gates
+    // requests would answer its own deploy with a rejection.
+    const adapter = createAdapter();
+    let loads = 0;
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => {
+        loads++;
+        return Promise.resolve([
+          () => new Response("project-middleware", { status: 403 }),
+        ]);
+      },
+    });
+    let routeCalls = 0;
+    const next = () => {
+      routeCalls++;
+      return Promise.resolve(new Response("route"));
+    };
+    const dispatches: Array<[string, string]> = [
+      ["POST", "/api/control-plane/runs/run_1/execute"],
+      ["POST", "/api/control-plane/runs/run_1/stream"],
+      ["POST", "/api/control-plane/runs/run_1/resume"],
+      ["POST", "/api/control-plane/agents/list"],
+      ["DELETE", "/api/control-plane/runs/run_1"],
+    ];
+
+    for (const [method, path] of dispatches) {
+      const response = await execute(
+        runtime,
+        createContext(adapter),
+        new Request(`https://example.com${path}`, {
+          method,
+          headers: { "x-veryfront-control-plane-jws": "header.payload.signature" },
+        }),
+        next,
+      );
+      assertEquals(
+        response?.status,
+        200,
+        `${method} ${path} was answered by project middleware`,
+      );
+      assertEquals(await response?.text(), "route");
+    }
+
+    assertEquals(loads, 0);
+    assertEquals(routeCalls, dispatches.length);
+  });
+
+  it("keeps project middleware in front of look-alike control-plane paths", async () => {
+    // The `/api/control-plane/` namespace is reserved but not exclusively
+    // routed: paths the platform does not own fall through to project code, so
+    // a signature header alone must never lift project middleware off a route
+    // the project itself serves.
+    const adapter = createAdapter();
+    let loads = 0;
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => {
+        loads++;
+        return Promise.resolve([
+          () => new Response("project-middleware", { status: 403 }),
+        ]);
+      },
+    });
+    let routeCalls = 0;
+    const next = () => {
+      routeCalls++;
+      return Promise.resolve(new Response("route"));
+    };
+    const impostors: Array<[string, string]> = [
+      // A project API route that merely sits inside the reserved namespace.
+      ["POST", "/api/control-plane/checkout"],
+      // A path that only starts alike.
+      ["POST", "/api/control-plane-mirror/runs/run_1/execute"],
+      // A registered surface addressed with a method no handler owns.
+      ["PUT", "/api/control-plane/runs/run_1/execute"],
+      // A deeper path under a registered surface.
+      ["POST", "/api/control-plane/runs/run_1/execute/../../../checkout"],
+    ];
+
+    for (const [method, path] of impostors) {
+      const response = await execute(
+        runtime,
+        createContext(adapter),
+        new Request(`https://example.com${path}`, {
+          method,
+          headers: { "x-veryfront-control-plane-jws": "header.payload.signature" },
+        }),
+        next,
+      );
+      assertEquals(
+        response?.status,
+        403,
+        `${method} ${path} skipped project middleware`,
+      );
+      assertEquals(await response?.text(), "project-middleware");
+    }
+
+    assertEquals(routeCalls, 0);
+    assertEquals(loads > 0, true);
+  });
+
   it("keeps project middleware enabled for control-plane run execution", async () => {
+    // Unsigned: a request that only looks like a dispatch carries no envelope
+    // for a control-plane handler to verify, so it stays project traffic and
+    // project middleware keeps answering it.
     const adapter = createAdapter();
     let loads = 0;
     const runtime = new ProjectMiddlewareRuntime({
