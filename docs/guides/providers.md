@@ -99,7 +99,7 @@ export default agent({
 
 This tool requires an OpenAI endpoint that implements the Responses and hosted
 web-search contracts. See the
-[`ext-llm-openai` reference](../../extensions/ext-llm-openai/README.md#hosted-web-search)
+[`ext-llm-openai` reference](https://github.com/veryfront/veryfront-code/blob/main/extensions/ext-llm-openai/README.md#hosted-web-search)
 for supported identifiers, arguments, and replay limits.
 
 ## Explicit local AI

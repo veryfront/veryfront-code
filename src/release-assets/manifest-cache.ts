@@ -27,6 +27,7 @@ import { serverLogger } from "#veryfront/utils/logger/index.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 import { markRequestProfilePhase, profilePhase } from "#veryfront/observability";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG, RELEASE_ASSET_MANIFEST_LIMITS } from "./constants.ts";
 import {
@@ -531,7 +532,7 @@ async function invokeManifestFetcher(
 ): Promise<ReleaseAssetManifestFetchResult | null> {
   if (controller.signal.aborted) {
     const reason = controller.signal.reason;
-    throw reason instanceof Error ? reason : new Error("Release manifest fetch aborted");
+    throw isErrorAcrossRealms(reason) ? reason : new Error("Release manifest fetch aborted");
   }
 
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -539,7 +540,7 @@ async function invokeManifestFetcher(
   const cancellation = new Promise<never>((_resolve, reject) => {
     abortListener = () => {
       const reason = controller.signal.reason;
-      reject(reason instanceof Error ? reason : new Error("Release manifest fetch aborted"));
+      reject(isErrorAcrossRealms(reason) ? reason : new Error("Release manifest fetch aborted"));
     };
     controller.signal.addEventListener("abort", abortListener, { once: true });
     timeoutId = setTimeout(() => {

@@ -6,6 +6,7 @@ import {
 } from "../../base.ts";
 import type { NodeHttpServer, WSWebSocket, WSWebSocketServer } from "./types.ts";
 import { DEFAULT_PORT } from "../../../compat/constants.ts";
+import { isErrorAcrossRealms } from "../../../compat/error-introspection.ts";
 import { TIMEOUT_ERROR } from "#veryfront/errors/error-registry/general.ts";
 import {
   captureNodeWebSocketServer,
@@ -584,13 +585,13 @@ async function createNodeServerInternal(
     throw new RangeError(`Node server port must be an integer from 0 to 65535, got ${port}`);
   }
   if (signal?.aborted) {
-    throw signal.reason instanceof Error
+    throw isErrorAcrossRealms(signal.reason)
       ? signal.reason
       : new DOMException("Node server startup was aborted", "AbortError");
   }
   const { createServer } = await import("node:http");
   if (signal?.aborted) {
-    throw signal.reason instanceof Error
+    throw isErrorAcrossRealms(signal.reason)
       ? signal.reason
       : new DOMException("Node server startup was aborted", "AbortError");
   }
@@ -877,7 +878,7 @@ async function createNodeServerInternal(
     let invokingOnListen = false;
     let nativeListenOutcomePending = false;
     const abortError = (): Error =>
-      signal?.reason instanceof Error
+      isErrorAcrossRealms(signal?.reason)
         ? signal.reason
         : new DOMException("Node server startup was aborted", "AbortError");
     const rejectAfterCleanup = (error: unknown, cleanup: Promise<void>): void => {

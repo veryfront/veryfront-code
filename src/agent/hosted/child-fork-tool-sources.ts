@@ -6,6 +6,7 @@ import {
   type RemoteToolSource,
 } from "#veryfront/tool";
 import { AGENT_ERROR } from "#veryfront/errors";
+import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 import {
   type AgentServiceMcpServerConfig,
   createAgentServiceRemoteMcpConfig,
@@ -256,7 +257,7 @@ function throwIfAborted(abortSignal: AbortSignal | undefined): void {
   }
 
   const reason = abortSignal.reason;
-  if (reason instanceof Error) {
+  if (isErrorAcrossRealms(reason)) {
     throw reason;
   }
 

@@ -15,6 +15,7 @@ import {
   PERMISSION_DENIED,
 } from "#veryfront/errors";
 import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
+import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 
 export const MAX_ENVIRONMENT_LIST_RESPONSE_BYTES = 256 * 1024;
 const MAX_ENVIRONMENT_COUNT = 100;
@@ -94,7 +95,7 @@ function normalizeEnvironmentName(value: string): string {
 
 function mapLookupError(error: unknown, signal?: AbortSignal): Error {
   if (signal?.aborted) {
-    return signal.reason instanceof Error
+    return isErrorAcrossRealms(signal.reason)
       ? signal.reason
       : new DOMException("Project environment lookup was cancelled", "AbortError");
   }

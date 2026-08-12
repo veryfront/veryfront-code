@@ -14,7 +14,7 @@ The examples use the default app router. Set `router: "pages"` in
 
 ## Prerequisites
 
-- A project created with `veryfront init` (see [Create project](../getting-started/create-project.md)).
+- A project created with `veryfront init` (see [Create project](../getting-started/create-project.md)), or a blank project with `veryfront` installed (see [Installation](../getting-started/installation.md)). Veryfront discovers these directories by convention either way.
 - Familiarity with how a file path maps to a route in modern React frameworks.
 
 ## Directory layout
@@ -68,6 +68,8 @@ my-app/
     globals.css
   veryfront.config.ts   # Framework configuration (optional)
   package.json
+  .cache/               # Generated bundles (written by the CLI, safe to delete)
+  dist/                 # Build output (written by `veryfront build`)
 ```
 
 ## Routing directories
@@ -177,6 +179,50 @@ These directories are not auto-discovered. They are common project conventions.
 | `public/`     | Static assets served at root path   |
 | `styles/`     | Global CSS files                    |
 | `middleware/` | Custom middleware functions         |
+
+## Generated directories
+
+These directories hold derived output only, so deleting them is safe: the next
+command regenerates whatever it needs. `dist/` is always written into the
+project root. During development `.cache/` is written there too, but a
+production runtime keeps it outside the project. See "Where the cache root
+lives" below.
+
+| Directory | Written by                         | Contents                                                                                                  |
+| --------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `.cache/` | `veryfront dev`, `veryfront build` | Compiled page modules in `veryfront-mdx-esm/` and bundled remote dependencies in `veryfront-http-bundle/` |
+| `dist/`   | `veryfront build`                  | The build output. `-o/--output` and `build.outDir` change the location                                    |
+
+### Where the cache root lives
+
+The cache root is `.cache/` in the project directory during development. Under
+a production runtime it is not in the project at all: when `NODE_ENV` or
+`VERYFRONT_MODE` is `production` and `HOME` is set, the cache root is
+`.cache/veryfront` inside the home directory instead, so a deployed project
+directory that is read-only still has somewhere to write. Both roots hold the
+same `veryfront-mdx-esm/` and `veryfront-http-bundle/` subdirectories.
+
+Set `VERYFRONT_CACHE_DIR` (or `VF_CACHE_DIR`) to choose the location yourself.
+It wins in both modes, so it is also how you keep generated bundles out of the
+project tree during development:
+
+```bash
+VERYFRONT_CACHE_DIR=/tmp/veryfront-cache veryfront dev
+```
+
+### Keeping the cache out of version control
+
+The cache root keeps itself out of version control. When the file is absent,
+both commands create a `.gitignore` in the cache root containing `*`, which
+ignores the directory's contents and the file itself, so a project that adopted
+Veryfront into an existing tree does not have to edit its own `.gitignore`. A
+marker you wrote yourself (a `.cache/.gitignore` of your own, say) is never
+overwritten in either root, so keep the generated bundles ignored there if you
+replace it. `veryfront init` also lists `.cache/` in the `.gitignore` it
+scaffolds.
+
+Deleting the cache root costs only time. The next run recompiles the pages and
+refetches the remote dependencies it needs.
 
 ## Special files
 

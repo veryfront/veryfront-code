@@ -13,11 +13,12 @@
 import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
-import { mkdir, readTextFile, remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { exists, mkdir, readTextFile, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { buildProduction } from "../../../../src/build/production-build/index.ts";
 import type { BuildStats } from "../../../../src/server/build-types.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
 
 async function removeAppDir(projectDir: string): Promise<void> {
   await remove(join(projectDir, "app"), { recursive: true });
@@ -63,6 +64,41 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
         assertEquals(typeof stats.pages, "number");
         assertEquals(typeof stats.duration, "number");
         assert(stats.duration >= 0);
+      });
+    });
+
+    // Regression: outside production the cache root is `<project>/.cache`, so a
+    // build drops generated bundles into the user's project — a dry run
+    // included. Server startup writes a self-ignoring `.gitignore` there, but
+    // `veryfront build` never starts a server, so a project that adopted
+    // Veryfront (its own .gitignore predates `veryfront init`) saw the bundles
+    // as untracked files and `git add -A` committed them.
+    it("marks the local cache root as ignored so a build cannot dirty the project's git history", async () => {
+      await withTestContext("build-cache-ignore", async (context) => {
+        const outputDir = join(context.projectDir, "dist");
+        const cacheRoot = join(context.projectDir, ".cache");
+
+        await removeAppDir(context.projectDir);
+
+        const pagesDir = await ensurePagesDir(context.projectDir);
+        await writeTextFile(join(pagesDir, "index.mdx"), "# Home Page");
+
+        await runWithCacheDir(cacheRoot, () =>
+          buildProduction({
+            projectDir: context.projectDir,
+            outputDir,
+            enableSplitting: false,
+            enableCompression: false,
+            enablePrefetch: false,
+            dryRun: true,
+          }));
+
+        const ignorePath = join(cacheRoot, ".gitignore");
+        assertEquals(await exists(ignorePath), true);
+        assertEquals(
+          (await readTextFile(ignorePath)).split(/\r?\n/).includes("*"),
+          true,
+        );
       });
     });
 
