@@ -305,10 +305,22 @@
             "type": "string",
             "description": "Case priority"
           },
+          "Reason": {
+            "type": "string",
+            "description": "Case reason"
+          },
+          "Type": {
+            "type": "string",
+            "description": "Case type"
+          },
           "Origin": {
             "type": "string",
             "description": "Case origin",
             "default": "Web"
+          },
+          "SuppliedEmail": {
+            "type": "string",
+            "description": "Customer supplied email"
           },
           "ContactId": {
             "type": "string",

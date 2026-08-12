@@ -353,6 +353,22 @@ describe("integration endpoint specs", () => {
     assertEquals(toolIds.includes("update_record"), false);
     assertEquals(toolIds.includes("delete_record"), false);
     assertEquals(getTool("salesforce", "create_case").requiresWrite, true);
+    assertEquals(
+      Object.keys(getTool("salesforce", "create_case").endpoint?.body ?? {}).sort(),
+      [
+        "AccountId",
+        "ContactId",
+        "Description",
+        "Origin",
+        "OwnerId",
+        "Priority",
+        "Reason",
+        "Status",
+        "Subject",
+        "SuppliedEmail",
+        "Type",
+      ],
+    );
     assertEquals(getTool("salesforce", "add_case_comment").endpoint?.method, "POST");
     assertEquals(getTool("salesforce", "update_case").endpoint?.method, "PATCH");
     assertEquals(
