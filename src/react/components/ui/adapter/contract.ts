@@ -203,6 +203,41 @@ export interface ToastParts {
   useToast: () => ToastState;
 }
 
+/** Normalized open state a modal skin part reads from its adapter (Dialog / Drawer). */
+export interface ModalState {
+  open: boolean;
+  setOpen: (open: boolean) => void;
+}
+
+/**
+ * Role-tagged slots an adapter provides for the Dialog primitive (Drawer is a
+ * skin over the same modal mechanics via its own instance). The builtin wraps
+ * `createModalSurfaceParts` (overlay + centered panel, Escape / overlay-click
+ * dismiss, focus containment + restoration); a Base UI / Radix engine maps these
+ * onto its own Dialog parts.
+ */
+export interface DialogParts {
+  /** Owns open state; renders no public node of its own. */
+  Root: React.FC<DisclosureProps & { children: React.ReactNode }>;
+  /** Opens the dialog; `asChild` merges onto the consumer's element. */
+  Trigger: React.FC<
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }
+  >;
+  /** Overlay + panel; `lead` is an optional node before children (Drawer's drag handle). */
+  Content: React.FC<
+    & React.HTMLAttributes<HTMLDivElement>
+    & { lead?: React.ReactNode; ref?: React.Ref<HTMLDivElement> }
+  >;
+  /** Closes the dialog; `asChild` merges onto the consumer's element. */
+  Close: React.FC<
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }
+  >;
+  /** Hook for skin parts that must close programmatically (e.g. `DialogCancel`). */
+  useDialog: () => ModalState;
+}
+
 /**
  * The adapter surface. Each new primitive must also be added to the explicit
  * composition in `context.tsx`, which prevents `undefined` overrides from
@@ -215,6 +250,7 @@ export interface UIAdapter {
   disclosure: DisclosureParts;
   toggleGroup: ToggleGroupParts;
   toolbar: ToolbarParts;
+  dialog: DialogParts;
 }
 
 /**

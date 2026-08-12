@@ -1,7 +1,25 @@
 /**
- * Dependency-free dialog primitive with a Studio-compatible part API. It
- * provides modal focus containment, focus restoration, document scroll
- * locking, stable ARIA relationships, and Escape/overlay dismissal.
+ * Dialog — BASIC fork of @radix-ui/react-dialog with the same API shape (Root /
+ * Trigger / Content + Header / Title / Description / Body / Footer / Action /
+ * Cancel / Close / Form). Classes ported 1:1 from Studio's `Dialog` (tokens
+ * remapped; `Heading` level 2 + `Text` inlined). Modal overlay + centered panel;
+ * dismisses on `Escape` and overlay click. A11y work tracked in modal-surface.tsx.
+ *
+ * @example
+ * ```tsx
+ * import { Button, Dialog, DialogAction, DialogCancel, DialogContent, DialogFooter, DialogTitle, DialogTrigger } from "veryfront/ui";
+ *
+ * <Dialog>
+ *   <DialogTrigger asChild><Button variant="destructive">Delete</Button></DialogTrigger>
+ *   <DialogContent>
+ *     <DialogTitle>Delete project?</DialogTitle>
+ *     <DialogFooter>
+ *       <DialogCancel>Cancel</DialogCancel>
+ *       <DialogAction onClick={remove}>Delete</DialogAction>
+ *     </DialogFooter>
+ *   </DialogContent>
+ * </Dialog>;
+ * ```
  *
  * @module react/components/ui/dialog
  */
@@ -9,52 +27,47 @@ import * as React from "react";
 import { cx as cn } from "./cva.ts";
 import { ScrollFade } from "./scroll-fade.tsx";
 import { Button, type ButtonProps, LoadingButton } from "./button.tsx";
-import { createModalSurfaceParts } from "./modal-surface.tsx";
-import { useIsomorphicLayoutEffect } from "./use-isomorphic-layout-effect.ts";
+import { useAdapter } from "./adapter/context.tsx";
 
-// Per-skin context + machinery -- distinct from Drawer's instance so a
-// DrawerClose nested inside a Dialog cannot accidentally close the Dialog.
-const {
-  ModalRoot: _Root,
-  useModal: _hook,
-  ModalTrigger: _Trigger,
-  ModalClose: _Close,
-  ModalContent: _Content,
-} = createModalSurfaceParts("Dialog");
+// The Dialog's behavioural mechanics (open state, overlay, dismiss, focus) are
+// resolved per-render from the active UI adapter. With no adapter provider this
+// is the zero-dependency `builtinDialog`, so behaviour is unchanged.
 
 /** Props accepted by `<Dialog>`. */
 export interface DialogProps {
+  /** The trigger and content parts to compose. */
   children: React.ReactNode;
+  /** Controlled open state (pair with `onOpenChange`). */
   open?: boolean;
+  /** Initial open state when uncontrolled. */
   defaultOpen?: boolean;
+  /** Fires when the open state changes. */
   onOpenChange?: (open: boolean) => void;
 }
 
 /** Dialog root — owns open state. */
 export function Dialog(props: DialogProps): React.ReactElement {
-  return <_Root {...props} />;
+  const { dialog } = useAdapter();
+  return <dialog.Root {...props} />;
 }
 
 /** Trigger — opens the dialog. `asChild` merges onto the child element. */
 export function DialogTrigger(
-  props:
-    & React.ButtonHTMLAttributes<HTMLButtonElement>
-    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> },
+  props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
 ): React.ReactElement {
-  return <_Trigger {...props} />;
+  const { dialog } = useAdapter();
+  return <dialog.Trigger {...props} />;
 }
 
 /** Modal surface — overlay + centered panel, rendered while open. */
 export function DialogContent({
   className,
   children,
-  "aria-describedby": describedBy,
   ...props
 }: React.HTMLAttributes<HTMLDivElement>): React.ReactElement | null {
-  const modal = _hook();
+  const { dialog } = useAdapter();
   return (
-    <_Content
-      aria-describedby={describedBy ?? (modal.descriptionPresent ? modal.descriptionId : undefined)}
+    <dialog.Content
       className={cn(
         "fixed left-1/2 top-1/2 z-50 w-[calc(100%-3rem)] max-w-xl max-h-[85vh] -translate-x-1/2 -translate-y-1/2",
         "rounded-xl bg-[var(--dialog)] text-[var(--foreground)] shadow-lg outline-none overflow-hidden flex flex-col",
@@ -63,7 +76,7 @@ export function DialogContent({
       {...props}
     >
       {children}
-    </_Content>
+    </dialog.Content>
   );
 }
 
@@ -78,27 +91,10 @@ export function DialogHeader(
  * Studio's medium-on-Söhne weight (workbench heading convention). */
 export function DialogTitle({
   className,
-  id,
   ...props
 }: React.HTMLAttributes<HTMLHeadingElement>): React.ReactElement {
-  const modal = _hook();
-  const resolvedId = id ?? modal.defaultTitleId;
-  useIsomorphicLayoutEffect(() => {
-    modal.setTitleId(resolvedId);
-    modal.setTitlePresent(true);
-    return () => {
-      modal.setTitlePresent(false);
-      modal.setTitleId((current) => current === resolvedId ? modal.defaultTitleId : current);
-    };
-  }, [
-    modal.defaultTitleId,
-    modal.setTitleId,
-    modal.setTitlePresent,
-    resolvedId,
-  ]);
   return (
     <h2
-      id={resolvedId}
       className={cn(
         "text-xl font-semibold text-[var(--foreground)]",
         className,
@@ -111,29 +107,10 @@ export function DialogTitle({
 /** Dialog description — body text, left-aligned. */
 export function DialogDescription({
   className,
-  id,
   ...props
 }: React.HTMLAttributes<HTMLParagraphElement>): React.ReactElement {
-  const modal = _hook();
-  const resolvedId = id ?? modal.defaultDescriptionId;
-  useIsomorphicLayoutEffect(() => {
-    modal.setDescriptionId(resolvedId);
-    modal.setDescriptionPresent(true);
-    return () => {
-      modal.setDescriptionPresent(false);
-      modal.setDescriptionId((current) =>
-        current === resolvedId ? modal.defaultDescriptionId : current
-      );
-    };
-  }, [
-    modal.defaultDescriptionId,
-    modal.setDescriptionId,
-    modal.setDescriptionPresent,
-    resolvedId,
-  ]);
   return (
     <p
-      id={resolvedId}
       className={cn(
         "text-base font-normal text-[var(--foreground)] mt-2",
         className,
@@ -176,6 +153,7 @@ export function DialogForm(
 
 /** Props accepted by `<DialogAction>`. */
 export interface DialogActionProps extends ButtonProps {
+  /** Show the pending/pulsing state and block double-submits. */
   isLoading?: boolean;
 }
 
@@ -206,7 +184,8 @@ export function DialogCancel({
   onClick,
   ...props
 }: ButtonProps): React.ReactElement {
-  const ctx = _hook();
+  const { dialog } = useAdapter();
+  const ctx = dialog.useDialog();
   return (
     <Button
       variant={variant}
@@ -214,7 +193,7 @@ export function DialogCancel({
       className={className}
       onClick={(e) => {
         onClick?.(e);
-        if (!e.defaultPrevented) ctx.setOpen(false);
+        ctx.setOpen(false);
       }}
       {...props}
     />
@@ -223,9 +202,8 @@ export function DialogCancel({
 
 /** Closes the dialog. `asChild` merges onto the child element. */
 export function DialogClose(
-  props:
-    & React.ButtonHTMLAttributes<HTMLButtonElement>
-    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> },
+  props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
 ): React.ReactElement {
-  return <_Close {...props} />;
+  const { dialog } = useAdapter();
+  return <dialog.Close {...props} />;
 }

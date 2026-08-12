@@ -32,6 +32,7 @@ export function UIAdapterProvider(
       toast: adapter.toast ?? parent.toast,
       toggleGroup: adapter.toggleGroup ?? parent.toggleGroup,
       toolbar: adapter.toolbar ?? parent.toolbar,
+      dialog: adapter.dialog ?? parent.dialog,
     }),
     [
       adapter.disclosure,
@@ -39,6 +40,7 @@ export function UIAdapterProvider(
       adapter.toast,
       adapter.toggleGroup,
       adapter.toolbar,
+      adapter.dialog,
       parent,
     ],
   );

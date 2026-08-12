@@ -36,6 +36,8 @@ export interface ModalState {
 export interface ModalContentProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Extra node rendered before `children` -- used by Drawer for the drag handle. */
   lead?: React.ReactNode;
+  /** React 19: ref is a regular prop, forwarded to (merged onto) the panel node. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 type ModalBtnProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -287,6 +289,7 @@ export function createModalSurfaceParts(name: string) {
       children,
       lead,
       id,
+      ref,
       "aria-label": ariaLabel,
       "aria-labelledby": labelledBy,
       ...props
@@ -294,6 +297,12 @@ export function createModalSurfaceParts(name: string) {
   ): React.ReactElement | null {
     const ctx = useModal();
     const panelRef = React.useRef<HTMLDivElement>(null);
+    // Merge the internal panel ref (read by the focus/dismiss effects) with any
+    // consumer ref, so `<DialogContent ref={...}>` reaches the panel node too.
+    const setPanelNode = React.useMemo(
+      () => composeRefs<HTMLDivElement>(panelRef, ref),
+      [ref],
+    );
     const resolvedId = id ?? ctx.defaultContentId;
     const [portalReady, setPortalReady] = React.useState(false);
     React.useEffect(() => setPortalReady(true), []);
@@ -324,7 +333,7 @@ export function createModalSurfaceParts(name: string) {
         />
         <div
           {...props}
-          ref={panelRef}
+          ref={setPanelNode}
           id={resolvedId}
           data-vf-modal-content=""
           role="dialog"

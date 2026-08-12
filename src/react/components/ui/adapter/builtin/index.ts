@@ -10,6 +10,7 @@ import { builtinToast } from "./toast.tsx";
 import { builtinDisclosure } from "./disclosure.tsx";
 import { builtinToggleGroup } from "./toggle-group.tsx";
 import { builtinToolbar } from "./toolbar.tsx";
+import { builtinDialog } from "./dialog.tsx";
 
 export const builtinAdapter: UIAdapter = {
   name: "builtin",
@@ -17,4 +18,5 @@ export const builtinAdapter: UIAdapter = {
   disclosure: builtinDisclosure,
   toggleGroup: builtinToggleGroup,
   toolbar: builtinToolbar,
+  dialog: builtinDialog,
 };
