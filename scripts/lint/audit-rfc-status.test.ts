@@ -9,6 +9,7 @@ import {
   collectObjectLiteralCompounds,
   headingSlug,
   parseRollupRows,
+  parseShippedBadges,
   type PublicSurface,
   resolvesOnSurface,
 } from "./audit-rfc-status.ts";
@@ -529,6 +530,30 @@ describe("audit-rfc-status", () => {
     assertEquals(violations.length, 1);
     assertEquals(violations[0].message.includes("has no row in this table"), true);
     assertEquals(violations[0].message.includes("-1"), true);
+  });
+
+  // A suffixed slug can collide with a heading whose own text ends `-1`.
+  // Counting occurrences of the base alone would hand `-1` out twice, giving two
+  // deltas one identity - the exact collapse this rule exists to prevent.
+  it("does not reissue a suffix a literal heading already took", () => {
+    const page = {
+      path: "docs/rfcs/29-chat-api-shape/hooks/use-chat-scroll.md",
+      content: [
+        "### `useChatScroll` - `new` - `shipped` (src/real.ts:10)",
+        "",
+        // Not a badge, but still a heading GitHub numbers - and its own text
+        // slugifies to exactly the first heading's slug + "-1".
+        "### `useChatScroll` - `new` - `shipped` (src/real.ts:10) 1",
+        "",
+        "### `useChatScroll` - `new` - `shipped` (src/real.ts:10)",
+      ].join("\n"),
+    };
+    const base = "usechatscroll---new---shipped-srcrealts10";
+    // The third heading skips the taken `-1` and lands on `-2`, as GitHub does.
+    assertEquals(
+      parseShippedBadges(page.content).badges.map((b) => b.slug),
+      [base, `${base}-2`],
+    );
   });
 
   // A `#` line inside a code fence is not a heading. Counting it would take a
