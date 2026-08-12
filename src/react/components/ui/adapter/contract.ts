@@ -239,6 +239,35 @@ export interface DialogParts {
 }
 
 /**
+ * Role-tagged slots an adapter provides for the Drawer primitive: the same modal
+ * mechanics as Dialog on a distinct instance, plus an edge `direction`. The
+ * builtin renders a static edge sheet (the skin positions it); a Vaul specialist
+ * adapter drives real drag-to-dismiss / snap points off the same slots.
+ */
+export interface DrawerParts {
+  /** Owns open state; renders no public node of its own. */
+  Root: React.FC<
+    & DisclosureProps
+    & { direction?: "top" | "bottom" | "left" | "right"; children: React.ReactNode }
+  >;
+  /** Opens the drawer; `asChild` merges onto the consumer's element. */
+  Trigger: React.FC<
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }
+  >;
+  /** Overlay + sliding sheet; `lead` is an optional node before children (drag handle). */
+  Content: React.FC<
+    & React.HTMLAttributes<HTMLDivElement>
+    & { lead?: React.ReactNode; ref?: React.Ref<HTMLDivElement> }
+  >;
+  /** Closes the drawer; `asChild` merges onto the consumer's element. */
+  Close: React.FC<
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }
+  >;
+}
+
+/**
  * The adapter surface. Each new primitive must also be added to the explicit
  * composition in `context.tsx`, which prevents `undefined` overrides from
  * erasing inherited or builtin slots.
@@ -251,6 +280,7 @@ export interface UIAdapter {
   toggleGroup: ToggleGroupParts;
   toolbar: ToolbarParts;
   dialog: DialogParts;
+  drawer: DrawerParts;
 }
 
 /**
