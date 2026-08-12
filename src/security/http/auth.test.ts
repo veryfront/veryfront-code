@@ -533,12 +533,12 @@ describe("AuthHandler signed control-plane dispatch", () => {
     // config shape, so the deploy breaks identically when they are set.
     const handler = new AuthHandler();
 
-    for (
-      const credentials of [
-        { VERYFRONT_BASIC_USER: "admin", VERYFRONT_BASIC_PASS: "secret" },
-        { VERYFRONT_BEARER_TOKEN: "project-token" },
-      ]
-    ) {
+    const credentialShapes: Record<string, string>[] = [
+      { VERYFRONT_BASIC_USER: "admin", VERYFRONT_BASIC_PASS: "secret" },
+      { VERYFRONT_BEARER_TOKEN: "project-token" },
+    ];
+
+    for (const credentials of credentialShapes) {
       const result = await handler.handle(
         new Request("https://acme.example.test/api/control-plane/runs/run_1/execute", {
           method: "POST",
