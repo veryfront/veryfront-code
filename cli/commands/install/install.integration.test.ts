@@ -194,8 +194,23 @@ describe("install command integration", () => {
     });
 
     it("fails instead of installing something else for an unknown target", async () => {
-      const { code } = await runInstallArgs(["unknown-tool", "--force", "--no-input"]);
-      assertEquals(code, 1);
+      const { code, output } = await runInstallArgs(["unknown-tool", "--force", "--no-input"]);
+      // AGENTS.md reserves exit 2 for usage and argument errors.
+      assertEquals(code, 2);
+      assertEquals(output.includes("Valid targets"), true);
+
+      await assertFileNotExists(join(tempDir, "SKILL.md"));
+      await assertFileNotExists(join(tempDir, "AGENTS.md"));
+    });
+
+    it("fails an unknown --target with the same usage exit code", async () => {
+      const { code } = await runInstallArgs([
+        "--target",
+        "unknown-tool",
+        "--force",
+        "--no-input",
+      ]);
+      assertEquals(code, 2);
 
       await assertFileNotExists(join(tempDir, "SKILL.md"));
       await assertFileNotExists(join(tempDir, "AGENTS.md"));
