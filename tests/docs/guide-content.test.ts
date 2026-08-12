@@ -200,6 +200,21 @@ describe("guide content contracts", () => {
     );
   });
 
+  it("offers open --site as the way back to the deployed environment URL", async () => {
+    // The deploy docs tell readers to use the URL Deploy printed. A reader who
+    // did not record it needs a command that reproduces it, so both deploy
+    // pages must name `open --site` alongside the dashboard-only `open`.
+    for (
+      const path of [
+        "docs/getting-started/deploy-project.md",
+        "docs/guides/deploying.md",
+      ]
+    ) {
+      const text = await Deno.readTextFile(path);
+      assertStringIncludes(text, "open --site");
+    }
+  });
+
   it("uses serve for local production builds", async () => {
     const docs = [
       "docs/getting-started/deploy-project.md",

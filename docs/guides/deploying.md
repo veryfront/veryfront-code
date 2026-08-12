@@ -103,12 +103,23 @@ npx veryfront@latest deploy --branch feature-x --env staging
 Deploy uses the last verified Push receipt and verifies the release was built
 from that exact source digest before assigning it to the environment. If no Push
 receipt exists, Deploy first runs a quiet Push so the first deployment still
-works as one command. Deploy prints the environment URL; record it when
-automation needs the deployed URL later. Use `npx veryfront@latest open` after
-deployment to open the project in the Cloud dashboard, and
-`npx veryfront@latest open --json` to print that dashboard URL. `open` resolves
-the same project reference Push and Deploy use, including the local
-`.veryfront/project.json` link. Dashboard URLs are built from the project slug,
+works as one command. Deploy prints the environment URL.
+`npx veryfront@latest open --site --env staging` opens that deployed environment
+in a browser, and `npx veryfront@latest open --site --env staging --json` prints
+its URL for automation. `--site` targets `production` unless `--env` names
+another environment, so name the environment you deployed. Without `--site`, use
+`npx veryfront@latest open` after deployment to open the project in the Cloud
+dashboard, and `npx veryfront@latest open --json` to print that dashboard URL.
+
+`--site` always builds the canonical
+`https://<slug>.<environment>.veryfront.com` address, because `open` has no API
+token with which to read the environment's configured domains. Deploy prints the
+custom domain when the environment has one, so the two can differ in origin even
+though both reach the same deployment. Automation that must use the custom domain
+should record the URL Deploy printed rather than rebuild it from `open --site`.
+
+`open` resolves the same project reference Push and Deploy use, including the
+local `.veryfront/project.json` link. Dashboard URLs are built from the project slug,
 so `open` skips an ID-only `VERYFRONT_PROJECT_ID` or `TENANT_PROJECT_ID`
 reference and uses the link instead.
 
@@ -165,6 +176,8 @@ After `veryfront deploy`:
   unconfirmed data-plane update is a warning after commit, not a failed deploy;
   do not retry solely because of that warning.
 - The environment URL Deploy printed serves the deployed page and API routes.
+- `veryfront open --site` reaches that deployment at its canonical
+  `https://<slug>.<environment>.veryfront.com` address.
 - `veryfront open` opens the project in the Cloud dashboard, not the deployed
   site.
 - The same page, API route, agent, workflow, task, or run path works in
