@@ -34,13 +34,17 @@ const FREE_PORT_ATTEMPTS = 25;
 /**
  * Binds an ephemeral loopback port on one family, or returns null when the host
  * has no address in that family at all (CI containers are routinely IPv4-only).
+ *
+ * Only a missing address family is worth skipping for. Every other bind failure
+ * - a permission error, a resource limit - is rethrown, so it fails the test
+ * that called this rather than quietly turning it into a no-op.
  */
 function listenOnLoopback(hostname: string): Deno.Listener | null {
   try {
     return Deno.listen({ hostname, port: 0 });
   } catch (error) {
-    if (isPortInUseError(error)) throw error;
-    return null;
+    if (isAddressFamilyUnavailableError(error)) return null;
+    throw error;
   }
 }
 
