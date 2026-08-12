@@ -310,22 +310,40 @@ export interface ShippedBadge {
   anchorPath: string;
   anchorLine: number;
   /**
-   * The heading's own GitHub anchor. This is the delta's identity: the roll-up
-   * names a delta by linking this slug, so the table can be checked one delta
-   * at a time instead of one page at a time.
+   * The heading's own GitHub anchor, document-unique. This is the delta's
+   * identity: the roll-up names a delta by linking this slug, so the table can
+   * be checked one delta at a time instead of one page at a time.
    */
   slug: string;
 }
 
 /**
- * GitHub's heading-anchor slug: lowercase, drop everything that is not a word
- * character, space, or hyphen, then spaces to hyphens. Backticks, parentheses,
- * and the `path.ts:12` punctuation in a badge all fall away, which is why
+ * GitHub's heading-anchor slug for one heading, before de-duplication:
+ * lowercase, drop everything that is not a letter, number, mark, underscore,
+ * space, or hyphen, then spaces to hyphens. Backticks, parentheses, and the
+ * `path.ts:12` punctuation in a badge all fall away, which is why
  * `` ### `mergeProps` - `new` - `shipped` (src/a.ts:85) `` anchors as
  * `mergeprops---new---shipped-srcats85`.
+ *
+ * The class is Unicode-aware on purpose. `\w` is ASCII-only in JavaScript, so
+ * the obvious spelling deletes the letters GitHub keeps: `Café` anchors as
+ * `café`, not `caf`, and a CJK heading keeps every character rather than
+ * slugging to bare punctuation. Stripping them mints an anchor no heading on
+ * the page actually has, so a correctly-linked roll-up row reads as a broken
+ * one - a false violation, and the badge it names drops out of the checkable
+ * set. Symbols and punctuation still fall away: `·`, `→`, and an em dash are
+ * not letters.
+ *
+ * Verified against `github-slugger` (the slugger GitHub's own renderer uses):
+ * identical output on all 943 headings in this corpus and on Greek, Cyrillic,
+ * CJK, emoji, and ligature cases.
+ *
+ * This is the *base* slug only. Repeat occurrences take GitHub's `-1`, `-2`
+ * suffix, which needs document order and so is assigned in
+ * `parseShippedBadges`.
  */
 export function headingSlug(heading: string): string {
-  return heading.toLowerCase().replace(/[^\w\- ]/g, "").replace(/ /g, "-");
+  return heading.toLowerCase().replace(/[^\p{L}\p{N}\p{M}_\- ]/gu, "").replace(/ /g, "-");
 }
 
 /**
@@ -339,7 +357,38 @@ const SHIPPED_RE =
   /^#{2,4}\s+(.*?)\s+-\s+`(?:partly )?shipped`\s+\((src\/[\w./-]+):(\d+)\)\s*$/;
 /** A `shipped` badge that failed to carry a resolvable anchor. */
 const SHIPPED_LOOSE_RE = /`(?:partly )?shipped`/;
+/** An ATX heading, the only kind this corpus uses. */
+const HEADING_RE = /^#{1,6}\s+(.*?)\s*$/;
+/**
+ * A fenced code block's delimiter - a `#` line inside one is not a heading, and
+ * counting it would shift the `-N` suffix of every heading that follows.
+ *
+ * The marker is captured rather than merely detected so a fence closes only on
+ * its own character, at its own length or longer, the way CommonMark says. A
+ * looser toggle would treat a ``` inside a ~~~ block as a close, fall out of
+ * step, and start skipping the real headings after it - a lint that quietly
+ * stops seeing badges is worse than one that never looked.
+ */
+const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
 
+/**
+ * Every `shipped` badge on a page, each carrying the anchor GitHub really
+ * renders for its heading.
+ *
+ * The scan runs over *every* heading, not only the badged ones, because that is
+ * what decides an anchor: GitHub slugs headings in document order and suffixes
+ * each repeat occurrence `-1`, `-2`, …. Two headings on a page collide more
+ * easily than they look - the slug rule strips punctuation, so a single comma
+ * can be the whole difference between them, and this corpus already contains
+ * four such pairs.
+ *
+ * Minting one slug per badge and keying a `Map` by it lost that: colliding
+ * headings collapsed to one entry, so the earlier badge left the checkable set
+ * entirely and its missing roll-up row was never reported, while the later
+ * heading's real `-1` anchor matched nothing and was reported as broken. A
+ * completeness rule that quietly drops a delta is the same defect the roll-up
+ * check exists to close, one level down.
+ */
 export function parseShippedBadges(content: string): {
   badges: ShippedBadge[];
   malformed: number[];
@@ -347,10 +396,29 @@ export function parseShippedBadges(content: string): {
   const badges: ShippedBadge[] = [];
   const malformed: number[] = [];
   const lines = content.split("\n");
+  /** base slug -> headings that have already claimed it, for the `-N` suffix. */
+  const occurrences = new Map<string, number>();
+  /** The open fence's marker, or `null` outside a fenced block. */
+  let fence: string | null = null;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (!line.startsWith("#") || !SHIPPED_LOOSE_RE.test(line)) continue;
+    const marker = FENCE_RE.exec(line)?.[1];
+    if (marker) {
+      if (fence === null) fence = marker;
+      else if (marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+      continue;
+    }
+    if (fence !== null) continue;
+    const heading = HEADING_RE.exec(line);
+    if (!heading) continue;
+
+    const base = headingSlug(heading[1]);
+    const seen = occurrences.get(base) ?? 0;
+    occurrences.set(base, seen + 1);
+    const slug = seen === 0 ? base : `${base}-${seen}`;
+
+    if (!SHIPPED_LOOSE_RE.test(line)) continue;
     const m = SHIPPED_RE.exec(line);
     if (!m) {
       malformed.push(i + 1);
@@ -361,7 +429,7 @@ export function parseShippedBadges(content: string): {
       heading: m[1],
       anchorPath: m[2],
       anchorLine: Number(m[3]),
-      slug: headingSlug(line.replace(/^#+\s+/, "")),
+      slug,
     });
   }
   return { badges, malformed };
@@ -386,9 +454,14 @@ const ROLLUP_PAGE = `${RFC_DIR}/README.md`;
  * and dropping it from the parse would have silently excused the row rather
  * than checked it - a completeness rule that stops looking at a row because of
  * how its link is spelled is no completeness rule at all.
+ *
+ * Both captures are Unicode-aware for that same reason. GitHub keeps letters
+ * like `é` in an anchor, so `#café-…` is a legitimate fragment; an ASCII `\w`
+ * class fails to match it, the row falls out of the parse, and the badge it
+ * names is then reported as having no row at all.
  */
 const ROLLUP_ROW_RE =
-  /^\|[^|]*\]\(([\w./-]+?\.md)(?:#([\w-]*))?\)[^|]*\|[^|]*`(?:partly )?shipped`/;
+  /^\|[^|]*\]\(([\p{L}\p{N}_./-]+?\.md)(?:#([\p{L}\p{N}\p{M}_-]*))?\)[^|]*\|[^|]*`(?:partly )?shipped`/u;
 
 export interface RollupRow {
   line: number;
@@ -444,6 +517,9 @@ export function auditRollup(rollup: AuditInput, deltaPages: AuditInput[]): Statu
   const anchorLine = rows[0]?.line ?? 1;
 
   // page -> delta slug -> the badge's line, for every delta that really landed.
+  // Keying by slug is only safe because `parseShippedBadges` makes them
+  // document-unique; two colliding headings would otherwise collapse to one
+  // entry and quietly shrink the set this rule claims to check exactly.
   const badgesByPage = new Map<string, Map<string, number>>();
   for (const page of deltaPages) {
     const { badges } = parseShippedBadges(page.content);

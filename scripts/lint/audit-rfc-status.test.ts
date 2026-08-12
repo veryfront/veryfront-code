@@ -102,6 +102,20 @@ const TWO_BADGE_SCROLL = {
   ].join("\n"),
 };
 
+/**
+ * Two deltas whose headings differ only by a comma - punctuation the anchor
+ * rule strips, so both slugify to the same base and GitHub suffixes the second
+ * `-1`.
+ */
+const COLLIDING_SCROLL = {
+  path: "docs/rfcs/29-chat-api-shape/hooks/use-chat-scroll.md",
+  content: [
+    "### `useChatScroll`, stick-to-bottom - `new` - `shipped` (src/real.ts:10)",
+    "",
+    "### `useChatScroll` stick-to-bottom - `new` - `shipped` (src/real.ts:10)",
+  ].join("\n"),
+};
+
 const LEDGER = [
   "> **Status: RFC 29 - proposed; nothing on this page has landed.** ok:",
   ">",
@@ -486,6 +500,91 @@ describe("audit-rfc-status", () => {
     assertEquals(violations.length, 1);
     assertEquals(violations[0].message.includes("names no `shipped` delta"), true);
     assertEquals(violations[0].line, 4);
+  });
+
+  // Rule 7, one level further down. Two headings on a page can slugify to the
+  // same anchor - punctuation is stripped, so a comma is the whole difference.
+  // GitHub resolves that by suffixing the second occurrence `-1`, and the roll-up
+  // row has to link the anchor GitHub really renders.
+  it("gives colliding headings the `-1` suffix GitHub renders", () => {
+    const rollup = [
+      "| Delta | Status | Landed in |",
+      "| --- | --- | --- |",
+      "| [first](./hooks/use-chat-scroll.md#usechatscroll-stick-to-bottom---new---shipped-srcrealts10) | `shipped` | `src/real.ts:10` |",
+      "| [second](./hooks/use-chat-scroll.md#usechatscroll-stick-to-bottom---new---shipped-srcrealts10-1) | `shipped` | `src/real.ts:10` |",
+    ].join("\n");
+    assertEquals(auditRollup(rollupPage(rollup), [COLLIDING_SCROLL]), []);
+  });
+
+  // The defect a collision hides: reducing the page's badges to a slug-keyed map
+  // drops all but the last, so the earlier delta leaves the checkable set and its
+  // missing row is never reported - the completeness rule silently shrinks.
+  it("still reports a colliding badge that has no row of its own", () => {
+    const rollup = [
+      "| Delta | Status | Landed in |",
+      "| --- | --- | --- |",
+      "| [first](./hooks/use-chat-scroll.md#usechatscroll-stick-to-bottom---new---shipped-srcrealts10) | `shipped` | `src/real.ts:10` |",
+    ].join("\n");
+    const violations = auditRollup(rollupPage(rollup), [COLLIDING_SCROLL]);
+    assertEquals(violations.length, 1);
+    assertEquals(violations[0].message.includes("has no row in this table"), true);
+    assertEquals(violations[0].message.includes("-1"), true);
+  });
+
+  // A `#` line inside a code fence is not a heading. Counting it would take a
+  // number GitHub never issued and shift the suffix of every heading below it.
+  it("ignores headings inside code fences when numbering anchors", () => {
+    const page = {
+      path: "docs/rfcs/29-chat-api-shape/hooks/use-chat-scroll.md",
+      content: [
+        "### `useChatScroll`, stick-to-bottom - `new` - `shipped` (src/real.ts:10)",
+        "",
+        "~~~md",
+        "### `useChatScroll` stick-to-bottom - `new` - `shipped` (src/real.ts:10)",
+        "```",
+        "~~~",
+        "",
+        "### `useChatScroll` stick-to-bottom - `new` - `shipped` (src/real.ts:10)",
+      ].join("\n"),
+      // The nested ``` must not close the ~~~ fence early - if it did, the
+      // sample heading would take `-1` and the real one below would slide to
+      // `-2`, and no row could name it.
+    };
+    const rollup = [
+      "| Delta | Status | Landed in |",
+      "| --- | --- | --- |",
+      "| [first](./hooks/use-chat-scroll.md#usechatscroll-stick-to-bottom---new---shipped-srcrealts10) | `shipped` | `src/real.ts:10` |",
+      "| [second](./hooks/use-chat-scroll.md#usechatscroll-stick-to-bottom---new---shipped-srcrealts10-1) | `shipped` | `src/real.ts:10` |",
+    ].join("\n");
+    assertEquals(auditRollup(rollupPage(rollup), [page]), []);
+  });
+
+  // GitHub keeps Unicode letters in an anchor; stripping them mints a slug no
+  // heading on the page has, so a correctly-linked row reads as a broken one.
+  it("preserves Unicode heading characters, as GitHub does", () => {
+    assertEquals(
+      headingSlug("`Café` scroll - `new` - `shipped` (src/real.ts:10)"),
+      "café-scroll---new---shipped-srcrealts10",
+    );
+    assertEquals(
+      headingSlug("`日本語` heading - `new` - `shipped` (src/real.ts:10)"),
+      "日本語-heading---new---shipped-srcrealts10",
+    );
+    // Punctuation and symbols still fall away - an em dash is not a letter.
+    assertEquals(headingSlug("`naïve` réglage — dash"), "naïve-réglage--dash");
+  });
+
+  it("accepts a roll-up row whose anchor carries Unicode", () => {
+    const page = {
+      path: "docs/rfcs/29-chat-api-shape/hooks/use-chat-scroll.md",
+      content: "### `Café` scroll - `new` - `shipped` (src/real.ts:10)",
+    };
+    const rollup = [
+      "| Delta | Status | Landed in |",
+      "| --- | --- | --- |",
+      "| [café](./hooks/use-chat-scroll.md#café-scroll---new---shipped-srcrealts10) | `shipped` | `src/real.ts:10` |",
+    ].join("\n");
+    assertEquals(auditRollup(rollupPage(rollup), [page]), []);
   });
 
   it("rejects two roll-up rows pointing at the same badge", () => {
