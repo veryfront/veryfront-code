@@ -7,7 +7,7 @@
 | Created    | 2026-08-12                                                                                              |
 | Branch     | `mattboon/phoenix`                                                                                      |
 | Affects    | `templates/integrations/salesforce/connector.json`, `src/integrations/schema.ts`, the hosted tools API, the `salesforce-test` studio project, and the public `veryfront/agentic-case-processing` example repo |
-| Related    | RFC 0001 (adapters), the `update_case` `Type` fix (`598a26d`)                                            |
+| Related    | RFC 0001 (adapters); PR #3638 (merged) — expands curated `create_case`/`update_case` fields incl. `Type`; studio PR #6364 — Salesforce Configure permission matrix |
 
 ## 1. Summary
 
@@ -195,6 +195,18 @@ The lesson is the general one:
    value must come from the org, via `describe`/`get_picklist_values`.
 3. **Silent empty returns read as success.** The tool should surface the write
    result (id / errors), not an empty string.
+
+**Landed fix (PR #3638, merged).** The curated `create_case`/`update_case` bodies
+were expanded to the standard writable Case fields — `create_case` gains `Reason`,
+`Type`, `SuppliedEmail`; `update_case` gains `Subject`, `Status`, `Priority`,
+`Reason`, `Type`, `Origin`, `SuppliedEmail`, `ContactId`, `AccountId`, `OwnerId`,
+`Description`. This resolves the Case happy path and is the **right** move for the
+curated demo surface. It is also the clearest possible statement of the problem
+this RFC generalises: it is per-field enumeration, **by hand, for one object**, and
+it can never reach custom `__c` fields or other objects. The generic passthrough
+tier (§5, Appendix B) does the same thing **once, for every object** — so the next
+field or object doesn't need another PR. #3638 and this RFC are complementary:
+keep the curated Case tools sharp; add the generic tier for breadth.
 
 ## 4. What "just works" has to survive on a standard org
 
