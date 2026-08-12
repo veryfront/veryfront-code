@@ -1,4 +1,5 @@
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { clearModelProviders, registerModelProvider } from "#veryfront/provider";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
@@ -24,6 +25,7 @@ import {
   toolRegistry,
 } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { __resetLogRecordEmitterForTests, agentLogger } from "#veryfront/utils/logger/index.ts";
 import {
   createExecuteSkillScriptTool,
@@ -73,6 +75,8 @@ Deno.test("public agent service options expose deployment-owned remote MCP compo
 Deno.test("root and child runtimes use the deployment-owned remote MCP factory", async () => {
   const createdConfigs: RemoteMCPToolSourceConfig[] = [];
   let failStudioListing = false;
+  let modelCallCount = 0;
+  let switchedTaskContext: { projectId: string; projectSlug?: string } | undefined;
   const injectedFactory = (config: RemoteMCPToolSourceConfig): RemoteToolSource => {
     createdConfigs.push(config);
     return {
@@ -80,8 +84,21 @@ Deno.test("root and child runtimes use the deployment-owned remote MCP factory",
       listTools: () =>
         failStudioListing && config.endpoint === "https://studio.example/mcp"
           ? Promise.reject(new Error("stop after transport capture"))
-          : Promise.resolve([]),
-      executeTool: () => Promise.resolve(null),
+          : Promise.resolve(
+            config.id === "studio-mcp"
+              ? [{
+                name: "studio_open_project",
+                description: "Open a project.",
+                parameters: { type: "object", properties: {} },
+              }]
+              : [],
+          ),
+      executeTool: (toolName) =>
+        Promise.resolve(
+          config.id === "studio-mcp" && toolName === "studio_open_project"
+            ? { success: true, project_id: "project-2", slug: "project-two" }
+            : null,
+        ),
     };
   };
   const context = {
@@ -92,8 +109,8 @@ Deno.test("root and child runtimes use the deployment-owned remote MCP factory",
     },
     infrastructure: {
       getConfig: () => ({
-        VERYFRONT_API_URL: "https://api.example",
-        VERYFRONT_MCP_URL: "https://api.example/mcp",
+        VERYFRONT_API_URL: "https://93.184.216.34",
+        VERYFRONT_MCP_URL: "https://93.184.216.34/mcp",
         VERYFRONT_STUDIO_MCP_URL: "https://studio.example/mcp",
         VERYFRONT_ENABLE_DURABLE_INVOKE_AGENT: false,
       }),
@@ -123,6 +140,10 @@ Deno.test("root and child runtimes use the deployment-owned remote MCP factory",
           inputSchema: defineSchema((v) => v.object({}))(),
           execute: () => ({ ok: true }),
         }),
+      refreshProjectSkillIds: (taskContext: { projectId: string; projectSlug?: string }) => {
+        switchedTaskContext = taskContext;
+        return Promise.resolve();
+      },
     }]]),
     trace: (_name: string, operation: () => unknown) => operation(),
   } as never;
@@ -133,13 +154,43 @@ Deno.test("root and child runtimes use the deployment-owned remote MCP factory",
     capabilities: ["ui_panels"],
   };
 
-  await createAgentRuntime(context, {
+  clearModelProviders();
+  registerModelProvider("test", () => ({
+    provider: "test",
+    modelId: "test/hosted-project-switch",
+    doGenerate: () => Promise.reject(new Error("unused")),
+    doStream: () => {
+      modelCallCount++;
+      return Promise.resolve({
+        stream: new ReadableStream<unknown>({
+          start(controller) {
+            if (modelCallCount === 1) {
+              controller.enqueue({
+                type: "tool-call",
+                toolCallId: "open-project-1",
+                toolName: "studio_open_project",
+                input: { project_reference: "project-two" },
+              });
+              controller.enqueue({ type: "finish", finishReason: "tool-calls", usage: {} });
+            } else {
+              controller.enqueue({ type: "text-delta", text: "opened" });
+              controller.enqueue({ type: "finish", finishReason: "stop", usage: {} });
+            }
+            controller.close();
+          },
+        }),
+      });
+    },
+  }));
+
+  const rootRuntime = await createAgentRuntime(context, {
     projectId: "project-1",
     branchId: "branch-1",
     authToken: "token-1",
     instructions: "Use the available tools.",
     agentId: "root-agent",
-    allowedTools: [],
+    model: "test/hosted-project-switch",
+    allowedTools: ["studio_open_project"],
     allowDelegation: false,
     clientProfile,
   });
@@ -149,16 +200,42 @@ Deno.test("root and child runtimes use the deployment-owned remote MCP factory",
       endpoint: typeof endpoint === "function" ? await endpoint() : endpoint,
     }))),
     [
-      { id: "veryfront-mcp", endpoint: "https://api.example/projects/project-1/mcp" },
+      { id: "veryfront-mcp", endpoint: "https://93.184.216.34/projects/project-1/mcp" },
       { id: "studio-mcp", endpoint: "https://studio.example/mcp" },
     ],
+  );
+
+  try {
+    await withMockFetch(
+      () => Promise.resolve(Response.json({ tools: [] })),
+      async () => {
+        const stream = await rootRuntime.agent.stream({
+          messages: [],
+          abortSignal: new AbortController().signal,
+        });
+        for await (const _chunk of stream.toUIMessageStream()) {
+          // Consume the project-switch tool round trip.
+        }
+      },
+    );
+  } finally {
+    await rootRuntime.cleanup();
+    clearModelProviders();
+  }
+  assertEquals(switchedTaskContext?.projectId, "project-2");
+  const rootApiConfig = createdConfigs.find((config) => config.id === "veryfront-mcp");
+  assertEquals(
+    typeof rootApiConfig?.endpoint === "function"
+      ? await rootApiConfig.endpoint()
+      : rootApiConfig?.endpoint,
+    "https://93.184.216.34/projects/project-2/mcp",
   );
 
   createdConfigs.length = 0;
   failStudioListing = true;
   const invokeAgent = createInvokeAgentTool(context, {
     authToken: "token-1",
-    projectId: "project-1",
+    projectId: switchedTaskContext?.projectId ?? "project-1",
     branchId: "branch-1",
     agentId: "orchestrator",
     clientProfile,
@@ -174,7 +251,7 @@ Deno.test("root and child runtimes use the deployment-owned remote MCP factory",
       endpoint: typeof endpoint === "function" ? await endpoint() : endpoint,
     }))),
     [
-      { id: "veryfront-mcp-fork", endpoint: "https://api.example/projects/project-1/mcp" },
+      { id: "veryfront-mcp-fork", endpoint: "https://93.184.216.34/projects/project-2/mcp" },
       { id: "studio-mcp-live-tools", endpoint: "https://studio.example/mcp" },
     ],
   );
