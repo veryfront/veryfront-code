@@ -2,6 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/platform/compat/fs.ts";
+import { detectProjectInstallTarget } from "#veryfront/extensions/install-command.ts";
+import { LOCKFILE_CLIENTS } from "#veryfront/utils/package-client.ts";
 import {
   detectFromUserAgent,
   detectPackageManager,
@@ -162,6 +164,27 @@ describe("cli/utils/package-manager", () => {
           const result = await detectPackageManager(tempDir);
           assertEquals(result, "deno");
         });
+      } finally {
+        restoreUserAgent();
+      }
+    });
+
+    it("agrees with the detector behind the framework's install hints", async () => {
+      // The CLI runs the install; `src/extensions/install-command.ts` prints
+      // the command a reader should run to add an extension later. If the two
+      // read the same lockfile differently, a pnpm project gets told to run
+      // `npm install`, which writes a conflicting `package-lock.json` and
+      // leaves `pnpm-lock.yaml` stale. Both read LOCKFILE_CLIENTS.
+      clearUserAgent();
+      try {
+        for (const [lockfile, client] of LOCKFILE_CLIENTS) {
+          await withTempDir(async (tempDir) => {
+            await Deno.writeTextFile(`${tempDir}/package.json`, `{"name":"x"}`);
+            await Deno.writeTextFile(`${tempDir}/${lockfile}`, "");
+            assertEquals(await detectPackageManager(tempDir), client);
+            assertEquals(detectProjectInstallTarget(tempDir), client);
+          });
+        }
       } finally {
         restoreUserAgent();
       }

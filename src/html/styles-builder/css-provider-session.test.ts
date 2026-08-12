@@ -291,12 +291,14 @@ describe("styles-builder CSS provider sessions", () => {
       ?.message ?? "";
     // Spelled out rather than derived from the formatter, so a formatter that
     // starts emitting something unrunnable cannot satisfy this assertion by
-    // agreeing with itself. Which of the three appears depends on the manifest
-    // in the working directory, which a unit test must not depend on; the
-    // mapping from manifest to command is pinned in install-command.test.ts.
+    // agreeing with itself. Which of the five appears depends on the manifest
+    // and lockfile in the working directory, which a unit test must not depend
+    // on; that mapping is pinned in install-command.test.ts.
     const runnableCommands = [
       "deno add npm:@veryfront/ext-css-lightning",
       "bun add @veryfront/ext-css-lightning",
+      "pnpm add @veryfront/ext-css-lightning",
+      "yarn add @veryfront/ext-css-lightning",
       "npm install @veryfront/ext-css-lightning",
     ];
     assertEquals(

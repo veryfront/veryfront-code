@@ -14,36 +14,69 @@
  * project's own `npm ci` then ignores. The runtime decides only when no
  * manifest is readable.
  *
+ * Which npm-family client owns the project is decided by the lockfile, not by
+ * `package.json`, and the table of lockfiles is shared with the CLI's own
+ * detector (`cli/utils/package-manager.ts`) so the client Veryfront *prints*
+ * cannot disagree with the client `veryfront init` *ran*. Printing
+ * `npm install` into a pnpm or Yarn project writes a second, conflicting
+ * `package-lock.json` and leaves the real lockfile stale, which a
+ * frozen-lockfile CI rejects.
+ *
  * @module extensions/install-command
  */
 
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { type RuntimeKind, runtimeKind } from "#veryfront/platform/compat/runtime.ts";
 import { existsSync } from "#veryfront/platform/compat/std/fs.ts";
+import {
+  LOCKFILE_CLIENTS,
+  MANIFEST_CLIENTS,
+  NPM_FAMILY_CLIENTS,
+  type PackageClient,
+} from "#veryfront/utils/package-client.ts";
 
 const NPM_SPECIFIER_PREFIX = "npm:";
 
-/** Package client that owns a project's dependencies. */
-export type InstallTarget = "bun" | "deno" | "npm";
-
 /**
- * Manifests in the order they decide ownership. A Bun project keeps a
- * package.json, and a Deno project can keep one too, so the more specific
- * manifest is read first.
+ * How far above a workspace member to look for the lockfile that owns it.
+ *
+ * pnpm and Yarn workspaces keep one lockfile at the repository root while each
+ * member keeps only a `package.json`, so the member directory alone cannot name
+ * the client. Nesting deeper than `<root>/<group>/<scope>/<member>` is rare
+ * enough that a bound is cheaper than walking to the filesystem root.
  */
-const MANIFESTS: readonly (readonly [string, InstallTarget])[] = [
-  ["bun.lock", "bun"],
-  ["bun.lockb", "bun"],
-  ["deno.json", "deno"],
-  ["deno.jsonc", "deno"],
-  ["package.json", "npm"],
-];
+const WORKSPACE_SEARCH_DEPTH = 4;
+
+/** Package client that owns a project's dependencies. */
+export type InstallTarget = PackageClient;
+
+/** Return the client whose lockfile sits directly in `directory`. */
+function lockfileClient(directory: string): InstallTarget | undefined {
+  for (const [file, client] of LOCKFILE_CLIENTS) {
+    if (existsSync(join(directory, file))) return client;
+  }
+  return undefined;
+}
+
+/** Return the client a manifest in `directory` names outright, if any. */
+function manifestClient(directory: string): InstallTarget | undefined {
+  for (const [file, client] of MANIFEST_CLIENTS) {
+    if (existsSync(join(directory, file))) return client;
+  }
+  return undefined;
+}
 
 /**
  * Return the client the project at `projectDirectory` installs with, or
  * `undefined` when no manifest is readable (a hosted render, a directory
  * without read permission, a runtime with no synchronous filesystem).
+ *
+ * A lockfile in the directory decides on its own. Failing that, `deno.json`
+ * decides, because Deno resolves dependencies from the manifest itself. A lone
+ * `package.json` is npm-family but does not say which client, so the ancestors
+ * are searched for the workspace lockfile that does; npm is the answer only
+ * when no lockfile exists anywhere above it.
  */
 export function detectProjectInstallTarget(
   projectDirectory?: string,
@@ -57,15 +90,35 @@ export function detectProjectInstallTarget(
       return undefined;
     }
   }
-  for (const [manifest, target] of MANIFESTS) {
-    try {
-      if (existsSync(join(directory, manifest))) return target;
-    } catch (_) {
-      /* expected: no synchronous filesystem, or the path is unreadable */
-      return undefined;
+
+  try {
+    const fromLockfile = lockfileClient(directory);
+    if (fromLockfile !== undefined) return fromLockfile;
+
+    const fromManifest = manifestClient(directory);
+    // `deno.json` names its client; only a lone `package.json` stays ambiguous.
+    if (fromManifest !== "npm") return fromManifest;
+
+    // The lockfile that names the client may belong to the workspace root
+    // above. Only an npm-family lockfile can claim a `package.json`; a
+    // `deno.lock` in some enclosing repository does not make this a Deno
+    // project, and answering `deno add` for it is the bug this module exists
+    // to avoid.
+    let ancestor = directory;
+    for (let level = 0; level < WORKSPACE_SEARCH_DEPTH; level++) {
+      const parent = dirname(ancestor);
+      if (parent === ancestor) break;
+      ancestor = parent;
+      const workspaceClient = lockfileClient(ancestor);
+      if (workspaceClient !== undefined && NPM_FAMILY_CLIENTS.includes(workspaceClient)) {
+        return workspaceClient;
+      }
     }
+    return "npm";
+  } catch (_) {
+    /* expected: no synchronous filesystem, or the path is unreadable */
+    return undefined;
   }
-  return undefined;
 }
 
 /** Return the client that ships with `runtime`. */
@@ -93,9 +146,14 @@ export function formatInstallCommand(
     : packageName;
   switch (target) {
     case "deno":
+      // Deno reads an unprefixed specifier as JSR, which hosts no `@veryfront`.
       return `deno add ${NPM_SPECIFIER_PREFIX}${bareName}`;
     case "bun":
       return `bun add ${bareName}`;
+    case "pnpm":
+      return `pnpm add ${bareName}`;
+    case "yarn":
+      return `yarn add ${bareName}`;
     default:
       return `npm install ${bareName}`;
   }
