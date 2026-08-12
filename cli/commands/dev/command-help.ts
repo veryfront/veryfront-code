@@ -8,7 +8,7 @@ export const devHelp: CommandHelp = {
   options: [
     {
       flag: "--port <number>",
-      description: "Port to run on",
+      description: "Port to run on (also reads PORT env var)",
       default: "3000",
     },
     {
@@ -23,7 +23,18 @@ export const devHelp: CommandHelp = {
   examples: [
     "veryfront dev",
     "veryfront dev --port 8080",
+    "PORT=3001 veryfront dev",
     "veryfront dev --open",
     "veryfront dev --no-hmr",
+  ],
+  notes: [
+    "Port selection priority (highest to lowest):",
+    "  1. --port / -p flag",
+    "  2. PORT env var",
+    "  3. VERYFRONT_PORT env var",
+    "  4. Default: 3000",
+    "",
+    "When the requested port is taken, the server falls forward to the next",
+    "free port and prints a warning naming both the requested and actual port.",
   ],
 };

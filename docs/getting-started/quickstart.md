@@ -87,14 +87,18 @@ The CLI prints the URL it is serving on:
 `veryfront.me` resolves to `127.0.0.1`, so
 [http://localhost:3000](http://localhost:3000) reaches the same server.
 
-The dev server binds port 3000. When that port is already taken, `veryfront dev`
-prints `! Port 3000 is in use, using 3001 instead` and serves on the first free
-port after 3000, so open the URL the CLI prints. Pass `--port` to pin one
-yourself:
+The dev server uses port 3000 by default. You can also set the `PORT` env var
+instead of the flag — `veryfront dev` reads it as a lower-precedence default,
+the same way Next.js, Vite, Heroku, and Railway all treat `PORT`:
 
 ```bash
-veryfront dev --port 4000
+PORT=3001 veryfront dev          # bind 3001
+veryfront dev --port 4000        # --port wins over PORT when both are set
 ```
+
+When the requested port is already taken, `veryfront dev` prints
+`! Port 3001 is in use, using 3002 instead` and serves on the first free port,
+so open the URL the CLI prints.
 
 `veryfront dev` also starts the development MCP server two ports above the port
 the dev server bound, so it moves with the app port when that falls forward.

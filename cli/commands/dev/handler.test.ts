@@ -4,7 +4,7 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { parseCliArgs } from "#cli/shared/args";
 import { handleDevCommand, parseDevArgs } from "./handler.ts";
 import type { ParsedArgs } from "#cli/shared/types";
@@ -74,6 +74,74 @@ describe("commands/dev/handler", () => {
         _: ["dev"],
       };
       assertEquals(args.port, undefined);
+    });
+  });
+
+  describe("PORT env var", () => {
+    let savedPort: string | undefined;
+    let savedVeryfrontPort: string | undefined;
+
+    beforeEach(() => {
+      savedPort = Deno.env.get("PORT");
+      savedVeryfrontPort = Deno.env.get("VERYFRONT_PORT");
+      Deno.env.delete("PORT");
+      Deno.env.delete("VERYFRONT_PORT");
+    });
+
+    afterEach(() => {
+      if (savedPort === undefined) Deno.env.delete("PORT");
+      else Deno.env.set("PORT", savedPort);
+      if (savedVeryfrontPort === undefined) Deno.env.delete("VERYFRONT_PORT");
+      else Deno.env.set("VERYFRONT_PORT", savedVeryfrontPort);
+    });
+
+    it("uses PORT env var as the default port when --port is not passed", () => {
+      Deno.env.set("PORT", "3001");
+      const result = parseDevArgs(parseCliArgs(["dev"]));
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.port, 3001);
+    });
+
+    it("--port flag wins over PORT env var", () => {
+      Deno.env.set("PORT", "3001");
+      const result = parseDevArgs(parseCliArgs(["dev", "--port", "4000"]));
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.port, 4000);
+    });
+
+    it("-p alias also wins over PORT env var", () => {
+      Deno.env.set("PORT", "3001");
+      const result = parseDevArgs(parseCliArgs(["dev", "-p", "4000"]));
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.port, 4000);
+    });
+
+    it("uses VERYFRONT_PORT when PORT is not set", () => {
+      Deno.env.set("VERYFRONT_PORT", "3001");
+      const result = parseDevArgs(parseCliArgs(["dev"]));
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.port, 3001);
+    });
+
+    it("PORT takes precedence over VERYFRONT_PORT", () => {
+      Deno.env.set("PORT", "4000");
+      Deno.env.set("VERYFRONT_PORT", "3001");
+      const result = parseDevArgs(parseCliArgs(["dev"]));
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.port, 4000);
+    });
+
+    it("falls back to 3000 when PORT is not a valid integer", () => {
+      Deno.env.set("PORT", "not-a-port");
+      const result = parseDevArgs(parseCliArgs(["dev"]));
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.port, 3000);
+    });
+
+    it("uses default 3000 when neither PORT nor VERYFRONT_PORT are set", () => {
+      const result = parseDevArgs(parseCliArgs(["dev"]));
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.port, 3000);
     });
   });
 });

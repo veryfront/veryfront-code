@@ -4,13 +4,41 @@
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import { isAbsolute, join } from "veryfront/platform/path";
-import { cwd, setEnv } from "veryfront/platform";
+import { cwd, getEnv, setEnv } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
-import { cliLogger, DEFAULT_DEV_SERVER_PORT, showHeader } from "#cli/utils";
+import { cliLogger, DEFAULT_DEV_SERVER_PORT, logWarning, showHeader } from "#cli/utils";
 import { refreshLoggerConfig } from "veryfront/utils";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
 import type { ParsedArgs } from "#cli/shared/types";
+
+/**
+ * Read a numeric port from an env var, returning `fallback` when the var is
+ * absent or contains a value that is not a valid integer.
+ */
+function readPortEnv(name: string, fallback: number): number {
+  const value = getEnv(name);
+  if (value === undefined) return fallback;
+  const port = Number.parseInt(value, 10);
+  return Number.isNaN(port) ? fallback : port;
+}
+
+/**
+ * The default port to use for `veryfront dev`, resolved from env vars.
+ *
+ * Priority (highest → lowest):
+ *   1. `--port` / `-p` flag — explicit, handled by `parseDevArgs`
+ *   2. `PORT`              — the near-universal PaaS / framework convention
+ *   3. `VERYFRONT_PORT`   — Veryfront-specific override
+ *   4. 3000               — hardcoded default
+ *
+ * This matches how `veryfront serve` handles the same env vars, and how
+ * Next.js, Vite, Create React App, Heroku, and Railway all treat `PORT`.
+ */
+function getDefaultDevPort(): number {
+  const veryfrontPort = readPortEnv("VERYFRONT_PORT", DEFAULT_DEV_SERVER_PORT);
+  return readPortEnv("PORT", veryfrontPort);
+}
 
 const getDevArgsSchema = defineSchema((v) =>
   v.object({
@@ -25,7 +53,7 @@ const getDevArgsSchema = defineSchema((v) =>
 
 const DevArgsSchema = lazySchema(getDevArgsSchema);
 
-export const parseDevArgs = createArgParser(DevArgsSchema, {
+const parseDevArgsBase = createArgParser(DevArgsSchema, {
   port: { keys: ["port", "p"], type: "number" },
   project: { keys: ["project"], type: "string" },
   hmr: { keys: ["hmr"], type: "boolean" },
@@ -33,6 +61,25 @@ export const parseDevArgs = createArgParser(DevArgsSchema, {
   open: { keys: ["open"], type: "boolean" },
   debug: { keys: ["debug", "d"], type: "boolean" },
 });
+
+/**
+ * Parses dev command arguments, honouring `PORT` / `VERYFRONT_PORT` as
+ * lower-precedence defaults when no explicit `--port` / `-p` is given.
+ */
+export const parseDevArgs: typeof parseDevArgsBase = (args) => {
+  const result = parseDevArgsBase(args);
+  if (!result.success) return result;
+
+  return {
+    success: true,
+    data: {
+      ...result.data,
+      port: args.port === undefined && args.p === undefined
+        ? getDefaultDevPort()
+        : result.data.port,
+    },
+  };
+};
 
 async function resolveProjectDir(projectArg: string | undefined): Promise<string> {
   if (projectArg) {
@@ -59,6 +106,25 @@ async function resolveProjectDir(projectArg: string | undefined): Promise<string
 export async function handleDevCommand(args: ParsedArgs): Promise<void> {
   const opts = parseArgsOrThrow(parseDevArgs, "dev", args);
   showHeader();
+
+  // Warn when `PORT` is set but `--port` overrides it. The developer set an
+  // env var that the server is not going to use, and silent divergence is the
+  // original defect this fixes. Only `PORT` is surfaced here (not
+  // `VERYFRONT_PORT`) because `PORT` is the near-universal convention that
+  // developers arriving from Next.js, Vite, Heroku, and Railway expect to work.
+  const portExplicit = args.port !== undefined || args.p !== undefined;
+  if (portExplicit) {
+    const portEnvValue = getEnv("PORT");
+    if (portEnvValue !== undefined && portEnvValue.trim() !== "") {
+      const portFromEnv = Number.parseInt(portEnvValue, 10);
+      if (!Number.isNaN(portFromEnv) && opts.port !== portFromEnv) {
+        logWarning(
+          `PORT=${portFromEnv} is set but --port ${opts.port} takes precedence`,
+        );
+      }
+    }
+  }
+
   await ensureCliBundlerContracts();
   const projectDir = await resolveProjectDir(opts.project);
 
