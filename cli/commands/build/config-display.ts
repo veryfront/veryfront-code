@@ -28,12 +28,15 @@ export function displayBuildConfig(options: BuildOptions): void {
     cliLogger.info(`  ${dim("Features:")} ${features}`);
     if (include?.length) cliLogger.info(`  ${dim("Include:")} ${include.join(", ")}`);
     if (exclude?.length) cliLogger.info(`  ${dim("Exclude:")} ${exclude.join(", ")}`);
-    cliLogger.info("");
+    // Emit the section break directly: the CLI logger preset renders every
+    // message as `  <glyph> <message>`, so an empty message prints a bare
+    // glyph line instead of a blank one.
+    console.log("");
   }
 
   if (dryRun) {
     cliLogger.info(`  ${warning("!")} Dry run: no files will be written`);
-    cliLogger.info("");
+    console.log("");
   }
 }
 
