@@ -1,4 +1,5 @@
 import { getErrorMessage } from "#veryfront/errors";
+import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 import { getEnv, unrefTimer } from "#veryfront/platform/compat/process.ts";
 import {
   hasProjectIdentityControlCharacters,
@@ -281,7 +282,7 @@ function defaultResolveTargets(hostname: string): Promise<readonly string[]> {
 }
 
 function abortReason(signal: AbortSignal): Error {
-  return signal.reason instanceof Error
+  return isErrorAcrossRealms(signal.reason)
     ? signal.reason
     : new DOMException("Renderer target refresh was aborted", "AbortError");
 }
