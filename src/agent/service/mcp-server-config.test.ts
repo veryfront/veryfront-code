@@ -6,14 +6,14 @@ import {
   defaultAgentServiceMcpServers,
 } from "./mcp-server-config.ts";
 
-Deno.test("defaultAgentServiceMcpServers enables first-party MCP servers", () => {
+it("defaultAgentServiceMcpServers enables first-party MCP servers", () => {
   assertEquals(defaultAgentServiceMcpServers(), [
     { kind: "veryfront-api" },
     { kind: "veryfront-studio" },
   ]);
 });
 
-Deno.test("createAgentServiceRemoteMcpConfig builds Veryfront API MCP config", async () => {
+it("createAgentServiceRemoteMcpConfig builds Veryfront API MCP config", async () => {
   let projectId = "project-1";
   const config = createAgentServiceRemoteMcpConfig({
     server: { kind: "veryfront-api" },
@@ -81,7 +81,7 @@ describe("createProjectScopedMcpUrl", () => {
   });
 });
 
-Deno.test("createAgentServiceRemoteMcpConfig builds generic MCP config without dropping options", () => {
+it("createAgentServiceRemoteMcpConfig builds generic MCP config without dropping options", () => {
   const headers = { Authorization: "Bearer external-token" };
   assertEquals(
     createAgentServiceRemoteMcpConfig({
@@ -105,7 +105,7 @@ Deno.test("createAgentServiceRemoteMcpConfig builds generic MCP config without d
   );
 });
 
-Deno.test("createAgentServiceRemoteMcpConfig gates Studio MCP by client profile", async () => {
+it("createAgentServiceRemoteMcpConfig gates Studio MCP by client profile", async () => {
   const blockedConfig = createAgentServiceRemoteMcpConfig({
     server: { kind: "veryfront-studio" },
     authToken: "token-1",
