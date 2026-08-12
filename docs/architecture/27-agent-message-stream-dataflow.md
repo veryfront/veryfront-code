@@ -347,8 +347,13 @@ both deliberately:
   tool-input-idle or commit-grace starts that phase's own budget rather than
   inheriting a partly consumed one.
 - Semantic progress. `noteSemanticProgress` refills after any signal the
-  reducer classifies as semantic. Telemetry cannot do this — status emission
-  schedules only the next status time and never touches `deadlineAbsMs`.
+  reducer classifies as semantic. Telemetry cannot do this. When status wins
+  the race, `raceProviderRead` only sets `statusEmitted`; the runner then calls
+  `pauseProviderWait`, which clears `deadlineAbsMs`, and the next
+  `resumeProviderWait` both schedules the following status time and re-arms
+  `deadlineAbsMs` from the carried-over `remainingMs`. The invariant is about
+  the budget, not the timestamp: `deadlineAbsMs` is recomputed on every resume,
+  but only a kind change or semantic progress refills `remainingMs`.
 
 The absolute attempt limit and external cancellation deliberately do **not**
 pause under consumer backpressure. `attemptDeadlineMs` is fixed at attempt
@@ -359,7 +364,7 @@ wall-clock ownership of an attempt, not provider availability. A read that
 resolves while the consumer holds a telemetry frame is cached by
 `trackProviderRead` and consumed on resume, but if the attempt limit wins
 first, the cached result is discarded and the failure is classified
-`STREAM_ATTEMPT_TIMEOUT` with `source: "runtime"` — never as provider semantic
+`STREAM_ATTEMPT_TIMEOUT` with `source: "runtime"`, never as provider semantic
 idle. Delivery latency belongs to Stream Delivery.
 
 When a provider part and a deadline become ready together, `raceProviderRead`
