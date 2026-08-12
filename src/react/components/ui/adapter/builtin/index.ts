@@ -14,6 +14,7 @@ import { builtinDialog } from "./dialog.tsx";
 import { builtinDrawer } from "./drawer.tsx";
 import { builtinTabs } from "./tabs.tsx";
 import { builtinPopover } from "./popover.tsx";
+import { builtinCombobox } from "./combobox.tsx";
 
 export const builtinAdapter: UIAdapter = {
   name: "builtin",
@@ -25,4 +26,5 @@ export const builtinAdapter: UIAdapter = {
   drawer: builtinDrawer,
   tabs: builtinTabs,
   popover: builtinPopover,
+  combobox: builtinCombobox,
 };

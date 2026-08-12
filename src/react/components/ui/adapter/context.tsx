@@ -36,6 +36,7 @@ export function UIAdapterProvider(
       drawer: adapter.drawer ?? parent.drawer,
       tabs: adapter.tabs ?? parent.tabs,
       popover: adapter.popover ?? parent.popover,
+      combobox: adapter.combobox ?? parent.combobox,
     }),
     [
       adapter.disclosure,
@@ -47,6 +48,7 @@ export function UIAdapterProvider(
       adapter.drawer,
       adapter.tabs,
       adapter.popover,
+      adapter.combobox,
       parent,
     ],
   );

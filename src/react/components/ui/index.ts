@@ -370,6 +370,44 @@ export {
   NavigationMenuTrigger,
   type NavigationMenuTriggerProps,
 } from "./navigation-menu.tsx";
+export {
+  Autocomplete,
+  AutocompleteContent,
+  type AutocompleteContentProps,
+  AutocompleteInput,
+  type AutocompleteInputProps,
+  AutocompleteItem,
+  type AutocompleteItemProps,
+  type AutocompleteProps,
+} from "./autocomplete.tsx";
+export {
+  Combobox,
+  ComboboxContent,
+  type ComboboxContentProps,
+  ComboboxInput,
+  type ComboboxInputProps,
+  ComboboxItem,
+  type ComboboxItemProps,
+  type ComboboxProps,
+} from "./combobox.tsx";
+export {
+  AlertDialog,
+  AlertDialogAction,
+  type AlertDialogActionProps,
+  AlertDialogCancel,
+  type AlertDialogCancelProps,
+  AlertDialogContent,
+  type AlertDialogContentProps,
+  AlertDialogDescription,
+  type AlertDialogDescriptionProps,
+  AlertDialogFooter,
+  type AlertDialogFooterProps,
+  type AlertDialogProps,
+  AlertDialogTitle,
+  type AlertDialogTitleProps,
+  AlertDialogTrigger,
+  type AlertDialogTriggerProps,
+} from "./alert-dialog.tsx";
 export { UIAdapterProvider, useAdapter } from "./adapter/context.tsx";
 export { useTokenScope } from "./adapter/token-scope.tsx";
 export type {

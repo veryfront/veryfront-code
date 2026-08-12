@@ -92,6 +92,9 @@ const UI: NavGridEntry[] = [
   { title: "Menubar", id: "ui-menubar--docs" },
   { title: "ContextMenu", id: "ui-contextmenu--docs" },
   { title: "HoverCard", id: "ui-hovercard--docs" },
+  { title: "Combobox", id: "ui-combobox--docs" },
+  { title: "Autocomplete", id: "ui-autocomplete--docs" },
+  { title: "AlertDialog", id: "ui-alertdialog--docs" },
 ];
 
 function SectionLabel({ children }: { children: React.ReactNode }) {

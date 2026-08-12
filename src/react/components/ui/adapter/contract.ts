@@ -315,6 +315,71 @@ export interface PopoverParts {
 }
 
 /**
+ * Combobox state a skin part reads. RICH by design — a Combobox is a text
+ * `role="combobox"` input filtering a `role="listbox"`, so the adapter owns the
+ * typed `query`, the substring `matches` filter, the option registry, and the
+ * `activeId` (`aria-activedescendant`) that keyboard navigation walks. Filtering
+ * lives in the ADAPTER, not the skin, because active-descendant nav must move
+ * over the *filtered* set — the two are one state machine. The skin's items
+ * register `(id, value, text)` and read `matches` / `activeId` to hide/highlight;
+ * the skin never owns the filter logic.
+ */
+export interface ComboboxState {
+  /** Current input text. */
+  query: string;
+  /** Set the input text (typically re-opens the list). */
+  setQuery: (query: string) => void;
+  /** Whether the listbox is open. */
+  open: boolean;
+  /** Open/close the listbox. */
+  setOpen: (open: boolean) => void;
+  /** The selected option value, if any. */
+  value: string | undefined;
+  /** Commit a selection (value + display text); closes the list. */
+  select: (value: string, text: string) => void;
+  /** `id` of the active option for `aria-activedescendant`, or `undefined`. */
+  activeId: string | undefined;
+  /** Substring filter — an option's text is visible when this returns true. */
+  matches: (text: string) => boolean;
+  /** DOM id of the listbox, for the input's `aria-controls`. */
+  listboxId: string;
+  /** Register an option so the adapter can drive filtering + keyboard nav. */
+  registerOption: (id: string, value: string, text: string) => void;
+  /** Remove a previously-registered option. */
+  unregisterOption: (id: string) => void;
+  /** Wire onto the input's `onKeyDown`: ArrowUp/Down/Home/End/Enter/Escape nav. */
+  onInputKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => void;
+}
+
+/** Role-tagged slots an adapter provides for the Combobox primitive. */
+export interface ComboboxParts {
+  /** Owns query/open/value + option registry + the positioning anchor. */
+  Root: React.FC<{
+    children: React.ReactNode;
+    value?: string;
+    defaultValue?: string;
+    onValueChange?: (value: string) => void;
+    open?: boolean;
+    defaultOpen?: boolean;
+    onOpenChange?: (open: boolean) => void;
+    defaultInputValue?: string;
+    /** Fires whenever the input text changes — typing OR filling from a selection.
+     * Autocomplete reads this to treat the free-typed text as the value. */
+    onInputValueChange?: (value: string) => void;
+  }>;
+  /** The `role="combobox"` text input; `aria-activedescendant`/`-controls` wired. */
+  Input: React.FC<
+    React.InputHTMLAttributes<HTMLInputElement> & { ref?: React.Ref<HTMLInputElement> }
+  >;
+  /** The floating `role="listbox"` surface, portalled into the token scope while open. */
+  Content: React.FC<
+    React.HTMLAttributes<HTMLDivElement> & { ref?: React.Ref<HTMLDivElement> }
+  >;
+  /** Read combobox state from a skin part (Input/Item/Empty). Throws outside a Combobox. */
+  useCombobox: () => ComboboxState;
+}
+
+/**
  * The adapter surface. Each new primitive must also be added to the explicit
  * composition in `context.tsx`, which prevents `undefined` overrides from
  * erasing inherited or builtin slots.
@@ -330,6 +395,7 @@ export interface UIAdapter {
   drawer: DrawerParts;
   tabs: TabsParts;
   popover: PopoverParts;
+  combobox: ComboboxParts;
 }
 
 /**
