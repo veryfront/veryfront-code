@@ -47756,7 +47756,8 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesforce__update_case",
       "name": "Update Case",
-      "description": "Update status, priority, owner, or resolution fields on a Service Cloud case",
+      "description":
+        "Update status, priority, Type classification, owner, or resolution fields on a Service Cloud case",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -47774,6 +47775,7 @@ export const connectors: IntegrationConfig[] = [
           "Priority": { "type": "string", "description": "New case priority" },
           "OwnerId": { "type": "string", "description": "Queue or user owner ID" },
           "Reason": { "type": "string", "description": "Case reason" },
+          "Type": { "type": "string", "description": "Case type" },
           "SuppliedEmail": { "type": "string", "description": "Customer supplied email" },
           "Description": { "type": "string", "description": "Updated case description" },
         },

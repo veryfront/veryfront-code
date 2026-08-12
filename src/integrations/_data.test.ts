@@ -355,6 +355,7 @@ describe("integration endpoint specs", () => {
     assertEquals(getTool("salesforce", "create_case").requiresWrite, true);
     assertEquals(getTool("salesforce", "add_case_comment").endpoint?.method, "POST");
     assertEquals(getTool("salesforce", "update_case").endpoint?.method, "PATCH");
+    assertEquals(getTool("salesforce", "update_case").endpoint?.body?.Type?.type, "string");
 
     const servicenowQuery = getTool("servicenow", "query_table");
     assertEquals(servicenowQuery.requiresWrite, false);

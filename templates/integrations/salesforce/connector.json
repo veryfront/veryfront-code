@@ -355,7 +355,7 @@
     {
       "id": "salesforce__update_case",
       "name": "Update Case",
-      "description": "Update status, priority, owner, or resolution fields on a Service Cloud case",
+      "description": "Update status, priority, Type classification, owner, or resolution fields on a Service Cloud case",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -384,6 +384,10 @@
           "Reason": {
             "type": "string",
             "description": "Case reason"
+          },
+          "Type": {
+            "type": "string",
+            "description": "Case type"
           },
           "SuppliedEmail": {
             "type": "string",
