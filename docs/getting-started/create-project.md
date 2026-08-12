@@ -101,8 +101,16 @@ deno init --npm veryfront
 veryfront dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). File changes reload the
-browser.
+The CLI prints the URL it is serving on:
+
+```
+  ✓ Ready in 1.3s
+  http://veryfront.me:3000
+```
+
+Open [http://veryfront.me:3000](http://veryfront.me:3000). `veryfront.me`
+resolves to `127.0.0.1`, so [http://localhost:3000](http://localhost:3000)
+reaches the same server. File changes reload the browser.
 
 ### Change the port
 
@@ -115,8 +123,11 @@ veryfront dev --port 4000
 When the requested port is already taken, `veryfront dev` does not fail. It
 scans forward for the first free port, reports the switch, and serves there:
 
-```text
-! Port 3000 is in use, using 3001 instead
+```
+  ! Port 3000 is in use, using 3001 instead
+
+  ✓ Ready in 925ms
+  http://veryfront.me:3001
 ```
 
 Open the URL the CLI prints, not the one in the examples above. The development
@@ -193,5 +204,6 @@ Claude Code, Cursor, Codex, or another MCP-aware agent.
 
 ## Verify it worked
 
-`veryfront dev` prints `Ready on http://localhost:3000`. Open the URL and save a
-source file. The browser should hot-reload.
+`veryfront dev` prints a `Ready in <duration>` line followed by
+`http://veryfront.me:3000`. Open that URL and save a source file. The browser
+should hot-reload.

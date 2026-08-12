@@ -210,8 +210,10 @@ describe("guide content contracts", () => {
   it("tells the reader a Cloud environment is protected before asking for a request", async () => {
     // Veryfront Cloud environments are protected by default: an anonymous
     // request to the environment URL gets a 302 to a Veryfront sign-in page on
-    // every path, API routes included, and VERYFRONT_API_TOKEN does not change
-    // that. A signed-in non-member gets a 403 instead, per
+    // every path, API routes included, and an API key in VERYFRONT_API_TOKEN
+    // does not change that (the browser-is-the-only-client half of this is
+    // wrong and is owned by the authToken case below). A signed-in non-member
+    // gets a 403 instead, per
     // checkProtectedProxyAccess in src/proxy/proxy-access-control.ts. Which
     // apex serves that sign-in page varies by deployment host — see the
     // sign-in-apex case below, which owns that half. Verified against a live
@@ -235,6 +237,41 @@ describe("guide content contracts", () => {
     assertStringIncludes(prose, "not a member of the project gets a `403`");
     assertStringIncludes(doc, "-w '%{http_code} %{redirect_url}\\n'");
     assertEquals(doc.includes("```bash\ncurl -sSf <environment-url>\n```"), false);
+  });
+
+  it("does not present a browser as the only client a protected environment serves", async () => {
+    // The gate reads the session out of an `authToken` cookie
+    // (extractUserToken, src/proxy/proxy-token-resolution.ts:52) and never
+    // inspects the client, so any HTTP client sending that cookie is served.
+    // `veryfront deploy` depends on exactly that: its readiness probe sets
+    // `Cookie: authToken=<token>` when the stored credential is a session token
+    // (cli/shared/deployment/deploy-project.ts:969, asserted at
+    // cli/shared/deployment/deploy-project.test.ts:653) and withholds an opaque
+    // API key instead, because extractUserIdFromToken resolves no userId from
+    // one (src/proxy/proxy-access-control.ts:104) and the gate then answers the
+    // same 302 an anonymous request gets. The API-key-versus-session
+    // distinction is the real axis, not browser versus non-browser: prose that
+    // says every non-browser request sees the redirect sends a reader to make
+    // an environment public when an authenticated probe would have worked.
+    const doc = await Deno.readTextFile(
+      new URL("../../docs/getting-started/deploy-project.md", import.meta.url),
+    );
+    const prose = doc.replace(/\s+/g, " ");
+
+    assertStringIncludes(prose, "A non-browser client can still authenticate");
+    assertStringIncludes(prose, "`authToken` cookie");
+    assertEquals(prose.includes("sees the sign-in redirect either way"), false);
+
+    const guide = await Deno.readTextFile(
+      new URL("../../docs/guides/deploying.md", import.meta.url),
+    );
+    const guideProse = guide.replace(/\s+/g, " ");
+
+    assertStringIncludes(guideProse, "`authToken` cookie");
+    assertEquals(
+      guideProse.includes("serves requests only to a browser signed in"),
+      false,
+    );
   });
 
   it("does not promise one sign-in apex for every protected environment", async () => {

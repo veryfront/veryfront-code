@@ -65,9 +65,10 @@ Veryfront Cloud creates `preview`, `staging`, and `production` as protected by
 default, so check the preview URL in a browser signed in to Veryfront as a
 member of the project.
 
-A protected environment serves only that signed-in member. An unauthenticated
-request gets a `302` to a Veryfront sign-in page, on every path including API
-routes:
+A protected environment serves only requests that carry a Veryfront user
+session for a member of the project. That session travels in an `authToken`
+cookie, which a browser receives by signing in. A request without one gets a
+`302` to a Veryfront sign-in page, on every path including API routes:
 
 ```bash
 curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' \
@@ -89,9 +90,23 @@ deployment host never receives the cookie, so the redirect just repeats.
 A request signed in as a user who is not a member of the project gets a `403`
 instead. A `403` means the account is wrong, not the URL.
 
-`VERYFRONT_API_TOKEN` does not open a protected environment. It authenticates
-the CLI against the Cloud API, not deployment traffic, so `curl`, a CI smoke
-test, or an uptime monitor sees the sign-in redirect either way.
+`VERYFRONT_API_TOKEN` carrying an API key (a `vf_` key) does not open a
+protected environment. It authenticates the CLI against the Cloud API, not
+deployment traffic. The environment gate reads a user id out of a verified
+session token and has no API-key branch, so an API key presented to it resolves
+to no user and draws the same sign-in redirect an anonymous request gets.
+`veryfront deploy` acts on that distinction instead of leaking the key: it sends
+the stored credential to a protected environment only when that credential is a
+session token, and otherwise probes anonymously and accepts the challenge as
+proof the environment is serving. Its readiness probe counts a sign-in redirect,
+a `401`, and a `403` alike as that challenge.
+
+A non-browser client can still authenticate. The gate inspects the cookie, not
+the client, so `curl`, a CI smoke test, or an uptime monitor reaches a protected
+environment by sending the `authToken` cookie with the session token of a
+project member. That token is a member's own session, so it expires and belongs
+in a secret store rather than a checked-in workflow file. For an unattended
+check with no session to spend, make the environment public instead.
 
 To serve an environment to everyone, open **Environments** in Veryfront Studio,
 select the environment, turn on **Public Environment**, and confirm
@@ -150,10 +165,11 @@ draws the same line: it picks a readiness route only from the project's static
 page routes and skips the browser readiness probe entirely when there is none,
 so a successful deploy does not imply a `200` anywhere.
 
-A protected environment answers `302` to the sign-in page — see
-[Environment access](#environment-access) for which apex serves it — or `403`
-for a signed-in non-member. In that case open the URL in a member's browser, or
-make the environment public. Do not check with a bare
+A protected environment answers `302` to the sign-in page (see
+[Environment access](#environment-access) for which apex serves it) or `403`
+for a signed-in non-member. In that case open the URL in a member's browser,
+repeat the request with a member's session in an `authToken` cookie, or make the
+environment public. Do not check with a bare
 `curl -sSf <environment-url>`: `curl` does not treat a `302` as a failure, so
 that command exits `0` with an empty body whether or not the deployment works.
 
