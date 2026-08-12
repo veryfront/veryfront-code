@@ -34,7 +34,84 @@ export function isPortInUseError(error: unknown): boolean {
 }
 
 /**
- * Binds `port` and releases it again, to see whether the dev server could have it.
+ * True when `error` means "this host has no address in that family at all",
+ * rather than "that port is taken".
+ *
+ * The two have to be told apart, because probing a family a host does not have
+ * must not make every port look busy: an IPv4-only CI container or a machine
+ * with IPv6 disabled would otherwise never find a free port to fall back to.
+ */
+export function isAddressFamilyUnavailableError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  // Deno names EADDRNOTAVAIL "AddrNotAvailable"; EAFNOSUPPORT surfaces only in
+  // the message. Node reports both through `code`.
+  const code = (error as { code?: string }).code ?? "";
+  const message = error.message.toLowerCase();
+  return error.name === "AddrNotAvailable" ||
+    code === "EADDRNOTAVAIL" || code === "EAFNOSUPPORT" ||
+    message.includes("eaddrnotavail") || message.includes("eafnosupport") ||
+    message.includes("assign requested address") ||
+    message.includes("address family not supported");
+}
+
+/**
+ * The loopback addresses a `veryfront dev` listener can land on.
+ *
+ * Which family a listener gets is decided by the runtime, not by the CLI: the
+ * Deno HTTP adapter defaults to `LOCALHOST.IPV4`, while the Node adapter that
+ * the published npm build runs defaults to the *name* `localhost`, which
+ * resolves to `::1` first on any dual-stack host. That is why one `veryfront
+ * dev` serves the app on `127.0.0.1:3000` but its MCP server - `--port + 2` -
+ * on `[::1]:3002`.
+ *
+ * A probe that bound only IPv4 therefore reported IPv6-held ports as free, and
+ * a second `veryfront dev` announced "Port 3000 is in use, using 3002 instead"
+ * while 3002 was already reserved by the first instance's MCP server. Nothing
+ * hard-failed only because the two listeners landed on different families.
+ *
+ * The literal addresses are probed rather than the name `localhost` because a
+ * listen on a name binds just the first address it resolves to, which would
+ * leave the other family unchecked exactly as before.
+ */
+const PROBE_HOSTNAMES: readonly string[] = [LOCALHOST.IPV4, LOCALHOST.IPV6];
+
+/** What one bind-and-release attempt learned about a port on one address. */
+type ProbeOutcome = "free" | "in-use" | "no-such-family";
+
+function probeWithDeno(deno: typeof Deno, hostname: string, port: number): ProbeOutcome {
+  try {
+    deno.listen({ hostname, port }).close();
+    return "free";
+  } catch (error) {
+    if (isPortInUseError(error)) return "in-use";
+    if (isAddressFamilyUnavailableError(error)) return "no-such-family";
+    throw error;
+  }
+}
+
+async function probeWithNode(hostname: string, port: number): Promise<ProbeOutcome> {
+  const net = await import("node:net");
+  return await new Promise<ProbeOutcome>((resolve, reject) => {
+    const server = net.createServer();
+    server.unref?.();
+    server.once("error", (error: unknown) => {
+      if (isPortInUseError(error)) resolve("in-use");
+      else if (isAddressFamilyUnavailableError(error)) resolve("no-such-family");
+      else reject(error);
+    });
+    server.listen({ port, host: hostname, exclusive: true }, () => {
+      server.close(() => resolve("free"));
+    });
+  });
+}
+
+/**
+ * Binds `port` on every loopback family the dev server might use, and releases
+ * it again, to see whether the dev server could have it.
+ *
+ * A port counts as available only when nothing holds it on *any* of those
+ * addresses - see `PROBE_HOSTNAMES` for why one family is not enough. A family
+ * the host does not have is skipped rather than counted as a collision.
  *
  * The Deno runtime is read through `getDenoRuntime()` rather than through the
  * `Deno` global directly: dnt rewrites every bare `Deno.` reference in the
@@ -46,28 +123,15 @@ export function isPortInUseError(error: unknown): boolean {
  */
 export async function isPortAvailable(port: number): Promise<boolean> {
   const deno = getDenoRuntime();
-  if (deno) {
-    try {
-      deno.listen({ hostname: LOCALHOST.IPV4, port }).close();
-      return true;
-    } catch (error) {
-      if (isPortInUseError(error)) return false;
-      throw error;
-    }
+
+  for (const hostname of PROBE_HOSTNAMES) {
+    const outcome = deno
+      ? probeWithDeno(deno, hostname, port)
+      : await probeWithNode(hostname, port);
+    if (outcome === "in-use") return false;
   }
 
-  const net = await import("node:net");
-  return await new Promise<boolean>((resolve, reject) => {
-    const server = net.createServer();
-    server.unref?.();
-    server.once("error", (error: unknown) => {
-      if (isPortInUseError(error)) resolve(false);
-      else reject(error);
-    });
-    server.listen({ port, host: LOCALHOST.IPV4, exclusive: true }, () => {
-      server.close(() => resolve(true));
-    });
-  });
+  return true;
 }
 
 /**
