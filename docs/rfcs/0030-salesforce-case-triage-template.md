@@ -18,7 +18,7 @@ checked-in taxonomy, then writes a `Reason` and a triage comment back to the
 case. The promise in the blog post is a straight line:
 
 > fork the template (or clone `veryfront/agentic-case-processing` — **once it is
-> published**; it is private today, Open Q E) → sign in to Veryfront → connect
+> published**; it is private today, Open Question E) → sign in to Veryfront → connect
 > **your own** Salesforce org over OAuth → run "Triage latest open cases" → it
 > runs green.
 
@@ -155,7 +155,7 @@ One tool call, end to end (interpolation/transform/gating all server-side, §2.1
 ```
 
 Fork → run (the blog's happy path; the main *auth* seam is the Connected App,
-Open Q A — the org-config gates in §4 are handled by the baseline + describe):
+Open Question A — the org-config gates in §4 are handled by the baseline + describe):
 
 ```
   fork template          sign in            connect Salesforce         run "Triage
@@ -211,7 +211,8 @@ The lesson is the general one:
 were expanded to the standard writable Case fields — `create_case` gains `Reason`,
 `Type`, `SuppliedEmail`; `update_case` gains `Subject`, `Status`, `Priority`,
 `Reason`, `Type`, `Origin`, `SuppliedEmail`, `ContactId`, `AccountId`, `OwnerId`,
-`Description`. This resolves the Case happy path and is the **right** move for the
+`Description`. This closes the curated Case **field-coverage** gap (it does not
+change write-result handling — see point 3) and is the **right** move for the
 curated demo surface. It is also the clearest possible statement of the problem
 this RFC generalises: it is per-field enumeration, **by hand, for one object**, and
 it can never reach custom `__c` fields or other objects. The generic passthrough
@@ -650,9 +651,13 @@ max-rows cap, and customer mapping.
    that coarser grant — Delete is not actually fenced yet. Precondition: define a
    **fail-closed precedence** (`permissions` denies beat `dataAccess.objects`
    grants; unknown → deny), enforce it against the runtime `sobjectType` before
-   *every* generic CRUD call, scope `get_record`/`run_soql_query`/`search` to
-   permitted objects, and honour `allowExpertSoql`. `delete_record` stays out of
-   v1 until Delete enforcement is verified live.
+   *every* generic CRUD call, and honour `allowExpertSoql`. `delete_record` stays
+   out of v1 until Delete enforcement is verified live. **This applies to reads and
+   metadata too, not just writes:** server-side parse and allowlist every object
+   referenced by `run_soql_query`, SOSL `search`, and the curated tools that accept
+   an arbitrary `q` — including relationship targets (`Account.Name`, `__r`) and
+   subqueries — and authorize the `sobjectType` for `describe_object` and
+   `get_picklist_values`. Deny unknown or unparseable requests (fail closed).
 3. **"Tools are static" still holds** (§2.1) — but *objects* and *permissions* are
    dynamically discovered and enforced. The static generic tools are the fixed
    *execution surface*; the Configure matrix is the dynamic *policy surface* over
