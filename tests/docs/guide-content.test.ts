@@ -1,10 +1,11 @@
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { basename } from "#veryfront/compat/path";
+import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import {
+  getCacheBaseDir,
   getHttpBundleCacheDir,
   getMdxEsmCacheDir,
-  runWithCacheDir,
 } from "#veryfront/utils/cache-dir.ts";
 import { MINIMUM_DENO_VERSION, MINIMUM_NODE_VERSION } from "../../scripts/build/runtime-support.ts";
 
@@ -558,29 +559,131 @@ describe("guide content contracts", () => {
     }
   });
 
-  it("documents the .cache root the CLI writes into the project", async () => {
+  it("documents the cache root in both development and production", async () => {
     // Resolved from import.meta.url, not the process cwd: test files share one
     // process under --parallel and a sibling isolate can hold a chdir.
+    const repoRoot = new URL("../../", import.meta.url);
     const guide = await Deno.readTextFile(
-      new URL("../../docs/guides/project-structure.md", import.meta.url),
+      new URL("docs/guides/project-structure.md", repoRoot),
     );
 
-    // `veryfront dev` and `veryfront build` both create `<project>/.cache`.
-    // Before this section existed the only explanation a developer got was the
-    // comment inside the generated `.cache/.gitignore`.
+    // `veryfront dev` and `veryfront build` both create a cache root. Before
+    // this section existed the only explanation a developer got was the
+    // comment inside the generated `.gitignore` marker.
     assertStringIncludes(guide, "## Generated directories");
     assertStringIncludes(guide, "`.cache/`");
     assertStringIncludes(guide, "`.cache/.gitignore`");
     assertStringIncludes(guide, "VERYFRONT_CACHE_DIR");
 
-    // Pinned to the real layout, so renaming a cache subdirectory fails here
-    // instead of leaving the guide describing a tree that no longer exists.
-    runWithCacheDir("/tmp/veryfront-guide-content", () => {
-      assertStringIncludes(guide, basename(getMdxEsmCacheDir()));
-      assertStringIncludes(guide, basename(getHttpBundleCacheDir()));
-    });
+    // The location is not one place. `getDefaultCacheBaseDir()` sends the
+    // cache to `$HOME/.cache/veryfront` under a production runtime and to
+    // `<project>/.cache` otherwise, so a guide that describes only the project
+    // root is wrong for every deployed run. Both branches are resolved here by
+    // calling the real function under each mode rather than by forcing a cache
+    // context, which would answer with the forced path in both modes and pass
+    // no matter what the guide says.
+    const home = "/tmp/veryfront-guide-content-home";
+    const noOverride = { VERYFRONT_CACHE_DIR: undefined, VF_CACHE_DIR: undefined };
+    const resolveRoots = (mode: string | undefined) =>
+      withHostEnv(
+        { ...noOverride, HOME: home, NODE_ENV: mode, VERYFRONT_MODE: mode },
+        () => ({
+          base: getCacheBaseDir(),
+          mdxEsm: basename(getMdxEsmCacheDir()),
+          httpBundle: basename(getHttpBundleCacheDir()),
+        }),
+      );
+
+    const development = resolveRoots("development");
+    const production = resolveRoots("production");
+
+    // Guard the guard: if these ever resolve to the same place, the two
+    // assertions below stop distinguishing anything and this test would keep
+    // passing while the guide describes a mode that no longer exists.
+    assert(
+      development.base !== production.base,
+      "development and production must resolve to different cache roots",
+    );
+    assertEquals(basename(development.base), ".cache");
+    assertStringIncludes(production.base, home);
+
+    // `.cache/veryfront` — the production root with the home prefix removed, so
+    // the guide has to name the real deployed location and not just `.cache/`.
+    const productionUnderHome = production.base
+      .slice(home.length + 1)
+      .replaceAll("\\", "/");
+    assertStringIncludes(guide, productionUnderHome);
+
+    // Every variable the production branch reads has to appear in the guide, so
+    // renaming a trigger fails here instead of leaving readers checking a
+    // variable the code stopped consulting.
+    for (
+      const key of productionCacheTriggerEnvKeys(
+        await Deno.readTextFile(
+          new URL("src/utils/cache-dir.ts", repoRoot),
+        ),
+      )
+    ) {
+      assertStringIncludes(guide, key);
+    }
+
+    // Pinned to the real layout in both modes, so renaming a cache
+    // subdirectory fails here instead of leaving the guide describing a tree
+    // that no longer exists.
+    for (const { mdxEsm, httpBundle } of [development, production]) {
+      assertStringIncludes(guide, mdxEsm);
+      assertStringIncludes(guide, httpBundle);
+    }
   });
 });
+
+/**
+ * Run `fn` with host environment variables set, restoring the previous values
+ * afterwards. `undefined` unsets a variable for the duration of the call.
+ */
+function withHostEnv<T>(
+  vars: Readonly<Record<string, string | undefined>>,
+  fn: () => T,
+): T {
+  const previous = Object.keys(vars).map(
+    (key) => [key, getHostEnv(key)] as const,
+  );
+  const apply = (entries: readonly (readonly [string, string | undefined])[]) => {
+    for (const [key, value] of entries) {
+      if (value === undefined) deleteEnv(key);
+      else setEnv(key, value);
+    }
+  };
+
+  apply(Object.entries(vars));
+  try {
+    return fn();
+  } finally {
+    apply(previous);
+  }
+}
+
+/**
+ * Environment variables `getDefaultCacheBaseDir()` reads to choose between the
+ * project cache root and the home cache root, read out of the source so the
+ * guide's list of triggers cannot drift away from the code's.
+ */
+function productionCacheTriggerEnvKeys(source: string): string[] {
+  const start = source.indexOf("function getDefaultCacheBaseDir(");
+  assert(start !== -1, "cache-dir.ts must define getDefaultCacheBaseDir()");
+  const open = source.indexOf("{", start);
+  let depth = 0;
+  let end = open;
+  for (; end < source.length; end++) {
+    if (source[end] === "{") depth++;
+    else if (source[end] === "}" && --depth === 0) break;
+  }
+
+  const body = source.slice(open, end);
+  const keys = [...body.matchAll(/getHostEnv\("([A-Z_]+)"\)/g)].map((m) => m[1]!);
+  assert(keys.length > 0, "getDefaultCacheBaseDir() must read the host env");
+  return [...new Set(keys)];
+}
 
 /**
  * Body of the guide's "Verify it worked" section, up to the next heading, with
