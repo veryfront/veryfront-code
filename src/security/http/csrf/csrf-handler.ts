@@ -42,6 +42,7 @@
  */
 
 import { isCspReportRequest } from "#veryfront/security/http/csp-report-endpoint.ts";
+import { isControlPlaneSurfaceRequest } from "#veryfront/channels/control-plane.ts";
 import { BaseHandler } from "../base-handler.ts";
 import { validateCsrf } from "../../csrf/helpers.ts";
 import type {
@@ -78,6 +79,15 @@ export class CsrfHandler extends BaseHandler {
     // `isCspReportRequest`; relying on a project to add it to `excludePaths`
     // would make reporting another thing a project has to configure first.
     if (isCspReportRequest(method, pathname)) return this.continue();
+
+    // A control-plane dispatch is not a browser request. Release asset builds,
+    // run execute/resume/cancel and agent listing all arrive as POSTs carrying
+    // a signed operation envelope, verified before the handler acts on them;
+    // they hold no `__Host-vf_csrf` cookie to echo and derive no authority from
+    // one. Rejecting them here protects nothing and instead stops the platform
+    // from building the project's own release asset manifest, which surfaces
+    // only as `deploy` timing out with `last state: missing`.
+    if (isControlPlaneSurfaceRequest(pathname)) return this.continue();
 
     // Check exclude paths
     if (typeof csrfConfig === "object" && csrfConfig.excludePaths?.length) {

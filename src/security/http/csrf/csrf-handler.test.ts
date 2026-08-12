@@ -62,6 +62,37 @@ describe("security/http/csrf/csrf-handler", () => {
     });
   });
 
+  describe("signed control-plane surfaces", () => {
+    it("passes a run dispatch through for every enabled csrf shape", async () => {
+      // The control plane holds no `__Host-vf_csrf` cookie and authorizes from
+      // a signed envelope the receiving handler verifies. Gating it here left a
+      // project that configured CSRF unable to build its own release assets.
+      for (const csrf of [true, { excludePaths: ["/api/ag-ui"] }]) {
+        const result = await handler.handle(
+          new Request(
+            "https://acme.veryfront.com/api/control-plane/runs/run_1/execute",
+            { method: "POST", body: "{}" },
+          ),
+          createCtx(csrf),
+        );
+
+        assertEquals(result.response, undefined);
+      }
+    });
+
+    it("still rejects a token-less POST to a path that merely starts alike", async () => {
+      const result = await handler.handle(
+        new Request("https://acme.veryfront.com/api/control-plane-mirror/runs", {
+          method: "POST",
+          body: "{}",
+        }),
+        createCtx(true),
+      );
+
+      assertEquals(result.response?.status, 403);
+    });
+  });
+
   describe("when CSRF is not configured", () => {
     it("should pass through all requests when securityConfig is null", async () => {
       const ctx = createCtx();

@@ -27,6 +27,26 @@ export const CONTROL_PLANE_RUN_STREAM_PATH = "/api/control-plane/runs/:runId/str
 const CONTROL_PLANE_RUN_ID_PATH_SEGMENT = "[^/]+";
 const CONTROL_PLANE_RUNS_REGEX_PREFIX = CONTROL_PLANE_RUNS_PATH_PREFIX.replaceAll("/", "\\/");
 
+/** Path prefix every signed control-plane surface is served under. */
+export const CONTROL_PLANE_PATH_PREFIX = "/api/control-plane/";
+
+/**
+ * True for a request addressed to a signed control-plane surface.
+ *
+ * Every handler behind this prefix authenticates a signed operation envelope
+ * through {@link verifyControlPlaneRequest} and derives no authority from
+ * ambient browser credentials, so a request that reaches one is authorized by
+ * its signature or not at all. Callers use this to keep browser-shaped gates —
+ * which expect a cookie the control plane neither holds nor can obtain — from
+ * standing in front of platform dispatch.
+ *
+ * Compared against `URL.pathname`, which resolves dot segments, so a path
+ * cannot be smuggled past a downstream check by prefixing this one.
+ */
+export function isControlPlaneSurfaceRequest(pathname: string | undefined): boolean {
+  return (pathname ?? "").startsWith(CONTROL_PLANE_PATH_PREFIX);
+}
+
 /**
  * True for control-plane run surfaces that can dispatch without project config.
  *
