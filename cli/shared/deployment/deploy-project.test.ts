@@ -163,6 +163,53 @@ describe("DeployProject", () => {
     });
   });
 
+  it("refuses a config the hosted runtime can never evaluate", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      await Deno.writeTextFile(
+        `${projectDir}/veryfront.config.ts`,
+        `import { defineConfig } from "veryfront";\n` +
+          `import extCssLightning from "@veryfront/ext-css-lightning";\n\n` +
+          `export default defineConfig({\n  extensions: [extCssLightning()],\n});\n`,
+      );
+      const controlPlane = new InMemoryDeployControlPlane();
+      try {
+        const error = await expectDeployError(() => executeApply(projectDir, controlPlane));
+
+        const message = (error as Error).message;
+        assertStringIncludes(message, "veryfront.config.ts");
+        assertStringIncludes(message, "@veryfront/ext-css-lightning");
+        assertEquals(controlPlane.createdReleases, [], "no release for an undeployable config");
+        assertEquals(
+          controlPlane.createdDeployments,
+          [],
+          "no deployment for an undeployable config",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("deploys a config that only uses the hosted configuration helpers", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      await Deno.writeTextFile(
+        `${projectDir}/veryfront.config.ts`,
+        `import { defineConfig } from "veryfront";\n\n` +
+          `export default defineConfig({ title: "Demo" });\n`,
+      );
+      const controlPlane = new InMemoryDeployControlPlane();
+      try {
+        const outcome = await executeApply(projectDir, controlPlane);
+
+        assertEquals(outcome.kind, "deployed", "a hosted-compatible config still deploys");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
   it("deploys a request-scoped project without inferring or persisting a local link", async () => {
     await withDeployEnv(async () => {
       const { projectDir, files } = await createUnlinkedPushedProject();

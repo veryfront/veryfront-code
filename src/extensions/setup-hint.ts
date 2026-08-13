@@ -45,6 +45,19 @@ const NPM_SPECIFIER_PREFIX = "npm:";
 /** Config file a project is told to create when it has none. */
 const DEFAULT_CONFIG_FILE: VeryfrontConfigFileName = "veryfront.config.ts";
 
+/**
+ * Where the recommended composition stops working.
+ *
+ * Veryfront Cloud evaluates a project's configuration file as data and never
+ * imports it, so the import this hint asks for is rejected there. Saying so
+ * here is the earliest the reader can learn it; `veryfront deploy` refuses the
+ * same config, and without this line the hint reads as advice that quietly
+ * costs the reader a deployable project.
+ */
+const HOSTED_CAVEAT =
+  "Extensions run where you run the project; a configuration file that imports one cannot be " +
+  "deployed to Veryfront Cloud.";
+
 export interface ExtensionSetupHintOptions {
   /** Project root to inspect; defaults to the working directory. */
   readonly projectDirectory?: string;
@@ -129,8 +142,10 @@ export function formatExtensionSetupHint(
   if (existingConfigFile === undefined) {
     return `Install one with: ${install}, then create ${DEFAULT_CONFIG_FILE} containing: ` +
       `import { defineConfig } from "veryfront"; ${importLine} ` +
-      `export default defineConfig({ extensions: [${binding}()] });`;
+      `export default defineConfig({ extensions: [${binding}()] });` +
+      ` ${HOSTED_CAVEAT}`;
   }
   return `Install one with: ${install}, then activate it in ${existingConfigFile}: ` +
-    `add ${importLine} and list ${binding}() in "extensions".`;
+    `add ${importLine} and list ${binding}() in "extensions".` +
+    ` ${HOSTED_CAVEAT}`;
 }
