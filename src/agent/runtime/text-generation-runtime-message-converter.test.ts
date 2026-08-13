@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   convertToTextGenerationRuntimeMessage,
@@ -84,6 +84,35 @@ describe("text-generation-runtime-message-converter", () => {
       assertStringIncludes(text, "sample-attachment.pdf");
       assertStringIncludes(text, "test-upload-id");
       assertStringIncludes(text, "application/pdf");
+    });
+
+    it("names the attachment when its URL is one no provider can fetch", () => {
+      // The chat upload handler mints this URL: with a storage backend that
+      // has no external URL of its own it falls back to the app's own origin
+      // (upload-handler.ts:426). A provider fetching `image_url.url` from its
+      // own network resolves `localhost` to itself and answers with an opaque
+      // 400, so the turn must fail here, naming the attachment instead.
+      const msg = {
+        id: "u-local-upload",
+        role: "user",
+        parts: [
+          { type: "text", text: "what is in this image?" },
+          {
+            type: "file",
+            url: "http://localhost:3000/api/chat/upload?id=blob_1",
+            mediaType: "image/png",
+            filename: "screenshot.png",
+            uploadId: "blob_1",
+          },
+        ],
+      } as unknown as Message;
+
+      const error = assertThrows(
+        () => convertToTextGenerationRuntimeMessage(msg),
+        Error,
+      );
+      assertStringIncludes(error.message, "screenshot.png");
+      assertStringIncludes(error.message, "localhost");
     });
 
     it("separates user text from attachment context with a readable blank line", () => {

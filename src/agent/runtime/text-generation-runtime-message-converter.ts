@@ -16,6 +16,7 @@ import type {
   TextGenerationRuntimeToolMessage,
   TextGenerationRuntimeToolResultPart,
 } from "./text-generation-runtime-message-types.ts";
+import { assertProviderReachableAttachment } from "./attachment-reachability.ts";
 import { buildDataFileAnnotation } from "#veryfront/chat/types.ts";
 import { getTextFromParts, getToolArguments, type Message, type ToolCallPart } from "../types.ts";
 
@@ -209,6 +210,15 @@ function getUserFileParts(parts: Message["parts"]): TextGenerationRuntimeFilePar
     // `data:` URLs (inline base64) are kept so the model receives the bytes as a
     // native image/file part (guest / no-project attachments have no fetchable URL).
     if (!mediaType || !url) return [];
+
+    // The provider dereferences this URL from its own network. A URL that can
+    // never resolve there comes back as a bare 400 that names nothing, so it
+    // fails here instead, naming the attachment.
+    assertProviderReachableAttachment({
+      url,
+      filename: getStringPartField(part, "filename"),
+      mediaType,
+    });
 
     return [{
       type,
