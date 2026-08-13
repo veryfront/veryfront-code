@@ -24,7 +24,11 @@ import {
 	readDenoConfigSet,
 } from "./npm-dependency-sources.ts";
 import { buildExtensionPackages } from "./build-npm-extension-packages.ts";
-import { patchDntArgvPolyfill, patchDntDenoShim } from "./dnt-polyfill.ts";
+import {
+	patchDntArgvPolyfill,
+	patchDntCryptoShim,
+	patchDntDenoShim,
+} from "./dnt-polyfill.ts";
 import { normalizeNpmPackageMetadata } from "./npm-package-metadata.ts";
 import { assertNpmRuntimeHelperContract } from "./npm-runtime-helper-contract.ts";
 import { normalizeEsmShReactNpmShims } from "./npm-react-shims.ts";
@@ -238,6 +242,17 @@ await build({
 		// off a node:net server, which is null under Deno's node compatibility
 		// layer, so every command that binds a port died before starting.
 		await patchDntDenoShim(
+			"./npm/esm/_dnt.shims.js",
+			{ required: true },
+		);
+
+		// Both shims must be lazy, not just the Deno one. The esm transform
+		// rewrites each bare specifier into an absolute file:// bundle, and Deno
+		// cannot prepare that graph node when node_modules is unmanaged, which is
+		// what `deno install -g` writes (`nodeModulesDir: "manual"`). A single
+		// remaining static shim import keeps a globally installed CLI failing
+		// every request with "Loading unprepared module".
+		await patchDntCryptoShim(
 			"./npm/esm/_dnt.shims.js",
 			{ required: true },
 		);
