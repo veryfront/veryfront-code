@@ -23,12 +23,16 @@ branding, verification, or scope requirements.
 2. Add the exact callback URL for the target environment:
    - Production: `https://api.veryfront.com/oauth/callback/github`
    - Staging: `https://api.veryfront.org/oauth/callback/github`
-3. For another environment, copy the callback URL displayed by its Veryfront
-   OAuth connection flow. A GitHub OAuth App can serve more than one route only
-   when GitHub's host, port, and callback-path rules accept the route. The
-   hosted production and staging URLs above do not share a base host, so use
-   separate OAuth Apps for them.
-4. Set the OAuth app client ID and client secret as project environment variables:
+3. These are the hosted Veryfront provider-adapter callbacks. Do not replace
+   them with the `veryfront/oauth` framework callback path. A self-hosted
+   framework application instead registers its own `APP_URL` origin with
+   `/api/auth/github/callback`.
+4. For another hosted environment, copy the callback URL displayed by its
+   Veryfront OAuth connection flow. A GitHub OAuth App can serve more than one
+   route only when GitHub's host, port, and callback-path rules accept the
+   route. The hosted production and staging URLs above do not share a base host,
+   so use separate OAuth Apps for them.
+5. Set the OAuth app client ID and client secret as project environment variables:
 
 | Variable               | Value                          |
 | ---------------------- | ------------------------------ |
