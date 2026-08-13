@@ -1,0 +1,64 @@
+name: Client bundle report
+
+# Posts (and keeps updated) a sticky PR comment with the client-bundle boundary
+# report — module count, source size, and any server-module leaks per browser
+# entrypoint. This is the informational half of the #3670 gate; the hard
+# fail-fast check runs in the `ci (lint)` job via `deno task lint:client-bundle`.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: client-bundle-report-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  report:
+    # Same-repo PRs only: forks get a read-only token that cannot comment, and
+    # the repo already scopes CI to same-repo PRs.
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+      - name: Compute client bundle report
+        run: deno task client-bundle:report > client-bundle-report.md
+      - name: Post sticky PR comment
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require("fs");
+            const marker = "<!-- client-bundle-report -->";
+            const body = fs.readFileSync("client-bundle-report.md", "utf8");
+
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+            });
+            const existing = comments.data.find(
+              (c) => c.user.type === "Bot" && c.body.includes(marker),
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body,
+              });
+            }
