@@ -182,11 +182,11 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(result.response, undefined);
     });
 
-    it("does not treat *.production.veryfront.me as localhost", async () => {
+    it("does not treat *.production.localhost as localhost", async () => {
       const handler = new HMRHandler();
 
       const req = new Request("http://localhost:3000/_ws", {
-        headers: { host: "myproject.production.veryfront.me:3000" },
+        headers: { host: "myproject.production.localhost:3000" },
       });
       const ctx = {
         requestContext: { mode: "production" },
@@ -202,11 +202,11 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(result.response, undefined);
     });
 
-    it("does not treat *.staging.veryfront.me as localhost", async () => {
+    it("does not treat *.staging.localhost as localhost", async () => {
       const handler = new HMRHandler();
 
       const req = new Request("http://localhost:3000/_ws", {
-        headers: { host: "myproject.staging.veryfront.me:3000" },
+        headers: { host: "myproject.staging.localhost:3000" },
       });
       const ctx = {
         requestContext: { mode: "production" },
@@ -222,11 +222,11 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(result.response, undefined);
     });
 
-    it("does not treat unknown *.veryfront.me namespace as localhost", async () => {
+    it("does not treat unknown *.localhost namespace as localhost", async () => {
       const handler = new HMRHandler();
 
       const req = new Request("http://localhost:3000/_ws", {
-        headers: { host: "myproject.foobar.veryfront.me:3000" },
+        headers: { host: "myproject.foobar.localhost:3000" },
       });
       const ctx = {
         requestContext: { mode: "production" },
@@ -246,7 +246,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       const handler = new HMRHandler();
 
       const req = new Request("http://localhost:3000/_ws", {
-        headers: { host: "preview.veryfront.me:3000" },
+        headers: { host: "preview.localhost:3000" },
       });
       const ctx = {
         requestContext: { mode: "production" },
@@ -264,7 +264,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
     it("IGNORES x-forwarded-host when the request is NOT proxy-trusted (VULN-SRV-4)", async () => {
       // Without a trusted-proxy signal the handler MUST NOT honour x-forwarded-host
-      // — otherwise any remote client could claim `x-forwarded-host: preview.veryfront.me`
+      // — otherwise any remote client could claim `x-forwarded-host: preview.localhost`
       // and unlock HMR on a production deployment. The raw Host header ("internal.proxy")
       // is non-local, so the handler should decline.
       const handler = new HMRHandler();
@@ -272,7 +272,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       const req = new Request("http://internal.proxy:3000/_ws", {
         headers: {
           host: "internal.proxy:3000",
-          "x-forwarded-host": "preview.veryfront.me:3000",
+          "x-forwarded-host": "preview.localhost:3000",
         },
       });
       const ctx = {
@@ -298,7 +298,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       const req = new Request("http://internal.proxy:3000/_ws", {
         headers: {
           host: "internal.proxy:3000",
-          "x-forwarded-host": "preview.veryfront.me:3000",
+          "x-forwarded-host": "preview.localhost:3000",
           "x-veryfront-dispatch-jws": jws,
         },
       });
@@ -328,7 +328,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       const req = new Request("http://internal.proxy:3000/_ws", {
         headers: {
           host: "internal.proxy:3000",
-          "x-forwarded-host": "preview.veryfront.me:3000",
+          "x-forwarded-host": "preview.localhost:3000",
           "x-veryfront-dispatch-jws": "attacker-supplied.bogus.value",
         },
       });

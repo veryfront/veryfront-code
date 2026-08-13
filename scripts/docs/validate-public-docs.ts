@@ -193,11 +193,11 @@ const DEPLOY_ACCESS_COVERAGE: CoveragePage[] = [
 ];
 
 /**
- * `veryfront dev` prints `http://veryfront.me:<port>` and no other URL. Pages
+ * `veryfront dev` prints `http://localhost:<port>` and no other URL. Pages
  * that run the dev server and then tell the reader to open the app must name
  * that host, or the reader hits a banner that matches nothing in the doc.
  */
-const PRINTED_DEV_SERVER_URL = "http://veryfront.me:3000";
+const PRINTED_DEV_SERVER_URL = "http://localhost:3000";
 const DEV_SERVER_PAGES = [
   "docs/getting-started/quickstart.md",
   "docs/getting-started/create-project.md",

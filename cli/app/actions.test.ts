@@ -60,7 +60,7 @@ describe("app/actions", () => {
       const host = fakeHost();
       const result = await createLauncher(host).openInBrowser(LOCAL, 8080);
 
-      assertEquals(host.urls, ["http://alpha.veryfront.me:8080"]);
+      assertEquals(host.urls, ["http://alpha.localhost:8080"]);
       assertEquals(result.success, true);
     });
 

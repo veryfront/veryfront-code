@@ -84,7 +84,7 @@ export function createApp(config: AppConfig): App {
 
   state = updateServer({
     port: config.port,
-    url: `http://veryfront.me:${config.port}`,
+    url: `http://localhost:${config.port}`,
   })(state);
 
   state = updateMCP({
@@ -368,8 +368,8 @@ export function createApp(config: AppConfig): App {
     running = true;
 
     if (!isInteractiveMode) {
-      console.log(`Server running on http://veryfront.me:${config.port}`);
-      if (config.mcpPort) console.log(`MCP available at http://veryfront.me:${config.mcpPort}/mcp`);
+      console.log(`Server running on http://localhost:${config.port}`);
+      if (config.mcpPort) console.log(`MCP available at http://localhost:${config.mcpPort}/mcp`);
       return;
     }
 

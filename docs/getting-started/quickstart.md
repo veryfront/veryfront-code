@@ -81,11 +81,11 @@ The CLI prints the URL it is serving on:
 
 ```
   ✓ Ready in 1.3s
-  http://veryfront.me:3000
+  http://localhost:3000
 ```
 
-`veryfront.me` resolves to `127.0.0.1`, so
-[http://localhost:3000](http://localhost:3000) reaches the same server.
+`localhost` resolves to `127.0.0.1` on every machine without a DNS lookup, so
+[http://localhost:3000](http://localhost:3000) always reaches the dev server.
 
 The dev server uses port 3000 by default. You can also set the `PORT` env var
 instead of the flag; `veryfront dev` reads it as a lower-precedence default,
@@ -109,7 +109,7 @@ Use [Coding agents](../guides/coding-agents.md) for setup details.
 ## Verify it worked
 
 Open the URL `veryfront dev` printed. Unless the port moved, that is
-[http://veryfront.me:3000](http://veryfront.me:3000). Ask:
+[http://localhost:3000](http://localhost:3000). Ask:
 
 ```text
 What is 128 divided by 8?

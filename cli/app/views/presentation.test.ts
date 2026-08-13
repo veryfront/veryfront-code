@@ -21,11 +21,11 @@ describe("CLI app presentation", () => {
   it("renders dashboard status without a decorative box or mascot", () => {
     const state = updateServer({
       port: 3000,
-      url: "http://veryfront.me:3000",
+      url: "http://localhost:3000",
     })(createInitialState());
     const output = renderEmptyState(state);
 
-    assertStringIncludes(output, "http://veryfront.me:3000");
+    assertStringIncludes(output, "http://localhost:3000");
     assertEquals(output.includes("╭"), false);
     assertEquals(output.includes("╰"), false);
   });

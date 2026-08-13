@@ -101,7 +101,7 @@ Then start the dev server:
 npm run dev
 ```
 
-Open the URL the CLI prints, `http://veryfront.me:3000` by default, to see the
+Open the URL the CLI prints, `http://localhost:3000` by default, to see the
 page.
 
 For where the remaining files go, see
@@ -202,7 +202,7 @@ veryfront install --target agents
 
 Then run `veryfront dev`. It starts an HTTP MCP server two ports above the port
 the dev server actually bound, always at the path `/mcp`. With the default port
-3000 that is `http://veryfront.me:3002/mcp`, so point your MCP-aware coding
+3000 that is `http://localhost:3002/mcp`, so point your MCP-aware coding
 agent there.
 
 Read the port off the URL the dev server printed rather than off the `--port`
