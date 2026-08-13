@@ -58,7 +58,11 @@ Two artefacts that must stay 1:1:
   - `case-classify` — **no Salesforce access**. Tools: `search_knowledge`,
     `get_file`. Classifies against the checked-in `knowledge/case-triage-taxonomy.md`.
   - `case-dispose` — write. Tools: `salesforce__add_case_comment`,
-    `salesforce__update_case`. Sets **only** `Case.Reason` and posts a comment.
+    `salesforce__update_case`. Sets **only** `Case.Reason` and posts a comment —
+    but that scoping is **prompt-driven today**: the granted `update_case` can write
+    every writable Case field, so the boundary is instructed, not enforced. §5.2/§6
+    replace the grant with a field-scoped `update_case_reason` tool that makes it
+    structural.
 - **GitHub repo** `veryfront/agentic-case-processing` (currently private). Mirrors
   the four agents as `agents/*.ts`, ships the taxonomy in `knowledge/`, ships
   **evals** (`evals/*.eval.ts` + `evals/mock-tools.ts`), and runs locally via
@@ -329,9 +333,11 @@ dynamic-*enough* behaviour from three levers that need no new platform machinery
    **Caveat (security):** do *not* make the curated `update_case` passthrough —
    `case-dispose` is scoped to write only `Reason`, and a passthrough `update_case`
    would let it (and the connected user) write *every* writable Case field. A tool
-   is authorization, a prompt is not. Keep `case-dispose` on a field-scoped tool
-   (a narrow curated `update_case`, or a dedicated `update_case_reason`); reserve
-   passthrough for the generic tier under the §16 matrix. Trade-off: passthrough's
+   is authorization, a prompt is not. Give `case-dispose` a dedicated, field-scoped
+   `update_case_reason(caseId, Reason)` tool whose input schema admits **no other
+   field**, and reserve passthrough for the generic tier under the §16 matrix. An
+   input-schema authorization test (§6) proves the scoping — a prompt cannot.
+   Trade-off: passthrough's
    looser JSON Schema gives the LLM less guidance — mitigate with a strong tool
    `description` and a describe preflight.
 3. **Describe-driven preflight.** Before a write, the agent learns *this org's*
@@ -358,9 +364,20 @@ readability.
 
 **Tier 1 — Curated triage happy path (keep, ergonomic wrappers):**
 `find_customer`, `list_cases`, `get_case`, `list_case_activity`,
-`add_case_comment`, `update_case` (now incl. `Type`, and passthrough), plus
-`search_accounts`, `get_account`, `search_contacts`, `get_contact`,
-`list_opportunities`, `create_case`, `create_lead`.
+`add_case_comment`, `update_case` (**field-scoped**; incl. `Type` per #3638 —
+**not** passthrough, §5.2), `update_case_reason` (writes `Case.Reason` only — the
+sole write tool granted to `case-dispose`), plus `search_accounts`, `get_account`,
+`search_contacts`, `get_contact`, `list_opportunities`, `create_case`,
+`create_lead`.
+
+**Caveat — `create_case` static picklist defaults.** The curated `create_case`
+still hard-defaults `Status = "New"` and `Origin = "Web"` (`connector.json`,
+unchanged by #3638). On an org that restricts those picklists — or scopes them by
+record type — a blind `New`/`Web` write fails, contradicting the describe-first
+rule (§5.3, §A.1 rule 2). Drop both defaults so Salesforce applies the org default
+when the field is omitted (or make `get_picklist_values` preflight mandatory before
+create), and add a restricted-picklist fixture proving create succeeds without
+assumed values.
 
 **Tier 2 — Universal escape hatches (keep):** `describe_object`,
 `run_soql_query`. Add **`get_picklist_values`** (describe filtered to picklist
@@ -376,11 +393,17 @@ specified but **deferred out of v1** until per-CRUD Delete enforcement is live.
 | | Tools | Count |
 | --- | --- | --- |
 | **Existing** (curated + escape) | the 16 in `connector.json` today | 16 |
-| **Add — helpers** | `get_picklist_values`, `search` (SOSL) | +2 |
+| **Add — helpers** | `update_case_reason` (`Reason`-only `case-dispose` write), `get_picklist_values`, `search` (SOSL) | +3 |
 | **Add — generic CRUD (v1)** | `get_record`, `create_record`, `update_record`, `upsert_record` | +4 |
 | **Add — generic CRUD (deferred)** | `delete_record` (pending Delete enforcement) | +1 |
-| **v1 total** | | **22** |
+| **v1 total** | | **23** |
 | **Optional curated wrappers** | `create_contact`, `update_account`, `create/update_opportunity`, `create_task`, `convert_lead` — sugar, not counted in core | — |
+
+**Authorization tests (acceptance gate).** Every least-privilege grant needs an
+input-schema test, because the schema *is* the authorization boundary:
+`update_case_reason`'s schema must reject any body key other than `caseId`/`Reason`
+(so `case-dispose` cannot write `Status`/`OwnerId`/etc. even when prompted to), and
+each generic CRUD tool must be denied for an un-granted `sobjectType` (§16).
 
 Coverage of the standard objects a "get-going" support/CRM demo needs:
 Account, Contact, Lead, Case, CaseComment, Opportunity — plus User/Group (owner &
@@ -733,9 +756,22 @@ Full `create_record` entry:
 params above; `get_record` takes an optional `fields` query param to trim the
 response. Two additional non-CRUD tools complete the surface:
 
-- **`get_picklist_values`** — a thin wrapper over `describe_object` returning only
-  `fields[].picklistValues` for a `sobjectType` (+ optional record type), so writes
-  can validate restricted fields before sending (§4.2, §5.3).
+- **`get_picklist_values`** — returns the picklist values *applicable to a write*,
+  which is **record-type-scoped**, not the object-wide set. Object `describe` only
+  exposes each field's full `fields[].picklistValues`; the values actually valid for
+  a given record type come from the UI API. Contract:
+  - **Inputs:** `sobjectType` (required); `recordTypeId` (optional — defaults to the
+    connected profile's default record type for that object); `field` (optional —
+    filter to one picklist field, e.g. `Reason`).
+  - **Endpoint:** `GET /services/data/v61.0/ui-api/object-info/{sobjectType}/picklist-values/{recordTypeId}/{fieldApiName}`
+    (per field), or the `object-info` form for all fields; fall back to
+    `describe_object` `fields[].picklistValues` **only** when the org has no record
+    types for the object.
+  - **Response:** `{ sobjectType, field, recordTypeId, values: [{ label, value, active, validFor }] }`
+    — `value` (the API name) is what a write must send.
+  - **Test:** a record type whose allowed `Reason`/`Status` set is a strict subset of
+    the object-wide set, asserting the tool returns the record-type set, not the
+    superset (§4.1, §5.3, §A.5).
 - **`search`** (SOSL) — `GET /search/?q=FIND {…} IN ALL FIELDS …` for cross-object
   keyword lookup, distinct from the SOQL that `find_customer` uses.
 
