@@ -206,6 +206,8 @@ export class InMemoryDeployControlPlane implements DeployControlPlane {
    * back to synthesising the `{slug}.{environment}.veryfront.com` hosted URL.
    */
   environmentDomains: string[] = ["https://my-project.production.veryfront.com"];
+  /** Whether the default environment sits behind the platform access gate. */
+  environmentProtected = false;
   releaseVersion: string | null = "2026.07.30-1";
   releaseProjectId = PROJECT_ID;
   releaseFiles: DeployReleaseFile[] = [
@@ -232,7 +234,7 @@ export class InMemoryDeployControlPlane implements DeployControlPlane {
     return {
       id: ENVIRONMENT_ID,
       name,
-      protected: false,
+      protected: this.environmentProtected,
       projectId: PROJECT_ID,
       deployment: this.deploymentReadCount > 0 && this.deployment && this.release
         ? {

@@ -127,6 +127,12 @@ follows the domain rather than the name. Deploy rejects an environment that has
 neither a hosted name nor a custom domain before it creates a release, so the
 failure costs one API call rather than a full deployment.
 
+That check needs a page to probe, so it applies to projects serving at least one
+static page route. A project that serves only API routes or an agent has no page
+address to verify, so it deploys under any environment name. The address printed
+on success is still synthesised from the environment name, so on a name Veryfront
+does not host it will not resolve until you attach a custom domain.
+
 For an existing nonproduction environment named `staging`:
 
 ```bash

@@ -107,7 +107,7 @@ export type DeployEvent =
   }
   | {
     kind: "warning";
-    code: "routing-convergence-unconfirmed";
+    code: "routing-convergence-unconfirmed" | "environment-url-unverified";
     message: string;
   };
 
@@ -1035,10 +1035,25 @@ async function cancelResponseBody(response: Response): Promise<void> {
   }
 }
 
+/**
+ * What the readiness step actually established about the environment URL.
+ *
+ * `served` is the only outcome in which the app itself was observed answering.
+ * A protected environment challenges an unauthenticated probe at the access
+ * gate, and this CLI cannot get past that gate holding an API key rather than a
+ * session, so `gated` means routing resolves and nothing more: the app behind
+ * it may be answering 503 to every signed-in visitor. Reporting the two the
+ * same way is what lets a broken deployment finish with a green tick.
+ */
+export type EnvironmentReadiness =
+  | Readonly<{ kind: "served" }>
+  | Readonly<{ kind: "unprobed" }>
+  | Readonly<{ kind: "gated"; url: string; status: number }>;
+
 export async function waitForEnvironmentReady(
   target: EnvironmentReadinessTarget,
   options: { pollIntervalMs?: number; timeoutMs?: number } = {},
-): Promise<void> {
+): Promise<EnvironmentReadiness> {
   const pollIntervalMs = options.pollIntervalMs === undefined ||
       !Number.isFinite(options.pollIntervalMs)
     ? DEFAULT_ENVIRONMENT_POLL_INTERVAL_MS
@@ -1047,7 +1062,11 @@ export async function waitForEnvironmentReady(
     ? DEFAULT_ENVIRONMENT_TIMEOUT_MS
     : Math.max(1, Math.trunc(options.timeoutMs));
   const deadline = Date.now() + timeoutMs;
-  for (const probe of buildEnvironmentReadinessProbes(target)) {
+  const probes = buildEnvironmentReadinessProbes(target);
+  let servedBy: EnvironmentReadiness | null = null;
+  let gatedBy: EnvironmentReadiness | null = null;
+
+  for (const probe of probes) {
     const headers = new Headers({ "Cache-Control": "no-cache" });
     if (probe.authenticate) {
       headers.set("Cookie", `authToken=${target.apiToken}`);
@@ -1073,12 +1092,19 @@ export async function waitForEnvironmentReady(
         const authenticationChallenge = signInRedirect ||
           response.status === 401 ||
           response.status === 403;
-        const ready = response.status >= 200 && response.status < 300 ||
-          response.status >= 300 && response.status < 400 && !signInRedirect ||
-          probe.acceptAuthenticationChallenge && authenticationChallenge;
+        const served = response.status >= 200 && response.status < 300 ||
+          response.status >= 300 && response.status < 400 && !signInRedirect;
+        const gated = !served && probe.acceptAuthenticationChallenge && authenticationChallenge;
+        const ready = served || gated;
         await cancelResponseBody(response);
 
-        if (ready) break;
+        if (ready) {
+          if (served) servedBy = { kind: "served" };
+          else if (gated && !gatedBy) {
+            gatedBy = { kind: "gated", url: probe.url, status: response.status };
+          }
+          break;
+        }
         if (authenticationChallenge) {
           // A bare Error here reaches the operator as `unknown-error`.
           throw DEPLOYMENT_ERROR.create({
@@ -1107,6 +1133,51 @@ export async function waitForEnvironmentReady(
       await wait(Math.min(pollIntervalMs, remainingMs));
     }
   }
+
+  // Order matters: one probe seeing the app answer outweighs another that only
+  // reached the gate. With no probe at all, or, unreachably, a loop that neither
+  // broke nor threw, the honest answer is that nothing was checked, never that
+  // the app served.
+  if (servedBy) return servedBy;
+  if (gatedBy) return gatedBy;
+  return { kind: "unprobed" };
+}
+
+/**
+ * The remedy that actually changes the probe credential for this token source.
+ *
+ * `veryfront login` only helps when nothing outranks the stored session.
+ * `resolveApiTokenForMode` in `cli/shared/config.ts` resolves a shell
+ * `VERYFRONT_API_TOKEN` and a `veryfront.json` `apiToken` ahead of the token
+ * store, so for those two sources signing in leaves the next deploy gated the
+ * same way. Naming the overriding key is the only step an operator can act on.
+ */
+function getProbeCredentialRemedy(source: ResolvedConfig["apiTokenSource"]): string {
+  if (source === "env") {
+    return "VERYFRONT_API_TOKEN is set in this shell and is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or unset that variable, run veryfront login, and deploy again, to confirm the app responds.";
+  }
+  if (source === "config-file") {
+    return "The apiToken in veryfront.json is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or remove that token, run veryfront login, and deploy again, to confirm the app responds.";
+  }
+  return "Open the URL signed in, or run veryfront login and deploy again, to confirm the app responds.";
+}
+
+/**
+ * The signal a deploy owes an operator when it never saw the app answer.
+ *
+ * Failing here is wrong, because the deployment is committed and verified, and
+ * a protected environment challenging an API key is the expected case for CI.
+ * Reporting it as a verified URL is what let a permanently-503 app deploy with
+ * a green tick and no signal at all.
+ */
+function getEnvironmentUrlWarning(
+  readiness: EnvironmentReadiness,
+  apiTokenSource: ResolvedConfig["apiTokenSource"],
+): string | null {
+  if (readiness.kind !== "gated") return null;
+  return `Deployment committed, but ${readiness.url} was never observed serving this app: the access gate answered HTTP ${readiness.status} and this CLI has no session credential to probe past it. ${
+    getProbeCredentialRemedy(apiTokenSource)
+  }`;
 }
 
 function getDeploymentRoutingConvergenceWarning(deployment: DeployDeployment): string | null {
@@ -1130,6 +1201,7 @@ function createDeployResult({
   environment,
   deployment,
   environmentUrl,
+  readiness,
   config,
   branch,
 }: {
@@ -1138,6 +1210,7 @@ function createDeployResult({
   environment: DeployEnvironment;
   deployment: DeployDeployment;
   environmentUrl: string;
+  readiness: EnvironmentReadiness;
   config: ResolvedConfig;
   branch: string;
 }): DeployResult {
@@ -1153,6 +1226,7 @@ function createDeployResult({
     environmentId: verification.environmentId,
     deploymentId: verification.deploymentId,
     url: environmentUrl,
+    urlVerification: readiness.kind,
     protected: environment.protected,
     routingConvergence: deployment.routingConvergence as DeploymentRoutingConvergence | undefined ??
       null,
@@ -1389,18 +1463,31 @@ export function createDeployProject(options: {
         buildEnvironmentUrl(verification.projectSlug, environment),
         readinessRoute,
       );
-      await step(observer, "wait-environment-url", async () =>
-        waitForEnvironmentReady({
-          projectSlug: verification.projectSlug,
-          environmentName: environment.name,
-          url: environmentUrl,
-          route: readinessRoute,
-          protected: environment.protected,
-          apiToken: config.apiToken,
-        }, {
-          pollIntervalMs: polling.environmentPollIntervalMs,
-          timeoutMs: polling.environmentTimeoutMs,
-        }));
+      const readiness = await step(
+        observer,
+        "wait-environment-url",
+        async () =>
+          waitForEnvironmentReady({
+            projectSlug: verification.projectSlug,
+            environmentName: environment.name,
+            url: environmentUrl,
+            route: readinessRoute,
+            protected: environment.protected,
+            apiToken: config.apiToken,
+          }, {
+            pollIntervalMs: polling.environmentPollIntervalMs,
+            timeoutMs: polling.environmentTimeoutMs,
+          }),
+      );
+
+      const urlWarning = getEnvironmentUrlWarning(readiness, config.apiTokenSource);
+      if (urlWarning) {
+        await emit(observer, {
+          kind: "warning",
+          code: "environment-url-unverified",
+          message: urlWarning,
+        });
+      }
 
       const warning = getDeploymentRoutingConvergenceWarning(deployment);
       if (warning) {
@@ -1419,6 +1506,7 @@ export function createDeployProject(options: {
           environment,
           deployment,
           environmentUrl,
+          readiness,
           config,
           branch,
         }),
