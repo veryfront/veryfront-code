@@ -1,4 +1,5 @@
 import { isCspReportRequest } from "#veryfront/security/http/csp-report-endpoint.ts";
+import { isPlatformLivenessProbe } from "#veryfront/security/http/platform-liveness-probe.ts";
 import {
   isSignedChannelDispatch,
   isSignedControlPlaneDispatch,
@@ -167,10 +168,23 @@ export class AuthHandler extends BaseHandler {
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (req.method.toUpperCase() === "OPTIONS") return Promise.resolve(this.continue());
 
+    const pathname = new URL(req.url).pathname;
+
+    // The orchestrator's own liveness and readiness probes are not site
+    // visitors, and a project that gates them takes its site offline rather
+    // than protecting it. See `isPlatformLivenessProbe` for why exempting them
+    // discloses nothing.
+    //
+    // This sits ahead of `resolveAuth` for the same reason the CSP report
+    // exemption does: an auth config the runtime cannot resolve still fails
+    // closed for every browser request, but a project's config typo must not
+    // fail the readiness probe and pull the pod out of service.
+    if (isPlatformLivenessProbe(req.method, pathname)) return Promise.resolve(this.continue());
+
     // Same reasoning as the CSRF gate: a browser reports a violation without
     // credentials, so a protected project would collect nothing. See
     // `isCspReportRequest` for why exempting it discloses nothing.
-    if (isCspReportRequest(req.method, new URL(req.url).pathname)) {
+    if (isCspReportRequest(req.method, pathname)) {
       return Promise.resolve(this.continue());
     }
 

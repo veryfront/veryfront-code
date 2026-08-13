@@ -483,6 +483,100 @@ describe("DeployProject", () => {
     });
   });
 
+  /**
+   * The readiness probe cannot get past a protected environment's access gate
+   * without a session credential, so a gate challenge is all it ever sees. The
+   * app behind the gate can be answering 503 to every signed-in visitor and
+   * this step still completes, which is correct, because the deployment is
+   * already committed and verified, and wrong to report as a verified URL.
+   * Deploy has to say which of the two it established.
+   */
+  it("warns that the environment URL was never observed serving behind its gate", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      controlPlane.environmentProtected = true;
+      const events: DeployEvent[] = [];
+      try {
+        const outcome = await withFetchStub(
+          // What a signed-out caller gets: the gate, never the dead app.
+          () =>
+            new Response(null, {
+              status: 302,
+              headers: { location: "https://veryfront.com/sign-in" },
+            }),
+          () =>
+            createDeployment(controlPlane).execute({
+              projectDir,
+              environment: "production",
+              mode: "apply",
+              source: { kind: "already-pushed" },
+            }, {
+              onEvent(event) {
+                events.push(event);
+              },
+            }),
+        );
+
+        assertEquals(outcome.kind, "deployed");
+        const warning = events.find((event) =>
+          event.kind === "warning" && event.code === "environment-url-unverified"
+        );
+        assertEquals(
+          warning?.kind === "warning" ? warning.code : "no warning emitted",
+          "environment-url-unverified",
+        );
+        assertStringIncludes(
+          warning?.kind === "warning" ? warning.message : "",
+          "https://my-project.production.veryfront.com/",
+        );
+        // The remedy has to be one the caller can act on. This deploy resolved
+        // VERYFRONT_API_TOKEN from the shell, which outranks the token store,
+        // so "run veryfront login" alone would leave the next deploy gated the
+        // same way.
+        assertStringIncludes(
+          warning?.kind === "warning" ? warning.message : "",
+          "VERYFRONT_API_TOKEN is set in this shell",
+        );
+        assertEquals(
+          outcome.kind === "deployed" ? outcome.result.urlVerification : undefined,
+          "gated",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("records the environment URL as served when the probe sees the app answer", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      const events: DeployEvent[] = [];
+      try {
+        const outcome = await executeApply(projectDir, controlPlane, {
+          onEvent(event) {
+            events.push(event);
+          },
+        });
+
+        assertEquals(outcome.kind, "deployed");
+        assertEquals(
+          events.some((event) =>
+            event.kind === "warning" && event.code === "environment-url-unverified"
+          ),
+          false,
+        );
+        assertEquals(
+          outcome.kind === "deployed" ? outcome.result.urlVerification : undefined,
+          "served",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
   it("awaits async observer events before starting the next deployment step", async () => {
     await withDeployEnv(async () => {
       const { projectDir } = await createPushedProject();
@@ -772,6 +866,48 @@ describe("environment URL readiness", () => {
           apiToken: apiKeyToken,
         }),
     );
+  });
+
+  it("reports a gate challenge as gated, not as the app serving", async () => {
+    const readiness = await withMockFetch(
+      () =>
+        Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://veryfront.com/sign-in" },
+          }),
+        ),
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          protected: true,
+          apiToken: apiKeyToken,
+        }),
+    );
+
+    assertEquals(readiness, {
+      kind: "gated",
+      url: "https://my-project.production.veryfront.com/",
+      status: 302,
+    });
+  });
+
+  it("reports a served response when the probe reaches the app itself", async () => {
+    const readiness = await withMockFetch(
+      () => Promise.resolve(new Response("ready")),
+      () => waitForEnvironmentReady(hostedTarget),
+    );
+
+    assertEquals(readiness, { kind: "served" });
+  });
+
+  it("reports an unprobed environment when there is no page route to check", async () => {
+    const readiness = await withMockFetch(
+      () => Promise.reject(new Error("readiness must not fetch without a route")),
+      () => waitForEnvironmentReady({ ...hostedTarget, route: null }),
+    );
+
+    assertEquals(readiness, { kind: "unprobed" });
   });
 
   it("classifies a rejected session credential as a deployment error", async () => {
