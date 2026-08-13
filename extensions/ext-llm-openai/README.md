@@ -18,11 +18,11 @@ export default defineConfig({
 
 ## Environment Variables
 
-| Variable                                              | Required | Description                                                                                                          |
-| ----------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
-| `OPENAI_API_KEY`                                      | Yes      | Your OpenAI API key.                                                                                                 |
-| `OPENAI_BASE_URL`                                     | No       | Override the API base URL (for Azure OpenAI, self-hosted gateways, or OpenAI-compatible providers like Moonshot AI). |
-| `VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS`    | Local    | Exact internal provider origins the host permits, without API paths.                                                 |
+| Variable                                           | Required | Description                                                                                                          |
+| -------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
+| `OPENAI_API_KEY`                                   | Yes      | Your OpenAI API key.                                                                                                 |
+| `OPENAI_BASE_URL`                                  | No       | Override the API base URL (for Azure OpenAI, self-hosted gateways, or OpenAI-compatible providers like Moonshot AI). |
+| `VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS` | Local    | Exact internal provider origins the host permits, without API paths.                                                 |
 
 ## Usage
 
