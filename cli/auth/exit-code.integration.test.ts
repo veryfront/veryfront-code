@@ -9,7 +9,7 @@ import { makeTempDir, remove } from "#veryfront/platform/compat/fs.ts";
  * shell scripts, and agents gate on them. These tests drive the real CLI entry
  * point in a subprocess so the assertion is on the process exit code itself.
  */
-describe("cli/auth exit codes", { sanitizeOps: false, sanitizeResources: false }, () => {
+describe("cli/auth exit codes", () => {
   const cliPath = fromFileUrl(new URL("../main.ts", import.meta.url));
   const configPath = fromFileUrl(new URL("../../deno.json", import.meta.url));
 
@@ -69,6 +69,11 @@ describe("cli/auth exit codes", { sanitizeOps: false, sanitizeResources: false }
 
     assertEquals(result.code, 1);
   });
+
+  // `login --provider anthropic|openai` also exits 1 on failure (see cli/router.ts),
+  // but it cannot be driven from here: `promptPassword` calls `Deno.stdin.setRaw()`,
+  // which throws ENODEV on a non-TTY stdin. A subprocess test would exit 1 from that
+  // crash rather than from the failure path, and would pass with the fix reverted.
 
   it("whoami still exits zero when a credential validates", async () => {
     const server = Deno.serve(
