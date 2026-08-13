@@ -7,12 +7,33 @@ import { getSkillInfo, listSkills } from "./command.ts";
 describe("Skills Command", () => {
   const repositoryRoot = fromFileUrl(new URL("../../../", import.meta.url));
 
+  /**
+   * Run the CLI the way these tests mean to read it: `--quiet` so the child's
+   * stderr carries the command's output and nothing else.
+   *
+   * Without it the stderr assertions below are not only about the CLI. A child
+   * whose dependencies are not all present locally first resolves them --
+   * `nodeModulesDir` is `auto`, so it reconciles `node_modules/` against
+   * `cli/main.ts`'s graph -- and it narrates that work on stderr: `Download
+   * https://registry.npmjs.org/yaml`. Nothing in this repository's CI puts
+   * `yaml` where the child would find it. The cache is warmed from
+   * `src/index.ts`, and `yaml` reaches the CLI only through `cli/main.ts` (via
+   * `@opentelemetry/configuration` and `bash-tool`), so it is in neither the
+   * warmed blob nor the test process's own graph; whether a shard paid for the
+   * fetch came down to which cache entry the runner happened to restore. That
+   * is why this file failed on pull requests that cannot reach this code.
+   *
+   * `--quiet` suppresses only the runtime's own diagnostics. Anything the CLI
+   * writes to stderr still arrives -- `veryfront skills info` with no name and
+   * no `--json` still reports `✗ Usage: veryfront skills info <name>` under it
+   * -- so the assertions still hold the command to a silent stderr.
+   */
   async function runSkillsInfo(
     args: string[],
   ): Promise<{ code: number; stdout: string; stderr: string }> {
     const cliPath = fromFileUrl(new URL("../../main.ts", import.meta.url));
     const result = await new Deno.Command(Deno.execPath(), {
-      args: ["run", "-A", cliPath, "skills", "info", ...args, "--json"],
+      args: ["run", "-A", "--quiet", cliPath, "skills", "info", ...args, "--json"],
       cwd: repositoryRoot,
       env: { VERYFRONT_NO_UPDATE_CHECK: "1", NO_COLOR: "1" },
       stdin: "null",
