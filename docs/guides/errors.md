@@ -1,7 +1,7 @@
 ---
 title: "Error reference"
 description: "Every error the Veryfront CLI, server, and logs can report, with what it means and what to do next."
-order: 46
+order: 48
 ---
 
 Veryfront reports errors with a stable slug, such as `port-in-use`. The CLI, the

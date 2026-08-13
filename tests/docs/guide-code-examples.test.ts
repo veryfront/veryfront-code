@@ -91,6 +91,8 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "chat-ui.md",
   "cli-knowledge-ingestion.md",
   "coding-agents.md",
+  "cloud-environment-access.md",
+  "cloud-quickstart.md",
   "create-agent.md",
   "deploy-from-ci.md",
   "deploying.md",
@@ -98,7 +100,6 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "extension-authoring.md",
   "extensions.md",
   "head-and-seo.md",
-  "index.md",
   "installation.md",
   "create-frontend.md",
   "create-project.md",
@@ -115,6 +116,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "schedule.md",
   "webhook.md",
   "security-headers.md",
+  "self-hosting.md",
   "skills.md",
   "storybook-ui-workbench.md",
   "tasks.md",
@@ -251,26 +253,6 @@ describe("Guide: agent-service-runtime.md", () => {
 
     const handler = createAgUiHandler("assistant");
     assertEquals(typeof handler, "function");
-  });
-});
-
-describe("Guide: index.md", () => {
-  it("documents the CLI and coding-agent workflow from the overview", async () => {
-    const guide = await readGuide("index.md");
-
-    for (
-      const snippet of [
-        "npm create veryfront",
-        "cd <PROJECT_NAME>",
-        "veryfront dev",
-        "veryfront generate <type> <name>",
-        "veryfront schema --json",
-        "AGENTS.md",
-        "vf_bootstrap",
-      ]
-    ) {
-      assertStringIncludes(guide, snippet);
-    }
   });
 });
 
@@ -1061,21 +1043,67 @@ describe("Guide: create-frontend.md", () => {
 });
 
 describe("Guide: deploy-project.md", () => {
-  it("documents the build, serve, deploy, and open sequence", async () => {
+  it("documents the focused Push, Deploy, and open sequence", async () => {
     const guide = await readGuide("deploy-project.md");
 
     for (
       const command of [
-        "veryfront build",
-        "veryfront serve",
+        "veryfront login",
+        "npx veryfront@latest push",
         "npx veryfront@latest deploy",
-        "npx veryfront@latest push --branch feature-x",
-        "veryfront open",
+        "veryfront open --site",
       ]
     ) {
       assertStringIncludes(guide, command);
     }
     assertEquals(guide.includes("veryfront start"), false);
+  });
+});
+
+describe("Guide: cloud-quickstart.md", () => {
+  it("keeps the gateway tutorial on one runnable command sequence", async () => {
+    const guide = await readGuide("cloud-quickstart.md");
+
+    for (
+      const command of [
+        "npm create veryfront@latest support-agent -- --template ai-agent",
+        "npx veryfront@latest login",
+        "npx veryfront@latest push",
+        "npm run dev",
+        "npm run eval -- assistant",
+        "npx veryfront@latest deploy --env production",
+      ]
+    ) {
+      assertStringIncludes(guide, command);
+    }
+  });
+});
+
+describe("Guide: self-hosting.md", () => {
+  it("documents a complete container path without Cloud commands", async () => {
+    const guide = await readGuide("self-hosting.md");
+
+    for (
+      const command of [
+        "veryfront build",
+        "veryfront serve",
+        "docker build -t veryfront-app .",
+        "docker run --rm -p 3000:3000 --env-file .env veryfront-app",
+      ]
+    ) {
+      assertStringIncludes(guide, command);
+    }
+    assertEquals(guide.includes("veryfront login"), false);
+  });
+});
+
+describe("Guide: cloud-environment-access.md", () => {
+  it("probes a concrete route and documents both sign-in apexes", async () => {
+    const guide = await readGuide("cloud-environment-access.md");
+
+    assertStringIncludes(guide, "<environment-url>/<route>");
+    assertStringIncludes(guide, "https://veryfront.com/sign-in");
+    assertStringIncludes(guide, "https://veryfront.org/sign-in");
   });
 });
 

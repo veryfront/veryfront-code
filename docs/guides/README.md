@@ -29,6 +29,9 @@ A page does not belong here when it is:
 - A duplicate of an existing guide with a different framing. Merge it into the
   existing guide instead.
 
+Keep self-hosting, Veryfront Cloud deployment, and Cloud environment access in
+separate guides. They serve different user goals and prerequisites.
+
 ## Page shape
 
 Use this structure:

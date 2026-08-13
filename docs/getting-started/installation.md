@@ -1,7 +1,7 @@
 ---
 title: "Installation"
 description: "Install Veryfront Code on macOS, Linux, or Windows."
-order: 2
+order: 3
 ---
 
 ## Requirements
