@@ -18,4 +18,15 @@ describe("Alert", () => {
       "dark alerts should keep the dark theme foreground on the dark error surface",
     );
   });
+
+  it("maps each variant to its fill + border token pair", () => {
+    const variants = ["default", "warning", "error", "success"] as const;
+    const tokenFor = { default: "info", warning: "warning", error: "error", success: "success" };
+    for (const variant of variants) {
+      const html = renderToString(<Alert variant={variant}>hi</Alert>);
+      const token = tokenFor[variant];
+      assertStringIncludes(html, `bg-[var(--alert-${token}-bg)]`);
+      assertStringIncludes(html, `border-[var(--alert-${token}-border)]`);
+    }
+  });
 });

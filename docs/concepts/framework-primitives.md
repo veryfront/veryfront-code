@@ -41,7 +41,7 @@ response. A task can run slow background work. An agent can reason about a
 user-facing decision. A skill can give the agent task-specific instructions.
 
 This keeps the project understandable. The app owns entry points. Agents own
-model decisions. Tools own deterministic actions. Tasks own background targets.
+model decisions. Tools own callable actions. Tasks own background targets.
 Evals own quality measurement. Workflows own automation logic. Runs own
 durable execution. Extensions own replaceable runtime infrastructure.
 

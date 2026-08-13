@@ -16,6 +16,7 @@ import type { Agent, AgentResponse, AgentStreamResult } from "../types.ts";
 // Side-effect import: registers the globalThis bridges
 import { agentAsTool, agentRegistry, registerAgent } from "./composition.ts";
 import { createInvokeAgentTool } from "../runtime/agent-delegation.ts";
+import { parseInvokeAgentStreamValue } from "#veryfront/chat/invoke-agent-stream.ts";
 
 const BRIDGE_KEYS = ["__vfGetAgent", "__vfRegisterAgent", "__vfGetAllAgentIds"] as const;
 
@@ -278,6 +279,86 @@ describe("agentAsTool", () => {
         },
       },
     ]);
+  });
+
+  it("attaches the child agent's name and avatar to every published event", async () => {
+    const childResponse: AgentResponse = {
+      text: "streamed child result",
+      messages: [],
+      toolCalls: [],
+      status: "completed",
+    };
+    const childAgent = createMinimalAgent("case-ingest");
+    childAgent.config.name = "Intake Bot";
+    childAgent.config.avatarUrl = "https://cdn.example.com/agents/case-ingest.png";
+    childAgent.stream = (input) => {
+      input.onFinish?.(childResponse);
+      return Promise.resolve({
+        toDataStreamResponse() {
+          return new Response(
+            [
+              'data: {"type":"message-start","messageId":"child-message"}',
+              'data: {"type":"text-delta","id":"child-text","delta":"Fetching cases"}',
+              "",
+            ].join("\n\n"),
+            { headers: { "Content-Type": "text/event-stream" } },
+          );
+        },
+      });
+    };
+    const published: unknown[] = [];
+    const tool = createInvokeAgentTool({ resolveAgent: () => childAgent });
+
+    await tool.execute(
+      { agent_id: "case-ingest", description: "Run case ingest", prompt: "Fetch", context: {} },
+      {
+        toolCallId: "parent-tool-call",
+        publishDataEvent: (event) => {
+          published.push(event.value);
+        },
+      },
+    );
+
+    // The card header must show the child's identity while it runs, so the
+    // identity rides along with the first event, not just the last.
+    assertEquals(published.length, 2);
+    for (const value of published) {
+      const parsed = parseInvokeAgentStreamValue(value);
+      assertEquals(parsed?.agentName, "Intake Bot");
+      assertEquals(parsed?.avatarUrl, "https://cdn.example.com/agents/case-ingest.png");
+    }
+  });
+
+  it("falls back to the deprecated snake_case avatar field", async () => {
+    const childAgent = createMinimalAgent("case-ingest");
+    childAgent.config.avatar_url = "https://cdn.example.com/legacy.png";
+    childAgent.stream = (input) => {
+      input.onFinish?.({ text: "ok", messages: [], toolCalls: [], status: "completed" });
+      return Promise.resolve({
+        toDataStreamResponse() {
+          return new Response('data: {"type":"message-start","messageId":"child-message"}\n\n', {
+            headers: { "Content-Type": "text/event-stream" },
+          });
+        },
+      });
+    };
+    const published: unknown[] = [];
+    const tool = createInvokeAgentTool({ resolveAgent: () => childAgent });
+
+    await tool.execute(
+      { agent_id: "case-ingest", description: "Run case ingest", prompt: "Fetch", context: {} },
+      {
+        toolCallId: "parent-tool-call",
+        publishDataEvent: (event) => {
+          published.push(event.value);
+        },
+      },
+    );
+
+    assertEquals(
+      parseInvokeAgentStreamValue(published.at(0))?.avatarUrl,
+      "https://cdn.example.com/legacy.png",
+    );
   });
 
   it("does not publish child events for fixed agent wrappers", async () => {

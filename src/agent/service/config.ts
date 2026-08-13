@@ -101,7 +101,9 @@ const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
       64_000,
     ),
     VERYFRONT_CONTEXT_COMPACTION_SUMMARY_MODEL: v.string().min(1).optional(),
-    ALLOWED_ORIGINS: v.string().default("http://localhost:3000,http://veryfront.me:3000"),
+    // One default entry: the dev server has a single printed origin, and the
+    // former second entry was an alias of this same loopback origin.
+    ALLOWED_ORIGINS: v.string().default("http://localhost:3000"),
     OTEL_ENABLED: booleanFlagSchema,
     OTEL_EXPORTER_OTLP_ENDPOINT: v.string().optional(),
   }).transform((env) => ({

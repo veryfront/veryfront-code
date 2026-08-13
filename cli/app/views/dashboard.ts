@@ -68,7 +68,7 @@ function renderStatus(state: AppState): string {
   const lines = [`  ✓ Server ready at ${brand(state.server.url)}`];
 
   if (state.mcp.enabled && state.mcp.transport === "http" && state.mcp.httpPort !== undefined) {
-    lines.push(`  ✓ MCP ready at ${brand(`http://veryfront.me:${state.mcp.httpPort}/mcp`)}`);
+    lines.push(`  ✓ MCP ready at ${brand(`http://localhost:${state.mcp.httpPort}/mcp`)}`);
   }
 
   const { errors, warnings } = state.server;

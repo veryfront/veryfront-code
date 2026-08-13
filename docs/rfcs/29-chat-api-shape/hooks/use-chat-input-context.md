@@ -2,7 +2,20 @@
 
 Reads the scoped composer state provided by the nearest `ChatInput` (via `ChatInputContextProvider`).
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - partly landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `useChatInputContext`, `useChatInputContextOptional`, `ChatInputContextProvider`, `ChatInputContextValue`
+> - **Not exported today:** none
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+
+## Landed so far
+
+### `useChatInputContext` - `new` - `shipped` (src/react/components/chat/chat/contexts/composer-context.tsx:83)
+
+The naming half of the RFC's "the word Composer is banned" decision has landed: `useChatInputContext`, `useChatInputContextOptional`, and `ChatInputContextProvider` are real exports of `veryfront/chat`, and the raw context object stays unexported as the providers rule requires.
+
+**Still proposed:** the retirement itself. `useComposerContext`, `useComposerContextOptional`, and `ComposerContextProvider` remain exported as `@deprecated` aliases pointing at the same functions, so the old names have not gone away - that removal is batched into the one breaking release. The **returned shape** is also still the old `ComposerContextValue` (`input`, `isLoading`, `onSubmit`, …), not the `UseChatInputResult` documented below; see [`useChatInput`](./use-chat-input.md) for exactly which members are real.
 
 ## Import
 

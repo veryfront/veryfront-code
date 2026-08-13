@@ -112,7 +112,7 @@ port the dev server bound (default `3002`). The endpoint is always `/mcp`.
 http://localhost:3002/mcp        # dev
 ```
 
-The dev server also accepts the `veryfront.me` hostname, which resolves to `127.0.0.1` and is what the CLI prints by default.
+`localhost` is what the CLI prints by default; `127.0.0.1` reaches the same server.
 
 ## Connect Claude Code
 
@@ -122,7 +122,7 @@ Add an `mcpServers` entry in `~/.claude.json`:
 {
   "mcpServers": {
     "veryfront": {
-      "url": "http://veryfront.me:3002/mcp"
+      "url": "http://localhost:3002/mcp"
     }
   }
 }
@@ -213,4 +213,4 @@ The dev MCP port is always two above the port the dev server bound, so a dev ser
 
 ### CORS error from a browser-based agent
 
-The HTTP MCP only accepts requests from `localhost`, `127.0.0.1`, and `veryfront.me`. Browser agents that run from any other origin are rejected by design.
+The HTTP MCP only accepts requests from `localhost`, `127.0.0.1`, and `[::1]`. Browser agents that run from any other origin are rejected by design.

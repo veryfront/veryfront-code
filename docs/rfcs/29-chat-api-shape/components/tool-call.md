@@ -2,7 +2,12 @@
 
 A disclosure for one tool invocation - input, output, and the full lifecycle including human-in-the-loop approval. Render it whole, or compose the parts.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `Markdown`, `RichCodeBlock`, `ToolCall`, `ToolCall.Body`, `ToolCall.Error`, `ToolCall.Input`, `ToolCall.Output`, `ToolCall.Root`, `ToolCall.Trigger`
+> - **Not exported today:** none
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 > **⚠ Reusability flag** (see [generic core vs veryfront adapter](../../29-chat-api-shape.md)): `variant` auto-selects `compact` by **hardcoded veryfront tool names** (`load_skill`, `load_skill_reference`, `execute_skill_script`) via `isSkillToolPart` - "skill" is a veryfront concept. Default `variant="card"` for all tools; let consumers opt a tool into compact via the `tools` registry; keep the skill guard out of the generic public API.
 

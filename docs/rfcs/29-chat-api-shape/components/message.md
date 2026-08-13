@@ -2,7 +2,12 @@
 
 One message row: a single `<article>` plus scoped context, with composable parts for content, actions, and metadata.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `Message`, `Message.Actions`, `Message.Avatar`, `Message.BranchPicker`, `Message.Content`, `Message.Continuing`, `Message.CopyAction`, `Message.EditAction`, `Message.Feedback`, `Message.Header`, `Message.Header.Name`, `Message.Part`, `Message.Reasoning`, `Message.RegenerateAction`, `Message.Root`, `Message.Source`, `Message.Sources`, `Message.Text`, `Message.Tokens`, `Sources.Pill`
+> - **Not exported today:** `Message.File`, `Message.Image`, `Message.Name`, `Message.Parts`, `Message.Timestamp`
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 

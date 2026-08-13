@@ -2,7 +2,12 @@
 
 A compound component for browsing and managing durable uploaded files, with the same compositional depth as messages.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `AttachmentsPanel`, `AttachmentsPanel.Action`, `AttachmentsPanel.Empty`, `AttachmentsPanel.Header`, `AttachmentsPanel.Item`, `AttachmentsPanel.Item.Icon`, `AttachmentsPanel.Item.Preview`, `AttachmentsPanel.Item.Remove`, `AttachmentsPanel.List`, `AttachmentsPanel.Loading`, `AttachmentsPanel.Root`, `useAttachments`
+> - **Not exported today:** `AttachmentsPanel.Item.Name`, `AttachmentsPanel.Item.Size`
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 > **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): the durable "file browser" is a RAG / doc-Q&A product feature (empty state: _"upload files to start asking questions about them"_), sitting at the same altitude as the composer - and it is why the attachment surface has **4 hooks, not 2**. **Proposed:** ship it as an optional module, not core v1; the composer keeps `AttachmentPill` + `useUpload`.
 

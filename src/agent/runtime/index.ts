@@ -1210,7 +1210,12 @@ export class AgentRuntime {
           const result = await generateText({
             model: languageModel,
             system: providerSystemPrompt,
-            messages: convertToTextGenerationRuntimeRequestMessages(currentMessages),
+            messages: convertToTextGenerationRuntimeRequestMessages(currentMessages, {
+              // A server-local runtime fetches attachments from this machine,
+              // where a loopback or private-network URL resolves; only a remote
+              // provider needs the URL to be reachable from the internet.
+              requireInternetReachableAttachments: !isLocalModelRuntime(languageModel),
+            }),
             tools: runtimeTools,
             experimental_repairToolCall: repairToolCall,
             maxOutputTokens: this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride),
@@ -1819,6 +1824,10 @@ export class AgentRuntime {
           system: providerSystemPrompt,
           messages: convertToTextGenerationRuntimeRequestMessages(
             currentMessages,
+            // A server-local runtime fetches attachments from this machine,
+            // where a loopback or private-network URL resolves; only a remote
+            // provider needs the URL to be reachable from the internet.
+            { requireInternetReachableAttachments: !isLocalModelRuntime(languageModel) },
           ),
           tools: runtimeTools,
           experimental_repairToolCall: repairToolCall,

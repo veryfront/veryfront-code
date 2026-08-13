@@ -19,7 +19,7 @@ export const mcpHelp: CommandHelp = {
     "The CLI MCP server is development-only. Production start does not expose vf_* tools.",
     "",
     "Claude Code setup (~/.claude.json):",
-    `  "mcpServers": { "veryfront": { "url": "http://veryfront.me:${DEFAULT_DEV_MCP_PORT}/mcp" } }`,
+    `  "mcpServers": { "veryfront": { "url": "http://localhost:${DEFAULT_DEV_MCP_PORT}/mcp" } }`,
     "",
     "Available tools:",
     "  • vf_list_local_projects  - Discover projects on filesystem",

@@ -8,8 +8,8 @@ An eval defines a repeatable quality check for an agent. It names the target,
 dataset, metrics, thresholds, and report shape that prove whether the agent still
 behaves as expected.
 
-Use evals when model behavior must be measured across examples, not just checked
-with one deterministic unit test.
+Use evals when agent or tool behavior must be measured across examples, not
+checked with one unit test.
 
 ## Characteristics
 
@@ -26,8 +26,8 @@ An eval is the definition. An eval run is one execution of that definition. A
 report is the result of the run. Durable eval runs use run kind `eval` and target
 IDs such as `eval:deep-research`.
 
-Keep evals separate from tests. Tests protect deterministic code behavior. Evals
-measure probabilistic agent behavior, retrieval behavior, tool behavior, and
+Keep evals separate from tests. Tests check code behavior against explicit
+assertions. Evals measure agent behavior, retrieval behavior, tool behavior, and
 operational budgets across datasets.
 
 ## Source files

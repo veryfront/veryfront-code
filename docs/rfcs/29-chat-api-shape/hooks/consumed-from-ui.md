@@ -2,7 +2,12 @@
 
 Layout primitives whose **shape is owned by `veryfront/ui`**, but which `veryfront/chat` **re-exports** so you can pull the shell straight from one import: `import { AppShell, useAppShell } from "veryfront/chat"`. They are part of chat's public surface; this RFC documents them but defers their contract to `veryfront/ui` rather than reshaping it.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `AppShell`, `useAppShell`
+> - **Not exported today:** `useColorMode`, `ColorModeProvider`, `ColorModeToggle`
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 > Grouped here rather than on per-hook pages because chat re-exports them verbatim from `veryfront/ui` (see `src/chat/index.ts`) - the chat RFC neither re-implements nor reshapes them. Any change to their shape (e.g. extracting a generic `useDisclosure` under `useAppShell`'s sidebar state) is a `veryfront/ui` decision that ripples through this re-export.
 

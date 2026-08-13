@@ -7,6 +7,7 @@
  */
 
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import { formatExtensionSetupHint } from "#veryfront/extensions/setup-hint.ts";
 import { getRecommendation } from "#veryfront/extensions/recommendations.ts";
 import {
   captureCSSOptimizationEngine,
@@ -155,18 +156,28 @@ export function acquireCSSGenerationSession(minify: boolean): CSSGenerationSessi
     // `resolve()`'s "install it with: deno add <package>" hint, which is only
     // true for an auto-activating extension: `@veryfront/ext-css-lightning`
     // declares `activation: "explicit"`, so installing it registers nothing
-    // until a `veryfront.config.ts` `extensions` entry activates it, and
-    // scaffolded projects are npm projects where `deno add` is the wrong
-    // command besides. Advice that stops at the install reads as actionable and
-    // leaves the CSS exactly as unminified as before. The contract name stays
-    // out of the instruction: it is an internal registration hook the guides
-    // never mention, and `component=css-compiler` already identifies the source.
+    // until a `veryfront.config.ts` `extensions` entry activates it. Advice
+    // that stops at the install reads as actionable and leaves the CSS exactly
+    // as unminified as before. The contract name stays out of the instruction:
+    // it is an internal registration hook the guides never mention, and
+    // `component=css-compiler` already identifies the source.
+    //
+    // Naming the package is likewise not enough to act on, so the remedy is
+    // steps the reader can paste. `formatExtensionSetupHint` owns both: an
+    // install command derived from the manifest that owns the project's
+    // dependencies rather than one hard-coded client, and the config edit --
+    // "create" or "add to", with the import lines, depending on whether the
+    // project has a config file. `veryfront init --template minimal` writes
+    // none, so the earlier "add it to the extensions in veryfront.config.ts"
+    // named a file that did not exist and never said what to put in it.
     reportedMissingOptimizationEngine = true;
     const recommendation = getRecommendation(CSSOptimizationEngineName);
     logger.warn(
       recommendation === undefined
         ? "Veryfront emits unminified CSS because no CSS optimizer is active"
-        : `Veryfront emits unminified CSS because no CSS optimizer is active. Install ${recommendation}, then add it to "extensions" in veryfront.config.ts`,
+        : `Veryfront emits unminified CSS because no CSS optimizer is active. ${
+          formatExtensionSetupHint(recommendation)
+        }`,
     );
   }
   const optimizationEngine = optimizationProvider === undefined

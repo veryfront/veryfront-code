@@ -115,6 +115,33 @@ describe("BunFileSystemAdapter", () => {
     );
   });
 
+  it("refuses a subclass that hides its own prototype.constructor", () => {
+    class ConstructorDeletingAdapter extends BunFileSystemAdapter {}
+    Reflect.deleteProperty(ConstructorDeletingAdapter.prototype, "constructor");
+
+    class ConstructorSpoofingAdapter extends BunFileSystemAdapter {}
+    Object.defineProperty(ConstructorSpoofingAdapter.prototype, "constructor", {
+      configurable: true,
+      value: BunFileSystemAdapter,
+    });
+
+    const fake = runtimeFor({
+      size: 0,
+      exists: () => Promise.resolve(true),
+      text: () => Promise.resolve(""),
+      arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+    });
+
+    assertEquals(
+      isNativeFileSystemAdapter(new ConstructorDeletingAdapter(fake.runtime)),
+      false,
+    );
+    assertEquals(
+      isNativeFileSystemAdapter(new ConstructorSpoofingAdapter(fake.runtime)),
+      false,
+    );
+  });
+
   it("uses Bun-native text and byte reads plus writes", async () => {
     let bytesCalls = 0;
     const fake = runtimeFor({

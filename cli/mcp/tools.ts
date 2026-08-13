@@ -191,7 +191,7 @@ export function createVfGetStatus(
 
       return {
         running: true,
-        url: `http://veryfront.me:${port}`,
+        url: `http://localhost:${port}`,
         port,
         errorCount: counts.compile + counts.runtime + counts.bundle,
         warningCount: logs.query({ level: "warn" }).length,

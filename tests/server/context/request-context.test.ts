@@ -73,7 +73,7 @@ describe("request-context", () => {
 
     it("sets preview mode from local preview environment root domain", () => {
       const ctx = createRequestContext(
-        new Request("http://preview.veryfront.me:8080/page"),
+        new Request("http://preview.localhost:8080/page"),
       );
 
       assertEquals(ctx.slug, "");
