@@ -21,7 +21,7 @@ export class BunFileSystemAdapter extends NodeCompatibleFileSystemAdapter {
     options: NodeFileSystemCapabilityOptions = {},
   ) {
     super(serverLogger, options);
-    if (new.target === BunFileSystemAdapter) {
+    if (this.constructor === BunFileSystemAdapter) {
       markNativeFileSystemAdapter(this);
     }
   }

@@ -63,7 +63,11 @@ export class ProviderError extends Error {
     retryAfterMs?: number;
   }) {
     super(options.message);
-    this.name = new.target.name;
+    // `this.constructor`, not `new.target`: DNT rewrites every meta-property
+    // into its `import.meta` ponyfill when it emits the npm package, which
+    // turned this line into `ponyfill(import.meta).name` — always `undefined`.
+    // See scripts/build/dnt-meta-property-safety.ts.
+    this.name = this.constructor.name;
     this.provider = options.provider;
     this.status = options.status;
     this.retryable = options.retryable;

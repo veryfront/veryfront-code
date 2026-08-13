@@ -432,7 +432,7 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
         enumerable: true,
       });
     }
-    if (new.target === NodeCompatibleFileSystemAdapter) {
+    if (this.constructor === NodeCompatibleFileSystemAdapter) {
       markNativeFileSystemAdapter(this);
     }
   }

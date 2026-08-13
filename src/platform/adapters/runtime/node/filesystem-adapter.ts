@@ -9,7 +9,7 @@ import { serverLogger } from "#veryfront/utils";
 export class NodeFileSystemAdapter extends NodeCompatibleFileSystemAdapter {
   constructor(options: NodeFileSystemCapabilityOptions = {}) {
     super(serverLogger, options);
-    if (new.target === NodeFileSystemAdapter) {
+    if (this.constructor === NodeFileSystemAdapter) {
       markNativeFileSystemAdapter(this);
     }
   }

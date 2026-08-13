@@ -156,7 +156,7 @@ export class DenoFileSystemAdapter implements FileSystemAdapter {
         enumerable: true,
       });
     }
-    if (new.target === DenoFileSystemAdapter) {
+    if (this.constructor === DenoFileSystemAdapter) {
       markNativeFileSystemAdapter(this);
     }
   }
