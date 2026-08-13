@@ -1951,6 +1951,16 @@ describe("unroutable hosted environment names", () => {
     );
   }
 
+  /** Matches on the parsed host, so a control-plane URL can never be mistaken for one. */
+  function isHostedEnvironmentRequest(input: string | URL | Request): boolean {
+    const url = input instanceof Request ? input.url : String(input);
+    try {
+      return new URL(url).hostname.endsWith(".veryfront.com");
+    } catch {
+      return false;
+    }
+  }
+
   it("rejects a user-created environment name before creating a release", async () => {
     await withDeployEnv(async () => {
       const { projectDir } = await createPushedProject();
@@ -1959,10 +1969,7 @@ describe("unroutable hosted environment names", () => {
       try {
         const error = await expectDeployError(() =>
           withFetchStub(
-            (input) =>
-              String(input instanceof Request ? input.url : input).includes(".veryfront.com")
-                ? hostedNotFound()
-                : new Response("ready"),
+            (input) => isHostedEnvironmentRequest(input) ? hostedNotFound() : new Response("ready"),
             () =>
               createDeployment(controlPlane).execute({
                 projectDir,
@@ -2004,7 +2011,7 @@ describe("unroutable hosted environment names", () => {
         await expectDeployError(() =>
           withFetchStub(
             (input) => {
-              if (String(input instanceof Request ? input.url : input).includes(".veryfront.com")) {
+              if (isHostedEnvironmentRequest(input)) {
                 probes++;
                 return hostedNotFound();
               }
