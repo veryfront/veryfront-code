@@ -146,6 +146,17 @@ No OAuth connect step is shown for these connectors. The integration runtime
 resolves their credentials during tool execution; agents do not receive raw
 secrets.
 
+## Set up a provider
+
+Use a provider guide when a connector needs provider-specific installation,
+permissions, OAuth configuration, or service-account credentials.
+
+| Provider   | Guide                                             |
+| ---------- | ------------------------------------------------- |
+| GitHub     | [Set up GitHub](./integrations/github.md)         |
+| Jira       | [Set up Jira](./integrations/jira.md)             |
+| Salesforce | [Set up Salesforce](./integrations/salesforce.md) |
+
 ## Available integrations
 
 The built-in connector catalog contains 204 connectors. The supported set is
@@ -176,3 +187,13 @@ when you need exact exported names or icon metadata:
 4. Confirm the run retries the tool and receives a non-error result.
 5. Reload the project and confirm connection inventory still reports the
    connection independently of agent source and both policy layers.
+
+## Next
+
+- [Set up GitHub](./integrations/github.md)
+- [Set up Jira](./integrations/jira.md)
+- [Set up Salesforce](./integrations/salesforce.md)
+
+## Related
+
+- [veryfront/integrations](../api-reference/veryfront/integrations.md): Connector catalog and helper API.

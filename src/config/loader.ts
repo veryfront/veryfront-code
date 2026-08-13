@@ -48,6 +48,7 @@ import {
   evaluatePreparedDeclarativeConfigInWorker,
 } from "./declarative-evaluator-worker-runner.ts";
 import { createDeclarativeConfigWorkerInfrastructureError } from "./declarative-evaluator-worker-protocol.ts";
+import { describeHostedConfigRejection } from "./hosted-compatibility.ts";
 
 // Capture the collection and reflection intrinsics before trusted executable
 // project configuration can mutate the shared host realm. Hosted configuration
@@ -1485,8 +1486,12 @@ function translateHostedConfigEvaluationError(
     });
   }
 
+  // The code/reason pair is what operators correlate on, so it stays first
+  // and unchanged. The sentence after it is for the developer whose project
+  // this is: without it the only signal a rejected config gives is a 500.
   return CONFIG_PARSE_ERROR.create({
-    detail: `Hosted configuration rejected (${error.code}: ${error.reason})`,
+    detail: `Hosted configuration rejected (${error.code}: ${error.reason}). ` +
+      describeHostedConfigRejection(error.reason),
     cause: error,
     context,
   });

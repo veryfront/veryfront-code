@@ -4,6 +4,7 @@ import {
   assertEquals,
   assertRejects,
   assertStrictEquals,
+  assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -976,6 +977,35 @@ export default config as const;
           if (previousMarker) Object.defineProperty(host, marker, previousMarker);
           else delete host[marker];
         }
+      });
+
+      it("explains a hosted rejection after the code and reason operators correlate on", async () => {
+        clearConfigCache();
+
+        const error = await assertRejects(
+          () =>
+            evaluateHostedConfigSource({
+              cacheKey: "exact-hosted-rejection-detail",
+              source: {
+                source: `import extCssLightning from "@veryfront/ext-css-lightning";\n` +
+                  `export default { extensions: [extCssLightning()] };\n`,
+                fileName: "veryfront.config.ts",
+              },
+              environmentName: "release",
+              environment: {},
+            }),
+          VeryfrontError,
+        ) as VeryfrontError;
+
+        assertEquals(error.slug, "config-parse-error");
+        // The pair stays first and unchanged: it is what an operator matches on.
+        assertStringIncludes(
+          error.detail ?? "",
+          "Hosted configuration rejected (unsupported-syntax: unsupported-import)",
+        );
+        // The sentences after it are for the developer whose project this is.
+        assertStringIncludes(error.detail ?? "", "never imports project modules");
+        assertStringIncludes(error.detail ?? "", "Remove the import");
       });
 
       it("binds exact release evaluation to an empty tenant environment", async () => {

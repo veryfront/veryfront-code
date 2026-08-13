@@ -1,4 +1,9 @@
 import { type EnvironmentConfig, getConfig, getEnvironmentConfig } from "veryfront/config";
+import { findVeryfrontConfigFile } from "#veryfront/config/config-files.ts";
+import {
+  findHostedConfigIncompatibility,
+  formatHostedConfigIncompatibility,
+} from "#veryfront/config/hosted-compatibility.ts";
 import { createFileSystem, isNotFoundError, runtime } from "veryfront/platform";
 import { join, relative, resolve } from "veryfront/platform/path";
 import { isWithinDirectory, normalizePath } from "veryfront/utils";
@@ -17,6 +22,7 @@ import {
   routeForPage,
 } from "veryfront/release-assets";
 import {
+  CONFIG_NOT_DEPLOYABLE,
   DEPLOYMENT_ERROR,
   ENVIRONMENT_NOT_FOUND,
   ENVIRONMENT_NOT_ROUTABLE,
@@ -550,6 +556,46 @@ function resolveProjectRouteDirectory(
     );
   }
   return routeRoot;
+}
+
+/**
+ * Refuse a configuration file Veryfront Cloud can never read.
+ *
+ * A hosted project's config is evaluated as data, not imported, so a config
+ * that imports an extension is rejected on every request: the deploy reports
+ * success and the environment answers 500 to all traffic. Deciding it here
+ * costs one parse and turns that into a message before anything is created.
+ *
+ * Only rejections the source alone decides reach this far (see
+ * `findHostedConfigIncompatibility`), so a config whose values depend on
+ * deployment environment variables is never blocked by a difference between
+ * that environment and the developer's.
+ */
+async function assertConfigIsDeployable(projectDir: string): Promise<void> {
+  const fs = createFileSystem();
+  const configFile = await findVeryfrontConfigFile(projectDir, (path) => fs.exists(path));
+  if (!configFile) return;
+
+  let source: string;
+  try {
+    source = await fs.readTextFile(configFile.path);
+  } catch (error) {
+    if (isNotFoundError(error)) return;
+    throw error;
+  }
+
+  const incompatibility = await findHostedConfigIncompatibility(source, configFile.fileName);
+  if (!incompatibility) return;
+
+  throw CONFIG_NOT_DEPLOYABLE.create({
+    detail: formatHostedConfigIncompatibility(incompatibility, configFile.fileName),
+    context: {
+      configFile: configFile.fileName,
+      code: incompatibility.code,
+      reason: incompatibility.reason,
+      ...(incompatibility.line === undefined ? {} : { line: incompatibility.line }),
+    },
+  });
 }
 
 async function collectProjectPageRoutes(projectDir: string): Promise<string[]> {
@@ -1286,7 +1332,15 @@ export function createDeployProject(options: {
       const environmentConfig = await step(
         observer,
         "resolve-config",
-        async () => getEnvironmentConfig(),
+        async () => {
+          // Naming a project deploys what that project already has, so the
+          // working directory is not the source under review and its config
+          // must not decide this deploy.
+          if (request.projectSlug === undefined) {
+            await assertConfigIsDeployable(request.projectDir);
+          }
+          return await getEnvironmentConfig();
+        },
       );
       const receipt = await readPushReceipt(request.projectDir);
       const branch = request.branch ?? "main";

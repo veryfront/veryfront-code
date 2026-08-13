@@ -105,8 +105,26 @@ export const BRANCH_NOT_FOUND = defineError({
   suggestion: "List branches in Studio or push a new one with: veryfront push --branch <name>",
 });
 
+/**
+ * The project's configuration file uses a construct Veryfront Cloud's
+ * configuration evaluator can never accept, so the release would answer 500 to
+ * every request. Raised before a release is created; the detail names the file,
+ * the change that makes the project deployable, and the line when the evaluator
+ * located the construct it refused.
+ */
+export const CONFIG_NOT_DEPLOYABLE = defineError({
+  slug: "config-not-deployable",
+  category: "DEPLOY",
+  status: 400,
+  title: "Configuration cannot be deployed to Veryfront Cloud",
+  suggestion:
+    "Veryfront Cloud reads veryfront.config.ts as data: keep it to literals and the veryfront configuration helpers",
+  exitCode: 2,
+});
+
 /** Registry fragment for DEPLOY errors (slug → definition). */
 export const DEPLOY_REGISTRY = {
+  "config-not-deployable": CONFIG_NOT_DEPLOYABLE,
   "deployment-error": DEPLOYMENT_ERROR,
   "platform-error": PLATFORM_ERROR,
   "env-var-missing": ENV_VAR_MISSING,
