@@ -23,6 +23,7 @@ import {
   createHttpDeployControlPlane,
   type DeployControlPlane,
   type DeployReleaseAssetManifestBody,
+  type DeployReleaseFile,
 } from "./control-plane.ts";
 import {
   assertProjectOwnership,
