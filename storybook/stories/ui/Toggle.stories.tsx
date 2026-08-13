@@ -18,10 +18,10 @@ function ToggleDocsPage() {
     <DocsPage>
       <DocsHero
         title="Toggle"
-        lead="A two-state pressed button — on / off — with data-state styling."
+        lead="A two-state pressed button - on / off - with data-state styling."
       />
 
-      <DocsSection title="Default" description="Uncontrolled — click to toggle pressed state.">
+      <DocsSection title="Default" description="Uncontrolled - click to toggle pressed state.">
         <DocsExampleAuto of={Default} />
       </DocsSection>
 

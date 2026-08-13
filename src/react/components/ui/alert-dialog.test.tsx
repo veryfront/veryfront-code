@@ -30,7 +30,7 @@ import {
 } from "./alert-dialog.tsx";
 
 // ---------------------------------------------------------------------------
-// jsdom harness — installs a fresh DOM per render and stubs the browser APIs
+// jsdom harness - installs a fresh DOM per render and stubs the browser APIs
 // jsdom lacks (ResizeObserver, rAF, matchMedia) so effect-driven components mount.
 // ---------------------------------------------------------------------------
 class ResizeObserverStub {

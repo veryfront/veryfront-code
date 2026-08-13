@@ -1,12 +1,13 @@
 /**
  * Calendar behaviour. Pins the observable contract with EXPLICIT dates only
  * (never `today`): the caption shows the displayed "Month YYYY", there are seven
- * weekday headers, the selected day carries `aria-selected="true"`, and clicking
+ * weekday headers, the selected day's gridcell carries `aria-selected="true"`
+ * while its button carries `aria-pressed="true"`, and clicking
  * a day button fires `onChange` with that day's Date.
  *
  * NOTE: synthetic keyboard/input events do NOT reach React handlers in this
  * deno+jsdom harness, so the day is chosen via a real click `MouseEvent`
- * (`bubbles: true`) — the same path a user's pointer takes.
+ * (`bubbles: true`) - the same path a user's pointer takes.
  *
  * @module react/components/ui/calendar.test
  */
@@ -19,7 +20,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { Calendar } from "./calendar.tsx";
 
 // ---------------------------------------------------------------------------
-// jsdom harness — installs a fresh DOM per render and stubs the browser APIs
+// jsdom harness - installs a fresh DOM per render and stubs the browser APIs
 // jsdom lacks (ResizeObserver, rAF, matchMedia) so effect-driven components mount.
 // ---------------------------------------------------------------------------
 class ResizeObserverStub {
@@ -127,14 +128,21 @@ describe("Calendar behaviour", () => {
     }
   });
 
-  it("marks the selected day with aria-selected=true", () => {
+  it("marks the selected day on the gridcell, and presses its button", () => {
     const { host, unmount } = render(
       <Calendar value={new Date(2026, 0, 15)} defaultMonth={new Date(2026, 0, 1)} />,
     );
     try {
       const fifteenth = dayButton(host, "15");
-      assertEquals(fifteenth.getAttribute("aria-selected"), "true", "the 15th is selected");
+      // aria-selected is only valid on the gridcell; the button reports aria-pressed.
+      assertEquals(fifteenth.getAttribute("aria-pressed"), "true", "the 15th reads as pressed");
+      assertEquals(
+        fifteenth.getAttribute("aria-selected"),
+        null,
+        "aria-selected is not set on role=button",
+      );
       const cell = fifteenth.closest("td");
+      assertEquals(cell?.getAttribute("aria-selected"), "true", "its gridcell is selected");
       assertEquals(cell?.getAttribute("data-selected"), "true", "its cell is marked selected");
     } finally {
       unmount();

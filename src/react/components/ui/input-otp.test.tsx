@@ -19,7 +19,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { InputOTP } from "./input-otp.tsx";
 
 // ---------------------------------------------------------------------------
-// jsdom harness — installs a fresh DOM per render and stubs the browser APIs
+// jsdom harness - installs a fresh DOM per render and stubs the browser APIs
 // jsdom lacks (ResizeObserver, rAF, matchMedia) so effect-driven components mount.
 // ---------------------------------------------------------------------------
 class ResizeObserverStub {
@@ -123,6 +123,36 @@ describe("InputOTP behaviour", () => {
 
       // The active slot is the caret position (index === value.length === 3).
       assert(slots[3]?.hasAttribute("data-active"), "slot at value.length is active");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("clamps a longer, non-digit value for both the input and the slots", () => {
+    const { host, unmount } = render(<InputOTP value="12a34567" maxLength={6} />);
+    try {
+      const input = host.querySelector("input")!;
+      assertEquals(input.value, "123456", "the input holds only maxLength digits");
+      const slots = host.querySelectorAll("[data-slot]");
+      assertEquals(slots.length, 6, "exactly maxLength slots render");
+      assertEquals(
+        host.querySelectorAll("[data-active]").length,
+        0,
+        "a full code leaves no active slot rather than indexing past the last one",
+      );
+    } finally {
+      unmount();
+    }
+  });
+
+  it("gives the focusable input its own accessible name", () => {
+    const { host, unmount } = render(<InputOTP value="12" />);
+    try {
+      const input = host.querySelector("input")!;
+      assert(
+        (input.getAttribute("aria-label") ?? "").length > 0,
+        "the input that receives focus must carry a name, not just the group",
+      );
     } finally {
       unmount();
     }

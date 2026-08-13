@@ -16,7 +16,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ScrollArea } from "./scroll-area.tsx";
 
 // ---------------------------------------------------------------------------
-// jsdom harness — installs a fresh DOM per render and stubs the browser APIs
+// jsdom harness - installs a fresh DOM per render and stubs the browser APIs
 // jsdom lacks (ResizeObserver, rAF, matchMedia) so effect-driven components mount.
 // ---------------------------------------------------------------------------
 class ResizeObserverStub {
@@ -95,7 +95,7 @@ function render(element: React.ReactElement): {
   };
 }
 
-describe("ScrollArea — leaf conformance (one node · ref · {...props} · className)", () => {
+describe("ScrollArea - leaf conformance (one node · ref · {...props} · className)", () => {
   it("renders one root node, forwards ref, spreads data-*, merges className", () => {
     const ref = React.createRef<HTMLDivElement>();
     const { host, unmount } = render(
@@ -117,7 +117,7 @@ describe("ScrollArea — leaf conformance (one node · ref · {...props} · clas
   });
 });
 
-describe("ScrollArea — data-orientation reflects the orientation prop", () => {
+describe("ScrollArea - data-orientation reflects the orientation prop", () => {
   for (const orientation of ["vertical", "horizontal", "both"] as const) {
     it(`orientation="${orientation}" sets data-orientation="${orientation}"`, () => {
       const { host, unmount } = render(

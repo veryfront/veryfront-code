@@ -22,7 +22,7 @@ import {
 } from "./pagination.tsx";
 
 // ---------------------------------------------------------------------------
-// jsdom harness (copied from conformance.test.tsx) — fresh DOM per render with
+// jsdom harness (copied from conformance.test.tsx) - fresh DOM per render with
 // the browser-API stubs (ResizeObserver/matchMedia/rAF) effect-driven mounts need.
 // ---------------------------------------------------------------------------
 class ResizeObserverStub {

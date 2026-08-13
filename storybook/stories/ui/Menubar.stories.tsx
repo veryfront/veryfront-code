@@ -31,7 +31,7 @@ function MenubarDocsPage() {
     <DocsPage>
       <DocsHero
         title="Menubar"
-        lead="A horizontal bar of menu buttons — File / Edit / View — where each button opens a dropdown and ArrowLeft / ArrowRight move between them."
+        lead="A horizontal bar of menu buttons - File / Edit / View - where each button opens a dropdown and ArrowLeft / ArrowRight move between them."
       />
 
       <DocsSection
@@ -79,7 +79,7 @@ function MenubarDocsPage() {
         />
         <DocsPropsTable
           component="MenubarMenu"
-          description="One menu in the bar — a DropdownMenu the bar controls"
+          description="One menu in the bar - a DropdownMenu the bar controls"
           props={[
             {
               name: "children",

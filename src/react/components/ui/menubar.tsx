@@ -1,11 +1,11 @@
 /**
- * Menubar — a horizontal bar of menu buttons (like a desktop app's
+ * Menubar - a horizontal bar of menu buttons (like a desktop app's
  * File / Edit / View). Each `MenubarMenu` is a `DropdownMenu` instance, so the
  * dropdown surface, outside-click / `Escape` dismissal, and token-scoped
  * portalling are all inherited unchanged. Menubar adds the horizontal bar
  * container, `role="menubar"`, and roving focus between the top-level triggers:
  * `ArrowRight` / `ArrowLeft` move focus (and carry an open menu) across
- * triggers, `Home` / `End` jump to the ends. Only one menu is open at a time —
+ * triggers, `Home` / `End` jump to the ends. Only one menu is open at a time -
  * the bar owns that state. Skinned entirely with veryfront theme tokens.
  *
  * @example
@@ -88,11 +88,11 @@ function useMenubarContext(part: string): MenubarState {
 export interface MenubarProps extends React.HTMLAttributes<HTMLDivElement> {
   /** The `MenubarMenu` children that make up the bar. */
   children: React.ReactNode;
-  /** React 19: ref is a regular prop — points at the bar's `role="menubar"` node. */
+  /** React 19: ref is a regular prop - points at the bar's `role="menubar"` node. */
   ref?: React.Ref<HTMLDivElement>;
 }
 
-/** Menubar root — the horizontal `role="menubar"` container that owns open + roving-focus state. */
+/** Menubar root - the horizontal `role="menubar"` container that owns open + roving-focus state. */
 export function Menubar({ children, className, ref, ...props }: MenubarProps): React.ReactElement {
   const barRef = React.useRef<HTMLDivElement | null>(null);
   const [openValue, setOpenValue] = React.useState<string | null>(null);
@@ -122,7 +122,7 @@ export function Menubar({ children, className, ref, ...props }: MenubarProps): R
       const targetValue = target.getAttribute("data-vf-menubar-value");
       setFocusedValue(targetValue);
       // If a menu was already open, carry the open state to the newly focused
-      // trigger — matching the desktop-app menubar feel.
+      // trigger - matching the desktop-app menubar feel.
       setOpenValue((prev) => (prev != null ? targetValue : prev));
     },
     [],
@@ -166,7 +166,7 @@ export interface MenubarMenuProps {
   value?: string;
 }
 
-/** One menu in the bar — a `DropdownMenu` whose open state the bar controls. */
+/** One menu in the bar - a `DropdownMenu` whose open state the bar controls. */
 export function MenubarMenu({ children, value }: MenubarMenuProps): React.ReactElement {
   const ctx = useMenubarContext("MenubarMenu");
   const generatedValue = React.useId();
@@ -188,11 +188,11 @@ export function MenubarMenu({ children, value }: MenubarMenuProps): React.ReactE
 export interface MenubarTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   /** The trigger label (usually a word like "File" or "Edit"). */
   children: React.ReactNode;
-  /** React 19: ref is a regular prop — points at the trigger button. */
+  /** React 19: ref is a regular prop - points at the trigger button. */
   ref?: React.Ref<HTMLButtonElement>;
 }
 
-/** Top-level menu button — `role="menuitem"` with `aria-haspopup`, part of the roving-focus group. */
+/** Top-level menu button - `role="menuitem"` with `aria-haspopup`, part of the roving-focus group. */
 export function MenubarTrigger(
   { children, className, onKeyDown, onFocus, ref, ...props }: MenubarTriggerProps,
 ): React.ReactElement {
@@ -259,7 +259,7 @@ export interface MenubarContentProps extends DropdownMenuContentProps {
   children: React.ReactNode;
 }
 
-/** The dropdown surface for one menu — reuses the `DropdownMenuContent` machinery. */
+/** The dropdown surface for one menu - reuses the `DropdownMenuContent` machinery. */
 export function MenubarContent(
   { children, ...props }: MenubarContentProps,
 ): React.ReactElement | null {
@@ -272,7 +272,7 @@ export interface MenubarItemProps extends DropdownMenuItemProps {
   children: React.ReactNode;
 }
 
-/** A selectable item inside a menu — `role="menuitem"`; selecting it closes the menu. */
+/** A selectable item inside a menu - `role="menuitem"`; selecting it closes the menu. */
 export function MenubarItem({ children, ...props }: MenubarItemProps): React.ReactElement {
   return <DropdownMenuItem {...props}>{children}</DropdownMenuItem>;
 }

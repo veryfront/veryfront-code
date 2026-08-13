@@ -12,7 +12,7 @@
  *     least one node without throwing, in a minimal valid composition.
  *
  * This is the "shared conformance/characterization suite" the coverage manifest
- * (`coverage.test.tsx`) credits for the "has a test" gate — every enumerated
+ * (`coverage.test.tsx`) credits for the "has a test" gate - every enumerated
  * component name is referenced here. Adapter-routed overlays (Popover, Dialog,
  * DropdownMenu, Tooltip, Select) have their own `adapter/*.conformance.test.tsx`.
  *
@@ -62,7 +62,7 @@ import { Toggle } from "./toggle.tsx";
 import { ToggleGroup, ToggleGroupItem } from "./toggle-group.tsx";
 
 // ---------------------------------------------------------------------------
-// jsdom harness — installs a fresh DOM per render and stubs the browser APIs
+// jsdom harness - installs a fresh DOM per render and stubs the browser APIs
 // jsdom lacks (ResizeObserver, rAF, matchMedia) so effect-driven components mount.
 // ---------------------------------------------------------------------------
 class ResizeObserverStub {
@@ -142,7 +142,7 @@ function render(element: React.ReactElement): {
 }
 
 // ---------------------------------------------------------------------------
-// Tier 1 — single-node leaves. Assert one node · ref · {...props} · className.
+// Tier 1 - single-node leaves. Assert one node · ref · {...props} · className.
 // ---------------------------------------------------------------------------
 interface LeafCase {
   name: string;
@@ -171,7 +171,7 @@ const LEAVES: LeafCase[] = [
   { name: "Slider", render: (p) => <Slider {...p} /> },
 ];
 
-describe("veryfront/ui conformance — leaves (one node · ref · {...props} · className)", () => {
+describe("veryfront/ui conformance - leaves (one node · ref · {...props} · className)", () => {
   for (const leaf of LEAVES) {
     it(`${leaf.name}: renders one node, forwards ref, spreads data-*, merges className`, () => {
       const ref = React.createRef<HTMLElement>();
@@ -195,7 +195,7 @@ describe("veryfront/ui conformance — leaves (one node · ref · {...props} · 
 });
 
 // ---------------------------------------------------------------------------
-// Tier 2 — compounds / context-driven. Smoke: renders ≥1 node without throwing.
+// Tier 2 - compounds / context-driven. Smoke: renders ≥1 node without throwing.
 // ---------------------------------------------------------------------------
 interface SmokeCase {
   name: string;
@@ -321,7 +321,7 @@ const SMOKE: SmokeCase[] = [
   },
 ];
 
-describe("veryfront/ui conformance — compounds (smoke render)", () => {
+describe("veryfront/ui conformance - compounds (smoke render)", () => {
   for (const c of SMOKE) {
     it(`${c.name}: renders at least one node without throwing`, () => {
       const { host, unmount } = render(c.render());

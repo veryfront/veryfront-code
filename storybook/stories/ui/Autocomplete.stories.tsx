@@ -26,7 +26,7 @@ function AutocompleteDocsPage() {
     <DocsPage>
       <DocsHero
         title="Autocomplete"
-        lead="A free-text input with a suggestions dropdown — the value is whatever you type."
+        lead="A free-text input with a suggestions dropdown - the value is whatever you type."
       />
 
       <DocsSection
@@ -38,7 +38,7 @@ function AutocompleteDocsPage() {
 
       <DocsSection
         title="Free text vs Combobox"
-        description="Unlike Combobox, the value is not forced to a listed option — you can submit text that isn't a suggestion."
+        description="Unlike Combobox, the value is not forced to a listed option - you can submit text that isn't a suggestion."
       >
         <DocsExampleAuto of={FreeText} />
       </DocsSection>
@@ -66,7 +66,7 @@ function AutocompleteDocsPage() {
             {
               name: "onValueChange",
               type: "(value: string) => void",
-              description: "Fires with the current text — typing or choosing a suggestion",
+              description: "Fires with the current text - typing or choosing a suggestion",
             },
             {
               name: "open",
@@ -125,7 +125,7 @@ export const FreeText: Story = {
             {CITIES.map((c) => <AutocompleteItem key={c} value={c} />)}
           </AutocompleteContent>
         </Autocomplete>
-        <p className="mt-2 text-sm text-[var(--muted-foreground)]">value: {value || "—"}</p>
+        <p className="mt-2 text-sm text-[var(--muted-foreground)]">value: {value || "-"}</p>
       </div>
     );
   },

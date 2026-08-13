@@ -1,5 +1,5 @@
 /**
- * Toggle — a two-state pressed button (on / off). Behavioural but self-contained
+ * Toggle - a two-state pressed button (on / off). Behavioural but self-contained
  * (a single `aria-pressed` button, no floating engine needed): controlled via
  * `pressed`/`onPressedChange` or uncontrolled via `defaultPressed`. State is
  * exposed as `data-state="on" | "off"` for styling; `asChild` grafts the toggle

@@ -1,5 +1,5 @@
 /**
- * ContextMenu — a menu opened by right-click (the native `contextmenu` event) at
+ * ContextMenu - a menu opened by right-click (the native `contextmenu` event) at
  * the pointer position, rather than by clicking a trigger button. It shares the
  * exact item / surface look of {@link ./dropdown-menu.tsx DropdownMenu} (classes
  * ported 1:1 from Studio, token names remapped to veryfront's `[var(--token)]`
@@ -60,7 +60,7 @@ export interface ContextMenuProps extends DisclosureOptions {
 }
 
 /**
- * ContextMenu root — owns open state and the pointer position. Renders a
+ * ContextMenu root - owns open state and the pointer position. Renders a
  * zero-size, `position: fixed` virtual anchor (kept inside the token scope so
  * the portalled surface resolves `var(--…)`), which `Floating` measures to place
  * the surface at the last right-click.
@@ -107,7 +107,7 @@ export interface ContextMenuTriggerProps extends React.HTMLAttributes<HTMLDivEle
 }
 
 /**
- * Trigger — the region a right-click opens the menu over. Captures
+ * Trigger - the region a right-click opens the menu over. Captures
  * `onContextMenu`, calls `preventDefault()` (suppressing the browser's native
  * menu), and opens the surface at the pointer coordinates. `asChild` merges onto
  * the child element, which must forward `ref` to its DOM node.
@@ -142,7 +142,7 @@ export interface ContextMenuContentProps extends React.HTMLAttributes<HTMLDivEle
   ref?: React.Ref<HTMLDivElement>;
 }
 
-/** Menu surface — portalled to the pointer position while open. No border (Studio). */
+/** Menu surface - portalled to the pointer position while open. No border (Studio). */
 export function ContextMenuContent({
   children,
   className,
@@ -237,7 +237,7 @@ export function ContextMenuSeparator(
   return <div className={cn("-mx-2.5 my-2 h-px bg-[var(--separator)]", className)} />;
 }
 
-/** Non-interactive section label — full-strength foreground (Studio). */
+/** Non-interactive section label - full-strength foreground (Studio). */
 export function ContextMenuLabel({
   children,
   className,

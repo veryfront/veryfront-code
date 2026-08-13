@@ -36,7 +36,7 @@ function FieldDocsPage() {
 
       <DocsSection
         title="Basic"
-        description="A label, control, and helper text — ids are derived and wired for you."
+        description="A label, control, and helper text: ids are derived and wired for you."
       >
         <DocsExampleAuto of={Basic} />
       </DocsSection>
@@ -59,7 +59,7 @@ function FieldDocsPage() {
       <DocsSection title="API Reference">
         <DocsPropsTable
           component="Field"
-          description="Form-field wrapper — provides derived ids to its sub-parts"
+          description="Form-field wrapper: provides derived ids to its sub-parts"
           props={[
             {
               name: "invalid",
@@ -76,7 +76,7 @@ function FieldDocsPage() {
         />
         <DocsPropsTable
           component="FieldControl"
-          description="Wiring wrapper — clones its single child control with id / aria-describedby / aria-invalid"
+          description="Wiring wrapper: clones its single child control with id / aria-describedby / aria-invalid"
           props={[
             {
               name: "children",
@@ -111,7 +111,7 @@ export const Basic: Story = {
       <FieldControl>
         <Input type="email" placeholder="you@example.com" />
       </FieldControl>
-      <FieldDescription>We'll never share your email.</FieldDescription>
+      <FieldDescription>Veryfront never shares your email.</FieldDescription>
     </Field>
   ),
 };

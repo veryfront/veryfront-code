@@ -106,7 +106,7 @@ function BreadcrumbDocsPage() {
         />
         <DocsPropsTable
           component="BreadcrumbPage"
-          description="The current page — aria-current='page', non-interactive"
+          description="The current page: aria-current='page', non-interactive"
           props={[
             { name: "className", type: "string", description: "Additional classes" },
           ]}

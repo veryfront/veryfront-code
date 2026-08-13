@@ -1,5 +1,5 @@
 /**
- * AspectRatio — constrains its content to a fixed width/height ratio. Pure-visual
+ * AspectRatio - constrains its content to a fixed width/height ratio. Pure-visual
  * CSS primitive (no engine needed): sets the `aspect-ratio` on a single node and
  * lets the child fill it. Handy for media, embeds, and skeleton placeholders.
  *

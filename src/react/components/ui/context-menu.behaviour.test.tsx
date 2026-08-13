@@ -1,11 +1,11 @@
 /**
- * ContextMenu behaviour — characterizes the right-click open path and the
+ * ContextMenu behaviour - characterizes the right-click open path and the
  * shared dismiss machinery.
  *
  * Harness mirrors `adapter/popover.conformance.test.tsx`: JSDOM + `createRoot` +
  * `flushSync`, mounting inside a `[data-vf-ui]` token scope. Synthetic DOM
  * keyboard/focus events do NOT reach React's synthetic handlers in this
- * deno+jsdom harness, but `MouseEvent` does — so the menu is opened by
+ * deno+jsdom harness, but `MouseEvent` does - so the menu is opened by
  * dispatching a native `contextmenu` MouseEvent on the trigger. `Escape` and
  * outside-click dismissal are driven through the NATIVE `document` listeners
  * `Floating` registers (not React's synthetic system), so those reach it.

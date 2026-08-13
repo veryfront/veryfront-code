@@ -83,8 +83,8 @@ function mountInScope(element: React.ReactElement): {
   host.appendChild(scope);
   const root = createRoot(scope);
   flushSync(() => root.render(element));
-  // Open via the real user path (a trigger click). Opening on a later render —
-  // after the anchor ref is attached — is what portals the surface into the
+  // Open via the real user path (a trigger click). Opening on a later render -
+  // after the anchor ref is attached - is what portals the surface into the
   // token scope; `defaultOpen`'s first frame commits before the ref exists.
   const clickTrigger = () => {
     const trigger = scope.querySelector<HTMLElement>(
@@ -109,7 +109,7 @@ function mountInScope(element: React.ReactElement): {
   };
 }
 
-/** Identity wrap — the builtin adapter needs no provider. */
+/** Identity wrap - the builtin adapter needs no provider. */
 function BuiltinWrap({ children }: { children: React.ReactNode }): React.ReactElement {
   return <>{children}</>;
 }
@@ -118,7 +118,7 @@ export function runPopoverConformance(
   label: string,
   Wrap: React.FC<{ children: React.ReactNode }>,
 ): void {
-  describe(`Popover adapter conformance — ${label}`, () => {
+  describe(`Popover adapter conformance - ${label}`, () => {
     it("open trigger reveals content with role=dialog, portalled into the token scope", () => {
       const { scope, clickTrigger, cleanup } = mountInScope(
         <Wrap>
@@ -257,7 +257,7 @@ export function runPopoverConformance(
         assertEquals(clicks, 1, "consumer onClick fired");
         assert(
           scope.querySelector('[role="dialog"]'),
-          "internal toggle fired too — popover opened",
+          "internal toggle fired too - popover opened",
         );
       } finally {
         cleanup();
@@ -315,7 +315,7 @@ export function runPopoverConformance(
 runPopoverConformance("builtin", BuiltinWrap);
 
 // Swap the adapter in via UIAdapterProvider and re-run the IDENTICAL suite. The
-// skin (`popover.tsx`) and every call-site above are byte-for-byte the same —
+// skin (`popover.tsx`) and every call-site above are byte-for-byte the same -
 // only the resolved adapter changes. Proves the provider + merge + `useAdapter`
 // indirection is transparent to consumers (the core promise of RFC 0001).
 function ProviderWrap({ children }: { children: React.ReactNode }): React.ReactElement {
@@ -330,12 +330,12 @@ runPopoverConformance("builtin via UIAdapterProvider (swap path)", ProviderWrap)
 
 // ---------------------------------------------------------------------------
 // CONTRACT-IS-A-REAL-SEAM proof. A SECOND, independently-wired `PopoverParts`
-// with different internals from the builtin — `useReducer` open state, a manual
+// with different internals from the builtin - `useReducer` open state, a manual
 // `createPortal` into the token scope (no `Floating` / `createAnchoredSurfaceParts`
 // factory). It shares ONLY the contract-level `useTokenScope` helper every
 // adapter is required to use. `popover.tsx` (the skin) and the RFC conformance
 // suite above are byte-for-byte unchanged; passing them against this proves the
-// skin depends on the CONTRACT, not on builtin internals — i.e. the adapter
+// skin depends on the CONTRACT, not on builtin internals - i.e. the adapter
 // boundary is a genuine seam a third-party engine can satisfy, not a
 // builtin-shaped assumption. (Runtime proof of what Base UI proves at the type
 // level for popover+dialog; the full cross-engine matrix is the gate-2 interop

@@ -114,7 +114,7 @@ export function runComboboxConformance(
       options: () => [...scope.querySelectorAll<HTMLElement>('[role="option"]')],
       // The input's onChange is a one-liner (`ctx.setQuery(target.value)`), but
       // DOM `input` events don't propagate to React's onChange in this
-      // deno+jsdom+React harness, so drive the real query path directly — same as
+      // deno+jsdom+React harness, so drive the real query path directly - same as
       // keyboard nav goes through the real `onInputKeyDown`.
       type: (text: string) => flushSync(() => ctx!.setQuery(text)),
       press: (key: string) => flushSync(() => ctx!.onInputKeyDown(keyEvent(key))),
@@ -131,7 +131,7 @@ export function runComboboxConformance(
     };
   }
 
-  describe(`Combobox adapter conformance — ${label}`, () => {
+  describe(`Combobox adapter conformance - ${label}`, () => {
     it("input is role=combobox with aria-controls + aria-expanded", () => {
       const h = mount();
       try {

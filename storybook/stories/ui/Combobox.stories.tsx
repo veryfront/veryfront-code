@@ -43,7 +43,7 @@ function ComboboxDocsPage() {
         <DocsExampleAuto of={Controlled} />
       </DocsSection>
 
-      <DocsSection title="Swap the engine" description="Wrap in UIAdapterProvider to run on cmdk / Base UI — the call site is unchanged.">
+      <DocsSection title="Swap the engine" description="Wrap in UIAdapterProvider to run on cmdk / Base UI - the call site is unchanged.">
         <DocsCode
           code={`<UIAdapterProvider adapter={{ combobox: cmdkCombobox }}>
   <Combobox>…</Combobox>

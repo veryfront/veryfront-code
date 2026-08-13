@@ -30,12 +30,12 @@ function InputOTPDocsPage() {
     <DocsPage>
       <DocsHero
         title="InputOTP"
-        lead="A segmented one-time-code input — one hidden numeric field feeding a row of visual slots."
+        lead="A segmented one-time-code input: one hidden numeric field feeding a row of visual slots."
       />
 
       <DocsSection
         title="Six digits"
-        description="The default — six slots, partially filled, with the active slot highlighted."
+        description="The default: six slots, partially filled, with the active slot highlighted."
       >
         <DocsExampleAuto of={SixDigit} />
       </DocsSection>

@@ -1,10 +1,10 @@
 /**
- * Autocomplete — a free-text input with a suggestions dropdown. Unlike
+ * Autocomplete - a free-text input with a suggestions dropdown. Unlike
  * {@link Combobox} (where the value must be one of the listed options), the
  * value here is *whatever the user types*; suggestions are optional completions
  * that fill the input when chosen. It reuses the zero-dependency `combobox`
  * adapter for its mechanics (filtering, `aria-activedescendant` keyboard nav,
- * open/dismiss, token-scope portalling) — swap it via `UIAdapterProvider` like
+ * open/dismiss, token-scope portalling) - swap it via `UIAdapterProvider` like
  * any other primitive.
  *
  * @example
@@ -31,7 +31,7 @@ export interface AutocompleteProps {
   children: React.ReactNode;
   /** Initial input text when uncontrolled. */
   defaultValue?: string;
-  /** Fires with the current text on every change — typing OR choosing a suggestion. */
+  /** Fires with the current text on every change - typing OR choosing a suggestion. */
   onValueChange?: (value: string) => void;
   /** Controlled open state of the suggestions list (pair with `onOpenChange`). */
   open?: boolean;
@@ -41,7 +41,7 @@ export interface AutocompleteProps {
   onOpenChange?: (open: boolean) => void;
 }
 
-/** Autocomplete root — renders no node of its own (state + context only). */
+/** Autocomplete root - renders no node of its own (state + context only). */
 export function Autocomplete({
   children,
   defaultValue,
@@ -117,7 +117,7 @@ export function AutocompleteContent(
 /** Props accepted by `<AutocompleteItem>`. */
 export interface AutocompleteItemProps
   extends Omit<React.HTMLAttributes<HTMLDivElement>, "onSelect"> {
-  /** The suggestion text — filled into the input when chosen, and used for filtering. */
+  /** The suggestion text - filled into the input when chosen, and used for filtering. */
   value: string;
   /** Disable this suggestion and dim it. */
   disabled?: boolean;

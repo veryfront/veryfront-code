@@ -1,8 +1,8 @@
 /**
- * `useTokenScope` — resolve the nearest `[data-vf-ui]` / `[data-vf-chat]` token
+ * `useTokenScope` - resolve the nearest `[data-vf-ui]` / `[data-vf-chat]` token
  * scope for portalling. Every adapter's floating surface (Popover, Menu,
  * Tooltip, Select, Dialog) MUST portal INTO this scope rather than `<body>`,
- * because the design tokens are scoped there — a surface under `<body>` resolves
+ * because the design tokens are scoped there - a surface under `<body>` resolves
  * every `var(--…)` to nothing (transparent background, wrong text color). This
  * is the single scope-resolution helper the builtin and any third-party adapter
  * share, so the invariant is enforced identically everywhere (see the mandatory

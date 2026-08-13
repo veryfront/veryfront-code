@@ -34,7 +34,7 @@ function HoverCardDocsPage() {
     <DocsPage>
       <DocsHero
         title="HoverCard"
-        lead="A non-modal preview card that opens on hover or focus of a trigger — for rich previews like a user card on a @mention."
+        lead="A non-modal preview card that opens on hover or focus of a trigger - for rich previews like a user card on a @mention."
       />
 
       <DocsSection
@@ -73,7 +73,7 @@ function HoverCardDocsPage() {
       <DocsSection title="API Reference">
         <DocsPropsTable
           component="HoverCard"
-          description="Root — owns open state on hover/focus"
+          description="Root - owns open state on hover/focus"
           props={[
             {
               name: "open",

@@ -1,5 +1,5 @@
 /**
- * Tabs adapter conformance — the `tabs` slot. One shared behaviour suite runs
+ * Tabs adapter conformance - the `tabs` slot. One shared behaviour suite runs
  * against the builtin engine and an independent, contract-only engine, proving
  * the slot is a real seam a third-party engine satisfies with the skin
  * (`tabs.tsx`) unchanged.
@@ -68,7 +68,7 @@ function Harness(): React.ReactElement {
 }
 
 function runTabsConformance(label: string, Wrap: React.FC<{ children: React.ReactNode }>): void {
-  describe(`Tabs adapter conformance — ${label}`, () => {
+  describe(`Tabs adapter conformance - ${label}`, () => {
     it("role=tablist/tab; clicking a tab selects it (aria-selected + data-state)", () => {
       const { host, unmount } = render(
         <Wrap>
@@ -98,7 +98,7 @@ function runTabsConformance(label: string, Wrap: React.FC<{ children: React.Reac
 const Identity: React.FC<{ children: React.ReactNode }> = ({ children }) => <>{children}</>;
 runTabsConformance("builtin (default)", Identity);
 
-// (2) an INDEPENDENT contract-only engine — its own tablist context, same skin.
+// (2) an INDEPENDENT contract-only engine - its own tablist context, same skin.
 const AltCtx = React.createContext<{ value: string; onValueChange: (v: string) => void } | null>(
   null,
 );

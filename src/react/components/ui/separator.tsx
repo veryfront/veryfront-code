@@ -1,5 +1,5 @@
 /**
- * Separator — a thin divider rule. Pure-visual/CSS primitive (no engine needed):
+ * Separator - a thin divider rule. Pure-visual/CSS primitive (no engine needed):
  * decorative by default (`role="none"`, hidden from a11y); pass `decorative={false}`
  * for a semantic `role="separator"` with `aria-orientation`.
  *

@@ -1,5 +1,5 @@
 /**
- * Meter — leaf conformance + semantics. Proves the RFC 2980 leaf contract (one
+ * Meter - leaf conformance + semantics. Proves the RFC 2980 leaf contract (one
  * root node, `ref` forwarded, `{...props}` / `data-*` spread, `className`
  * merged) and the gauge semantics: `role="meter"` with an `aria-valuenow` that
  * reflects the value clamped into `[min, max]`.
@@ -15,7 +15,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { Meter } from "./meter.tsx";
 
 // ---------------------------------------------------------------------------
-// jsdom harness — installs a fresh DOM per render and stubs the browser APIs
+// jsdom harness - installs a fresh DOM per render and stubs the browser APIs
 // jsdom lacks (ResizeObserver, rAF, matchMedia) so effect-driven components mount.
 // ---------------------------------------------------------------------------
 class ResizeObserverStub {
@@ -94,7 +94,7 @@ function render(element: React.ReactElement): {
   };
 }
 
-describe("Meter — leaf conformance (one node · ref · {...props} · className)", () => {
+describe("Meter - leaf conformance (one node · ref · {...props} · className)", () => {
   it("renders one root node, forwards ref, spreads data-*, merges className", () => {
     const ref = React.createRef<HTMLDivElement>();
     const { host, unmount } = render(
@@ -113,7 +113,7 @@ describe("Meter — leaf conformance (one node · ref · {...props} · className
   });
 });
 
-describe("Meter — semantics (role=meter · clamped aria-valuenow)", () => {
+describe("Meter - semantics (role=meter · clamped aria-valuenow)", () => {
   it("exposes role=meter with the value range and label", () => {
     const { host, unmount } = render(
       <Meter value={30} min={0} max={100} label="30 of 100" />,

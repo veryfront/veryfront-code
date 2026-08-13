@@ -1,12 +1,12 @@
 /**
- * NumberField — a numeric text input with clamping and keyboard stepping.
+ * NumberField - a numeric text input with clamping and keyboard stepping.
  *
  * A single `<input inputmode="numeric">` that keeps its value within
  * `[min, max]`, rounds to `step`, and steps with ArrowUp/ArrowDown. Controlled
  * via `value`/`onValueChange` or uncontrolled via `defaultValue`. Skinned with
  * the veryfront theme tokens; no adapter or engine required.
  *
- * @example Uncontrolled, clamped 0–10
+ * @example Uncontrolled, clamped 0-10
  * ```tsx
  * import { NumberField } from "veryfront/ui";
  *

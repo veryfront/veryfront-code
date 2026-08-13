@@ -1,10 +1,10 @@
 /**
- * Builtin Combobox adapter — the zero-dependency, hand-rolled engine for the
+ * Builtin Combobox adapter - the zero-dependency, hand-rolled engine for the
  * Combobox primitive: a `role="combobox"` text input filtering a `role="listbox"`
  * of `role="option"`s, with `aria-activedescendant` keyboard navigation
  * (ArrowUp/Down/Home/End/Enter/Escape) over the *filtered* option set. Filtering,
  * the option registry, and the active-descendant live here (the adapter), not in
- * the skin — see {@link ComboboxState}. The floating listbox portals into the
+ * the skin - see {@link ComboboxState}. The floating listbox portals into the
  * token scope via `Floating`. No `cmdk`/Base UI dependency; those are opt-in
  * adapters that satisfy the same `ComboboxParts` contract.
  *

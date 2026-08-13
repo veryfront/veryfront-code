@@ -68,7 +68,7 @@ function AlertDialogDocsPage() {
     <DocsPage>
       <DocsHero
         title="AlertDialog"
-        lead="A confirmation modal — a Dialog with role='alertdialog', a required title + description, and explicit Action / Cancel buttons. It does not dismiss on outside-click or Escape; the user must choose."
+        lead="A confirmation modal - a Dialog with role='alertdialog', a required title + description, and explicit Action / Cancel buttons. It does not dismiss on outside-click or Escape; the user must choose."
       />
 
       <DocsSection
@@ -89,7 +89,7 @@ function AlertDialogDocsPage() {
       <DocsSection title="API Reference">
         <DocsPropsTable
           component="AlertDialog"
-          description="Confirmation modal root — owns open state"
+          description="Confirmation modal root - owns open state"
           props={[
             {
               name: "open",
@@ -116,13 +116,13 @@ function AlertDialogDocsPage() {
         />
         <DocsPropsTable
           component="AlertDialogAction"
-          description="Confirming action button — runs its onClick, then closes"
+          description="Confirming action button - runs its onClick, then closes"
           props={[
             {
               name: "variant",
               type: "ButtonProps['variant']",
               default: "'primary'",
-              description: "Button style — pass 'destructive' for dangerous actions",
+              description: "Button style - pass 'destructive' for dangerous actions",
             },
             {
               name: "onClick",

@@ -87,7 +87,7 @@ function runDialogConformance(
   label: string,
   Wrap: React.FC<{ children: React.ReactNode }>,
 ): void {
-  describe(`Dialog adapter conformance — ${label}`, () => {
+  describe(`Dialog adapter conformance - ${label}`, () => {
     it("trigger opens an aria-modal dialog panel with merged classes", () => {
       const { scope, click, cleanup } = mount(
         <Wrap>

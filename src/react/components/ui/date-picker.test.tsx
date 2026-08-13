@@ -6,7 +6,7 @@
  *
  * NOTE: with `defaultOpen`, the Popover's `Floating` surface portals before the
  * anchor ref attaches, so it lands under `document.body` rather than the mount
- * scope — the grid is queried on `document`, not the host. Synthetic key/focus
+ * scope - the grid is queried on `document`, not the host. Synthetic key/focus
  * events do NOT reach React in this deno+jsdom harness, so the day is chosen via
  * a real click `MouseEvent` (the pointer path).
  *
@@ -21,7 +21,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DatePicker, DatePickerContent, DatePickerTrigger } from "./date-picker.tsx";
 
 // ---------------------------------------------------------------------------
-// jsdom harness — installs a fresh DOM per render and stubs the browser APIs
+// jsdom harness - installs a fresh DOM per render and stubs the browser APIs
 // jsdom lacks (ResizeObserver, rAF, matchMedia) that Popover's Floating needs.
 // ---------------------------------------------------------------------------
 class ResizeObserverStub {
@@ -131,7 +131,7 @@ describe("DatePicker behaviour", () => {
       );
       assertEquals(trigger!.getAttribute("data-empty"), "true", "data-empty set when no value");
 
-      // The Calendar grid is portalled (defaultOpen escapes the mount scope) —
+      // The Calendar grid is portalled (defaultOpen escapes the mount scope) -
       // query the document, per the harness note.
       const grid = doc.querySelector('[role="grid"]');
       assert(grid, "the Calendar grid appears while open");

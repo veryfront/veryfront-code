@@ -1,5 +1,5 @@
 /**
- * `<Field>` behaviour — proves the label/control/description/error ids are
+ * `<Field>` behaviour - proves the label/control/description/error ids are
  * derived and wired for accessibility, and that an invalid field surfaces
  * `aria-invalid` + a `role="alert"` error.
  *
@@ -15,7 +15,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { Field, FieldControl, FieldDescription, FieldError, FieldLabel } from "./field.tsx";
 
 // ---------------------------------------------------------------------------
-// jsdom harness (from conformance.test.tsx) — fresh DOM per render, with the
+// jsdom harness (from conformance.test.tsx) - fresh DOM per render, with the
 // browser-API stubs effect-driven components expect.
 // ---------------------------------------------------------------------------
 class ResizeObserverStub {
@@ -169,6 +169,60 @@ describe("Field", () => {
       assert(
         host.querySelector('[role="alert"]') === null,
         "empty FieldError must render nothing",
+      );
+    } finally {
+      unmount();
+    }
+  });
+
+  it("omits aria-describedby when no FieldDescription is rendered", () => {
+    const { host, unmount } = render(
+      <Field invalid>
+        <FieldLabel>Email</FieldLabel>
+        <FieldControl>
+          <input type="email" />
+        </FieldControl>
+        <FieldError>Enter a valid email.</FieldError>
+      </Field>,
+    );
+    try {
+      const control = host.querySelector("input")!;
+      const describedBy = control.getAttribute("aria-describedby");
+      for (const id of (describedBy ?? "").split(" ").filter(Boolean)) {
+        assert(
+          host.ownerDocument.getElementById(id) ?? host.querySelector(`#${id}`),
+          `aria-describedby must not reference the missing node ${id}`,
+        );
+      }
+    } finally {
+      unmount();
+    }
+  });
+
+  it("preserves a ref and aria-describedby set directly on the child control", () => {
+    let node: HTMLElement | null = null;
+    const { host, unmount } = render(
+      <Field>
+        <FieldLabel>Email</FieldLabel>
+        <FieldControl>
+          <input
+            type="email"
+            aria-describedby="consumer-hint"
+            ref={(el: HTMLInputElement | null) => {
+              node = el;
+            }}
+          />
+        </FieldControl>
+        <FieldDescription>Veryfront never shares it.</FieldDescription>
+      </Field>,
+    );
+    try {
+      const control = host.querySelector("input")!;
+      assert(node === control, "a ref on the child control must still receive the node");
+      const describedBy = control.getAttribute("aria-describedby") ?? "";
+      assert(
+        describedBy.split(" ").includes("consumer-hint"),
+        "the child's own aria-describedby must be merged, not dropped",
       );
     } finally {
       unmount();

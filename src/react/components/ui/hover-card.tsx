@@ -1,10 +1,10 @@
 /**
- * HoverCard — a non-modal preview surface that opens when the user hovers or
+ * HoverCard - a non-modal preview surface that opens when the user hovers or
  * focuses a trigger and closes when they leave or blur it. Built on the same
  * `Floating` portal + positioning machinery as Popover (anchored below the
  * trigger, portalled into the nearest `[data-vf-ui]`/`[data-vf-chat]` token
  * scope, dismisses on outside-click / `Escape`), but opens on hover intent
- * instead of click. Ideal for rich previews — a user card on a `@mention`, a
+ * instead of click. Ideal for rich previews - a user card on a `@mention`, a
  * repo card on a link. Skinned entirely with veryfront theme tokens.
  *
  * `openDelay` / `closeDelay` gate the hover transitions so brief pointer passes
@@ -39,7 +39,7 @@ import { useDisclosure } from "./disclosure.ts";
 interface HoverCardContextValue {
   /** Whether the card is currently open. */
   open: boolean;
-  /** Positioning anchor — the trigger element the card is anchored to. */
+  /** Positioning anchor - the trigger element the card is anchored to. */
   anchorRef: React.RefObject<HTMLElement | null>;
   /** Arm the open timer (after `openDelay`); cancels any pending close. */
   scheduleOpen: () => void;
@@ -72,7 +72,7 @@ export interface HoverCardProps {
 }
 
 /**
- * HoverCard root — owns open state and the hover/focus timers. Renders no node
+ * HoverCard root - owns open state and the hover/focus timers. Renders no node
  * of its own; the positioning anchor is the trigger element, carried on context.
  */
 export function HoverCard({
@@ -161,11 +161,11 @@ export interface HoverCardTriggerProps extends React.ButtonHTMLAttributes<HTMLBu
 }
 
 /**
- * Trigger — carries the positioning-anchor ref and the hover/focus intent.
+ * Trigger - carries the positioning-anchor ref and the hover/focus intent.
  * Opens the card on pointer enter (after `openDelay`) or immediately on focus;
  * closes it on pointer leave (after `closeDelay`) or on blur. `asChild` merges
  * the behaviour onto the child element, which must forward `ref` to its DOM node
- * (a child that drops `ref` leaves the card unanchored — `Floating` warns).
+ * (a child that drops `ref` leaves the card unanchored - `Floating` warns).
  */
 export function HoverCardTrigger({
   children,
@@ -219,7 +219,7 @@ export interface HoverCardContentProps extends React.HTMLAttributes<HTMLDivEleme
 }
 
 /**
- * HoverCard surface — the portalled floating card, rendered while open. Non-modal
+ * HoverCard surface - the portalled floating card, rendered while open. Non-modal
  * (no `role="dialog"`, no focus trap): it's a supplementary preview, so the
  * trigger keeps focus. Keeps itself open while the pointer is over it and closes
  * shortly after the pointer leaves. Base classes mirror Popover's surface.

@@ -17,12 +17,12 @@ function ScrollAreaDocsPage() {
     <DocsPage>
       <DocsHero
         title="ScrollArea"
-        lead="A styled native-overflow scroll container with a tasteful thin scrollbar — vertical, horizontal, or both."
+        lead="A styled native-overflow scroll container with a tasteful thin scrollbar: vertical, horizontal, or both."
       />
 
       <DocsSection
         title="Vertical"
-        description="The default — scrolls the y-axis and clips the x-axis. Give it a fixed height."
+        description="The default: scrolls the y-axis and clips the x-axis. Give it a fixed height."
       >
         <DocsExampleAuto of={Vertical} />
       </DocsSection>
@@ -99,7 +99,7 @@ export const Vertical: Story = {
     >
       <div className="space-y-2">
         {Array.from({ length: 24 }, (_, i) => (
-          <p key={i}>Line {i + 1} — tall content that scrolls vertically.</p>
+          <p key={i}>Line {i + 1}, tall content that scrolls vertically.</p>
         ))}
       </div>
     </ScrollArea>
@@ -137,7 +137,7 @@ export const Both: Story = {
       <div className="w-[600px] space-y-2">
         {Array.from({ length: 24 }, (_, i) => (
           <p key={i} className="whitespace-nowrap">
-            Row {i + 1} — wide and tall content that overflows on both axes.
+            Row {i + 1}, wide and tall content that overflows on both axes.
           </p>
         ))}
       </div>

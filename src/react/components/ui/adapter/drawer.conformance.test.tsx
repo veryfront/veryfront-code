@@ -1,5 +1,5 @@
 /**
- * Drawer adapter conformance — the `drawer` slot. Proves the Drawer skin works on
+ * Drawer adapter conformance - the `drawer` slot. Proves the Drawer skin works on
  * the builtin (static sheet) AND an independent contract-only drawer engine
  * (stand-in for the Vaul specialist), unchanged. The real Vaul drag physics can't
  * run in jsdom, so this asserts the slot seam (open → sheet present, Close works),
@@ -81,9 +81,9 @@ function click(node: Element): void {
 }
 
 function runDrawerConformance(label: string, Wrap: React.FC<{ children: React.ReactNode }>): void {
-  describe(`Drawer adapter conformance — ${label}`, () => {
+  describe(`Drawer adapter conformance - ${label}`, () => {
     it("open renders the sheet; Close dismisses it", () => {
-      // Query `document` — the sheet may portal outside #root. Open via a
+      // Query `document` - the sheet may portal outside #root. Open via a
       // trigger click (not `defaultOpen`): the click drains the builtin
       // modal-surface's passive `portalReady` effect so the sheet mounts.
       const { doc, unmount } = render(
@@ -121,11 +121,11 @@ function runDrawerConformance(label: string, Wrap: React.FC<{ children: React.Re
   });
 }
 
-// (1) builtin — the static bottom sheet.
+// (1) builtin - the static bottom sheet.
 const Identity: React.FC<{ children: React.ReactNode }> = ({ children }) => <>{children}</>;
 runDrawerConformance("builtin (default)", Identity);
 
-// (2) an INDEPENDENT contract-only drawer engine (stand-in for Vaul) — its own
+// (2) an INDEPENDENT contract-only drawer engine (stand-in for Vaul) - its own
 // open state + a plain overlay/sheet, same Drawer skin + call-site.
 const AltCtx = React.createContext<{ open: boolean; setOpen: (o: boolean) => void } | null>(null);
 const altDrawer: DrawerParts = {
@@ -179,7 +179,7 @@ const altDrawer: DrawerParts = {
     );
   },
   // This engine wires its own labelling, so the registration surface is inert
-  // here — it only has to exist and expose open/close for skin parts.
+  // here - it only has to exist and expose open/close for skin parts.
   useDrawer: () => {
     const ctx = React.useContext(AltCtx);
     return {

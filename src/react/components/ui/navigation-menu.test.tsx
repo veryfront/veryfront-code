@@ -2,11 +2,12 @@
  * NavigationMenu behaviour. Pins the observable contract: the root is a `<nav>`
  * landmark, its item triggers start collapsed (`aria-expanded="false"`), and
  * clicking a trigger opens its item's panel (`aria-expanded="true"`, the
- * `role="menu"` panel + its links now present) — only one panel open at a time.
+ * panel + its links now present) - only one panel open at a time. The panel is
+ * a plain disclosure region, NOT `role="menu"`, so tests match it by data-slot.
  *
  * NOTE: synthetic keyboard/focus events do NOT reach React handlers in this
  * deno+jsdom harness, so panels are opened via a real click `MouseEvent`
- * (`bubbles: true`) — the same path a user's pointer takes.
+ * (`bubbles: true`) - the same path a user's pointer takes.
  *
  * @module react/components/ui/navigation-menu.test
  */
@@ -26,7 +27,7 @@ import {
 } from "./navigation-menu.tsx";
 
 // ---------------------------------------------------------------------------
-// jsdom harness — installs a fresh DOM per render and stubs the browser APIs
+// jsdom harness - installs a fresh DOM per render and stubs the browser APIs
 // jsdom lacks (ResizeObserver, rAF, matchMedia) so effect-driven components mount.
 // ---------------------------------------------------------------------------
 class ResizeObserverStub {
@@ -158,13 +159,17 @@ describe("NavigationMenu behaviour", () => {
       for (const trigger of triggers(host)) {
         assertEquals(trigger.getAttribute("aria-expanded"), "false", "triggers start collapsed");
       }
-      assertEquals(host.querySelector('[role="menu"]'), null, "no panel open initially");
+      assertEquals(
+        host.querySelector('[data-slot="navigation-menu-content"]'),
+        null,
+        "no panel open initially",
+      );
     } finally {
       unmount();
     }
   });
 
-  it("clicking a trigger opens its panel — aria-expanded flips true and its links render", () => {
+  it("clicking a trigger opens its panel - aria-expanded flips true and its links render", () => {
     const { host, click, unmount } = render(<Fixture />);
     try {
       const products = triggers(host)[0]!;
@@ -172,7 +177,7 @@ describe("NavigationMenu behaviour", () => {
       click(products);
 
       assertEquals(products.getAttribute("aria-expanded"), "true", "trigger now expanded");
-      const panel = host.querySelector('[role="menu"]') as HTMLElement;
+      const panel = host.querySelector('[data-slot="navigation-menu-content"]') as HTMLElement;
       assert(panel, "clicking the trigger opens its panel");
       assertEquals(
         products.getAttribute("aria-controls"),
@@ -182,7 +187,74 @@ describe("NavigationMenu behaviour", () => {
       assert(panel.querySelector(".vf-test-analytics"), "the Products panel's link rendered");
       // Only the Products panel opened, not Resources.
       assertEquals(host.querySelector(".vf-test-guides"), null, "the Resources panel stays closed");
-      assertEquals(host.querySelectorAll('[role="menu"]').length, 1, "exactly one panel open");
+      assertEquals(
+        host.querySelectorAll('[data-slot="navigation-menu-content"]').length,
+        1,
+        "exactly one panel open",
+      );
+    } finally {
+      unmount();
+    }
+  });
+
+  it("keeps two items with the SAME value independent", () => {
+    const Duplicated = (): React.ReactElement => (
+      <NavigationMenu label="Main">
+        <NavigationMenuList>
+          <NavigationMenuItem value="same">
+            <NavigationMenuTrigger>First</NavigationMenuTrigger>
+            <NavigationMenuContent>
+              <NavigationMenuLink href="/one" className="vf-test-one">One</NavigationMenuLink>
+            </NavigationMenuContent>
+          </NavigationMenuItem>
+          <NavigationMenuItem value="same">
+            <NavigationMenuTrigger>Second</NavigationMenuTrigger>
+            <NavigationMenuContent>
+              <NavigationMenuLink href="/two" className="vf-test-two">Two</NavigationMenuLink>
+            </NavigationMenuContent>
+          </NavigationMenuItem>
+        </NavigationMenuList>
+      </NavigationMenu>
+    );
+    const { host, click, unmount } = render(<Duplicated />);
+    try {
+      click(triggers(host)[0]!);
+      assertEquals(
+        host.querySelectorAll('[data-slot="navigation-menu-content"]').length,
+        1,
+        "a duplicated value must not open both panels at once",
+      );
+      assert(host.querySelector(".vf-test-one"), "the clicked item's own panel opened");
+      assertEquals(host.querySelector(".vf-test-two"), null, "the other panel stayed closed");
+      const ids = Array.from(host.querySelectorAll("[id]")).map((el) => el.getAttribute("id"));
+      assertEquals(ids.length, new Set(ids).size, "panel ids must stay unique");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("drops aria-controls while the panel is unmounted", () => {
+    const { host, click, unmount } = render(<Fixture />);
+    try {
+      const products = triggers(host)[0]!;
+      assertEquals(
+        products.getAttribute("aria-controls"),
+        null,
+        "a closed trigger must not reference a panel that does not exist",
+      );
+      click(products);
+      assert(products.getAttribute("aria-controls"), "an open trigger references its panel");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("does not declare application menu roles it has no keyboard model for", () => {
+    const { host, click, unmount } = render(<Fixture />);
+    try {
+      click(triggers(host)[0]!);
+      assertEquals(host.querySelector('[role="menu"]'), null, "no role=menu");
+      assertEquals(host.querySelector('[role="menuitem"]'), null, "no role=menuitem");
     } finally {
       unmount();
     }

@@ -20,15 +20,15 @@ function AspectRatioDocsPage() {
         lead="Constrain content to a fixed width/height ratio."
       />
 
-      <DocsSection title="Widescreen" description="16 / 9 — video, hero media, embeds.">
+      <DocsSection title="Widescreen" description="16 / 9 - video, hero media, embeds.">
         <DocsExampleAuto of={Widescreen} />
       </DocsSection>
 
-      <DocsSection title="Square" description="1 / 1 — avatars, thumbnails, tiles.">
+      <DocsSection title="Square" description="1 / 1 - avatars, thumbnails, tiles.">
         <DocsExampleAuto of={Square} />
       </DocsSection>
 
-      <DocsSection title="Portrait" description="3 / 4 — cards and vertical media.">
+      <DocsSection title="Portrait" description="3 / 4 - cards and vertical media.">
         <DocsExampleAuto of={Portrait} />
       </DocsSection>
 

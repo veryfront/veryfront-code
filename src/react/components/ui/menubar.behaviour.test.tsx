@@ -7,7 +7,7 @@
  *
  * NOTE: synthetic keyboard/focus events do NOT reach React handlers in this
  * deno+jsdom harness, so menus are opened via a real click `MouseEvent`
- * (`bubbles: true`) — the same path a user's pointer takes.
+ * (`bubbles: true`) - the same path a user's pointer takes.
  */
 import * as React from "react";
 import { flushSync } from "react-dom";

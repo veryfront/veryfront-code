@@ -1,5 +1,5 @@
 /**
- * Meter — a semantic gauge for a known, bounded measurement (disk usage, a
+ * Meter: a semantic gauge for a known, bounded measurement (disk usage, a
  * score, remaining quota). A leaf: one root `role="meter"` node carrying the
  * ARIA value range, containing a single fill `<div>` whose width reflects the
  * clamped percentage. Unlike a ProgressBar (task completion), a Meter reports a
@@ -18,14 +18,16 @@
 import * as React from "react";
 import { cva, cx as cn, type VariantProps } from "./cva.ts";
 
-/** Fill colour by semantic variant — token-pure, keyed to the repo palette. */
+/** Fill colour by semantic variant: token-pure, keyed to the repo palette. */
 const meterFill = cva("h-full rounded-full transition-all duration-500 ease-out", {
   variants: {
     variant: {
       default: "bg-[var(--primary)]",
       success: "bg-[var(--status-success)]",
       warning: "bg-[var(--status-warning)]",
-      danger: "bg-[var(--destructive)]",
+      // --status-error, not --destructive: this keeps the whole variant set on
+      // the same --status-* palette Status uses.
+      danger: "bg-[var(--status-error)]",
     },
   },
   defaultVariants: {

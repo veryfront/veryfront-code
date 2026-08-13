@@ -17,10 +17,10 @@ function SeparatorDocsPage() {
     <DocsPage>
       <DocsHero
         title="Separator"
-        lead="A thin divider rule — horizontal or vertical, decorative by default."
+        lead="A thin divider rule - horizontal or vertical, decorative by default."
       />
 
-      <DocsSection title="Horizontal" description="The default — a full-width rule between stacked content.">
+      <DocsSection title="Horizontal" description="The default - a full-width rule between stacked content.">
         <DocsExampleAuto of={Horizontal} />
       </DocsSection>
 

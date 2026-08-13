@@ -1,5 +1,5 @@
 /**
- * Autocomplete behaviour — the free-text-with-suggestions skin over the builtin
+ * Autocomplete behaviour - the free-text-with-suggestions skin over the builtin
  * `combobox` adapter. Verifies: a `role="combobox"` input; typing surfaces the
  * free text via `onValueChange` and filters suggestions; choosing a suggestion
  * fills the input (also via `onValueChange`); ArrowDown drives

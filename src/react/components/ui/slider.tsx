@@ -1,12 +1,12 @@
 /**
- * Slider — pick a number from a range by dragging a thumb along a track.
+ * Slider - pick a number from a range by dragging a thumb along a track.
  *
  * A single native `<input type="range">` (so keyboard, focus, and ARIA come for
  * free) restyled with the veryfront theme tokens. Controlled via
  * `value`/`onValueChange` or uncontrolled via `defaultValue`; `min`/`max`/`step`
  * behave as on the native element. No adapter or engine required.
  *
- * @example Uncontrolled, 0–100
+ * @example Uncontrolled, 0-100
  * ```tsx
  * import { Slider } from "veryfront/ui";
  *

@@ -21,7 +21,7 @@ function SliderDocsPage() {
         lead="Pick a number from a range by dragging the thumb or using the arrow keys."
       />
 
-      <DocsSection title="Default" description="0–100, uncontrolled.">
+      <DocsSection title="Default" description="0-100, uncontrolled.">
         <DocsExampleAuto of={Default} />
       </DocsSection>
 

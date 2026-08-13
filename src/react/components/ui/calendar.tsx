@@ -1,10 +1,10 @@
 /**
- * Calendar — a dependency-free single-month date grid. Renders a header row
+ * Calendar: a dependency-free single-month date grid. Renders a header row
  * (prev-month button · "Month YYYY" caption · next-month button), a weekday
  * header, and a `role="grid"` table of days. The selected day is controlled via
  * `value`; clicking a day fires `onChange`. The displayed month is tracked
  * internally (seeded from `defaultMonth ?? value ?? today`) and moved by the
- * prev/next buttons. Self-contained — no `react-day-picker`, no floating engine;
+ * prev/next buttons. Self-contained: no `react-day-picker`, no floating engine;
  * skinned with the veryfront theme tokens.
  *
  * @example
@@ -69,7 +69,7 @@ export interface CalendarProps extends Omit<React.HTMLAttributes<HTMLDivElement>
   onChange?: (date: Date) => void;
   /** Month shown initially; the displayed month is tracked internally and moved by the prev/next buttons. @default value ?? today */
   defaultMonth?: Date;
-  /** First day of the week — `0` = Sunday, `1` = Monday. @default 0 */
+  /** First day of the week: `0` = Sunday, `1` = Monday. @default 0 */
   weekStartsOn?: 0 | 1;
   /** React 19: ref is a regular prop. */
   ref?: React.Ref<HTMLDivElement>;
@@ -164,15 +164,19 @@ export function Calendar({
                 const selected = value != null && isSameDay(value, date);
                 const isToday = isSameDay(today, date);
                 return (
+                  // aria-selected belongs on the gridcell: ARIA defines it for
+                  // gridcell/option/row/tab, not for role="button". The button
+                  // carries aria-pressed for its own state instead.
                   <td
                     key={di}
                     role="gridcell"
+                    aria-selected={selected}
                     data-selected={selected ? "true" : undefined}
                     className="p-0"
                   >
                     <button
                       type="button"
-                      aria-selected={selected}
+                      aria-pressed={selected}
                       data-today={isToday ? "true" : undefined}
                       onClick={() => select(day)}
                       className={cn(

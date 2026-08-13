@@ -1,9 +1,9 @@
 /**
- * Builtin Tabs adapter — the zero-dependency single-select tablist machinery
+ * Builtin Tabs adapter - the zero-dependency single-select tablist machinery
  * (`role="tablist"` / `role="tab"` / `aria-selected`, select-on-click), assembled
  * as `TabsParts`. The Root owns the selected value; each Tab self-wires through
  * the file-local context. Panel-less (the consumer renders content by value). The
- * Tab sets `data-state="active"|"inactive"` and carries NO visual classes — the
+ * Tab sets `data-state="active"|"inactive"` and carries NO visual classes - the
  * skin passes those.
  *
  * @module react/components/ui/adapter/builtin/tabs

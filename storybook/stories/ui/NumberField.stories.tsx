@@ -105,7 +105,7 @@ export const Clamped: Story = {
   tags: ["!dev"],
   render: () => (
     <div className="w-40">
-      <NumberField defaultValue={5} min={0} max={10} aria-label="Quantity (0–10)" />
+      <NumberField defaultValue={5} min={0} max={10} aria-label="Quantity (0-10)" />
     </div>
   ),
 };

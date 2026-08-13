@@ -1,5 +1,5 @@
 /**
- * Breadcrumb — a non-interactive navigation trail showing the current page's
+ * Breadcrumb: a non-interactive navigation trail showing the current page's
  * location within a hierarchy. Pure-structure primitive (no engine needed): a
  * labelled `<nav>` wrapping an ordered `<BreadcrumbList>` of `<BreadcrumbItem>`s,
  * with `<BreadcrumbLink>`s for ancestors, a single `<BreadcrumbPage>` for the
@@ -96,7 +96,7 @@ export interface BreadcrumbItemProps extends React.LiHTMLAttributes<HTMLLIElemen
   ref?: React.Ref<HTMLLIElement>;
 }
 
-/** A single item in the trail — wraps a link, the current page, or an ellipsis. */
+/** A single item in the trail: wraps a link, the current page, or an ellipsis. */
 export function BreadcrumbItem({
   className,
   children,
@@ -146,7 +146,7 @@ export interface BreadcrumbPageProps extends React.HTMLAttributes<HTMLSpanElemen
   ref?: React.Ref<HTMLSpanElement>;
 }
 
-/** The current page — a non-interactive `role="link"` marked `aria-current="page"`. */
+/** The current page: a non-interactive `role="link"` marked `aria-current="page"`. */
 export function BreadcrumbPage({
   className,
   children,
@@ -201,7 +201,7 @@ export interface BreadcrumbEllipsisProps extends React.HTMLAttributes<HTMLSpanEl
   ref?: React.Ref<HTMLSpanElement>;
 }
 
-/** A collapsed-trail indicator — renders `…` with an sr-only "More" label. */
+/** A collapsed-trail indicator: renders `…` with an sr-only "More" label. */
 export function BreadcrumbEllipsis({
   className,
   ref,
@@ -211,12 +211,15 @@ export function BreadcrumbEllipsis({
     <span
       ref={ref}
       role="presentation"
-      aria-hidden="true"
       data-slot="breadcrumb-ellipsis"
       className={cn("flex size-9 items-center justify-center", className)}
       {...props}
     >
-      …
+      {
+        /* aria-hidden sits on the glyph, not the wrapper: hiding the wrapper
+          would take the sr-only label out of the accessibility tree with it. */
+      }
+      <span aria-hidden="true">…</span>
       <span className="sr-only">More</span>
     </span>
   );

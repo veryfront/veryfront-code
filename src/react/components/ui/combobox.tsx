@@ -1,8 +1,8 @@
 /**
- * Combobox — a text input that filters a dropdown `listbox` as you type, then
+ * Combobox - a text input that filters a dropdown `listbox` as you type, then
  * commits a selection. The look is ours (theme tokens); the mechanics (query,
  * filtering, `aria-activedescendant` keyboard nav, open/dismiss, portalling)
- * come from the active adapter's `combobox` slot — the zero-dependency
+ * come from the active adapter's `combobox` slot - the zero-dependency
  * {@link builtinCombobox} by default, swappable to cmdk / Base UI / etc. via
  * `UIAdapterProvider`.
  *
@@ -46,7 +46,7 @@ export interface ComboboxProps {
   defaultInputValue?: string;
 }
 
-/** Combobox root — renders no node of its own (state + context only). */
+/** Combobox root - renders no node of its own (state + context only). */
 export function Combobox(props: ComboboxProps): React.ReactElement {
   const { combobox } = useAdapter();
   return <combobox.Root {...props} />;
