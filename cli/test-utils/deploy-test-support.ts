@@ -201,6 +201,8 @@ export class InMemoryDeployControlPlane implements DeployControlPlane {
   readonly projectLookups: string[] = [];
   getProjectError: unknown;
   environment: DeployEnvironment | null | undefined;
+  /** Whether the default environment sits behind the platform access gate. */
+  environmentProtected = false;
   releaseVersion: string | null = "2026.07.30-1";
   releaseProjectId = PROJECT_ID;
   releaseFiles: DeployReleaseFile[] = [
@@ -227,7 +229,7 @@ export class InMemoryDeployControlPlane implements DeployControlPlane {
     return {
       id: ENVIRONMENT_ID,
       name,
-      protected: false,
+      protected: this.environmentProtected,
       projectId: PROJECT_ID,
       deployment: this.deploymentReadCount > 0 && this.deployment && this.release
         ? {
