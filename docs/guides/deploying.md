@@ -123,15 +123,14 @@ Veryfront hosting serves three environment names: `preview`, `staging`, and
 `https://<slug>.<environment>.veryfront.com`. Every other name, including
 `development`, has no address on `veryfront.com`. An environment can still carry
 any name you like once it has a custom domain attached, because routing then
-follows the domain rather than the name. Deploy rejects an environment that has
-neither a hosted name nor a custom domain before it creates a release, so the
-failure costs one API call rather than a full deployment.
+follows the domain rather than the name. For a project that serves at least one
+static page, deploy rejects an environment that has neither a hosted name nor a
+custom domain before it creates a release, so the failure costs one API call
+rather than a full deployment.
 
-That check needs a page to probe, so it applies to projects serving at least one
-static page route. A project that serves only API routes or an agent has no page
-address to verify, so it deploys under any environment name. The address printed
-on success is still synthesised from the environment name, so on a name Veryfront
-does not host it will not resolve until you attach a custom domain.
+That check needs a page to probe. A project that serves only API routes or an
+agent has no page address to verify, so it deploys under any environment name
+and reports no hosted address for the deployment.
 
 For an existing nonproduction environment named `staging`:
 
