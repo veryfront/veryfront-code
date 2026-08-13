@@ -1258,7 +1258,7 @@ export interface IsolationSurfacePosture {
  * `requested` and `effective` are separate fields because they diverge: API
  * isolation is requested and not effective when it is downgraded under an
  * explicit host-execution grant. `inForce` is the field that answers the
- * question the per-surface booleans cannot — whether the configuration as a
+ * question the per-surface booleans cannot: whether the configuration as a
  * whole isolates anything at all.
  */
 export interface IsolationPosture {
@@ -1382,11 +1382,14 @@ function resolveFlags(): void {
 }
 
 /**
- * The resolved isolation configuration, for startup logs and health output.
+ * The resolved isolation configuration, for the startup log.
  *
  * The boolean accessors below each answer for one surface and cannot tell an
  * operator that the configuration as a whole resolved to nothing. Resolves the
  * flags on first call, exactly as those accessors do.
+ *
+ * Do not publish this snapshot on an unauthenticated response such as
+ * `/_health`: it tells an anonymous caller which realm tenant code runs in.
  */
 export function getIsolationPosture(): IsolationPosture {
   resolveFlags();

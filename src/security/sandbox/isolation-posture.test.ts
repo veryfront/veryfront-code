@@ -1,12 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
 import {
   __registerLogRecordEmitter,
   __resetLoggerConfigForTests,
   __resetLogRecordEmitterForTests,
   type LogEntry,
 } from "#veryfront/utils/logger/logger.ts";
+import { HOST_PROJECT_EXECUTION_OVERRIDE_ENV } from "#veryfront/security/host-execution-policy.ts";
 import { __setCompiledBinaryForTests } from "./isolation-capability.ts";
 import {
   __resetPoolForTests,
@@ -19,11 +21,12 @@ const ISOLATION_ENV = [
   "WORKER_ISOLATION_API",
   "WORKER_ISOLATION_DATA",
   "WORKER_ISOLATION_SSR",
+  HOST_PROJECT_EXECUTION_OVERRIDE_ENV,
 ] as const;
 
 function captureLogs(): LogEntry[] {
   const entries: LogEntry[] = [];
-  Deno.env.set("LOG_LEVEL", "DEBUG");
+  setEnv("LOG_LEVEL", "DEBUG");
   __resetLoggerConfigForTests();
   __registerLogRecordEmitter((entry) => entries.push(entry));
   return entries;
@@ -33,11 +36,11 @@ describe("security/sandbox isolation posture reporting", () => {
   afterEach(async () => {
     for (const name of ISOLATION_ENV) {
       try {
-        Deno.env.delete(name);
+        deleteEnv(name);
       } catch { /* ok */ }
     }
     try {
-      Deno.env.delete("LOG_LEVEL");
+      deleteEnv("LOG_LEVEL");
     } catch { /* ok */ }
     __setCompiledBinaryForTests(undefined);
     await __resetPoolForTests();
@@ -47,7 +50,7 @@ describe("security/sandbox isolation posture reporting", () => {
 
   it("warns when the master switch is on but no surface is actually isolated", async () => {
     await __resetPoolForTests();
-    Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+    setEnv("WORKER_ISOLATION_ENABLED", "1");
     const entries = captureLogs();
 
     assertEquals(isWorkerIsolationEnabled(), false);
@@ -65,8 +68,8 @@ describe("security/sandbox isolation posture reporting", () => {
 
   it("reports requested and effective state for every surface", async () => {
     await __resetPoolForTests();
-    Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
-    Deno.env.set("WORKER_ISOLATION_DATA", "1");
+    setEnv("WORKER_ISOLATION_ENABLED", "1");
+    setEnv("WORKER_ISOLATION_DATA", "1");
 
     const posture = getIsolationPosture();
 
@@ -77,25 +80,47 @@ describe("security/sandbox isolation posture reporting", () => {
     assertEquals(posture.data.effective, true);
     assertEquals(posture.ssr.requested, false);
     assertEquals(posture.ssr.effective, false);
+    assertEquals(posture.hostExecutionGranted, false);
     assertEquals(posture.inForce, true);
   });
 
-  it("reports API isolation as requested but not in force when preparation is unsupported", async () => {
-    Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
-    Deno.env.set("WORKER_ISOLATION_API", "1");
+  it("keeps API isolation in force when preparation is unsupported and no grant exists", async () => {
+    setEnv("WORKER_ISOLATION_ENABLED", "1");
+    setEnv("WORKER_ISOLATION_API", "1");
+    __setCompiledBinaryForTests(true);
+    await __resetPoolForTests();
+
+    const posture = getIsolationPosture();
+
+    // Without an operator grant the flag stands and API ownership fails closed
+    // with a typed 503, so the surface stays effective rather than downgrading.
+    assertEquals(posture.api.requested, true);
+    assertEquals(posture.api.effective, true);
+    assertEquals(posture.apiPreparationSupported, false);
+    assertEquals(posture.hostExecutionGranted, false);
+    assertEquals(posture.inForce, true);
+  });
+
+  it("reports API isolation as requested but not in force when it is downgraded under a grant", async () => {
+    setEnv("WORKER_ISOLATION_ENABLED", "1");
+    setEnv("WORKER_ISOLATION_API", "1");
+    setEnv(HOST_PROJECT_EXECUTION_OVERRIDE_ENV, "1");
     __setCompiledBinaryForTests(true);
     await __resetPoolForTests();
 
     const posture = getIsolationPosture();
 
     assertEquals(posture.api.requested, true);
+    assertEquals(posture.api.effective, false);
     assertEquals(posture.apiPreparationSupported, false);
+    assertEquals(posture.hostExecutionGranted, true);
+    assertEquals(posture.inForce, false);
   });
 
   it("does not warn when a requested surface is genuinely in force", async () => {
     await __resetPoolForTests();
-    Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
-    Deno.env.set("WORKER_ISOLATION_SSR", "1");
+    setEnv("WORKER_ISOLATION_ENABLED", "1");
+    setEnv("WORKER_ISOLATION_SSR", "1");
     const entries = captureLogs();
 
     getIsolationPosture();
