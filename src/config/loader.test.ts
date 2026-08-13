@@ -683,6 +683,127 @@ export default config as const;
         }
       });
 
+      it("names why the config module failed, not just which file failed", async () => {
+        // Reproduced against published 0.1.1232 in a `veryfront init --template
+        // minimal` scaffold. A reader following the CSS-optimizer hint writes
+        // the natural first guess, `import { defineConfig } from
+        // "veryfront/config"` -- a subpath the package does not export. The
+        // build reports:
+        //
+        //   ! Failed to load config file  configFile=veryfront.config.ts
+        //   ✗ [config-parse-error] Failed to parse configuration
+        //     Detail: Failed to load veryfront.config.ts
+        //     Suggestion: Ensure your configuration file contains valid
+        //                 JavaScript or TypeScript
+        //
+        // The runtime said exactly what was wrong -- "Package subpath './config'
+        // is not defined by exports" -- and the loader dropped it, then advised
+        // checking syntax that was never the problem. `cause` is attached but
+        // nothing on the way to the terminal reads it, at any log level.
+        const adapter = setup();
+        const projectDir = await Deno.makeTempDir({
+          prefix: "vf-config-load-cause-",
+        });
+        const configPath = `${projectDir}/veryfront.config.js`;
+        // Not the literal `veryfront/config` from the field report: this
+        // repository's own deno.json maps that specifier to src/config/index.ts
+        // for internal callers, so inside the test process it resolves. That
+        // asymmetry is why the guess is natural in the first place -- the
+        // subpath is real in the monorepo and absent from the package's exports
+        // map. A specifier no map claims reproduces the same class of failure
+        // and needs no network.
+        const source = 'import { defineConfig } from "veryfront/not-an-export";\n' +
+          "export default defineConfig({});\n";
+
+        try {
+          await Deno.writeTextFile(configPath, source);
+          adapter.fs.files.set(configPath, source);
+
+          const error = await assertRejects(
+            () => getConfig(projectDir, adapter),
+            VeryfrontError,
+          );
+
+          assert(
+            error.message.includes("veryfront.config.js"),
+            `error must still name the file, got: ${error.message}`,
+          );
+          // Both runtimes name the subpath rather than the joined specifier:
+          // Deno says "Unknown export './not-an-export' for 'veryfront'", Node
+          // says "Package subpath './config' is not defined by exports".
+          assert(
+            error.message.includes("not-an-export"),
+            `error must name the subpath that failed to resolve, got: ${error.message}`,
+          );
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+
+      it("carries a thrown config's own message through to the reader", async () => {
+        const adapter = setup();
+        const projectDir = await Deno.makeTempDir({
+          prefix: "vf-config-throw-cause-",
+        });
+        const configPath = `${projectDir}/veryfront.config.js`;
+        const source = 'throw new Error("DATABASE_URL is required");\n';
+
+        try {
+          await Deno.writeTextFile(configPath, source);
+          adapter.fs.files.set(configPath, source);
+
+          const error = await assertRejects(
+            () => getConfig(projectDir, adapter),
+            VeryfrontError,
+          );
+
+          assert(
+            error.message.includes("DATABASE_URL is required"),
+            `error must repeat what the config threw, got: ${error.message}`,
+          );
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+
+      it("bounds a hostile cause instead of pasting it into the report", async () => {
+        // The cause is authored by the project being loaded. A hosted build log
+        // must not become a paste surface for an arbitrarily long, arbitrarily
+        // formatted string, so the summary is one line and bounded.
+        const adapter = setup();
+        const projectDir = await Deno.makeTempDir({
+          prefix: "vf-config-cause-bound-",
+        });
+        const configPath = `${projectDir}/veryfront.config.js`;
+        const noise = "A".repeat(4096);
+        const source = `throw new Error("first line\\nsecond line ${noise}");\n`;
+
+        try {
+          await Deno.writeTextFile(configPath, source);
+          adapter.fs.files.set(configPath, source);
+
+          const error = await assertRejects(
+            () => getConfig(projectDir, adapter),
+            VeryfrontError,
+          );
+
+          assert(
+            error.message.includes("first line"),
+            `error must keep the first line, got: ${error.message}`,
+          );
+          assert(
+            !error.message.includes("second line"),
+            `error must stop at the first line, got: ${error.message}`,
+          );
+          assert(
+            error.message.length < 512,
+            `error must stay bounded, got ${error.message.length} characters`,
+          );
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+
       it("bounds distinct concurrent loads and recovers capacity after they drain", async () => {
         const adapter = setup();
         const gate = Promise.withResolvers<void>();
