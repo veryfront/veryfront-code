@@ -19,8 +19,16 @@ credentials only when the project must use its own Atlassian OAuth app.
 ## Use your own Atlassian OAuth app
 
 1. In the [Atlassian developer console](https://developer.atlassian.com/console/myapps/), create an OAuth 2.0 app.
-2. Add the Veryfront callback URL for the target environment.
-3. Grant the Jira scopes required by the project: `read:jira-work`, `write:jira-work`, `read:jira-user`, and `offline_access`.
+2. Add the exact callback URL for the target environment:
+   - Production: `https://api.veryfront.com/oauth/callback/jira`
+   - Staging: `https://api.veryfront.org/oauth/callback/jira`
+3. Grant all four scopes that the Jira connector requests by default:
+   - `read:jira-work` for Jira reads.
+   - `write:jira-work` for write tools.
+   - `read:jira-user` for `jira__search_users`.
+   - `offline_access` to receive refresh tokens. Veryfront uses refresh tokens
+     to keep a user connection active; omit it only when the connection must
+     not be refreshable.
 4. Set the OAuth app client ID and client secret as project environment variables:
 
 | Variable                  | Value                         |

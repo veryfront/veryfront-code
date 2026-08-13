@@ -20,8 +20,15 @@ branding, verification, or scope requirements.
 ## Use your own GitHub OAuth app
 
 1. In [GitHub Developer Settings](https://github.com/settings/developers), create an OAuth App.
-2. Add the Veryfront callback URL for the target environment.
-3. Set the OAuth app client ID and client secret as project environment variables:
+2. Add the exact callback URL for the target environment:
+   - Production: `https://api.veryfront.com/oauth/callback/github`
+   - Staging: `https://api.veryfront.org/oauth/callback/github`
+3. For another environment, copy the callback URL displayed by its Veryfront
+   OAuth connection flow. A GitHub OAuth App can serve more than one route only
+   when GitHub's host, port, and callback-path rules accept the route. The
+   hosted production and staging URLs above do not share a base host, so use
+   separate OAuth Apps for them.
+4. Set the OAuth app client ID and client secret as project environment variables:
 
 | Variable               | Value                          |
 | ---------------------- | ------------------------------ |

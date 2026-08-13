@@ -12,7 +12,11 @@ account for scheduled or project-owned automation.
 
 - A Salesforce administrator for the target org.
 - A Veryfront project with Salesforce tools declared in an agent.
-- Salesforce enabled for the target Veryfront environment. Salesforce is currently feature-gated. Set `VERYFRONT_EXPERIMENTAL_INTEGRATIONS=salesforce` where the integration catalog is configured.
+- The hosted Veryfront API, which supplies the Salesforce provider adapter. The
+  generic Veryfront runtime cannot scaffold or execute Salesforce OAuth routes.
+  An embedding host that supplies its own Salesforce adapter must declare
+  `VERYFRONT_HOST_ADAPTER_INTEGRATIONS=salesforce` to expose the connector
+  catalog. This does not enable generic Salesforce scaffolding.
 
 ## Connect a Salesforce user
 
@@ -51,21 +55,24 @@ In the target Salesforce org:
 
 1. Create a dedicated integration user with the minimum object, field, and API permissions required by the project.
 2. Create or configure a Salesforce Connected App for the client-credentials flow.
-3. Set the integration user as the Connected App's **Run As** user.
-4. Record the Connected App consumer key and consumer secret in your approved secret manager.
+3. Enable **Client Credentials Flow** and select the **Manage user data via APIs** (`api`) OAuth scope.
+4. In the Connected App policy, set permitted users to **Admin approved users are pre-authorized**, then select the dedicated integration user as the **Run As** user.
+5. Record the Connected App consumer key and consumer secret in your approved secret manager.
 
 Set all three values as project environment variables in the matching
 Veryfront environment:
 
-| Variable                                   | Value                          |
-| ------------------------------------------ | ------------------------------ |
-| `SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID`     | Connected App consumer key     |
-| `SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET` | Connected App consumer secret  |
-| `SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL`     | `https://login.salesforce.com` |
+| Variable                                   | Value                         |
+| ------------------------------------------ | ----------------------------- |
+| `SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID`     | Connected App consumer key    |
+| `SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET` | Connected App consumer secret |
+| `SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL`     | Salesforce My Domain origin   |
 
-For a Salesforce sandbox, set `SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL` to
-`https://test.salesforce.com`. Use the Salesforce login endpoint, not the
-instance URL returned after authentication.
+Set `SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL` to the target org's Salesforce My
+Domain origin, for example `https://acme.my.salesforce.com`. Veryfront rejects
+generic login endpoints such as `https://login.salesforce.com` and
+`https://test.salesforce.com`; it also rejects paths and non-HTTPS URLs. Use
+the My Domain origin, not the instance URL returned after authentication.
 
 All three variables are required. If any service-account variable is missing,
 Veryfront fails closed and does not fall back to a human OAuth connection for
