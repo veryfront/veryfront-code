@@ -536,6 +536,61 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
+  it("serves RSC app-router page and layout modules in local dev so they hydrate", async () => {
+    // Regression #3662: with `experimental.rsc`, `veryfront dev` (isLocalProject)
+    // 404'd every app-router client module because RSC client-boundary admission
+    // — a hosted-transport concern — was applied to local dev, where the browser
+    // hydrates by importing the whole page module (as the non-RSC path does).
+    // The hosted contract stays pinned by the sibling test above.
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-browser-module-rsc-local-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/app/api`, { recursive: true });
+      for (const name of ["page", "layout"]) {
+        await Deno.writeTextFile(
+          `${projectDir}/app/${name}.tsx`,
+          `export const marker = "server-${name}"; export default function View() { return null; }`,
+        );
+      }
+      await Deno.writeTextFile(
+        `${projectDir}/app/api/save.ts`,
+        `export function GET() { return new Response("secret-route"); }`,
+      );
+
+      const { serveModule } = await import("./module-server.ts");
+      const options = {
+        projectId: "test",
+        projectDir,
+        adapter: denoAdapter,
+        isLocalProject: true,
+        isProxyMode: false,
+        mode: "development",
+        config: { experimental: { rsc: true } },
+      } as const;
+
+      for (const prefix of ["/_vf_modules", "/_veryfront/modules"]) {
+        for (const name of ["page", "layout"]) {
+          const response = await serveModule(
+            new Request(`http://localhost:3000${prefix}/app/${name}.js`),
+            options,
+          );
+          assertEquals(response.status, 200, `${prefix}/app/${name}.js should serve in local dev`);
+          assertStringIncludes(await response.text(), `server-${name}`);
+        }
+
+        // Server surfaces (api/actions) stay protected in local dev regardless of RSC.
+        const apiRoute = await serveModule(
+          new Request(`http://localhost:3000${prefix}/app/api/save.js`),
+          options,
+        );
+        assertEquals(apiRoute.status, 404, `${prefix}/app/api/save.js must stay protected`);
+        assertEquals((await apiRoute.text()).includes("secret-route"), false);
+      }
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("rejects server-directed source from browser module requests", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-browser-module-boundary-" });
 
