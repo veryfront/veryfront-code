@@ -397,6 +397,25 @@ async function createNodeFileBytesExclusive(
 }
 
 /**
+ * Resolve the `O_NOFOLLOW` open flag that binds an exact-inode snapshot read.
+ *
+ * `constants` is `undefined` in a runtime without `node:fs` — e.g. a browser
+ * bundle that transitively imports this adapter. Dereferencing `.O_NOFOLLOW` on
+ * it unconditionally threw `Cannot read properties of undefined (reading
+ * 'O_NOFOLLOW')` during construction and aborted client hydration (#3661).
+ * Treat the missing constants as "unavailable" (`undefined`) — the same meaning
+ * {@link NodeFileSystemCapabilityOptions.noFollow} already documents for an own
+ * `undefined` — so `canOpenExactSnapshot` degrades to `false` instead of the
+ * constructor exploding. An own `noFollow` on `options` still wins (the test seam).
+ */
+export function resolveNoFollowFlag(
+  options: NodeFileSystemCapabilityOptions,
+  constants: { readonly O_NOFOLLOW?: number } | undefined,
+): number | undefined {
+  return hasOwn(options, "noFollow") ? options.noFollow : constants?.O_NOFOLLOW;
+}
+
+/**
  * Filesystem implementation shared by runtimes that provide Node-compatible
  * `node:fs` APIs (currently Node.js and Bun).
  */
@@ -409,12 +428,7 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
       ...nodeFileSystemOperations,
       ...options.operations,
     } as NodeFileSystemOperations;
-    // `node:fs` constants are absent in non-Node runtimes (e.g. a browser bundle
-    // that transitively pulls this adapter in). Treat that as "unavailable" —
-    // matching NodeFileSystemCapabilityOptions.noFollow's documented contract —
-    // instead of throwing `Cannot read properties of undefined (reading 'O_NOFOLLOW')`
-    // at construction, which kills client hydration (#3661).
-    const noFollow = hasOwn(options, "noFollow") ? options.noFollow : nodeFsConstants?.O_NOFOLLOW;
+    const noFollow = resolveNoFollowFlag(options, nodeFsConstants);
     const platform = options.platform ?? (runtimeUsesWindowsPaths() ? "windows" : "posix");
     const canOpenExactSnapshot = platform === "windows"
       ? hasUsableWindowsSnapshotIdentity(detectNodeCompatibleRuntime())

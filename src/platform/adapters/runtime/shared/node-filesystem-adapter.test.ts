@@ -12,6 +12,7 @@ import {
   hasUsableWindowsSnapshotIdentity,
   NodeCompatibleFileSystemAdapter,
   readNodeFileSnapshotWithinLimit,
+  resolveNoFollowFlag,
 } from "./node-filesystem-adapter.ts";
 import { setupNodeFsWatcher } from "./shared-watcher.ts";
 
@@ -39,7 +40,40 @@ function requireExclusiveCreator(adapter: NodeCompatibleFileSystemAdapter) {
   return adapter.createFileBytesExclusive;
 }
 
+describe("resolveNoFollowFlag", () => {
+  it("does not throw when node:fs constants are unavailable (#3661)", () => {
+    // In a browser bundle `nodeFsConstants` is `undefined`. Reading `.O_NOFOLLOW`
+    // off it must degrade to "unavailable", not throw at construction. Passing
+    // `undefined` for `constants` reproduces the non-Node runtime directly.
+    assertEquals(resolveNoFollowFlag({}, undefined), undefined);
+  });
+
+  it("returns the runtime O_NOFOLLOW when the constants are present", () => {
+    assertEquals(resolveNoFollowFlag({}, { O_NOFOLLOW: 0x20000 }), 0x20000);
+  });
+
+  it("lets an own noFollow option win over the runtime constants (test seam)", () => {
+    assertEquals(resolveNoFollowFlag({ noFollow: 7 }, { O_NOFOLLOW: 0x20000 }), 7);
+    // An own `undefined` means "unavailable" even when constants exist.
+    assertEquals(resolveNoFollowFlag({ noFollow: undefined }, { O_NOFOLLOW: 0x20000 }), undefined);
+  });
+});
+
 describe("NodeCompatibleFileSystemAdapter", () => {
+  it("constructs without exact-snapshot support when node:fs constants are absent (#3661)", () => {
+    // Reproduce the browser path end to end: no runtime O_NOFOLLOW available, so
+    // the adapter must construct (not throw) and simply cannot bind an exact
+    // inode snapshot. `noFollow: undefined` is the documented "unavailable" seam.
+    const adapter = new NodeCompatibleFileSystemAdapter(undefined, {
+      noFollow: undefined,
+      platform: "posix",
+    });
+    assertEquals(
+      (adapter as { readFileSnapshotWithinLimit?: unknown }).readFileSnapshotWithinLimit,
+      undefined,
+    );
+  });
+
   it("reads empty and exact-limit snapshots and rejects invalid or oversized inputs", async () => {
     const root = await Deno.makeTempDir({ prefix: "veryfront-node-snapshot-" });
     try {
