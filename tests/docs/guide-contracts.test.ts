@@ -556,6 +556,38 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Available integrations",
     ],
   },
+  "guides/integrations/github.md": {
+    references: ["../../api-reference/veryfront/integrations.md"],
+    snippets: [
+      "Connect a GitHub user",
+      "https://api.veryfront.com/oauth/callback/github",
+      "GITHUB_CLIENT_ID",
+      "Verify it worked",
+    ],
+  },
+  "guides/integrations/jira.md": {
+    references: ["../../api-reference/veryfront/integrations.md"],
+    snippets: [
+      "Connect a Jira user",
+      "/api/auth/jira/callback",
+      "read:jira-user",
+      "ATLASSIAN_CLIENT_ID",
+      "JIRA_CLOUD_ID",
+    ],
+  },
+  "guides/integrations/salesforce.md": {
+    references: [
+      "../../api-reference/veryfront/integrations.md",
+      "../../concepts/salesforce-integration.md",
+    ],
+    snippets: [
+      "Connect a Salesforce user",
+      "VERYFRONT_HOST_ADAPTER_INTEGRATIONS=salesforce",
+      "SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID",
+      "Admin approved users are pre-authorized",
+      "Verify it worked",
+    ],
+  },
   "guides/runs.md": {
     references: ["../api-reference/veryfront/runs.md"],
     snippets: [
