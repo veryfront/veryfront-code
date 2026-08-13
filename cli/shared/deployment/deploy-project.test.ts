@@ -163,6 +163,80 @@ describe("DeployProject", () => {
     });
   });
 
+  it("refuses a config the hosted runtime can never evaluate", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      await Deno.writeTextFile(
+        `${projectDir}/veryfront.config.ts`,
+        `import { defineConfig } from "veryfront";\n` +
+          `import extCssLightning from "@veryfront/ext-css-lightning";\n\n` +
+          `export default defineConfig({\n  extensions: [extCssLightning()],\n});\n`,
+      );
+      const controlPlane = new InMemoryDeployControlPlane();
+      try {
+        const error = await expectDeployError(() => executeApply(projectDir, controlPlane));
+
+        const message = (error as Error).message;
+        assertStringIncludes(message, "veryfront.config.ts");
+        assertStringIncludes(message, "@veryfront/ext-css-lightning");
+        assertEquals(controlPlane.createdReleases, [], "no release for an undeployable config");
+        assertEquals(
+          controlPlane.createdDeployments,
+          [],
+          "no deployment for an undeployable config",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("refuses a literal config the hosted result policy always rejects", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      // Every construct here is one the hosted evaluator parses happily. It
+      // refuses the record afterwards, on every request, so a deploy that let
+      // this through would report success over an environment answering 500.
+      await Deno.writeTextFile(
+        `${projectDir}/veryfront.config.ts`,
+        `export default { cache: { dir: ".tenant-cache" } };\n`,
+      );
+      const controlPlane = new InMemoryDeployControlPlane();
+      try {
+        const error = await expectDeployError(() => executeApply(projectDir, controlPlane));
+
+        assertStringIncludes((error as Error).message, "cache.dir");
+        assertEquals(controlPlane.createdReleases, [], "no release for an undeployable config");
+        assertEquals(
+          controlPlane.createdDeployments,
+          [],
+          "no deployment for an undeployable config",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("deploys a config that only uses the hosted configuration helpers", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      await Deno.writeTextFile(
+        `${projectDir}/veryfront.config.ts`,
+        `import { defineConfig } from "veryfront";\n\n` +
+          `export default defineConfig({ title: "Demo" });\n`,
+      );
+      const controlPlane = new InMemoryDeployControlPlane();
+      try {
+        const outcome = await executeApply(projectDir, controlPlane);
+
+        assertEquals(outcome.kind, "deployed", "a hosted-compatible config still deploys");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
   it("deploys a request-scoped project without inferring or persisting a local link", async () => {
     await withDeployEnv(async () => {
       const { projectDir, files } = await createUnlinkedPushedProject();

@@ -569,6 +569,14 @@ Source map loading error.
 
 Raised while building, uploading, or activating a deployment.
 
+### config-not-deployable
+
+Configuration cannot be deployed to Veryfront Cloud.
+
+- **HTTP status:** 400
+- **CLI exit code:** 2
+- **What to do:** Veryfront Cloud reads veryfront.config.ts as data: keep it to literals and the veryfront configuration helpers
+
 ### deployment-error
 
 Deployment process failed.
