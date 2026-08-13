@@ -46,10 +46,22 @@ const MAX_SOURCE_EXCERPT_CHARACTERS = 160;
  * `getEnv` reads a deployment variable and `defineConfigWithEnv` hands the
  * environment name to a callback; the hosted evaluator binds nothing else that
  * can. An import names the helper it takes even when it renames it locally
- * (`import { getEnv as env }`), so a source that mentions neither name
- * evaluates to what its own literals say, here and in production alike.
+ * (`import { getEnv as env }`), so a file that imports neither evaluates to
+ * what its own literals say, here and in production alike.
  */
 const ENVIRONMENT_READING_HELPERS = /\b(?:getEnv|defineConfigWithEnv)\b/;
+
+/**
+ * An `import ... from "veryfront"` statement, up to its specifier.
+ *
+ * Only an import binds a helper, so only an import can make a configuration
+ * environment-dependent — and by the time a result rejection exists the program
+ * has validated, which means every import it has is this one. Reading the
+ * statements rather than the whole file keeps a string or a comment that
+ * happens to spell `getEnv` from silencing a verdict the config's own literals
+ * decide.
+ */
+const VERYFRONT_IMPORT_STATEMENTS = /\bimport\b[^;]*?\bfrom\s*["']veryfront["']/g;
 
 // deno-lint-ignore no-control-regex
 const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/g;
@@ -151,7 +163,17 @@ function isDecidedByTheSourceAlone(
   if (error.phase === "validate") return true;
   return error.phase === "result" &&
     error.code === "unsupported-hosted-feature" &&
-    !ENVIRONMENT_READING_HELPERS.test(source);
+    !readsDeploymentEnvironment(source);
+}
+
+/** Does `source` import a helper that reads deployment environment data? */
+function readsDeploymentEnvironment(source: string): boolean {
+  const statements = source.match(VERYFRONT_IMPORT_STATEMENTS);
+  if (statements === null) return false;
+  for (let index = 0; index < statements.length; index += 1) {
+    if (ENVIRONMENT_READING_HELPERS.test(statements[index]!)) return true;
+  }
+  return false;
 }
 
 function describeReason(

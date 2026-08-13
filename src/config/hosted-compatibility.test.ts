@@ -119,6 +119,34 @@ describe("hosted config compatibility", () => {
     assertStringIncludes(incompatibility?.remedy ?? "", "cache.dir");
   });
 
+  it("is not silenced by a helper name that is only text", async () => {
+    // "getEnv" here is a title, not a binding. Nothing in this config reads
+    // the environment, so the cache.dir verdict is still the hosted one.
+    const incompatibility = await findHostedConfigIncompatibility(
+      `export default { cache: { dir: ".tenant-cache" }, title: "getEnv" };\n`,
+    );
+
+    assertEquals(incompatibility?.reason, "hosted-cache-directory");
+  });
+
+  it("defers on a literal rejection standing beside a real environment read", async () => {
+    // A known limit, and the safe direction: the evaluator names the reason it
+    // refused, not the path of the value it refused, so nothing here can tell
+    // whether ORIGINS reaches cache.dir. Reporting would risk blocking a deploy
+    // over a local difference; staying silent leaves the verdict where it was
+    // before this check existed, with the hosted runtime.
+    assertEquals(
+      await findHostedConfigIncompatibility(
+        `import { getEnv } from "veryfront";\n` +
+          `export default {\n` +
+          `  cache: { dir: ".tenant-cache" },\n` +
+          `  security: { cors: { origin: getEnv("ORIGINS") } },\n` +
+          `};\n`,
+      ),
+      null,
+    );
+  });
+
   it("stays silent about rejections that depend on evaluated values", async () => {
     // The hosted result policy refuses an origin this evaluation cannot
     // produce: ORIGINS is set in the deployment environment, not this one. A

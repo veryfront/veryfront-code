@@ -100,7 +100,8 @@ export const BRANCH_NOT_FOUND = defineError({
  * The project's configuration file uses a construct Veryfront Cloud's
  * configuration evaluator can never accept, so the release would answer 500 to
  * every request. Raised before a release is created; the detail names the file,
- * the line, and the change that makes the project deployable.
+ * the change that makes the project deployable, and the line when the evaluator
+ * located the construct it refused.
  */
 export const CONFIG_NOT_DEPLOYABLE = defineError({
   slug: "config-not-deployable",
