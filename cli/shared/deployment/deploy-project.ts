@@ -818,6 +818,9 @@ function configuredEnvironmentDomain(environment: DeployEnvironment): string | n
  *
  * A configured custom domain removes the constraint entirely — routing then has
  * nothing to do with the environment's name — so this only guards the fallback.
+ *
+ * Call this only for a deploy that will actually ask for that address. A project
+ * with no static page route probes nothing, so its name never has to resolve.
  */
 function assertEnvironmentIsReachable(environment: DeployEnvironment): void {
   if (configuredEnvironmentDomain(environment) !== null) return;
@@ -1253,6 +1256,12 @@ export function createDeployProject(options: {
         controlPlane = createControlPlane(config);
       }
 
+      // Read from the project directory, before the environment is resolved,
+      // because whether this deploy needs a hosted address at all decides
+      // whether an unroutable environment name is fatal to it.
+      const expectedPageRoutes = await collectProjectPageRoutes(request.projectDir);
+      const readinessRoute = expectedPageRoutes.find((route) => !route.includes("[")) ?? null;
+
       const environment = await step(observer, "resolve-target", async () => {
         if (!project) project = await controlPlane.getProject(projectApiReference(config));
         const resolvedEnvironment = await controlPlane.getEnvironment(
@@ -1265,9 +1274,14 @@ export function createDeployProject(options: {
           });
         }
         assertProjectOwnership("Environment", resolvedEnvironment, project.id);
-        // Before any release or deployment exists, so an unreachable target
-        // costs one API call rather than a full deploy and a readiness window.
-        assertEnvironmentIsReachable(resolvedEnvironment);
+        // Only a deploy that will ask the platform for a page address depends on
+        // the name resolving. A project with no static page route sends no
+        // readiness probe at all, so its deploy never touches the synthesised
+        // host and must not be refused for a name it never resolves. When the
+        // address is needed this still runs before any release or deployment
+        // exists, so an unreachable target costs one API call rather than a full
+        // deploy and a readiness window.
+        if (readinessRoute !== null) assertEnvironmentIsReachable(resolvedEnvironment);
         return resolvedEnvironment;
       });
 
@@ -1303,17 +1317,14 @@ export function createDeployProject(options: {
         };
       }
 
-      const { source, expectedPageRoutes } = await step(observer, "verify-source", async () => {
-        const source = await resolvePushedSource({
+      const source = await step(observer, "verify-source", async () =>
+        resolvePushedSource({
           projectDir: request.projectDir,
           controlPlane: config.apiUrl,
           projectId: project!.id,
           projectSlug: project!.slug,
           branch,
-        });
-        const expectedPageRoutes = await collectProjectPageRoutes(request.projectDir);
-        return { source, expectedPageRoutes };
-      });
+        }));
 
       const release = await step(observer, "create-release", async () => {
         const created = await controlPlane.createRelease(project!.id, {
@@ -1374,7 +1385,6 @@ export function createDeployProject(options: {
           }, { verifiedRelease }),
       );
 
-      const readinessRoute = expectedPageRoutes.find((route) => !route.includes("[")) ?? null;
       const environmentUrl = buildReadyEnvironmentUrl(
         buildEnvironmentUrl(verification.projectSlug, environment),
         readinessRoute,

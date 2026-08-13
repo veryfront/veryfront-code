@@ -2065,6 +2065,77 @@ describe("unroutable hosted environment names", () => {
     );
   });
 
+  /**
+   * An API-only, agent-only or otherwise page-less project. `readinessRoute` is
+   * null for it, so `buildEnvironmentReadinessProbes` yields nothing and the
+   * deploy never asks the platform for a hosted address — which is why the name
+   * check must not apply to it.
+   */
+  const SERVER_ONLY_CONTENT = "export const handler = () => new Response('ok');\n";
+
+  async function createPushedPagelessProject(): Promise<{
+    projectDir: string;
+    files: DeployReleaseFile[];
+  }> {
+    const projectDir = await Deno.makeTempDir();
+    await Deno.mkdir(`${projectDir}/server`, { recursive: true });
+    await Deno.writeTextFile(`${projectDir}/veryfront.json`, projectConfigText());
+    await Deno.writeTextFile(`${projectDir}/server/handler.ts`, SERVER_ONLY_CONTENT);
+    const commitSha = await commitProject(projectDir);
+    const files: DeployReleaseFile[] = [
+      { path: "server/handler.ts", content: SERVER_ONLY_CONTENT },
+      { path: "veryfront.json", content: projectConfigText() },
+    ];
+    await writePushReceipt(projectDir, {
+      controlPlane: CONTROL_PLANE,
+      projectId: PROJECT_ID,
+      projectSlug: PROJECT_SLUG,
+      branch: "main",
+      commitSha,
+      sourceDigest: await computeSourceDigest(files),
+      clean: true,
+    });
+    return { projectDir, files };
+  }
+
+  it("still deploys a page-less project to an environment with no hosted address", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir, files } = await createPushedPagelessProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      controlPlane.environmentDomains = [];
+      controlPlane.releaseFiles = files;
+      controlPlane.manifestResponses = [readyManifest({})];
+      let probes = 0;
+      try {
+        const outcome = await withFetchStub(
+          (input) => {
+            if (isHostedEnvironmentRequest(input)) {
+              probes++;
+              return hostedNotFound();
+            }
+            return new Response("ready");
+          },
+          () =>
+            createDeployment(controlPlane).execute({
+              projectDir,
+              environment: "development",
+              mode: "apply",
+              source: { kind: "already-pushed" },
+            }),
+        );
+
+        assertEquals(
+          outcome.kind,
+          "deployed",
+          "a deploy that never probes a hosted address does not depend on the environment name",
+        );
+        assertEquals(probes, 0, "a page-less deploy sends no readiness probe");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
   it("still deploys an unroutable environment name that has a custom domain", async () => {
     await withDeployEnv(async () => {
       const { projectDir } = await createPushedProject();

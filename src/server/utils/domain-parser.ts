@@ -45,9 +45,28 @@ export const HOSTED_ENVIRONMENT_NAMES = ["preview", "staging", "production"] as 
 
 export type HostedEnvironmentName = typeof HOSTED_ENVIRONMENT_NAMES[number];
 
-/** Whether `{slug}.{name}.veryfront.com` is a host the platform can route. */
-export function isHostedEnvironmentName(name: string): name is HostedEnvironmentName {
-  return (HOSTED_ENVIRONMENT_NAMES as readonly string[]).includes(name.toLowerCase());
+/**
+ * Whether `{slug}.{name}.veryfront.com` is a host the platform can route.
+ *
+ * Deliberately not a `name is HostedEnvironmentName` predicate. Host labels are
+ * case-insensitive, so the comparison folds case — and a predicate would then
+ * narrow the *unfolded* `"Production"` to a type whose members are all
+ * lowercase, letting a caller feed it to an exhaustive `switch` or a keyed
+ * lookup that misses at runtime. A caller that needs a value of that type must
+ * take the folded label this is built on rather than its own string.
+ */
+export function isHostedEnvironmentName(name: string): boolean {
+  return toHostedEnvironmentName(name) !== null;
+}
+
+/**
+ * The routable label `name` denotes, case-folded, or null when the platform
+ * cannot route it. Returns the constant rather than the caller's string, so the
+ * value always matches its `HostedEnvironmentName` type.
+ */
+function toHostedEnvironmentName(name: string): HostedEnvironmentName | null {
+  const folded = name.toLowerCase();
+  return HOSTED_ENVIRONMENT_NAMES.find((hosted) => hosted === folded) ?? null;
 }
 
 /** Alternation source for the hosted environment labels, e.g. `preview|staging|production`. */

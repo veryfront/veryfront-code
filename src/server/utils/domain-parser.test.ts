@@ -449,5 +449,21 @@ describe("domain-parser", () => {
       assertEquals(isHostedEnvironmentName("STAGING"), true);
       assertEquals(isHostedEnvironmentName("Development"), false);
     });
+
+    it("answers about the label, not about the caller's string", () => {
+      // The check folds case, so a true answer says nothing about the spelling
+      // the caller holds. It must therefore stay a plain boolean: as a
+      // `name is HostedEnvironmentName` predicate it typed `"Production"` as a
+      // lowercase-only literal, and an exhaustive switch or keyed lookup built
+      // on that narrowing misses at runtime — exactly as this assertion shows.
+      const name = "Production";
+      const routable: boolean = isHostedEnvironmentName(name);
+      assertEquals(routable, true);
+      assertEquals(
+        (HOSTED_ENVIRONMENT_NAMES as readonly string[]).includes(name),
+        false,
+        "the caller's spelling is not one of the hosted labels",
+      );
+    });
   });
 });
