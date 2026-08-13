@@ -201,6 +201,11 @@ export class InMemoryDeployControlPlane implements DeployControlPlane {
   readonly projectLookups: string[] = [];
   getProjectError: unknown;
   environment: DeployEnvironment | null | undefined;
+  /**
+   * Custom domains the environment reports. Set to `[]` to make the CLI fall
+   * back to synthesising the `{slug}.{environment}.veryfront.com` hosted URL.
+   */
+  environmentDomains: string[] = ["https://my-project.production.veryfront.com"];
   /** Whether the default environment sits behind the platform access gate. */
   environmentProtected = false;
   releaseVersion: string | null = "2026.07.30-1";
@@ -237,7 +242,7 @@ export class InMemoryDeployControlPlane implements DeployControlPlane {
           release: { id: this.release.id, name: this.release.name },
         }
         : null,
-      domains: ["https://my-project.production.veryfront.com"],
+      domains: this.environmentDomains,
     };
   }
 

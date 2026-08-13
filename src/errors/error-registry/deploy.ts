@@ -40,6 +40,15 @@ export const ENVIRONMENT_NOT_FOUND = defineError({
   suggestion: "Check environment names with: veryfront config",
 });
 
+export const ENVIRONMENT_NOT_ROUTABLE = defineError({
+  slug: "environment-not-routable",
+  category: "DEPLOY",
+  status: 400,
+  title: "Environment name has no Veryfront-hosted address",
+  suggestion:
+    "Deploy to preview, staging, or production, or attach a custom domain to this environment in Studio",
+});
+
 export const RELEASE_MISSING_VERSION = defineError({
   slug: "release-missing-version",
   category: "DEPLOY",
@@ -121,6 +130,7 @@ export const DEPLOY_REGISTRY = {
   "env-var-missing": ENV_VAR_MISSING,
   "production-build-required": PRODUCTION_BUILD_REQUIRED,
   "environment-not-found": ENVIRONMENT_NOT_FOUND,
+  "environment-not-routable": ENVIRONMENT_NOT_ROUTABLE,
   "release-missing-version": RELEASE_MISSING_VERSION,
   "release-build-timeout": RELEASE_BUILD_TIMEOUT,
   "deployment-verification-timeout": DEPLOYMENT_VERIFICATION_TIMEOUT,
