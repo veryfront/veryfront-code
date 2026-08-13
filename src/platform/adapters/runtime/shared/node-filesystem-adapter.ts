@@ -409,7 +409,12 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
       ...nodeFileSystemOperations,
       ...options.operations,
     } as NodeFileSystemOperations;
-    const noFollow = hasOwn(options, "noFollow") ? options.noFollow : nodeFsConstants.O_NOFOLLOW;
+    // `node:fs` constants are absent in non-Node runtimes (e.g. a browser bundle
+    // that transitively pulls this adapter in). Treat that as "unavailable" —
+    // matching NodeFileSystemCapabilityOptions.noFollow's documented contract —
+    // instead of throwing `Cannot read properties of undefined (reading 'O_NOFOLLOW')`
+    // at construction, which kills client hydration (#3661).
+    const noFollow = hasOwn(options, "noFollow") ? options.noFollow : nodeFsConstants?.O_NOFOLLOW;
     const platform = options.platform ?? (runtimeUsesWindowsPaths() ? "windows" : "posix");
     const canOpenExactSnapshot = platform === "windows"
       ? hasUsableWindowsSnapshotIdentity(detectNodeCompatibleRuntime())
