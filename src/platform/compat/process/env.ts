@@ -1,5 +1,6 @@
 import { getDenoRuntime, isDeno as IS_DENO } from "../runtime.ts";
-import { runtimeProcess } from "./runtime-process.ts";
+import { hostProcessEnv, runtimeProcess } from "./runtime-process.ts";
+import { installProjectScopedProcessEnv } from "./scoped-process-env.ts";
 import type { ProjectEnvSnapshot } from "./project-env-contract.ts";
 
 type EnvOverlayValue = string | null;
@@ -31,11 +32,17 @@ function getOverlayEnvValue(
 
 /** Read and write process environment variables. */
 export function env(): Record<string, string> {
+  const projectEnv = getTrustedProjectEnvSnapshot();
+  // Same rule as getEnv(): while a project scope is active its snapshot is the
+  // whole environment, so the bulk accessor cannot report a wider set of
+  // variables than the single-key one.
+  if (projectEnv !== undefined) return { ...projectEnv };
+
   const deno = IS_DENO ? getDenoRuntime() : undefined;
   const base = deno
     ? deno.env.toObject()
-    : runtimeProcess
-    ? { ...runtimeProcess.env } as Record<string, string>
+    : hostProcessEnv
+    ? { ...hostProcessEnv } as Record<string, string>
     : {};
 
   const overlay = getEnvOverlayStore();
@@ -75,7 +82,10 @@ export function getHostEnv(key: string): string | undefined {
       return undefined;
     }
   }
-  if (runtimeProcess) return runtimeProcess.env[key];
+  // Read the captured host record rather than `runtimeProcess.env`, so the
+  // narrower view installed over `process.env` cannot redirect a host-scoped
+  // read back into a project scope.
+  if (hostProcessEnv) return hostProcessEnv[key];
   return undefined;
 }
 
@@ -87,6 +97,10 @@ let _trustedProjectEnvSnapshot: (() => ProjectEnvSnapshot | undefined) | null = 
  * Kept out of the public process barrel so project code cannot replace the
  * callback through a supported package export. Re-registering a different
  * function is rejected rather than silently widening an isolation boundary.
+ *
+ * Registering the bridge also installs the matching view over `process.env`, so
+ * the raw environment object and `getEnv()` are scoped by the same act and
+ * cannot drift apart.
  */
 export function registerTrustedProjectEnvSnapshot(
   getter: () => ProjectEnvSnapshot | undefined,
@@ -95,6 +109,7 @@ export function registerTrustedProjectEnvSnapshot(
     throw new Error("Project environment snapshot bridge is already registered");
   }
   _trustedProjectEnvSnapshot = getter;
+  installProjectScopedProcessEnv(getTrustedProjectEnvSnapshot);
 }
 
 /** Return the active server-owned project env snapshot, if registered. */
