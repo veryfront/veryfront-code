@@ -1,9 +1,11 @@
-import { type EnvironmentConfig, getConfig, getEnvironmentConfig } from "veryfront/config";
-import { findVeryfrontConfigFile } from "#veryfront/config/config-files.ts";
 import {
+  type EnvironmentConfig,
   findHostedConfigIncompatibility,
+  findVeryfrontConfigFile,
   formatHostedConfigIncompatibility,
-} from "#veryfront/config/hosted-compatibility.ts";
+  getConfig,
+  getEnvironmentConfig,
+} from "veryfront/config";
 import { createFileSystem, isNotFoundError, runtime } from "veryfront/platform";
 import { join, relative, resolve } from "veryfront/platform/path";
 import { isWithinDirectory, normalizePath } from "veryfront/utils";
