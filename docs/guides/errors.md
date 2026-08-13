@@ -604,6 +604,13 @@ Deployment environment not found.
 - **HTTP status:** 404
 - **What to do:** Check environment names with: veryfront config
 
+### environment-not-routable
+
+Environment name has no Veryfront-hosted address.
+
+- **HTTP status:** 400
+- **What to do:** Deploy to preview, staging, or production, or attach a custom domain to this environment in Studio
+
 ### release-missing-version
 
 Release has no version.

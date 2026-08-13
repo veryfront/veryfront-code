@@ -3,6 +3,8 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   getEffectiveProjectSlug,
+  HOSTED_ENVIRONMENT_NAMES,
+  isHostedEnvironmentName,
   isLocalDevHost,
   isVeryfrontDomain,
   parseProjectDomain,
@@ -417,6 +419,35 @@ describe("domain-parser", () => {
 
     it("disallows embed for prod custom domain simulation", () => {
       assertEquals(parseProjectDomain("example.com.prod.lvh.me").allowIframeEmbed, false);
+    });
+  });
+
+  describe("HOSTED_ENVIRONMENT_NAMES", () => {
+    it("names exactly the labels parseProjectDomain routes to a hosted project", () => {
+      for (const name of HOSTED_ENVIRONMENT_NAMES) {
+        const parsed = parseProjectDomain(`myproject.${name}.veryfront.com`);
+        assertEquals(parsed.slug, "myproject", `${name} must resolve a project slug`);
+        assertEquals(parsed.environment, name);
+        assertEquals(parsed.isVeryfrontDomain, true);
+      }
+    });
+
+    it("excludes labels the hosted platform cannot route", () => {
+      // `development` is the one that matters: it is a valid local environment
+      // and reads like a natural deploy target, but no hosted rule produces it.
+      for (const name of ["development", "dev", "qa", "test", "sandbox"]) {
+        assertEquals(isHostedEnvironmentName(name), false, `${name} must not be hosted-routable`);
+        const parsed = parseProjectDomain(`myproject.${name}.veryfront.com`);
+        assertEquals(parsed.slug, null, `${name} must not resolve a project slug`);
+        assertEquals(parsed.environment, null);
+        assertEquals(parsed.isVeryfrontDomain, false);
+      }
+    });
+
+    it("matches environment names case-insensitively", () => {
+      assertEquals(isHostedEnvironmentName("Production"), true);
+      assertEquals(isHostedEnvironmentName("STAGING"), true);
+      assertEquals(isHostedEnvironmentName("Development"), false);
     });
   });
 });

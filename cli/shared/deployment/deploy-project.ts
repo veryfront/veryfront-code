@@ -2,7 +2,11 @@ import { type EnvironmentConfig, getConfig, getEnvironmentConfig } from "veryfro
 import { createFileSystem, isNotFoundError, runtime } from "veryfront/platform";
 import { join, relative, resolve } from "veryfront/platform/path";
 import { isWithinDirectory, normalizePath } from "veryfront/utils";
-import { parseProjectDomain } from "veryfront/server";
+import {
+  HOSTED_ENVIRONMENT_NAMES,
+  isHostedEnvironmentName,
+  parseProjectDomain,
+} from "veryfront/server";
 import {
   describeReadyReleaseAssetManifestRejection,
   isSafeBoundedText,
@@ -15,6 +19,7 @@ import {
 import {
   DEPLOYMENT_ERROR,
   ENVIRONMENT_NOT_FOUND,
+  ENVIRONMENT_NOT_ROUTABLE,
   RELEASE_MISSING_VERSION,
   SOURCE_DIGEST_MISMATCH,
   VeryfrontError,
@@ -790,14 +795,48 @@ export async function waitForReleaseAssetManifest(
   }
 }
 
-function buildEnvironmentUrl(projectSlug: string, environment: DeployEnvironment): string {
+/** The environment's own domain, or null when it has none configured. */
+function configuredEnvironmentDomain(environment: DeployEnvironment): string | null {
   const domain = environment.domains?.[0];
-  if (domain) {
-    return domain.startsWith("http://") || domain.startsWith("https://")
-      ? domain
-      : `https://${domain}`;
-  }
-  return `https://${projectSlug}.${environment.name}.veryfront.com`;
+  if (!domain) return null;
+  return domain.startsWith("http://") || domain.startsWith("https://")
+    ? domain
+    : `https://${domain}`;
+}
+
+/**
+ * Rejects an environment whose name has no address the deploy could ever reach.
+ *
+ * The hosted URL is synthesised as `{slug}.{environment}.veryfront.com`, which
+ * only resolves for the labels in `HOSTED_ENVIRONMENT_NAMES`. Any other label —
+ * `development`, `qa`, anything an operator invented in Studio — has no wildcard
+ * certificate and no routing rule, so the readiness probe cannot succeed: it
+ * fails the TLS handshake, or the proxy answers `404 No project configured for
+ * domain`. Both are retried as transient, so without this check the deploy
+ * pushes source, builds assets, commits a deployment, and only then spends the
+ * full readiness window before failing with a message about the deployment.
+ *
+ * A configured custom domain removes the constraint entirely — routing then has
+ * nothing to do with the environment's name — so this only guards the fallback.
+ */
+function assertEnvironmentIsReachable(environment: DeployEnvironment): void {
+  if (configuredEnvironmentDomain(environment) !== null) return;
+  if (isHostedEnvironmentName(environment.name)) return;
+
+  throw ENVIRONMENT_NOT_ROUTABLE.create({
+    detail: `Environment "${environment.name}" has no Veryfront-hosted address. ` +
+      `Veryfront serves ${
+        HOSTED_ENVIRONMENT_NAMES.join(", ")
+      } at https://<slug>.<environment>.veryfront.com; ` +
+      `no other environment name resolves. Deploy to one of those, or attach a custom domain ` +
+      `to "${environment.name}" in Studio under Environments and deploy again.`,
+    context: { environmentName: environment.name, hostedEnvironments: HOSTED_ENVIRONMENT_NAMES },
+  });
+}
+
+function buildEnvironmentUrl(projectSlug: string, environment: DeployEnvironment): string {
+  return configuredEnvironmentDomain(environment) ??
+    buildCanonicalEnvironmentUrl(projectSlug, environment.name);
 }
 
 function buildCanonicalEnvironmentUrl(projectSlug: string, environmentName: string): string {
@@ -919,12 +958,18 @@ function buildEnvironmentReadinessProbes(
 
   const targetUrl = buildEnvironmentProbeUrl(target.url, route);
   if (target.protected && !isMatchingVeryfrontHostedUrl(new URL(targetUrl), target)) {
+    const challengeProbe = {
+      url: targetUrl,
+      authenticate: false,
+      acceptAuthenticationChallenge: true,
+    };
+    // The canonical companion probe only exists where the platform routes it.
+    // An environment on a custom domain may be named anything, and synthesising
+    // an address for a name hosting cannot serve would poll an unreachable host
+    // to the deadline after the custom domain has already answered.
+    if (!isHostedEnvironmentName(target.environmentName)) return [challengeProbe];
     return [
-      {
-        url: targetUrl,
-        authenticate: false,
-        acceptAuthenticationChallenge: true,
-      },
+      challengeProbe,
       {
         url: buildEnvironmentProbeUrl(
           buildCanonicalEnvironmentUrl(target.projectSlug, target.environmentName),
@@ -1220,6 +1265,9 @@ export function createDeployProject(options: {
           });
         }
         assertProjectOwnership("Environment", resolvedEnvironment, project.id);
+        // Before any release or deployment exists, so an unreachable target
+        // costs one API call rather than a full deploy and a readiness window.
+        assertEnvironmentIsReachable(resolvedEnvironment);
         return resolvedEnvironment;
       });
 

@@ -93,6 +93,15 @@ Push preserves remote-only files by default. Use
 `npx veryfront@latest push --prune --dry-run` to preview an exact remote mirror, then
 run `npx veryfront@latest push --prune` only when those deletions are intentional.
 
+Veryfront hosting serves three environment names: `preview`, `staging`, and
+`production`. Only those resolve at
+`https://<slug>.<environment>.veryfront.com`. Every other name, including
+`development`, has no address on `veryfront.com`. An environment can still carry
+any name you like once it has a custom domain attached, because routing then
+follows the domain rather than the name. Deploy rejects an environment that has
+neither a hosted name nor a custom domain before it creates a release, so the
+failure costs one API call rather than a full deployment.
+
 For an existing nonproduction environment named `staging`:
 
 ```bash
