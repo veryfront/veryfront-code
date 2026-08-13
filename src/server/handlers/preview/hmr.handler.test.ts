@@ -266,7 +266,7 @@ describe("server/handlers/preview/hmr.handler", () => {
       const req = new Request("http://example.com/_ws", {
         headers: {
           host: "internal.proxy:3000",
-          "x-forwarded-host": "preview.veryfront.me:3000",
+          "x-forwarded-host": "preview.localhost:3000",
         },
       });
       const ctx = makeCtx({

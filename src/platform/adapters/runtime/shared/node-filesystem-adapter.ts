@@ -15,7 +15,10 @@ import {
   readFileWithinLimit,
   withFileHandle,
 } from "../../bounded-file-read.ts";
-import { markNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
+import {
+  isDirectConstruction,
+  markNativeFileSystemAdapter,
+} from "../../native-file-system-provenance.ts";
 import { constants as nodeFsConstants } from "node:fs";
 import { resolve } from "../../../compat/path/index.ts";
 import { runtimeUsesWindowsPaths } from "../../../compat/path/portable.ts";
@@ -432,7 +435,7 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
         enumerable: true,
       });
     }
-    if (new.target === NodeCompatibleFileSystemAdapter) {
+    if (isDirectConstruction(this, NodeCompatibleFileSystemAdapter)) {
       markNativeFileSystemAdapter(this);
     }
   }

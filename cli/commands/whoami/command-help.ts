@@ -10,5 +10,6 @@ export const whoamiHelp: CommandHelp = {
   notes: [
     "Shows the authenticated user or API-key credential type",
     "Checks both environment variable and stored token",
+    "Exits 0 when a credential validates and 1 when none does, so scripts can gate on it",
   ],
 };

@@ -181,7 +181,7 @@ describe("DevDashboardHandler admission", () => {
   it("issues a headless session without requiring optional Dev UI assets", async () => {
     const handler = new DevDashboardHandler();
     const response = (await handler.handle(
-      dashboardRequest(`http://veryfront.me:3002${DASHBOARD_SESSION_PATH}`),
+      dashboardRequest(`http://localhost:3002${DASHBOARD_SESSION_PATH}`),
       localContext(),
     )).response!;
 
@@ -198,10 +198,10 @@ describe("DevDashboardHandler admission", () => {
     const rejectedMethod = (await handler.handle(
       requestFromPeer(
         new Request(
-          `http://veryfront.me:3002${DASHBOARD_SESSION_PATH}`,
+          `http://localhost:3002${DASHBOARD_SESSION_PATH}`,
           {
             method: "POST",
-            headers: { host: "veryfront.me:3002" },
+            headers: { host: "localhost:3002" },
             body: new ReadableStream<Uint8Array>({
               cancel() {
                 cancelled = true;

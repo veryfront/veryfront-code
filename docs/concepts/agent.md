@@ -35,9 +35,10 @@ The loop has four parts:
 | Action      | The agent calls a tool or emits output.                       |
 | Observation | Tool results or new messages are added back into context.     |
 
-Veryfront hides most loop plumbing behind the agent runtime. The important
-boundary is still visible: the agent decides what to do next, while tools,
-resources, runs, and app routes own the deterministic work they perform.
+Veryfront hides most loop plumbing behind the agent runtime. The boundary stays
+visible: the agent decides what to do next. Resources own readable context.
+Executable primitives own execution, including tools, tasks, workflows, runs,
+and app routes.
 
 ## Boundary
 
@@ -45,9 +46,9 @@ Use an agent when the system needs judgment, language understanding, tool choice
 or streamed conversational output. Agents usually pair with tools, memory, and a
 chat UI. AG-UI is the default streaming surface for interactive agent output.
 
-Do not use an agent for deterministic work that a tool, route, task, or workflow
-can own directly. If the next step is always known, the model should not be in
-charge of it.
+Do not use an agent for work that a tool, route, task, or workflow can own
+directly. If the next step is always known, the model should not be in charge of
+it.
 
 ## Wrong fit
 

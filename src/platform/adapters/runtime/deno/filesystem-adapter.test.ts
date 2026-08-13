@@ -169,6 +169,26 @@ if (isDeno) {
       assertEquals(isNativeFileSystemAdapter(new DerivedAdapter()), false);
     });
 
+    it("refuses a subclass that hides its own prototype.constructor", () => {
+      class ConstructorDeletingAdapter extends DenoFileSystemAdapter {}
+      Reflect.deleteProperty(ConstructorDeletingAdapter.prototype, "constructor");
+
+      class ConstructorSpoofingAdapter extends DenoFileSystemAdapter {}
+      Object.defineProperty(ConstructorSpoofingAdapter.prototype, "constructor", {
+        configurable: true,
+        value: DenoFileSystemAdapter,
+      });
+
+      assertEquals(
+        isNativeFileSystemAdapter(new ConstructorDeletingAdapter()),
+        false,
+      );
+      assertEquals(
+        isNativeFileSystemAdapter(new ConstructorSpoofingAdapter()),
+        false,
+      );
+    });
+
     it("reads a genuinely bounded byte prefix", async () => {
       const root = await Deno.makeTempDir({ prefix: "vf-deno-bounded-read-" });
       const path = join(root, "file.txt");

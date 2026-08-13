@@ -96,7 +96,7 @@ empty string; objects and arrays render as formatted JSON.
 
 Payload text is inserted verbatim. Template rendering is not an input-safety or
 prompt-injection boundary. Agents that act on untrusted event fields should
-apply an explicit input policy and keep authorization in deterministic tools.
+apply an explicit input policy and keep authorization in application code.
 
 Hosted agent webhooks may use `create_new`, `existing`, or `none` conversation
 mode. `existing` requires a conversation UUID. Local runs execute standalone

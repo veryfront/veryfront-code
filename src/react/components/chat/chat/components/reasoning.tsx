@@ -76,6 +76,10 @@ export interface ReasoningProps {
 /**
  * `Reasoning.Root` — context provider + wrapper. No children renders the
  * default anatomy (`Trigger` + `Content`); pass children to recompose.
+ *
+ * Spacing belongs to the parent. The wrapper carries no bottom margin (it used
+ * to add `mb-3`, which doubled up with the flex gap of every layout that hosts
+ * it). Pass `className` to space it inside a container that has no gap.
  */
 function ReasoningRoot(
   {
@@ -141,7 +145,7 @@ function ReasoningRoot(
 
   return (
     <ReasoningContext.Provider value={context}>
-      <div ref={ref} className={cn("not-prose mb-3", className)}>
+      <div ref={ref} className={cn("not-prose", className)}>
         {children ?? (
           <>
             <ReasoningTrigger icon={icon} labels={labels} />

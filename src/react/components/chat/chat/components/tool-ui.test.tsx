@@ -8,6 +8,7 @@ import type { ChatDynamicToolPart } from "#veryfront/agent/react";
 import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { ToolCall, useToolCall } from "./tool-ui.tsx";
 import { Message } from "../composition/message.tsx";
+import { ChatContextProvider, type ChatContextValue } from "../contexts/chat-context.tsx";
 
 /** A fully-populated card tool (input + output) — the composable `card` path. */
 const cardTool: ChatDynamicToolPart = {
@@ -35,6 +36,30 @@ const invokeAgentTool: ChatDynamicToolPart = {
   state: "input-available",
   input: { agent_id: "case-ingest", description: "Fetch and redact cases" },
 };
+
+/** An assistant turn holding one `invoke_agent` child that never resolved. */
+const runningInvokeAgentMessage = {
+  id: "assistant-message",
+  role: "assistant" as const,
+  metadata: {},
+  parts: [invokeAgentTool],
+};
+
+/** Minimal `ChatContext` — only the streaming lifecycle matters to these cards. */
+function chatContext(overrides: Partial<ChatContextValue>): ChatContextValue {
+  const noop = () => {};
+  return {
+    messages: [],
+    isLoading: false,
+    error: null,
+    input: "",
+    setInput: noop,
+    onSubmit: noop,
+    models: [],
+    attachments: [],
+    ...overrides,
+  } as ChatContextValue;
+}
 
 function installDom(): { host: HTMLElement; restore: () => void } {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
@@ -111,6 +136,7 @@ describe("ToolCall", () => {
       flushSync(() =>
         root.render(
           <Message.Root
+            isStreaming
             message={{
               id: "assistant-message",
               role: "assistant",
@@ -123,21 +149,23 @@ describe("ToolCall", () => {
         )
       );
     };
-    const detailsFor = (label: string) =>
-      Array.from(host.querySelectorAll("details")).find((details) =>
-        details.querySelector("summary")?.textContent === label
-      );
+    // The child sections reuse the main-chat `Reasoning` disclosure (a button +
+    // conditionally-rendered content), so "open" is detected by whether the
+    // section's body text is in the DOM rather than a `<details open>` flag.
+    const shows = (text: string) => host.textContent?.includes(text) ?? false;
 
     try {
       renderWithEvents([]);
-      assertEquals(detailsFor("Instructions")?.open, true);
+      // Instructions phase: its body is visible.
+      assertEquals(shows("Fetch the newest cases."), true);
 
       renderWithEvents([
         { type: "reasoning-start", id: "child-reasoning" },
         { type: "reasoning-delta", id: "child-reasoning", delta: "I should query first." },
       ]);
-      assertEquals(detailsFor("Instructions")?.open, false);
-      assertEquals(detailsFor("Thought process")?.open, true);
+      // Reasoning began: instructions collapse, the thought process is visible.
+      assertEquals(shows("Fetch the newest cases."), false);
+      assertEquals(shows("I should query first."), true);
 
       renderWithEvents([
         { type: "reasoning-start", id: "child-reasoning" },
@@ -150,12 +178,194 @@ describe("ToolCall", () => {
           input: { status: "open" },
         },
       ]);
-      assertEquals(detailsFor("Instructions")?.open, false);
-      assertEquals(detailsFor("Thought process")?.open, false);
+      // Work phase: instructions stay collapsed and the child tool renders.
+      assertEquals(shows("Fetch the newest cases."), false);
+      assertEquals(shows("salesforce__list_cases"), true);
     } finally {
       await unmountReactRoot(root);
       restore();
     }
+  });
+
+  it("recovers streamed child tool input (start → delta → output) into Parameters", async () => {
+    const { host, restore } = installDom();
+    const root = createRoot(host);
+    const tool: ChatDynamicToolPart = { ...invokeAgentTool, input: { agent_id: "case-ingest" } };
+    const streamPart = (event: Record<string, unknown>) => ({
+      type: "data-veryfront.invoke_agent.stream" as const,
+      data: { toolCallId: tool.toolCallId, agentId: "case-ingest", event },
+    });
+    try {
+      // No `tool-input-available` — the input only ever arrives as buffered
+      // delta text, so the reducer must parse `inputText` into `input`.
+      flushSync(() =>
+        root.render(
+          <Message.Root
+            isStreaming
+            message={{
+              id: "assistant-message",
+              role: "assistant",
+              metadata: {},
+              parts: [
+                tool,
+                streamPart({
+                  type: "tool-input-start",
+                  toolCallId: "child",
+                  toolName: "salesforce__list_cases",
+                }),
+                streamPart({
+                  type: "tool-input-delta",
+                  toolCallId: "child",
+                  inputTextDelta: '{"status":"open"}',
+                }),
+                streamPart({
+                  type: "tool-output-available",
+                  toolCallId: "child",
+                  output: { ok: true },
+                }),
+              ],
+            }}
+          >
+            <ToolCall tool={tool} defaultExpanded />
+          </Message.Root>,
+        )
+      );
+      const childButton = Array.from(host.querySelectorAll("button")).find((button) =>
+        button.textContent?.includes("salesforce__list_cases")
+      );
+      assert(childButton, "expected the child tool row to render");
+      flushSync(() => (childButton as HTMLButtonElement).click());
+      assert(host.textContent?.includes("status"), "expected the parsed child input key");
+      assert(host.textContent?.includes("open"), "expected the parsed child input value");
+    } finally {
+      await unmountReactRoot(root);
+      restore();
+    }
+  });
+
+  it("freezes a running child as Stopped once the turn stops streaming", () => {
+    const skillStreamPart = {
+      type: "data-veryfront.invoke_agent.stream" as const,
+      data: {
+        toolCallId: invokeAgentTool.toolCallId,
+        agentId: "case-ingest",
+        event: {
+          type: "tool-input-available",
+          toolCallId: "child-load-skill",
+          toolName: "load_skill",
+          input: { skillId: "case-normalise-redact" },
+        },
+      },
+    };
+    const message = {
+      id: "assistant-message",
+      role: "assistant" as const,
+      metadata: {},
+      parts: [invokeAgentTool, skillStreamPart],
+    };
+
+    // While the turn streams, the running child reads as Running.
+    const streamingHtml = renderToString(
+      <Message.Root message={message} isStreaming>
+        <ToolCall tool={invokeAgentTool} defaultExpanded />
+      </Message.Root>,
+    );
+    assertStringIncludes(streamingHtml, "Running");
+
+    // Once the turn stops streaming with no terminal output, the card and its
+    // still-running child freeze to Stopped instead of a forever-Running card.
+    const stoppedHtml = renderToString(
+      <Message.Root message={message} isStreaming={false}>
+        <ToolCall tool={invokeAgentTool} defaultExpanded />
+      </Message.Root>,
+    );
+    assertStringIncludes(stoppedHtml, "Stopped");
+    assertEquals(stoppedHtml.includes("Running"), false);
+    // The frozen child row reads terminal, never a static "Loading".
+    assertStringIncludes(stoppedHtml, "Stopped loading skill: case-normalise-redact");
+  });
+
+  it("keeps a running child card Running while the chat is still streaming", () => {
+    // The message itself stopped streaming because the turn moved on to another
+    // message. The chat is still live, so nothing was stopped.
+    const html = renderToString(
+      <ChatContextProvider value={chatContext({ status: "streaming" })}>
+        <Message.Root message={runningInvokeAgentMessage} isStreaming={false}>
+          <ToolCall tool={invokeAgentTool} defaultExpanded />
+        </Message.Root>
+      </ChatContextProvider>,
+    );
+
+    assertStringIncludes(html, "Running");
+    assertEquals(html.includes("Stopped"), false);
+  });
+
+  it("reads a turn that ended in an error as Failed, not Stopped", () => {
+    const html = renderToString(
+      <ChatContextProvider value={chatContext({ status: "error" })}>
+        <Message.Root message={runningInvokeAgentMessage} isStreaming={false}>
+          <ToolCall tool={invokeAgentTool} defaultExpanded />
+        </Message.Root>
+      </ChatContextProvider>,
+    );
+
+    assertStringIncludes(html, "Failed");
+    assertEquals(html.includes("Stopped"), false);
+  });
+
+  it("leaves an approval-gated child card alone when the turn pauses on the user", () => {
+    // The stream ends while the tool waits for a person. That is paused, not
+    // stopped, so the card keeps its own state.
+    const awaitingApproval: ChatDynamicToolPart = {
+      ...invokeAgentTool,
+      state: "approval-requested" as ChatDynamicToolPart["state"],
+    };
+    const html = renderToString(
+      <ChatContextProvider value={chatContext({ status: "ready" })}>
+        <Message.Root
+          message={{ ...runningInvokeAgentMessage, parts: [awaitingApproval] }}
+          isStreaming={false}
+        >
+          <ToolCall tool={awaitingApproval} defaultExpanded />
+        </Message.Root>
+      </ChatContextProvider>,
+    );
+
+    assertEquals(html.includes("Stopped"), false);
+    assertEquals(html.includes("Failed"), false);
+  });
+
+  it("renders the streamed child name and avatar in the card header", () => {
+    const message = {
+      id: "assistant-message",
+      role: "assistant" as const,
+      metadata: {},
+      parts: [
+        invokeAgentTool,
+        {
+          type: "data-veryfront.invoke_agent.stream" as const,
+          data: {
+            toolCallId: invokeAgentTool.toolCallId,
+            agentId: "case-ingest",
+            agentName: "Intake Bot",
+            avatarUrl: "https://cdn.example.com/agents/case-ingest.png",
+            event: { type: "reasoning-delta", delta: "Starting." },
+          },
+        },
+      ],
+    };
+
+    const html = renderToString(
+      <Message.Root message={message} isStreaming>
+        <ToolCall tool={invokeAgentTool} defaultExpanded />
+      </Message.Root>,
+    );
+
+    // The streamed name wins over the humanized agent id, and the avatar image
+    // renders while the child is still running (not only on completion).
+    assertStringIncludes(html, "Intake Bot");
+    assertStringIncludes(html, "https://cdn.example.com/agents/case-ingest.png");
+    assertEquals(html.includes("Case Ingest"), false);
   });
 
   it("renders the child prompt in an Instructions disclosure", () => {
@@ -172,7 +382,9 @@ describe("ToolCall", () => {
 
     assertStringIncludes(html, "Instructions");
     assertStringIncludes(html, "Fetch the five newest open cases and redact PII.");
-    assertStringIncludes(html, "text-[var(--soft)]");
+    // Themed via tokens, like the main-chat disclosure it now reuses (which
+    // carries the foreground token, not the softer one the old markup used).
+    assertStringIncludes(html, "text-[var(--foreground)]");
     assertEquals(html.includes("text-black"), false);
     assertEquals(html.includes("text-white"), false);
   });
@@ -230,7 +442,9 @@ describe("ToolCall", () => {
       </Message.Root>,
     );
 
-    assertStringIncludes(html, "Thought process");
+    // Reasoning is still streaming (no reasoning-end), so the shared Reasoning
+    // disclosure shows its "Thinking..." label and stays open.
+    assertStringIncludes(html, "Thinking...");
     assertStringIncludes(html, "I should query Salesforce first.");
     assertStringIncludes(html, "Fetching the newest cases now.");
     assertStringIncludes(html, "salesforce__list_cases");

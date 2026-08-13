@@ -6,8 +6,8 @@ order: 22
 
 A tool owns one callable capability. It defines input, output, and execution.
 
-Tools exist because agents and workflows need safe ways to act. The model can
-choose a tool, but the tool owns the deterministic code that runs.
+Tools give agents and workflows defined ways to act. The model can
+choose a tool, but the tool owns the code that runs.
 
 ## Characteristics
 

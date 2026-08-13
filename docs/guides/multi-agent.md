@@ -145,7 +145,8 @@ nested levels.
 
 ## Workflow-based composition
 
-For deterministic multi-agent pipelines, use [workflows](./workflows.md):
+For multi-agent pipelines with explicit execution order, use
+[workflows](./workflows.md):
 
 ```ts
 // workflows/article-pipeline.ts
@@ -173,7 +174,8 @@ Start this workflow from an API route, task, or tool. The [Workflows](./workflow
 | **Agent-as-tool** | The orchestrator decides dynamically which agents to call and in what order |
 | **Workflow**      | The execution order is known in advance: sequential, parallel, or branching |
 
-Agent-as-tool is more flexible but harder to predict. Workflows are deterministic and easier to debug.
+Agent-as-tool is more flexible but harder to predict. Workflows make execution
+order explicit and easier to debug.
 
 ## Agent registry
 

@@ -12,7 +12,7 @@ import {
 } from "react";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ChatInput } from "./chat-composer.tsx";
 import { useChatInputContext } from "../contexts/composer-context.tsx";
@@ -330,8 +330,10 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       flushSync(() => headlessAttach.click());
       assertEquals(filePickerCalls, 1, "the headless getter opens the upload picker");
 
-      const attachButton = document.querySelector(
-        'button[aria-label="Add document"]',
+      // `&` in a CSS attribute selector trips jsdom's selector engine, so match
+      // the accessible name via getAttribute instead.
+      const attachButton = Array.from(document.querySelectorAll("button")).find(
+        (button) => button.getAttribute("aria-label") === "Add photos & files",
       );
       assert(attachButton, "Expected attachment button to exist");
 
@@ -340,7 +342,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       });
 
       const uploadAction = Array.from(document.querySelectorAll("button")).find(
-        (button) => button.textContent?.trim() === "Attach files to chat",
+        (button) => button.textContent?.trim() === "Add photos & files",
       );
       const menu = document.querySelector('[role="menu"]');
       assert(uploadAction, "Expected upload action to render");
@@ -362,6 +364,104 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       });
 
       assertEquals(selectCalls, 1);
+      await unmountReactRoot(root);
+    } finally {
+      restore();
+    }
+  });
+
+  it("opens the file dialog directly when attaching files is the only action", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "Expected root element to exist");
+
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(<ChatInput input="" onChange={() => {}} onAttach={() => {}} />);
+      });
+
+      const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
+      assert(fileInput, "Expected the provider-owned file input to render");
+      let filePickerCalls = 0;
+      fileInput.click = () => filePickerCalls += 1;
+
+      const attachButton = Array.from(document.querySelectorAll("button")).find(
+        (button) => button.getAttribute("aria-label") === "Add photos & files",
+      );
+      assert(attachButton, "Expected attachment button to exist");
+
+      flushSync(() => {
+        attachButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+
+      // No single-item dropdown: the `+` is the picker.
+      assertEquals(document.querySelector('[role="menu"]'), null);
+      assertEquals(filePickerCalls, 1, "the `+` opens the upload picker directly");
+
+      await unmountReactRoot(root);
+    } finally {
+      restore();
+    }
+  });
+
+  it("renders pending attachment pills inside the composer card", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
+    let removed: string | undefined;
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "Expected root element to exist");
+
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <ChatInput
+            input=""
+            onChange={() => {}}
+            onAttach={() => {}}
+            attachments={[{ id: "file-1", name: "cases.csv", type: "text/csv", state: "uploaded" }]}
+            onRemoveAttachment={(id) => {
+              removed = id;
+            }}
+          />,
+        );
+      });
+
+      const textarea = document.querySelector("textarea");
+      // The composer sizes each pending pill, so the class is a stable handle.
+      const pill = Array.from(document.querySelectorAll("div")).find((node) =>
+        node.className.includes("w-[200px]")
+      );
+      assert(textarea, "Expected the composer editor to render");
+      assert(pill, "Expected the pending attachment pill to render");
+      assertStringIncludes(pill.textContent ?? "", "cases.csv");
+
+      // The pill lives inside the composer card, above the editor — not in a
+      // row floating above the card (the form owns exactly one card wrapper).
+      const card = document.querySelector("form > div");
+      assert(card, "Expected the composer card wrapper to exist");
+      assertEquals(card.contains(pill), true, "the pill renders inside the composer card");
+      assertEquals(
+        pill.compareDocumentPosition(textarea) & Node.DOCUMENT_POSITION_FOLLOWING,
+        Node.DOCUMENT_POSITION_FOLLOWING,
+        "the pill renders above the editor",
+      );
+
+      const removeButton = Array.from(pill.querySelectorAll("button")).at(-1);
+      assert(removeButton, "Expected the pill remove control to render");
+      flushSync(() => removeButton.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+      assertEquals(removed, "file-1");
+
       await unmountReactRoot(root);
     } finally {
       restore();

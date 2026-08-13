@@ -118,12 +118,10 @@ describe("local control request admission", () => {
         "http://[::1]:3000/_dev",
         "http://[::ffff:7f00:1]:3000/_dev",
         "http://project.localhost:3000/_dev",
+        "http://project.preview.localhost:3000/_dev",
         "http://lvh.me:3000/_dev",
         "http://project.lvh.me:3000/_dev",
         "http://project.preview.lvh.me:3000/_dev",
-        "http://veryfront.me:3000/_dev",
-        "http://project.veryfront.me:3000/_dev",
-        "http://project.preview.veryfront.me:3000/_dev",
       ]
     ) {
       const parsed = new URL(url);
@@ -146,9 +144,19 @@ describe("local control request admission", () => {
         "http://project.staging.lvh.me:3000/_dev",
         "http://example.com.prod.lvh.me:3000/_dev",
         "http://project.unknown.lvh.me:3000/_dev",
-        "http://production.veryfront.me:3000/_dev",
-        "http://project.staging.veryfront.me:3000/_dev",
-        "http://project.unknown.veryfront.me:3000/_dev",
+        // `localhost` is a single label, so it has no registrable domain to key
+        // the shape check on. It still gets the same shape check as the
+        // two-label roots: moving the printed dev hostname onto it must not
+        // promote production, staging, custom-domain simulation, unknown
+        // namespaces, or arbitrarily deep names into control authorities.
+        "http://production.localhost:3000/_dev",
+        "http://staging.localhost:3000/_dev",
+        "http://project.production.localhost:3000/_dev",
+        "http://project.staging.localhost:3000/_dev",
+        "http://project.unknown.localhost:3000/_dev",
+        "http://example.com.prod.localhost:3000/_dev",
+        "http://a.b.c.localhost:3000/_dev",
+        "http://localhost.attacker.example:3000/_dev",
         "http://attacker.example:3000/_dev",
       ]
     ) {

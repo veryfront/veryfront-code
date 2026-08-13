@@ -127,7 +127,11 @@ export function ConversationScrollButton({
       onClick={onClick}
       aria-label="Scroll to bottom"
       className={cn(
-        "absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-[var(--outline-border)] bg-[var(--secondary)] p-2 shadow-sm transition-colors hover:bg-[var(--tertiary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]",
+        // A clean floating circle lifted off the transcript (bg-background +
+        // soft edge + md shadow), nudged clear of the composer boundary. Sized
+        // by padding rather than a fixed `size-8`, so the default `size-4`
+        // glyph lands on 32px while a larger custom `icon` still fits.
+        "absolute bottom-6 left-1/2 flex -translate-x-1/2 items-center justify-center rounded-full border border-[var(--edge-medium)] bg-[var(--background)] p-2 text-[var(--foreground)] shadow-md transition-colors hover:bg-[var(--tertiary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]",
         className,
       )}
     >

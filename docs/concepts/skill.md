@@ -37,7 +37,7 @@ large system prompt.
 
 ## Wrong fit
 
-Do not use a skill for deterministic work that should be a tool, background work
-that should be a task, or multi-step process state that should be a workflow.
+Do not use a skill for callable work that should be a tool, background work that
+should be a task, or multi-step process state that should be a workflow.
 
 For implementation steps, see [Skills](../guides/skills.md).
