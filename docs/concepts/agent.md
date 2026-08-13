@@ -37,7 +37,8 @@ The loop has four parts:
 
 Veryfront hides most loop plumbing behind the agent runtime. The boundary stays
 visible: the agent decides what to do next. Resources own readable context.
-Tools, runs, and app routes own execution.
+Executable primitives own execution, including tools, tasks, workflows, runs,
+and app routes.
 
 ## Boundary
 

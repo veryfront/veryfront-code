@@ -8,8 +8,8 @@ An eval defines a repeatable quality check for an agent. It names the target,
 dataset, metrics, thresholds, and report shape that prove whether the agent still
 behaves as expected.
 
-Use evals when model behavior must be measured across examples, not checked with
-one unit test.
+Use evals when agent or tool behavior must be measured across examples, not
+checked with one unit test.
 
 ## Characteristics
 
