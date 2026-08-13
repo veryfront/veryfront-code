@@ -33,11 +33,6 @@ interface DocumentedTree {
 
 const DOCUMENTED_TREES: DocumentedTree[] = [
   {
-    doc: "docs/getting-started/quickstart.md",
-    marker: "The `ai-agent` template creates a runnable chat app:",
-    template: "ai-agent",
-  },
-  {
     doc: "docs/getting-started/create-project.md",
     marker: "The `minimal` template creates:",
     template: "minimal",
