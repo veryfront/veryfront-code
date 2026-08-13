@@ -21,7 +21,13 @@ export interface InvokeAgentStreamSnapshot {
   events: Array<Record<string, unknown> & { type: string }>;
 }
 
-/** The child agent's identity carried alongside its event stream. */
+/**
+ * The child agent's identity carried alongside its event stream.
+ *
+ * `avatarUrl` (not the message-metadata spelling `agentAvatarUrl`) matches the
+ * `invoke_agent` tool output field the card already falls back to, so both
+ * sources of the child avatar read the same key.
+ */
 export interface InvokeAgentStreamIdentity {
   agentName?: string;
   avatarUrl?: string;

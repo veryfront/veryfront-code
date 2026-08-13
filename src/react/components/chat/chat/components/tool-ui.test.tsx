@@ -8,6 +8,7 @@ import type { ChatDynamicToolPart } from "#veryfront/agent/react";
 import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { ToolCall, useToolCall } from "./tool-ui.tsx";
 import { Message } from "../composition/message.tsx";
+import { ChatContextProvider, type ChatContextValue } from "../contexts/chat-context.tsx";
 
 /** A fully-populated card tool (input + output) — the composable `card` path. */
 const cardTool: ChatDynamicToolPart = {
@@ -35,6 +36,30 @@ const invokeAgentTool: ChatDynamicToolPart = {
   state: "input-available",
   input: { agent_id: "case-ingest", description: "Fetch and redact cases" },
 };
+
+/** An assistant turn holding one `invoke_agent` child that never resolved. */
+const runningInvokeAgentMessage = {
+  id: "assistant-message",
+  role: "assistant" as const,
+  metadata: {},
+  parts: [invokeAgentTool],
+};
+
+/** Minimal `ChatContext` — only the streaming lifecycle matters to these cards. */
+function chatContext(overrides: Partial<ChatContextValue>): ChatContextValue {
+  const noop = () => {};
+  return {
+    messages: [],
+    isLoading: false,
+    error: null,
+    input: "",
+    setInput: noop,
+    onSubmit: noop,
+    models: [],
+    attachments: [],
+    ...overrides,
+  } as ChatContextValue;
+}
 
 function installDom(): { host: HTMLElement; restore: () => void } {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
@@ -256,7 +281,91 @@ describe("ToolCall", () => {
     );
     assertStringIncludes(stoppedHtml, "Stopped");
     assertEquals(stoppedHtml.includes("Running"), false);
-    assertStringIncludes(stoppedHtml, "Loading skill: case-normalise-redact");
+    // The frozen child row reads terminal, never a static "Loading".
+    assertStringIncludes(stoppedHtml, "Stopped loading skill: case-normalise-redact");
+  });
+
+  it("keeps a running child card Running while the chat is still streaming", () => {
+    // The message itself stopped streaming because the turn moved on to another
+    // message. The chat is still live, so nothing was stopped.
+    const html = renderToString(
+      <ChatContextProvider value={chatContext({ status: "streaming" })}>
+        <Message.Root message={runningInvokeAgentMessage} isStreaming={false}>
+          <ToolCall tool={invokeAgentTool} defaultExpanded />
+        </Message.Root>
+      </ChatContextProvider>,
+    );
+
+    assertStringIncludes(html, "Running");
+    assertEquals(html.includes("Stopped"), false);
+  });
+
+  it("reads a turn that ended in an error as Failed, not Stopped", () => {
+    const html = renderToString(
+      <ChatContextProvider value={chatContext({ status: "error" })}>
+        <Message.Root message={runningInvokeAgentMessage} isStreaming={false}>
+          <ToolCall tool={invokeAgentTool} defaultExpanded />
+        </Message.Root>
+      </ChatContextProvider>,
+    );
+
+    assertStringIncludes(html, "Failed");
+    assertEquals(html.includes("Stopped"), false);
+  });
+
+  it("leaves an approval-gated child card alone when the turn pauses on the user", () => {
+    // The stream ends while the tool waits for a person. That is paused, not
+    // stopped, so the card keeps its own state.
+    const awaitingApproval: ChatDynamicToolPart = {
+      ...invokeAgentTool,
+      state: "approval-requested" as ChatDynamicToolPart["state"],
+    };
+    const html = renderToString(
+      <ChatContextProvider value={chatContext({ status: "ready" })}>
+        <Message.Root
+          message={{ ...runningInvokeAgentMessage, parts: [awaitingApproval] }}
+          isStreaming={false}
+        >
+          <ToolCall tool={awaitingApproval} defaultExpanded />
+        </Message.Root>
+      </ChatContextProvider>,
+    );
+
+    assertEquals(html.includes("Stopped"), false);
+    assertEquals(html.includes("Failed"), false);
+  });
+
+  it("renders the streamed child name and avatar in the card header", () => {
+    const message = {
+      id: "assistant-message",
+      role: "assistant" as const,
+      metadata: {},
+      parts: [
+        invokeAgentTool,
+        {
+          type: "data-veryfront.invoke_agent.stream" as const,
+          data: {
+            toolCallId: invokeAgentTool.toolCallId,
+            agentId: "case-ingest",
+            agentName: "Intake Bot",
+            avatarUrl: "https://cdn.example.com/agents/case-ingest.png",
+            event: { type: "reasoning-delta", delta: "Starting." },
+          },
+        },
+      ],
+    };
+
+    const html = renderToString(
+      <Message.Root message={message} isStreaming>
+        <ToolCall tool={invokeAgentTool} defaultExpanded />
+      </Message.Root>,
+    );
+
+    // The streamed name wins over the humanized agent id, and the avatar image
+    // renders while the child is still running (not only on completion).
+    assertStringIncludes(html, "Intake Bot");
+    assertStringIncludes(html, "https://cdn.example.com/agents/case-ingest.png");
+    assertEquals(html.includes("Case Ingest"), false);
   });
 
   it("renders the child prompt in an Instructions disclosure", () => {
@@ -273,6 +382,9 @@ describe("ToolCall", () => {
 
     assertStringIncludes(html, "Instructions");
     assertStringIncludes(html, "Fetch the five newest open cases and redact PII.");
+    // Themed via tokens, like the main-chat disclosure it now reuses (which
+    // carries the foreground token, not the softer one the old markup used).
+    assertStringIncludes(html, "text-[var(--foreground)]");
     assertEquals(html.includes("text-black"), false);
     assertEquals(html.includes("text-white"), false);
   });

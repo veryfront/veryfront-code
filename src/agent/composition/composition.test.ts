@@ -280,6 +280,72 @@ describe("agentAsTool", () => {
     ]);
   });
 
+  it("attaches the child agent's name and avatar to every published event", async () => {
+    const childResponse: AgentResponse = {
+      text: "streamed child result",
+      messages: [],
+      toolCalls: [],
+      status: "completed",
+    };
+    const childAgent = createMinimalAgent("case-ingest");
+    childAgent.config.name = "Intake Bot";
+    childAgent.config.avatarUrl = "https://cdn.example.com/agents/case-ingest.png";
+    childAgent.stream = (input) => {
+      input.onFinish?.(childResponse);
+      return Promise.resolve({
+        toDataStreamResponse() {
+          return new Response(
+            [
+              'data: {"type":"message-start","messageId":"child-message"}',
+              'data: {"type":"text-delta","id":"child-text","delta":"Fetching cases"}',
+              "",
+            ].join("\n\n"),
+            { headers: { "Content-Type": "text/event-stream" } },
+          );
+        },
+      });
+    };
+    const events: Array<{ value: { agentName?: string; avatarUrl?: string } }> = [];
+    const tool = createInvokeAgentTool({ resolveAgent: () => childAgent });
+
+    await tool.execute(
+      { agent_id: "case-ingest", description: "Run case ingest", prompt: "Fetch", context: {} },
+      {
+        toolCallId: "parent-tool-call",
+        publishDataEvent: (event) => {
+          events.push(event as { value: { agentName?: string; avatarUrl?: string } });
+        },
+      },
+    );
+
+    // The card header must show the child's identity while it runs, so the
+    // identity rides along with the first event, not just the last.
+    assertEquals(events.length, 2);
+    for (const event of events) {
+      assertEquals(event.value.agentName, "Intake Bot");
+      assertEquals(event.value.avatarUrl, "https://cdn.example.com/agents/case-ingest.png");
+    }
+  });
+
+  it("falls back to the deprecated snake_case avatar field", async () => {
+    const childAgent = createMinimalAgent("case-ingest");
+    childAgent.config.avatar_url = "https://cdn.example.com/legacy.png";
+    const events: Array<{ value: { avatarUrl?: string } }> = [];
+    const tool = createInvokeAgentTool({ resolveAgent: () => childAgent });
+
+    await tool.execute(
+      { agent_id: "case-ingest", description: "Run case ingest", prompt: "Fetch", context: {} },
+      {
+        toolCallId: "parent-tool-call",
+        publishDataEvent: (event) => {
+          events.push(event as { value: { avatarUrl?: string } });
+        },
+      },
+    );
+
+    assertEquals(events.at(0)?.value.avatarUrl, "https://cdn.example.com/legacy.png");
+  });
+
   it("does not publish child events for fixed agent wrappers", async () => {
     const childAgent = createMinimalAgent("case-ingest");
     const events: unknown[] = [];

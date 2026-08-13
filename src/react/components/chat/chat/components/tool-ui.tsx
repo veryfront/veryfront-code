@@ -17,13 +17,14 @@ import { Alert, AlertContent, AlertIcon } from "../../../ui/alert.tsx";
 import { Avatar } from "../../../ui/avatar.tsx";
 import { Status } from "../../../ui/status.tsx";
 import { createStrictContext } from "../../../create-strict-context.ts";
-import type { ChatDynamicToolPart, ChatToolPart } from "#veryfront/agent/react";
+import type { ChatDynamicToolPart, ChatStatus, ChatToolPart } from "#veryfront/agent/react";
 import { type ChatJsonValue, toChatJsonValue } from "#veryfront/chat/json-value.ts";
 import { escapeHtml } from "#veryfront/utils/html-escape.ts";
 import { isSkillToolPart } from "../utils/message-parts.ts";
 import { CHILD_TOOL_STOPPED_STATE, getSkillToolProps, SkillTool } from "./skill-tool.tsx";
 import { Reasoning } from "./reasoning.tsx";
 import { useMessageContextOptional } from "../contexts/message-context.tsx";
+import { useChatContextOptional } from "../contexts/chat-context.tsx";
 import {
   getInvokeAgentStreamEvents,
   getInvokeAgentStreamIdentity,
@@ -314,6 +315,44 @@ function childEventString(event: Record<string, unknown>, key: string): string {
 }
 
 /**
+ * Tool states that mean "waiting on a person", not "running". A turn that ends
+ * while one of these is pending is paused, never stopped.
+ */
+const AWAITING_HUMAN_STATES: ReadonlySet<string> = new Set([
+  "approval-requested",
+  "approval-responded",
+]);
+
+/**
+ * How an unfinished `invoke_agent` card reads once its turn stops streaming.
+ *
+ * The client gets no explicit "this child was cancelled" event, so the state is
+ * inferred. Infer it only where the inference holds:
+ * - outside a live transcript (a standalone card) infer nothing;
+ * - while the chat is still `submitted`/`streaming` the turn has only moved on
+ *   to another message, so the child is still running;
+ * - a turn that ended in `error` killed the child, so the card reports the
+ *   failure rather than claiming the user stopped it;
+ * - an approval-gated tool is paused on the user, so it keeps its own state.
+ *
+ * A provider that omits `status` (a hand-built `ChatContext`) falls back to the
+ * message's own streaming flag.
+ */
+function resolveInterruption(input: {
+  toolState: string;
+  isInTranscript: boolean;
+  isMessageStreaming: boolean;
+  chatStatus: ChatStatus | undefined;
+}): "none" | "stopped" | "failed" {
+  const { toolState, isInTranscript, isMessageStreaming, chatStatus } = input;
+  if (!isInTranscript || isMessageStreaming) return "none";
+  if (AWAITING_HUMAN_STATES.has(toolState)) return "none";
+  if (chatStatus === "error") return "failed";
+  if (chatStatus === "submitted" || chatStatus === "streaming") return "none";
+  return "stopped";
+}
+
+/**
  * Best-effort parse of a streamed `inputText` JSON string into an object, so a
  * child tool's `Parameters` block highlights the same way the top-level tool
  * card does even when the runtime only streamed the raw input text.
@@ -464,6 +503,7 @@ function InvokeAgentToolCall(
 ): React.ReactElement {
   const { tool, isExpanded, toggle } = useToolCall();
   const messageContext = useMessageContextOptional();
+  const chat = useChatContextOptional();
   const childStream = useInvokeAgentStreamView(tool.toolCallId);
   const input = jsonRecord(tool.input);
   const rawOutput = jsonRecord(tool.output);
@@ -475,15 +515,16 @@ function InvokeAgentToolCall(
     status === "stopped";
   const completed = tool.state === "output-available" || status === "completed" ||
     output?.ok === true;
-  // The turn stopped (user hit Stop / the stream aborted) before this child
-  // produced a terminal result: the enclosing message is no longer streaming
-  // yet the tool never resolved. Render it (and its live child rows) as Stopped
-  // instead of a forever-"Running" card. `messageContext == null` means we're
-  // outside a live transcript (e.g. a standalone card), so never infer a stop.
-  const interruptedByStop = messageContext != null && !messageContext.isStreaming &&
-    !completed && !failed && !explicitStopped;
-  const stopped = explicitStopped || interruptedByStop;
-  const statusProps = failed
+  // The turn ended before this child produced a terminal result. Freeze the
+  // card (and its live child rows) instead of leaving a forever-"Running" card.
+  const interruption = completed || failed || explicitStopped ? "none" : resolveInterruption({
+    toolState: tool.state,
+    isInTranscript: messageContext != null,
+    isMessageStreaming: messageContext?.isStreaming ?? false,
+    chatStatus: chat?.status,
+  });
+  const stopped = explicitStopped || interruption === "stopped";
+  const statusProps = failed || interruption === "failed"
     ? { label: "Failed", color: "red" as const }
     : stopped
     ? { label: "Stopped", color: "gray" as const }
@@ -500,13 +541,14 @@ function InvokeAgentToolCall(
   const summary = jsonRecord(output?.summary);
   const result = tool.errorText ?? stringValue(output, "text") ?? stringValue(output, "error") ??
     stringValue(output, "terminalErrorMessage") ?? stringValue(summary, "text");
-  const fallbackResponse = failed
+  const reportsFailure = failed || interruption === "failed";
+  const fallbackResponse = reportsFailure
     ? (result ?? "The child agent run failed before returning a usable result.")
     : result;
   const instructions = stringValue(input, "prompt") ?? stringValue(input, "description");
   const hasStreamedText = childStream.items.some((item) => item.type === "text");
-  const response = hasStreamedText && !failed ? undefined : fallbackResponse;
-  const phase = completed || failed || stopped
+  const response = hasStreamedText && !reportsFailure ? undefined : fallbackResponse;
+  const phase = completed || reportsFailure || stopped
     ? "result"
     : childStream.items.length > 0
     ? "working"
@@ -594,9 +636,9 @@ function InvokeAgentToolCall(
             }
             const childTool = childStream.tools.get(item.toolCallId);
             if (!childTool) return null;
-            // Freeze a child tool that was still running when the turn stopped,
+            // Freeze a child tool that was still running when the turn ended,
             // so its row (or skill shimmer) doesn't claim to be running forever.
-            const frozen = stopped && isToolRunning(childTool)
+            const frozen = (stopped || reportsFailure) && isToolRunning(childTool)
               ? { ...childTool, state: CHILD_TOOL_STOPPED_STATE as ChatDynamicToolPart["state"] }
               : childTool;
             return <ToolCallRoot key={childTool.toolCallId} tool={frozen} />;

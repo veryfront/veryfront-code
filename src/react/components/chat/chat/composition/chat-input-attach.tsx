@@ -31,7 +31,6 @@ export function ChatInputAttach(
   { icon, onClick, ref }: ChatInputAttachProps,
 ): React.ReactElement | null {
   const c = useChatInputContext();
-  const [menuOpen, setMenuOpen] = React.useState(false);
   if (!c.onAttach && !c.onSelectAttachment) return null;
 
   const openDialog = () => c.onOpenAttachmentPicker?.();
@@ -56,6 +55,23 @@ export function ChatInputAttach(
       </div>
     );
   }
+
+  return <ChatInputAttachMenu icon={icon} runUpload={runUpload} ref={ref} />;
+}
+
+/**
+ * The two-or-more-action `+`: a portalled menu. Split from `ChatInputAttach` so
+ * its open state belongs to the branch that uses it.
+ */
+function ChatInputAttachMenu(
+  { icon, runUpload, ref }: {
+    icon?: React.ReactNode;
+    runUpload: (event: React.MouseEvent<HTMLButtonElement>) => void;
+    ref?: React.Ref<HTMLDivElement>;
+  },
+): React.ReactElement {
+  const c = useChatInputContext();
+  const [menuOpen, setMenuOpen] = React.useState(false);
 
   return (
     <div ref={ref} className="relative flex shrink-0 items-center">

@@ -19,7 +19,10 @@ import { getRuntimeSourceIntegrationPolicyFromContext } from "../runtime/runtime
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { streamDataStreamEvents } from "../streaming/data-stream.ts";
-import { buildInvokeAgentStreamDataEvent } from "#veryfront/chat/invoke-agent-stream.ts";
+import {
+  buildInvokeAgentStreamDataEvent,
+  type InvokeAgentStreamIdentity,
+} from "#veryfront/chat/invoke-agent-stream.ts";
 
 /** Agent as tool helper. */
 async function runAgentAsStreamingTool(
@@ -29,6 +32,14 @@ async function runAgentAsStreamingTool(
   context?: ToolExecutionContext,
   publishChildStream = false,
 ): Promise<AgentResponse> {
+  // Resolved once: the identity rides along with every published event, so
+  // recomputing it per chunk would repeat the work on the stream's hot path.
+  const childIdentity: InvokeAgentStreamIdentity = {
+    ...(agent.config.name ? { agentName: agent.config.name } : {}),
+    ...(agent.config.avatarUrl ?? agent.config.avatar_url
+      ? { avatarUrl: agent.config.avatarUrl ?? agent.config.avatar_url }
+      : {}),
+  };
   const execute = async (): Promise<AgentResponse> => {
     let finalResponse: AgentResponse | undefined;
     const stream = await agent.stream({
@@ -46,10 +57,7 @@ async function runAgentAsStreamingTool(
           await context.publishDataEvent(buildInvokeAgentStreamDataEvent({
             toolCallId: context.toolCallId,
             agentId: agent.id,
-            ...(agent.config.name ? { agentName: agent.config.name } : {}),
-            ...(agent.config.avatarUrl ?? agent.config.avatar_url
-              ? { avatarUrl: agent.config.avatarUrl ?? agent.config.avatar_url }
-              : {}),
+            ...childIdentity,
             event,
           }));
         }

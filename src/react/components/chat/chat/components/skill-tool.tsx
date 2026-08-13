@@ -40,12 +40,19 @@ export interface SkillToolProps {
    * - `loading` — Sparkles pulses, label shimmers.
    * - `loaded` — Check appears, label is solid.
    * - `stopped` — the run was interrupted mid-load: static Sparkles, solid
-   *   label, no animation (so a stopped turn never keeps shimmering).
+   *   label, no animation (so a stopped turn never keeps shimmering), and a
+   *   terminal label so a frozen row never still reads "Loading".
    * @default "loaded"
    */
   state?: "loading" | "loaded" | "stopped";
   className?: string;
 }
+
+const SKILL_TOOL_LABELS: Record<Required<SkillToolProps>["state"], (skill: string) => string> = {
+  loading: (skill) => `Loading skill: ${skill}`,
+  loaded: (skill) => `Loaded skill: ${skill}`,
+  stopped: (skill) => `Stopped loading skill: ${skill}`,
+};
 
 /** Render a skill-load tool-call row. */
 export function SkillTool({
@@ -55,7 +62,7 @@ export function SkillTool({
 }: SkillToolProps): React.JSX.Element {
   const isLoading = state === "loading";
   const isLoaded = state === "loaded";
-  const label = isLoaded ? `Loaded skill: ${skill}` : `Loading skill: ${skill}`;
+  const label = SKILL_TOOL_LABELS[state](skill);
 
   return (
     <p className={cn(skillToolRow(), className)}>

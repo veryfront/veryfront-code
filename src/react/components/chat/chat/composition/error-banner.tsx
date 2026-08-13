@@ -15,9 +15,15 @@ export interface ErrorBannerProps {
   error: Error;
   onRetry?: () => void;
   className?: string;
-  /** Override the leading glyph. Defaults to the built-in warning triangle. */
+  /**
+   * Override the leading glyph. Defaults to the built-in warning triangle.
+   *
+   * Behavior change: this used to render inside the retry button. It now fills
+   * the alert's leading icon slot, and the retry button is label-only. Move a
+   * button glyph into `retryLabel` to keep it on the button.
+   */
   icon?: React.ReactNode;
-  /** Label for the retry button. Defaults to "Try again". */
+  /** Label for the retry button. Defaults to "Try again" (was "Retry"). */
   retryLabel?: string;
 
   /** React 19: ref is a regular prop. */
@@ -39,6 +45,10 @@ export function ErrorBanner(
         <AlertContent>{error.message}</AlertContent>
         {onRetry && (
           <AlertAction>
+            {
+              /* Studio's banner button is 24px tall — one step below the
+                smallest `size` variant (32px), so the height is set here. */
+            }
             <Button size="sm" className="h-6 px-2.5 text-sm" onClick={onRetry}>
               {retryLabel}
             </Button>
