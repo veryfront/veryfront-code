@@ -38,6 +38,7 @@ import {
   isHostProjectExecutionOverrideEnabled,
 } from "#veryfront/security/host-execution-policy.ts";
 import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
+import { getIsolationPosture } from "#veryfront/security/sandbox/worker-pool.ts";
 import { runStartupDiscovery } from "./startup-discovery.ts";
 
 const serverLog = logger.component("server");
@@ -283,6 +284,12 @@ export function startProductionServer(
         }
 
         logger.info("Starting production server", { projectDir, port, bindAddress });
+
+        // Resolve the isolation flags here rather than leaving them to the
+        // first request, so the posture (including the warning for a master
+        // switch that enables no surface) lands in the startup log where an
+        // operator looks for it.
+        getIsolationPosture();
 
         if (operatorGrant && !isolatedRuntimeGrant) {
           logger.warn("Shared runtime is executing tenant project code by operator grant", {
