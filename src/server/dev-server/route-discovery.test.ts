@@ -50,7 +50,7 @@ describe("server/dev-server/route-discovery", () => {
   it("names every searched directory without leaking the project path", async () => {
     const captured = captureDebugLogs();
     try {
-      const adapter = createMockAdapter({});
+      const adapter = createMockAdapter();
       const discovery = new RouteDiscovery(
         "/Users/someone/private/path/my-project",
         adapter,
