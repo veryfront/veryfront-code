@@ -7,7 +7,7 @@
  */
 
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import { formatInstallCommand } from "#veryfront/extensions/install-command.ts";
+import { formatExtensionSetupHint } from "#veryfront/extensions/setup-hint.ts";
 import { getRecommendation } from "#veryfront/extensions/recommendations.ts";
 import {
   captureCSSOptimizationEngine,
@@ -162,21 +162,22 @@ export function acquireCSSGenerationSession(minify: boolean): CSSGenerationSessi
     // it is an internal registration hook the guides never mention, and
     // `component=css-compiler` already identifies the source.
     //
-    // Naming the package is likewise not enough to act on, so the install step
-    // is a command the reader can paste. `formatInstallCommand` derives it from
-    // the manifest that owns the project's dependencies rather than hard-coding
-    // one client: a bare `deno add @veryfront/ext-css-lightning` resolves
-    // against JSR, which hosts no `@veryfront` package, and the compiled Deno
-    // binary builds `--runtime node` scaffolds whose own `npm ci` would ignore
-    // any deno.json a `deno add` wrote.
+    // Naming the package is likewise not enough to act on, so the remedy is
+    // steps the reader can paste. `formatExtensionSetupHint` owns both: an
+    // install command derived from the manifest that owns the project's
+    // dependencies rather than one hard-coded client, and the config edit --
+    // "create" or "add to", with the import lines, depending on whether the
+    // project has a config file. `veryfront init --template minimal` writes
+    // none, so the earlier "add it to the extensions in veryfront.config.ts"
+    // named a file that did not exist and never said what to put in it.
     reportedMissingOptimizationEngine = true;
     const recommendation = getRecommendation(CSSOptimizationEngineName);
     logger.warn(
       recommendation === undefined
         ? "Veryfront emits unminified CSS because no CSS optimizer is active"
-        : `Veryfront emits unminified CSS because no CSS optimizer is active. Install one with: ${
-          formatInstallCommand(recommendation)
-        }, then add it to "extensions" in veryfront.config.ts`,
+        : `Veryfront emits unminified CSS because no CSS optimizer is active. ${
+          formatExtensionSetupHint(recommendation)
+        }`,
     );
   }
   const optimizationEngine = optimizationProvider === undefined
