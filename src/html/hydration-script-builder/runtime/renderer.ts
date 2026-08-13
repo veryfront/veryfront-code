@@ -53,11 +53,32 @@ export function preferReachedModuleError(earlier: unknown, later: unknown): unkn
 }
 
 /**
+ * True when `error` proves `<route>.js` loaded as a module and then threw while
+ * *evaluating* — a runtime error from the module's own code.
+ *
+ * A `SyntaxError` means the module never linked (a missing export, or an HTML
+ * shell a proxy returned for a miss) and a fetch failure (see
+ * {@link isModuleNotFoundError}) means it was never served — both are cases the
+ * `<route>/index.js` retry exists to recover. Anything else is code that ran
+ * inside a module that *did* load, which proves `<route>.js` is the real served
+ * file: retrying a sibling `<route>/index.js` can only 404.
+ */
+function isReachedModuleEvaluationError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error instanceof SyntaxError) return false;
+  return !isModuleNotFoundError(error);
+}
+
+/**
  * Loads a Pages Router page, retrying at `<route>/index.js` because both
  * pages/about.tsx and pages/about/index.tsx are valid sources for the same
- * route. The retry is unconditional: gating it on the wording of the first
- * rejection turned any unrecognized wording into a blank page. Error selection,
- * not the retry, is what must stay precise.
+ * route. The retry stays unconditional for missing-module and proxy-shell
+ * rejections — gating it on the wording of those turned any unrecognized
+ * wording into a blank page. It is skipped only when the first attempt reached
+ * a module and threw at evaluation: `<route>.js` then exists, so probing
+ * `<route>/index.js` can only 404 and bury the real error under a misleading
+ * "module not found" (issue #3667, as surfaced by the #3661 adapter crash).
+ * Error selection, not the retry, is what must stay precise.
  */
 export async function loadPageModuleWithIndexFallback(
   basePath: string,
@@ -73,6 +94,10 @@ export async function loadPageModuleWithIndexFallback(
     // An index slug already resolves to <route>/index.js, so the retry would
     // ask for <route>/index/index.js.
     if (pageSlug === "index" || pageSlug.endsWith("/index")) throw routeError;
+
+    // <route>.js loaded and threw at evaluation — it is the served file, so the
+    // retry is guaranteed useless. Surface the real error, not a sibling 404.
+    if (isReachedModuleEvaluationError(error)) throw routeError;
 
     try {
       return await importModule(basePath + "/index.js");

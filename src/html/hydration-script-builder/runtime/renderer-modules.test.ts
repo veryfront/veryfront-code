@@ -105,6 +105,36 @@ describe("hydration-script-builder/runtime/renderer", () => {
       ]);
     });
 
+    it("does not probe /index.js when <route>.js reached a module and threw at evaluation", async () => {
+      // Issue #3667: an extension-style route (pages/vector-a.tsx, no folder) was
+      // requesting <route>/index.js and 404ing. That only fires as the retry —
+      // here <route>.js loads and throws a *runtime* error during evaluation
+      // (the class surfaced by the #3661 O_NOFOLLOW adapter crash). The module
+      // exists and is the served file, so the /index.js probe can only 404 and
+      // add noise; the real error must surface untouched.
+      const requested: string[] = [];
+      const evaluationError = new TypeError(
+        "Cannot read properties of undefined (reading 'O_NOFOLLOW')",
+      );
+
+      const thrown = await captureRejection(
+        loadPageModuleWithIndexFallback(
+          "http://modules/pages/vector-a",
+          "vector-a",
+          null,
+          (url) => {
+            requested.push(url);
+            return Promise.reject(
+              url.endsWith("/vector-a.js") ? evaluationError : notFound(url),
+            );
+          },
+        ),
+      );
+
+      assertEquals(thrown, evaluationError);
+      assertEquals(requested, ["http://modules/pages/vector-a.js"]);
+    });
+
     it("retries at /index.js for rejections the classifier does not recognize", async () => {
       // A proxy that rewrites a module miss into an HTML shell surfaces as a
       // SyntaxError. Gating the retry on error wording turned that into a blank
