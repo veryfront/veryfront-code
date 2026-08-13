@@ -36,8 +36,8 @@ The loop has four parts:
 | Observation | Tool results or new messages are added back into context.     |
 
 Veryfront hides most loop plumbing behind the agent runtime. The boundary stays
-visible: the agent decides what to do next. Tools, resources, runs, and app
-routes own execution.
+visible: the agent decides what to do next. Resources own readable context.
+Tools, runs, and app routes own execution.
 
 ## Boundary
 
