@@ -60,9 +60,14 @@ function resolveToRepoPath(
     return normalize(fromDir + spec);
   }
   if (spec.startsWith("#")) {
+    // Deno import-map semantics: a bare key (`#veryfront/security`) maps only the
+    // exact specifier — it points at a *file*. Only a trailing-slash key
+    // (`#veryfront/`) maps sub-paths. Matching sub-paths against a bare key would
+    // mis-resolve `#veryfront/security/sandbox/x.ts` onto the security barrel file
+    // and silently drop the edge — hiding real leaks.
     let bestKey = "";
     for (const key of Object.keys(map)) {
-      const matches = spec === key || spec.startsWith(key.endsWith("/") ? key : key + "/");
+      const matches = key.endsWith("/") ? spec.startsWith(key) : spec === key;
       if (matches && key.length > bestKey.length) bestKey = key;
     }
     const mapped = map[bestKey];
