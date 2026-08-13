@@ -2,6 +2,7 @@
   "note": "Known server modules reachable from a browser entrypoint (#3670). Burn down, never grow. Regenerate with: deno run --allow-read --allow-write scripts/lint/audit-client-bundle.ts --update",
   "entrypoints": {
     "src/index.client.ts": [
+      "src/extensions/distributed/redis-runtime-provider.ts",
       "src/platform/adapters/fs/veryfront/adapter-content-context.ts",
       "src/platform/adapters/fs/veryfront/adapter-helpers.ts",
       "src/platform/adapters/fs/veryfront/adapter.ts",
@@ -36,7 +37,10 @@
       "src/platform/adapters/veryfront-api-client/schemas/api.schema.ts",
       "src/platform/adapters/veryfront-api-client/schemas/index.ts",
       "src/platform/adapters/veryfront-api-client/types.ts",
-      "src/platform/compat/process/command.ts"
+      "src/platform/compat/process/command.ts",
+      "src/security/sandbox/project-worker.ts",
+      "src/security/sandbox/worker-error-boundary.ts",
+      "src/security/sandbox/worker-pool.ts"
     ]
   }
 }

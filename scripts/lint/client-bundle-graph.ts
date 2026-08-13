@@ -37,6 +37,10 @@ export const SERVER_ONLY_MODULE_PATTERNS: readonly RegExp[] = [
   /\/server\/production-server\.ts$/,
   /\/extensions\/distributed\/(redis-runtime-provider|owned-redis-client)\.ts$/,
   /\/platform\/compat\/process\/command\.ts$/,
+  // The isolation worker pool spawns runtime workers and reads `node:util`
+  // types at module scope — it crashes browser hydration (surfaced by the
+  // `pages-server-import-leak/vector-a` reproducer's `isProxy` TypeError).
+  /\/security\/sandbox\/(worker-pool|project-worker|worker-error-boundary|worker-script)\.ts$/,
 ];
 
 // Edges that actually ship code into the browser graph:
@@ -86,10 +90,14 @@ export function resolveSpecifier(
     return normalizePath(fromDir + spec);
   }
   if (spec.startsWith("#")) {
+    // Deno import-map semantics: a bare key (`#veryfront/security`) maps only the
+    // exact specifier — it points at a *file*. Only a trailing-slash key
+    // (`#veryfront/`) maps sub-paths. Matching sub-paths against a bare key would
+    // mis-resolve `#veryfront/security/sandbox/x.ts` onto the security barrel file
+    // and silently drop the edge — hiding real server leaks.
     let bestKey = "";
     for (const key of Object.keys(importMap)) {
-      const matches = spec === key ||
-        spec.startsWith(key.endsWith("/") ? key : key + "/");
+      const matches = key.endsWith("/") ? spec.startsWith(key) : spec === key;
       if (matches && key.length > bestKey.length) bestKey = key;
     }
     const mapped = importMap[bestKey];
