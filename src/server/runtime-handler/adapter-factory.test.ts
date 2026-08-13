@@ -522,6 +522,53 @@ describe("adapter-factory", () => {
     assertEquals("isLocalProject" in result, true);
   });
 
+  it("survives an adapter cache that drops the entry it was just given", async () => {
+    Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+    const cache = new ProjectDiscoveryCache();
+    const adapter = createMockAdapter({
+      "/trusted/project": { isDirectory: true },
+      "/trusted/project/app": { isDirectory: true },
+    });
+
+    // The adapter LRU estimates a RuntimeAdapter's size and evicts it again
+    // when it exceeds the byte budget, so set() can silently store nothing.
+    // Observed under Bun 1.3.6, where the same adapter object that caches
+    // fine on Node is dropped: set() then has()===false and size===0.
+    // resolveAdapter must not depend on reading back what it just wrote.
+    cache.adapters.set = () => {};
+
+    const result = await resolveAdapter({
+      req: await makeReq({ projectPath: "/trusted/project", trusted: true }),
+      projectDir: "/base/project",
+      adapter,
+      config: undefined,
+      projectSlug: "myproject",
+      projectId: "proj_123",
+      proxyToken: undefined,
+      releaseId: undefined,
+      proxyEnv: "preview",
+      branch: null,
+      environmentName: undefined,
+      parsedDomain: {
+        slug: null,
+        branch: null,
+        environment: null,
+        isVeryfrontDomain: false,
+        isDraft: false,
+        allowIframeEmbed: false,
+      },
+      isProxyMode: true,
+      cache,
+      prepareHostedConfigContext: preparePreviewHostedConfigContext,
+    });
+
+    assertEquals(
+      result.adapter === undefined || result.adapter === null,
+      false,
+      "resolveAdapter must hand on a real adapter even when the cache drops it",
+    );
+  });
+
   it("uses injected cache instead of default singleton", async () => {
     Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
     const cache = new ProjectDiscoveryCache();
