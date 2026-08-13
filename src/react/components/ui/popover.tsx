@@ -55,8 +55,9 @@ export interface PopoverTriggerProps extends React.ButtonHTMLAttributes<HTMLButt
 }
 
 /**
- * Literal slotted trigger contract with an element-specific ref.
- * @deprecated The popover trigger is engine-neutral now; use {@link PopoverTriggerProps}.
+ * Literal slotted trigger contract with an element-specific `ref` — for
+ * `asChild` triggers whose child is not a `<button>` (e.g. an `<a>`), so the
+ * consumer's ref keeps its precise element type.
  */
 export type PopoverSlottedTriggerProps<T extends HTMLElement = HTMLElement> =
   & Omit<PopoverTriggerProps, "ref">
@@ -64,13 +65,19 @@ export type PopoverSlottedTriggerProps<T extends HTMLElement = HTMLElement> =
 
 /**
  * Trigger — toggles the popover; the positioning anchor. `asChild` merges onto
- * the child element, which must forward `ref` to its DOM node.
+ * the child element, which must forward `ref` to its DOM node. The generic
+ * overload lets an `asChild` trigger carry an element-specific ref (e.g. an
+ * `<a>`); `aria-haspopup` is supplied by the adapter's trigger.
  */
-export function PopoverTrigger(props: PopoverTriggerProps): React.ReactElement {
-  // `aria-haspopup` is supplied by the adapter's trigger (a mechanics concern),
-  // so the skin stays engine-neutral.
+export function PopoverTrigger<T extends HTMLElement = HTMLElement>(
+  props: PopoverSlottedTriggerProps<T>,
+): React.ReactElement;
+export function PopoverTrigger(props: PopoverTriggerProps): React.ReactElement;
+export function PopoverTrigger(
+  props: PopoverTriggerProps | PopoverSlottedTriggerProps<HTMLElement>,
+): React.ReactElement {
   const { popover } = useAdapter();
-  return <popover.Trigger {...props} />;
+  return <popover.Trigger {...(props as PopoverTriggerProps)} />;
 }
 
 /** Props accepted by `<PopoverContent>`. */
