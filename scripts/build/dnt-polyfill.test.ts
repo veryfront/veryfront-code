@@ -357,6 +357,27 @@ describe("patchDntCryptoShim", () => {
     }
   });
 
+  it("fails closed on unrecognized crypto output without being asked to", async () => {
+    const directory = await Deno.makeTempDir();
+    const path = `${directory}/_dnt.shims.js`;
+
+    try {
+      // build-npm-extension-packages.ts calls this without `required`, so the
+      // default path is the one that guards the extension packages.
+      await Deno.writeTextFile(
+        path,
+        'export { crypto } from "@deno/shim-crypto-next";\n',
+      );
+      await assertRejects(
+        () => patchDntCryptoShim(path),
+        Error,
+        "does not contain the expected @deno/shim-crypto re-export",
+      );
+    } finally {
+      await Deno.remove(directory, { recursive: true });
+    }
+  });
+
   it("skips packages without the DNT crypto shim", async () => {
     const directory = await Deno.makeTempDir();
     const path = `${directory}/_dnt.shims.js`;
