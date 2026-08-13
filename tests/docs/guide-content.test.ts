@@ -9,7 +9,83 @@ import {
 } from "#veryfront/utils/cache-dir.ts";
 import { MINIMUM_DENO_VERSION, MINIMUM_NODE_VERSION } from "../../scripts/build/runtime-support.ts";
 
+const repoRoot = new URL("../../", import.meta.url);
+
 describe("guide content contracts", () => {
+  it("presents open source, self-hosted, and managed paths as first-class options", async () => {
+    const overview = await Deno.readTextFile(
+      new URL("docs/getting-started/index.md", repoRoot),
+    );
+    const deploymentGuide = await Deno.readTextFile(
+      new URL("docs/guides/deploying.md", repoRoot),
+    );
+
+    assertStringIncludes(overview, "Apache-2.0 open-source framework");
+    assertStringIncludes(overview, "does not require a Veryfront account");
+    assertStringIncludes(overview, "Local development");
+    assertStringIncludes(overview, "Self-host");
+    assertStringIncludes(overview, "Veryfront Cloud");
+    assert(
+      deploymentGuide.indexOf("## Self-host") <
+        deploymentGuide.indexOf("## Preview on Veryfront Cloud"),
+    );
+  });
+
+  it("keeps the quickstart local and account-free", async () => {
+    const quickstart = await Deno.readTextFile(
+      new URL("docs/getting-started/quickstart.md", repoRoot),
+    );
+
+    assertStringIncludes(
+      quickstart,
+      "does not require a Veryfront account or Veryfront Cloud",
+    );
+    assertStringIncludes(quickstart, "You need access to model inference");
+    assertStringIncludes(quickstart, 'export OPENAI_API_KEY="<API_KEY>"');
+    assertStringIncludes(quickstart, "veryfront eval assistant");
+    assertStringIncludes(
+      quickstart,
+      "[Self-host the app](../guides/deploying.md#self-host)",
+    );
+    assertStringIncludes(
+      quickstart,
+      "[Use another inference provider](../guides/providers.md)",
+    );
+    assertStringIncludes(quickstart, "protected by default");
+    assertEquals(quickstart.includes("veryfront login"), false);
+    assertEquals(quickstart.includes("veryfront push"), false);
+    assertEquals(quickstart.includes("veryfront deploy"), false);
+
+    const deploymentGuide = await Deno.readTextFile(
+      new URL("docs/guides/deploying.md", repoRoot),
+    );
+    assertStringIncludes(deploymentGuide, "## Self-host");
+
+    const providerGuide = await Deno.readTextFile(
+      new URL("docs/guides/providers.md", repoRoot),
+    );
+    assertStringIncludes(providerGuide, "### Ollama");
+    assertStringIncludes(providerGuide, "### LM Studio");
+    assertStringIncludes(providerGuide, "VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS");
+    assertStringIncludes(providerGuide, "Other internal destinations");
+    assertEquals(providerGuide.includes("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS=1"), false);
+    assertStringIncludes(providerGuide, 'OPENAI_BASE_URL="http://localhost:11434/v1"');
+    assertStringIncludes(
+      providerGuide,
+      'VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS="http://localhost:11434"',
+    );
+    assertStringIncludes(providerGuide, 'agent({ model: "openai/qwen3:1.7b" })');
+    assertStringIncludes(providerGuide, 'OPENAI_BASE_URL="http://localhost:1234/v1"');
+    assertStringIncludes(
+      providerGuide,
+      'VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS="http://localhost:1234"',
+    );
+    assertStringIncludes(
+      providerGuide,
+      'agent({ model: "openai/qwen2.5-7b-instruct" })',
+    );
+  });
+
   it("documents the current knowledge ingest JSON result shape", async () => {
     const guide = await Deno.readTextFile(
       "docs/guides/cli-knowledge-ingestion.md",

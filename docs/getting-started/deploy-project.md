@@ -36,6 +36,23 @@ veryfront serve
 Open [http://localhost:3000](http://localhost:3000). Confirm the same pages and
 endpoints work.
 
+## Self-host
+
+Veryfront Code is open source and can run in your own cloud, private network,
+or on-premises environment. Self-hosting does not require a Veryfront account.
+
+To self-host Veryfront Code, ship the whole project directory, not just
+`dist/`. Copy the project to the host and run `veryfront build` there (or ship the `dist/` you built locally
+alongside the source), then run `veryfront serve` from the project directory.
+
+A host that receives only `dist/` has no backend. The pages load, but every API
+route is absent, and the response depends on the host: running
+`veryfront serve` over a `dist/`-only directory returns 404, while a static host
+that honors the generated `_redirects` file returns the SPA `index.html` with a
+200. Either way the chat UI from the default scaffold loads with a dead
+`/api/ag-ui` backend. See [Building and deploying](../guides/deploying.md) for a
+container example.
+
 ## Preview on Veryfront Cloud
 
 Create or link the cloud project and push the current source to its preview:
@@ -130,21 +147,6 @@ Project reference precedence is `VERYFRONT_PROJECT_SLUG` or environment
 configuration, then `veryfront.config.ts`, then legacy `veryfront.json`, then
 lower-level tenant or project-ID environment references, then the ignored local
 link.
-
-## Deploy somewhere else
-
-For a non-Cloud target, ship the whole project directory, not just `dist/`. Copy
-the project to the host and run `veryfront build` there (or ship the `dist/` you
-built locally alongside the source), then run `veryfront serve` from the project
-directory.
-
-A host that receives only `dist/` has no backend. The pages load, but every API
-route is absent, and the response depends on the host: running
-`veryfront serve` over a `dist/`-only directory returns 404, while a static host
-that honors the generated `_redirects` file returns the SPA `index.html` with a
-200. Either way the chat UI from the default scaffold loads with a dead
-`/api/ag-ui` backend. See [Building and deploying](../guides/deploying.md) for a
-container example.
 
 ## Verify it worked
 

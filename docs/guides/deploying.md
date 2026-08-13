@@ -76,6 +76,31 @@ veryfront serve
 Open the same route you tested in development. For API routes, compare the dev
 and production responses with `curl`.
 
+## Self-host
+
+Veryfront Code is an Apache-2.0 open-source framework. You can deploy it to any
+environment that supports your chosen JavaScript runtime, including your own
+cloud account, a private network, or on-premises infrastructure. Self-hosting
+does not require a Veryfront account.
+
+To self-host Veryfront Code, ship the whole project directory, not just
+`dist/`. The container below copies the project, builds it in place, and serves
+it from the project directory:
+
+```dockerfile
+FROM denoland/deno:2.6.0
+
+WORKDIR /app
+COPY . .
+RUN deno task build
+
+EXPOSE 3000
+CMD ["deno", "task", "start"]
+```
+
+Use infrastructure that supports your chosen runtime and can run
+`veryfront serve` from the project directory.
+
 ## Preview on Veryfront Cloud
 
 Create or link the cloud project and push the current source to its preview:
@@ -160,26 +185,6 @@ ANTHROPIC_API_KEY=<API_KEY>
 
 For Veryfront Cloud, set the same variables in the target environment before
 deploying.
-
-## Deploy somewhere else
-
-Self-hosted deployments ship the whole project directory, not just `dist/`. The
-container below copies the project, builds it in place, and serves it from the
-project directory:
-
-```dockerfile
-FROM denoland/deno:2.6.0
-
-WORKDIR /app
-COPY . .
-RUN deno task build
-
-EXPOSE 3000
-CMD ["deno", "task", "start"]
-```
-
-Use infrastructure that supports your chosen runtime and can run
-`veryfront serve` from the project directory.
 
 ## Verify it worked
 
