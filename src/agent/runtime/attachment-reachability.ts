@@ -152,9 +152,17 @@ function describeUnreachableIPv6(address: string, hostname: string): string | un
   return undefined;
 }
 
-/** Reason this hostname is unreachable from a provider's network, if it is. */
+/**
+ * Reason this hostname is unreachable from a provider's network, if it is.
+ *
+ * The trailing dot of a fully qualified name is dropped first: `URL` keeps it
+ * on DNS names (`http://localhost./x` has hostname `localhost.`) while
+ * normalizing it away on IP literals, so without this `localhost.` and
+ * `app.localhost.` resolve to the same unreachable host under a spelling the
+ * checks below would not recognize.
+ */
 function describeUnreachableHostname(hostname: string): string | undefined {
-  const host = hostname.toLowerCase();
+  const host = hostname.toLowerCase().replace(/\.$/, "");
   if (LOOPBACK_HOSTNAMES.has(host)) return loopbackReason(hostname);
   if (LOCAL_SUFFIXES.some((suffix) => host.endsWith(suffix))) {
     return `"${hostname}" is a local-network name that does not resolve on the public internet`;

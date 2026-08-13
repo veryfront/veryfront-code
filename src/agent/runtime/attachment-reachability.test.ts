@@ -77,6 +77,23 @@ describe("attachment reachability", () => {
       }
     });
 
+    it("rejects the same names spelled with a trailing DNS root dot", () => {
+      // `URL` keeps the root dot on a DNS name, so `localhost.` is the same
+      // unreachable host under a spelling the plain comparisons would miss.
+      assertEquals(new URL("http://localhost./upload").hostname, "localhost.");
+      assertStringIncludes(
+        describeUnreachableAttachmentUrl("http://localhost./upload?id=1") ?? "",
+        "loopback",
+      );
+      for (const host of ["app.localhost.", "nas.local.", "svc.internal."]) {
+        assertStringIncludes(
+          describeUnreachableAttachmentUrl(`http://${host}/upload?id=1`) ?? "",
+          "local-network",
+          host,
+        );
+      }
+    });
+
     it("rejects schemes the provider cannot dereference at all", () => {
       const reason = describeUnreachableAttachmentUrl("blob:https://app.example.com/9f2c");
       assertStringIncludes(reason ?? "", "cannot be fetched");

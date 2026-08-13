@@ -8,6 +8,7 @@ import {
 } from "./text-generation-runtime-message-converter.ts";
 import type {
   TextGenerationRuntimeAssistantMessage,
+  TextGenerationRuntimeMessage,
   TextGenerationRuntimeToolMessage,
   TextGenerationRuntimeUserMessage,
 } from "./text-generation-runtime-message-types.ts";
@@ -943,5 +944,67 @@ describe("text-generation-runtime-message-converter", () => {
       assertEquals(requestMessages.at(-1)?.role, "tool");
       assertEquals(requestMessages.length, historyMessages.length - 1);
     });
+  });
+
+  describe("attachment reachability across the conversion entry points", () => {
+    // The runtime calls the request entry point, which delegates to the batch
+    // one, which delegates to the single-message one. Each hand-off is a place
+    // the exemption can be dropped silently, so all three are pinned in both
+    // directions rather than only the innermost.
+    const loopbackAttachmentMessages = (): Message[] => [
+      {
+        id: "u-attachment",
+        role: "user",
+        parts: [
+          { type: "text", text: "what is in this image?" },
+          {
+            type: "file",
+            url: "http://localhost:3000/api/chat/upload?id=blob_1",
+            mediaType: "image/png",
+            filename: "screenshot.png",
+            uploadId: "blob_1",
+          },
+        ],
+      } as unknown as Message,
+    ];
+
+    const attachmentUrls = (message: TextGenerationRuntimeMessage): string[] => {
+      const content = (message as TextGenerationRuntimeUserMessage).content;
+      if (!Array.isArray(content)) return [];
+      return content.flatMap((part) =>
+        part.type === "file" || part.type === "image" ? [part.url] : []
+      );
+    };
+
+    for (
+      const entryPoint of [
+        {
+          name: "convertToTextGenerationRuntimeMessages",
+          convert: convertToTextGenerationRuntimeMessages,
+        },
+        {
+          name: "convertToTextGenerationRuntimeRequestMessages",
+          convert: convertToTextGenerationRuntimeRequestMessages,
+        },
+      ]
+    ) {
+      it(`${entryPoint.name} forwards the server-local exemption`, () => {
+        const messages = entryPoint.convert(loopbackAttachmentMessages(), {
+          requireInternetReachableAttachments: false,
+        });
+        assertEquals(messages.length, 1);
+        assertEquals(attachmentUrls(messages[0]!), [
+          "http://localhost:3000/api/chat/upload?id=blob_1",
+        ]);
+      });
+
+      it(`${entryPoint.name} still rejects the attachment by default`, () => {
+        const error = assertThrows(
+          () => entryPoint.convert(loopbackAttachmentMessages()),
+          Error,
+        ) as Error;
+        assertStringIncludes(error.message, "screenshot.png");
+      });
+    }
   });
 });
