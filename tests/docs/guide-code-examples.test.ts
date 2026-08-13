@@ -1087,6 +1087,11 @@ describe("Guide: self-hosting.md", () => {
       const command of [
         "veryfront build",
         "veryfront serve",
+        "FROM node:22-slim",
+        "COPY package.json package-lock.json ./",
+        "RUN npm ci",
+        "RUN npm run build",
+        'CMD ["npm", "start"]',
         "docker build -t veryfront-app .",
         "docker run --rm -p 3000:3000 --env-file .env veryfront-app",
       ]
@@ -1094,6 +1099,7 @@ describe("Guide: self-hosting.md", () => {
       assertStringIncludes(guide, command);
     }
     assertEquals(guide.includes("veryfront login"), false);
+    assertEquals(guide.includes("FROM denoland/deno"), false);
   });
 });
 
