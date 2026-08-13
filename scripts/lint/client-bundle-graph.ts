@@ -49,19 +49,41 @@ export const SERVER_ONLY_MODULE_PATTERNS: readonly RegExp[] = [
 //  - `import "x"` — a bare side-effect import still evaluates the module.
 // A dynamic `import("x")` is lazy (parenthesised, no `from`, no trailing quote
 // after whitespace), so neither pattern matches it.
+// Group 1 is the binding clause, group 2 the specifier.
 const VALUE_FROM_RE =
-  /(?:^|\n)\s*(?:import|export)\s+(?!type\b)[^;'"]*?\sfrom\s+["']([^"']+)["']/g;
+  /(?:^|\n)\s*(?:import|export)\s+(?!type\b)([^;'"]*?)\sfrom\s+["']([^"']+)["']/g;
 const SIDE_EFFECT_IMPORT_RE = /(?:^|\n)\s*import\s+["']([^"']+)["']/g;
+
+/**
+ * True for a clause whose named bindings are *all* inline-`type` — e.g.
+ * `{ type A }` or `{ type A as B, type C }`. Deno erases such a statement
+ * whole, module specifier included (verified on 2.7.7: the target's top-level
+ * side effects never run), so it ships nothing and must not become an edge.
+ * A clause holding any value binding (`{ type A, open }`, `Default, { type A }`)
+ * still ships and stays an edge.
+ */
+function isTypeOnlyClause(clause: string): boolean {
+  const trimmed = clause.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return false;
+  const bindings = trimmed.slice(1, -1).split(",").map((b) => b.trim()).filter(
+    (b) => b !== "",
+  );
+  return bindings.length > 0 && bindings.every((b) => /^type\s/.test(b));
+}
 
 const textEncoder = new TextEncoder();
 
 export function* staticSpecifiers(source: string): Generator<string> {
-  for (const pattern of [VALUE_FROM_RE, SIDE_EFFECT_IMPORT_RE]) {
-    pattern.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = pattern.exec(source)) !== null) {
-      if (match[1]) yield match[1];
-    }
+  let match: RegExpExecArray | null;
+
+  VALUE_FROM_RE.lastIndex = 0;
+  while ((match = VALUE_FROM_RE.exec(source)) !== null) {
+    if (match[2] && !isTypeOnlyClause(match[1] ?? "")) yield match[2];
+  }
+
+  SIDE_EFFECT_IMPORT_RE.lastIndex = 0;
+  while ((match = SIDE_EFFECT_IMPORT_RE.exec(source)) !== null) {
+    if (match[1]) yield match[1];
   }
 }
 

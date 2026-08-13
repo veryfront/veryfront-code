@@ -93,6 +93,35 @@ describe("scripts/lint/client-bundle-graph", () => {
       assertEquals(findServerOnlyLeaks(graph), []);
     });
 
+    it("ignores an inline type-only clause, which Deno erases entirely", async () => {
+      const graph = await graphFrom({
+        "app/client-entry.ts": [
+          'import { type DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/adapter.ts";',
+          'export { type Fs } from "#veryfront/platform/adapters/runtime/node/adapter.ts";',
+          "export type A = DenoAdapter;",
+        ].join("\n"),
+        "src/platform/adapters/runtime/deno/adapter.ts":
+          "export class DenoAdapter {}",
+        "src/platform/adapters/runtime/node/adapter.ts": "export class Fs {}",
+      });
+
+      assertEquals(findServerOnlyLeaks(graph), []);
+    });
+
+    it("still follows a clause that mixes a type binding with a value binding", async () => {
+      const graph = await graphFrom({
+        "app/client-entry.ts":
+          'import { type DenoAdapter, open } from "#veryfront/platform/adapters/runtime/deno/adapter.ts";\n' +
+          "export const x: DenoAdapter = open;",
+        "src/platform/adapters/runtime/deno/adapter.ts":
+          "export class DenoAdapter {}\nexport const open = {};",
+      });
+
+      assertEquals(findServerOnlyLeaks(graph), [
+        "src/platform/adapters/runtime/deno/adapter.ts",
+      ]);
+    });
+
     it("follows a bare side-effect import, which still ships the module", async () => {
       const graph = await graphFrom({
         "app/client-entry.ts":

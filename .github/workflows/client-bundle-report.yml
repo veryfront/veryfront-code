@@ -43,8 +43,14 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.payload.pull_request.number,
             });
+            // Only ever update our own comment: another bot that quotes the
+            // marker (a review bot echoing this report, say) must not be
+            // overwritten. github-script runs on GITHUB_TOKEN, so the sticky
+            // comment is always authored by github-actions[bot].
             const existing = comments.data.find(
-              (c) => c.user.type === "Bot" && c.body.includes(marker),
+              (c) =>
+                c.user?.login === "github-actions[bot]" &&
+                c.body.includes(marker),
             );
 
             if (existing) {
