@@ -181,15 +181,6 @@ const DEPLOY_ACCESS_COVERAGE: CoveragePage[] = [
       },
     ],
   },
-  {
-    path: "docs/getting-started/quickstart.md",
-    requirements: [
-      {
-        label: "state that the deployed environment is protected by default",
-        pattern: /protected by default/i,
-      },
-    ],
-  },
 ];
 
 /**

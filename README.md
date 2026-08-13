@@ -10,6 +10,11 @@ Veryfront Code is a full-stack framework for building AI-powered applications an
 
 It gives you agents, tools, workflows, and a complete React rendering stack in a single framework. Veryfront Code runs on Node.js, Deno, and Bun, and can be deployed anywhere or shipped through the Veryfront platform with built-in preview environments and production hosting.
 
+Veryfront Code is an Apache-2.0 open-source framework that works standalone.
+Develop and evaluate locally, self-host in your own cloud or on-premises
+environment, or use Veryfront Cloud for managed platform services. A Veryfront
+account is not required for local development or self-hosting.
+
 <p align="center">
   <img src="./assets/banner.svg" alt="Veryfront" width="100%">
 </p>

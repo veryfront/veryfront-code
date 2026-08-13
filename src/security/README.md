@@ -235,6 +235,14 @@ private, link-local, metadata, and other non-global addresses, and repeats both
 the network and caller-specific allowlist checks before every redirect hop.
 Cross-origin redirects do not retain authorization or cookie headers.
 
+`VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS` is the narrow exception for
+model and embedding providers on internal networks. Its value is a
+comma-separated list of exact HTTP origins, including scheme, host, and port
+without a path. The exception applies only to an origin-bound provider
+transport configured for the same origin. Redirects remain rejected, and all
+other internal destinations remain blocked. Project environment overlays
+cannot add origins to this host-owned list.
+
 `VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS=1` is an operator-owned compatibility
 override. It disables the private-network destination check for these host
 fetches and must remain unset in a shared runtime. Project environment overlays
