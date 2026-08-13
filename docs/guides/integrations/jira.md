@@ -14,25 +14,24 @@ Use Jira OAuth when an agent needs to read or update Jira projects and issues.
 4. Run a read-only Jira tool, such as listing accessible sites or projects, to verify the connection.
 
 Managed Atlassian OAuth works without project credentials. Set project
-credentials only when the project must use its own Atlassian OAuth app.
+credentials only for a self-hosted framework deployment that owns one
+distributable Atlassian OAuth app. Hosted Veryfront projects must use the
+managed OAuth connection.
 
-## Use your own Atlassian OAuth app
+## Use an Atlassian OAuth app in a self-hosted deployment
 
 1. In the [Atlassian developer console](https://developer.atlassian.com/console/myapps/), create an OAuth 2.0 app.
-2. Add the exact callback URL for the target environment:
-   - Production: `https://api.veryfront.com/oauth/callback/jira`
-   - Staging: `https://api.veryfront.org/oauth/callback/jira`
-3. These are the hosted Veryfront provider-adapter callbacks. A self-hosted
-   framework application instead registers its own `APP_URL` origin with
-   `/api/auth/jira/callback`.
-4. Grant all four scopes that the Jira connector requests by default:
+2. Register your deployment's `APP_URL` origin with
+   `/api/auth/jira/callback`, for example
+   `https://app.example.com/api/auth/jira/callback`.
+3. Grant all four scopes that the Jira connector requests by default:
    - `read:jira-work` for Jira reads.
    - `write:jira-work` for write tools.
    - `read:jira-user` for `jira__search_users`.
    - `offline_access` to receive refresh tokens. Veryfront uses refresh tokens
      to keep a user connection active; omit it only when the connection must
      not be refreshable.
-5. Set the OAuth app client ID and client secret as project environment variables:
+4. Set the OAuth app client ID and client secret as project environment variables:
 
 | Variable                  | Value                         |
 | ------------------------- | ----------------------------- |

@@ -566,7 +566,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: ["../../api-reference/veryfront/integrations.md"],
     snippets: [
       "Connect a Jira user",
-      "https://api.veryfront.com/oauth/callback/jira",
+      "/api/auth/jira/callback",
       "read:jira-user",
       "ATLASSIAN_CLIENT_ID",
       "JIRA_CLOUD_ID",
