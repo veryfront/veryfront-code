@@ -51,5 +51,6 @@ export const deployHelp: CommandHelp = {
     "With --project, promotes only: the working directory is never pushed, so the selected project directory's push receipt must already name that project",
     "Creates a new release from the resolved branch",
     "Verifies the target environment points to the created deployment before succeeding",
+    "Warns when only the environment's access gate answered the readiness probe, so the app itself was never observed serving",
   ],
 };

@@ -487,7 +487,7 @@ describe("DeployProject", () => {
    * The readiness probe cannot get past a protected environment's access gate
    * without a session credential, so a gate challenge is all it ever sees. The
    * app behind the gate can be answering 503 to every signed-in visitor and
-   * this step still completes — which is correct, because the deployment is
+   * this step still completes, which is correct, because the deployment is
    * already committed and verified, and wrong to report as a verified URL.
    * Deploy has to say which of the two it established.
    */
@@ -529,6 +529,14 @@ describe("DeployProject", () => {
         assertStringIncludes(
           warning?.kind === "warning" ? warning.message : "",
           "https://my-project.production.veryfront.com/",
+        );
+        // The remedy has to be one the caller can act on. This deploy resolved
+        // VERYFRONT_API_TOKEN from the shell, which outranks the token store,
+        // so "run veryfront login" alone would leave the next deploy gated the
+        // same way.
+        assertStringIncludes(
+          warning?.kind === "warning" ? warning.message : "",
+          "VERYFRONT_API_TOKEN is set in this shell",
         );
         assertEquals(
           outcome.kind === "deployed" ? outcome.result.urlVerification : undefined,

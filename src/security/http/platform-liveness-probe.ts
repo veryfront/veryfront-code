@@ -25,7 +25,7 @@ const PROBE_PATHS = new Set(PLATFORM_LIVENESS_PROBE_PATHS);
  * sends no `Authorization` header and there is nowhere to hand it a per-project
  * secret. Left alone, a project that sets `security.auth` fails its own
  * readiness probe, the Service drops its only endpoint, and the ingress answers
- * every visitor with a bodiless 503 — while the liveness failures restart the
+ * every visitor with a bodiless 503, while the liveness failures restart the
  * container underneath. The gate the project asked for takes its site offline
  * instead of protecting it, and nothing in the response names auth. Local
  * `veryfront dev` never shows it: the dev server answers both paths ahead of
@@ -33,7 +33,7 @@ const PROBE_PATHS = new Set(PLATFORM_LIVENESS_PROBE_PATHS);
  *
  * Exempting them discloses nothing the gate exists to protect. `HealthHandler`
  * owns both paths as exact patterns, so a project route can never be what
- * answers here, and what it returns is fixed platform text — `{"service":
+ * answers here, and what it returns is fixed platform text: `{"service":
  * "veryfront-server","status":"ok"}` and `ready`/`not-ready`. No project
  * content, no configuration, no credential. `/_health`, which reports the
  * runtime version and build mode and which nothing in the platform probes,

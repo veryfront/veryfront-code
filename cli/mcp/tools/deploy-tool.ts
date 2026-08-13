@@ -4,7 +4,8 @@
  * Creates a release from a branch and deploys it to an environment through
  * Deploy Execution (`DeployProject.execute`), the same module behind the
  * `vf deploy` CLI command. Success means the deployment is verified and the
- * environment URL is reachable.
+ * environment URL resolves. Read `urlVerification` to tell whether the app
+ * itself answered (`served`) or only its access gate did (`gated`).
  */
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
@@ -113,7 +114,10 @@ export const vfTriggerDeploy: MCPTool<TriggerDeployInput, TriggerDeployResult> =
     "Requires a successful vf push from the current project, then creates and verifies a release " +
     "from the specified branch, deploys it to the target environment, waits for release assets " +
     "and environment readiness, and returns the deployment evidence including the live URL. " +
-    "Success means the environment is verified and reachable. " +
+    "Success means the deployment is verified and the environment URL resolves. " +
+    "Check the returned urlVerification field to tell what the readiness probe established: " +
+    "'served' means the app itself answered, 'gated' means only its access gate answered so the " +
+    "app was never observed, and 'unprobed' means the project has no static page route to check. " +
     "Requires a valid API token (set VERYFRONT_API_TOKEN or run 'veryfront login'). " +
     "Do not use for local builds; use vf_build instead. " +
     "Do not use for running tests before deploy; use vf_run_tests instead.",

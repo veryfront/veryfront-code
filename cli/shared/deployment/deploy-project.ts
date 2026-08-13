@@ -993,7 +993,7 @@ async function cancelResponseBody(response: Response): Promise<void> {
  * `served` is the only outcome in which the app itself was observed answering.
  * A protected environment challenges an unauthenticated probe at the access
  * gate, and this CLI cannot get past that gate holding an API key rather than a
- * session, so `gated` means routing resolves and nothing more — the app behind
+ * session, so `gated` means routing resolves and nothing more: the app behind
  * it may be answering 503 to every signed-in visitor. Reporting the two the
  * same way is what lets a broken deployment finish with a green tick.
  */
@@ -1087,25 +1087,49 @@ export async function waitForEnvironmentReady(
   }
 
   // Order matters: one probe seeing the app answer outweighs another that only
-  // reached the gate. With no probe at all — or, unreachably, a loop that
-  // neither broke nor threw — the honest answer is that nothing was checked,
-  // never that the app served.
+  // reached the gate. With no probe at all, or, unreachably, a loop that neither
+  // broke nor threw, the honest answer is that nothing was checked, never that
+  // the app served.
   if (servedBy) return servedBy;
   if (gatedBy) return gatedBy;
   return { kind: "unprobed" };
 }
 
 /**
+ * The remedy that actually changes the probe credential for this token source.
+ *
+ * `veryfront login` only helps when nothing outranks the stored session.
+ * `resolveApiTokenForMode` in `cli/shared/config.ts` resolves a shell
+ * `VERYFRONT_API_TOKEN` and a `veryfront.json` `apiToken` ahead of the token
+ * store, so for those two sources signing in leaves the next deploy gated the
+ * same way. Naming the overriding key is the only step an operator can act on.
+ */
+function getProbeCredentialRemedy(source: ResolvedConfig["apiTokenSource"]): string {
+  if (source === "env") {
+    return "VERYFRONT_API_TOKEN is set in this shell and is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or unset that variable, run veryfront login, and deploy again, to confirm the app responds.";
+  }
+  if (source === "config-file") {
+    return "The apiToken in veryfront.json is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or remove that token, run veryfront login, and deploy again, to confirm the app responds.";
+  }
+  return "Open the URL signed in, or run veryfront login and deploy again, to confirm the app responds.";
+}
+
+/**
  * The signal a deploy owes an operator when it never saw the app answer.
  *
- * Failing here is wrong — the deployment is committed and verified, and a
- * protected environment challenging an API key is the expected case for CI —
- * but reporting it as a verified URL is what let a permanently-503 app deploy
- * with a green tick and no signal at all.
+ * Failing here is wrong, because the deployment is committed and verified, and
+ * a protected environment challenging an API key is the expected case for CI.
+ * Reporting it as a verified URL is what let a permanently-503 app deploy with
+ * a green tick and no signal at all.
  */
-function getEnvironmentUrlWarning(readiness: EnvironmentReadiness): string | null {
+function getEnvironmentUrlWarning(
+  readiness: EnvironmentReadiness,
+  apiTokenSource: ResolvedConfig["apiTokenSource"],
+): string | null {
   if (readiness.kind !== "gated") return null;
-  return `Deployment committed, but ${readiness.url} was never observed serving this app: the access gate answered HTTP ${readiness.status} and this CLI has no session credential to probe past it. Open the URL signed in, or run veryfront login and deploy again, to confirm the app responds.`;
+  return `Deployment committed, but ${readiness.url} was never observed serving this app: the access gate answered HTTP ${readiness.status} and this CLI has no session credential to probe past it. ${
+    getProbeCredentialRemedy(apiTokenSource)
+  }`;
 }
 
 function getDeploymentRoutingConvergenceWarning(deployment: DeployDeployment): string | null {
@@ -1398,7 +1422,7 @@ export function createDeployProject(options: {
           }),
       );
 
-      const urlWarning = getEnvironmentUrlWarning(readiness);
+      const urlWarning = getEnvironmentUrlWarning(readiness, config.apiTokenSource);
       if (urlWarning) {
         await emit(observer, {
           kind: "warning",

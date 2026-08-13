@@ -97,9 +97,28 @@ session token and has no API-key branch, so an API key presented to it resolves
 to no user and draws the same sign-in redirect an anonymous request gets.
 `veryfront deploy` acts on that distinction instead of leaking the key: it sends
 the stored credential to a protected environment only when that credential is a
-session token, and otherwise probes anonymously and accepts the challenge as
-proof the environment is serving. Its readiness probe counts a sign-in redirect,
-a `401`, and a `403` alike as that challenge.
+session token, and otherwise probes anonymously. Its readiness probe counts a
+sign-in redirect, a `401`, and a `403` alike as that challenge.
+
+A challenge proves routing resolves to the environment and nothing about the app
+behind the gate, so deploy does not report it as proof the app is serving. The
+deploy still succeeds, because the deployment is already committed and verified,
+and it prints a warning naming the URL it never observed serving. In `--json`
+mode that warning arrives as
+`{"type":"warning","code":"environment-url-unverified"}`, and the result carries
+a `urlVerification` field:
+
+| Value      | Meaning                                                     |
+| ---------- | ----------------------------------------------------------- |
+| `served`   | The probe saw the app itself answer.                        |
+| `gated`    | Only the access gate answered, so the app was not observed. |
+| `unprobed` | The project has no static page route to check.              |
+
+A CI job that must fail on an unverified URL can key on `gated`. Signing in
+changes what the probe sends only when nothing outranks the stored session: a
+`VERYFRONT_API_TOKEN` in the shell and an `apiToken` in `veryfront.json` are both
+resolved ahead of it, so remove the overriding key before running
+`veryfront login`.
 
 A non-browser client can still authenticate. The gate inspects the cookie, not
 the client, so `curl`, a CI smoke test, or an uptime monitor reaches a protected

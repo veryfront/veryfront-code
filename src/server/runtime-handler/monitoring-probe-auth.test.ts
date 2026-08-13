@@ -4,7 +4,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * `security.auth` gate.
  *
  * `AuthHandler` runs at priority 0 with `patterns: []`, so it sees every
- * request the registry executes — including the monitoring fast path in
+ * request the registry executes, including the monitoring fast path in
  * `runtime-handler/index.ts`, which calls `registry.execute` with a context
  * carrying the project's `securityConfig`. The caller on that path is a kubelet
  * HTTP probe (operator `k8s-resources.ts`: readinessProbe GET /readyz,
@@ -13,7 +13,7 @@ import "#veryfront/schemas/_test-setup.ts";
  *
  * If the gate answers those probes with 401, the pod never becomes Ready, the
  * Service drops its only endpoint and the ingress answers every visitor request
- * with a bodiless 503 — while the liveness failures restart the container in a
+ * with a bodiless 503, while the liveness failures restart the container in a
  * loop. Local `veryfront dev` never shows this because the dev server answers
  * /healthz and /readyz ahead of the handler registry.
  *
