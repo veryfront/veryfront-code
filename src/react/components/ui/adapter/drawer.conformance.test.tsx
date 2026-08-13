@@ -178,6 +178,23 @@ const altDrawer: DrawerParts = {
       </Comp>
     );
   },
+  // This engine wires its own labelling, so the registration surface is inert
+  // here — it only has to exist and expose open/close for skin parts.
+  useDrawer: () => {
+    const ctx = React.useContext(AltCtx);
+    return {
+      open: ctx?.open ?? false,
+      setOpen: (next: boolean) => ctx?.setOpen(next),
+      defaultTitleId: "alt-drawer-title",
+      defaultDescriptionId: "alt-drawer-description",
+      descriptionId: "alt-drawer-description",
+      descriptionPresent: false,
+      setTitleId: () => {},
+      setDescriptionId: () => {},
+      setTitlePresent: () => {},
+      setDescriptionPresent: () => {},
+    };
+  },
 };
 
 const AltWrap: React.FC<{ children: React.ReactNode }> = ({ children }) => (

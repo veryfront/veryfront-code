@@ -21,4 +21,5 @@ export const builtinDrawer: DrawerParts = {
   Trigger: parts.ModalTrigger,
   Content: parts.ModalContent,
   Close: parts.ModalClose,
+  useDrawer: parts.useModal,
 };

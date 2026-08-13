@@ -203,10 +203,33 @@ export interface ToastParts {
   useToast: () => ToastState;
 }
 
-/** Normalized open state a modal skin part reads from its adapter (Dialog / Drawer). */
+/**
+ * Normalized modal state a Dialog/Drawer skin part reads from its adapter.
+ * Beyond open/close it carries the **label-registration surface** so `DialogTitle`
+ * / `DialogDescription` can register their ids and the adapter wires the panel's
+ * `aria-labelledby` / `aria-describedby` (the builtin does this; an engine
+ * adapter maps these onto its own labelling). Structurally a subset of the
+ * builtin `createModalSurfaceParts` context.
+ */
 export interface ModalState {
   open: boolean;
   setOpen: (open: boolean) => void;
+  /** Fallback id the title adopts before/without an explicit `id`. */
+  defaultTitleId: string;
+  /** Fallback id the description adopts before/without an explicit `id`. */
+  defaultDescriptionId: string;
+  /** The active description id (skin wires the panel's `aria-describedby` to it). */
+  descriptionId: string;
+  /** Whether a description registered (skin adopts/drops `aria-describedby`). */
+  descriptionPresent: boolean;
+  /** Register the active title id (drives the panel's `aria-labelledby`). */
+  setTitleId: React.Dispatch<React.SetStateAction<string>>;
+  /** Register the active description id (drives the panel's `aria-describedby`). */
+  setDescriptionId: React.Dispatch<React.SetStateAction<string>>;
+  /** Mark a title present/absent so the panel adopts (or drops) `aria-labelledby`. */
+  setTitlePresent: React.Dispatch<React.SetStateAction<boolean>>;
+  /** Mark a description present/absent so the panel adopts (or drops) `aria-describedby`. */
+  setDescriptionPresent: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 /**
@@ -265,6 +288,8 @@ export interface DrawerParts {
     & React.ButtonHTMLAttributes<HTMLButtonElement>
     & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }
   >;
+  /** Read drawer state (open + label registration) from a skin part (e.g. `DrawerTitle`). */
+  useDrawer: () => ModalState;
 }
 
 /**

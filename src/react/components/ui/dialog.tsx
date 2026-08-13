@@ -28,6 +28,7 @@ import { cx as cn } from "./cva.ts";
 import { ScrollFade } from "./scroll-fade.tsx";
 import { Button, type ButtonProps, LoadingButton } from "./button.tsx";
 import { useAdapter } from "./adapter/context.tsx";
+import { useIsomorphicLayoutEffect } from "./use-isomorphic-layout-effect.ts";
 
 // The Dialog's behavioural mechanics (open state, overlay, dismiss, focus) are
 // resolved per-render from the active UI adapter. With no adapter provider this
@@ -63,11 +64,14 @@ export function DialogTrigger(
 export function DialogContent({
   className,
   children,
+  "aria-describedby": describedBy,
   ...props
 }: React.HTMLAttributes<HTMLDivElement>): React.ReactElement | null {
   const { dialog } = useAdapter();
+  const modal = dialog.useDialog();
   return (
     <dialog.Content
+      aria-describedby={describedBy ?? (modal.descriptionPresent ? modal.descriptionId : undefined)}
       className={cn(
         "fixed left-1/2 top-1/2 z-50 w-[calc(100%-3rem)] max-w-xl max-h-[85vh] -translate-x-1/2 -translate-y-1/2",
         "rounded-xl bg-[var(--dialog)] text-[var(--foreground)] shadow-lg outline-none overflow-hidden flex flex-col",
@@ -88,13 +92,27 @@ export function DialogHeader(
 }
 
 /** Dialog title — Studio Heading level 2 (20px). Semibold so Inter reads at
- * Studio's medium-on-Söhne weight (workbench heading convention). */
+ * Studio's medium-on-Söhne weight (workbench heading convention). Registers its
+ * id with the adapter so the panel adopts `aria-labelledby`. */
 export function DialogTitle({
   className,
+  id,
   ...props
 }: React.HTMLAttributes<HTMLHeadingElement>): React.ReactElement {
+  const { dialog } = useAdapter();
+  const modal = dialog.useDialog();
+  const resolvedId = id ?? modal.defaultTitleId;
+  useIsomorphicLayoutEffect(() => {
+    modal.setTitleId(resolvedId);
+    modal.setTitlePresent(true);
+    return () => {
+      modal.setTitlePresent(false);
+      modal.setTitleId((current) => current === resolvedId ? modal.defaultTitleId : current);
+    };
+  }, [modal.defaultTitleId, modal.setTitleId, modal.setTitlePresent, resolvedId]);
   return (
     <h2
+      id={resolvedId}
       className={cn(
         "text-xl font-semibold text-[var(--foreground)]",
         className,
@@ -104,13 +122,34 @@ export function DialogTitle({
   );
 }
 
-/** Dialog description — body text, left-aligned. */
+/** Dialog description — body text, left-aligned. Registers its id with the
+ * adapter so the panel adopts `aria-describedby`. */
 export function DialogDescription({
   className,
+  id,
   ...props
 }: React.HTMLAttributes<HTMLParagraphElement>): React.ReactElement {
+  const { dialog } = useAdapter();
+  const modal = dialog.useDialog();
+  const resolvedId = id ?? modal.defaultDescriptionId;
+  useIsomorphicLayoutEffect(() => {
+    modal.setDescriptionId(resolvedId);
+    modal.setDescriptionPresent(true);
+    return () => {
+      modal.setDescriptionPresent(false);
+      modal.setDescriptionId((current) =>
+        current === resolvedId ? modal.defaultDescriptionId : current
+      );
+    };
+  }, [
+    modal.defaultDescriptionId,
+    modal.setDescriptionId,
+    modal.setDescriptionPresent,
+    resolvedId,
+  ]);
   return (
     <p
+      id={resolvedId}
       className={cn(
         "text-base font-normal text-[var(--foreground)] mt-2",
         className,

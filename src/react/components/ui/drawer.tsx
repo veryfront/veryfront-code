@@ -21,6 +21,7 @@
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
 import { useAdapter } from "./adapter/context.tsx";
+import { useIsomorphicLayoutEffect } from "./use-isomorphic-layout-effect.ts";
 
 // The Drawer's MECHANICS come from the active adapter's `drawer` slot
 // (`useAdapter().drawer`) — a static bottom sheet on the builtin, or real
@@ -80,13 +81,27 @@ export function DrawerContent({
   );
 }
 
-/** Drawer title — 18px medium (Studio Heading-ish). Add `sr-only` to hide. */
+/** Drawer title — 18px medium (Studio Heading-ish). Add `sr-only` to hide.
+ * Registers its id with the adapter so the sheet adopts `aria-labelledby`. */
 export function DrawerTitle({
   className,
+  id,
   ...props
 }: React.HTMLAttributes<HTMLHeadingElement>): React.ReactElement {
+  const { drawer } = useAdapter();
+  const modal = drawer.useDrawer();
+  const resolvedId = id ?? modal.defaultTitleId;
+  useIsomorphicLayoutEffect(() => {
+    modal.setTitleId(resolvedId);
+    modal.setTitlePresent(true);
+    return () => {
+      modal.setTitlePresent(false);
+      modal.setTitleId((current) => current === resolvedId ? modal.defaultTitleId : current);
+    };
+  }, [modal.defaultTitleId, modal.setTitleId, modal.setTitlePresent, resolvedId]);
   return (
     <h2
+      id={resolvedId}
       className={cn("text-lg font-medium text-[var(--foreground)]", className)}
       {...props}
     />
