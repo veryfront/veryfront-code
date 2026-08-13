@@ -34,5 +34,6 @@ export const loginHelp: CommandHelp = {
     "Without options, prompts for authentication method",
     "OAuth methods open browser for authentication",
     "Token is stored in ~/.config/veryfront/token",
+    "Exits 1 when no credential was obtained, so scripts can gate on it",
   ],
 };

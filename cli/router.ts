@@ -60,18 +60,20 @@ const commands: Record<string, CommandLoader> = {
   "login": async () => async (args) => {
     const { parseLoginMethod, parseProvider } = await import("./auth/utils.ts");
     const provider = parseProvider(args);
+    // Every branch reports failure the same way: exit non-zero so scripts can
+    // tell a failed login from a successful one, whichever credential was asked for.
     if (provider === "anthropic") {
       const { loginAnthropic } = await import("./auth/providers/anthropic.ts");
-      await loginAnthropic();
+      if (!await loginAnthropic()) exitProcess(1);
       return;
     }
     if (provider === "openai") {
       const { loginOpenAI } = await import("./auth/providers/openai.ts");
-      await loginOpenAI(args["base-url"] as string | undefined);
+      if (!await loginOpenAI(args["base-url"] as string | undefined)) exitProcess(1);
       return;
     }
     const { login } = await import("./auth/index.ts");
-    await login(parseLoginMethod(args));
+    if (!await login(parseLoginMethod(args))) exitProcess(1);
   },
   "logout": async () => async (args) => {
     const { parseProvider } = await import("./auth/utils.ts");
@@ -90,7 +92,8 @@ const commands: Record<string, CommandLoader> = {
   },
   "whoami": async () => async () => {
     const { whoami } = await import("./auth/index.ts");
-    await whoami();
+    // The exit code is the machine-readable answer: 0 authenticated, 1 not.
+    if (!await whoami()) exitProcess(1);
   },
   "install": async () => (await import("./commands/install/handler.ts")).handleInstallCommand,
   "uninstall": async () => (await import("./commands/install/handler.ts")).handleUninstallCommand,
