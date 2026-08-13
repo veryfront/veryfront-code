@@ -53,9 +53,13 @@
   --status-warning: #f99100;
   --status-error: #d40924;
   --alert-warning-bg: #f1e3cd;
+  --alert-warning-border: #f5ba67;
   --alert-error-bg: #ecd3d1;
+  --alert-error-border: #e06e7b;
   --alert-success-bg: #d4e2d2;
+  --alert-success-border: #6fb57c;
   --alert-info-bg: #e6e6e0;
+  --alert-info-border: #adadaa;
   --faint: oklch(from var(--foreground) l c h / 0.25);
   --soft: oklch(from var(--foreground) l c h / 0.7);
   --tint: oklch(from var(--foreground) l c h / 0.04);
@@ -106,6 +110,14 @@
   --accent: #303030;
   --muted: #0d1315;
   --outline-border: #3a3a3a;
+  --alert-warning-bg: color-mix(in oklch, var(--status-warning) 18%, var(--background));
+  --alert-warning-border: color-mix(in oklch, var(--status-warning) 40%, var(--background));
+  --alert-error-bg: color-mix(in oklch, var(--status-error) 18%, var(--background));
+  --alert-error-border: color-mix(in oklch, var(--status-error) 40%, var(--background));
+  --alert-success-bg: color-mix(in oklch, var(--status-success) 18%, var(--background));
+  --alert-success-border: color-mix(in oklch, var(--status-success) 40%, var(--background));
+  --alert-info-bg: color-mix(in oklch, var(--status-info) 18%, var(--background));
+  --alert-info-border: color-mix(in oklch, var(--status-info) 40%, var(--background));
   --separator: oklch(from var(--foreground) l c h / 0.06);
   --code-bg: oklch(0.08 0.005 280);
   --input-bg: #40403f;

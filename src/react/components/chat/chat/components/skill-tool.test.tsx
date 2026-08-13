@@ -16,6 +16,14 @@ describe("SkillTool", () => {
     assertStringIncludes(html, "animate-pulse");
   });
 
+  it("renders a terminal label with no animation once stopped", () => {
+    const html = renderToString(<SkillTool skill="review" state="stopped" />);
+    assertStringIncludes(html, "Stopped loading skill: review");
+    // A frozen row must not keep shimmering, and must not claim it loaded.
+    assertEquals(html.includes("animate-pulse"), false);
+    assertEquals(html.includes("Loaded skill"), false);
+  });
+
   it("merges className onto the row", () => {
     const html = renderToString(<SkillTool skill="review" className="vf-custom-row" />);
     assertStringIncludes(html, "vf-custom-row");
