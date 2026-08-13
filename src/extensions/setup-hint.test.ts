@@ -99,6 +99,28 @@ describe("extensions/setup-hint", () => {
     });
   });
 
+  it("names a .mjs config file too, which the loader also accepts", async () => {
+    // Third and last entry in VERYFRONT_CONFIG_FILES, and the one a lookup
+    // that stopped early would drop. Spelled out rather than iterated over the
+    // constant: a regression that removed `.mjs` from the loader's list would
+    // make an iterating test check one case fewer and still pass.
+    await withTempDir(async (directory) => {
+      await writeTextFile(join(directory, "package.json"), `{"name":"mjs-config"}`);
+      await writeTextFile(join(directory, "veryfront.config.mjs"), "export default {};\n");
+
+      const hint = formatExtensionSetupHint("@veryfront/ext-css-lightning", {
+        projectDirectory: directory,
+      });
+
+      assertEquals(hint.includes("veryfront.config.mjs"), true, hint);
+      assertEquals(
+        hint.includes("create veryfront.config.ts"),
+        false,
+        `the project has a config file; the hint must not ask for a second one, got: ${hint}`,
+      );
+    });
+  });
+
   it("derives a binding that is a valid identifier for any recommendation", async () => {
     // Every first-party extension exports its factory as the module default,
     // so the local binding is the hint's to choose; it only has to be a legal
