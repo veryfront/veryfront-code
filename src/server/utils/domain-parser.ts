@@ -23,6 +23,55 @@ const PROD_DOMAINS = "veryfront\\.com|veryfront\\.org";
 // Domains that allow iframe embedding but aren't veryfront domains
 const IFRAME_EMBED_DOMAINS = /^(localhost|.*\.xip\.io|.*\.zip\.io)$/i;
 
+/**
+ * Environment labels that `{slug}.{environment}.veryfront.com` actually routes.
+ *
+ * This is not a naming preference — it is what the hosted platform can serve.
+ * Each label needs a wildcard TLS certificate (`*.{label}.veryfront.com`) and a
+ * rule below that resolves the host to a project. A label with neither is not a
+ * slow environment, it is an unreachable one: TLS fails outright, or the proxy
+ * falls through to the custom-domain lookup and answers
+ * `404 {"error":"No project configured for domain: ..."}`.
+ *
+ * `development` is deliberately absent. It is a valid `ParsedDomain.environment`
+ * for *local* roots (`lvh.me`, `localhost`, `veryfront.dev`), where it means
+ * "running on this machine". No hosted rule produces it, so a hosted
+ * `{slug}.development.veryfront.com` resolves to no project.
+ *
+ * Keep in sync with the hosted rules in `parseProjectDomain`; the lock test in
+ * `domain-parser.test.ts` fails if they drift apart.
+ */
+export const HOSTED_ENVIRONMENT_NAMES = ["preview", "staging", "production"] as const;
+
+export type HostedEnvironmentName = typeof HOSTED_ENVIRONMENT_NAMES[number];
+
+/**
+ * Whether `{slug}.{name}.veryfront.com` is a host the platform can route.
+ *
+ * Deliberately not a `name is HostedEnvironmentName` predicate. Host labels are
+ * case-insensitive, so the comparison folds case — and a predicate would then
+ * narrow the *unfolded* `"Production"` to a type whose members are all
+ * lowercase, letting a caller feed it to an exhaustive `switch` or a keyed
+ * lookup that misses at runtime. A caller that needs a value of that type must
+ * take the folded label this is built on rather than its own string.
+ */
+export function isHostedEnvironmentName(name: string): boolean {
+  return toHostedEnvironmentName(name) !== null;
+}
+
+/**
+ * The routable label `name` denotes, case-folded, or null when the platform
+ * cannot route it. Returns the constant rather than the caller's string, so the
+ * value always matches its `HostedEnvironmentName` type.
+ */
+function toHostedEnvironmentName(name: string): HostedEnvironmentName | null {
+  const folded = name.toLowerCase();
+  return HOSTED_ENVIRONMENT_NAMES.find((hosted) => hosted === folded) ?? null;
+}
+
+/** Alternation source for the hosted environment labels, e.g. `preview|staging|production`. */
+const HOSTED_ENVIRONMENTS = HOSTED_ENVIRONMENT_NAMES.join("|");
+
 /** All recognized veryfront domains */
 const ALL_DOMAINS = `${LOCAL_DEV_DOMAINS}|${PROD_DOMAINS}`;
 
@@ -126,7 +175,7 @@ export function parseProjectDomain(host: string): ParsedDomain {
   // Local environment root domains (no slug): preview|staging|production.{lvh.me|veryfront.dev}
   const localEnvRootMatch = matchDomain(
     domain,
-    `^(preview|staging|production)\\.(${LOCAL_DEV_DOMAINS})$`,
+    `^(${HOSTED_ENVIRONMENTS})\\.(${LOCAL_DEV_DOMAINS})$`,
   );
   if (localEnvRootMatch?.[1]) {
     const env = localEnvRootMatch[1] as Environment;
@@ -171,7 +220,7 @@ export function parseProjectDomain(host: string): ParsedDomain {
   }
 
   // Environment root domains (no slug): preview|staging|production.veryfront.{com|org}
-  const envRootMatch = matchDomain(domain, `^(preview|staging|production)\\.(${PROD_DOMAINS})$`);
+  const envRootMatch = matchDomain(domain, `^(${HOSTED_ENVIRONMENTS})\\.(${PROD_DOMAINS})$`);
   if (envRootMatch?.[1]) {
     const env = envRootMatch[1] as Environment;
     return createParsedDomain(null, null, env, true, env === "preview");

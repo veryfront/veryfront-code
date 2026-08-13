@@ -1,8 +1,19 @@
-import { type EnvironmentConfig, getConfig, getEnvironmentConfig } from "veryfront/config";
+import {
+  type EnvironmentConfig,
+  findHostedConfigIncompatibility,
+  findVeryfrontConfigFile,
+  formatHostedConfigIncompatibility,
+  getConfig,
+  getEnvironmentConfig,
+} from "veryfront/config";
 import { createFileSystem, isNotFoundError, runtime } from "veryfront/platform";
 import { join, relative, resolve } from "veryfront/platform/path";
 import { isWithinDirectory, normalizePath } from "veryfront/utils";
-import { parseProjectDomain } from "veryfront/server";
+import {
+  HOSTED_ENVIRONMENT_NAMES,
+  isHostedEnvironmentName,
+  parseProjectDomain,
+} from "veryfront/server";
 import {
   describeReadyReleaseAssetManifestRejection,
   isSafeBoundedText,
@@ -13,8 +24,10 @@ import {
   routeForPage,
 } from "veryfront/release-assets";
 import {
+  CONFIG_NOT_DEPLOYABLE,
   DEPLOYMENT_ERROR,
   ENVIRONMENT_NOT_FOUND,
+  ENVIRONMENT_NOT_ROUTABLE,
   RELEASE_MISSING_VERSION,
   SOURCE_DIGEST_MISMATCH,
   VeryfrontError,
@@ -102,7 +115,7 @@ export type DeployEvent =
   }
   | {
     kind: "warning";
-    code: "routing-convergence-unconfirmed";
+    code: "routing-convergence-unconfirmed" | "environment-url-unverified";
     message: string;
   };
 
@@ -547,6 +560,46 @@ function resolveProjectRouteDirectory(
   return routeRoot;
 }
 
+/**
+ * Refuse a configuration file Veryfront Cloud can never read.
+ *
+ * A hosted project's config is evaluated as data, not imported, so a config
+ * that imports an extension is rejected on every request: the deploy reports
+ * success and the environment answers 500 to all traffic. Deciding it here
+ * costs one parse and turns that into a message before anything is created.
+ *
+ * Only rejections the source alone decides reach this far (see
+ * `findHostedConfigIncompatibility`), so a config whose values depend on
+ * deployment environment variables is never blocked by a difference between
+ * that environment and the developer's.
+ */
+async function assertConfigIsDeployable(projectDir: string): Promise<void> {
+  const fs = createFileSystem();
+  const configFile = await findVeryfrontConfigFile(projectDir, (path) => fs.exists(path));
+  if (!configFile) return;
+
+  let source: string;
+  try {
+    source = await fs.readTextFile(configFile.path);
+  } catch (error) {
+    if (isNotFoundError(error)) return;
+    throw error;
+  }
+
+  const incompatibility = await findHostedConfigIncompatibility(source, configFile.fileName);
+  if (!incompatibility) return;
+
+  throw CONFIG_NOT_DEPLOYABLE.create({
+    detail: formatHostedConfigIncompatibility(incompatibility, configFile.fileName),
+    context: {
+      configFile: configFile.fileName,
+      code: incompatibility.code,
+      reason: incompatibility.reason,
+      ...(incompatibility.line === undefined ? {} : { line: incompatibility.line }),
+    },
+  });
+}
+
 async function collectProjectPageRoutes(projectDir: string): Promise<string[]> {
   const fs = createFileSystem();
   const directories = await getProjectRouteDirectories(projectDir);
@@ -790,14 +843,51 @@ export async function waitForReleaseAssetManifest(
   }
 }
 
-function buildEnvironmentUrl(projectSlug: string, environment: DeployEnvironment): string {
+/** The environment's own domain, or null when it has none configured. */
+function configuredEnvironmentDomain(environment: DeployEnvironment): string | null {
   const domain = environment.domains?.[0];
-  if (domain) {
-    return domain.startsWith("http://") || domain.startsWith("https://")
-      ? domain
-      : `https://${domain}`;
-  }
-  return `https://${projectSlug}.${environment.name}.veryfront.com`;
+  if (!domain) return null;
+  return domain.startsWith("http://") || domain.startsWith("https://")
+    ? domain
+    : `https://${domain}`;
+}
+
+/**
+ * Rejects an environment whose name has no address the deploy could ever reach.
+ *
+ * The hosted URL is synthesised as `{slug}.{environment}.veryfront.com`, which
+ * only resolves for the labels in `HOSTED_ENVIRONMENT_NAMES`. Any other label —
+ * `development`, `qa`, anything an operator invented in Studio — has no wildcard
+ * certificate and no routing rule, so the readiness probe cannot succeed: it
+ * fails the TLS handshake, or the proxy answers `404 No project configured for
+ * domain`. Both are retried as transient, so without this check the deploy
+ * pushes source, builds assets, commits a deployment, and only then spends the
+ * full readiness window before failing with a message about the deployment.
+ *
+ * A configured custom domain removes the constraint entirely — routing then has
+ * nothing to do with the environment's name — so this only guards the fallback.
+ *
+ * Call this only for a deploy that will actually ask for that address. A project
+ * with no static page route probes nothing, so its name never has to resolve.
+ */
+function assertEnvironmentIsReachable(environment: DeployEnvironment): void {
+  if (configuredEnvironmentDomain(environment) !== null) return;
+  if (isHostedEnvironmentName(environment.name)) return;
+
+  throw ENVIRONMENT_NOT_ROUTABLE.create({
+    detail: `Environment "${environment.name}" has no Veryfront-hosted address. ` +
+      `Veryfront serves ${
+        HOSTED_ENVIRONMENT_NAMES.join(", ")
+      } at https://<slug>.<environment>.veryfront.com; ` +
+      `no other environment name resolves. Deploy to one of those, or attach a custom domain ` +
+      `to "${environment.name}" in Studio under Environments and deploy again.`,
+    context: { environmentName: environment.name, hostedEnvironments: HOSTED_ENVIRONMENT_NAMES },
+  });
+}
+
+function buildEnvironmentUrl(projectSlug: string, environment: DeployEnvironment): string {
+  return configuredEnvironmentDomain(environment) ??
+    buildCanonicalEnvironmentUrl(projectSlug, environment.name);
 }
 
 function buildCanonicalEnvironmentUrl(projectSlug: string, environmentName: string): string {
@@ -919,12 +1009,18 @@ function buildEnvironmentReadinessProbes(
 
   const targetUrl = buildEnvironmentProbeUrl(target.url, route);
   if (target.protected && !isMatchingVeryfrontHostedUrl(new URL(targetUrl), target)) {
+    const challengeProbe = {
+      url: targetUrl,
+      authenticate: false,
+      acceptAuthenticationChallenge: true,
+    };
+    // The canonical companion probe only exists where the platform routes it.
+    // An environment on a custom domain may be named anything, and synthesising
+    // an address for a name hosting cannot serve would poll an unreachable host
+    // to the deadline after the custom domain has already answered.
+    if (!isHostedEnvironmentName(target.environmentName)) return [challengeProbe];
     return [
-      {
-        url: targetUrl,
-        authenticate: false,
-        acceptAuthenticationChallenge: true,
-      },
+      challengeProbe,
       {
         url: buildEnvironmentProbeUrl(
           buildCanonicalEnvironmentUrl(target.projectSlug, target.environmentName),
@@ -987,10 +1083,25 @@ async function cancelResponseBody(response: Response): Promise<void> {
   }
 }
 
+/**
+ * What the readiness step actually established about the environment URL.
+ *
+ * `served` is the only outcome in which the app itself was observed answering.
+ * A protected environment challenges an unauthenticated probe at the access
+ * gate, and this CLI cannot get past that gate holding an API key rather than a
+ * session, so `gated` means routing resolves and nothing more: the app behind
+ * it may be answering 503 to every signed-in visitor. Reporting the two the
+ * same way is what lets a broken deployment finish with a green tick.
+ */
+export type EnvironmentReadiness =
+  | Readonly<{ kind: "served" }>
+  | Readonly<{ kind: "unprobed" }>
+  | Readonly<{ kind: "gated"; url: string; status: number }>;
+
 export async function waitForEnvironmentReady(
   target: EnvironmentReadinessTarget,
   options: { pollIntervalMs?: number; timeoutMs?: number } = {},
-): Promise<void> {
+): Promise<EnvironmentReadiness> {
   const pollIntervalMs = options.pollIntervalMs === undefined ||
       !Number.isFinite(options.pollIntervalMs)
     ? DEFAULT_ENVIRONMENT_POLL_INTERVAL_MS
@@ -999,7 +1110,11 @@ export async function waitForEnvironmentReady(
     ? DEFAULT_ENVIRONMENT_TIMEOUT_MS
     : Math.max(1, Math.trunc(options.timeoutMs));
   const deadline = Date.now() + timeoutMs;
-  for (const probe of buildEnvironmentReadinessProbes(target)) {
+  const probes = buildEnvironmentReadinessProbes(target);
+  let servedBy: EnvironmentReadiness | null = null;
+  let gatedBy: EnvironmentReadiness | null = null;
+
+  for (const probe of probes) {
     const headers = new Headers({ "Cache-Control": "no-cache" });
     if (probe.authenticate) {
       headers.set("Cookie", `authToken=${target.apiToken}`);
@@ -1025,12 +1140,19 @@ export async function waitForEnvironmentReady(
         const authenticationChallenge = signInRedirect ||
           response.status === 401 ||
           response.status === 403;
-        const ready = response.status >= 200 && response.status < 300 ||
-          response.status >= 300 && response.status < 400 && !signInRedirect ||
-          probe.acceptAuthenticationChallenge && authenticationChallenge;
+        const served = response.status >= 200 && response.status < 300 ||
+          response.status >= 300 && response.status < 400 && !signInRedirect;
+        const gated = !served && probe.acceptAuthenticationChallenge && authenticationChallenge;
+        const ready = served || gated;
         await cancelResponseBody(response);
 
-        if (ready) break;
+        if (ready) {
+          if (served) servedBy = { kind: "served" };
+          else if (gated && !gatedBy) {
+            gatedBy = { kind: "gated", url: probe.url, status: response.status };
+          }
+          break;
+        }
         if (authenticationChallenge) {
           // A bare Error here reaches the operator as `unknown-error`.
           throw DEPLOYMENT_ERROR.create({
@@ -1059,6 +1181,51 @@ export async function waitForEnvironmentReady(
       await wait(Math.min(pollIntervalMs, remainingMs));
     }
   }
+
+  // Order matters: one probe seeing the app answer outweighs another that only
+  // reached the gate. With no probe at all, or, unreachably, a loop that neither
+  // broke nor threw, the honest answer is that nothing was checked, never that
+  // the app served.
+  if (servedBy) return servedBy;
+  if (gatedBy) return gatedBy;
+  return { kind: "unprobed" };
+}
+
+/**
+ * The remedy that actually changes the probe credential for this token source.
+ *
+ * `veryfront login` only helps when nothing outranks the stored session.
+ * `resolveApiTokenForMode` in `cli/shared/config.ts` resolves a shell
+ * `VERYFRONT_API_TOKEN` and a `veryfront.json` `apiToken` ahead of the token
+ * store, so for those two sources signing in leaves the next deploy gated the
+ * same way. Naming the overriding key is the only step an operator can act on.
+ */
+function getProbeCredentialRemedy(source: ResolvedConfig["apiTokenSource"]): string {
+  if (source === "env") {
+    return "VERYFRONT_API_TOKEN is set in this shell and is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or unset that variable, run veryfront login, and deploy again, to confirm the app responds.";
+  }
+  if (source === "config-file") {
+    return "The apiToken in veryfront.json is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or remove that token, run veryfront login, and deploy again, to confirm the app responds.";
+  }
+  return "Open the URL signed in, or run veryfront login and deploy again, to confirm the app responds.";
+}
+
+/**
+ * The signal a deploy owes an operator when it never saw the app answer.
+ *
+ * Failing here is wrong, because the deployment is committed and verified, and
+ * a protected environment challenging an API key is the expected case for CI.
+ * Reporting it as a verified URL is what let a permanently-503 app deploy with
+ * a green tick and no signal at all.
+ */
+function getEnvironmentUrlWarning(
+  readiness: EnvironmentReadiness,
+  apiTokenSource: ResolvedConfig["apiTokenSource"],
+): string | null {
+  if (readiness.kind !== "gated") return null;
+  return `Deployment committed, but ${readiness.url} was never observed serving this app: the access gate answered HTTP ${readiness.status} and this CLI has no session credential to probe past it. ${
+    getProbeCredentialRemedy(apiTokenSource)
+  }`;
 }
 
 function getDeploymentRoutingConvergenceWarning(deployment: DeployDeployment): string | null {
@@ -1082,6 +1249,7 @@ function createDeployResult({
   environment,
   deployment,
   environmentUrl,
+  readiness,
   config,
   branch,
 }: {
@@ -1090,6 +1258,7 @@ function createDeployResult({
   environment: DeployEnvironment;
   deployment: DeployDeployment;
   environmentUrl: string;
+  readiness: EnvironmentReadiness;
   config: ResolvedConfig;
   branch: string;
 }): DeployResult {
@@ -1105,6 +1274,7 @@ function createDeployResult({
     environmentId: verification.environmentId,
     deploymentId: verification.deploymentId,
     url: environmentUrl,
+    urlVerification: readiness.kind,
     protected: environment.protected,
     routingConvergence: deployment.routingConvergence as DeploymentRoutingConvergence | undefined ??
       null,
@@ -1164,7 +1334,15 @@ export function createDeployProject(options: {
       const environmentConfig = await step(
         observer,
         "resolve-config",
-        async () => getEnvironmentConfig(),
+        async () => {
+          // Naming a project deploys what that project already has, so the
+          // working directory is not the source under review and its config
+          // must not decide this deploy.
+          if (request.projectSlug === undefined) {
+            await assertConfigIsDeployable(request.projectDir);
+          }
+          return await getEnvironmentConfig();
+        },
       );
       const receipt = await readPushReceipt(request.projectDir);
       const branch = request.branch ?? "main";
@@ -1208,6 +1386,12 @@ export function createDeployProject(options: {
         controlPlane = createControlPlane(config);
       }
 
+      // Read from the project directory, before the environment is resolved,
+      // because whether this deploy needs a hosted address at all decides
+      // whether an unroutable environment name is fatal to it.
+      const expectedPageRoutes = await collectProjectPageRoutes(request.projectDir);
+      const readinessRoute = expectedPageRoutes.find((route) => !route.includes("[")) ?? null;
+
       const environment = await step(observer, "resolve-target", async () => {
         if (!project) project = await controlPlane.getProject(projectApiReference(config));
         const resolvedEnvironment = await controlPlane.getEnvironment(
@@ -1220,6 +1404,14 @@ export function createDeployProject(options: {
           });
         }
         assertProjectOwnership("Environment", resolvedEnvironment, project.id);
+        // Only a deploy that will ask the platform for a page address depends on
+        // the name resolving. A project with no static page route sends no
+        // readiness probe at all, so its deploy never touches the synthesised
+        // host and must not be refused for a name it never resolves. When the
+        // address is needed this still runs before any release or deployment
+        // exists, so an unreachable target costs one API call rather than a full
+        // deploy and a readiness window.
+        if (readinessRoute !== null) assertEnvironmentIsReachable(resolvedEnvironment);
         return resolvedEnvironment;
       });
 
@@ -1255,17 +1447,14 @@ export function createDeployProject(options: {
         };
       }
 
-      const { source, expectedPageRoutes } = await step(observer, "verify-source", async () => {
-        const source = await resolvePushedSource({
+      const source = await step(observer, "verify-source", async () =>
+        resolvePushedSource({
           projectDir: request.projectDir,
           controlPlane: config.apiUrl,
           projectId: project!.id,
           projectSlug: project!.slug,
           branch,
-        });
-        const expectedPageRoutes = await collectProjectPageRoutes(request.projectDir);
-        return { source, expectedPageRoutes };
-      });
+        }));
 
       const release = await step(observer, "create-release", async () => {
         const created = await controlPlane.createRelease(project!.id, {
@@ -1326,23 +1515,35 @@ export function createDeployProject(options: {
           }, { verifiedRelease }),
       );
 
-      const readinessRoute = expectedPageRoutes.find((route) => !route.includes("[")) ?? null;
       const environmentUrl = buildReadyEnvironmentUrl(
         buildEnvironmentUrl(verification.projectSlug, environment),
         readinessRoute,
       );
-      await step(observer, "wait-environment-url", async () =>
-        waitForEnvironmentReady({
-          projectSlug: verification.projectSlug,
-          environmentName: environment.name,
-          url: environmentUrl,
-          route: readinessRoute,
-          protected: environment.protected,
-          apiToken: config.apiToken,
-        }, {
-          pollIntervalMs: polling.environmentPollIntervalMs,
-          timeoutMs: polling.environmentTimeoutMs,
-        }));
+      const readiness = await step(
+        observer,
+        "wait-environment-url",
+        async () =>
+          waitForEnvironmentReady({
+            projectSlug: verification.projectSlug,
+            environmentName: environment.name,
+            url: environmentUrl,
+            route: readinessRoute,
+            protected: environment.protected,
+            apiToken: config.apiToken,
+          }, {
+            pollIntervalMs: polling.environmentPollIntervalMs,
+            timeoutMs: polling.environmentTimeoutMs,
+          }),
+      );
+
+      const urlWarning = getEnvironmentUrlWarning(readiness, config.apiTokenSource);
+      if (urlWarning) {
+        await emit(observer, {
+          kind: "warning",
+          code: "environment-url-unverified",
+          message: urlWarning,
+        });
+      }
 
       const warning = getDeploymentRoutingConvergenceWarning(deployment);
       if (warning) {
@@ -1361,6 +1562,7 @@ export function createDeployProject(options: {
           environment,
           deployment,
           environmentUrl,
+          readiness,
           config,
           branch,
         }),

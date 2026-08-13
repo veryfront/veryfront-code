@@ -9,13 +9,14 @@ in the same order as the public docs navigation.
 ## Pages
 
 - `index.md`: Public section landing page.
-- `quickstart.md`: End-to-end first app.
+- `quickstart.md`: Local first-app tutorial.
+- `cloud-quickstart.md`: AI Gateway and Cloud deployment tutorial.
 - `installation.md`: CLI and framework installation.
 - `create-project.md`: Project scaffolding.
 - `create-agent.md`: First agent.
 - `create-frontend.md`: First chat page.
 - `create-api.md`: First API route.
-- `deploy-project.md`: First deployment.
+- `deploy-project.md`: First Cloud deployment for an existing app.
 
 ## Related
 

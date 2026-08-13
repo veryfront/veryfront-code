@@ -1,29 +1,57 @@
 ---
 title: "Providers"
-description: "Provider registry with runtime conventions and explicit overrides."
+description: "Choose and configure model inference for a Veryfront project."
 order: 17
 ---
 
-An agent's `model` is a `"provider/model"` string.
+Every agent needs one inference path. Choose it independently from where the app
+is developed or deployed.
 
-The provider registry resolves each string to one runtime:
+| Goal                              | Inference path             | Start here                                                 |
+| --------------------------------- | -------------------------- | ---------------------------------------------------------- |
+| Use managed model access          | Veryfront Cloud AI Gateway | [Cloud quickstart](../getting-started/cloud-quickstart.md) |
+| Call a model vendor with your key | Direct provider            | [Direct providers](#direct-providers)                      |
+| Use an OpenAI-compatible endpoint | Compatible service         | [OpenAI-compatible services](#openai-compatible-services)  |
+| Run inference on the app server   | Built-in local AI          | [Explicit local AI](#explicit-local-ai)                    |
 
-- Veryfront Cloud
-- a direct vendor such as OpenAI, Anthropic, or Google
-- an OpenAI-compatible service such as OpenRouter
-- a local model
-
-Omit `model` in most agents to use `openai/gpt-5.4-nano`.
+An agent's `model` is a `"provider/model"` string. Omit it to use the default
+`openai/gpt-5.4-nano` model with the inference credentials available at runtime.
 
 ## Prerequisites
 
 - At least one agent defined under `agents/` (see [Agents](./agents.md)).
-- One of the following:
-  - A Veryfront Cloud token (`VERYFRONT_API_TOKEN` plus
-    `VERYFRONT_PROJECT_SLUG`),
-  - An API key for a direct provider (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-    or `GOOGLE_API_KEY`), or
-  - A local inference target if you want to run without external providers.
+- One configured inference path from the table above.
+
+## Veryfront Cloud AI Gateway
+
+The AI Gateway provides managed model access without a model-vendor API key.
+Run `veryfront login`, then Push the project once to create its local project
+link. `veryfront dev` and `veryfront eval` load the stored login and linked
+project automatically.
+
+Model selection follows these rules:
+
+| Agent model                            | With Cloud context                                  | With a matching direct provider key                      |
+| -------------------------------------- | --------------------------------------------------- | -------------------------------------------------------- |
+| Omitted                                | Routes the default model through the AI Gateway     | Uses the direct provider                                 |
+| `"auto"`                               | Prefers the AI Gateway                              | Uses the AI Gateway when Cloud context is also available |
+| `"veryfront-cloud/<provider>/<model>"` | Uses the AI Gateway                                 | Uses the AI Gateway                                      |
+| `"<provider>/<model>"`                 | Uses the AI Gateway when no direct key is available | Uses the direct provider                                 |
+
+Use an explicit gateway model when the route must never switch to a direct
+provider:
+
+```ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  model: "veryfront-cloud/openai/gpt-5.5",
+  system: "You are a helpful assistant.",
+});
+```
+
+With `model: "auto"`, `VERYFRONT_DEFAULT_MODEL` can select another gateway
+default. It is optional.
 
 ## Runtime conventions (recommended)
 
@@ -49,16 +77,11 @@ curl -N http://localhost:3000/api/ag-ui \
 In a client UI, `useChat()` also exposes `inferenceMode` so you can confirm
 whether the response used cloud or server-local inference.
 
-For `model: "auto"`, runtime conventions are:
+The runtime resolves `model: "auto"` from Cloud context or direct provider
+credentials. `VERYFRONT_DEFAULT_MODEL`, `VERYFRONT_DEFAULT_EMBEDDING_MODEL`, and
+`VERYFRONT_RAG_BACKEND` are optional overrides.
 
-- local development without cloud bootstrap uses explicit provider env vars or
-  an explicit `local/*` model
-- Veryfront Cloud is selected automatically when `VERYFRONT_API_TOKEN` and
-  project context such as `VERYFRONT_PROJECT_SLUG` are available
-- `VERYFRONT_DEFAULT_MODEL`, `VERYFRONT_DEFAULT_EMBEDDING_MODEL`, and
-  `VERYFRONT_RAG_BACKEND` are escape hatches, not required config
-
-## Set provider environment variables
+## Direct providers
 
 Set only the variables for the provider you use:
 
@@ -174,7 +197,8 @@ agent({ model: "openai/meta-llama/llama-3.1-405b" });
 
 ## OpenAI-compatible services
 
-Override the base URL to route through OpenRouter, Azure OpenAI, Ollama, or any OpenAI-compatible API:
+Override the base URL to route through an OpenAI-compatible API. Public HTTPS
+services such as OpenRouter work without changing the host network policy:
 
 ```bash
 OPENAI_API_KEY=<API_KEY>
@@ -182,6 +206,72 @@ OPENAI_BASE_URL=https://openrouter.ai/api/v1
 ```
 
 Both `apiKey` and `baseURL` are resolved per-request, so each project in a multi-tenant setup can have its own configuration.
+
+Local OpenAI-compatible servers need an explicit host-network opt-in. Veryfront
+blocks loopback and private destinations by default to prevent server-side
+request forgery. Set `VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS` to the
+exact provider origins that Veryfront can reach. Include the scheme, host, and
+port, but do not include `/v1` or another path. Other internal destinations
+remain blocked. Only the runtime operator can set this policy. A project
+environment cannot grant itself access.
+
+### Ollama
+
+Start Ollama and download a model. This example uses a model with tool-use
+support:
+
+```bash
+ollama pull qwen3:1.7b
+```
+
+Set the OpenAI-compatible endpoint in the terminal that starts Veryfront:
+
+```bash
+export OPENAI_API_KEY="<TOKEN>"
+export OPENAI_BASE_URL="http://localhost:11434/v1"
+export VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS="http://localhost:11434"
+```
+
+Use the Ollama model ID under the `openai` provider:
+
+```ts
+agent({ model: "openai/qwen3:1.7b" });
+```
+
+Ollama ignores the token by default, but Veryfront requires a non-empty value
+for `OPENAI_API_KEY`. See
+[Ollama OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility).
+
+### LM Studio
+
+Load a model in LM Studio, start its local server on port 1234, then list the
+model IDs it exposes:
+
+```bash
+lms server start --port 1234
+curl http://localhost:1234/v1/models
+```
+
+Set the endpoint in the terminal that starts Veryfront:
+
+```bash
+export OPENAI_API_KEY="<TOKEN>"
+export OPENAI_BASE_URL="http://localhost:1234/v1"
+export VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS="http://localhost:1234"
+```
+
+Use an ID returned by `/v1/models`. For example:
+
+```ts
+agent({ model: "openai/qwen2.5-7b-instruct" });
+```
+
+LM Studio does not require a token unless you enable authentication, but
+Veryfront still requires a non-empty `OPENAI_API_KEY`. See
+[LM Studio OpenAI compatibility](https://lmstudio.ai/docs/developer/openai-compat).
+
+Model behavior varies in both runtimes. Select a model with native tool-use
+support when the agent uses tools.
 
 ## Custom provider registration
 

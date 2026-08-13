@@ -222,17 +222,27 @@ export async function resolveAdapter(
       projectDir: effectiveProjectDir,
     });
 
-    // Get or create local adapter
-    if (!cache.adapters.has(effectiveProjectDir)) {
-      const baseAdapter = await runtime.get();
-      cache.adapters.set(effectiveProjectDir, baseAdapter);
+    // Get or create local adapter.
+    //
+    // Hold the adapter rather than reading it back: the cache is an LRU that
+    // estimates each value's size and can evict an oversized entry as part of
+    // the same set(), so a write is not guaranteed to be readable afterwards.
+    // A RuntimeAdapter crosses that budget under Bun, where set() then leaves
+    // has() === false and size === 0, and the non-null assertion this replaces
+    // turned that miss into an undefined adapter that reached getConfig and
+    // threw "undefined is not an object (evaluating 'adapter.fs')" on every
+    // request. Caching stays best effort; correctness no longer depends on it.
+    let localAdapter = cache.adapters.get(effectiveProjectDir);
+    if (!localAdapter) {
+      localAdapter = await runtime.get();
+      cache.adapters.set(effectiveProjectDir, localAdapter);
       logger.debug("Created local adapter for project", {
         projectSlug: opts.projectSlug,
         projectDir: effectiveProjectDir,
       });
     }
 
-    effectiveAdapter = cache.adapters.get(effectiveProjectDir)!;
+    effectiveAdapter = localAdapter;
 
     if (shouldDeferConfigLoad(opts)) {
       effectiveConfig = undefined;
