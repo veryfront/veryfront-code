@@ -228,7 +228,10 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
     snippets: [
       "npm create veryfront@latest support-agent",
-      "npx veryfront@latest deploy",
+      "does not require a Veryfront account or Veryfront Cloud",
+      'export OPENAI_API_KEY="<API_KEY>"',
+      "veryfront eval assistant",
+      "Self-host the app",
       "calculator.ts",
       "What is 128 divided by 8?",
       "curl -N -X POST",

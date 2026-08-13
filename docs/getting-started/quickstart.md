@@ -1,12 +1,20 @@
 ---
 title: "Quickstart"
-description: "Build your first Veryfront agent app."
+description: "Build, run, and evaluate your first Veryfront agent app locally."
 order: -1
 ---
+
+Veryfront Code runs locally with your chosen inference backend. This quickstart
+does not require a Veryfront account or Veryfront Cloud.
 
 ## Prerequisites
 
 - Node.js 22.3 or later.
+- An OpenAI API key. This tutorial uses OpenAI directly for model inference.
+
+You need access to model inference to run the agent and its eval. Veryfront Code
+also supports other API-based providers, OpenAI-compatible local servers, and
+built-in local models.
 
 The examples use `veryfront` commands. If you have not installed the CLI
 globally, run them with `npx veryfront@latest ...`.
@@ -58,18 +66,16 @@ The template includes the agent, calculator tool, chat page, AG-UI route, a
 smoke eval you run with `veryfront eval` (see [Evals](../guides/evals.md)), and
 the `AGENTS.md` project guide for coding agents.
 
-## Authenticate
+## Configure inference
 
-From the project directory, authenticate with Veryfront Cloud:
+Set the OpenAI API key in the terminal where you will run Veryfront:
 
 ```bash
-veryfront login
+export OPENAI_API_KEY="<API_KEY>"
 ```
 
-This lets the app use the Veryfront Cloud gateway for model inference. You can
-also set `VERYFRONT_API_TOKEN` directly. Direct provider keys such as
-`OPENAI_API_KEY` or `ANTHROPIC_API_KEY` also work; see
-[Providers](../guides/providers.md).
+The starter uses `openai/gpt-5.4-nano`. Veryfront sends these inference requests
+directly to OpenAI, not through Veryfront Cloud.
 
 ## Run it locally
 
@@ -80,8 +86,8 @@ veryfront dev
 The CLI prints the URL it is serving on:
 
 ```
-  ✓ Ready in 1.3s
-  http://localhost:3000
+✓ Ready in 1.3s
+http://localhost:3000
 ```
 
 `localhost` resolves to `127.0.0.1` on every machine without a DNS lookup, so
@@ -125,36 +131,28 @@ curl -N -X POST http://localhost:3000/api/ag-ui \
 
 The answer should stream. The curl response should emit `data:` lines.
 
-## Preview and deploy it
+## Run the eval
 
-From the project directory, push the source to its cloud preview:
-
-```bash
-npx veryfront@latest push
-```
-
-The command creates or links the cloud project, stores that local identity in
-ignored `.veryfront/project.json`, and prints the preview URL. When the preview
-is ready for production, deploy the exact pushed source digest:
-
-Push preserves remote-only files by default. Use
-`npx veryfront@latest push --prune --dry-run` to preview an exact remote mirror, then
-run `npx veryfront@latest push --prune` only when those deletions are intentional.
+Stop the dev server with `Ctrl+C`, then run the included smoke eval:
 
 ```bash
-npx veryfront@latest deploy --env production
+veryfront eval assistant
 ```
 
-Deploy uses the last verified Push receipt. If no receipt exists yet, it first
-runs a quiet Push so the first production deploy still works as one command.
+The eval sends a calculator prompt to the same agent, checks that the agent calls
+the calculator tool, and verifies the answer. The command exits successfully
+when every required check passes.
 
-Both URLs are protected by default: they open for a browser signed in to
-Veryfront as a member of the project, and redirect everyone else to the sign-in
-page. See
-[Environment access](./deploy-project.md#environment-access) before sharing a
-URL or pointing a smoke test at it.
+## Next steps
 
-Project reference precedence is `VERYFRONT_PROJECT_SLUG` or environment
-configuration, then `veryfront.config.ts`, then legacy `veryfront.json`, then
-lower-level tenant or project-ID environment references, then the ignored local
-link.
+The local development and eval workflow is complete. Continue with the guide
+that matches your next goal:
+
+- [Use another inference provider](../guides/providers.md): connect Anthropic,
+  Google, an OpenAI-compatible local server such as Ollama or LM Studio, or a
+  built-in local model.
+- [Self-host the app](../guides/deploying.md#self-host): build and run
+  the project in your own environment.
+- [Deploy with Veryfront Cloud](./deploy-project.md): use managed previews and
+  deployment when you want those services. Veryfront Cloud environments are
+  protected by default.
