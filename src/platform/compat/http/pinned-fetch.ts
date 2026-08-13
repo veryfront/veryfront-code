@@ -127,18 +127,29 @@ export function planPinnedConnectAttempts(
 export function isRetriableConnectFailure(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   const code = (error as { code?: unknown }).code;
-  return typeof code === "string" && RETRIABLE_CONNECT_CODES.has(code);
+  if (typeof code !== "string" || !RETRIABLE_CONNECT_CODES.has(code)) return false;
+  // ETIMEDOUT is the one code here that is not exclusively a connect failure:
+  // it also surfaces when a socket times out after the request was written, and
+  // replaying then could deliver a non-idempotent request twice. Only the
+  // connect syscall is known to have reached no server.
+  if (code === "ETIMEDOUT") {
+    return (error as { syscall?: unknown }).syscall === "connect";
+  }
+  return true;
 }
 
 /**
- * A body may only be replayed when re-reading it yields the same bytes. Blob
- * and ReadableStream bodies reach the wire through `Readable.fromWeb`, which
- * consumes them, so a second attempt would send nothing.
+ * A body may only be replayed when re-reading it yields the same bytes. A
+ * ReadableStream does not qualify: the failed attempt already drained it, so a
+ * retry would send nothing.
  */
 export function isReplayableRequestBody(body: BodyInit | null): boolean {
+  // A Blob counts: it is immutable and `writeRequestBody` calls `body.stream()`
+  // per attempt, so each attempt gets a fresh stream over identical bytes. A
+  // ReadableStream does not, because the attempt that failed already drained it.
   return body === null || typeof body === "string" ||
     body instanceof URLSearchParams || body instanceof ArrayBuffer ||
-    ArrayBuffer.isView(body);
+    ArrayBuffer.isView(body) || body instanceof Blob;
 }
 
 function copyResponseHeaders(message: IncomingMessage): Headers {

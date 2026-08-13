@@ -313,13 +313,28 @@ describe("pinned connect attempts", () => {
     assertEquals(isRetriableConnectFailure(null), false);
   });
 
+  it("retries ETIMEDOUT only when it came from connect", () => {
+    // A socket timeout after the request was written carries the same code, and
+    // replaying it could deliver a non-idempotent request twice.
+    assertEquals(
+      isRetriableConnectFailure({ code: "ETIMEDOUT", syscall: "connect" }),
+      true,
+    );
+    assertEquals(
+      isRetriableConnectFailure({ code: "ETIMEDOUT", syscall: "read" }),
+      false,
+    );
+    assertEquals(isRetriableConnectFailure({ code: "ETIMEDOUT" }), false);
+  });
+
   it("replays only bodies that re-read identically", () => {
     assertEquals(isReplayableRequestBody(null), true);
     assertEquals(isReplayableRequestBody("{}"), true);
     assertEquals(isReplayableRequestBody(new Uint8Array([1, 2])), true);
     assertEquals(isReplayableRequestBody(new URLSearchParams("a=1")), true);
-    // Consumed by Readable.fromWeb, so a second attempt would send nothing.
-    assertEquals(isReplayableRequestBody(new Blob(["x"])), false);
+    // Immutable, and writeRequestBody takes a fresh body.stream() per attempt.
+    assertEquals(isReplayableRequestBody(new Blob(["x"])), true);
+    // Already drained by the attempt that failed, so a retry would send nothing.
     assertEquals(
       isReplayableRequestBody(new Blob(["x"]).stream() as unknown as BodyInit),
       false,
