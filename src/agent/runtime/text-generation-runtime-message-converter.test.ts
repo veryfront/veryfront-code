@@ -110,9 +110,42 @@ describe("text-generation-runtime-message-converter", () => {
       const error = assertThrows(
         () => convertToTextGenerationRuntimeMessage(msg),
         Error,
-      );
+      ) as Error;
       assertStringIncludes(error.message, "screenshot.png");
       assertStringIncludes(error.message, "localhost");
+    });
+
+    it("keeps a loopback attachment for a runtime that fetches from this machine", () => {
+      // A `server-local` runtime resolves `localhost` to the server the upload
+      // handler is running on, so the URL it minted is reachable there. Only a
+      // remote provider fetches from a network where it is not.
+      const msg = {
+        id: "u-local-runtime",
+        role: "user",
+        parts: [
+          { type: "text", text: "what is in this image?" },
+          {
+            type: "file",
+            url: "http://localhost:3000/api/chat/upload?id=blob_1",
+            mediaType: "image/png",
+            filename: "screenshot.png",
+            uploadId: "blob_1",
+          },
+        ],
+      } as unknown as Message;
+
+      const result = convertToTextGenerationRuntimeMessage(msg, {
+        requireInternetReachableAttachments: false,
+      });
+
+      const content = (result as TextGenerationRuntimeUserMessage).content;
+      if (!Array.isArray(content)) {
+        throw new Error("Expected user content to preserve native file parts");
+      }
+      const fileUrls = content.flatMap((part) =>
+        part.type === "file" || part.type === "image" ? [part.url] : []
+      );
+      assertEquals(fileUrls, ["http://localhost:3000/api/chat/upload?id=blob_1"]);
     });
 
     it("separates user text from attachment context with a readable blank line", () => {

@@ -24,10 +24,16 @@
  * context left to name.
  *
  * Only hosts that are unreachable *by construction* are rejected — loopback,
- * link-local, and the RFC 1918 private ranges — plus schemes a provider cannot
- * dereference at all. A public hostname that merely happens to be firewalled is
- * not something this can detect, and guessing would break working setups.
- * `data:` URLs carry their own bytes and are always allowed.
+ * link-local, and the private ranges, in both IPv4 (RFC 1918) and IPv6
+ * (`fc00::/7`, `fe80::/10`) — plus schemes a provider cannot dereference at
+ * all. A public hostname that merely happens to be firewalled is not something
+ * this can detect, and guessing would break working setups. `data:` URLs carry
+ * their own bytes and are always allowed.
+ *
+ * This judges reachability *from the public internet*, so it applies to a
+ * remote provider. A server-local runtime fetches from the server itself, where
+ * a loopback URL resolves fine; the caller decides which case it is (see
+ * `text-generation-runtime-message-converter.ts`).
  *
  * @module
  */
@@ -56,8 +62,18 @@ export class UnreachableAttachmentError extends Error {
   }
 }
 
-const LOOPBACK_HOSTNAMES = new Set(["localhost", "::1", "[::1]", "0.0.0.0"]);
+// `::1` is not listed: `URL` brackets every IPv6 host, so it is judged by the
+// IPv6 rules below and has exactly one authority.
+const LOOPBACK_HOSTNAMES = new Set(["localhost", "0.0.0.0"]);
 const LOCAL_SUFFIXES = [".localhost", ".local", ".internal", ".home.arpa"];
+
+function loopbackReason(hostname: string): string {
+  return `"${hostname}" is a loopback address that resolves to the provider's own machine`;
+}
+
+function privateNetworkReason(hostname: string): string {
+  return `"${hostname}" is a private-network address that is not routable from the public internet`;
+}
 
 /** Dotted-quad host, or undefined when `hostname` is not an IPv4 literal. */
 function readIPv4Octets(hostname: string): number[] | undefined {
@@ -73,31 +89,87 @@ function readIPv4Octets(hostname: string): number[] | undefined {
   return octets;
 }
 
-/** Reason this hostname is unreachable from a provider's network, if it is. */
-function describeUnreachableHostname(hostname: string): string | undefined {
-  const host = hostname.toLowerCase();
-  if (LOOPBACK_HOSTNAMES.has(host)) {
-    return `"${hostname}" is a loopback address that resolves to the provider's own machine`;
-  }
-  if (LOCAL_SUFFIXES.some((suffix) => host.endsWith(suffix))) {
-    return `"${hostname}" is a local-network name that does not resolve on the public internet`;
-  }
+/**
+ * The address inside an IPv6 literal host, or undefined for any other host.
+ *
+ * `URL` serializes an IPv6 host in brackets and already lowercases and
+ * compresses it, so `http://[FE80::1]/x` arrives here as `[fe80::1]`.
+ */
+function readIPv6Address(hostname: string): string | undefined {
+  if (!hostname.startsWith("[") || !hostname.endsWith("]")) return undefined;
+  return hostname.slice(1, -1);
+}
 
-  const octets = readIPv4Octets(host);
-  if (!octets) return undefined;
+/**
+ * The four octets of an IPv4-mapped IPv6 address, if it is one.
+ *
+ * `URL` rewrites the readable form to hextets — `::ffff:127.0.0.1` is
+ * serialized as `::ffff:7f00:1` — so the mapped address is recovered from
+ * there and judged by the IPv4 rules.
+ */
+function readIPv4MappedOctets(address: string): number[] | undefined {
+  const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(address);
+  if (!mapped) return undefined;
+  const high = Number.parseInt(mapped[1]!, 16);
+  const low = Number.parseInt(mapped[2]!, 16);
+  return [high >> 8, high & 0xff, low >> 8, low & 0xff];
+}
+
+/** Reason these IPv4 octets are unreachable from a provider's network, if any. */
+function describeUnreachableIPv4(octets: number[], hostname: string): string | undefined {
   const [first, second] = octets as [number, number, number, number];
-  if (first === 127) {
-    return `"${hostname}" is a loopback address that resolves to the provider's own machine`;
-  }
+  if (first === 127) return loopbackReason(hostname);
   if (
     first === 10 ||
     (first === 172 && second >= 16 && second <= 31) ||
     (first === 192 && second === 168) ||
     (first === 169 && second === 254)
   ) {
-    return `"${hostname}" is a private-network address that is not routable from the public internet`;
+    return privateNetworkReason(hostname);
   }
   return undefined;
+}
+
+/**
+ * Reason this IPv6 address is unreachable from a provider's network, if any.
+ *
+ * Mirrors the IPv4 ranges: `::1` is loopback, `fc00::/7` is the unique-local
+ * space that stands in for RFC 1918, and `fe80::/10` is link-local. `::` names
+ * no host at all. Anything else is left to the provider.
+ */
+function describeUnreachableIPv6(address: string, hostname: string): string | undefined {
+  if (address === "::1") return loopbackReason(hostname);
+  if (address === "::") {
+    return `"${hostname}" is the unspecified address and names no host the provider could fetch from`;
+  }
+
+  const firstGroup = address.split(":")[0] ?? "";
+  const leading = firstGroup === "" ? 0 : Number.parseInt(firstGroup, 16);
+  // fc00::/7 (unique local) and fe80::/10 (link local).
+  if ((leading & 0xfe00) === 0xfc00 || (leading & 0xffc0) === 0xfe80) {
+    return privateNetworkReason(hostname);
+  }
+  return undefined;
+}
+
+/** Reason this hostname is unreachable from a provider's network, if it is. */
+function describeUnreachableHostname(hostname: string): string | undefined {
+  const host = hostname.toLowerCase();
+  if (LOOPBACK_HOSTNAMES.has(host)) return loopbackReason(hostname);
+  if (LOCAL_SUFFIXES.some((suffix) => host.endsWith(suffix))) {
+    return `"${hostname}" is a local-network name that does not resolve on the public internet`;
+  }
+
+  const address = readIPv6Address(host);
+  if (address === undefined) {
+    const octets = readIPv4Octets(host);
+    return octets ? describeUnreachableIPv4(octets, hostname) : undefined;
+  }
+
+  const mapped = readIPv4MappedOctets(address);
+  return mapped
+    ? describeUnreachableIPv4(mapped, hostname)
+    : describeUnreachableIPv6(address, hostname);
 }
 
 /**

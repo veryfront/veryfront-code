@@ -29,6 +29,47 @@ describe("attachment reachability", () => {
       }
     });
 
+    it("rejects IPv6 unique-local and link-local addresses", () => {
+      for (const host of ["[fc00::1]", "[fd12:3456::9]", "[fe80::1]", "[febf::1]"]) {
+        const reason = describeUnreachableAttachmentUrl(`http://${host}/upload?id=1`);
+        assertStringIncludes(reason ?? "", "private-network", host);
+      }
+    });
+
+    it("rejects the IPv6 loopback and unspecified addresses", () => {
+      assertStringIncludes(
+        describeUnreachableAttachmentUrl("http://[::1]:3000/upload?id=1") ?? "",
+        "loopback",
+      );
+      assertStringIncludes(
+        describeUnreachableAttachmentUrl("http://[::]:3000/upload?id=1") ?? "",
+        "unspecified address",
+      );
+    });
+
+    it("rejects an IPv4 loopback wearing an IPv6 mapping", () => {
+      // `URL` rewrites `::ffff:127.0.0.1` to the hextet form `::ffff:7f00:1`.
+      assertEquals(new URL("http://[::ffff:127.0.0.1]/a.png").hostname, "[::ffff:7f00:1]");
+      assertStringIncludes(
+        describeUnreachableAttachmentUrl("http://[::ffff:127.0.0.1]/a.png") ?? "",
+        "loopback",
+      );
+      assertStringIncludes(
+        describeUnreachableAttachmentUrl("http://[::ffff:192.168.1.4]/a.png") ?? "",
+        "private-network",
+      );
+    });
+
+    it("allows public IPv6 addresses", () => {
+      for (const host of ["[2001:db8::1]", "[2606:4700:4700::1111]", "[fbff::1]", "[fec0::1]"]) {
+        assertEquals(
+          describeUnreachableAttachmentUrl(`http://${host}/upload?id=1`),
+          undefined,
+          host,
+        );
+      }
+    });
+
     it("rejects local-network names that do not resolve publicly", () => {
       for (const host of ["app.localhost", "nas.local", "svc.internal", "router.home.arpa"]) {
         const reason = describeUnreachableAttachmentUrl(`http://${host}/upload?id=1`);
@@ -81,7 +122,7 @@ describe("attachment reachability", () => {
             mediaType: "image/png",
           }),
         UnreachableAttachmentError,
-      );
+      ) as UnreachableAttachmentError;
 
       assertEquals(error.filename, "screenshot.png");
       assertEquals(error.attachmentUrl, "http://localhost:3000/api/chat/upload?id=blob_1");
@@ -98,7 +139,7 @@ describe("attachment reachability", () => {
             mediaType: "image/png",
           }),
         UnreachableAttachmentError,
-      );
+      ) as UnreachableAttachmentError;
       assertStringIncludes(error.message, "image/png");
     });
 
