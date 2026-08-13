@@ -561,7 +561,7 @@ function resolveProjectRouteDirectory(
  * success and the environment answers 500 to all traffic. Deciding it here
  * costs one parse and turns that into a message before anything is created.
  *
- * Only statically decided rejections reach this far (see
+ * Only rejections the source alone decides reach this far (see
  * `findHostedConfigIncompatibility`), so a config whose values depend on
  * deployment environment variables is never blocked by a difference between
  * that environment and the developer's.

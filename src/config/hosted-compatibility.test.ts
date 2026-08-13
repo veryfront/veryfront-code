@@ -53,6 +53,17 @@ describe("hosted config compatibility", () => {
     assertStringIncludes(message, "Remedy sentence.");
   });
 
+  it("keeps a credential out of the excerpt it prints", async () => {
+    const incompatibility = await findHostedConfigIncompatibility(
+      `const client = connect("postgres://admin:hunter2@db.internal.test/app");\n` +
+        `export default { title: "Demo" };\n`,
+    );
+
+    assertEquals(incompatibility?.line, 1);
+    assertEquals(incompatibility?.excerpt?.includes("hunter2"), false);
+    assertStringIncludes(incompatibility?.excerpt ?? "", "connect(");
+  });
+
   it("accepts the configuration shapes the hosted evaluator supports", async () => {
     for (
       const source of [
@@ -71,13 +82,51 @@ describe("hosted config compatibility", () => {
     }
   });
 
+  it("refuses a literal config the hosted result policy always rejects", async () => {
+    // Nothing here reads the deployment environment, so this evaluation and
+    // the hosted one see the same record: the deploy would ship a release that
+    // answers 500 to every request.
+    for (
+      const [source, reason] of [
+        [`export default { cache: { dir: ".tenant-cache" } };`, "hosted-cache-directory"],
+        [
+          `export default { extensions: [{ name: "ext-css-lightning" }] };`,
+          "hosted-extensions",
+        ],
+        [
+          `export default { cache: { render: { type: "filesystem" } } };`,
+          "hosted-render-cache-backend",
+        ],
+      ] as const
+    ) {
+      const incompatibility = await findHostedConfigIncompatibility(source);
+
+      assertEquals(incompatibility?.code, "unsupported-hosted-feature", source);
+      assertEquals(incompatibility?.reason, reason, source);
+      // The evaluator reports a result rejection against the program, not the
+      // key, so no line is claimed for one.
+      assertEquals(incompatibility?.line, undefined, source);
+      assertEquals(incompatibility?.excerpt, undefined, source);
+    }
+  });
+
+  it("names the hosted limit rather than the generic literal remedy", async () => {
+    const incompatibility = await findHostedConfigIncompatibility(
+      `export default { cache: { dir: ".tenant-cache" } };`,
+    );
+
+    assertStringIncludes(incompatibility?.summary ?? "", "cache.dir");
+    assertStringIncludes(incompatibility?.remedy ?? "", "cache.dir");
+  });
+
   it("stays silent about rejections that depend on evaluated values", async () => {
-    // The hosted result policy also refuses this one, but only after
-    // evaluating it. A caller checking without the deployment environment's
-    // variables cannot reach that verdict honestly, so this reports nothing.
+    // The hosted result policy refuses an origin this evaluation cannot
+    // produce: ORIGINS is set in the deployment environment, not this one. A
+    // caller cannot reach that verdict honestly, so it reports nothing.
     assertEquals(
       await findHostedConfigIncompatibility(
-        `export default { extensions: [{ name: "ext-css-lightning" }] };`,
+        `import { getEnv } from "veryfront";\n` +
+          `export default { security: { cors: { origin: getEnv("ORIGINS") } } };\n`,
       ),
       null,
     );

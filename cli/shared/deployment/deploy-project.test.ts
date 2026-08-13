@@ -191,6 +191,33 @@ describe("DeployProject", () => {
     });
   });
 
+  it("refuses a literal config the hosted result policy always rejects", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      // Every construct here is one the hosted evaluator parses happily. It
+      // refuses the record afterwards, on every request, so a deploy that let
+      // this through would report success over an environment answering 500.
+      await Deno.writeTextFile(
+        `${projectDir}/veryfront.config.ts`,
+        `export default { cache: { dir: ".tenant-cache" } };\n`,
+      );
+      const controlPlane = new InMemoryDeployControlPlane();
+      try {
+        const error = await expectDeployError(() => executeApply(projectDir, controlPlane));
+
+        assertStringIncludes((error as Error).message, "cache.dir");
+        assertEquals(controlPlane.createdReleases, [], "no release for an undeployable config");
+        assertEquals(
+          controlPlane.createdDeployments,
+          [],
+          "no deployment for an undeployable config",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
   it("deploys a config that only uses the hosted configuration helpers", async () => {
     await withDeployEnv(async () => {
       const { projectDir } = await createPushedProject();
