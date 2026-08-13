@@ -270,7 +270,20 @@ The worker pool provides:
 The `WORKER_ISOLATION_ENABLED` and surface-specific
 `WORKER_ISOLATION_API`, `WORKER_ISOLATION_DATA`, and `WORKER_ISOLATION_SSR`
 flags opt trusted local projects into worker execution. They cannot disable the
-shared-runtime boundary. A dedicated single-project runtime may execute
+shared-runtime boundary.
+
+`WORKER_ISOLATION_ENABLED` is a gate, not a surface: it is required by all three
+surface flags and enables none of them on its own. Because a capability
+configured on that resolves to nothing reads as safe to anyone auditing the
+environment, flag resolution reports itself once — the effective per-surface
+state at `info`, and a `warn` when the master switch is set with no surface in
+force, or when surface flags are set without the master switch.
+`security/sandbox/worker-pool.ts` exposes the same resolution as a typed
+`getIsolationPosture()` snapshot (requested versus effective per surface, plus
+`apiPreparationSupported`), which the production server resolves at startup so
+the posture lands in the startup log rather than on the first request. The
+posture is not published on the unauthenticated `/_health` response, where it
+would tell an anonymous caller which realm tenant code runs in. A dedicated single-project runtime may execute
 prepared API source in its local worker pool. A shared multi-project/proxy
 runtime never executes tenant API source in the host process or a same-process
 Worker: API ownership returns the typed
