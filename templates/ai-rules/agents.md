@@ -8,7 +8,7 @@ Use these folders as runtime boundaries. Create folders only when the feature ne
 
 - `app/`: pages, layouts, route handlers, and user-facing API routes.
 - `agents/`: model reasoning and tool use.
-- `tools/`: deterministic callable capabilities.
+- `tools/`: callable capabilities for agents and workflows.
 - `workflows/`: multi-step coordination.
 - `skills/`: reusable agent instructions in `skills/<id>/SKILL.md`.
 - `veryfront.config.ts`: project metadata and router configuration.
