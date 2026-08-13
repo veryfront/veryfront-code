@@ -50,15 +50,21 @@ node_modules
 Add this `Dockerfile`:
 
 ```dockerfile
-FROM denoland/deno:2.6.0
+FROM node:22-slim
 
 WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
 COPY . .
-RUN deno task build
+RUN npm run build
 
 EXPOSE 3000
-CMD ["deno", "task", "start"]
+CMD ["npm", "start"]
 ```
+
+`npm ci` installs the project-local Veryfront CLI from the lockfile before the
+image builds the app. Copying the package files first also lets Docker reuse the
+dependency layer when only application code changes.
 
 Build and run it:
 
