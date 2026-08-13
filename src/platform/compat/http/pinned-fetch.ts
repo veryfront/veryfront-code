@@ -300,6 +300,7 @@ export async function fetchWithPinnedAddresses(
       ...(url.protocol === "https:" ? { servername: url.hostname } : {}),
     };
 
+    let pendingRequest: ClientRequest | undefined;
     try {
       return await new Promise<Response>((resolve, reject) => {
         let settled = false;
@@ -363,9 +364,22 @@ export async function fetchWithPinnedAddresses(
           return;
         }
         request.once("error", rejectBeforeResponse);
+        // Bun reports connect failures through
+        // `process.nextTick(() => self.emit("error", err))`, so the emit can
+        // land after this promise has settled and after the `once` listener
+        // above has been consumed. With no listener left, Node stream
+        // semantics turn it into an uncaught exception and the process exits,
+        // which is how one refused address took down the dev server instead of
+        // failing a single request. This sink absorbs the late emit; the first
+        // error still rejects through `rejectBeforeResponse`.
+        request.on("error", () => {});
+        pendingRequest = request;
         void writeRequestBody(request, body).catch((error) => request.destroy(error));
       });
     } catch (error) {
+      // Release the socket of the attempt being abandoned. The sink above stays
+      // attached, so a teardown error from this destroy has somewhere to land.
+      pendingRequest?.destroy();
       lastConnectError = error;
       const hasAnotherAddress = attemptIndex < attempts.length - 1;
       if (
