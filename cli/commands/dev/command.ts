@@ -338,14 +338,14 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         };
       }
 
-      const serverUrl = `http://veryfront.me:${boundPort}`;
+      const serverUrl = `http://localhost:${boundPort}`;
       const elapsed = Date.now() - startTime;
 
       console.log();
       console.log(`  ✓ Ready in ${formatDuration(elapsed)}`);
       console.log(`  ${brand(serverUrl)}`);
       if (mcpServer && isVerbose()) {
-        console.log(`  ${dim("MCP")} ${brand(`http://veryfront.me:${mcpPort}/mcp`)}`);
+        console.log(`  ${dim("MCP")} ${brand(`http://localhost:${mcpPort}/mcp`)}`);
       }
       if (isTTY()) {
         console.log(devShortcuts());

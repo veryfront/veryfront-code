@@ -109,7 +109,7 @@ export const vfGetDebugContext: MCPTool<GetDebugContextInput, DebugContextResult
     withSpan(
       "cli.mcp.tool.vf_get_debug_context",
       async () => {
-        const host = input.project ? `${input.project}.veryfront.me` : "veryfront.me";
+        const host = input.project ? `${input.project}.localhost` : "localhost";
         const url = `http://${host}:${input.port}/_vf_debug/context`;
 
         try {

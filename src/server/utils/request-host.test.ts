@@ -13,15 +13,15 @@ describe("server/utils/request-host", () => {
 
     it("returns the first forwarded host entry", () => {
       assertEquals(
-        parseForwardedHost("preview.veryfront.me:3000, proxy.internal"),
-        "preview.veryfront.me:3000",
+        parseForwardedHost("preview.localhost:3000, proxy.internal"),
+        "preview.localhost:3000",
       );
     });
 
     it("trims surrounding whitespace from the selected entry", () => {
       assertEquals(
-        parseForwardedHost("  preview.veryfront.me:3000  , proxy.internal"),
-        "preview.veryfront.me:3000",
+        parseForwardedHost("  preview.localhost:3000  , proxy.internal"),
+        "preview.localhost:3000",
       );
     });
   });
@@ -30,7 +30,7 @@ describe("server/utils/request-host", () => {
     it("ignores x-forwarded-host by default (untrusted) and uses the host header", () => {
       const req = new Request("http://127.0.0.1:3000/test", {
         headers: {
-          "x-forwarded-host": "preview.veryfront.me:3000, proxy.internal",
+          "x-forwarded-host": "preview.localhost:3000, proxy.internal",
           "host": "localhost:3000",
         },
       });
@@ -43,14 +43,14 @@ describe("server/utils/request-host", () => {
     it("prefers x-forwarded-host over host and url host when proxy is trusted", () => {
       const req = new Request("http://127.0.0.1:3000/test", {
         headers: {
-          "x-forwarded-host": "preview.veryfront.me:3000, proxy.internal",
+          "x-forwarded-host": "preview.localhost:3000, proxy.internal",
           "host": "localhost:3000",
         },
       });
 
       assertEquals(
         getEffectiveRequestHost(req, undefined, true),
-        "preview.veryfront.me:3000",
+        "preview.localhost:3000",
       );
     });
 
@@ -63,9 +63,9 @@ describe("server/utils/request-host", () => {
     });
 
     it("falls back to request url host when no forwarded or host headers exist", () => {
-      const req = new Request("http://preview.veryfront.me:3000/test");
+      const req = new Request("http://preview.localhost:3000/test");
 
-      assertEquals(getEffectiveRequestHost(req), "preview.veryfront.me:3000");
+      assertEquals(getEffectiveRequestHost(req), "preview.localhost:3000");
     });
   });
 });

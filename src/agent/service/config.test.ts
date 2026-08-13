@@ -55,7 +55,7 @@ describe("agent/agent-service-config", () => {
     assertEquals(config.VERYFRONT_STUDIO_MCP_URL, "");
     assertEquals(config.NODE_ENV, "development");
     assertEquals(config.PORT, 3001);
-    assertEquals(config.ALLOWED_ORIGINS, ["http://localhost:3000", "http://veryfront.me:3000"]);
+    assertEquals(config.ALLOWED_ORIGINS, ["http://localhost:3000"]);
     assertEquals(config.OTEL_ENABLED, false);
     assertEquals(config.VERYFRONT_API_TOKEN, undefined);
     assertEquals(config.VERYFRONT_PROJECT_ID, undefined);

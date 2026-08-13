@@ -10,8 +10,8 @@ import {
 
 describe("domain-parser", () => {
   describe("parseProjectDomain", () => {
-    it("veryfront.me preview", () => {
-      const result = parseProjectDomain("myproject.preview.veryfront.me:8080");
+    it("localhost preview", () => {
+      const result = parseProjectDomain("myproject.preview.localhost:8080");
       assertEquals(result.slug, "myproject");
       assertEquals(result.branch, null);
       assertEquals(result.environment, "preview");
@@ -19,38 +19,38 @@ describe("domain-parser", () => {
       assertEquals(result.isDraft, true);
     });
 
-    it("veryfront.me preview with branch", () => {
-      const result = parseProjectDomain("myproject--feature-x.preview.veryfront.me");
+    it("localhost preview with branch", () => {
+      const result = parseProjectDomain("myproject--feature-x.preview.localhost");
       assertEquals(result.slug, "myproject");
       assertEquals(result.branch, "feature-x");
       assertEquals(result.environment, "preview");
     });
 
-    it("veryfront.me base (mirrors production)", () => {
-      const result = parseProjectDomain("myproject.veryfront.me:8080");
+    it("localhost base (mirrors production)", () => {
+      const result = parseProjectDomain("myproject.localhost:8080");
       assertEquals(result.slug, "myproject");
       assertEquals(result.environment, "production");
       assertEquals(result.isVeryfrontDomain, true);
       assertEquals(result.isDraft, false);
     });
 
-    it("veryfront.me prod (custom domain simulation)", () => {
-      const result = parseProjectDomain("example.com.prod.veryfront.me");
+    it("localhost prod (custom domain simulation)", () => {
+      const result = parseProjectDomain("example.com.prod.localhost");
       assertEquals(result.slug, null);
       assertEquals(result.environment, "production");
       assertEquals(result.isVeryfrontDomain, false);
     });
 
-    it("plain veryfront.me", () => {
-      const result = parseProjectDomain("veryfront.me");
+    it("plain localhost", () => {
+      const result = parseProjectDomain("localhost");
       assertEquals(result.slug, null);
       assertEquals(result.environment, "development");
       assertEquals(result.isVeryfrontDomain, true);
       assertEquals(result.isDraft, true);
     });
 
-    it("local preview environment root (veryfront.me)", () => {
-      const result = parseProjectDomain("preview.veryfront.me");
+    it("local preview environment root (localhost)", () => {
+      const result = parseProjectDomain("preview.localhost");
       assertEquals(result.slug, null);
       assertEquals(result.environment, "preview");
       assertEquals(result.isVeryfrontDomain, true);
@@ -144,16 +144,16 @@ describe("domain-parser", () => {
       assertEquals(result.isDraft, false);
     });
 
-    it("local dev explicit production: {slug}.production.veryfront.me", () => {
-      const result = parseProjectDomain("myproject.production.veryfront.me:8080");
+    it("local dev explicit production: {slug}.production.localhost", () => {
+      const result = parseProjectDomain("myproject.production.localhost:8080");
       assertEquals(result.slug, "myproject");
       assertEquals(result.environment, "production");
       assertEquals(result.isVeryfrontDomain, true);
       assertEquals(result.isDraft, false);
     });
 
-    it("local dev explicit staging: {slug}.staging.veryfront.me", () => {
-      const result = parseProjectDomain("myproject.staging.veryfront.me:8080");
+    it("local dev explicit staging: {slug}.staging.localhost", () => {
+      const result = parseProjectDomain("myproject.staging.localhost:8080");
       assertEquals(result.slug, "myproject");
       assertEquals(result.environment, "staging");
       assertEquals(result.isVeryfrontDomain, true);
@@ -183,16 +183,16 @@ describe("domain-parser", () => {
       assertEquals(result.isDraft, false);
     });
 
-    it("local staging environment root (veryfront.me)", () => {
-      const result = parseProjectDomain("staging.veryfront.me");
+    it("local staging environment root (localhost)", () => {
+      const result = parseProjectDomain("staging.localhost");
       assertEquals(result.slug, null);
       assertEquals(result.environment, "staging");
       assertEquals(result.isVeryfrontDomain, true);
       assertEquals(result.isDraft, false);
     });
 
-    it("local production environment root (veryfront.me)", () => {
-      const result = parseProjectDomain("production.veryfront.me");
+    it("local production environment root (localhost)", () => {
+      const result = parseProjectDomain("production.localhost");
       assertEquals(result.slug, null);
       assertEquals(result.environment, "production");
       assertEquals(result.isVeryfrontDomain, true);
@@ -216,7 +216,7 @@ describe("domain-parser", () => {
     });
 
     it("local unknown namespace is not recognized", () => {
-      const result = parseProjectDomain("myproject.foobar.veryfront.me");
+      const result = parseProjectDomain("myproject.foobar.localhost");
       assertEquals(result.slug, null);
       assertEquals(result.environment, null);
       assertEquals(result.isVeryfrontDomain, false);
@@ -242,9 +242,9 @@ describe("domain-parser", () => {
       assertEquals(isVeryfrontDomain("myproject.preview.veryfront.com"), true);
     });
 
-    it("recognizes veryfront.me", () => {
-      assertEquals(isVeryfrontDomain("myproject.veryfront.me:8080"), true);
-      assertEquals(isVeryfrontDomain("veryfront.me"), true);
+    it("recognizes localhost", () => {
+      assertEquals(isVeryfrontDomain("myproject.localhost:8080"), true);
+      assertEquals(isVeryfrontDomain("localhost"), true);
     });
 
     it("recognizes lvh.me", () => {
@@ -327,37 +327,54 @@ describe("domain-parser", () => {
     });
 
     it("recognizes bare local dev domains", () => {
-      assertEquals(isLocalDevHost("veryfront.me"), true);
+      assertEquals(isLocalDevHost("localhost"), true);
       assertEquals(isLocalDevHost("lvh.me"), true);
       assertEquals(isLocalDevHost("veryfront.dev"), true);
-      assertEquals(isLocalDevHost("veryfront.me:8080"), true);
+      assertEquals(isLocalDevHost("localhost:8080"), true);
     });
 
     it("recognizes slug-only local dev domains", () => {
-      assertEquals(isLocalDevHost("myproject.veryfront.me"), true);
+      assertEquals(isLocalDevHost("myproject.localhost"), true);
       assertEquals(isLocalDevHost("myproject.lvh.me:3001"), true);
       assertEquals(isLocalDevHost("myproject.veryfront.dev"), true);
     });
 
     it("recognizes preview local dev domains", () => {
-      assertEquals(isLocalDevHost("myproject.preview.veryfront.me"), true);
+      assertEquals(isLocalDevHost("myproject.preview.localhost"), true);
       assertEquals(isLocalDevHost("myproject.preview.lvh.me:3001"), true);
-      assertEquals(isLocalDevHost("preview.veryfront.me"), true);
+      assertEquals(isLocalDevHost("preview.localhost"), true);
       assertEquals(isLocalDevHost("preview.lvh.me"), true);
     });
 
     it("rejects explicit production local dev domains", () => {
-      assertEquals(isLocalDevHost("myproject.production.veryfront.me"), false);
+      assertEquals(isLocalDevHost("myproject.production.localhost"), false);
       assertEquals(isLocalDevHost("myproject.production.lvh.me"), false);
     });
 
     it("rejects explicit staging local dev domains", () => {
-      assertEquals(isLocalDevHost("myproject.staging.veryfront.me"), false);
+      assertEquals(isLocalDevHost("myproject.staging.localhost"), false);
       assertEquals(isLocalDevHost("myproject.staging.lvh.me"), false);
     });
 
     it("rejects custom domain simulation", () => {
       assertEquals(isLocalDevHost("example.com.prod.lvh.me"), false);
+      assertEquals(isLocalDevHost("example.com.prod.localhost"), false);
+    });
+
+    // `localhost` is a single label with no registrable domain, so `*.localhost`
+    // cannot be admitted by a blanket suffix test the way a two-label root can.
+    // It goes through the same parse, which keeps the non-dev namespaces out.
+    it("classifies *.localhost by the same rules as the two-label local roots", () => {
+      for (const root of ["localhost", "lvh.me"]) {
+        assertEquals(isLocalDevHost(`myproject.production.${root}:3000`), false, root);
+        assertEquals(isLocalDevHost(`myproject.staging.${root}:3000`), false, root);
+        assertEquals(isLocalDevHost(`staging.${root}`), false, root);
+        assertEquals(isLocalDevHost(`myproject.foobar.${root}`), false, root);
+        assertEquals(isLocalDevHost(`example.com.prod.${root}`), false, root);
+        assertEquals(isLocalDevHost(`a.b.c.${root}`), false, root);
+        assertEquals(isLocalDevHost(`myproject.${root}`), true, root);
+        assertEquals(isLocalDevHost(`myproject.preview.${root}`), true, root);
+      }
     });
 
     it("rejects custom domains", () => {
@@ -371,7 +388,7 @@ describe("domain-parser", () => {
     });
 
     it("rejects unknown namespace on local dev domains", () => {
-      assertEquals(isLocalDevHost("myproject.foobar.veryfront.me"), false);
+      assertEquals(isLocalDevHost("myproject.foobar.localhost"), false);
     });
   });
 
@@ -380,7 +397,7 @@ describe("domain-parser", () => {
       assertEquals(parseProjectDomain("myproject.production.veryfront.com").allowIframeEmbed, true);
       assertEquals(parseProjectDomain("myproject.preview.veryfront.com").allowIframeEmbed, true);
       assertEquals(parseProjectDomain("myproject.lvh.me").allowIframeEmbed, true);
-      assertEquals(parseProjectDomain("myproject.veryfront.me").allowIframeEmbed, true);
+      assertEquals(parseProjectDomain("myproject.localhost").allowIframeEmbed, true);
     });
 
     it("allows embed for localhost", () => {

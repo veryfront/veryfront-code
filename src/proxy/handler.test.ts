@@ -1663,7 +1663,7 @@ describe("Proxy Handler", () => {
         for (
           const host of [
             "lvh.me",
-            "veryfront.me",
+            "localhost",
             "veryfront.dev",
             "preview.lvh.me",
             "staging.lvh.me",
