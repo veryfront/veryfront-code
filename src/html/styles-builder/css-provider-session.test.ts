@@ -323,6 +323,52 @@ describe("styles-builder CSS provider sessions", () => {
     );
   });
 
+  it("shows the import line, so the config edit needs no guessing", () => {
+    // The shipped hint ends at `then add it to "extensions" in
+    // veryfront.config.ts`. Verified against published 0.1.1232: `veryfront
+    // init --template minimal` writes no veryfront.config.ts at all, so the
+    // reader has to author the file, and the sentence never says what to write
+    // in it. The natural first guess, `import { defineConfig } from
+    // "veryfront/config"`, is not an exported subpath -- the build then dies
+    // with a bare "Failed to load veryfront.config.ts".
+    //
+    // Whether the file already exists depends on the working directory, which
+    // a unit test must not depend on (setup-hint.test.ts pins that mapping
+    // against explicit directories). What holds either way is the import line
+    // for the package being recommended: without it the reader is guessing at
+    // both the specifier and the binding.
+    installProcessor(createProcessor("import-line-rearm"));
+    register(CSSOptimizationEngineName, createOptimizer("import-line-rearm"));
+    acquireCSSGenerationSession(true);
+    resetContracts();
+    installProcessor(createProcessor("import-line"));
+
+    const records: LogEntry[] = [];
+    __resetLogRecordEmitterForTests();
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+      records.push(entry);
+    });
+    try {
+      acquireCSSGenerationSession(true);
+    } finally {
+      unsubscribe();
+      __resetLogRecordEmitterForTests();
+    }
+
+    const message = records.find((entry) => entry.message.includes("unminified CSS"))
+      ?.message ?? "";
+    assertEquals(
+      message.includes(`import extCssLightning from "@veryfront/ext-css-lightning"`),
+      true,
+      `hint must show the import line for the extension, got: ${message}`,
+    );
+    assertEquals(
+      message.includes("extCssLightning()"),
+      true,
+      `hint must show the extension being composed, got: ${message}`,
+    );
+  });
+
   it("keeps minified and unminified output in separate cache identities", async () => {
     // The reversal above is only safe because an absent optimizer is recorded
     // in the pipeline identity, so an unminified entry can never be served in
