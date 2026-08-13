@@ -1,7 +1,7 @@
 ---
 title: "Create frontend"
 description: "Add a chat page that streams responses from a Veryfront agent."
-order: 6
+order: 7
 ---
 
 ## Prerequisites
