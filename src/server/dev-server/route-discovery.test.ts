@@ -10,6 +10,7 @@ import {
   type LogEntry,
 } from "#veryfront/utils/logger/logger.ts";
 import { RouteDiscovery } from "./route-discovery.ts";
+import { logPath } from "#veryfront/modules/react-loader/ssr-module-loader/loader.ts";
 
 function captureDebugLogs(): { entries: LogEntry[]; restore: () => void } {
   const originalLogLevel = Deno.env.get("LOG_LEVEL");
@@ -46,6 +47,58 @@ function captureDebugLogs(): { entries: LogEntry[]; restore: () => void } {
 }
 
 describe("server/dev-server/route-discovery", () => {
+  it("names every searched directory without leaking the project path", async () => {
+    const captured = captureDebugLogs();
+    try {
+      const adapter = createMockAdapter({});
+      const discovery = new RouteDiscovery(
+        "/Users/someone/private/path/my-project",
+        adapter,
+        new ApiRouteMatcher(),
+        { router: "app" } as never,
+      );
+      await discovery.discoverRoutes();
+
+      const warning = captured.entries.find((entry) =>
+        entry.message.includes("No route directories found")
+      );
+      assertEquals(warning !== undefined, true, "the warning must be emitted");
+      const message = warning!.message;
+
+      // Discovery probes .veryfront and, when the configured router's directory
+      // is missing, the other router's as a fallback. Reporting only the
+      // preferred one would claim a directory went unsearched when it did not.
+      assertEquals(message.includes(".veryfront/"), true);
+      assertEquals(message.includes("app/"), true);
+      assertEquals(message.includes("pages/"), true);
+
+      // An absolute project root is machine-specific and does not belong in a
+      // user-facing log line.
+      assertEquals(message.includes("/Users/someone"), false);
+      // AGENTS.md prohibits em and en dashes in public copy.
+      assertEquals(/[\u2014\u2013]/.test(message), false);
+    } finally {
+      captured.restore();
+    }
+  });
+
+  it("marks a truncated log path so it cannot read as a whole path", () => {
+    const short = "app/page.tsx";
+    assertEquals(logPath(short), short);
+
+    const long = "/private/tmp/build/node_modules/veryfront/esm/src/react/context/index.js";
+    const shortened = logPath(long);
+    assertEquals(shortened.startsWith("…"), true);
+    assertEquals(shortened.length, 41);
+    assertEquals(long.endsWith(shortened.slice(1)), true);
+
+    // The pair that made two distinct files read as one cache-key collision
+    // stays distinguishable once both are marked as cut.
+    const a = logPath("/a/very/long/prefix/veryfront/esm/src/react/context/index.js");
+    const b = logPath("/b/other/long/prefix/veryfront/esm/src/react/router/index.js");
+    assertEquals(a === b, false);
+  });
+
   it("discovers routes from configured app and pages directories", async () => {
     const adapter = createMockAdapter();
     adapter.fs.files.set("/project/src/app/page.tsx", "export default () => null;");

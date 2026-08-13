@@ -185,8 +185,10 @@ async function waitForInProgressTransform(
  * two distinct modules looks like two modules colliding on one cache key,
  * which is a materially different bug. The marker keeps the entry short while
  * making the truncation visible.
+ *
+ * @internal exported for tests
  */
-function logPath(filePath: string): string {
+export function logPath(filePath: string): string {
   return filePath.length <= 40 ? filePath : `…${filePath.slice(-40)}`;
 }
 

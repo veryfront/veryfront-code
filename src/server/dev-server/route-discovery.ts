@@ -59,12 +59,11 @@ export class RouteDiscovery {
     });
 
     if (routeDirs.length === 0) {
-      const searched = this.routeDirectoryCandidates();
+      const { appDir } = this.routeDirectoryNames();
       logger.warn(
-        `No route directories found; skipping discovery. Looked for ${
-          searched.map((candidate) => `${candidate.dir}/`).join(" and ")
-        } in ${this.projectDir}. A project serves pages once one of those exists — ` +
-          `for example ${searched[0]!.dir}/page.tsx.`,
+        `No route directories found; skipping discovery. Searched ${
+          this.searchedRouteDirectoryNames().map((dir) => `${dir}/`).join(", ")
+        } relative to the project root. Create ${appDir}/page.tsx to serve a page.`,
       );
       return;
     }
@@ -85,23 +84,40 @@ export class RouteDiscovery {
     });
   }
 
-  /**
-   * The directories discovery will look in, in order. Shared with the
-   * "nothing found" warning so the advice cannot drift from the search.
-   */
+  /** The configured route directory names, resolved once for every caller. */
+  private routeDirectoryNames(): { appDir: string; pagesDir: string } {
+    return {
+      appDir: this.config?.directories?.app ?? "app",
+      pagesDir: this.config?.directories?.pages ?? "pages",
+    };
+  }
+
+  /** The directories discovery prefers, in order, before any fallback. */
   private routeDirectoryCandidates(): Array<{ type: "app" | "pages"; dir: string }> {
     const preferredRouter = this.config?.router;
-    const appDir = this.config?.directories?.app ?? "app";
-    const pagesDir = this.config?.directories?.pages ?? "pages";
+    const { appDir, pagesDir } = this.routeDirectoryNames();
     if (preferredRouter === "app") return [{ type: "app", dir: appDir }];
     if (preferredRouter === "pages") return [{ type: "pages", dir: pagesDir }];
     return [{ type: "app", dir: appDir }, { type: "pages", dir: pagesDir }];
   }
 
+  /**
+   * Every directory discovery probes before giving up, which is a wider set
+   * than {@link routeDirectoryCandidates}: `.veryfront` is always checked, and
+   * when the configured router's directory is missing the other router's is
+   * tried as a fallback. The warning reports this list so it cannot claim a
+   * directory went unsearched when it did not.
+   *
+   * @internal exported shape for tests
+   */
+  searchedRouteDirectoryNames(): string[] {
+    const { appDir, pagesDir } = this.routeDirectoryNames();
+    return [".veryfront", appDir, pagesDir];
+  }
+
   private async resolveRouteDirectories(): Promise<RouteDirectory[]> {
     const preferredRouter = this.config?.router;
-    const appDir = this.config?.directories?.app ?? "app";
-    const pagesDir = this.config?.directories?.pages ?? "pages";
+    const { appDir, pagesDir } = this.routeDirectoryNames();
     const results: RouteDirectory[] = [];
 
     const candidates = this.routeDirectoryCandidates();
