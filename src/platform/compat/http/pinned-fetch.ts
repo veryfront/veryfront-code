@@ -117,6 +117,61 @@ function createPinnedLookup(addresses: readonly string[]): RequestOptions["looku
   }) as RequestOptions["lookup"];
 }
 
+/** Connect-level failures that mean "this address is unusable", not "this request is bad". */
+const RETRIABLE_CONNECT_CODES = new Set([
+  "ECONNREFUSED",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "EADDRNOTAVAIL",
+  "ETIMEDOUT",
+]);
+
+/**
+ * Order the validated addresses into connection attempts.
+ *
+ * The first attempt offers the whole set, which is what `autoSelectFamily`
+ * consumes on runtimes that implement it. Bun does not implement it, so a host
+ * whose DNS carries an unreachable family (an AAAA record with no IPv6 route,
+ * for instance) fails outright instead of falling through. The follow-up
+ * attempts pin one address each so the walk happens here rather than depending
+ * on the runtime, and a different family is tried before a sibling of the one
+ * that just failed.
+ *
+ * Every address is already validated by the egress policy, so trying them in
+ * turn narrows nothing: the set is identical, only the order of use changes.
+ */
+export function planPinnedConnectAttempts(
+  addresses: readonly string[],
+): readonly (readonly string[])[] {
+  if (addresses.length <= 1) return [addresses];
+  const first = addresses[0]!;
+  const otherFamily = addresses.filter((address) =>
+    addressFamily(address) !== addressFamily(first)
+  );
+  const sameFamily = addresses.slice(1).filter((address) =>
+    addressFamily(address) === addressFamily(first)
+  );
+  return [addresses, ...[...otherFamily, ...sameFamily].map((address) => [address])];
+}
+
+/** True when the request may be issued again against a different address. */
+export function isRetriableConnectFailure(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && RETRIABLE_CONNECT_CODES.has(code);
+}
+
+/**
+ * A body may only be replayed when re-reading it yields the same bytes. Blob
+ * and ReadableStream bodies reach the wire through `Readable.fromWeb`, which
+ * consumes them, so a second attempt would send nothing.
+ */
+export function isReplayableRequestBody(body: BodyInit | null): boolean {
+  return body === null || typeof body === "string" ||
+    body instanceof URLSearchParams || body instanceof ArrayBuffer ||
+    ArrayBuffer.isView(body);
+}
+
 function copyResponseHeaders(message: IncomingMessage): Headers {
   const headers = new Headers();
   for (let i = 0; i < message.rawHeaders.length; i += 2) {
@@ -225,82 +280,102 @@ export async function fetchWithPinnedAddresses(
   const transport = url.protocol === "https:"
     ? await import("node:https")
     : await import("node:http");
-  const requestOptions: RequestOptions & { autoSelectFamily?: boolean } = {
-    protocol: url.protocol,
-    hostname: url.hostname,
-    port: url.port || undefined,
-    path: `${url.pathname}${url.search}`,
-    method,
-    headers: requestHeaders,
-    lookup: createPinnedLookup(addresses),
-    // Let Node/Bun race the complete validated address set instead of binding
-    // availability to whichever A/AAAA record happened to be returned first.
-    autoSelectFamily: true,
-    ...(url.protocol === "https:" ? { servername: url.hostname } : {}),
-  };
+  const attempts = planPinnedConnectAttempts(addresses);
+  const bodyIsReplayable = isReplayableRequestBody(body);
+  let lastConnectError: unknown;
 
-  return await new Promise<Response>((resolve, reject) => {
-    let settled = false;
-    let responseMessage: IncomingMessage | undefined;
-    const cleanupAbortListener = () => init.signal?.removeEventListener("abort", abort);
-    const rejectBeforeResponse = (error: unknown) => {
-      cleanupAbortListener();
-      reject(error);
+  for (let attemptIndex = 0; attemptIndex < attempts.length; attemptIndex++) {
+    const requestOptions: RequestOptions & { autoSelectFamily?: boolean } = {
+      protocol: url.protocol,
+      hostname: url.hostname,
+      port: url.port || undefined,
+      path: `${url.pathname}${url.search}`,
+      method,
+      headers: requestHeaders,
+      lookup: createPinnedLookup(attempts[attemptIndex]!),
+      // Let Node/Bun race the complete validated address set instead of binding
+      // availability to whichever A/AAAA record happened to be returned first.
+      // Bun ignores this, which is why the loop above also walks the addresses.
+      autoSelectFamily: true,
+      ...(url.protocol === "https:" ? { servername: url.hostname } : {}),
     };
-    const request = transport.request(requestOptions, async (message) => {
-      responseMessage = message;
-      try {
-        const responseHeaders = copyResponseHeaders(message);
-        const status = message.statusCode ?? 500;
-        if (method === "HEAD" || NULL_BODY_STATUSES.has(status)) {
-          message.once("end", cleanupAbortListener);
-          message.once("close", cleanupAbortListener);
-          message.once("error", cleanupAbortListener);
-          // Drain any protocol-invalid payload without exposing it through the
-          // Fetch response. Response rejects stream bodies for these statuses.
-          message.resume();
-          settled = true;
-          resolve(createPinnedFetchResponse(
-            status,
-            message.statusMessage ?? "",
-            responseHeaders,
-            null,
-            method,
-          ));
+
+    try {
+      return await new Promise<Response>((resolve, reject) => {
+        let settled = false;
+        let responseMessage: IncomingMessage | undefined;
+        const cleanupAbortListener = () => init.signal?.removeEventListener("abort", abort);
+        const rejectBeforeResponse = (error: unknown) => {
+          cleanupAbortListener();
+          reject(error);
+        };
+        const request = transport.request(requestOptions, async (message) => {
+          responseMessage = message;
+          try {
+            const responseHeaders = copyResponseHeaders(message);
+            const status = message.statusCode ?? 500;
+            if (method === "HEAD" || NULL_BODY_STATUSES.has(status)) {
+              message.once("end", cleanupAbortListener);
+              message.once("close", cleanupAbortListener);
+              message.once("error", cleanupAbortListener);
+              // Drain any protocol-invalid payload without exposing it through the
+              // Fetch response. Response rejects stream bodies for these statuses.
+              message.resume();
+              settled = true;
+              resolve(createPinnedFetchResponse(
+                status,
+                message.statusMessage ?? "",
+                responseHeaders,
+                null,
+                method,
+              ));
+              return;
+            }
+            const decoded = await decodeResponseBody(message, responseHeaders);
+            decoded.once("end", cleanupAbortListener);
+            decoded.once("close", cleanupAbortListener);
+            decoded.once("error", cleanupAbortListener);
+            const { Readable } = await import("node:stream");
+            const webBody = Readable.toWeb(decoded) as globalThis.ReadableStream<Uint8Array>;
+            settled = true;
+            resolve(createPinnedFetchResponse(
+              status,
+              message.statusMessage ?? "",
+              responseHeaders,
+              webBody,
+              method,
+            ));
+          } catch (error) {
+            rejectBeforeResponse(error);
+          }
+        });
+
+        const abort = () => {
+          const reason = init.signal?.reason ??
+            new DOMException("The operation was aborted", "AbortError");
+          responseMessage?.destroy(isErrorAcrossRealms(reason) ? reason : undefined);
+          request.destroy(isErrorAcrossRealms(reason) ? reason : undefined);
+          if (!settled) rejectBeforeResponse(reason);
+        };
+        init.signal?.addEventListener("abort", abort, { once: true });
+        if (init.signal?.aborted) {
+          abort();
           return;
         }
-        const decoded = await decodeResponseBody(message, responseHeaders);
-        decoded.once("end", cleanupAbortListener);
-        decoded.once("close", cleanupAbortListener);
-        decoded.once("error", cleanupAbortListener);
-        const { Readable } = await import("node:stream");
-        const webBody = Readable.toWeb(decoded) as globalThis.ReadableStream<Uint8Array>;
-        settled = true;
-        resolve(createPinnedFetchResponse(
-          status,
-          message.statusMessage ?? "",
-          responseHeaders,
-          webBody,
-          method,
-        ));
-      } catch (error) {
-        rejectBeforeResponse(error);
+        request.once("error", rejectBeforeResponse);
+        void writeRequestBody(request, body).catch((error) => request.destroy(error));
+      });
+    } catch (error) {
+      lastConnectError = error;
+      const hasAnotherAddress = attemptIndex < attempts.length - 1;
+      if (
+        !hasAnotherAddress || !bodyIsReplayable || init.signal?.aborted ||
+        !isRetriableConnectFailure(error)
+      ) {
+        throw error;
       }
-    });
-
-    const abort = () => {
-      const reason = init.signal?.reason ??
-        new DOMException("The operation was aborted", "AbortError");
-      responseMessage?.destroy(isErrorAcrossRealms(reason) ? reason : undefined);
-      request.destroy(isErrorAcrossRealms(reason) ? reason : undefined);
-      if (!settled) rejectBeforeResponse(reason);
-    };
-    init.signal?.addEventListener("abort", abort, { once: true });
-    if (init.signal?.aborted) {
-      abort();
-      return;
     }
-    request.once("error", rejectBeforeResponse);
-    void writeRequestBody(request, body).catch((error) => request.destroy(error));
-  });
+  }
+
+  throw lastConnectError;
 }
