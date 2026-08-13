@@ -105,7 +105,7 @@ function scheduleStaleInProgressTransformEviction(
   const timer = setTimeout(() => {
     if (!deleteInProgressTransformIfCurrent(key, transformPromise)) return;
     logger.warn("Evicted stalled in-progress transform", {
-      file: filePath.slice(-40),
+      file: logPath(filePath),
       timeoutMs: TRANSFORM_IN_PROGRESS_STALE_EVICTION_MS,
     });
   }, TRANSFORM_IN_PROGRESS_STALE_EVICTION_MS);
@@ -173,6 +173,21 @@ async function waitForInProgressTransform(
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
+}
+
+/**
+ * Shorten a path for a log line without letting it read as a real one.
+ *
+ * The bare `slice(-40)` this replaces emitted entries like
+ * `veryfront/esm/src/react/context/index.js` and
+ * `/veryfront/esm/src/react/router/index.js`: two different files whose tails
+ * differ only by a leading slash. Reading those side by side, one failure of
+ * two distinct modules looks like two modules colliding on one cache key,
+ * which is a materially different bug. The marker keeps the entry short while
+ * making the truncation visible.
+ */
+function logPath(filePath: string): string {
+  return filePath.length <= 40 ? filePath : `…${filePath.slice(-40)}`;
 }
 
 /**
@@ -266,7 +281,7 @@ export class SSRModuleLoader {
         await this.invalidateMdxEsmCacheEntry(filePath, cacheEntry);
       } catch (invalidationError) {
         logger.warn("Failed to invalidate unreadable MDX cache entry", {
-          file: filePath.slice(-40),
+          file: logPath(filePath),
           error: invalidationError,
         });
       }
@@ -274,7 +289,7 @@ export class SSRModuleLoader {
         this.cache.invalidateFilePathCacheEntry(filePath, cacheEntry);
       } catch (invalidationError) {
         logger.warn("Failed to invalidate unreadable file-path cache entry", {
-          file: filePath.slice(-40),
+          file: logPath(filePath),
           error: invalidationError,
         });
       }
@@ -282,7 +297,7 @@ export class SSRModuleLoader {
     }
     if (!fileExists) {
       logger.debug("Cache file missing before import, invalidating", {
-        file: filePath.slice(-40),
+        file: logPath(filePath),
         tempPath: cacheEntry.tempPath,
         contentHash: cacheEntry.contentHash,
       });
@@ -311,7 +326,7 @@ export class SSRModuleLoader {
         const cacheDir = getHttpBundleCacheDir();
 
         logger.error("Missing HTTP bundle after ensureHttpBundlesExist", {
-          file: filePath.slice(-40),
+          file: logPath(filePath),
           hash,
           tempPath: cacheEntry.tempPath,
           contentHash: cacheEntry.contentHash,
@@ -327,7 +342,7 @@ export class SSRModuleLoader {
         if (recovered) {
           logger.info("HTTP bundle recovered, retrying import", {
             hash,
-            file: filePath.slice(-40),
+            file: logPath(filePath),
           });
           return (await import(
             `file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}&retry=1`
@@ -338,9 +353,11 @@ export class SSRModuleLoader {
 
         logger.error("HTTP bundle recovery failed, cache invalidated", {
           hash,
-          file: filePath.slice(-40),
+          file: logPath(filePath),
           cacheDir,
-          hint: "Bundle may have expired from Redis (24h TTL) while transform was still cached",
+          hint: isSSRDistributedCacheEnabled()
+            ? "The bundle may have expired from the distributed cache (24h TTL) while the transform stayed cached locally"
+            : "The transform is cached but its bundle is absent from the local cache directory; the entry has been invalidated so the next request rebuilds it",
         });
         throw importError;
       }
@@ -359,7 +376,7 @@ export class SSRModuleLoader {
                 `-recovered-${cacheEntry.contentHash}.mjs`;
               await this.cache.getFs().writeTextFile(retryTempPath, cachedCode);
               logger.info("Recovered vfmod dependencies for cached SSR module, retrying import", {
-                file: filePath.slice(-40),
+                file: logPath(filePath),
                 recovered: recovered.recovered.slice(0, 5),
                 retryTempPath,
               });
@@ -369,7 +386,7 @@ export class SSRModuleLoader {
             }
           } catch (recoveryError) {
             logger.debug("Failed to recover vfmod dependencies for cached SSR module", {
-              file: filePath.slice(-40),
+              file: logPath(filePath),
               error: recoveryError instanceof Error ? recoveryError.message : String(recoveryError),
             });
           }
@@ -378,7 +395,7 @@ export class SSRModuleLoader {
         logger.error(
           "[SSR-MODULE-LOADER] Cached module has missing dependency, invalidating cache",
           {
-            file: filePath.slice(-40),
+            file: logPath(filePath),
             tempPath: cacheEntry.tempPath,
             error: classifiedError.message.slice(0, 200),
           },
@@ -462,7 +479,7 @@ export class SSRModuleLoader {
             if (!retryErrorMessage) throw importError;
 
             logger.warn("Retrying SSR module import after stale cache invalidation", {
-              file: filePath.slice(-40),
+              file: logPath(filePath),
               tempPath: cacheEntry.tempPath,
               error: retryErrorMessage.slice(0, 200),
             });
@@ -539,7 +556,7 @@ export class SSRModuleLoader {
   ): Promise<ModuleCacheEntry> {
     if (depth > MAX_TRANSFORM_DEPTH) {
       logger.warn("Max transform depth exceeded", {
-        file: filePath.slice(-40),
+        file: logPath(filePath),
         depth,
         maxDepth: MAX_TRANSFORM_DEPTH,
       });
@@ -613,7 +630,7 @@ export class SSRModuleLoader {
             globalModuleCache.set(contentCacheKey, entry);
             globalModuleCache.set(filePathCacheKey, entry);
 
-            logger.debug("Redis cache hit", { file: filePath.slice(-40) });
+            logger.debug("Redis cache hit", { file: logPath(filePath) });
 
             await this.depValidator.ensureDependenciesExist(code, filePath, depth);
             return entry;
@@ -648,7 +665,7 @@ export class SSRModuleLoader {
         globalModuleCache.set(filePathCacheKey, entry);
 
         logger.debug("Reusing MDX-ESM cache", {
-          file: filePath.slice(-40),
+          file: logPath(filePath),
           cachedPath: mdxCacheResult.path.slice(-60),
         });
 
@@ -658,7 +675,7 @@ export class SSRModuleLoader {
 
       if (mdxCacheResult.status === "corrupted") {
         logger.warn("MDX-ESM cache corrupted, re-transforming", {
-          file: filePath.slice(-40),
+          file: logPath(filePath),
           reason: mdxCacheResult.reason,
         });
       }
@@ -678,7 +695,7 @@ export class SSRModuleLoader {
       } catch (error) {
         if (error instanceof InProgressTransformWaitTimeoutError) {
           logger.warn("In-progress transform wait timed out", {
-            file: filePath.slice(-40),
+            file: logPath(filePath),
             error: error.message,
           });
           // Detach this caller without deleting the shared leader. The leader
@@ -695,13 +712,13 @@ export class SSRModuleLoader {
         rejectedInProgressLeaders += 1;
         if (!shouldRetryRejectedInProgressTransform(rejectedInProgressLeaders)) {
           logger.warn("In-progress transform failed after retry, propagating", {
-            file: filePath.slice(-40),
+            file: logPath(filePath),
             error: error instanceof Error ? error.message : String(error),
           });
           throw error;
         }
         logger.warn("In-progress transform failed, retrying", {
-          file: filePath.slice(-40),
+          file: logPath(filePath),
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -755,7 +772,7 @@ export class SSRModuleLoader {
 
         if (preflightMissing.length > 0) {
           logger.warn("Pre-flight: some dependencies missing, skipping them", {
-            file: filePath.slice(-40),
+            file: logPath(filePath),
             missing: preflightMissing.map((m) => m.specifier),
             depth,
           });
@@ -859,7 +876,7 @@ export class SSRModuleLoader {
           const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
           if (failed.length > 0) {
             logger.error("Unrecoverable HTTP bundles", {
-              file: filePath.slice(-40),
+              file: logPath(filePath),
               failed,
               totalBundles: bundlePaths.length,
               cacheDir,
@@ -924,7 +941,7 @@ export class SSRModuleLoader {
         });
         if (!published) {
           logger.debug("Skipped cache publication from stale transform leader", {
-            file: filePath.slice(-40),
+            file: logPath(filePath),
           });
         }
         // A revoked leader must not update shared caches, but its immutable

@@ -59,7 +59,13 @@ export class RouteDiscovery {
     });
 
     if (routeDirs.length === 0) {
-      logger.warn("No route directories found; skipping discovery");
+      const searched = this.routeDirectoryCandidates();
+      logger.warn(
+        `No route directories found; skipping discovery. Looked for ${
+          searched.map((candidate) => `${candidate.dir}/`).join(" and ")
+        } in ${this.projectDir}. A project serves pages once one of those exists — ` +
+          `for example ${searched[0]!.dir}/page.tsx.`,
+      );
       return;
     }
 
@@ -79,16 +85,26 @@ export class RouteDiscovery {
     });
   }
 
+  /**
+   * The directories discovery will look in, in order. Shared with the
+   * "nothing found" warning so the advice cannot drift from the search.
+   */
+  private routeDirectoryCandidates(): Array<{ type: "app" | "pages"; dir: string }> {
+    const preferredRouter = this.config?.router;
+    const appDir = this.config?.directories?.app ?? "app";
+    const pagesDir = this.config?.directories?.pages ?? "pages";
+    if (preferredRouter === "app") return [{ type: "app", dir: appDir }];
+    if (preferredRouter === "pages") return [{ type: "pages", dir: pagesDir }];
+    return [{ type: "app", dir: appDir }, { type: "pages", dir: pagesDir }];
+  }
+
   private async resolveRouteDirectories(): Promise<RouteDirectory[]> {
     const preferredRouter = this.config?.router;
     const appDir = this.config?.directories?.app ?? "app";
     const pagesDir = this.config?.directories?.pages ?? "pages";
     const results: RouteDirectory[] = [];
 
-    const candidates: Array<{ type: "app" | "pages"; dir: string }> = [];
-    if (preferredRouter === "app") candidates.push({ type: "app", dir: appDir });
-    else if (preferredRouter === "pages") candidates.push({ type: "pages", dir: pagesDir });
-    else candidates.push({ type: "app", dir: appDir }, { type: "pages", dir: pagesDir });
+    const candidates = this.routeDirectoryCandidates();
 
     const veryfrontDir = this.useRelativePaths ? ".veryfront" : join(this.projectDir, ".veryfront");
     if (await this.directoryExists(veryfrontDir)) {
