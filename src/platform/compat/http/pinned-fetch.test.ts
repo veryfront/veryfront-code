@@ -285,11 +285,10 @@ describe("pinned connect attempts", () => {
     assertEquals(planPinnedConnectAttempts(["203.0.113.7"]), [["203.0.113.7"]]);
   });
 
-  it("offers the whole set first, then one address at a time", () => {
-    // The runtime gets its chance to race the set; the per-address attempts are
-    // the fallback for runtimes that ignore autoSelectFamily, such as Bun.
+  it("dials one address per attempt", () => {
+    // Every attempt dials one address; the runtime is never asked to choose.
     const plan = planPinnedConnectAttempts(["2606:4700::1", "104.26.14.209"]);
-    assertEquals(plan[0], ["2606:4700::1", "104.26.14.209"]);
+    assertEquals(plan[0], ["2606:4700::1"]);
     assertEquals(plan.length, 2);
     assertEquals(plan[1], ["104.26.14.209"]);
   });

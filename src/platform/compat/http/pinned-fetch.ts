@@ -88,35 +88,6 @@ function addressFamily(address: string): 4 | 6 {
   return address.includes(":") ? 6 : 4;
 }
 
-function createPinnedLookup(addresses: readonly string[]): RequestOptions["lookup"] {
-  let nextIndex = 0;
-  return ((_hostname: string, options: unknown, callback: (...args: unknown[]) => void) => {
-    const requestedFamily = typeof options === "number"
-      ? options
-      : typeof options === "object" && options !== null && "family" in options
-      ? Number((options as { family?: unknown }).family ?? 0)
-      : 0;
-    const candidates = addresses.filter((address) =>
-      requestedFamily === 0 || addressFamily(address) === requestedFamily
-    );
-    if (candidates.length === 0) {
-      callback(new Error("No validated address matches the requested address family"));
-      return;
-    }
-    const wantsAll = typeof options === "object" && options !== null &&
-      (options as { all?: unknown }).all === true;
-    if (wantsAll) {
-      callback(
-        null,
-        candidates.map((address) => ({ address, family: addressFamily(address) })),
-      );
-      return;
-    }
-    const address = candidates[nextIndex++ % candidates.length]!;
-    callback(null, address, addressFamily(address));
-  }) as RequestOptions["lookup"];
-}
-
 /** Connect-level failures that mean "this address is unusable", not "this request is bad". */
 const RETRIABLE_CONNECT_CODES = new Set([
   "ECONNREFUSED",
@@ -129,13 +100,11 @@ const RETRIABLE_CONNECT_CODES = new Set([
 /**
  * Order the validated addresses into connection attempts.
  *
- * The first attempt offers the whole set, which is what `autoSelectFamily`
- * consumes on runtimes that implement it. Bun does not implement it, so a host
- * whose DNS carries an unreachable family (an AAAA record with no IPv6 route,
- * for instance) fails outright instead of falling through. The follow-up
- * attempts pin one address each so the walk happens here rather than depending
- * on the runtime, and a different family is tried before a sibling of the one
- * that just failed.
+ * Each attempt dials exactly one validated address, so the walk happens here
+ * rather than depending on the runtime: Node honours `autoSelectFamily` and a
+ * custom `lookup`, Bun honours neither. A different family is tried before a
+ * sibling of the one that just failed, because a host with no IPv6 route fails
+ * on every AAAA record its DNS carries.
  *
  * Every address is already validated by the egress policy, so trying them in
  * turn narrows nothing: the set is identical, only the order of use changes.
@@ -143,7 +112,7 @@ const RETRIABLE_CONNECT_CODES = new Set([
 export function planPinnedConnectAttempts(
   addresses: readonly string[],
 ): readonly (readonly string[])[] {
-  if (addresses.length <= 1) return [addresses];
+  if (addresses.length <= 1) return addresses.map((address) => [address]);
   const first = addresses[0]!;
   const otherFamily = addresses.filter((address) =>
     addressFamily(address) !== addressFamily(first)
@@ -151,7 +120,7 @@ export function planPinnedConnectAttempts(
   const sameFamily = addresses.slice(1).filter((address) =>
     addressFamily(address) === addressFamily(first)
   );
-  return [addresses, ...[...otherFamily, ...sameFamily].map((address) => [address])];
+  return [[first], ...[...otherFamily, ...sameFamily].map((address) => [address])];
 }
 
 /** True when the request may be issued again against a different address. */
@@ -287,16 +256,18 @@ export async function fetchWithPinnedAddresses(
   for (let attemptIndex = 0; attemptIndex < attempts.length; attemptIndex++) {
     const requestOptions: RequestOptions & { autoSelectFamily?: boolean } = {
       protocol: url.protocol,
-      hostname: url.hostname,
-      port: url.port || undefined,
+      // Connect straight to the validated address. Overriding DNS through a
+      // custom `lookup` is the documented way to pin and Node honours it, but
+      // Bun's node:https ignores the address it returns and fails with
+      // ECONNREFUSED even for a reachable one, so the pin was inert there.
+      // Dialling the address directly needs no runtime cooperation; identity
+      // travels in the Host header and the TLS SNI name instead.
+      hostname: attempts[attemptIndex]![0]!,
+      port: url.port || (url.protocol === "https:" ? 443 : 80),
       path: `${url.pathname}${url.search}`,
       method,
-      headers: requestHeaders,
-      lookup: createPinnedLookup(attempts[attemptIndex]!),
-      // Let Node/Bun race the complete validated address set instead of binding
-      // availability to whichever A/AAAA record happened to be returned first.
-      // Bun ignores this, which is why the loop above also walks the addresses.
-      autoSelectFamily: true,
+      headers: { ...requestHeaders, host: url.host },
+
       ...(url.protocol === "https:" ? { servername: url.hostname } : {}),
     };
 
