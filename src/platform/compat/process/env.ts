@@ -1,6 +1,10 @@
 import { getDenoRuntime, isDeno as IS_DENO } from "../runtime.ts";
 import { hostProcessEnv, runtimeProcess } from "./runtime-process.ts";
-import { installProjectScopedProcessEnv } from "./scoped-process-env.ts";
+import {
+  installProjectScopedProcessEnv,
+  projectScopedEnvRecord,
+  readProjectScopedEnv,
+} from "./scoped-process-env.ts";
 import type { ProjectEnvSnapshot } from "./project-env-contract.ts";
 
 type EnvOverlayValue = string | null;
@@ -35,8 +39,10 @@ export function env(): Record<string, string> {
   const projectEnv = getTrustedProjectEnvSnapshot();
   // Same rule as getEnv(): while a project scope is active its snapshot is the
   // whole environment, so the bulk accessor cannot report a wider set of
-  // variables than the single-key one.
-  if (projectEnv !== undefined) return { ...projectEnv };
+  // variables than the single-key one. Built from the scoped view rather than
+  // the raw snapshot, so a write the raw object has already accepted is not
+  // missing here.
+  if (projectEnv !== undefined) return projectScopedEnvRecord(projectEnv);
 
   const deno = IS_DENO ? getDenoRuntime() : undefined;
   const base = deno
@@ -124,8 +130,9 @@ export function getEnv(key: string): string | undefined {
     // The registered snapshot is authoritative even when the requested key is
     // absent. Falling through here would expose host process configuration to
     // a remote project. Never discover this boundary through replaceable
-    // globalThis hooks.
-    return projectEnv[key];
+    // globalThis hooks. Reads go through the scoped view so this accessor and
+    // the raw object resolve a key by the same rule, writes included.
+    return readProjectScopedEnv(projectEnv, key);
   }
 
   return getHostEnv(key);
