@@ -2,7 +2,10 @@ import {
   NodeCompatibleFileSystemAdapter,
   type NodeFileSystemCapabilityOptions,
 } from "../shared/node-filesystem-adapter.ts";
-import { markNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
+import {
+  isDirectConstruction,
+  markNativeFileSystemAdapter,
+} from "../../native-file-system-provenance.ts";
 import type { BunNamespace } from "./types.ts";
 import { getBunRuntime } from "./types.ts";
 import { NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
@@ -21,7 +24,7 @@ export class BunFileSystemAdapter extends NodeCompatibleFileSystemAdapter {
     options: NodeFileSystemCapabilityOptions = {},
   ) {
     super(serverLogger, options);
-    if (this.constructor === BunFileSystemAdapter) {
+    if (isDirectConstruction(this, BunFileSystemAdapter)) {
       markNativeFileSystemAdapter(this);
     }
   }

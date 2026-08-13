@@ -987,6 +987,26 @@ describe("NodeCompatibleFileSystemAdapter", () => {
     assertEquals(isNativeFileSystemAdapter(new DerivedAdapter()), false);
   });
 
+  it("refuses a subclass that hides its own prototype.constructor", () => {
+    class ConstructorDeletingAdapter extends NodeCompatibleFileSystemAdapter {}
+    Reflect.deleteProperty(ConstructorDeletingAdapter.prototype, "constructor");
+
+    class ConstructorSpoofingAdapter extends NodeCompatibleFileSystemAdapter {}
+    Object.defineProperty(ConstructorSpoofingAdapter.prototype, "constructor", {
+      configurable: true,
+      value: NodeCompatibleFileSystemAdapter,
+    });
+
+    assertEquals(
+      isNativeFileSystemAdapter(new ConstructorDeletingAdapter()),
+      false,
+    );
+    assertEquals(
+      isNativeFileSystemAdapter(new ConstructorSpoofingAdapter()),
+      false,
+    );
+  });
+
   it("does not disguise invalid paths as missing", async () => {
     const adapter = new NodeCompatibleFileSystemAdapter();
     await assertRejects(() => adapter.exists("\0"), TypeError);

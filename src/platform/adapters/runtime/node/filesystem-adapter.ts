@@ -2,14 +2,17 @@ import {
   NodeCompatibleFileSystemAdapter,
   type NodeFileSystemCapabilityOptions,
 } from "../shared/node-filesystem-adapter.ts";
-import { markNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
+import {
+  isDirectConstruction,
+  markNativeFileSystemAdapter,
+} from "../../native-file-system-provenance.ts";
 import { serverLogger } from "#veryfront/utils";
 
 /** Node.js filesystem adapter. */
 export class NodeFileSystemAdapter extends NodeCompatibleFileSystemAdapter {
   constructor(options: NodeFileSystemCapabilityOptions = {}) {
     super(serverLogger, options);
-    if (this.constructor === NodeFileSystemAdapter) {
+    if (isDirectConstruction(this, NodeFileSystemAdapter)) {
       markNativeFileSystemAdapter(this);
     }
   }

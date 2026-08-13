@@ -27,14 +27,22 @@
  *    module, the rewritten expression throws
  *    `TypeError: globalThis[Symbol.for(...)] is not a function` instead.
  *
- * The fix at every call site is `this.constructor`, which is not a
- * meta-property and survives the transform:
+ * The replacements are ordinary expressions, not meta-properties, so they
+ * survive the transform:
  *
- *   this.name = new.target.name        ->  this.name = this.constructor.name
- *   if (new.target === Base) throw ... ->  if (this.constructor === Base) throw ...
+ *   this.name = new.target.name
+ *     ->  this.name = this.constructor.name
  *
- * The two differ only for `Reflect.construct(Base, args, Other)`, which this
- * repo does not do, and only `new.target` can observe.
+ *   if (new.target === Base) ...
+ *     ->  if (Object.getPrototypeOf(this) === Base.prototype) ...
+ *
+ * Reading a name off `this.constructor` is enough; an identity test is not,
+ * because `constructor` is an ordinary inherited property a subclass can delete
+ * or overwrite, which would make the subclass answer as the base. Prototype
+ * identity is the unforgeable spelling — see `isDirectConstruction` in
+ * `src/platform/adapters/native-file-system-provenance.ts`. Both differ from
+ * `new.target` only under `Reflect.construct(Base, args, Other)`, which this
+ * repo does not do.
  *
  * @module
  */
@@ -112,7 +120,9 @@ export function findBuildUnsafeMetaProperties(
       uses.push({
         file,
         line: node.loc?.start.line ?? 0,
-        expression: `new.${isNode(node.property) ? node.property.name : "target"}`,
+        expression: `new.${
+          isNode(node.property) ? node.property.name : "target"
+        }`,
       });
     }
 
@@ -131,28 +141,68 @@ export function findBuildUnsafeMetaProperties(
   return uses.sort((a, b) => a.line - b.line);
 }
 
-/** Source roots copied into the npm package by the DNT build. */
-export const SHIPPED_SOURCE_ROOTS = ["src", "cli", "react"] as const;
+/** The parts of `deno.json` that decide what DNT compiles. */
+export interface ShippedSourceConfig {
+  /** The root package's export map — DNT's entry points are derived from it. */
+  exports?: Record<string, string>;
+  /** Workspace members; the `./extensions/*` ones get their own DNT build. */
+  workspace?: string[];
+}
+
+/**
+ * Source roots copied into a published npm package by a DNT build.
+ *
+ * Derived rather than listed so a new export or a new extension package cannot
+ * quietly fall outside the audit:
+ *
+ *  - `scripts/build/build-npm-dnt.ts` builds the root package with
+ *    `entryPoints` taken straight from `deno.json`'s export map, which today
+ *    reaches `src/`, `cli/` and `templates/` (`./scaffold`).
+ *  - `scripts/build/build-npm-extension-packages.ts` runs one further DNT build
+ *    per first-party `./extensions/*` workspace member.
+ *  - `react/` holds the shim modules the root build maps onto the bare
+ *    `react`/`react-dom` specifiers; they are part of that module graph.
+ */
+export function shippedSourceRoots(config: ShippedSourceConfig): string[] {
+  const roots = new Set<string>(["react"]);
+
+  for (const path of Object.values(config.exports ?? {})) {
+    const root = path.replace(/^\.\//, "").split("/")[0];
+    if (root) roots.add(root);
+  }
+
+  for (const member of config.workspace ?? []) {
+    if (member.startsWith("./extensions/")) {
+      roots.add(member.replace(/^\.\//, ""));
+    }
+  }
+
+  return [...roots].toSorted();
+}
 
 const SOURCE_EXTENSIONS = [".ts", ".tsx"];
 
 /** Every shipped source file under `root`, tests included. */
 export async function collectShippedSources(root: string): Promise<string[]> {
   const files: string[] = [];
-  let entries: AsyncIterable<Deno.DirEntry>;
   try {
-    entries = Deno.readDir(root);
-  } catch {
-    return files; // expected: a scan root may not exist in every checkout
-  }
-  for await (const entry of entries) {
-    const path = `${root}/${entry.name}`;
-    if (entry.isDirectory) {
-      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
-      files.push(...await collectShippedSources(path));
-    } else if (SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) {
-      files.push(path);
+    // `Deno.readDir` is lazy: a missing root rejects here, during iteration,
+    // not at the call. Only that case is expected — a scan root can be absent
+    // in a partial checkout — so every other failure has to keep propagating
+    // rather than silently shrink the audited set.
+    for await (const entry of Deno.readDir(root)) {
+      const path = `${root}/${entry.name}`;
+      if (entry.isDirectory) {
+        if (entry.name === "node_modules" || entry.name.startsWith(".")) {
+          continue;
+        }
+        files.push(...await collectShippedSources(path));
+      } else if (SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) {
+        files.push(path);
+      }
     }
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
   }
   return files;
 }
@@ -163,8 +213,11 @@ export async function auditRepoMetaProperties(
 ): Promise<{ uses: MetaPropertyUse[]; parseFailures: string[] }> {
   const uses: MetaPropertyUse[] = [];
   const parseFailures: string[] = [];
+  const config = JSON.parse(
+    await Deno.readTextFile(`${repoRoot}deno.json`),
+  ) as ShippedSourceConfig;
 
-  for (const root of SHIPPED_SOURCE_ROOTS) {
+  for (const root of shippedSourceRoots(config)) {
     for (const file of await collectShippedSources(`${repoRoot}${root}`)) {
       const relative = file.slice(repoRoot.length).replaceAll("\\", "/");
       const source = await Deno.readTextFile(file);
