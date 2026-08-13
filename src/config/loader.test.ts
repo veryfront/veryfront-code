@@ -722,7 +722,7 @@ export default config as const;
           const error = await assertRejects(
             () => getConfig(projectDir, adapter),
             VeryfrontError,
-          );
+          ) as VeryfrontError;
 
           assert(
             error.message.includes("veryfront.config.js"),
@@ -755,7 +755,7 @@ export default config as const;
           const error = await assertRejects(
             () => getConfig(projectDir, adapter),
             VeryfrontError,
-          );
+          ) as VeryfrontError;
 
           assert(
             error.message.includes("DATABASE_URL is required"),
@@ -785,7 +785,7 @@ export default config as const;
           const error = await assertRejects(
             () => getConfig(projectDir, adapter),
             VeryfrontError,
-          );
+          ) as VeryfrontError;
 
           assert(
             error.message.includes("first line"),
@@ -798,6 +798,49 @@ export default config as const;
           assert(
             error.message.length < 512,
             `error must stay bounded, got ${error.message.length} characters`,
+          );
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+
+      it("redacts a credential the bound would otherwise cut in half", async () => {
+        // Order matters, not just presence: the redactor recognizes userinfo by
+        // the trailing `@host`. Cutting the message to 200 characters first can
+        // drop that `@host` and leave the password prefix behind in a detail
+        // that a 400 response carries all the way to the caller, so redaction
+        // has to see the complete message. The padding is sized so the password
+        // straddles the 200-character bound: `https://svc:` ends at character
+        // 190 and the `@` sits at 209, so an unredacted cut keeps nine
+        // characters of the secret and loses the marker that identifies it.
+        const adapter = setup();
+        const projectDir = await Deno.makeTempDir({
+          prefix: "vf-config-cause-credential-",
+        });
+        const configPath = `${projectDir}/veryfront.config.js`;
+        const padding = "B".repeat(160);
+        const password = "sup3rsecretpassword";
+        const source =
+          `throw new Error("upstream refused ${padding} https://svc:${password}@registry.internal/pkg");\n`;
+
+        try {
+          await Deno.writeTextFile(configPath, source);
+          adapter.fs.files.set(configPath, source);
+
+          const error = await assertRejects(
+            () => getConfig(projectDir, adapter),
+            VeryfrontError,
+          ) as VeryfrontError;
+
+          assert(
+            !error.message.includes(password),
+            `error must not carry the password, got: ${error.message}`,
+          );
+          // A prefix of the secret is still the secret: pin the exact cut the
+          // 200-character bound produces when redaction runs too late.
+          assert(
+            !error.message.includes(password.slice(0, 9)),
+            `error must not carry a prefix of the password, got: ${error.message}`,
           );
         } finally {
           await Deno.remove(projectDir, { recursive: true });
