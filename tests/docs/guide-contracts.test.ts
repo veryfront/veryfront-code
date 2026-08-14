@@ -749,6 +749,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
     snippets: [
       "npm install veryfront",
+      '"extends": "veryfront/tsconfig.json"',
+      '"moduleResolution": "bundler"',
       '"jsx": "react-jsx"',
       '"skipLibCheck": true',
       "@types/mdx",

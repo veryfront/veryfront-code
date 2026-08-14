@@ -1011,7 +1011,7 @@ describe("Guide: add-to-existing-project.md", () => {
   it("documents the compiler options the scaffold actually sets", async () => {
     const guide = await readGuide("add-to-existing-project.md");
 
-    // The page tells an existing-project reader to add by hand what the
+    // The page tells an existing-project reader to set by hand what the
     // scaffolded template already carries. If the template ever drops one of
     // these, the guidance is wrong and this fails.
     const template = await getTemplate("ai-agent");
@@ -1023,6 +1023,32 @@ describe("Guide: add-to-existing-project.md", () => {
       assertStringIncludes(guide, option);
       assertStringIncludes(tsconfig.content, option);
     }
+  });
+
+  it("documents a package-exports-aware moduleResolution", async () => {
+    const guide = await readGuide("add-to-existing-project.md");
+
+    // Veryfront's entry points are subpath exports (`veryfront/agent`), which
+    // the older `node`/`classic` modes cannot resolve. The scaffold sets
+    // `bundler`; an adopting project must pick an equivalent mode or the
+    // linked next steps fail to typecheck.
+    assertStringIncludes(guide, '"moduleResolution": "bundler"');
+
+    const template = await getTemplate("ai-agent");
+    assertExists(template);
+    const tsconfig = template.find((file) => file.path === "tsconfig.json");
+    assertExists(tsconfig);
+    assertStringIncludes(tsconfig.content.toLowerCase(), '"moduleresolution": "bundler"');
+  });
+
+  it("points at the base config the package actually publishes", async () => {
+    const guide = await readGuide("add-to-existing-project.md");
+    assertStringIncludes(guide, '"extends": "veryfront/tsconfig.json"');
+
+    // The page's shortest path is extending the shipped config, so the npm
+    // build must keep publishing it under that exact export key.
+    const dnt = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
+    assertStringIncludes(dnt, './tsconfig.json"] = "./tsconfig.json"');
   });
 
   it("documents the install command and the entry route the server needs", async () => {

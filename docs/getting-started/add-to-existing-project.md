@@ -29,37 +29,58 @@ variants.
 
 ## Configure TypeScript
 
-Veryfront routes are `.tsx` files, so the compiler needs the React JSX
-transform. Add both options to your `compilerOptions`:
+The package ships a base config with everything Veryfront needs. Extending it is
+the shortest correct route:
+
+```json
+{
+  "extends": "veryfront/tsconfig.json",
+  "include": ["src", "app"]
+}
+```
+
+Make sure `include` covers wherever you keep your own source as well as your
+routes.
+
+### Setting the options yourself
+
+If your project cannot extend that config, three settings matter:
 
 ```json
 {
   "compilerOptions": {
+    "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "skipLibCheck": true
   }
 }
 ```
 
-`skipLibCheck` is required, not merely recommended. Veryfront's MDX support
+**`moduleResolution`** must understand package exports. Veryfront's entry points
+are subpaths such as `veryfront/agent`, which the older `node` and `classic`
+modes cannot resolve:
+
+```text
+app/a.ts(1,23): error TS2307: Cannot find module 'veryfront/agent' or its corresponding type declarations.
+  There are types at 'node_modules/veryfront/esm/src/agent/index.d.ts', but this result could not be
+  resolved under your current 'moduleResolution' setting. Consider updating to 'node16', 'nodenext', or 'bundler'.
+```
+
+`bundler`, `node16`, and `nodenext` all work.
+
+**`jsx`** is needed because Veryfront routes are `.tsx` files.
+
+**`skipLibCheck`** is required, not merely recommended. Veryfront's MDX support
 depends on `@types/mdx`, which refers to a global `JSX` namespace that React 19
-no longer declares globally. Without `skipLibCheck`, `tsc` fails on a
-dependency you do not import:
+no longer declares globally. Without it, `tsc` fails on a dependency you do not
+import:
 
 ```text
 node_modules/@types/mdx/types.d.ts(23,38): error TS2503: Cannot find namespace 'JSX'.
 ```
 
-Scaffolded projects set `skipLibCheck` already, which is why the error only
-appears when adding Veryfront to a project you already have.
-
-Make sure `include` covers wherever you put routes:
-
-```json
-{
-  "include": ["src", "app"]
-}
-```
+Scaffolded projects set all three already, which is why these only surface when
+adding Veryfront to a project you already have.
 
 ## Add an entry route
 
@@ -91,11 +112,14 @@ forward and prints the port it actually used, so open the URL the CLI prints.
 
 ## Verify it worked
 
-Open the URL the CLI printed. The page renders `Hello from Veryfront`. To check
-it without a browser, using that same port:
+Open the URL the CLI printed. The page renders `Hello from Veryfront`.
+
+To check it without a browser, use the port from that URL rather than assuming
+3000. If the port fell forward, 3000 still belongs to whatever took it, so
+curling it verifies the wrong server:
 
 ```bash
-curl -s http://localhost:3000/
+curl -s http://localhost:<PORT>/
 ```
 
 The response contains `Hello from Veryfront`.
