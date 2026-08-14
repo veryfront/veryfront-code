@@ -206,6 +206,20 @@ On Windows PowerShell, run:
 irm https://veryfront.com/install.ps1 | iex
 ```
 
+Both commands execute a script fetched at run time, and neither the script nor
+the binary it downloads is checksum-verified. To read the script before running
+it, and to pin a version instead of tracking latest:
+
+```bash
+curl -fsSL https://veryfront.com/install.sh -o install.sh
+less install.sh
+sh install.sh --version <VERSION>
+```
+
+To skip the installer entirely, download the binary for your platform from the
+[release assets](https://github.com/veryfront/veryfront/releases) and put it on
+your path.
+
 The installer downloads the binary for the current platform and adds it to your
 shell path. Embedded ONNX inference is not available from compiled standalone
 binaries. Use a package-manager installation when the app runs an embedded

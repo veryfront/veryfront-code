@@ -169,7 +169,7 @@ an embedded model automatically.
 Embedded ONNX inference uses CPU by default. To request WebGPU, use:
 
 ```bash
-VERYFRONT_LOCAL_AI_DEVICE=webgpu
+export VERYFRONT_LOCAL_AI_DEVICE=webgpu
 ```
 
 If WebGPU is requested but unavailable, Veryfront returns a setup error instead
@@ -178,7 +178,7 @@ of retrying on CPU.
 To enable Gemma4 thinking in the local prompt template, use:
 
 ```bash
-VERYFRONT_LOCAL_AI_THINKING=1
+export VERYFRONT_LOCAL_AI_THINKING=1
 ```
 
 Thinking is disabled by default.
@@ -186,7 +186,7 @@ Thinking is disabled by default.
 To disable embedded ONNX inference, use:
 
 ```bash
-VERYFRONT_DISABLE_LOCAL_AI=1
+export VERYFRONT_DISABLE_LOCAL_AI=1
 ```
 
 ## Model strings
