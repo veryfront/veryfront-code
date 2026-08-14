@@ -249,6 +249,20 @@ function isTextSseChunk(chunk: Uint8Array): boolean {
   }
 }
 
+function textDeltaFromSseChunk(chunk: Uint8Array): string | undefined {
+  const payload = new TextDecoder().decode(chunk);
+  if (!payload.startsWith("data: ")) {
+    return undefined;
+  }
+
+  try {
+    const event = JSON.parse(payload.slice("data: ".length)) as Record<string, unknown>;
+    return event.type === "text-delta" && typeof event.delta === "string" ? event.delta : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function stripLeadingText(
   text: string,
   remainingPrefixLength: number,
@@ -1914,51 +1928,16 @@ export class AgentRuntime {
         interruptedLocalToolBatchRecoveryText !== undefined;
       const deferredRecoveryOutput: DeferredRecoveryOutput[] | undefined =
         deferInterruptedRecoveryOutput ? [] : undefined;
-      const stepController = deferredRecoveryOutput === undefined ? controller : {
-        enqueue(chunk: Uint8Array) {
-          deferredRecoveryOutput.push({
-            kind: "sse",
-            chunk,
-            isTextEvent: isTextSseChunk(chunk),
-          });
-        },
-      } as ReadableStreamDefaultController;
-      const stepTextPartId = textPartId === undefined || step === 0
-        ? textPartId
-        : `${textPartId}:step:${step}`;
-      await processStream(streamSource, state, stepController, encoder, stepTextPartId, {
-        onChunk: deferredRecoveryOutput === undefined
-          ? callbacks?.onChunk
-          : (chunk) => deferredRecoveryOutput.push({ kind: "callback", chunk }),
-        onUsage: (usage) => accumulateUsage(totalUsage, usage),
-        providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
-        availableToolNames: runtimeToolNames,
-        streamLifecycleMode: resolveStreamLifecycleModeFromEnv(),
-        traceSpanName: `chat ${effectiveModel}`,
-        traceAttributes: {
-          ...(genAiProviderName ? { "gen_ai.provider.name": genAiProviderName } : {}),
-          "gen_ai.request.model": effectiveModel,
-          "gen_ai.response.model": effectiveModel,
-          "gen_ai.request.max_tokens": maxOutputTokens,
-          "gen_ai.output.type": "text",
-          ...(temperature === undefined ? {} : { "gen_ai.request.temperature": temperature }),
-        },
-      }, abortSignal);
-      throwIfAborted(abortSignal);
       const previousRecoveryText = interruptedLocalToolBatchRecoveryText ?? "";
-      const interruptedRecoveryPrefixLength = deferredRecoveryOutput === undefined
-        ? 0
-        : state.accumulatedText.startsWith(previousRecoveryText)
-        ? previousRecoveryText.length
-        : previousRecoveryText.startsWith(state.accumulatedText)
-        ? state.accumulatedText.length
-        : 0;
-      const recoveryPresentationText = state.accumulatedText.slice(
-        interruptedRecoveryPrefixLength,
-      );
-      const repeatsInterruptedRecoveryText = interruptedRecoveryPrefixLength > 0 &&
-        recoveryPresentationText.length === 0;
-      if (deferredRecoveryOutput !== undefined) {
+      let deferredRecoverySseText = "";
+      let deferredRecoveryCallbackText = "";
+      let releasedDeferredRecoveryOutput = false;
+      const flushDeferredRecoveryOutput = (
+        interruptedRecoveryPrefixLength: number,
+        repeatsInterruptedRecoveryText: boolean,
+      ): void => {
+        if (deferredRecoveryOutput === undefined) return;
+
         let remainingSsePrefixLength = interruptedRecoveryPrefixLength;
         let remainingCallbackPrefixLength = interruptedRecoveryPrefixLength;
         for (const output of deferredRecoveryOutput) {
@@ -1988,6 +1967,87 @@ export class AgentRuntime {
             }
           }
         }
+        deferredRecoveryOutput.length = 0;
+      };
+      const releaseDeferredRecoveryOutputAfterDivergence = (): void => {
+        if (deferredRecoveryOutput === undefined || releasedDeferredRecoveryOutput) return;
+
+        const sseDiverged = !previousRecoveryText.startsWith(deferredRecoverySseText);
+        const callbackDiverged = callbacks?.onChunk === undefined ||
+          !previousRecoveryText.startsWith(deferredRecoveryCallbackText);
+        if (!sseDiverged || !callbackDiverged) return;
+
+        const observedRecoveryText = callbacks?.onChunk === undefined
+          ? deferredRecoverySseText
+          : deferredRecoveryCallbackText;
+        flushDeferredRecoveryOutput(
+          observedRecoveryText.startsWith(previousRecoveryText) ? previousRecoveryText.length : 0,
+          false,
+        );
+        releasedDeferredRecoveryOutput = true;
+      };
+      const stepController = deferredRecoveryOutput === undefined ? controller : {
+        enqueue(chunk: Uint8Array) {
+          if (releasedDeferredRecoveryOutput) {
+            controller.enqueue(chunk);
+            return;
+          }
+          deferredRecoverySseText += textDeltaFromSseChunk(chunk) ?? "";
+          deferredRecoveryOutput.push({
+            kind: "sse",
+            chunk,
+            isTextEvent: isTextSseChunk(chunk),
+          });
+          releaseDeferredRecoveryOutputAfterDivergence();
+        },
+      } as ReadableStreamDefaultController;
+      const stepTextPartId = textPartId === undefined || step === 0
+        ? textPartId
+        : `${textPartId}:step:${step}`;
+      await processStream(streamSource, state, stepController, encoder, stepTextPartId, {
+        onChunk: deferredRecoveryOutput === undefined ? callbacks?.onChunk : (chunk) => {
+          if (releasedDeferredRecoveryOutput) {
+            callbacks?.onChunk?.(chunk);
+            return;
+          }
+          deferredRecoveryCallbackText += chunk;
+          if (callbacks?.onChunk !== undefined) {
+            deferredRecoveryOutput.push({ kind: "callback", chunk });
+          }
+          releaseDeferredRecoveryOutputAfterDivergence();
+        },
+        onUsage: (usage) => accumulateUsage(totalUsage, usage),
+        providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
+        availableToolNames: runtimeToolNames,
+        streamLifecycleMode: resolveStreamLifecycleModeFromEnv(),
+        traceSpanName: `chat ${effectiveModel}`,
+        traceAttributes: {
+          ...(genAiProviderName ? { "gen_ai.provider.name": genAiProviderName } : {}),
+          "gen_ai.request.model": effectiveModel,
+          "gen_ai.response.model": effectiveModel,
+          "gen_ai.request.max_tokens": maxOutputTokens,
+          "gen_ai.output.type": "text",
+          ...(temperature === undefined ? {} : { "gen_ai.request.temperature": temperature }),
+        },
+      }, abortSignal);
+      throwIfAborted(abortSignal);
+      const interruptedRecoveryPrefixLength = deferredRecoveryOutput === undefined
+        ? 0
+        : state.accumulatedText.startsWith(previousRecoveryText)
+        ? previousRecoveryText.length
+        : previousRecoveryText.startsWith(state.accumulatedText)
+        ? state.accumulatedText.length
+        : 0;
+      const recoveryPresentationText = state.accumulatedText.slice(
+        interruptedRecoveryPrefixLength,
+      );
+      const repeatsInterruptedRecoveryText = interruptedRecoveryPrefixLength > 0 &&
+        recoveryPresentationText.length === 0;
+      if (deferredRecoveryOutput !== undefined && !releasedDeferredRecoveryOutput) {
+        flushDeferredRecoveryOutput(
+          interruptedRecoveryPrefixLength,
+          repeatsInterruptedRecoveryText,
+        );
       }
       finalFinishReason = state.finishReason ?? finalFinishReason;
 

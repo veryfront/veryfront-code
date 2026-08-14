@@ -2123,6 +2123,14 @@ describe("agent runtime refresh hooks", () => {
     let finishedResponse: AgentResponse | undefined;
     let callCount = 0;
     const chunks: string[] = [];
+    let releaseRecoveryContinuation!: () => void;
+    const recoveryContinuation = new Promise<void>((resolve) => {
+      releaseRecoveryContinuation = resolve;
+    });
+    let observeFirstRecoveryChunk!: () => void;
+    const firstRecoveryChunk = new Promise<void>((resolve) => {
+      observeFirstRecoveryChunk = resolve;
+    });
     const studioSuggestions = tool({
       id: "studio_suggestions",
       description: "Capture Studio suggestions",
@@ -2142,11 +2150,21 @@ describe("agent runtime refresh hooks", () => {
       async doStream() {
         callCount++;
         if (callCount === 2) {
+          let firstChunkSent = false;
           return {
-            stream: createRuntimeStream([
-              { type: "text-delta", text: "Recovered final answer." },
-              { type: "finish", finishReason: "stop" },
-            ]),
+            stream: new ReadableStream({
+              async pull(controller) {
+                if (!firstChunkSent) {
+                  firstChunkSent = true;
+                  controller.enqueue({ type: "text-delta", text: "Recovered " });
+                  return;
+                }
+                await recoveryContinuation;
+                controller.enqueue({ type: "text-delta", text: "final answer." });
+                controller.enqueue({ type: "finish", finishReason: "stop" });
+                controller.close();
+              },
+            }),
           };
         }
 
@@ -2175,17 +2193,32 @@ describe("agent runtime refresh hooks", () => {
 
     const response = (await assistant.stream({
       input: "Create an Outlook assistant",
-      onChunk: (chunk) => chunks.push(chunk),
+      onChunk: (chunk) => {
+        chunks.push(chunk);
+        if (chunk === "Recovered ") observeFirstRecoveryChunk();
+      },
       onFinish: (result) => {
         finishedResponse = result;
       },
     })).toDataStreamResponse();
-    const body = await response.text();
+    const bodyPromise = response.text();
+    let streamingDeadline: number | undefined;
+    const streamedBeforeCompletion = await Promise.race([
+      firstRecoveryChunk.then(() => true),
+      new Promise<false>((resolve) => {
+        streamingDeadline = setTimeout(() => resolve(false), 50);
+      }),
+    ]);
+    if (streamingDeadline !== undefined) clearTimeout(streamingDeadline);
+    releaseRecoveryContinuation();
+    const body = await bodyPromise;
 
     assertEquals(callCount, 2);
+    assertEquals(streamedBeforeCompletion, true);
     assertEquals(body.match(/Initial partial answer\./g)?.length ?? 0, 1);
-    assertEquals(body.match(/Recovered final answer\./g)?.length ?? 0, 1);
-    assertEquals(chunks, ["Initial partial answer.", "Recovered final answer."]);
+    assertEquals(body.match(/Recovered /g)?.length ?? 0, 1);
+    assertEquals(body.match(/final answer\./g)?.length ?? 0, 1);
+    assertEquals(chunks, ["Initial partial answer.", "Recovered ", "final answer."]);
     const completedResponse = finishedResponse as AgentResponse | undefined;
     assertExists(completedResponse);
     assertEquals(completedResponse.text, "Recovered final answer.");
@@ -2202,6 +2235,14 @@ describe("agent runtime refresh hooks", () => {
     let finishedResponse: AgentResponse | undefined;
     let callCount = 0;
     const chunks: string[] = [];
+    let releaseRecoveryContinuation!: () => void;
+    const recoveryContinuation = new Promise<void>((resolve) => {
+      releaseRecoveryContinuation = resolve;
+    });
+    let observeRecoverySuffix!: () => void;
+    const recoverySuffix = new Promise<void>((resolve) => {
+      observeRecoverySuffix = resolve;
+    });
     const studioSuggestions = tool({
       id: "studio_suggestions",
       description: "Capture Studio suggestions",
@@ -2221,12 +2262,24 @@ describe("agent runtime refresh hooks", () => {
       async doStream() {
         callCount++;
         if (callCount === 2) {
+          let firstChunkSent = false;
           return {
-            stream: createRuntimeStream([
-              { type: "text-delta", text: "Created the " },
-              { type: "text-delta", text: "assistant. It is ready." },
-              { type: "finish", finishReason: "stop" },
-            ]),
+            stream: new ReadableStream({
+              async pull(controller) {
+                if (!firstChunkSent) {
+                  firstChunkSent = true;
+                  controller.enqueue({
+                    type: "text-delta",
+                    text: "Created the assistant. It is ",
+                  });
+                  return;
+                }
+                await recoveryContinuation;
+                controller.enqueue({ type: "text-delta", text: "ready." });
+                controller.enqueue({ type: "finish", finishReason: "stop" });
+                controller.close();
+              },
+            }),
           };
         }
 
@@ -2253,18 +2306,34 @@ describe("agent runtime refresh hooks", () => {
       tools: { studio_suggestions: studioSuggestions },
     });
 
-    const body = await (await assistant.stream({
+    const response = (await assistant.stream({
       input: "Create an assistant",
-      onChunk: (chunk) => chunks.push(chunk),
+      onChunk: (chunk) => {
+        chunks.push(chunk);
+        if (chunk === " It is ") observeRecoverySuffix();
+      },
       onFinish: (result) => {
         finishedResponse = result;
       },
-    })).toDataStreamResponse().text();
+    })).toDataStreamResponse();
+    const bodyPromise = response.text();
+    let streamingDeadline: number | undefined;
+    const streamedBeforeCompletion = await Promise.race([
+      recoverySuffix.then(() => true),
+      new Promise<false>((resolve) => {
+        streamingDeadline = setTimeout(() => resolve(false), 50);
+      }),
+    ]);
+    if (streamingDeadline !== undefined) clearTimeout(streamingDeadline);
+    releaseRecoveryContinuation();
+    const body = await bodyPromise;
 
     assertEquals(callCount, 2);
+    assertEquals(streamedBeforeCompletion, true);
     assertEquals(body.match(/Created the assistant\./g)?.length ?? 0, 1);
-    assertEquals(body.match(/ It is ready\./g)?.length ?? 0, 1);
-    assertEquals(chunks, ["Created the assistant.", " It is ready."]);
+    assertEquals(body.match(/ It is /g)?.length ?? 0, 1);
+    assertEquals(body.match(/ready\./g)?.length ?? 0, 1);
+    assertEquals(chunks, ["Created the assistant.", " It is ", "ready."]);
     const completedResponse = finishedResponse as AgentResponse | undefined;
     assertExists(completedResponse);
     assertEquals(completedResponse.text, "Created the assistant. It is ready.");
