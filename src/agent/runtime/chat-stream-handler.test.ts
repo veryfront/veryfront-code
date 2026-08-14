@@ -1930,7 +1930,11 @@ describe("processStream active mode", () => {
     );
   });
 
-  async function runMode(mode: "legacy" | "active", parts: Record<string, unknown>[]) {
+  async function runMode(
+    mode: "legacy" | "active",
+    parts: Record<string, unknown>[],
+    suppressTextOutput = false,
+  ) {
     const { events, controller, encoder } = createSSECollector();
     const state = createStreamState();
     const chunks: string[] = [];
@@ -1944,6 +1948,7 @@ describe("processStream active mode", () => {
       "text-1",
       {
         streamLifecycleMode: mode,
+        suppressTextOutput,
         onChunk: (chunk) => chunks.push(chunk),
         onUsage: (next) => usage = next,
         providerExecutedToolNames: ["web_search"],
@@ -2013,6 +2018,22 @@ describe("processStream active mode", () => {
       { type: "finish", finishReason: "stop", totalUsage: null },
     ]);
     assertEquals(active.state.streamOutcome?.status, "completed");
+  });
+
+  it("suppresses recovery text output in legacy and active modes", async () => {
+    const parts = [
+      { type: "text-delta", text: "Already delivered." },
+      { type: "finish", finishReason: "stop", totalUsage: null },
+    ];
+    const legacy = await runMode("legacy", parts, true);
+    const active = await runMode("active", parts, true);
+
+    assertEquals(legacy.events, []);
+    assertEquals(active.events, []);
+    assertEquals(legacy.chunks, []);
+    assertEquals(active.chunks, []);
+    assertEquals(legacy.state.accumulatedText, "Already delivered.");
+    assertEquals(active.state.accumulatedText, "Already delivered.");
   });
 
   it("matches legacy SSE and state for reasoning segments", async () => {

@@ -1944,12 +1944,19 @@ describe("agent runtime refresh hooks", () => {
 
     assertEquals(callCount, 2);
     assertEquals(toolResults, []);
-    assertEquals(body.includes("Created the Outlook assistant."), true);
+    assertEquals(body.match(/Created the Outlook assistant\./g)?.length ?? 0, 1);
     assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 0);
     assertEquals(body.includes("Unexpected second recovery."), false);
     const completedResponse = finishedResponse as AgentResponse | undefined;
     assertExists(completedResponse);
     assertEquals(completedResponse.text, "Created the Outlook assistant.");
+    assertEquals(
+      completedResponse.messages
+        .filter((message) => message.role === "assistant")
+        .flatMap((message) => message.parts)
+        .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : []),
+      ["Created the Outlook assistant."],
+    );
     const placeholderPart = completedResponse.messages
       .flatMap((message) => message.parts)
       .find((part) => "toolCallId" in part && part.toolCallId === "toolu_placeholder_after_text");

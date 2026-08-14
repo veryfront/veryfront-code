@@ -1748,6 +1748,7 @@ export class AgentRuntime {
     // batch without allowing a repeatedly broken provider stream to loop.
     let recoveredInterruptedLocalToolBatch = false;
     let interruptedLocalToolBatchRecoveryStep: number | undefined;
+    let interruptedLocalToolBatchRecoveryHasDeliveredText = false;
 
     for (let step = 0; step < maxSteps; step++) {
       throwIfAborted(abortSignal);
@@ -1848,11 +1849,14 @@ export class AgentRuntime {
       );
 
       const state = createStreamState();
+      const suppressInterruptedRecoveryText = step === interruptedLocalToolBatchRecoveryStep &&
+        interruptedLocalToolBatchRecoveryHasDeliveredText;
       const stepTextPartId = textPartId === undefined || step === 0
         ? textPartId
         : `${textPartId}:step:${step}`;
       await processStream(streamSource, state, controller, encoder, stepTextPartId, {
         onChunk: callbacks?.onChunk,
+        suppressTextOutput: suppressInterruptedRecoveryText,
         onUsage: (usage) => accumulateUsage(totalUsage, usage),
         providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
         availableToolNames: runtimeToolNames,
@@ -1868,6 +1872,9 @@ export class AgentRuntime {
         },
       }, abortSignal);
       throwIfAborted(abortSignal);
+      if (suppressInterruptedRecoveryText) {
+        state.accumulatedText = "";
+      }
       finalFinishReason = state.finishReason ?? finalFinishReason;
 
       const streamedToolCalls = Array.from(state.toolCalls.values());
@@ -2008,6 +2015,9 @@ export class AgentRuntime {
         // prefix here could apply only part of the model's intended mutation.
         recoveredInterruptedLocalToolBatch = true;
         interruptedLocalToolBatchRecoveryStep = step + 1;
+        interruptedLocalToolBatchRecoveryHasDeliveredText = hasSubstantiveAssistantText(
+          stepAssistantText,
+        );
       }
 
       for (const tc of streamedToolCalls) {
