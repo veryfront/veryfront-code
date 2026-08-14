@@ -533,10 +533,13 @@ editing `Case.Reason` in a customer org mutates admin-owned picklists and
 record-type behaviour.
 
 - **Disposable orgs (Developer Edition / scratch org) - the golden path.** The template
-  *may* fully automate: an SFDX scratch-org definition or unmanaged package that
-  creates a few Accounts / Contacts / Cases with known subjects **and** installs a
-  Case `Reason` picklist aligned to `case-triage-taxonomy.md` v5. Taxonomy and
-  picklist are authored together, never independently.
+  *may* fully automate the environment, but metadata and data are separate steps:
+  use an SFDX scratch-org definition or unmanaged package for org shape and the
+  Case `Reason` picklist, then run an explicit `sf data import tree`, Apex seeder,
+  or equivalent post-create import that creates the baseline Accounts, Contacts,
+  and open Cases with known subjects. The seed step is required before the blog can
+  claim step 7 "runs green" against a real org. Taxonomy and picklist are authored
+  together, never independently.
 - **Existing / customer orgs - no automatic schema changes.** The fork must *not*
   silently alter picklists. Require an explicit admin-run deploy, or (preferred)
   the "adapt to my org" step (§15) that maps the taxonomy to the org's *existing*
@@ -557,8 +560,17 @@ is promptable in the agents.
 | API disabled for edition | raw 403 | "This Salesforce edition has no API access. Use a free Developer Edition org: <link>." |
 | Restricted picklist bad value | raw `INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST` | catch → describe → retry only after the user confirms a taxonomy-to-org mapping; otherwise report the allowed set and fail closed |
 | Case listing not open-constrained | default `list_cases` can return recently modified closed cases | "The latest-open-cases tool is not open-case constrained. Add a fixed `IsClosed = false` query/filter before triage." |
-| Knowledge not enabled | raw `INVALID_TYPE` | `search_knowledge_articles` returns `[]` + a one-line hint |
+| Knowledge not enabled | raw `INVALID_TYPE` | agent treats `INVALID_TYPE` from `search_knowledge_articles` as optional Knowledge unavailable, continues with `knowledge: []`, and surfaces `knowledgeUnavailableHint` |
 | FLS Edit missing on Reason | silent drop / raw error | name the exact profile toggle |
+
+The v1 `search_knowledge_articles` endpoint remains a static SOQL connector entry
+that only transforms successful responses. It must not promise hosted error
+adaptation that `IntegrationEndpointSchema` cannot express. Instead, the project
+agent owns the executable fallback: when the tool call fails with Salesforce
+`INVALID_TYPE`, it records a structured result equivalent to
+`{ knowledge: [], knowledgeUnavailableHint: "Salesforce Knowledge is not enabled for this org." }`
+and proceeds with the project-local taxonomy. Other Salesforce errors still fail
+closed with their sanitized, actionable messages.
 
 ## 9. The fork → run flow the blog narrates
 
@@ -568,11 +580,13 @@ is promptable in the agents.
 2. Sign in to Veryfront.
 3. A Salesforce administrator installs the **Veryfront Salesforce Integration**
    package in the target org and verifies that the packaged app is enabled.
-4. The Integrations panel shows **Salesforce → Connect**. The user authorizes
+4. For the disposable-org golden path, run the seed data import after metadata
+   deployment so the org contains baseline Accounts, Contacts, and open Cases.
+5. The Integrations panel shows **Salesforce → Connect**. The user authorizes
    against the same org where the package is installed.
-5. Run **"Triage latest open cases"** through the v1 open-case constrained listing
+6. Run **"Triage latest open cases"** through the v1 open-case constrained listing
    tool, not a general recent-cases default.
-6. Pipeline runs green against seeded data; a `Reason` + triage comment land on
+7. Pipeline runs green against seeded data; a `Reason` + triage comment land on
    the case.
 
 The single biggest seam is step 3: package installation is an org-level admin
