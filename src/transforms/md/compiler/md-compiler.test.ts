@@ -6,9 +6,33 @@ import { VeryfrontError } from "#veryfront/errors";
 import {
   register as registerContract,
   tryResolve as tryResolveContract,
+  unregister as unregisterContract,
 } from "#veryfront/extensions/contracts.ts";
 import type { ContentProcessor } from "#veryfront/extensions/content/index.ts";
+import {
+  createYamlParserProvider,
+  YamlParserProviderName,
+} from "#veryfront/extensions/parser/yaml-parser.ts";
 import { compileMarkdownRuntime } from "./md-compiler.ts";
+
+async function withYamlSyntaxErrorProvider(body: () => Promise<void>): Promise<void> {
+  const previous = tryResolveContract(YamlParserProviderName);
+  registerContract(
+    YamlParserProviderName,
+    createYamlParserProvider(() => {
+      throw new SyntaxError("invalid YAML");
+    }),
+  );
+  try {
+    await body();
+  } finally {
+    if (previous === undefined) {
+      unregisterContract(YamlParserProviderName);
+    } else {
+      registerContract(YamlParserProviderName, previous);
+    }
+  }
+}
 
 describe(
   "transforms/md/compiler/md-compiler",
@@ -53,6 +77,26 @@ describe(
         assertInstanceOf(error, VeryfrontError);
         assertEquals(error.slug, "markdown-compile-error");
         assertEquals(error.category, "BUILD");
+      });
+
+      it("classifies provider-independent Markdown frontmatter SyntaxError failures", async () => {
+        await withYamlSyntaxErrorProvider(async () => {
+          const error = await assertRejects(
+            () =>
+              compileMarkdownRuntime(
+                "runtime",
+                "/tmp/project",
+                "---\ntitle: broken\n---\n# Content",
+                undefined,
+                "provider-frontmatter.md",
+              ),
+            VeryfrontError,
+          );
+
+          assertInstanceOf(error, VeryfrontError);
+          assertEquals(error.slug, "markdown-compile-error");
+          assertEquals(error.category, "BUILD");
+        });
       });
 
       it("preserves non-source processor failures", async () => {
