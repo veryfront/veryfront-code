@@ -302,6 +302,30 @@ function stripTextDeltaPrefixFromSseChunk(
   }
 }
 
+function rewriteTextSseChunkId(
+  chunk: Uint8Array,
+  id: string,
+  encoder: TextEncoder,
+): Uint8Array {
+  const payload = new TextDecoder().decode(chunk);
+  if (!payload.startsWith("data: ")) {
+    return chunk;
+  }
+
+  try {
+    const event = JSON.parse(payload.slice("data: ".length)) as Record<string, unknown>;
+    if (
+      event.type !== "text-start" && event.type !== "text-delta" &&
+      event.type !== "text-end"
+    ) {
+      return chunk;
+    }
+    return encoder.encode(`data: ${JSON.stringify({ ...event, id })}\n\n`);
+  } catch {
+    return chunk;
+  }
+}
+
 function buildGeneratedAssistantMessage(
   response: RuntimeGenerateTextResult,
   metadata: { id: string; timestamp: number },
@@ -1931,9 +1955,17 @@ export class AgentRuntime {
       let deferredRecoverySseText = "";
       let deferredRecoveryCallbackText = "";
       let releasedDeferredRecoveryOutput = false;
+      let releasedRecoveryReplacementTextPartId: string | undefined;
+      const stepTextPartId = textPartId === undefined || step === 0
+        ? textPartId
+        : `${textPartId}:step:${step}`;
+      const replacementRecoveryTextPartId = stepTextPartId === undefined
+        ? `recovery:step:${step}`
+        : `${stepTextPartId}:recovery`;
       const flushDeferredRecoveryOutput = (
         interruptedRecoveryPrefixLength: number,
         repeatsInterruptedRecoveryText: boolean,
+        useReplacementTextPartId: boolean,
       ): void => {
         if (deferredRecoveryOutput === undefined) return;
 
@@ -1953,13 +1985,16 @@ export class AgentRuntime {
               callbacks?.onChunk?.(stripped.text);
             }
           } else {
+            const textChunk = useReplacementTextPartId && output.isTextEvent
+              ? rewriteTextSseChunkId(output.chunk, replacementRecoveryTextPartId, encoder)
+              : output.chunk;
             const stripped = output.isTextEvent
               ? stripTextDeltaPrefixFromSseChunk(
-                output.chunk,
+                textChunk,
                 remainingSsePrefixLength,
                 encoder,
               )
-              : { chunk: output.chunk, remainingPrefixLength: remainingSsePrefixLength };
+              : { chunk: textChunk, remainingPrefixLength: remainingSsePrefixLength };
             remainingSsePrefixLength = stripped.remainingPrefixLength;
             if (stripped.chunk !== undefined) {
               controller.enqueue(stripped.chunk);
@@ -1979,16 +2014,25 @@ export class AgentRuntime {
         const observedRecoveryText = callbacks?.onChunk === undefined
           ? deferredRecoverySseText
           : deferredRecoveryCallbackText;
+        const extendsPreviousRecoveryText = observedRecoveryText.startsWith(previousRecoveryText);
         flushDeferredRecoveryOutput(
-          observedRecoveryText.startsWith(previousRecoveryText) ? previousRecoveryText.length : 0,
+          extendsPreviousRecoveryText ? previousRecoveryText.length : 0,
           false,
+          !extendsPreviousRecoveryText,
         );
+        if (!extendsPreviousRecoveryText) {
+          releasedRecoveryReplacementTextPartId = replacementRecoveryTextPartId;
+        }
         releasedDeferredRecoveryOutput = true;
       };
       const stepController = deferredRecoveryOutput === undefined ? controller : {
         enqueue(chunk: Uint8Array) {
           if (releasedDeferredRecoveryOutput) {
-            controller.enqueue(chunk);
+            controller.enqueue(
+              releasedRecoveryReplacementTextPartId !== undefined
+                ? rewriteTextSseChunkId(chunk, releasedRecoveryReplacementTextPartId, encoder)
+                : chunk,
+            );
             return;
           }
           deferredRecoverySseText += textDeltaFromSseChunk(chunk) ?? "";
@@ -2000,9 +2044,6 @@ export class AgentRuntime {
           releaseDeferredRecoveryOutputAfterDivergence();
         },
       } as ReadableStreamDefaultController;
-      const stepTextPartId = textPartId === undefined || step === 0
-        ? textPartId
-        : `${textPartId}:step:${step}`;
       await processStream(streamSource, state, stepController, encoder, stepTextPartId, {
         onChunk: deferredRecoveryOutput === undefined ? callbacks?.onChunk : (chunk) => {
           if (releasedDeferredRecoveryOutput) {
@@ -2046,6 +2087,8 @@ export class AgentRuntime {
         flushDeferredRecoveryOutput(
           interruptedRecoveryPrefixLength,
           repeatsInterruptedRecoveryText,
+          previousRecoveryText.length > 0 && interruptedRecoveryPrefixLength === 0 &&
+            !repeatsInterruptedRecoveryText && state.accumulatedText.length > 0,
         );
       }
       finalFinishReason = state.finishReason ?? finalFinishReason;
