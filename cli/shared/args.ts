@@ -349,7 +349,8 @@ function parseBooleanValue(value: unknown): boolean | undefined {
   }
 }
 
-function isValue(arg: string | undefined): boolean {
+/** Return whether a raw argv token is consumed as an option value. */
+export function isCliOptionValue(arg: string | undefined): arg is string {
   return arg !== undefined && (!arg.startsWith("-") || /^-\d/.test(arg));
 }
 
@@ -398,7 +399,7 @@ function parse(
       const key = arg.slice(2);
       const next = args[i + 1];
 
-      if (!isBooleanFlag(key, result._ as string[]) && isValue(next)) {
+      if (!isBooleanFlag(key, result._ as string[]) && isCliOptionValue(next)) {
         setValue(key, next);
         i++;
         continue;
@@ -415,7 +416,7 @@ function parse(
 
       const isBoolean = isBooleanFlag(key, result._ as string[]) ||
         isBooleanFlag(short, result._ as string[]);
-      if (!isBoolean && isValue(next)) {
+      if (!isBoolean && isCliOptionValue(next)) {
         setValue(key, next);
         if (key !== short) setValue(short, next);
         i++;

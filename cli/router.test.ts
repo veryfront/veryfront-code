@@ -639,6 +639,28 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("redacts login base URLs in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "login",
+          "--provider",
+          "openai",
+          "--base-url",
+          "https://model-gateway.corp.example/v1",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront login --provider openai --base-url '<REDACTED>'",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("preserves schedule input file paths in the correction", async () => {
       stubExit();
       stubLogger();
@@ -687,6 +709,30 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("redacts issue assignee identifiers in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "issues",
+          "create",
+          "--assignees",
+          "customer@example.com",
+          "--assignee=account-42",
+          "-a",
+          "another@example.com",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront issues create --assignees '<REDACTED>' --assignee='<REDACTED>' -a '<REDACTED>'",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("redacts each repeated opaque option value independently", async () => {
       stubExit();
       stubLogger();
@@ -697,6 +743,29 @@ describe("cli/router helpers", () => {
           "create",
           "--body",
           "private customer details",
+          "--body",
+          "--help",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront issues create --body '<REDACTED>' --body --help",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("redacts negative-leading opaque option values", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "issues",
+          "create",
+          "--body",
+          "-1 private customer detail",
           "--body",
           "--help",
         ]));

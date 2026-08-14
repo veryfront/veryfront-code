@@ -20,6 +20,7 @@ import {
   setOutputPath,
 } from "./shared/json-output.ts";
 import { detectCI, setAutoConfirm, setNonInteractive } from "./shared/interactive.ts";
+import { isCliOptionValue } from "./shared/args.ts";
 import type { ParsedArgs } from "./shared/types.ts";
 
 type CommandHandler = (args: ParsedArgs) => Promise<void>;
@@ -220,8 +221,16 @@ export async function formatDuplicatedBinaryHint(
     : undefined;
   const formatted: string[] = [];
   const opaquePayloadOptions = new Set(["--config", "--input"]);
-  const opaqueIssueOptions = new Set(["--body", "-b", "--title", "-t"]);
-  const opaqueConnectionOptions = new Set(["--redis", "--redis-url"]);
+  const opaqueIssueOptions = new Set([
+    "--assignee",
+    "--assignees",
+    "-a",
+    "--body",
+    "-b",
+    "--title",
+    "-t",
+  ]);
+  const opaqueWorkerConnectionOptions = new Set(["--redis", "--redis-url"]);
   const rootRelativeRouteOptions = new Set(["--exclude", "--include"]);
   const commandOptions = typeof correctedCommand === "string"
     ? COMMANDS[correctedCommand]?.options ?? []
@@ -243,14 +252,16 @@ export async function formatDuplicatedBinaryHint(
     );
     const fileOption = optionDefinition?.flag.includes("<file>") === true;
     const opaqueIssueOption = correctedCommand === "issues" && opaqueIssueOptions.has(option);
-    const opaqueConnectionOption = opaqueConnectionOptions.has(option);
+    const opaqueConnectionOption = (correctedCommand === "worker" &&
+      opaqueWorkerConnectionOptions.has(option)) ||
+      (correctedCommand === "login" && option === "--base-url");
     const redactOptionValue = sensitiveOption || opaqueIssueOption ||
       opaqueConnectionOption ||
       (opaquePayloadOptions.has(option) && !fileOption);
     const allowRootRelativeRoute = rootRelativeRouteOptions.has(option);
     const booleanOption = optionDefinition !== undefined && !optionDefinition.flag.includes("<");
     const nextArgument = hintArguments[index + 1];
-    const hasSeparateRawValue = nextArgument !== undefined && !nextArgument.startsWith("-");
+    const hasSeparateRawValue = isCliOptionValue(nextArgument);
 
     if (equalsIndex > 0) {
       const formattedOption = formatCommandHintArgument(option, sanitizeUrlCredentials);
