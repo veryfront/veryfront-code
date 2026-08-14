@@ -204,6 +204,7 @@ function createPluginDisposalBarrier(scope: OperationScope): {
   }> = [];
   let activated = false;
   let holdingOperation = false;
+  let disposalError: Error | null = null;
 
   const releaseIfSettled = (): void => {
     if (!holdingOperation || callbacks.some((callback) => !callback.settled)) return;
@@ -223,12 +224,13 @@ function createPluginDisposalBarrier(scope: OperationScope): {
     callback: { settled: boolean; resolveSettled: () => void },
     error: unknown,
   ): void => {
-    if (!pluginDisposalError) {
-      pluginDisposalError = new Error(
+    if (!disposalError) {
+      disposalError = new Error(
         "[ext-bundler-esbuild] Plugin disposal failed",
         { cause: error },
       );
     }
+    if (!pluginDisposalError) pluginDisposalError = disposalError;
     settle(callback);
   };
 
@@ -302,7 +304,7 @@ function createPluginDisposalBarrier(scope: OperationScope): {
       const pending = callbacks.filter((callback) => !callback.settled);
       for (const callback of pending) start(callback);
       await Promise.all(pending.map((callback) => callback.settledPromise));
-      if (pluginDisposalError) throw pluginDisposalError;
+      if (disposalError) throw disposalError;
     },
   };
 }
@@ -715,7 +717,7 @@ export class EsbuildBundler implements Bundler {
   async context(options: BundleOptions): Promise<BuildContext> {
     return runBundlerOperation(async (contextScope) => {
       const esbuild = await getEsbuild();
-      const mapped = mapOptions(options, contextScope);
+      let mapped = mapOptions(options, contextScope);
       let ctx = await invokeEsbuild(() => esbuild.context(mapped.options)).catch(
         async (error: unknown) => {
           await finalizePluginDisposals(mapped);
@@ -729,13 +731,16 @@ export class EsbuildBundler implements Bundler {
         contextRefresh ??= (async () => {
           if (contextGeneration === esbuildServiceGeneration) return;
           await mapped.disposePluginGeneration();
+          const nextMapped = mapOptions(options, contextScope);
           const currentEsbuild = await getEsbuild();
-          ctx = await invokeEsbuild(() => currentEsbuild.context(mapped.options)).catch(
+          ctx = await invokeEsbuild(() => currentEsbuild.context(nextMapped.options)).catch(
             async (error: unknown) => {
-              await finalizePluginDisposals(mapped);
+              await finalizePluginDisposals(nextMapped);
+              mapped = mapOptions(options, contextScope);
               throw error;
             },
           );
+          mapped = nextMapped;
           contextGeneration = esbuildServiceGeneration;
         })().finally(() => {
           contextRefresh = null;

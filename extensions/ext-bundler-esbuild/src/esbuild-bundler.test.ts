@@ -1,5 +1,5 @@
 /**
- * EsbuildBundler smoke tests — verifies the adapter correctly invokes
+ * EsbuildBundler smoke tests verify the adapter correctly invokes
  * esbuild and maps its results into the Bundler contract shape.
  *
  * @module extensions/ext-bundler-esbuild/esbuild-bundler.test
@@ -1209,6 +1209,170 @@ describe("EsbuildBundler service crash recovery", () => {
       assertEquals(disposeCount, 1);
       assertEquals(activeResources, 0);
     } finally {
+      await ctx?.dispose().catch(() => undefined);
+      await bundler.stop().catch(() => undefined);
+      __resetServiceRecoveryForTests();
+      try {
+        await bundler.stop();
+      } finally {
+        observation.restore();
+      }
+    }
+  });
+
+  it("does not surface stale plugin disposal errors while cleaning up a later crashed context", async () => {
+    const observation = observeEsbuildServices();
+    const { services } = observation;
+    const bundler = new EsbuildBundler();
+    let crashingContext: BuildContext | undefined;
+    let disposeCount = 0;
+    const releaseFailedDisposal = Promise.withResolvers<void>();
+    const staleDisposalRecorded = Promise.withResolvers<void>();
+
+    try {
+      await bundler.bundle({
+        stdin: { contents: "export const failingDispose = true;", loader: "ts" },
+        bundle: true,
+        format: "esm",
+        write: false,
+        plugins: [{
+          name: "failing-dispose-resource",
+          setup(build) {
+            build.onDispose(async () => {
+              await releaseFailedDisposal.promise;
+              try {
+                throw new Error("first disposal failed");
+              } finally {
+                staleDisposalRecorded.resolve();
+              }
+            });
+          },
+        }],
+      });
+      releaseFailedDisposal.resolve();
+      await staleDisposalRecorded.promise;
+      await Promise.resolve();
+
+      crashingContext = await bundler.context({
+        stdin: {
+          contents: "export const laterCrashedContext: number = 1;",
+          sourcefile: "later.ts",
+          loader: "ts",
+        },
+        bundle: false,
+        format: "esm",
+        write: false,
+        plugins: [{
+          name: "later-dispose-resource",
+          setup(build) {
+            build.onDispose(() => {
+              disposeCount += 1;
+            });
+          },
+        }],
+      });
+      await crashingContext.rebuild();
+
+      const managedService = services[services.length - 1]!;
+      managedService.child.ref();
+      managedService.child.kill("SIGKILL");
+      await managedService.close;
+
+      await crashingContext.dispose();
+      crashingContext = undefined;
+
+      assertEquals(disposeCount, 1);
+    } finally {
+      releaseFailedDisposal.resolve();
+      await crashingContext?.dispose().catch(() => undefined);
+      await bundler.stop().catch(() => undefined);
+      __resetServiceRecoveryForTests();
+      try {
+        await bundler.stop();
+      } finally {
+        observation.restore();
+      }
+    }
+  });
+
+  it("waits for plugin cleanup after a context refresh fails and a later retry succeeds", async () => {
+    const observation = observeEsbuildServices();
+    const { services } = observation;
+    const bundler = new EsbuildBundler();
+    let ctx: BuildContext | undefined;
+    let setupCount = 0;
+    let disposeCount = 0;
+    let rejectNextSetup = false;
+    const retryDisposalStarted = Promise.withResolvers<void>();
+    let finishRetryDisposal: (() => void) | undefined;
+
+    try {
+      ctx = await bundler.context({
+        stdin: {
+          contents: "export const retryContext: number = 1;",
+          sourcefile: "retry.ts",
+          loader: "ts",
+        },
+        bundle: false,
+        format: "esm",
+        write: false,
+        plugins: [{
+          name: "refresh-retry-dispose-resource",
+          setup(build) {
+            setupCount += 1;
+            const generation = setupCount;
+            if (rejectNextSetup) {
+              rejectNextSetup = false;
+              throw new Error("refresh setup failed");
+            }
+            build.onDispose(() => {
+              if (generation !== 3) {
+                disposeCount += 1;
+                return;
+              }
+              retryDisposalStarted.resolve();
+              return new Promise<void>((resolve) => {
+                finishRetryDisposal = () => {
+                  disposeCount += 1;
+                  resolve();
+                };
+              });
+            });
+          },
+        }],
+      });
+      await ctx.rebuild();
+      assertEquals(setupCount, 1);
+
+      const firstService = services[0]!;
+      firstService.child.ref();
+      firstService.child.kill("SIGKILL");
+      await firstService.close;
+      await bundler.transform({ code: "export const afterFirstCrash = true;", loader: "ts" });
+
+      rejectNextSetup = true;
+      await assertRejects(() => ctx!.rebuild(), Error, "refresh setup failed");
+      assertEquals(disposeCount, 1);
+
+      const secondService = services[services.length - 1]!;
+      secondService.child.ref();
+      secondService.child.kill("SIGKILL");
+      await secondService.close;
+      await bundler.transform({ code: "export const afterSecondCrash = true;", loader: "ts" });
+
+      const rebuilt = await ctx.rebuild();
+      assertStringIncludes(rebuilt.outputFiles[0]!.text, "retryContext = 1");
+      assertEquals(setupCount, 3);
+
+      const disposing = ctx.dispose();
+      ctx = undefined;
+      await retryDisposalStarted.promise;
+      assertEquals(disposeCount, 1);
+      finishRetryDisposal?.();
+      await disposing;
+      assertEquals(disposeCount, 2);
+    } finally {
+      finishRetryDisposal?.();
       await ctx?.dispose().catch(() => undefined);
       await bundler.stop().catch(() => undefined);
       __resetServiceRecoveryForTests();
