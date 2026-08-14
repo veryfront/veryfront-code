@@ -77,6 +77,7 @@ let serviceLossSpawnGuard: {
   previous: typeof childProcess.spawn;
   foreignService: EsbuildService | null;
 } | null = null;
+let esbuildServiceForeignReplacement: EsbuildService | null = null;
 let activeOperationCount = 0;
 let activeOperationsIdle: Promise<void> = Promise.resolve();
 let resolveActiveOperationsIdle: (() => void) | null = null;
@@ -263,7 +264,8 @@ function recoverLostService(): Promise<void> {
   esbuildServiceRecovery ??= (async () => {
     await activeOperationsIdle;
     if (!esbuildServiceLost) return;
-    const foreignService = serviceLossSpawnGuard?.foreignService;
+    const foreignService = esbuildServiceForeignReplacement ??
+      serviceLossSpawnGuard?.foreignService;
     if (foreignService) {
       const error = recordOwnershipError(
         new Error("esbuild service was replaced outside the module-wide adapter"),
@@ -378,7 +380,9 @@ function installServiceLossSpawnGuard(): void {
   const guard = ((...spawnArgs: unknown[]) => {
     const child = Reflect.apply(previous, childProcess, spawnArgs) as ChildProcess;
     if (isEsbuildServiceSpawn(spawnArgs)) {
-      serviceLossSpawnGuard!.foreignService = observeForeignServiceChild(child);
+      const foreignService = observeForeignServiceChild(child);
+      esbuildServiceForeignReplacement = foreignService;
+      serviceLossSpawnGuard!.foreignService = foreignService;
     }
     return child;
   }) as typeof childProcess.spawn;
@@ -409,6 +413,7 @@ export function __resetServiceRecoveryForTests(): void {
   esbuildOwnershipError = null;
   esbuildServiceLost = false;
   esbuildServiceLostDetail = "";
+  esbuildServiceForeignReplacement = null;
   remainingServiceRestarts = MAX_SERVICE_RESTARTS;
   uninstallServiceLossSpawnGuard();
 }
@@ -655,7 +660,10 @@ export class EsbuildBundler implements Bundler {
     const stopping = (async () => {
       await activeOperationsIdle;
 
-      if (esbuildServiceLost && serviceLossSpawnGuard?.foreignService) {
+      if (
+        esbuildServiceLost &&
+        (esbuildServiceForeignReplacement ?? serviceLossSpawnGuard?.foreignService)
+      ) {
         const error = recordOwnershipError(
           new Error("esbuild service was replaced outside the module-wide adapter"),
         );

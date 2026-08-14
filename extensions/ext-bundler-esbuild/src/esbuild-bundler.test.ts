@@ -1011,6 +1011,8 @@ describe("EsbuildBundler unsupported lifecycle ownership", () => {
       );
       assertStringIncludes((error as Error).message, "module-wide adapter");
 
+      const stopError = await assertRejects(() => bundler.stop());
+      assertStringIncludes((stopError as Error).message, "module-wide adapter");
       assertEquals(foreignService.closed, false);
     } finally {
       __resetServiceRecoveryForTests();
