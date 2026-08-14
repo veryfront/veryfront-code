@@ -417,6 +417,29 @@ describe("transforms/import-rewriter/url-builder", () => {
       assertEquals(normalizeExtension("file.tsx", { removeExtension: true }), "file");
     });
 
+    it("should use captured replace after String.replace poisoning", () => {
+      const originalReplace = Object.getOwnPropertyDescriptor(String.prototype, "replace")!;
+      let poisonCalls = 0;
+      try {
+        Object.defineProperty(String.prototype, "replace", {
+          ...originalReplace,
+          value() {
+            poisonCalls += 1;
+            throw new Error("poisoned String.prototype.replace");
+          },
+        });
+
+        assertEquals(normalizeExtension("components/Card.tsx"), "components/Card.js");
+        assertEquals(
+          normalizeExtension("components/Card.tsx", { removeExtension: true }),
+          "components/Card",
+        );
+        assertEquals(poisonCalls, 0);
+      } finally {
+        Object.defineProperty(String.prototype, "replace", originalReplace);
+      }
+    });
+
     it("should keep .js unchanged", () => {
       assertEquals(normalizeExtension("file.js"), "file.js");
     });
