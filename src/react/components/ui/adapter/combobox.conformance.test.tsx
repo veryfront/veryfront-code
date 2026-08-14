@@ -120,13 +120,14 @@ export function runComboboxConformance(
             <Capture />
             <ComboboxContent>
               <ComboboxItem value="next">
-                <svg aria-label="Next.js" />
+                <span>Next.js</span>
               </ComboboxItem>
               {includeDisabled && <ComboboxItem value="disabled" disabled>Disabled</ComboboxItem>}
-              <ComboboxItem value="remix">
-                <span>Remix</span>
-              </ComboboxItem>
+              <ComboboxItem value="remix">Remix</ComboboxItem>
               <ComboboxItem value="astro">Astro</ComboboxItem>
+              <ComboboxItem value="opaque">
+                <svg aria-label="Opaque" />
+              </ComboboxItem>
             </ComboboxContent>
           </Combobox>
         </Wrap>,
@@ -198,18 +199,18 @@ export function runComboboxConformance(
     });
 
     it("uses nested plain text as the selected option label", () => {
-      const h = mount(undefined, false, { defaultValue: "remix" });
+      const h = mount(undefined, false, { defaultValue: "next" });
       try {
-        assertEquals(h.input().value, "Remix");
+        assertEquals(h.input().value, "Next.js");
       } finally {
         h.cleanup();
       }
     });
 
     it("falls back to the value when option children have no plain text", () => {
-      const h = mount(undefined, false, { defaultValue: "next" });
+      const h = mount(undefined, false, { defaultValue: "opaque" });
       try {
-        assertEquals(h.input().value, "next");
+        assertEquals(h.input().value, "opaque");
       } finally {
         h.cleanup();
       }
@@ -258,7 +259,7 @@ export function runComboboxConformance(
       const h = mount();
       try {
         h.press("ArrowDown"); // open with empty query
-        assertEquals(h.options().length, 3, "all options visible with empty query");
+        assertEquals(h.options().length, 4, "all options visible with empty query");
         h.type("re");
         assertEquals(h.options().map((o) => o.textContent), ["Remix"], "only matches remain");
       } finally {
