@@ -828,6 +828,32 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("redacts project identifiers for project-scoped file commands", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        for (const command of ["files", "uploads", "knowledge"]) {
+          for (const option of ["--project", "-p"]) {
+            infoMessages.length = 0;
+            const code = await runAndCaptureExit(parseCliArgs([
+              "veryfront",
+              command,
+              "list",
+              option,
+              "private-file-project",
+            ]));
+            assertEquals(code, 2);
+            assertEquals(infoMessages, [
+              '  You already included "veryfront". Use:',
+              `    veryfront ${command} list ${option} '<REDACTED>'`,
+            ]);
+          }
+        }
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("redacts a positional pull project identifier in the correction", async () => {
       stubExit();
       stubLogger();

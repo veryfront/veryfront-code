@@ -264,6 +264,15 @@ export async function formatDuplicatedBinaryHint(
   ]);
   const opaqueWorkerConnectionOptions = new Set(["--redis", "--redis-url"]);
   const opaqueServeHostOptions = new Set(["--host", "--hostname"]);
+  const opaqueRemoteTargetCommands = new Set([
+    "deploy",
+    "files",
+    "knowledge",
+    "open",
+    "pull",
+    "push",
+    "uploads",
+  ]);
   const rootRelativeRouteOptions = new Set(["--exclude", "--include"]);
   const globalBooleanOptions = new Set([
     "--color",
@@ -315,9 +324,8 @@ export async function formatDuplicatedBinaryHint(
     );
     const fileOption = optionDefinition?.flag.includes("<file>") === true;
     const opaqueIssueOption = correctedCommand === "issues" && opaqueIssueOptions.has(option);
-    const opaqueRemoteTargetOption =
-      (canonicalCommand === "deploy" || canonicalCommand === "open" ||
-        canonicalCommand === "pull" || canonicalCommand === "push") &&
+    const opaqueRemoteTargetOption = canonicalCommand !== undefined &&
+      opaqueRemoteTargetCommands.has(canonicalCommand) &&
       opaqueRemoteTargetOptions.has(option);
     const opaqueConnectionOption = (correctedCommand === "worker" &&
       opaqueWorkerConnectionOptions.has(option)) ||
