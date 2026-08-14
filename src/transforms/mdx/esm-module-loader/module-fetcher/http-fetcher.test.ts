@@ -8,6 +8,57 @@ import { MAX_MDX_MODULE_CODE_BYTES, MAX_MDX_MODULE_TRANSFORM_CONCURRENCY } from 
 import { HttpModuleBodyTooLargeError } from "../../../shared/http-module-response.ts";
 
 describe("module-fetcher/http-fetcher", () => {
+  it("falls back to bare localhost, carrying the project slug, when the subdomain will not resolve", async () => {
+    const logger = { debug: () => {}, warn: () => {} } as unknown as Logger;
+    const adapter = {
+      env: { get: (k: string) => (k === "VERYFRONT_DEV_PORT" ? "3001" : undefined) },
+    } as RuntimeAdapter;
+
+    const attempts: { url: string; projectSlug: string | null }[] = [];
+    const fetchFn = ((input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const projectSlug = new Headers(init?.headers).get("x-project-slug");
+      attempts.push({ url, projectSlug });
+      if (attempts.length === 1) {
+        // Shape of a Deno resolver failure on a glibc-only NSS setup.
+        return Promise.reject(new TypeError("error sending request: dns error: failed to lookup address"));
+      }
+      return Promise.resolve(new Response("export const ok = 1;"));
+    }) as unknown as typeof fetch;
+
+    await fetchModuleViaHTTP("mod.js", adapter, async () => null, logger, "docs", true, undefined, {
+      fetchFn,
+    });
+
+    assertEquals(attempts.length, 2);
+    assertEquals(new URL(attempts[0]!.url).hostname, "docs.localhost");
+    assertEquals(attempts[0]!.projectSlug, null);
+    // The retry must reach a name that always resolves, without losing the tenant.
+    assertEquals(new URL(attempts[1]!.url).hostname, "localhost");
+    assertEquals(attempts[1]!.projectSlug, "docs");
+  });
+
+  it("does not retry when the fetch was aborted", async () => {
+    const logger = { debug: () => {}, warn: () => {} } as unknown as Logger;
+    const adapter = {
+      env: { get: (k: string) => (k === "VERYFRONT_DEV_PORT" ? "3001" : undefined) },
+    } as RuntimeAdapter;
+
+    let calls = 0;
+    const fetchFn = (() => {
+      calls += 1;
+      return Promise.reject(new DOMException("Local module fetch timed out", "AbortError"));
+    }) as unknown as typeof fetch;
+
+    await assertRejects(() =>
+      fetchModuleViaHTTP("mod.js", adapter, async () => null, logger, "docs", true, undefined, {
+        fetchFn,
+      })
+    );
+    // A timeout must not be re-issued against localhost; that would double the wait.
+    assertEquals(calls, 1);
+  });
+
   it("rewrites the matched import instead of the same text in an earlier comment", async () => {
     const originalFetch = globalThis.fetch;
     const logger = { debug: () => {}, warn: () => {} } as unknown as Logger;

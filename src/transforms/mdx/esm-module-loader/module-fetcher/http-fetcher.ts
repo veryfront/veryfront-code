@@ -92,15 +92,20 @@ function isNameResolutionError(error: unknown): boolean {
  *
  * Pinning the connection to 127.0.0.1 while keeping subdomain routing is not an
  * option: Deno's fetch silently drops a `Host` header override (verified), so
- * the request would arrive with `Host: 127.0.0.1` and lose the project. Bare
- * `localhost` instead lets the dev server resolve the project from its
- * configured slug, which is the correct project in single-project local dev.
+ * the request would arrive with `Host: 127.0.0.1` and lose the project.
+ *
+ * The retry therefore carries the project in `x-project-slug`, which the dev
+ * server reads inbound (see server/context/request-context.ts and
+ * server/runtime-handler/project-resolution.ts) and which fetch — unlike `Host`
+ * — is allowed to set. Without it a multi-project workspace would lose tenant
+ * identity, because resolveDefaultProjectSlug() returns undefined there.
  */
 async function fetchModuleWithLoopbackFallback(
   fetchFn: typeof fetch,
   url: URL,
   init: RequestInit,
   log: Logger,
+  projectSlug?: string,
 ): Promise<Response> {
   try {
     return await fetchFn(url.toString(), init);
@@ -108,10 +113,13 @@ async function fetchModuleWithLoopbackFallback(
     if (!isLocalhostSubdomain(url.hostname) || !isNameResolutionError(error)) throw error;
     const fallbackUrl = new URL(url);
     fallbackUrl.hostname = "localhost";
+    const headers = new Headers(init.headers);
+    if (projectSlug) headers.set("x-project-slug", projectSlug);
     log.debug(
-      `${LOG_PREFIX_MDX_LOADER} ${url.hostname} did not resolve; retrying via ${fallbackUrl.host}`,
+      `${LOG_PREFIX_MDX_LOADER} ${url.hostname} did not resolve; retrying via ${fallbackUrl.host}` +
+        `${projectSlug ? ` with x-project-slug: ${projectSlug}` : ""}`,
     );
-    return await fetchFn(fallbackUrl.toString(), init);
+    return await fetchFn(fallbackUrl.toString(), { ...init, headers });
   }
 }
 
@@ -195,7 +203,7 @@ export async function fetchModuleViaHTTP(
         fetchModuleWithLoopbackFallback(fetchFn, moduleUrl, {
           signal: controller.signal,
           redirect: "error",
-        }, log),
+        }, log, projectSlug),
       {
         "http.method": "GET",
         "http.url": moduleUrlString,
