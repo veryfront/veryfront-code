@@ -47,8 +47,16 @@ const CRITICAL_PATTERNS: readonly RegExp[] = [
 
 /**
  * Warn (not fail) once the client graph exceeds this many modules. The graph is
- * ~382 today; a broad server barrel leak jumps it into four figures. A soft
+ * 451 today; a broad server barrel leak jumps it into four figures. A soft
  * ceiling flags that jump for review without inventing a hard byte budget.
+ *
+ * Deliberately a warning rather than a gate. The leak check above already fails
+ * the build on a server module reaching the client, which is the condition worth
+ * blocking on; this count is a canary for the shape of a regression the
+ * pattern list has not learned yet. Turning it into a hard budget needs a
+ * ratchet that records the count per entrypoint and only lets it fall — a
+ * fixed ceiling either sits so close to today's graph that ordinary growth
+ * trips it, or so far above that it never fires.
  */
 const SIZE_WARN_MODULES = 550;
 

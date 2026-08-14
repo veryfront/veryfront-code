@@ -1,7 +1,7 @@
 ---
 title: "Move Studio changes into Git"
 description: "Pull an immutable Veryfront Studio release into a Git feature branch and open a reviewed pull request."
-order: 45
+order: 47
 ---
 
 Use this guide to hand a Studio change to a professional developer for Git

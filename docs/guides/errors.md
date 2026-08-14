@@ -1,7 +1,7 @@
 ---
 title: "Error reference"
 description: "Every error the Veryfront CLI, server, and logs can report, with what it means and what to do next."
-order: 46
+order: 48
 ---
 
 Veryfront reports errors with a stable slug, such as `port-in-use`. The CLI, the
@@ -569,6 +569,14 @@ Source map loading error.
 
 Raised while building, uploading, or activating a deployment.
 
+### config-not-deployable
+
+Configuration cannot be deployed to Veryfront Cloud.
+
+- **HTTP status:** 400
+- **CLI exit code:** 2
+- **What to do:** Veryfront Cloud reads veryfront.config.ts as data: keep it to literals and the veryfront configuration helpers
+
 ### deployment-error
 
 Deployment process failed.
@@ -603,6 +611,13 @@ Deployment environment not found.
 
 - **HTTP status:** 404
 - **What to do:** Check environment names with: veryfront config
+
+### environment-not-routable
+
+Environment name has no Veryfront-hosted address.
+
+- **HTTP status:** 400
+- **What to do:** Deploy to preview, staging, or production, or attach a custom domain to this environment in Studio
 
 ### release-missing-version
 

@@ -121,6 +121,40 @@ function snapshotSchema<T>(value: unknown, label: string): Schema<T> {
   return Object.freeze(snapshot);
 }
 
+/**
+ * Resolve the underlying `Request` a validated handler must read.
+ *
+ * The App Router invokes handlers with a real `Request`, but the Pages Router
+ * invokes them with the `APIContext` it builds (see `routing/api/route-executor.ts`),
+ * whose `.body` is a reader *function* rather than a `ReadableStream`. Reading
+ * that context as if it were a `Request` threw
+ * `request.body?.getReader is not a function` before validation could run, so
+ * no POST body could ever be validated (issue #3666). Accept either shape and
+ * hand the real `Request` to the body/limit machinery and to the handler.
+ */
+function resolveValidatedRequest(candidate: Request): Request {
+  if (candidate instanceof Request) return candidate;
+
+  if (typeof candidate === "object" && candidate !== null) {
+    // The Pages Router context exposes the live request as both `.request` and
+    // `.req`. Read them defensively — a stray getter must not derail the
+    // resolution — and accept the first that is a genuine `Request`.
+    for (const key of ["request", "req"] as const) {
+      let value: unknown;
+      try {
+        value = (candidate as Record<string, unknown>)[key];
+      } catch {
+        continue;
+      }
+      if (value instanceof Request) return value;
+    }
+  }
+
+  throw new TypeError(
+    "Validated handler expected a Request or an API context exposing one",
+  );
+}
+
 function cancelUnconsumedBody(request: Request, reason: unknown): void {
   const body = request.body;
   if (!body || body.locked) return;
@@ -177,7 +211,8 @@ export function createValidatedHandler<TBody = unknown, TQuery = unknown>(
   }
   const handlerSnapshot = handler;
 
-  return async function validatedHandler(request: Request): Promise<Response> {
+  return async function validatedHandler(requestOrContext: Request): Promise<Response> {
+    const request = resolveValidatedRequest(requestOrContext);
     try {
       validateRequestLimits(request, limits);
 

@@ -134,7 +134,7 @@ function createHostedConfigAdapter(source: string): RuntimeAdapter {
 function makeRuntimeContextInput(
   overrides: Record<string, unknown> = {},
 ): Parameters<typeof resolveProjectRuntimeContext>[0] {
-  const req = new Request("http://remote-project.preview.lvh.me/page", {
+  const req = new Request("http://remote-project.preview.localhost/page", {
     headers: {
       "x-project-slug": "remote-project",
       "x-project-id": "proj-remote",
@@ -210,7 +210,7 @@ describe("prepareProjectRequest", () => {
     const req = new Request("http://localhost/page", {
       headers: {
         host: "localhost",
-        "x-forwarded-host": "forwarded-project.preview.lvh.me",
+        "x-forwarded-host": "forwarded-project.preview.localhost",
         "x-project-slug": "header-project",
         "x-token": "proxy-token",
         "x-release-id": "rel_123",
@@ -574,7 +574,7 @@ describe("resolveProjectIdentity", () => {
 
   it("derives identity from forwarded host only when proxy trust is explicit true", async () => {
     const req = new Request("http://localhost/", {
-      headers: { "x-forwarded-host": "forwarded-project.preview.lvh.me" },
+      headers: { "x-forwarded-host": "forwarded-project.preview.localhost" },
     });
     const url = new URL(req.url);
 
@@ -1070,7 +1070,7 @@ describe("resolveProjectRuntimeContext", () => {
           },
         }));
       `);
-      const req = new Request(`http://${projectSlug}.preview.lvh.me/page`, {
+      const req = new Request(`http://${projectSlug}.preview.localhost/page`, {
         headers: {
           "x-project-slug": projectSlug,
           "x-project-id": projectId,

@@ -2,12 +2,12 @@ export const PLAYWRIGHT_RUNTIME_CONFIGS = [
   {
     name: "production-host",
     modeName: "production",
-    getUrl: (subdomain: string) => `http://${subdomain}.lvh.me:8080`,
+    getUrl: (subdomain: string) => `http://${subdomain}.localhost:8080`,
   },
   {
     name: "preview-host",
     modeName: "preview",
-    getUrl: (subdomain: string) => `http://${subdomain}.preview.lvh.me:8080`,
+    getUrl: (subdomain: string) => `http://${subdomain}.preview.localhost:8080`,
   },
 ] as const;
 

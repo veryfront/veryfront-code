@@ -6,6 +6,9 @@ import {
   createPinnedFetchResponse,
   DEFAULT_OUTBOUND_USER_AGENT,
   fetchWithPinnedAddresses,
+  isReplayableRequestBody,
+  isRetriableConnectFailure,
+  planPinnedConnectAttempts,
 } from "./pinned-fetch.ts";
 
 describe("fetchWithPinnedAddresses", () => {
@@ -200,6 +203,42 @@ describe("fetchWithPinnedAddresses", () => {
     }
   });
 
+  it("falls through to the next validated address when the first refuses", async () => {
+    if (!isNode) return;
+
+    const { createServer } = await import("node:http");
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "text/plain" });
+      response.end("reached");
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Node test server did not expose a TCP address");
+      }
+      // 127.0.0.2 is loopback with nothing listening, so it refuses fast. Only
+      // the second validated address serves. autoSelectFamily races IPv4
+      // against IPv6 and does nothing for two addresses of the same family, so
+      // the transport has to walk the list itself.
+      const response = await fetchWithPinnedAddresses(
+        new URL(`http://localhost:${address.port}/resource`),
+        ["127.0.0.2", "127.0.0.1"],
+        { method: "GET" },
+      );
+      assertEquals(response.status, 200);
+      assertEquals(await response.text(), "reached");
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
+  });
+
   it("returns a null body for HEAD through the native Node transport", async () => {
     if (!isNode) return;
 
@@ -238,5 +277,67 @@ describe("fetchWithPinnedAddresses", () => {
         server.close((error) => error ? reject(error) : resolve());
       });
     }
+  });
+});
+
+describe("pinned connect attempts", () => {
+  it("keeps a single validated address as one attempt", () => {
+    assertEquals(planPinnedConnectAttempts(["203.0.113.7"]), [["203.0.113.7"]]);
+  });
+
+  it("dials one address per attempt", () => {
+    // Every attempt dials one address; the runtime is never asked to choose.
+    const plan = planPinnedConnectAttempts(["2606:4700::1", "104.26.14.209"]);
+    assertEquals(plan[0], ["2606:4700::1"]);
+    assertEquals(plan.length, 2);
+    assertEquals(plan[1], ["104.26.14.209"]);
+  });
+
+  it("tries the other address family before a sibling of the failed one", () => {
+    const plan = planPinnedConnectAttempts([
+      "2606:4700::1",
+      "2606:4700::2",
+      "104.26.14.209",
+    ]);
+    // A host with no IPv6 route fails on both AAAA records, so the A record has
+    // to come before the second AAAA.
+    assertEquals(plan[1], ["104.26.14.209"]);
+    assertEquals(plan[2], ["2606:4700::2"]);
+  });
+
+  it("retries only connect-level failures", () => {
+    assertEquals(isRetriableConnectFailure({ code: "ECONNREFUSED" }), true);
+    assertEquals(isRetriableConnectFailure({ code: "ENETUNREACH" }), true);
+    assertEquals(isRetriableConnectFailure({ code: "ECONNRESET" }), false);
+    assertEquals(isRetriableConnectFailure(new Error("boom")), false);
+    assertEquals(isRetriableConnectFailure(null), false);
+  });
+
+  it("retries ETIMEDOUT only when it came from connect", () => {
+    // A socket timeout after the request was written carries the same code, and
+    // replaying it could deliver a non-idempotent request twice.
+    assertEquals(
+      isRetriableConnectFailure({ code: "ETIMEDOUT", syscall: "connect" }),
+      true,
+    );
+    assertEquals(
+      isRetriableConnectFailure({ code: "ETIMEDOUT", syscall: "read" }),
+      false,
+    );
+    assertEquals(isRetriableConnectFailure({ code: "ETIMEDOUT" }), false);
+  });
+
+  it("replays only bodies that re-read identically", () => {
+    assertEquals(isReplayableRequestBody(null), true);
+    assertEquals(isReplayableRequestBody("{}"), true);
+    assertEquals(isReplayableRequestBody(new Uint8Array([1, 2])), true);
+    assertEquals(isReplayableRequestBody(new URLSearchParams("a=1")), true);
+    // Immutable, and writeRequestBody takes a fresh body.stream() per attempt.
+    assertEquals(isReplayableRequestBody(new Blob(["x"])), true);
+    // Already drained by the attempt that failed, so a retry would send nothing.
+    assertEquals(
+      isReplayableRequestBody(new Blob(["x"]).stream() as unknown as BodyInit),
+      false,
+    );
   });
 });
