@@ -167,6 +167,10 @@ export function shouldContinueAfterStreamStep(
   const hasProviderExecutedToolCall = streamedToolCalls.some((toolCall) =>
     toolCall.providerExecuted === true
   );
+  const finalToolResults = collectFinalStreamToolResults(state);
+  const hasUnresolvedProviderToolCall = streamedToolCalls.some(
+    (toolCall) => toolCall.providerExecuted === true && !finalToolResults.has(toolCall.id),
+  );
   // A non-finalized call whose only accumulated arguments are a bare
   // empty-object placeholder is provisional streamed input the model never
   // committed. The runtime can recover by re-calling the model only before the
@@ -189,7 +193,9 @@ export function shouldContinueAfterStreamStep(
 
   if (state.finishReason === "tool-calls") {
     if (hasIncompleteDeadToolCall) {
-      return options.recoverInterruptedToolCalls === true && !hasInterruptedProviderToolCall;
+      return options.recoverInterruptedToolCalls === true &&
+        !hasInterruptedProviderToolCall &&
+        !hasUnresolvedProviderToolCall;
     }
     if (hasProviderExecutedToolCall && !hasFinalizedClientToolCall) {
       return false;
@@ -205,14 +211,15 @@ export function shouldContinueAfterStreamStep(
   }
 
   if (hasIncompleteDeadToolCall) {
-    return options.recoverInterruptedToolCalls === true && !hasInterruptedProviderToolCall;
+    return options.recoverInterruptedToolCalls === true &&
+      !hasInterruptedProviderToolCall &&
+      !hasUnresolvedProviderToolCall;
   }
 
   if (hasAssistantText) {
     return false;
   }
 
-  const finalToolResults = collectFinalStreamToolResults(state);
   if (!finalToolResults.size) {
     for (const toolCall of state.toolCalls.values()) {
       if (toolCall.inputAvailable !== true || toolCall.providerExecuted === true) {

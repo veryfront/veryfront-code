@@ -264,6 +264,39 @@ describe("agent runtime streamed tool result collection", () => {
     assertEquals(shouldContinue, true);
   });
 
+  it("does not recover an interrupted local call while a provider call is unresolved", () => {
+    const shouldContinue = shouldContinueAfterStreamStep({
+      accumulatedText: "",
+      finishReason: "stop",
+      toolCalls: new Map([
+        [
+          "toolu_incomplete_local",
+          {
+            id: "toolu_incomplete_local",
+            name: "update_file",
+            arguments: '{"path":"knowledge/case-triage-taxonomy.md","content":"# Case',
+            inputAvailable: false,
+          },
+        ],
+        [
+          "toolu_unresolved_provider",
+          {
+            id: "toolu_unresolved_provider",
+            name: "web_search",
+            arguments: '{"query":"case triage taxonomy"}',
+            inputAvailable: true,
+            providerExecuted: true,
+          },
+        ],
+      ]),
+      toolResults: [],
+    }, {
+      recoverInterruptedToolCalls: true,
+    });
+
+    assertEquals(shouldContinue, false);
+  });
+
   it("continues finalized client-executed tool calls when the provider reports stop", () => {
     const shouldContinue = shouldContinueAfterStreamStep({
       accumulatedText: "",
