@@ -2040,17 +2040,25 @@ export class AgentRuntime {
         flushDeferredRecoveryOutput(previousRecoveryText.length, false, false);
         releasedDeferredRecoveryOutput = true;
       };
-      const releaseDeferredRecoveryNonTextOutputBeforeReplay = (
+      const releaseDeferredRecoveryNonTextOutput = (
         isTextEvent: boolean,
       ): void => {
         if (
-          isTextEvent || deferredRecoveryOutput === undefined || releasedDeferredRecoveryOutput ||
-          deferredRecoverySseText.length > 0 || deferredRecoveryCallbackText.length > 0
+          isTextEvent || deferredRecoveryOutput === undefined || releasedDeferredRecoveryOutput
         ) {
           return;
         }
 
-        flushDeferredRecoveryOutput(0, false, false);
+        const retainedOutput = deferredRecoveryOutput.filter((output) =>
+          output.kind === "callback" || output.isTextEvent
+        );
+        for (const output of deferredRecoveryOutput) {
+          if (output.kind === "sse" && !output.isTextEvent) {
+            controller.enqueue(output.chunk);
+          }
+        }
+        deferredRecoveryOutput.length = 0;
+        deferredRecoveryOutput.push(...retainedOutput);
       };
       const stepController = deferredRecoveryOutput === undefined ? controller : {
         enqueue(chunk: Uint8Array) {
@@ -2071,7 +2079,7 @@ export class AgentRuntime {
           });
           releaseDeferredRecoveryOutputAfterDivergence();
           releaseDeferredRecoveryOutputAfterExactReplay(isTextEvent);
-          releaseDeferredRecoveryNonTextOutputBeforeReplay(isTextEvent);
+          releaseDeferredRecoveryNonTextOutput(isTextEvent);
         },
       } as ReadableStreamDefaultController;
       await processStream(streamSource, state, stepController, encoder, stepTextPartId, {
