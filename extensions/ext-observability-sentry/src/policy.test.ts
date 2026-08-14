@@ -400,7 +400,7 @@ it("policy redacts PostgreSQL radix integer literals", () => {
         values: [{
           type: "DrizzleQueryError",
           value:
-            'Failed query: \n  select 0xDEADBEEF, 0o731, 0b101101 from "orders0x2" where "id" = $1',
+            'Failed query: \n  select 0xDEADBEEF, 0o731, 0b101101, 0x_DEAD, 0o_1_755, 0b_101101 from "orders0x2" where "id" = $1',
         }],
       },
     },
@@ -409,7 +409,7 @@ it("policy redacts PostgreSQL radix integer literals", () => {
 
   assertEquals(
     event.exception?.values?.[0]?.value,
-    'Failed query: select ?, ?, ? from "orders0x2" where "id" = $1',
+    'Failed query: select ?, ?, ?, ?, ?, ? from "orders0x2" where "id" = $1',
   );
 });
 
