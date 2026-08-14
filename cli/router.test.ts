@@ -506,6 +506,47 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("preserves and safely renders positional arguments in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit({
+          _: [
+            "veryfront",
+            "task",
+            "sync data",
+            "it's ready",
+            "https://user:secret@example.test/path",
+          ],
+        } as ParsedArgs);
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront task 'sync data' 'it'\\''s ready' 'https://user:[REDACTED]@example.test/path'",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("explains the duplicated binary name before routing global help", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit({
+          _: ["veryfront", "login"],
+          help: true,
+        } as ParsedArgs);
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront login",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("command validation failure with --json outputs a JSON error envelope", async () => {
       stubExit();
       stubConsole();

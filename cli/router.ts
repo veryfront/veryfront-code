@@ -134,6 +134,41 @@ function commandNameForJson(args: ParsedArgs): string {
   return typeof command === "string" && command.length > 0 ? command : "cli";
 }
 
+function containsControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function formatCommandHintArgument(
+  value: string | number,
+  sanitize: (input: string) => string,
+): string {
+  const argument = String(value);
+  if (
+    argument.length > 256 ||
+    containsControlCharacter(argument) ||
+    /^(?:\/|[A-Za-z]:[\\/]|\\\\)/u.test(argument)
+  ) {
+    return "'<REDACTED>'";
+  }
+  const sanitized = sanitize(argument);
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/u.test(sanitized)) {
+    return sanitized;
+  }
+  return `'${sanitized.replaceAll("'", "'\\''")}'`;
+}
+
+async function formatDuplicatedBinaryHint(args: ParsedArgs): Promise<string> {
+  const { sanitizeUrlCredentials } = await import("veryfront/utils");
+  const positionalArguments = args._.slice(1).map((value) =>
+    formatCommandHintArgument(value, sanitizeUrlCredentials)
+  );
+  return ["veryfront", ...positionalArguments].join(" ");
+}
+
 async function outputCliJsonError(
   command: string,
   error: ErrorEnvelope["error"],
@@ -199,8 +234,13 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
   }
 
   const command = args._[0] as string | undefined;
+  const secondCommand = args._[1];
+  const duplicatedBinaryTarget = command === "veryfront" &&
+      typeof secondCommand === "string" && Object.hasOwn(commands, secondCommand)
+    ? secondCommand
+    : undefined;
 
-  if (args.help || args.h) {
+  if ((args.help || args.h) && !duplicatedBinaryTarget) {
     showHelp(command, args.all === true);
     await updateCheck;
     exitProcess(0);
@@ -222,11 +262,6 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     const { COMMANDS } = await import("./help/command-definitions.ts");
     // Use canonical command names from help registry (excludes aliases like "g", "preview")
     const canonicalNames = Object.keys(COMMANDS);
-    const secondCommand = args._[1];
-    const duplicatedBinaryTarget = command === "veryfront" &&
-        typeof secondCommand === "string" && Object.hasOwn(commands, secondCommand)
-      ? secondCommand
-      : undefined;
     const suggestions = duplicatedBinaryTarget
       ? [duplicatedBinaryTarget]
       : suggestCommand(command, canonicalNames);
@@ -243,7 +278,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     cliLogger.error(`Unknown command: ${command}\n`);
     if (duplicatedBinaryTarget) {
       cliLogger.info('  You already included "veryfront". Use:');
-      cliLogger.info(`    veryfront ${duplicatedBinaryTarget}`);
+      cliLogger.info(`    ${await formatDuplicatedBinaryHint(args)}`);
     } else if (suggestions.length > 0) {
       cliLogger.info(`  Did you mean?`);
       for (const s of suggestions) {
