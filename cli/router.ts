@@ -273,6 +273,7 @@ export async function formatDuplicatedBinaryHint(
     "push",
     "uploads",
   ]);
+  const knownUndocumentedLoginOptions = new Set(["--provider"]);
   const rootRelativeRouteOptions = new Set(["--exclude", "--include"]);
   const globalBooleanOptions = new Set([
     "--color",
@@ -333,7 +334,10 @@ export async function formatDuplicatedBinaryHint(
       (canonicalCommand === "serve" &&
         opaqueServeHostOptions.has(option));
     const knownGlobalOption = globalBooleanOptions.has(option) || globalValueOptions.has(option);
+    const knownUndocumentedOption = correctedCommand === "login" &&
+      knownUndocumentedLoginOptions.has(option);
     const unknownOption = option.startsWith("-") && optionDefinition === undefined &&
+      !knownUndocumentedOption &&
       !knownGlobalOption;
     const redactOptionValue = sensitiveOption || opaqueIssueOption || opaqueRemoteTargetOption ||
       opaqueConnectionOption ||
