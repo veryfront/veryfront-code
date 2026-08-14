@@ -1578,7 +1578,7 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolResults[0]?.context?.projectId, "project-stream");
   });
 
-  it("retries an interrupted local tool batch without partially executing it", async () => {
+  it("retries a wholly uncommitted local tool batch without partially executing it", async () => {
     const executedMutations: string[] = [];
     let callCount = 0;
     const model: ModelRuntime = {
@@ -1598,18 +1598,6 @@ describe("agent runtime refresh hooks", () => {
           return {
             stream: createRuntimeStream([
               { type: "text-delta", text: "Applying the requested updates." },
-              {
-                type: "tool-call",
-                toolCallId: "aborted-file",
-                toolName: "issue466_update_file",
-                input: '{"revision":"aborted-file"}',
-              },
-              {
-                type: "tool-call",
-                toolCallId: "aborted-agent",
-                toolName: "issue466_update_agent",
-                input: '{"revision":"aborted-agent"}',
-              },
               {
                 type: "tool-input-start",
                 id: "truncated-agent",
@@ -1701,100 +1689,108 @@ describe("agent runtime refresh hooks", () => {
 
     assertEquals(callCount, 3);
     assertEquals(executedMutations, ["retry-file", "retry-agent-1", "retry-agent-2"]);
-    assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 2);
+    assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 0);
     assertEquals(body.includes("Recovered after interrupted tool batch."), true);
   });
 
-  it("fails closed when an interrupted local batch already has a final streamed result", async () => {
-    const executedMutations: string[] = [];
-    let callCount = 0;
-    const model: ModelRuntime = {
-      provider: "hosted",
-      modelId: "hosted/interrupted-batch-with-result",
-      async doGenerate() {
-        return {
-          content: [{ type: "text", text: "unused" }],
-          finishReason: "stop",
-          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-        };
-      },
-      async doStream() {
-        callCount++;
-        if (callCount > 1) {
+  it("fails closed after a local sibling was exposed, with or without a final result", async () => {
+    for (const hasFinalResult of [false, true]) {
+      const executedMutations: string[] = [];
+      let callCount = 0;
+      const model: ModelRuntime = {
+        provider: "hosted",
+        modelId: `hosted/interrupted-exposed-batch-${hasFinalResult}`,
+        async doGenerate() {
+          return {
+            content: [{ type: "text", text: "unused" }],
+            finishReason: "stop",
+            usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          };
+        },
+        async doStream() {
+          callCount++;
+          if (callCount > 1) {
+            return {
+              stream: createRuntimeStream([
+                { type: "text-delta", text: "Unexpected recovery." },
+                { type: "finish", finishReason: "stop" },
+              ]),
+            };
+          }
+
           return {
             stream: createRuntimeStream([
-              { type: "text-delta", text: "Unexpected recovery." },
-              { type: "finish", finishReason: "stop" },
+              {
+                type: "tool-call",
+                toolCallId: "exposed-file",
+                toolName: "issue466_update_file",
+                input: '{"revision":"already-exposed"}',
+              },
+              ...(hasFinalResult
+                ? [{
+                  type: "tool-result",
+                  toolCallId: "exposed-file",
+                  toolName: "issue466_update_file",
+                  output: { revision: "already-applied" },
+                }]
+                : []),
+              {
+                type: "tool-input-start",
+                id: "truncated-agent-after-exposure",
+                toolName: "issue466_update_agent",
+              },
+              {
+                type: "tool-input-delta",
+                id: "truncated-agent-after-exposure",
+                delta: '{"revision":"truncated',
+              },
+              {
+                type: "finish",
+                finishReason: "stop",
+                usage: { inputTokens: 0, outputTokens: 0 },
+              },
             ]),
           };
-        }
-
-        return {
-          stream: createRuntimeStream([
-            {
-              type: "tool-call",
-              toolCallId: "already-applied-file",
-              toolName: "issue466_update_file",
-              input: '{"revision":"already-applied"}',
-            },
-            {
-              type: "tool-result",
-              toolCallId: "already-applied-file",
-              toolName: "issue466_update_file",
-              output: { revision: "already-applied" },
-            },
-            {
-              type: "tool-input-start",
-              id: "truncated-agent-after-result",
-              toolName: "issue466_update_agent",
-            },
-            {
-              type: "tool-input-delta",
-              id: "truncated-agent-after-result",
-              delta: '{"revision":"truncated',
-            },
-            {
-              type: "finish",
-              finishReason: "stop",
-              usage: { inputTokens: 0, outputTokens: 0 },
-            },
-          ]),
-        };
-      },
-    };
-
-    const mutationTool = (id: string) =>
-      tool({
-        id,
-        description: `Apply ${id}`,
-        inputSchema: defineSchema((v) => v.object({ revision: v.string() }))(),
-        execute: async ({ revision }) => {
-          executedMutations.push(revision);
-          return { revision };
         },
+      };
+
+      const mutationTool = (id: string) =>
+        tool({
+          id,
+          description: `Apply ${id}`,
+          inputSchema: defineSchema((v) => v.object({ revision: v.string() }))(),
+          execute: async ({ revision }) => {
+            executedMutations.push(revision);
+            return { revision };
+          },
+        });
+
+      const assistant = eagerAgent({
+        model: `hosted/interrupted-exposed-batch-${hasFinalResult}`,
+        system: "Do not repeat an interrupted batch after exposing a local tool call.",
+        tools: {
+          issue466_update_file: mutationTool("issue466_update_file"),
+          issue466_update_agent: mutationTool("issue466_update_agent"),
+        },
+        maxSteps: 3,
+        resolveModelTransport: async () => ({ model }),
       });
 
-    const assistant = eagerAgent({
-      model: "hosted/interrupted-batch-with-result",
-      system: "Do not repeat an interrupted batch after a terminal tool result.",
-      tools: {
-        issue466_update_file: mutationTool("issue466_update_file"),
-        issue466_update_agent: mutationTool("issue466_update_agent"),
-      },
-      maxSteps: 3,
-      resolveModelTransport: async () => ({ model }),
-    });
+      const response = (await assistant.stream({
+        input: "Update the taxonomy and agent",
+      })).toDataStreamResponse();
+      const body = await response.text();
 
-    const response = (await assistant.stream({
-      input: "Update the taxonomy and agent",
-    })).toDataStreamResponse();
-    const body = await response.text();
-
-    assertEquals(callCount, 1);
-    assertEquals(executedMutations, []);
-    assertEquals(body.match(/"type":"tool-output-available"/g)?.length ?? 0, 1);
-    assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 0);
-    assertEquals(body.includes("Unexpected recovery."), false);
+      assertEquals(callCount, 1);
+      assertEquals(executedMutations, []);
+      assertEquals(body.match(/"type":"tool-input-available"/g)?.length ?? 0, 1);
+      assertEquals(
+        body.match(/"type":"tool-output-available"/g)?.length ?? 0,
+        hasFinalResult ? 1 : 0,
+      );
+      assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 0);
+      assertEquals(body.includes("Unexpected recovery."), false);
+    }
   });
 
   it("recovers a placeholder after assistant text only once", async () => {

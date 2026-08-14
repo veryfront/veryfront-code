@@ -169,16 +169,14 @@ export function shouldContinueAfterStreamStep(
       toolCall.providerExecuted === true &&
       isStreamedToolCallIncomplete(toolCall),
   );
-  const hasFinalizedClientToolResult = streamedToolCalls.some(
-    (toolCall) =>
-      toolCall.providerExecuted !== true &&
-      finalToolResults.has(toolCall.id),
-  );
+  // A finalized local call has already emitted tool-input-available. Client
+  // callbacks may have applied its side effect, so reconstructing the batch
+  // could repeat that mutation even when no result reached this stream.
   const canRecoverInterruptedClientToolCall = options.recoverInterruptedToolCalls === true &&
     hasInterruptedClientToolCall &&
+    !hasFinalizedClientToolCall &&
     !hasInterruptedProviderToolCall &&
-    !hasUnresolvedProviderToolCall &&
-    !hasFinalizedClientToolResult;
+    !hasUnresolvedProviderToolCall;
 
   if (state.finishReason === "tool-calls") {
     if (hasIncompleteToolCall) {

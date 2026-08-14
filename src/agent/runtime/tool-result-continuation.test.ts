@@ -211,7 +211,7 @@ describe("agent runtime streamed tool result collection", () => {
     assertEquals(shouldContinue, false);
   });
 
-  it("continues an interrupted local tool batch when bounded recovery is available", () => {
+  it("does not recover after a finalized local sibling was exposed", () => {
     const shouldContinue = shouldContinueAfterStreamStep({
       accumulatedText: "Applying the requested updates.",
       finishReason: "stop",
@@ -240,7 +240,7 @@ describe("agent runtime streamed tool result collection", () => {
       recoverInterruptedToolCalls: true,
     });
 
-    assertEquals(shouldContinue, true);
+    assertEquals(shouldContinue, false);
   });
 
   it("continues a single interrupted local tool call when bounded recovery is available", () => {
