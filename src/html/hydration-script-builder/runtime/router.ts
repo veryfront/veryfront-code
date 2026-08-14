@@ -131,10 +131,14 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
    * navigation, reloads the current route instead — the user still escapes the
    * broken SPA state, without the runtime executing a URL it could not vet.
    */
-  function navigateDocument(target: string): void {
+  function navigateDocument(target: string, options: { replace?: boolean } = {}): void {
     const safeUrl = resolveDocumentNavigationUrl(target, window.location.origin);
     if (safeUrl) {
-      window.location.href = safeUrl;
+      if (options.replace && window.location.replace) {
+        window.location.replace(safeUrl);
+      } else {
+        window.location.href = safeUrl;
+      }
       return;
     }
 
@@ -572,7 +576,11 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
       // and the loader owns the history entry, so nothing is pushed here.
       if (pageData.requiresFullDocumentNavigation) {
         log("Server layout requires a full document navigation:", href);
-        navigateDocument(href);
+        // Progress state is restored first: if the unload is cancelled (a
+        // beforeunload guard on the current page), the document stays alive
+        // and must not remain aria-busy behind a stuck progress bar.
+        hideNavigationProgress();
+        navigateDocument(href, { replace: historyMode === "replace" });
         return;
       }
 

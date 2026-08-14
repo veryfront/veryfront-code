@@ -57,6 +57,8 @@ interface RouterHarness {
   document: RuntimeDocument;
   headElements: RuntimeElement[];
   setNextPageData(data: PageDataPayload): void;
+  /** URLs handed to location.replace (replacing document navigations). */
+  replacedHrefs(): string[];
   /** router.params at the moment RouterProvider was built — what the new page renders with. */
   renderedRouterParams(): Record<string, string> | null;
   /** The `params` prop handed to the page component; must be normalized. */
@@ -222,6 +224,7 @@ function createRouterHarness(options: HarnessOptions = {}): RouterHarness {
 
   let assignedHref: string | undefined;
   let reloadCount = 0;
+  const replacedHrefs: string[] = [];
   const historyCalls: HistoryCall[] = [];
 
   const window = {
@@ -237,6 +240,9 @@ function createRouterHarness(options: HarnessOptions = {}): RouterHarness {
       },
       reload() {
         reloadCount++;
+      },
+      replace(url: string) {
+        replacedHrefs.push(url);
       },
     },
     history: {
@@ -375,6 +381,7 @@ function createRouterHarness(options: HarnessOptions = {}): RouterHarness {
     setNextPageData: (data) => {
       nextPageData = data;
     },
+    replacedHrefs: () => [...replacedHrefs],
     renderedRouterParams: () => renderedRouterParams,
     renderedPageParams: () => renderedPageParams,
     reloads: () => reloadCount,
@@ -968,6 +975,39 @@ describe("hydration-script-builder/runtime/router", () => {
         harness.historyCalls,
         [],
         "pushState before a document navigation duplicates the history entry",
+      );
+    });
+
+    it("honours replace semantics when the fallback leaves the document", async () => {
+      const harness = createRouterHarness();
+      harness.window.__veryfrontHydrationComplete?.();
+      harness.setNextPageData({ pagePath: "page", requiresFullDocumentNavigation: true });
+
+      await harness.runtime.navigateSPA("/server-only", "replace");
+
+      assertEquals(
+        harness.replacedHrefs(),
+        ["https://veryfront.test/server-only"],
+        "replace-mode navigation must replace the current history entry",
+      );
+      assertEquals(
+        harness.window.location.href,
+        "https://veryfront.test/",
+        "an href assignment would add a Back-reachable entry for the replaced page",
+      );
+    });
+
+    it("clears the navigation progress state before handing over to the document loader", async () => {
+      const harness = createRouterHarness();
+      harness.window.__veryfrontHydrationComplete?.();
+      harness.setNextPageData({ pagePath: "page", requiresFullDocumentNavigation: true });
+
+      await harness.runtime.navigateSPA("/server-only");
+
+      assertEquals(
+        harness.document.body.getAttribute("aria-busy"),
+        null,
+        "a cancelled unload (beforeunload) must not leave the page stuck aria-busy",
       );
     });
 
