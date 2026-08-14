@@ -1662,8 +1662,14 @@ Deno.test("successful strict project file calls dispose cancellation listeners a
   const observedSignals: AbortSignal[] = [];
   const client = createStrictRuntimeProjectFilesClient({
     apiUrl: baseOptions.apiUrl,
-    operationTimeoutMs: 10,
-    timeoutMs: 10,
+    // Deadlines only need to be larger than this call, which resolves from a
+    // stub. A 10ms budget made a success-path assertion depend on wall clock:
+    // under a loaded parallel run the deadline can elapse before the call
+    // settles, the timeout path runs, and the listener counts below stop being
+    // 1/1. Nothing here tests timeout behaviour -- the tests that do set their
+    // own short deadlines deliberately.
+    operationTimeoutMs: 30_000,
+    timeoutMs: 30_000,
     fetch: (_url, init) => {
       observedSignals.push(init.signal as AbortSignal);
       return Promise.resolve(
