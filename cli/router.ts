@@ -245,6 +245,8 @@ export async function formatDuplicatedBinaryHint(
     "-a",
     "--body",
     "-b",
+    "--labels",
+    "-l",
     "--title",
     "-t",
   ]);
@@ -314,8 +316,8 @@ export async function formatDuplicatedBinaryHint(
     const fileOption = optionDefinition?.flag.includes("<file>") === true;
     const opaqueIssueOption = correctedCommand === "issues" && opaqueIssueOptions.has(option);
     const opaqueRemoteTargetOption =
-      (canonicalCommand === "deploy" || canonicalCommand === "pull" ||
-        canonicalCommand === "push") &&
+      (canonicalCommand === "deploy" || canonicalCommand === "open" ||
+        canonicalCommand === "pull" || canonicalCommand === "push") &&
       opaqueRemoteTargetOptions.has(option);
     const opaqueConnectionOption = (correctedCommand === "worker" &&
       opaqueWorkerConnectionOptions.has(option)) ||

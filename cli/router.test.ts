@@ -804,6 +804,30 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("redacts open target identifiers in the correction", async () => {
+      stubExit();
+      stubLogger();
+      const targetOptions = ["--project", "-p", "--env"];
+      try {
+        for (const option of targetOptions) {
+          infoMessages.length = 0;
+          const code = await runAndCaptureExit(parseCliArgs([
+            "veryfront",
+            "open",
+            option,
+            "private-open-target",
+          ]));
+          assertEquals(code, 2);
+          assertEquals(infoMessages, [
+            '  You already included "veryfront". Use:',
+            `    veryfront open ${option} '<REDACTED>'`,
+          ]);
+        }
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("redacts a positional pull project identifier in the correction", async () => {
       stubExit();
       stubLogger();
@@ -996,6 +1020,28 @@ describe("cli/router helpers", () => {
         assertEquals(infoMessages, [
           '  You already included "veryfront". Use:',
           "    veryfront issues create --assignees '<REDACTED>' --assignee='<REDACTED>' -a '<REDACTED>'",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("redacts issue label identifiers in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "issues",
+          "create",
+          "--labels",
+          "customer-acme",
+          "-l=project-private",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront issues create --labels '<REDACTED>' -l='<REDACTED>'",
         ]);
       } finally {
         restoreAll();
