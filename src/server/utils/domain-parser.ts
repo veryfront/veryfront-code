@@ -10,13 +10,16 @@ export interface ParsedDomain {
 
 type Environment = ParsedDomain["environment"];
 
-// Local development domains (localhost preferred, lvh.me alternative, veryfront.dev for HTTPS testing)
-// `localhost` is the hostname the CLI prints: {slug}.localhost URLs work and *.localhost is a
-// W3C Secure Context, enabling navigator.mediaDevices / getUserMedia in WKWebView (Tauri) and
-// all browsers. Unlike lvh.me and veryfront.dev it is a *single-label* root with no registrable
-// domain, so every rule below matches it as a root in its own right rather than via an eTLD+1
-// style "last two labels" split.
-const LOCAL_DEV_DOMAINS = "localhost|lvh\\.me|veryfront\\.dev";
+// Local development domain. `localhost` is the only one: it is the hostname the CLI prints,
+// it is reserved by RFC 6761 so it never leaves the machine, and *.localhost is a W3C Secure
+// Context, enabling navigator.mediaDevices / getUserMedia in WKWebView (Tauri) and all browsers.
+//
+// Public wildcard-DNS roots that resolve to 127.0.0.1 were removed deliberately: they are real
+// DNS names, so DNS rebind protection blocks them and the local stack becomes unreachable with
+// no actionable error. `localhost` is a *single-label* root with no registrable domain, so every
+// rule below matches it as a root in its own right rather than via an eTLD+1 style
+// "last two labels" split.
+const LOCAL_DEV_DOMAINS = "localhost";
 // Production domains
 const PROD_DOMAINS = "veryfront\\.com|veryfront\\.org";
 
@@ -34,7 +37,7 @@ const IFRAME_EMBED_DOMAINS = /^(localhost|.*\.xip\.io|.*\.zip\.io)$/i;
  * `404 {"error":"No project configured for domain: ..."}`.
  *
  * `development` is deliberately absent. It is a valid `ParsedDomain.environment`
- * for *local* roots (`lvh.me`, `localhost`, `veryfront.dev`), where it means
+ * for the *local* root (`localhost`), where it means
  * "running on this machine". No hosted rule produces it, so a hosted
  * `{slug}.development.veryfront.com` resolves to no project.
  *
@@ -122,11 +125,11 @@ function matchDomain(domain: string, pattern: string): RegExpMatchArray | null {
 export function parseProjectDomain(host: string): ParsedDomain {
   const domain = stripPort(host);
 
-  // Plain local dev domains without slug.
+  // Plain local dev domain without slug.
   // Bare `localhost` is checked here, ahead of IFRAME_EMBED_DOMAINS, so that it is a full
-  // veryfront local-dev root like bare lvh.me: a project-less local host is how the project
-  // chooser is reached, and it must not fall through to the custom-domain lookup path.
-  if (domain === "localhost" || domain === "veryfront.dev" || domain === "lvh.me") {
+  // veryfront local-dev root: a project-less local host is how the project chooser is
+  // reached, and it must not fall through to the custom-domain lookup path.
+  if (domain === "localhost") {
     return createParsedDomain(null, null, "development", true, true);
   }
 
@@ -134,7 +137,7 @@ export function parseProjectDomain(host: string): ParsedDomain {
     return createParsedDomain(null, null, "development", false, true, true);
   }
 
-  // Local development preview: {slug}.preview.{lvh.me|veryfront.dev}
+  // Local development preview: {slug}.preview.localhost
   const localPreviewMatch = matchDomain(
     domain,
     `^([A-Za-z0-9-]+)\\.preview\\.(${LOCAL_DEV_DOMAINS})$`,
@@ -144,7 +147,7 @@ export function parseProjectDomain(host: string): ParsedDomain {
     return createParsedDomain(slug, branch, "preview", true, true);
   }
 
-  // Local production testing: {custom-domain}.prod.{lvh.me|veryfront.dev}
+  // Local production testing: {custom-domain}.prod.localhost
   // Treated as custom domain for JIT production rendering
   const localProdMatch = matchDomain(
     domain,
@@ -154,7 +157,7 @@ export function parseProjectDomain(host: string): ParsedDomain {
     return createParsedDomain(null, null, "production", false, false);
   }
 
-  // Local development explicit production: {slug}.production.{lvh.me|veryfront.dev}
+  // Local development explicit production: {slug}.production.localhost
   const localProductionMatch = matchDomain(
     domain,
     `^([A-Za-z0-9-]+)\\.production\\.(${LOCAL_DEV_DOMAINS})$`,
@@ -163,7 +166,7 @@ export function parseProjectDomain(host: string): ParsedDomain {
     return createParsedDomain(localProductionMatch[1], null, "production", true, false);
   }
 
-  // Local development explicit staging: {slug}.staging.{lvh.me|veryfront.dev}
+  // Local development explicit staging: {slug}.staging.localhost
   const localStagingMatch = matchDomain(
     domain,
     `^([A-Za-z0-9-]+)\\.staging\\.(${LOCAL_DEV_DOMAINS})$`,
@@ -172,7 +175,7 @@ export function parseProjectDomain(host: string): ParsedDomain {
     return createParsedDomain(localStagingMatch[1], null, "staging", true, false);
   }
 
-  // Local environment root domains (no slug): preview|staging|production.{lvh.me|veryfront.dev}
+  // Local environment root domains (no slug): preview|staging|production.localhost
   const localEnvRootMatch = matchDomain(
     domain,
     `^(${HOSTED_ENVIRONMENTS})\\.(${LOCAL_DEV_DOMAINS})$`,
@@ -182,9 +185,9 @@ export function parseProjectDomain(host: string): ParsedDomain {
     return createParsedDomain(null, null, env, true, env === "preview");
   }
 
-  // Local development base: {slug}.{lvh.me|veryfront.dev}
+  // Local development base: {slug}.localhost
   // Mirrors production behavior: serves released content (isDraft: false)
-  // Use {slug}.preview.lvh.me for draft content
+  // Use {slug}.preview.localhost for draft content
   const localBaseMatch = matchDomain(domain, `^([A-Za-z0-9-]+)\\.(${LOCAL_DEV_DOMAINS})$`);
   if (localBaseMatch?.[1]) {
     const { slug, branch } = parseSlugAndBranch(localBaseMatch[1]);
@@ -246,28 +249,29 @@ export function isHostedVeryfrontDomain(host: string): boolean {
 }
 
 /**
- * Check if a domain is a valid veryfront domain (includes localhost and lvh.me for local dev)
+ * Check if a domain is a valid veryfront domain (includes localhost for local dev)
  */
 export function isVeryfrontDomain(host: string): boolean {
   const domain = stripPort(host);
 
-  if (domain === "localhost" || domain === "veryfront.dev" || domain === "lvh.me") return true;
+  if (domain === "localhost") return true;
 
   return new RegExp(`^[a-zA-Z0-9-]+(\\.[a-zA-Z0-9-]+)*\\.(${ALL_DOMAINS})$`).test(domain);
 }
 
 /**
  * Check if a host is a local development host where HMR connections should be allowed.
- * Recognises localhost, 127.0.0.1, 0.0.0.0, *.localhost, and local dev domains
- * (lvh.me, veryfront.dev) — but excludes explicit production/staging
- * subdomains ({slug}.production.{local}, {slug}.staging.{local}) since those are
- * used for testing non-dev behaviour locally.
+ * Recognises localhost, 127.0.0.1, 0.0.0.0, and *.localhost — but excludes explicit
+ * production/staging subdomains ({slug}.production.localhost,
+ * {slug}.staging.localhost) since those are used for testing non-dev behaviour locally.
  *
  * `*.localhost` is deliberately NOT a blanket allow. It is classified by the same
- * `parseProjectDomain` rules as the two-label local roots, so
- * `{slug}.production.localhost` and unknown namespaces such as `{slug}.foobar.localhost`
- * stay excluded exactly as their lvh.me counterparts do. A single-label root would
- * otherwise widen HMR admission the moment the printed dev hostname moved to localhost.
+ * `parseProjectDomain` rules, so `{slug}.production.localhost` and unknown namespaces
+ * such as `{slug}.foobar.localhost` stay excluded. `localhost` being a single-label root
+ * must not widen HMR admission relative to the two-label roots it replaced.
+ *
+ * `host` may carry a port; it is stripped before matching, so `app.localhost:3000`
+ * is classified as `app.localhost`.
  */
 export function isLocalDevHost(host: string): boolean {
   const domain = stripPort(host).toLowerCase();
@@ -275,11 +279,9 @@ export function isLocalDevHost(host: string): boolean {
   // Standard loopback / bind-all addresses
   if (domain === "localhost" || domain === "127.0.0.1" || domain === "0.0.0.0") return true;
 
-  // Must be on a local dev root — production domains (veryfront.com/org) are not dev hosts.
-  // `localhost` is a single-label root; the others are two-label registrable domains.
-  const isLocalTLD = /\.(localhost|lvh\.me|veryfront\.dev)$/i.test(domain) ||
-    /^(lvh\.me|veryfront\.dev)$/i.test(domain);
-  if (!isLocalTLD) return false;
+  // Must be under the local dev root — production domains (veryfront.com/org) are not dev
+  // hosts. `localhost` is a single-label root, matched here as a whole suffix.
+  if (!/\.localhost$/i.test(domain)) return false;
 
   const parsed = parseProjectDomain(host);
 

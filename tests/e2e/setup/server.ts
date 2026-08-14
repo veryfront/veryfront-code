@@ -14,7 +14,7 @@ let serverProcess: ChildProcess | null = null;
 let runtimeServer: Awaited<ReturnType<typeof startVeryfrontRuntimeServer>> | null = null;
 let runtimeServerAbortController: AbortController | null = null;
 let workspaceRoot: string | null = null;
-let readinessUrl = "http://blank.lvh.me:8080/";
+let readinessUrl = "http://blank.localhost:8080/";
 
 async function writeProjectFile(
   projectDir: string,
@@ -271,7 +271,7 @@ export async function startServer(
     ? options.projectSlugs
     : getProjectsToProvision();
   workspaceRoot = await createPlaywrightWorkspace(projectSlugs);
-  readinessUrl = `http://${projectSlugs[0]}.lvh.me:8080/`;
+  readinessUrl = `http://${projectSlugs[0]}.localhost:8080/`;
   await persistWorkspaceState(workspaceRoot);
 
   if (options.mode === "production") {

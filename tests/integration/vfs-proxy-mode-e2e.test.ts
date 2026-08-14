@@ -301,10 +301,10 @@ describe(
             }
           }
 
-          // Use flow-ops.lvh.me (*.lvh.me resolves to 127.0.0.1)
+          // Use flow-ops.localhost (*.localhost resolves to 127.0.0.1)
           // Include proxy headers that a real proxy would set — without x-release-id
           // the renderer rejects production requests in proxy mode with 502.
-          const response = await fetch(`http://flow-ops.lvh.me:${server.port}/api/flows`, {
+          const response = await fetch(`http://flow-ops.localhost:${server.port}/api/flows`, {
             headers: {
               "x-release-id": releaseId,
               "x-environment": "production",

@@ -826,7 +826,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       // configuration gap reported as an upstream failure. A custom domain in
       // that state already answers 404.
       //
-      // Locally the same shape means something else: on lvh.me and friends a
+      // Locally the same shape means something else: on localhost a
       // project-less host is how the project chooser is reached, so those keep
       // forwarding. See ProjectsHandler, enabled for exactly this state.
       if (isHostedVeryfrontDomain(host)) {

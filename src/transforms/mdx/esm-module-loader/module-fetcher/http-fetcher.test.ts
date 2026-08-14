@@ -53,7 +53,7 @@ describe("module-fetcher/http-fetcher", () => {
       );
       assertEquals(
         requestedUrl,
-        "http://docs.lvh.me:3001/_vf_modules/pages/index.js?ssr=true&pins=on%3Apins-a",
+        "http://docs.localhost:3001/_vf_modules/pages/index.js?ssr=true&pins=on%3Apins-a",
       );
     } finally {
       globalThis.fetch = originalFetch;

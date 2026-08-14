@@ -110,7 +110,7 @@ describe("Proxy-Renderer Mode Parity", () => {
         environment: "preview",
         contentSourceId: "local-main",
         localPath: "/Users/dev/projects/local-project",
-        host: "local-project.lvh.me:8080",
+        host: "local-project.localhost:8080",
         parsedDomain: {
           slug: "local-project",
           isVeryfrontDomain: true,
@@ -123,7 +123,7 @@ describe("Proxy-Renderer Mode Parity", () => {
       };
 
       const injected = injectContextHeaders(
-        new Request("http://local-project.lvh.me:8080/page"),
+        new Request("http://local-project.localhost:8080/page"),
         ctx,
       );
 

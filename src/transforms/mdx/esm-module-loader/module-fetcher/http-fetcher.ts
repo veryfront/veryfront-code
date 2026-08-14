@@ -56,7 +56,7 @@ function requireProjectSlug(value: string | undefined): string {
   ) {
     throw new TypeError("Project slug must be a valid DNS label");
   }
-  return `${value}.lvh.me`;
+  return `${value}.localhost`;
 }
 
 function requireFetchTimeout(value: number): number {

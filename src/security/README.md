@@ -82,7 +82,7 @@ the trusted shell.
 
 When Fetch Metadata is present, only `sec-fetch-site: none` (address bar or
 bookmark navigation) and `same-origin` requests pass. A link from a rendered
-project site such as `project.lvh.me:3000` to `lvh.me:3000/_dev` is same-site
+project site such as `project.localhost:3000` to `localhost:3000/_dev` is same-site
 but cross-origin and is rejected with `403` by design: sibling local origins
 execute untrusted project code and must not be able to drive any privileged
 local control. Open the dashboard directly instead; this is intended behavior,
