@@ -144,8 +144,8 @@ Install the CLI globally when you use Veryfront commands often.
 
 | Method            | Use when                                          | Approximate size                            |
 | ----------------- | ------------------------------------------------- | ------------------------------------------- |
-| npm package       | You use Node.js, Deno, Bun, or another npm client | 6 MB download, 28 MB before dependencies   |
-| Standalone binary | You need one executable with an included runtime | 0.9 to 1.2 GB for the downloaded executable |
+| npm package       | You use Node.js, Deno, Bun, or another npm client | 6 MB download, 28 MB before dependencies    |
+| Standalone binary | You need one executable with an included runtime  | 0.9 to 1.2 GB for the downloaded executable |
 
 These measurements describe recent releases and vary by platform and package
 manager. A clean global npm installation used approximately 145 MB in one

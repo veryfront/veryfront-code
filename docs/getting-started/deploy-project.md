@@ -1,7 +1,7 @@
 ---
 title: "Deploy with Veryfront Cloud"
 description: "Push and deploy an existing Veryfront project."
-order: 8
+order: 9
 ---
 
 Deploy a project that already works locally. For a guided first project that

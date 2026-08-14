@@ -117,6 +117,44 @@ describe("security/sandbox isolation posture reporting", () => {
     assertEquals(posture.inForce, false);
   });
 
+  it("keeps the default posture off the default-verbosity dev log", async () => {
+    // A developer who configured no isolation at all has nothing to act on, so
+    // resolution must not spend the one line a successful dev request prints.
+    await __resetPoolForTests();
+    const entries = captureLogs();
+
+    getIsolationPosture();
+
+    const posture = entries.find((entry) =>
+      entry.message.includes("Worker isolation posture resolved")
+    );
+    assertExists(posture, "expected the posture to still be reported at DEBUG");
+    assertEquals(
+      posture?.level,
+      "debug",
+      "unconfigured posture must not log at info",
+    );
+  });
+
+  it("still reports the posture at info once isolation is actually in force", async () => {
+    await __resetPoolForTests();
+    setEnv("WORKER_ISOLATION_ENABLED", "1");
+    setEnv("WORKER_ISOLATION_SSR", "1");
+    const entries = captureLogs();
+
+    getIsolationPosture();
+
+    const posture = entries.find((entry) =>
+      entry.message.includes("Worker isolation posture resolved")
+    );
+    assertExists(posture, "expected the posture to be reported");
+    assertEquals(
+      posture?.level,
+      "info",
+      "an in-force posture is operator-relevant and stays at info",
+    );
+  });
+
   it("does not warn when a requested surface is genuinely in force", async () => {
     await __resetPoolForTests();
     setEnv("WORKER_ISOLATION_ENABLED", "1");

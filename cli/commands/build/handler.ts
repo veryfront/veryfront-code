@@ -53,7 +53,7 @@ export const parseBuildArgs = createArgParser(BuildArgsSchema, {
   include: { keys: ["include"], type: "array" },
   exclude: { keys: ["exclude"], type: "array" },
   dryRun: CommonArgs.dryRun,
-});
+}, { rejectUnknown: true });
 
 export async function handleBuildCommand(args: ParsedArgs): Promise<void> {
   showHeader();

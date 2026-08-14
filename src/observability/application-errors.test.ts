@@ -252,7 +252,6 @@ it("application error reporter downgrades tenant build errors to tagged warnings
   assertEquals(captures[9]?.context.errorClass, undefined);
   assertEquals(captures[9]?.context.level, undefined);
 });
-
 it("application error capture failures never replace application control flow", () => {
   const hostile = new Proxy({}, {
     getPrototypeOf() {

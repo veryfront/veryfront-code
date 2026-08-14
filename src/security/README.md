@@ -107,14 +107,14 @@ environment ID, and a digest of the request credential. Fetch failure, timeout,
 credential rejection, or explicit invalidation never returns stale or empty
 secret data.
 
-If both `VERYFRONT_API_INTERNAL_USER` and `VERYFRONT_API_INTERNAL_PASS` are
-configured, `VERYFRONT_API_BASE_URL` must provide the canonical
-`/internal/project-environment-variables` endpoint. Before using those host
-credentials, the runtime verifies the request bearer token against the
-project-scoped management endpoint. A missing, redirected, or failed internal
-endpoint is an error; there is no compatibility fallback to masked management
-values. Leave both internal credential variables unset when that endpoint is
-not deployed.
+Hosted proxy mode requires both `VERYFRONT_API_INTERNAL_USER` and
+`VERYFRONT_API_INTERNAL_PASS`, and `VERYFRONT_API_BASE_URL` must provide the
+canonical `/internal/project-environment-variables` endpoint. Before using
+those host credentials, the runtime verifies the request bearer token against
+the project-scoped management endpoint. A missing credential, redirected
+endpoint, or failed internal request is an error. There is no compatibility
+fallback to masked management values. Local CLI proxy mode and non-proxy
+runtimes do not require these host credentials.
 
 #### Trust boundary and residual risk
 
@@ -133,28 +133,37 @@ binding comes from the signed control-plane request body.
 #### Rollout ordering for hosted identity changes
 
 The hosted runtime fails closed at boot without
-`VERYFRONT_TRUST_FORWARDED_HEADERS=1`, and hosted agent runs fail closed
-without the branch identity that only the current proxy derives from the
-signed control-plane body. Upgrading an existing deployment is safe in this
-order:
+`VERYFRONT_TRUST_FORWARDED_HEADERS=1`,
+`VERYFRONT_API_INTERNAL_USER`, and `VERYFRONT_API_INTERNAL_PASS`. Hosted agent
+runs also fail closed without the branch identity that only the current proxy
+derives from the signed control-plane body. Upgrading an existing deployment
+is safe in this order:
 
-1. Set `VERYFRONT_TRUST_FORWARDED_HEADERS=1` (and ensure
+1. Deploy and verify the canonical
+   `/internal/project-environment-variables` endpoint on
+   `VERYFRONT_API_BASE_URL`. Provision the credential pair that the endpoint
+   accepts.
+2. Set `VERYFRONT_API_INTERNAL_USER`, `VERYFRONT_API_INTERNAL_PASS`, and
+   `VERYFRONT_TRUST_FORWARDED_HEADERS=1` (and ensure
    `CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY` is set) on the runtime environment
    while it still runs the previous version. Earlier runtimes already accept
-   the variable as an explicit operator trust opt-in, so this step is
-   behaviour-preserving inside the required private topology.
-2. Deploy the proxy tier. Earlier runtimes ignore the added
+   the trust variable and internal credentials. Step 1 ensures that their
+   privileged environment reads succeed before the new boot requirement takes
+   effect.
+3. Deploy the proxy tier. Earlier runtimes ignore the added
    `x-default-branch-name` header, and the `vf-utf8:` branch-name encoding is
    applied only to values an earlier proxy could not forward at all.
-3. Deploy the runtime tier. A new runtime booted without step 1 crash-loops
-   intentionally; a new runtime behind an old proxy rejects hosted
+4. Deploy the runtime tier. A new runtime booted without steps 1 and 2
+   crash-loops intentionally. A new runtime behind an old proxy rejects hosted
    preview-branch and non-default-branch agent runs with `PERMISSION_DENIED`
    because branch identity must come from the verified control-plane binding.
 
-Roll back in the reverse order (runtime first, then proxy). The trust variable
-can remain set during rollback. There is deliberately no warn-only
-compatibility mode for a missing trust declaration or missing branch binding:
-either one would let unbound identity select tenant data.
+Roll back the runtime first, then the proxy. Keep the internal endpoint,
+credentials, and trust variable in place throughout rollback. After the older
+runtime is active, operators can unset the internal credentials before removing
+the internal endpoint. There is deliberately no warn-only compatibility mode
+for a missing trust declaration, missing hosted credential, or missing branch
+binding. Any of these gaps can expose or select incorrect tenant data.
 
 ### Input validation
 
