@@ -15,8 +15,8 @@ import type { LLMProvider, LLMProviderRegistry } from "./llm/index.ts";
 import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.ts";
 import {
   createBuiltinExtensions,
+  createDeferredBuiltinExtension,
   createEvalCliBuiltinExtensions,
-  createOptionalBuiltinExtension,
 } from "./builtin-extensions.ts";
 import { join } from "@std/path";
 
@@ -654,10 +654,11 @@ describe("orchestrateExtensions()", () => {
           discoverPackageExtensions: () => Promise.resolve(packageHits),
         },
         builtinExtensions: [
-          createOptionalBuiltinExtension({
+          createDeferredBuiltinExtension({
             name: "ext-css-tailwind",
             origin: "veryfront/ext-css-tailwind",
             sourceDirectory: "ext-css-tailwind",
+            availability: "root-bundled",
             factory: () => {
               deferredFactoryCalls.push("ext-css-tailwind");
               return stubExt("ext-css-tailwind", {
@@ -666,10 +667,11 @@ describe("orchestrateExtensions()", () => {
               });
             },
           }),
-          createOptionalBuiltinExtension({
+          createDeferredBuiltinExtension({
             name: "ext-node-websocket-ws",
             origin: "veryfront/ext-node-websocket-ws",
             sourceDirectory: "ext-node-websocket-ws",
+            availability: "root-bundled",
             factory: () => {
               deferredFactoryCalls.push("ext-node-websocket-ws");
               return stubExt("ext-node-websocket-ws", {
