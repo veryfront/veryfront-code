@@ -541,11 +541,13 @@ describe("cli/router helpers", () => {
           "--environment",
           "staging",
           "--token=top-secret",
+          "file:///Users/alice/project",
+          "unsafe\u0085value",
         ]));
         assertEquals(code, 2);
         assertEquals(infoMessages, [
           '  You already included "veryfront". Use:',
-          "    veryfront deploy --dry-run --environment staging --token='<REDACTED>'",
+          "    veryfront deploy --dry-run --environment staging --token='<REDACTED>' '<REDACTED>' '<REDACTED>'",
         ]);
       } finally {
         restoreAll();
