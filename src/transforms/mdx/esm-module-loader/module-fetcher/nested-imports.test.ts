@@ -54,6 +54,18 @@ import { bar } from "./local.js";
         assertEquals(result.vfModules[0]!.path.startsWith("file://"), false);
       }
     });
+
+    it("finds bare side-effect _vf_modules imports", () => {
+      const code = [
+        `import "/_vf_modules/styles/theme.css";`,
+        `import '/_vf_modules/polyfills/runtime.js';`,
+      ].join("\n");
+      const result = findNestedImports(code);
+      assertEquals(result.vfModules.map((module) => module.path), [
+        "_vf_modules/styles/theme.css",
+        "_vf_modules/polyfills/runtime.js",
+      ]);
+    });
   });
 
   describe("hasUnresolvedImports", () => {
@@ -204,6 +216,38 @@ import { bar } from "./local.js";
         [
           `export const load = () => import("file:///cache/_vf_modules__components__Lazy.js.mjs");`,
           `export const unchanged = () => import(path);`,
+        ].join("\n"),
+      );
+    });
+
+    it("materializes bare side-effect _vf_modules imports before caching the module", async () => {
+      const calls: Array<{ path: string; parent?: string }> = [];
+      const result = await resolveNestedModuleImports({
+        moduleCode: [
+          `import "/_vf_modules/styles/theme.css";`,
+          `import '/_vf_modules/polyfills/runtime.js';`,
+          `export const ready = true;`,
+        ].join("\n"),
+        esmCacheDir: "/tmp/veryfront-unused",
+        normalizedPath: "_vf_modules/pages/index.js",
+        projectSlug: "docs",
+        strictMissingModules: true,
+        fetchAndCacheModule: (path, parent) => {
+          calls.push({ path, parent });
+          return Promise.resolve(`/cache/${path.replaceAll("/", "__")}.mjs`);
+        },
+      });
+
+      assertEquals(calls, [
+        { path: "_vf_modules/styles/theme.css", parent: "_vf_modules/pages/index.js" },
+        { path: "_vf_modules/polyfills/runtime.js", parent: "_vf_modules/pages/index.js" },
+      ]);
+      assertEquals(
+        result,
+        [
+          `import "file:///cache/_vf_modules__styles__theme.css.mjs";`,
+          `import "file:///cache/_vf_modules__polyfills__runtime.js.mjs";`,
+          `export const ready = true;`,
         ].join("\n"),
       );
     });

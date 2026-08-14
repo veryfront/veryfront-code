@@ -10,6 +10,7 @@ import { createStubModule } from "../utils/stub-module.ts";
 import {
   findDynamicImportSpans,
   findStaticImportFromSpans,
+  findStaticSideEffectImportSpans,
   replaceSourceSpans,
   type SourceSpanReplacement,
 } from "../utils/source-spans.ts";
@@ -27,6 +28,15 @@ function matchUnresolvedVfModuleSpecifier(specifier: string): string | null {
   return specifier.match(/^((?:file:\/\/)?\/?\/?_vf_modules\/[^?]+)(?:\?.*)?$/)?.[1] ?? null;
 }
 
+type NestedImportSpan = {
+  original: string;
+  path: string;
+  start: number;
+  end: number;
+  isDynamic?: boolean;
+  isSideEffect?: boolean;
+};
+
 /**
  * Find nested module imports in code.
  * Matches both /_vf_modules/... and file:///_vf_modules/... patterns.
@@ -34,19 +44,11 @@ function matchUnresolvedVfModuleSpecifier(specifier: string): string | null {
 export function findNestedImports(
   moduleCode: string,
 ): {
-  vfModules: Array<
-    { original: string; path: string; start: number; end: number; isDynamic?: boolean }
-  >;
-  relative: Array<
-    { original: string; path: string; start: number; end: number; isDynamic?: boolean }
-  >;
+  vfModules: NestedImportSpan[];
+  relative: NestedImportSpan[];
 } {
-  const vfModules: Array<
-    { original: string; path: string; start: number; end: number; isDynamic?: boolean }
-  > = [];
-  const relative: Array<
-    { original: string; path: string; start: number; end: number; isDynamic?: boolean }
-  > = [];
+  const vfModules: NestedImportSpan[] = [];
+  const relative: NestedImportSpan[] = [];
 
   for (
     const { original, path: rawPath, start, end } of findStaticImportFromSpans(
@@ -82,6 +84,23 @@ export function findNestedImports(
   }
 
   for (
+    const { original, path: rawPath, start, end } of findStaticSideEffectImportSpans(
+      moduleCode,
+      matchUnresolvedVfModuleSpecifier,
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+    )
+  ) {
+    // Strip file:// prefix and leading slashes to get clean _vf_modules/... path
+    vfModules.push({
+      original,
+      path: rawPath.replace(/^(?:file:\/\/)?\/+/, ""),
+      start,
+      end,
+      isSideEffect: true,
+    });
+  }
+
+  for (
     const { original, path, start, end } of findStaticImportFromSpans(
       moduleCode,
       (specifier) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1],
@@ -112,6 +131,22 @@ export function findNestedImports(
     });
   }
 
+  for (
+    const { original, path, start, end } of findStaticSideEffectImportSpans(
+      moduleCode,
+      (specifier) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1],
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+    )
+  ) {
+    relative.push({
+      original,
+      path,
+      start,
+      end,
+      isSideEffect: true,
+    });
+  }
+
   return { vfModules, relative };
 }
 
@@ -121,6 +156,11 @@ export function findNestedImports(
 export function hasUnresolvedImports(moduleCode: string): { count: number; paths: string[] } {
   const matches = [
     ...findStaticImportFromSpans(
+      moduleCode,
+      matchUnresolvedVfModuleSpecifier,
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+    ),
+    ...findStaticSideEffectImportSpans(
       moduleCode,
       matchUnresolvedVfModuleSpecifier,
       MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
@@ -151,14 +191,27 @@ export async function processNestedImports(
   const replacements: SourceSpanReplacement[] = [];
 
   for (
-    const { original, start, end, isDynamic, nestedFilePath, nestedPath, relativePath } of results
+    const {
+      original,
+      start,
+      end,
+      isDynamic,
+      isSideEffect,
+      nestedFilePath,
+      nestedPath,
+      relativePath,
+    } of results
   ) {
     if (nestedFilePath) {
       replacements.push({
         start,
         end,
         expected: original,
-        replacement: isDynamic ? `"file://${nestedFilePath}"` : `from "file://${nestedFilePath}"`,
+        replacement: isDynamic
+          ? `"file://${nestedFilePath}"`
+          : isSideEffect
+          ? `import "file://${nestedFilePath}"`
+          : `from "file://${nestedFilePath}"`,
       });
       continue;
     }
@@ -180,7 +233,11 @@ export async function processNestedImports(
         start,
         end,
         expected: original,
-        replacement: isDynamic ? `"file://${stubPath}"` : `from "file://${stubPath}"`,
+        replacement: isDynamic
+          ? `"file://${stubPath}"`
+          : isSideEffect
+          ? `import "file://${stubPath}"`
+          : `from "file://${stubPath}"`,
       });
     }
   }
@@ -278,11 +335,12 @@ export async function resolveNestedModuleImports(
 
   const nestedResults: NestedImportResult[] = await parallelMap(
     allImports,
-    async ({ original, path, start, end, isDynamic, key }) => ({
+    async ({ original, path, start, end, isDynamic, isSideEffect, key }) => ({
       original,
       start,
       end,
       isDynamic,
+      isSideEffect,
       nestedFilePath: await input.fetchAndCacheModule(
         path,
         input.parentBasePath ?? input.normalizedPath,

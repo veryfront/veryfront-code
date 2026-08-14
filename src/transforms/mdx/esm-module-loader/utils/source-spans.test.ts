@@ -308,5 +308,15 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         ["./value.js"],
       );
     });
+
+    it("finds a non-interpolated template-literal side-effect specifier", () => {
+      const [span] = findStaticSideEffectImportSpans(
+        "import `./value.js`;",
+        matchRelative,
+        UNBOUNDED,
+      );
+      assertEquals(span?.original, "import `./value.js`");
+      assertEquals(span?.path, "./value.js");
+    });
   });
 });

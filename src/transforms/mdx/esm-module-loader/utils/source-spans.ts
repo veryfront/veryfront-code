@@ -407,25 +407,25 @@ export function findStaticSideEffectImportSpans(
       continue;
     }
 
-    const quoteIndex = skipWhitespace(source, cursor + "import".length);
-    const quoted = readQuotedSpecifier(source, quoteIndex);
-    if (!quoted) {
-      cursor = nextStatementCursor(source, quoteIndex);
+    const literalIndex = skipWhitespace(source, cursor + "import".length);
+    const literal = readLiteralSpecifier(source, literalIndex);
+    if (!literal) {
+      cursor = nextStatementCursor(source, literalIndex);
       continue;
     }
 
-    const matchedPath = matcher(quoted.specifier);
+    const matchedPath = matcher(literal.specifier);
     if (matchedPath) {
       spans.push({
-        original: source.slice(cursor, quoted.end),
+        original: source.slice(cursor, literal.end),
         path: matchedPath,
         start: cursor,
-        end: quoted.end,
+        end: literal.end,
       });
       if (spans.length >= maxMatches) return spans;
     }
 
-    cursor = quoted.end;
+    cursor = literal.end;
   }
 
   return spans;
