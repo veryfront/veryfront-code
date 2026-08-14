@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { VeryfrontError } from "veryfront/errors";
 import { writeTextFile } from "#veryfront/compat/fs.ts";
@@ -18,8 +18,8 @@ describe("cli build", () => {
         buildCommand({ projectDir: context.projectDir, dryRun: true } as any)
       );
 
-      assertEquals(error instanceof VeryfrontError, true);
-      assertEquals((error as VeryfrontError).slug, "config-validation-failed");
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "config-validation-failed");
       assertEquals(
         error.message.includes("Invalid veryfront.config at security.cors"),
         true,
