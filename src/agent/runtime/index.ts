@@ -249,6 +249,45 @@ function isTextSseChunk(chunk: Uint8Array): boolean {
   }
 }
 
+function stripLeadingText(
+  text: string,
+  remainingPrefixLength: number,
+): { text: string; remainingPrefixLength: number } {
+  const consumedLength = Math.min(text.length, remainingPrefixLength);
+  return {
+    text: text.slice(consumedLength),
+    remainingPrefixLength: remainingPrefixLength - consumedLength,
+  };
+}
+
+function stripTextDeltaPrefixFromSseChunk(
+  chunk: Uint8Array,
+  remainingPrefixLength: number,
+  encoder: TextEncoder,
+): { chunk: Uint8Array | undefined; remainingPrefixLength: number } {
+  const payload = new TextDecoder().decode(chunk);
+  if (!payload.startsWith("data: ")) {
+    return { chunk, remainingPrefixLength };
+  }
+
+  try {
+    const event = JSON.parse(payload.slice("data: ".length)) as Record<string, unknown>;
+    if (event.type !== "text-delta" || typeof event.delta !== "string") {
+      return { chunk, remainingPrefixLength };
+    }
+    const stripped = stripLeadingText(event.delta, remainingPrefixLength);
+    if (stripped.text.length === 0) {
+      return { chunk: undefined, remainingPrefixLength: stripped.remainingPrefixLength };
+    }
+    return {
+      chunk: encoder.encode(`data: ${JSON.stringify({ ...event, delta: stripped.text })}\n\n`),
+      remainingPrefixLength: stripped.remainingPrefixLength,
+    };
+  } catch {
+    return { chunk, remainingPrefixLength };
+  }
+}
+
 function buildGeneratedAssistantMessage(
   response: RuntimeGenerateTextResult,
   metadata: { id: string; timestamp: number },
@@ -1906,9 +1945,18 @@ export class AgentRuntime {
         },
       }, abortSignal);
       throwIfAborted(abortSignal);
-      const repeatsInterruptedRecoveryText = deferredRecoveryOutput !== undefined &&
-        state.accumulatedText === interruptedLocalToolBatchRecoveryText;
+      const interruptedRecoveryPrefixLength = deferredRecoveryOutput !== undefined &&
+          state.accumulatedText.startsWith(interruptedLocalToolBatchRecoveryText ?? "")
+        ? interruptedLocalToolBatchRecoveryText?.length ?? 0
+        : 0;
+      const recoveryPresentationText = state.accumulatedText.slice(
+        interruptedRecoveryPrefixLength,
+      );
+      const repeatsInterruptedRecoveryText = interruptedRecoveryPrefixLength > 0 &&
+        recoveryPresentationText.length === 0;
       if (deferredRecoveryOutput !== undefined) {
+        let remainingSsePrefixLength = interruptedRecoveryPrefixLength;
+        let remainingCallbackPrefixLength = interruptedRecoveryPrefixLength;
         for (const output of deferredRecoveryOutput) {
           if (
             repeatsInterruptedRecoveryText &&
@@ -1917,9 +1965,23 @@ export class AgentRuntime {
             continue;
           }
           if (output.kind === "callback") {
-            callbacks?.onChunk?.(output.chunk);
+            const stripped = stripLeadingText(output.chunk, remainingCallbackPrefixLength);
+            remainingCallbackPrefixLength = stripped.remainingPrefixLength;
+            if (stripped.text.length > 0) {
+              callbacks?.onChunk?.(stripped.text);
+            }
           } else {
-            controller.enqueue(output.chunk);
+            const stripped = output.isTextEvent
+              ? stripTextDeltaPrefixFromSseChunk(
+                output.chunk,
+                remainingSsePrefixLength,
+                encoder,
+              )
+              : { chunk: output.chunk, remainingPrefixLength: remainingSsePrefixLength };
+            remainingSsePrefixLength = stripped.remainingPrefixLength;
+            if (stripped.chunk !== undefined) {
+              controller.enqueue(stripped.chunk);
+            }
           }
         }
       }
@@ -1937,7 +1999,7 @@ export class AgentRuntime {
         streamedToolCalls.some(isInterruptedClientToolCall);
       const assistantMessage = buildStreamedAssistantMessage({
         ...state,
-        accumulatedText: repeatsInterruptedRecoveryText ? "" : state.accumulatedText,
+        accumulatedText: recoveryPresentationText,
       }, {
         id: `msg_${Date.now()}_${step}`,
         timestamp: Date.now(),
@@ -1989,7 +2051,9 @@ export class AgentRuntime {
       }
 
       const stepAssistantText = getTextFromParts(assistantMessage.parts);
-      if (
+      if (step === interruptedLocalToolBatchRecoveryStep && interruptedRecoveryPrefixLength > 0) {
+        latestAssistantText = state.accumulatedText;
+      } else if (
         hasSubstantiveAssistantText(stepAssistantText) ||
         step !== interruptedLocalToolBatchRecoveryStep
       ) {

@@ -2076,6 +2076,85 @@ describe("agent runtime refresh hooks", () => {
     );
   });
 
+  it("delivers only the new suffix when recovery extends prior text", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    const chunks: string[] = [];
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/prefix-placeholder-recovery-text",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 2) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Created the " },
+              { type: "text-delta", text: "assistant. It is ready." },
+              { type: "finish", finishReason: "stop" },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "Created the assistant." },
+            {
+              type: "tool-input-start",
+              id: "toolu_prefix_recovery",
+              toolName: "studio_suggestions",
+            },
+            { type: "tool-input-delta", id: "toolu_prefix_recovery", delta: "{}" },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "hosted/prefix-placeholder-recovery-text",
+      system: "Prefix placeholder recovery text regression test",
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+      tools: { studio_suggestions: studioSuggestions },
+    });
+
+    const body = await (await assistant.stream({
+      input: "Create an assistant",
+      onChunk: (chunk) => chunks.push(chunk),
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse().text();
+
+    assertEquals(callCount, 2);
+    assertEquals(body.match(/Created the assistant\./g)?.length ?? 0, 1);
+    assertEquals(body.match(/ It is ready\./g)?.length ?? 0, 1);
+    assertEquals(chunks, ["Created the assistant.", " It is ready."]);
+    const completedResponse = finishedResponse as AgentResponse | undefined;
+    assertExists(completedResponse);
+    assertEquals(completedResponse.text, "Created the assistant. It is ready.");
+    assertEquals(
+      completedResponse.messages
+        .filter((message) => message.role === "assistant")
+        .flatMap((message) => message.parts)
+        .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : []),
+      ["Created the assistant.", " It is ready."],
+    );
+  });
+
   it("stops after distinct recovery text with a finalized provider result", async () => {
     let finishedResponse: AgentResponse | undefined;
     let callCount = 0;
