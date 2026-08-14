@@ -2,9 +2,15 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
-import { exists, remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { exists, makeTempDir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { generateCommand } from "./index.ts";
 import { type TestContext, withTestContext } from "../../../tests/_helpers/context.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLoggerConfigForTests,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 
 async function setPreferredRouter(
   context: TestContext,
@@ -99,6 +105,55 @@ describe("CLI generate command", () => {
       assert(await exists(join(context.projectDir, "tasks", "sync-data.ts")));
       assert(await exists(join(context.projectDir, "resources", "docs.ts")));
       assert(await exists(join(context.projectDir, "skills", "code-review", "SKILL.md")));
+    });
+  });
+
+  describe("outside a Veryfront project", () => {
+    function captureLogs(): LogEntry[] {
+      const entries: LogEntry[] = [];
+      __resetLoggerConfigForTests();
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      return entries;
+    }
+
+    it("warns before scaffolding into a directory that is not a project", async () => {
+      const bare = await makeTempDir({ prefix: "generate-not-a-project-" });
+      const entries = captureLogs();
+      try {
+        await generateCommand(bare, "page", "about");
+
+        const warning = entries.find((entry) =>
+          entry.level === "warn" && entry.message.includes("does not look like a Veryfront project")
+        );
+        assert(
+          warning !== undefined,
+          "expected a warning that the target directory is not a Veryfront project",
+        );
+        // Still scaffolds — the warning informs, it does not block.
+        assert(await exists(join(bare, "app", "about", "page.tsx")));
+      } finally {
+        __resetLogRecordEmitterForTests();
+        __resetLoggerConfigForTests();
+        await remove(bare, { recursive: true });
+      }
+    });
+
+    it("stays quiet inside a real project", async () => {
+      await withTestContext("generate-in-project-quiet", async (context: TestContext) => {
+        const entries = captureLogs();
+        try {
+          await generateCommand(context.projectDir, "page", "about");
+
+          const warning = entries.find((entry) =>
+            entry.level === "warn" &&
+            entry.message.includes("does not look like a Veryfront project")
+          );
+          assert(warning === undefined, "must not warn inside a real project");
+        } finally {
+          __resetLogRecordEmitterForTests();
+          __resetLoggerConfigForTests();
+        }
+      });
     });
   });
 });
