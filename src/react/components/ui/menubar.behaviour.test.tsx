@@ -202,4 +202,63 @@ describe("Menubar behaviour", () => {
       cleanup();
     }
   });
+
+  it("skips disabled triggers during roving keyboard focus", () => {
+    const { scope, cleanup } = mount(
+      <Menubar>
+        <MenubarMenu value="file">
+          <MenubarTrigger>File</MenubarTrigger>
+        </MenubarMenu>
+        <MenubarMenu value="edit">
+          <MenubarTrigger disabled>Edit</MenubarTrigger>
+        </MenubarMenu>
+        <MenubarMenu value="view">
+          <MenubarTrigger>View</MenubarTrigger>
+        </MenubarMenu>
+      </Menubar>,
+    );
+    try {
+      const [file, edit, view] = triggers(scope);
+      assert(file && edit && view);
+      assertEquals(file.tabIndex, 0, "the first enabled trigger is tabbable");
+      assertEquals((edit as HTMLButtonElement).disabled, true);
+      file.focus();
+      flushSync(() => {
+        file.dispatchEvent(
+          new globalThis.KeyboardEvent("keydown", {
+            bubbles: true,
+            cancelable: true,
+            key: "ArrowRight",
+          }),
+        );
+      });
+      assert(document.activeElement === view, "ArrowRight skips the disabled trigger");
+      assertEquals(view.tabIndex, 0, "the next enabled trigger becomes tabbable");
+      assertEquals(file.tabIndex, -1, "the previous trigger leaves the tab order");
+
+      flushSync(() => {
+        view.dispatchEvent(
+          new globalThis.KeyboardEvent("keydown", {
+            bubbles: true,
+            cancelable: true,
+            key: "Home",
+          }),
+        );
+      });
+      assert(document.activeElement === file, "Home focuses the first enabled trigger");
+
+      flushSync(() => {
+        file.dispatchEvent(
+          new globalThis.KeyboardEvent("keydown", {
+            bubbles: true,
+            cancelable: true,
+            key: "End",
+          }),
+        );
+      });
+      assert(document.activeElement === view, "End focuses the last enabled trigger");
+    } finally {
+      cleanup();
+    }
+  });
 });

@@ -83,11 +83,13 @@ function isFocusableElement(value: Element | null): value is HTMLElement {
   return value !== null && typeof (value as HTMLElement).focus === "function";
 }
 
-function useModalContentEffect(
+/** Run the shared modal focus, stack, scroll-lock, and dismissal lifecycle. */
+export function useModalContentEffect(
   open: boolean,
   setOpen: (open: boolean) => void,
   ref: React.RefObject<HTMLElement | null>,
   triggerRef: React.RefObject<HTMLButtonElement | null>,
+  dismissOnEscape = true,
 ): void {
   React.useEffect(() => {
     const panel = ref.current;
@@ -105,7 +107,9 @@ function useModalContentEffect(
     const unregisterDismissableLayer = registerDismissableLayer(
       document,
       () => ref.current,
-      () => setOpen(false),
+      () => {
+        if (dismissOnEscape) setOpen(false);
+      },
     );
     const onKey = (e: KeyboardEvent) => {
       if (!isTopModal() || e.defaultPrevented) return;
@@ -144,7 +148,21 @@ function useModalContentEffect(
         : null;
       if (restoreTarget) focusWithoutScroll(restoreTarget);
     };
-  }, [open, ref, setOpen, triggerRef]);
+  }, [dismissOnEscape, open, ref, setOpen, triggerRef]);
+}
+
+/** Resolve a token scope outside any clipping modal panel for a modal portal. */
+export function getModalTokenScope(
+  document: Document,
+  anchor: HTMLElement | null,
+): HTMLElement {
+  const activeScope = document.activeElement?.closest<HTMLElement>(UI_SCOPE_SELECTOR);
+  const scopes = document.querySelectorAll<HTMLElement>(UI_SCOPE_SELECTOR);
+  return anchor?.closest<HTMLElement>(UI_SCOPE_SELECTOR) ??
+    modalStacks.get(document)?.at(-1)?.closest<HTMLElement>(UI_SCOPE_SELECTOR) ??
+    activeScope ??
+    (scopes.length === 1 ? scopes[0]! : undefined) ??
+    document.body;
 }
 
 /**

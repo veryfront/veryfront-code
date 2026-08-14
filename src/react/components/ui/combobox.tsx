@@ -129,9 +129,9 @@ export function ComboboxItem({
   const text = textValue ?? value;
 
   React.useEffect(() => {
-    ctx.registerOption(id, value, text);
+    ctx.registerOption(id, value, text, disabled);
     return () => ctx.unregisterOption(id);
-  }, [ctx, id, value, text]);
+  }, [ctx, disabled, id, value, text]);
 
   if (!ctx.matches(text)) return null;
 
@@ -144,6 +144,7 @@ export function ComboboxItem({
       id={id}
       role="option"
       aria-selected={selected}
+      aria-disabled={disabled || undefined}
       data-active={active ? "" : undefined}
       data-disabled={disabled ? "" : undefined}
       onClick={(event: React.MouseEvent<HTMLDivElement>) => {

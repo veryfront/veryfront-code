@@ -140,9 +140,9 @@ export function AutocompleteItem({
   const id = React.useId();
 
   React.useEffect(() => {
-    ctx.registerOption(id, value, value);
+    ctx.registerOption(id, value, value, disabled);
     return () => ctx.unregisterOption(id);
-  }, [ctx, id, value]);
+  }, [ctx, disabled, id, value]);
 
   if (!ctx.matches(value)) return null;
 
@@ -154,6 +154,7 @@ export function AutocompleteItem({
       id={id}
       role="option"
       aria-selected={false}
+      aria-disabled={disabled || undefined}
       data-active={active ? "" : undefined}
       data-disabled={disabled ? "" : undefined}
       onClick={(event: React.MouseEvent<HTMLDivElement>) => {

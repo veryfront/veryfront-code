@@ -108,6 +108,8 @@ export function Menubar({ children, className, ref, ...props }: MenubarProps): R
       if (!bar) return;
       const triggers = Array.from(
         bar.querySelectorAll<HTMLElement>("[data-vf-menubar-trigger]"),
+      ).filter((trigger) =>
+        !trigger.matches(":disabled") && trigger.getAttribute("aria-disabled") !== "true"
       );
       const i = triggers.indexOf(current);
       if (i < 0 || triggers.length === 0) return;
@@ -194,28 +196,29 @@ export interface MenubarTriggerProps extends React.ButtonHTMLAttributes<HTMLButt
 
 /** Top-level menu button - `role="menuitem"` with `aria-haspopup`, part of the roving-focus group. */
 export function MenubarTrigger(
-  { children, className, onKeyDown, onFocus, ref, ...props }: MenubarTriggerProps,
+  { children, className, disabled, onKeyDown, onFocus, ref, ...props }: MenubarTriggerProps,
 ): React.ReactElement {
   const ctx = useMenubarContext("MenubarTrigger");
   const menuValue = React.useContext(MenubarMenuContext);
   const open = menuValue != null && ctx.openValue === menuValue;
-  const tabbable = menuValue != null && ctx.focusedValue === menuValue;
+  const tabbable = !disabled && menuValue != null && ctx.focusedValue === menuValue;
 
   React.useEffect(() => {
-    if (menuValue != null) ctx.registerFirst(menuValue);
-  }, [ctx, menuValue]);
+    if (!disabled && menuValue != null) ctx.registerFirst(menuValue);
+  }, [ctx, disabled, menuValue]);
 
   return (
     <DropdownMenuTrigger
       ref={ref}
       role="menuitem"
+      disabled={disabled}
       tabIndex={tabbable ? 0 : -1}
       data-vf-menubar-trigger=""
       data-vf-menubar-value={menuValue ?? undefined}
       data-state={open ? "open" : "closed"}
       onFocus={(event) => {
         onFocus?.(event);
-        if (menuValue != null) ctx.setFocusedValue(menuValue);
+        if (!disabled && menuValue != null) ctx.setFocusedValue(menuValue);
       }}
       onKeyDown={(event) => {
         onKeyDown?.(event);

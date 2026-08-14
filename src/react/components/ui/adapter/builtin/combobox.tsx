@@ -19,6 +19,7 @@ interface Option {
   id: string;
   value: string;
   text: string;
+  disabled: boolean;
 }
 
 interface InternalComboboxState extends ComboboxState {
@@ -94,13 +95,19 @@ function ComboboxRoot({
     onOpenChange?.(false);
   }, [isValueControlled, onValueChange, isOpenControlled, onOpenChange, onInputValueChange]);
 
-  const registerOption = React.useCallback((id: string, value: string, text: string) => {
+  const registerOption = React.useCallback((
+    id: string,
+    value: string,
+    text: string,
+    disabled = false,
+  ) => {
     const existing = optionsRef.current.find((o) => o.id === id);
     if (existing) {
       existing.value = value;
       existing.text = text;
+      existing.disabled = disabled;
     } else {
-      optionsRef.current.push({ id, value, text });
+      optionsRef.current.push({ id, value, text, disabled });
     }
   }, []);
   const unregisterOption = React.useCallback((id: string) => {
@@ -108,7 +115,7 @@ function ComboboxRoot({
   }, []);
 
   const onInputKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
-    const visible = optionsRef.current.filter((o) => matches(o.text));
+    const visible = optionsRef.current.filter((o) => !o.disabled && matches(o.text));
     const currentIndex = visible.findIndex((o) => o.id === activeId);
     const move = (nextIndex: number) => {
       const clamped = Math.max(0, Math.min(visible.length - 1, nextIndex));

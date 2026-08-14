@@ -155,6 +155,44 @@ describe("ContextMenu behaviour (builtin)", () => {
       assertEquals(items[0]?.textContent, "Cut");
       const paste = scope.querySelector('[data-testid="paste"]') as HTMLElement;
       assertEquals(paste.getAttribute("aria-disabled"), "true", "disabled item marked");
+      assertEquals((paste as HTMLButtonElement).disabled, true, "native item is disabled");
+      flushSync(() => {
+        paste.dispatchEvent(new globalThis.MouseEvent("click", { bubbles: true }));
+      });
+      assert(
+        scope.querySelector('[role="menu"]'),
+        "disabled native activation keeps the menu open",
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("suppresses disabled asChild activation at the composed-control boundary", () => {
+    let childClicks = 0;
+    let selections = 0;
+    const { scope, rightClickTrigger, cleanup } = mountInScope(
+      <ContextMenu>
+        <ContextMenuTrigger data-testid="trigger">Right-click here</ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem disabled asChild onSelect={() => selections++}>
+            <a href="/danger" onClick={() => childClicks++}>Danger</a>
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>,
+    );
+    try {
+      rightClickTrigger();
+      const item = scope.querySelector<HTMLAnchorElement>('[role="menuitem"]');
+      assert(item);
+      assertEquals(item.getAttribute("href"), null, "disabled Slot removes navigation");
+      assertEquals(item.tabIndex, -1, "disabled Slot leaves the item out of focus order");
+      const event = new globalThis.MouseEvent("click", { bubbles: true, cancelable: true });
+      flushSync(() => item.dispatchEvent(event));
+      assert(event.defaultPrevented, "disabled Slot prevents default activation");
+      assertEquals(childClicks, 0, "the child click handler does not run");
+      assertEquals(selections, 0, "the item selection handler does not run");
+      assert(scope.querySelector('[role="menu"]'), "the menu stays open");
     } finally {
       cleanup();
     }

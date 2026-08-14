@@ -49,6 +49,22 @@ function clamp(n: number, min?: number, max?: number): number {
   return n;
 }
 
+function decimalPlaces(value: number): number {
+  const [coefficient, exponentText] = value.toString().toLowerCase().split("e");
+  const fractionLength = coefficient?.split(".")[1]?.length ?? 0;
+  const exponent = Number(exponentText ?? 0);
+  return Math.max(0, fractionLength - exponent);
+}
+
+/** Quantize a value to the nearest positive step, using `min` as the step base. */
+export function quantizeNumberFieldValue(value: number, step: number, min?: number): number {
+  if (!Number.isFinite(step) || step <= 0) return value;
+  const base = min ?? 0;
+  const quantized = base + Math.round((value - base) / step) * step;
+  const precision = Math.min(12, Math.max(decimalPlaces(base), decimalPlaces(step)));
+  return Number(quantized.toFixed(precision));
+}
+
 /** Render a numeric input that clamps to `[min, max]` and steps by `step`. */
 export function NumberField({
   value,
@@ -77,7 +93,7 @@ export function NumberField({
     if (raw === "") return commit(null);
     const parsed = Number(raw);
     if (Number.isNaN(parsed)) return;
-    commit(clamp(parsed, min, max));
+    commit(clamp(quantizeNumberFieldValue(parsed, step, min), min, max));
   };
 
   const nudge = (direction: 1 | -1) => {

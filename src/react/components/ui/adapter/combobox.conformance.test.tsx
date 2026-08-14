@@ -83,7 +83,7 @@ export function runComboboxConformance(
     return null;
   }
 
-  function mount(onValueChange?: (v: string) => void) {
+  function mount(onValueChange?: (v: string) => void, includeDisabled = false) {
     const dom = new JSDOM(
       `<!doctype html><html><body><div id="root"></div></body></html>`,
       { url: "https://example.com/", pretendToBeVisual: true },
@@ -100,6 +100,7 @@ export function runComboboxConformance(
             <Capture />
             <ComboboxContent>
               <ComboboxItem value="next">Next.js</ComboboxItem>
+              {includeDisabled && <ComboboxItem value="disabled" disabled>Disabled</ComboboxItem>}
               <ComboboxItem value="remix">Remix</ComboboxItem>
               <ComboboxItem value="astro">Astro</ComboboxItem>
             </ComboboxContent>
@@ -210,6 +211,23 @@ export function runComboboxConformance(
         h.press("ArrowDown"); // active = first (Next.js)
         h.press("Enter");
         assertEquals(selected, "next", "Enter commits the active option");
+      } finally {
+        h.cleanup();
+      }
+    });
+
+    it("keyboard navigation and Enter skip disabled options", () => {
+      let selected: string | undefined;
+      const h = mount((v) => selected = v, true);
+      try {
+        h.press("ArrowDown"); // open
+        h.press("ArrowDown"); // Next.js
+        h.press("ArrowDown"); // skip Disabled, move to Remix
+        const active = h.input().getAttribute("aria-activedescendant");
+        assert(active, "an enabled option is active");
+        assertEquals(h.scope.querySelector(`#${active}`)?.textContent, "Remix");
+        h.press("Enter");
+        assertEquals(selected, "remix", "Enter commits the enabled option after the gap");
       } finally {
         h.cleanup();
       }

@@ -64,7 +64,7 @@ describe("react/components/ui/autocomplete", () => {
     return null;
   }
 
-  function mount(onValueChange?: (v: string) => void) {
+  function mount(onValueChange?: (v: string) => void, includeDisabled = false) {
     const dom = new JSDOM(
       `<!doctype html><html><body><div id="root"></div></body></html>`,
       { url: "https://example.com/", pretendToBeVisual: true },
@@ -80,6 +80,7 @@ describe("react/components/ui/autocomplete", () => {
           <Capture />
           <AutocompleteContent>
             <AutocompleteItem value="Amsterdam" />
+            {includeDisabled && <AutocompleteItem value="Athens" disabled />}
             <AutocompleteItem value="Berlin" />
             <AutocompleteItem value="Barcelona" />
           </AutocompleteContent>
@@ -154,6 +155,23 @@ describe("react/components/ui/autocomplete", () => {
       const active = h.input().getAttribute("aria-activedescendant");
       assert(active, "aria-activedescendant is set");
       assert(h.scope.querySelector(`#${active}`), "points at a rendered suggestion");
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it("keyboard navigation and Enter skip disabled suggestions", () => {
+    let text: string | undefined;
+    const h = mount((v) => text = v, true);
+    try {
+      h.press("ArrowDown"); // open
+      h.press("ArrowDown"); // Amsterdam
+      h.press("ArrowDown"); // skip Athens, move to Berlin
+      const active = h.input().getAttribute("aria-activedescendant");
+      assert(active, "an enabled suggestion is active");
+      assertEquals(h.scope.querySelector(`#${active}`)?.textContent, "Berlin");
+      h.press("Enter");
+      assertEquals(text, "Berlin", "Enter commits the enabled suggestion after the gap");
     } finally {
       h.cleanup();
     }

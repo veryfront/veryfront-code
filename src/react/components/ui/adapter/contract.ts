@@ -368,8 +368,8 @@ export interface ComboboxState {
   matches: (text: string) => boolean;
   /** DOM id of the listbox, for the input's `aria-controls`. */
   listboxId: string;
-  /** Register an option so the adapter can drive filtering + keyboard nav. */
-  registerOption: (id: string, value: string, text: string) => void;
+  /** Register an option so the adapter can drive filtering + enabled keyboard nav. */
+  registerOption: (id: string, value: string, text: string, disabled?: boolean) => void;
   /** Remove a previously-registered option. */
   unregisterOption: (id: string) => void;
   /** Wire onto the input's `onKeyDown`: ArrowUp/Down/Home/End/Enter/Escape nav. */

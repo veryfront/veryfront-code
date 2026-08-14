@@ -34,10 +34,11 @@
  * @module react/components/ui/alert-dialog
  */
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { cx as cn } from "./cva.ts";
 import { Button, type ButtonProps } from "./button.tsx";
 import { useAdapter } from "./adapter/context.tsx";
-import { registerDismissableLayer } from "./dismissable-layer.ts";
+import { getModalTokenScope, useModalContentEffect } from "./modal-surface.tsx";
 import { composeRefs } from "./slot.tsx";
 
 // The confirm modal's open state / trigger reuse the Dialog slot of the active
@@ -53,15 +54,24 @@ interface AlertDialogIds {
 
 const AlertDialogContext = React.createContext<AlertDialogIds | null>(null);
 
+interface AlertDialogRootState {
+  triggerRef: React.RefObject<HTMLButtonElement | null>;
+}
+
+const AlertDialogRootContext = React.createContext<AlertDialogRootState | null>(null);
+
+function useAlertDialogRoot(): AlertDialogRootState {
+  const ctx = React.useContext(AlertDialogRootContext);
+  if (!ctx) throw new Error("AlertDialog parts must be used within <AlertDialog>");
+  return ctx;
+}
+
 /** Read the Content-provided ids; throws when a labelled part is used outside `<AlertDialogContent>`. */
 function useAlertDialogIds(): AlertDialogIds {
   const ctx = React.useContext(AlertDialogContext);
   if (!ctx) throw new Error("AlertDialog parts must be used within <AlertDialogContent>");
   return ctx;
 }
-
-const FOCUSABLE =
-  'input:not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
 
 /** Props accepted by `<AlertDialog>`. */
 export interface AlertDialogProps {
@@ -78,7 +88,13 @@ export interface AlertDialogProps {
 /** AlertDialog root - owns open state (shares the Dialog adapter slot). */
 export function AlertDialog(props: AlertDialogProps): React.ReactElement {
   const { dialog } = useAdapter();
-  return <dialog.Root {...props} />;
+  const triggerRef = React.useRef<HTMLButtonElement | null>(null);
+  const value = React.useMemo<AlertDialogRootState>(() => ({ triggerRef }), []);
+  return (
+    <AlertDialogRootContext.Provider value={value}>
+      <dialog.Root {...props} />
+    </AlertDialogRootContext.Provider>
+  );
 }
 
 /** Props accepted by `<AlertDialogTrigger>`. */
@@ -90,9 +106,20 @@ export interface AlertDialogTriggerProps extends React.ButtonHTMLAttributes<HTML
 }
 
 /** Trigger - opens the alert dialog. `asChild` merges onto the child element. */
-export function AlertDialogTrigger(props: AlertDialogTriggerProps): React.ReactElement {
+export function AlertDialogTrigger({ ref, ...props }: AlertDialogTriggerProps): React.ReactElement {
   const { dialog } = useAdapter();
-  return <dialog.Trigger {...props} />;
+  const ctx = useAlertDialogRoot();
+  const setTrigger = React.useCallback((node: HTMLButtonElement | null) => {
+    ctx.triggerRef.current = node;
+    return () => {
+      if (ctx.triggerRef.current === node) ctx.triggerRef.current = null;
+    };
+  }, [ctx.triggerRef]);
+  const composedRef = React.useMemo(
+    () => composeRefs<HTMLButtonElement>(setTrigger, ref),
+    [ref, setTrigger],
+  );
+  return <dialog.Trigger {...props} ref={composedRef} />;
 }
 
 /** Props accepted by `<AlertDialogContent>`. */
@@ -104,7 +131,8 @@ export interface AlertDialogContentProps extends React.HTMLAttributes<HTMLDivEle
 /**
  * Alert surface - non-dismissing overlay + centered `role="alertdialog"` panel,
  * rendered only while open. Generates the title / description ids, wires them to
- * `aria-labelledby` / `aria-describedby`, and moves focus into the panel on open.
+ * `aria-labelledby` / `aria-describedby`, traps focus, restores it on close,
+ * and portals outside clipping ancestors while retaining the token scope.
  */
 export function AlertDialogContent({
   className,
@@ -113,34 +141,33 @@ export function AlertDialogContent({
   ...props
 }: AlertDialogContentProps): React.ReactElement | null {
   const { dialog } = useAdapter();
-  const { open } = dialog.useDialog();
+  const modal = dialog.useDialog();
+  const root = useAlertDialogRoot();
   const titleId = React.useId();
   const descriptionId = React.useId();
   const panelRef = React.useRef<HTMLDivElement>(null);
+  const [portalReady, setPortalReady] = React.useState(false);
+  React.useEffect(() => setPortalReady(true), []);
   // Merge the internal panel ref (read by the focus effect) with any consumer
   // ref via `composeRefs`, which tracks + runs ref cleanups for us.
   const setNode = React.useMemo(() => composeRefs<HTMLDivElement>(panelRef, ref), [ref]);
-  React.useEffect(() => {
-    const panel = panelRef.current;
-    if (!open || !panel) return;
-    return registerDismissableLayer(
-      panel.ownerDocument,
-      () => panelRef.current,
-      () => {},
-    );
-  }, [open]);
-  // Move focus into the panel on open (no Escape listener → no key-dismiss).
-  React.useEffect(() => {
-    if (!open) return;
-    const focusable = panelRef.current?.querySelector<HTMLElement>(FOCUSABLE);
-    (focusable ?? panelRef.current)?.focus();
-  }, [open]);
+  useModalContentEffect(
+    modal.open && portalReady,
+    modal.setOpen,
+    panelRef,
+    root.triggerRef,
+    false,
+  );
   const ids = React.useMemo<AlertDialogIds>(() => ({ titleId, descriptionId }), [
     titleId,
     descriptionId,
   ]);
-  if (!open) return null;
-  return (
+  if (!modal.open || !portalReady) return null;
+  const trigger = root.triggerRef.current;
+  const document = trigger?.ownerDocument ?? globalThis.document;
+  if (!document?.body) return null;
+  const container = getModalTokenScope(document, trigger);
+  return createPortal(
     <AlertDialogContext.Provider value={ids}>
       <div className="fixed inset-0 z-50" data-state="open">
         {/* Overlay: intentionally has NO onClick - an alert dialog never dismisses on outside-click. */}
@@ -164,7 +191,8 @@ export function AlertDialogContent({
           {children}
         </div>
       </div>
-    </AlertDialogContext.Provider>
+    </AlertDialogContext.Provider>,
+    container,
   );
 }
 

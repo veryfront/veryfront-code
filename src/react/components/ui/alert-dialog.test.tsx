@@ -15,7 +15,7 @@ import * as React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { assert } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 import {
@@ -48,8 +48,11 @@ function installDom(dom: JSDOM): () => void {
     "window",
     "navigator",
     "HTMLElement",
+    "HTMLButtonElement",
     "Node",
     "Element",
+    "FocusEvent",
+    "KeyboardEvent",
     "MouseEvent",
     "getComputedStyle",
     "ResizeObserver",
@@ -64,8 +67,11 @@ function installDom(dom: JSDOM): () => void {
   g.window = w;
   g.navigator = w.navigator;
   g.HTMLElement = w.HTMLElement;
+  g.HTMLButtonElement = w.HTMLButtonElement;
   g.Node = w.Node;
   g.Element = w.Element;
+  g.FocusEvent = w.FocusEvent;
+  g.KeyboardEvent = w.KeyboardEvent;
   g.MouseEvent = w.MouseEvent;
   g.getComputedStyle = (w.getComputedStyle as (e: Element) => CSSStyleDeclaration).bind(w);
   g.ResizeObserver = ResizeObserverStub;
@@ -86,6 +92,18 @@ function installDom(dom: JSDOM): () => void {
     for (const k of keys) g[k] = prev[k];
     dom.window.close();
   };
+}
+
+async function waitFor(
+  condition: () => boolean,
+  message: string,
+  timeoutMs = 3_000,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (!condition()) {
+    if (Date.now() - startedAt > timeoutMs) throw new Error(message);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 /** Render `element` into a fresh DOM; returns the document, host node, and a teardown. */
@@ -131,9 +149,100 @@ const OPEN_CONFIRM = (
 );
 
 describe("AlertDialog", () => {
-  it("renders a role='alertdialog' surface when open", () => {
+  it("traps focus and restores it to the trigger after closing", async () => {
+    const { doc, click, unmount } = render(
+      <div data-vf-ui="">
+        <AlertDialog>
+          <AlertDialogTrigger id="confirm-trigger">Open confirmation</AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogTitle>Confirm action</AlertDialogTitle>
+            <AlertDialogDescription>This action needs confirmation.</AlertDialogDescription>
+            <AlertDialogCancel id="first-action">Cancel</AlertDialogCancel>
+            <AlertDialogAction id="last-action">Continue</AlertDialogAction>
+          </AlertDialogContent>
+        </AlertDialog>
+        <button id="outside" type="button">Outside</button>
+      </div>,
+    );
+    try {
+      const trigger = doc.getElementById("confirm-trigger") as HTMLButtonElement;
+      const outside = doc.getElementById("outside") as HTMLButtonElement;
+      trigger.focus();
+      click(trigger);
+      await waitFor(
+        () => doc.querySelector('[role="alertdialog"]') !== null,
+        "alert dialog did not open",
+      );
+      const panel = doc.querySelector<HTMLElement>('[role="alertdialog"]')!;
+      const first = doc.getElementById("first-action") as HTMLButtonElement;
+      const last = doc.getElementById("last-action") as HTMLButtonElement;
+      await waitFor(() => doc.activeElement === first, "first action did not receive focus");
+
+      last.focus();
+      const tab = new doc.defaultView!.KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Tab",
+      });
+      last.dispatchEvent(tab);
+      assert(tab.defaultPrevented, "forward Tab is contained at the final action");
+      assertEquals(doc.activeElement, first, "focus wraps to the first action");
+
+      outside.focus();
+      assertEquals(doc.activeElement, first, "programmatic focus is contained in the modal");
+
+      click(first);
+      await waitFor(() => !panel.isConnected, "alert dialog did not close");
+      assertEquals(doc.activeElement, trigger, "closing restores focus to the trigger");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("portals outside clipping ancestors while retaining the token scope", async () => {
+    const { doc, click, unmount } = render(
+      <div data-vf-ui="" data-testid="scope">
+        <div data-testid="clipped" style={{ overflow: "hidden", transform: "translateZ(0)" }}>
+          <AlertDialog>
+            <AlertDialogTrigger>Open confirmation</AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogTitle>Confirm action</AlertDialogTitle>
+              <AlertDialogDescription>This action needs confirmation.</AlertDialogDescription>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+      </div>,
+    );
+    try {
+      const trigger = doc.querySelector("button");
+      assert(trigger);
+      click(trigger);
+      await waitFor(
+        () => doc.querySelector('[role="alertdialog"]') !== null,
+        "alert dialog did not open",
+      );
+      const panel = doc.querySelector<HTMLElement>('[role="alertdialog"]')!;
+      assert(
+        panel.closest('[data-testid="clipped"]') === null,
+        "the fixed surface escapes transformed and clipping ancestors",
+      );
+      assert(
+        panel.closest("[data-vf-ui]") === doc.querySelector('[data-testid="scope"]'),
+        "the portalled surface retains the Veryfront token scope",
+      );
+    } finally {
+      unmount();
+    }
+  });
+
+  it("renders a role='alertdialog' surface when open", async () => {
     const { doc, unmount } = render(OPEN_CONFIRM);
     try {
+      await waitFor(
+        () => doc.querySelector('[role="alertdialog"]') !== null,
+        "alert dialog did not portal",
+      );
       const panel = doc.querySelector('[role="alertdialog"]');
       assert(panel, "an element with role='alertdialog' must exist while open");
     } finally {
@@ -141,21 +250,23 @@ describe("AlertDialog", () => {
     }
   });
 
-  it("blocks Escape from dismissing an underlying dialog", () => {
+  it("blocks Escape from dismissing an underlying dialog", async () => {
     const { doc, click, unmount } = render(
-      <Dialog>
-        <DialogTrigger>Open outer dialog</DialogTrigger>
-        <DialogContent>
-          <DialogTitle>Outer dialog</DialogTitle>
-          <AlertDialog defaultOpen>
-            <AlertDialogContent>
-              <AlertDialogTitle>Confirm action</AlertDialogTitle>
-              <AlertDialogDescription>This action needs confirmation.</AlertDialogDescription>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-            </AlertDialogContent>
-          </AlertDialog>
-        </DialogContent>
-      </Dialog>,
+      <div data-vf-ui="" data-testid="scope">
+        <Dialog>
+          <DialogTrigger>Open outer dialog</DialogTrigger>
+          <DialogContent>
+            <DialogTitle>Outer dialog</DialogTitle>
+            <AlertDialog defaultOpen>
+              <AlertDialogContent>
+                <AlertDialogTitle>Confirm action</AlertDialogTitle>
+                <AlertDialogDescription>This action needs confirmation.</AlertDialogDescription>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+              </AlertDialogContent>
+            </AlertDialog>
+          </DialogContent>
+        </Dialog>
+      </div>,
     );
     try {
       const trigger = Array.from(doc.querySelectorAll("button")).find((button) =>
@@ -163,8 +274,23 @@ describe("AlertDialog", () => {
       );
       assert(trigger, "outer trigger renders");
       click(trigger);
+      await waitFor(
+        () =>
+          doc.querySelector('[role="dialog"]') !== null &&
+          doc.querySelector('[role="alertdialog"]') !== null,
+        "nested modal surfaces did not portal",
+      );
       assert(doc.querySelector('[role="dialog"]'), "underlying dialog renders");
-      assert(doc.querySelector('[role="alertdialog"]'), "alert dialog renders above it");
+      const alert = doc.querySelector<HTMLElement>('[role="alertdialog"]');
+      assert(alert, "alert dialog renders above it");
+      assert(
+        alert.closest('[role="dialog"]') === null,
+        "the alert portal escapes the transformed outer dialog panel",
+      );
+      assert(
+        alert.closest("[data-vf-ui]") === doc.querySelector('[data-testid="scope"]'),
+        "the nested alert portal retains the outer token scope",
+      );
       const event = new doc.defaultView!.KeyboardEvent("keydown", {
         bubbles: true,
         cancelable: true,
@@ -179,9 +305,13 @@ describe("AlertDialog", () => {
     }
   });
 
-  it("is labelled by the title and described by the description (ids resolve)", () => {
+  it("is labelled by the title and described by the description (ids resolve)", async () => {
     const { doc, unmount } = render(OPEN_CONFIRM);
     try {
+      await waitFor(
+        () => doc.querySelector('[role="alertdialog"]') !== null,
+        "alert dialog did not portal",
+      );
       const panel = doc.querySelector('[role="alertdialog"]') as HTMLElement;
       assert(panel, "panel renders");
 
@@ -207,17 +337,21 @@ describe("AlertDialog", () => {
     }
   });
 
-  it("closes when Cancel is clicked (alertdialog leaves the DOM)", () => {
+  it("closes when Cancel is clicked (alertdialog leaves the DOM)", async () => {
     const { doc, click, unmount } = render(OPEN_CONFIRM);
     try {
+      await waitFor(
+        () => doc.querySelector('[role="alertdialog"]') !== null,
+        "alert dialog did not portal",
+      );
       assert(doc.querySelector('[role="alertdialog"]'), "open initially");
       const buttons = Array.from(doc.querySelectorAll("button"));
       const cancel = buttons.find((b) => (b.textContent ?? "").includes("Cancel"))!;
       assert(cancel, "Cancel button renders");
       click(cancel);
-      assert(
-        doc.querySelector('[role="alertdialog"]') === null,
-        "clicking Cancel closes the alert dialog",
+      await waitFor(
+        () => doc.querySelector('[role="alertdialog"]') === null,
+        "clicking Cancel did not close the alert dialog",
       );
     } finally {
       unmount();
