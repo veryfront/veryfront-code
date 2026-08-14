@@ -425,6 +425,10 @@ jobs:
         run: npm --prefix storybook ci --ignore-scripts
       - name: Check published package types
         run: deno task typecheck:consumer
+      - name: Report npm package size
+        run: |
+          deno run --allow-read --allow-run=npm scripts/build/report-artifact-sizes.ts --npm-package npm \
+            | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Clean-room install/import smoke
         run: bash scripts/test/npm-install-smoke.sh
 
@@ -686,6 +690,12 @@ jobs:
             --target ${{ matrix.target }} \
             --output ${{ matrix.name }}
 
+      - name: Report binary size
+        shell: bash
+        run: |
+          deno run --allow-read scripts/build/report-artifact-sizes.ts ./${{ matrix.name }} \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Smoke test proxy binary
         if: matrix.name == 'veryfront-proxy-linux-x64'
         shell: bash
@@ -758,6 +768,8 @@ jobs:
         run: |
           deno run -A scripts/ci/prepare-rc-build.ts
           deno task build:npm
+          deno run --allow-read --allow-run=npm scripts/build/report-artifact-sizes.ts --npm-package npm \
+            | tee -a "$GITHUB_STEP_SUMMARY"
           scripts/ci/publish-npm-packages.sh rc-publish
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -924,6 +936,8 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           deno task build:npm
+          deno run --allow-read --allow-run=npm scripts/build/report-artifact-sizes.ts --npm-package npm \
+            | tee -a "$GITHUB_STEP_SUMMARY"
           scripts/ci/publish-npm-packages.sh release-publish
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8

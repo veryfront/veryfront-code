@@ -7,9 +7,11 @@ order: 3
 ## Requirements
 
 - macOS 12 or later, Linux x86_64 or arm64 (glibc), or Windows 10 or later.
-- A JavaScript runtime: Node.js 22.3 or later, Deno 2.2 or later, or Bun
-  1.1 or later.
-- 1 GB of free disk space and 2 GB of RAM for local development.
+- For package-manager installations, Node.js 22.3 or later, Deno 2.2 or later,
+  or Bun 1.1 or later. The standalone binary includes its runtime.
+- 2 GB of RAM for local development.
+- Disk space for the selected CLI installation and project dependencies. See
+  [Install the CLI](#install-the-cli) for current artifact sizes.
 
 ## Blank or existing project
 
@@ -140,10 +142,20 @@ deno init --npm veryfront
 
 Install the CLI globally when you use Veryfront commands often.
 
-### npm
+| Method            | Use when                                          | Approximate size                            |
+| ----------------- | ------------------------------------------------- | ------------------------------------------- |
+| npm package       | You use Node.js, Deno, Bun, or another npm client | 6 MB download, 28 MB before dependencies   |
+| Standalone binary | You need one executable with an included runtime | 0.9 to 1.2 GB for the downloaded executable |
+
+These measurements describe recent releases and vary by platform and package
+manager. A clean global npm installation used approximately 145 MB in one
+measurement. Model weights are not included. The optional embedded ONNX runtime
+adds approximately 500 MB, and supported model weights add 0.9 to 6 GB.
+
+### npm (recommended)
 
 ```bash
-npm install -g veryfront
+npm install -g veryfront@latest
 ```
 
 This installs the latest published Veryfront CLI and adds `veryfront` to your
@@ -178,6 +190,49 @@ specifier. Deno resolves that specifier from the current working directory, so
 inside a project that depends on `veryfront` the global binary runs that
 project's version instead. Run `veryfront --version` outside any project
 directory to see the globally installed version.
+
+### Standalone binary
+
+Use the standalone binary when you need an executable that includes its own
+runtime. On macOS or Linux, run:
+
+```bash
+curl -fsSL https://veryfront.com/install.sh | sh
+```
+
+On Windows PowerShell, run:
+
+```powershell
+irm https://veryfront.com/install.ps1 | iex
+```
+
+Both installers verify what they download. Each release publishes a `SHA256SUMS`
+manifest; the binary is staged, checked against it, and only then moved into
+place, so a mismatch installs nothing. Releases published before that manifest
+existed have none, so pinning to one of those fails unless you set
+`VERYFRONT_INSTALL_SKIP_CHECKSUM=1` deliberately.
+
+The commands still execute a script fetched at run time. To read it first, and
+to pin a version instead of tracking latest:
+
+```bash
+curl -fsSL https://veryfront.com/install.sh -o install.sh
+less install.sh
+sh install.sh --version <VERSION>
+```
+
+To skip the installer entirely, download the binary for your platform from the
+[release assets](https://github.com/veryfront/veryfront/releases) and put it on
+your path. Check it against the `SHA256SUMS` published with the same release:
+
+```bash
+sha256sum --check --ignore-missing SHA256SUMS
+```
+
+The installer downloads the binary for the current platform and adds it to your
+shell path. Embedded ONNX inference is not available from compiled standalone
+binaries. Use a package-manager installation when the app runs an embedded
+ONNX model.
 
 ## One-shot CLI usage
 

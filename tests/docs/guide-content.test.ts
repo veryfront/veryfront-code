@@ -12,6 +12,36 @@ import { MINIMUM_DENO_VERSION, MINIMUM_NODE_VERSION } from "../../scripts/build/
 const repoRoot = new URL("../../", import.meta.url);
 
 describe("guide content contracts", () => {
+  it("states installation sizes and local inference boundaries", async () => {
+    const readme = await Deno.readTextFile(new URL("README.md", repoRoot));
+    const installation = await Deno.readTextFile(
+      new URL("docs/getting-started/installation.md", repoRoot),
+    );
+    const providers = await Deno.readTextFile(
+      new URL("docs/guides/providers.md", repoRoot),
+    );
+
+    assertStringIncludes(readme, "npm install -g veryfront@latest");
+    assert(
+      readme.indexOf("npm install -g veryfront@latest") <
+        readme.indexOf("https://veryfront.com/install.sh"),
+      "the recommended npm installation must appear before the standalone binary",
+    );
+    assertStringIncludes(installation, "0.9 to 1.2 GB");
+    assertStringIncludes(installation, "Model weights are not included");
+    assertStringIncludes(providers, "Embedded ONNX inference");
+    assertStringIncludes(providers, "npm install @huggingface/transformers");
+    assertStringIncludes(providers, "not available from compiled standalone binaries");
+    assertStringIncludes(
+      providers,
+      "For local chat development, use Ollama or LM Studio",
+    );
+    assertEquals(
+      providers.includes("src/provider/local/_smoke-test.ts"),
+      false,
+    );
+  });
+
   it("presents open source, self-hosted, and managed paths as first-class options", async () => {
     const overview = await Deno.readTextFile(
       new URL("docs/getting-started/index.md", repoRoot),

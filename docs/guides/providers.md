@@ -12,7 +12,7 @@ is developed or deployed.
 | Use managed model access          | Veryfront Cloud AI Gateway | [Cloud quickstart](../getting-started/cloud-quickstart.md) |
 | Call a model vendor with your key | Direct provider            | [Direct providers](#direct-providers)                      |
 | Use an OpenAI-compatible endpoint | Compatible service         | [OpenAI-compatible services](#openai-compatible-services)  |
-| Run inference on the app server   | Built-in local AI          | [Explicit local AI](#explicit-local-ai)                    |
+| Run inference inside the app      | Embedded ONNX inference    | [Embedded ONNX inference](#embedded-onnx-inference)        |
 
 An agent's `model` is a `"provider/model"` string. Omit it to use the default
 `openai/gpt-5.4-nano` model with the inference credentials available at runtime.
@@ -125,58 +125,68 @@ web-search contracts. See the
 [`ext-llm-openai` reference](https://github.com/veryfront/veryfront-code/blob/main/extensions/ext-llm-openai/README.md#hosted-web-search)
 for supported identifiers, arguments, and replay limits.
 
-## Explicit local AI
+## Embedded ONNX inference
 
-Local inference is explicit. Use a `local/*` model when you want the server to
-run a curated ONNX model through `@huggingface/transformers`.
+Embedded inference is explicit. Use a `local/*` model when you want the app
+server process to run a curated ONNX model through `@huggingface/transformers`.
+For local chat development, use Ollama or LM Studio unless you specifically
+need the model to run inside the app process.
 
-```ts
-agent({ model: "local/qwen3.5-0.8b" });
-// Also available: "local/gemma4-e2b-it", "local/gemma4-e4b-it"
-```
-
-The model is downloaded and cached on first use. If the local runtime cannot
-load ONNX, the chat handler returns a `503` setup error. The browser never
-starts a local model automatically.
-
-Local AI uses CPU by default. To request WebGPU for local inference, use:
+For Node.js or Bun, install the optional runtime alongside Veryfront. Deno
+resolves the runtime on first use.
 
 ```bash
-VERYFRONT_LOCAL_AI_DEVICE=webgpu
+npm install @huggingface/transformers
+```
+
+The Transformers and ONNX packages add approximately 500 MB before model
+weights.
+
+Embedded ONNX inference is not available from compiled standalone binaries.
+Use a package-manager installation of Veryfront for this inference path.
+
+Select a supported model:
+
+```ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  model: "local/qwen3.5-0.8b",
+  system: "You are a helpful assistant.",
+});
+```
+
+| Model                  | Approximate download |
+| ---------------------- | -------------------- |
+| `local/qwen3.5-0.8b`   | 900 MB               |
+| `local/gemma4-e2b-it`  | 1.8 GB               |
+| `local/gemma4-e4b-it`  | 6 GB                 |
+
+The selected model is downloaded and cached on first use. If the runtime cannot
+load ONNX, the chat handler returns a `503` setup error. Veryfront never starts
+an embedded model automatically.
+
+Embedded ONNX inference uses CPU by default. To request WebGPU, use:
+
+```bash
+export VERYFRONT_LOCAL_AI_DEVICE=webgpu
 ```
 
 If WebGPU is requested but unavailable, Veryfront returns a setup error instead
 of retrying on CPU.
 
-To smoke-test WebGPU local inference in this package, use:
-
-```bash
-VERYFRONT_LOCAL_AI_DEVICE=webgpu deno run -A src/provider/local/_smoke-test.ts
-```
-
-To smoke-test Gemma4 local inference, use:
-
-```bash
-VERYFRONT_LOCAL_AI_MODEL=gemma4-e2b-it deno run -A src/provider/local/_smoke-test.ts
-```
-
 To enable Gemma4 thinking in the local prompt template, use:
 
 ```bash
-VERYFRONT_LOCAL_AI_THINKING=1
+export VERYFRONT_LOCAL_AI_THINKING=1
 ```
 
-Thinking is disabled by default. To smoke-test Gemma4 E4B with thinking enabled,
-use:
+Thinking is disabled by default.
+
+To disable embedded ONNX inference, use:
 
 ```bash
-VERYFRONT_LOCAL_AI_MODEL=gemma4-e4b-it VERYFRONT_LOCAL_AI_THINKING=1 deno run -A src/provider/local/_smoke-test.ts
-```
-
-To disable server-side local AI, use:
-
-```bash
-VERYFRONT_DISABLE_LOCAL_AI=1
+export VERYFRONT_DISABLE_LOCAL_AI=1
 ```
 
 ## Model strings
@@ -206,6 +216,9 @@ OPENAI_BASE_URL=https://openrouter.ai/api/v1
 ```
 
 Both `apiKey` and `baseURL` are resolved per-request, so each project in a multi-tenant setup can have its own configuration.
+
+For local chat development, use Ollama or LM Studio. Both keep model loading and
+hardware management outside the Veryfront app process.
 
 Local OpenAI-compatible servers need an explicit host-network opt-in. Veryfront
 blocks loopback and private destinations by default to prevent server-side
