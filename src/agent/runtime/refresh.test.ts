@@ -1880,7 +1880,8 @@ describe("agent runtime refresh hooks", () => {
         if (callCount === 2) {
           return {
             stream: createRuntimeStream([
-              { type: "text-delta", text: "Created the Outlook assistant." },
+              { type: "text-delta", text: "Created the Outlook " },
+              { type: "text-delta", text: "assistant." },
               {
                 type: "tool-input-start",
                 id: "toolu_repeated_placeholder",
@@ -1995,6 +1996,86 @@ describe("agent runtime refresh hooks", () => {
     );
     assertExists(repeatedToolCall);
     assertEquals(repeatedToolCall.status, "error");
+  });
+
+  it("keeps prior text while interrupted recovery returns only a tool call", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    let executionCount = 0;
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => {
+        executionCount++;
+        return { suggestions: [] };
+      },
+    });
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/tool-only-recovery",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Preparing the Studio suggestions." },
+              {
+                type: "tool-input-start",
+                id: "toolu_tool_only_placeholder",
+                toolName: "studio_suggestions",
+              },
+              { type: "tool-input-delta", id: "toolu_tool_only_placeholder", delta: "{}" },
+              { type: "finish", finishReason: "tool-calls" },
+            ]),
+          };
+        }
+        return {
+          stream: createRuntimeStream([
+            {
+              type: "tool-call",
+              toolCallId: "toolu_reconstructed_suggestions",
+              toolName: "studio_suggestions",
+              input: "{}",
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "hosted/tool-only-recovery",
+      system: "Recover an interrupted local placeholder once.",
+      tools: { studio_suggestions: studioSuggestions },
+      maxSteps: 2,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const body = await (await assistant.stream({
+      input: "Prepare Studio suggestions",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse().text();
+
+    assertEquals(callCount, 2);
+    assertEquals(executionCount, 1);
+    assertEquals(body.match(/Preparing the Studio suggestions\./g)?.length ?? 0, 1);
+    assertExists(finishedResponse);
+    assertEquals(finishedResponse.text, "Preparing the Studio suggestions.");
+    const recoveredToolCall = finishedResponse.toolCalls.find((toolCall) =>
+      toolCall.id === "toolu_reconstructed_suggestions"
+    );
+    assertExists(recoveredToolCall);
+    assertEquals(recoveredToolCall.status, "completed");
   });
 
   it("delivers distinct terminal text from placeholder recovery", async () => {
