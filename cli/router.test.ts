@@ -666,6 +666,29 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("redacts a positional issue title in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "--no-input",
+          "veryfront",
+          "issues",
+          "create",
+          "--body",
+          "private customer details",
+          "private customer incident",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront --no-input issues create --body '<REDACTED>' '<REDACTED>'",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("explains the duplicated binary name before routing global help", async () => {
       stubExit();
       stubLogger();

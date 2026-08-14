@@ -174,20 +174,35 @@ export async function formatDuplicatedBinaryHint(
   const { sanitizeUrlCredentials } = await import("veryfront/utils");
   const { COMMANDS } = await import("./help/command-definitions.ts");
   const duplicatedBinaryIndex = args.__rawPositionals?.[0];
+  const correctedCommand = args._[1];
   const hintArguments = args.__raw !== undefined && duplicatedBinaryIndex !== undefined
     ? args.__raw.filter((_, index) => index !== duplicatedBinaryIndex)
     : args._.slice(1).map(String);
+  const positionalIssueTitle = correctedCommand === "issues" && args._[2] === "create" &&
+    typeof args._[3] === "string" && !args._[3].startsWith("-");
+  const positionalIssueTitleRawIndex = positionalIssueTitle
+    ? args.__rawPositionals?.[3]
+    : undefined;
+  const positionalIssueTitleHintIndex = positionalIssueTitleRawIndex !== undefined &&
+      duplicatedBinaryIndex !== undefined
+    ? positionalIssueTitleRawIndex - (duplicatedBinaryIndex < positionalIssueTitleRawIndex ? 1 : 0)
+    : positionalIssueTitle
+    ? 2
+    : undefined;
   const formatted: string[] = [];
   const opaquePayloadOptions = new Set(["--config", "--input"]);
   const opaqueIssueOptions = new Set(["--body", "-b", "--title", "-t"]);
   const rootRelativeRouteOptions = new Set(["--exclude", "--include"]);
-  const correctedCommand = args._[1];
   const commandOptions = typeof correctedCommand === "string"
     ? COMMANDS[correctedCommand]?.options ?? []
     : [];
 
   for (let index = 0; index < hintArguments.length; index++) {
     const argument = hintArguments[index]!;
+    if (index === positionalIssueTitleHintIndex) {
+      formatted.push("'<REDACTED>'");
+      continue;
+    }
     const equalsIndex = argument.startsWith("-") ? argument.indexOf("=") : -1;
     const option = equalsIndex > 0 ? argument.slice(0, equalsIndex) : argument;
     const optionDefinition = commandOptions.find((definition) =>
