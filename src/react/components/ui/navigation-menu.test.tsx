@@ -305,4 +305,32 @@ describe("NavigationMenu behaviour", () => {
       unmount();
     }
   });
+
+  it("keeps a disabled trigger collapsed on pointer entry", async () => {
+    const { host, pointerEnter, unmount } = render(
+      <NavigationMenu>
+        <NavigationMenuList>
+          <NavigationMenuItem value="products">
+            <NavigationMenuTrigger disabled>Products</NavigationMenuTrigger>
+            <NavigationMenuContent>
+              <NavigationMenuLink href="/products">Products</NavigationMenuLink>
+            </NavigationMenuContent>
+          </NavigationMenuItem>
+        </NavigationMenuList>
+      </NavigationMenu>,
+    );
+    try {
+      const trigger = triggers(host)[0]!;
+      await pointerEnter(trigger);
+
+      assertEquals(trigger.getAttribute("aria-expanded"), "false");
+      assertEquals(
+        host.querySelector('[data-slot="navigation-menu-content"]'),
+        null,
+        "a disabled trigger does not open its panel",
+      );
+    } finally {
+      unmount();
+    }
+  });
 });

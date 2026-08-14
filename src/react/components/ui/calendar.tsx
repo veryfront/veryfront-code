@@ -1,11 +1,13 @@
 /**
  * Calendar: a dependency-free single-month date grid. Renders a header row
- * (prev-month button · "Month YYYY" caption · next-month button), a weekday
- * header, and a `role="grid"` table of days. The selected day is controlled via
- * `value`; clicking a day fires `onChange`. The displayed month is tracked
- * internally (seeded from `defaultMonth ?? value ?? today`) and moved by the
- * prev/next buttons. Self-contained: no `react-day-picker`, no floating engine;
- * skinned with the veryfront theme tokens.
+ * (previous-month button, "Month YYYY" caption, and next-month button), a
+ * weekday header, and a `role="grid"` table of days. One day participates in
+ * the tab order. Arrow keys move by day or week, Home and End move to week
+ * boundaries, and Page Up and Page Down move by month. The selected day is
+ * controlled via `value`; selecting a day fires `onChange`. The displayed month
+ * is tracked internally (seeded from `defaultMonth ?? value ?? today`) and moved
+ * by the previous and next buttons. Self-contained: no `react-day-picker`, no
+ * floating engine; skinned with the veryfront theme tokens.
  *
  * @example
  * ```tsx
@@ -54,6 +56,23 @@ function isSameDay(a: Date, b: Date): boolean {
   );
 }
 
+/** True when `a` and `b` fall in the same calendar month. */
+function isSameMonth(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
+}
+
+/** Return the local calendar day `offset` days from `date`. */
+function addDays(date: Date, offset: number): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + offset);
+}
+
+/** Move by whole months, clamping the day to the target month's final day. */
+function addMonths(date: Date, offset: number): Date {
+  const target = new Date(date.getFullYear(), date.getMonth() + offset, 1);
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  return new Date(target.getFullYear(), target.getMonth(), Math.min(date.getDate(), lastDay));
+}
+
 /** Chunk the flat cell list into rows of seven. */
 function toWeeks(cells: Array<number | null>): Array<Array<number | null>> {
   const weeks: Array<Array<number | null>> = [];
@@ -65,7 +84,7 @@ function toWeeks(cells: Array<number | null>): Array<Array<number | null>> {
 export interface CalendarProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "onChange"> {
   /** The selected day (controlled). @default undefined */
   value?: Date;
-  /** Fires with the clicked day. @default undefined */
+  /** Fires with the selected day. @default undefined */
   onChange?: (date: Date) => void;
   /** Month shown initially; the displayed month is tracked internally and moved by the prev/next buttons. @default value ?? today */
   defaultMonth?: Date;
@@ -88,6 +107,20 @@ export function Calendar({
   const [displayed, setDisplayed] = React.useState<Date>(() =>
     startOfMonth(defaultMonth ?? value ?? new Date())
   );
+  const [activeDate, setActiveDate] = React.useState<Date>(() => {
+    const initialMonth = startOfMonth(defaultMonth ?? value ?? new Date());
+    const today = new Date();
+    if (value != null && isSameMonth(value, initialMonth)) return value;
+    if (isSameMonth(today, initialMonth)) return today;
+    return initialMonth;
+  });
+  const activeButtonRef = React.useRef<HTMLButtonElement>(null);
+  const shouldFocusActiveRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!shouldFocusActiveRef.current) return;
+    shouldFocusActiveRef.current = false;
+    activeButtonRef.current?.focus();
+  }, [activeDate, displayed]);
 
   const today = new Date();
   const year = displayed.getFullYear();
@@ -104,9 +137,45 @@ export function Calendar({
   while (cells.length % 7 !== 0) cells.push(null);
   const weeks = toWeeks(cells);
 
-  const goPrev = () => setDisplayed(new Date(year, month - 1, 1));
-  const goNext = () => setDisplayed(new Date(year, month + 1, 1));
   const select = (day: number) => onChange?.(new Date(year, month, day));
+  const moveFocus = (date: Date) => {
+    shouldFocusActiveRef.current = true;
+    if (!isSameMonth(date, displayed)) setDisplayed(startOfMonth(date));
+    setActiveDate(date);
+  };
+  const changeDisplayedMonth = (offset: number) => {
+    const date = addMonths(activeDate, offset);
+    setDisplayed(startOfMonth(date));
+    setActiveDate(date);
+  };
+  const goPrev = () => changeDisplayedMonth(-1);
+  const goNext = () => changeDisplayedMonth(1);
+  const handleDayKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    date: Date,
+  ) => {
+    const dayOfWeek = (date.getDay() - weekStartsOn + 7) % 7;
+    const nextDate = event.key === "ArrowLeft"
+      ? addDays(date, -1)
+      : event.key === "ArrowRight"
+      ? addDays(date, 1)
+      : event.key === "ArrowUp"
+      ? addDays(date, -7)
+      : event.key === "ArrowDown"
+      ? addDays(date, 7)
+      : event.key === "Home"
+      ? addDays(date, -dayOfWeek)
+      : event.key === "End"
+      ? addDays(date, 6 - dayOfWeek)
+      : event.key === "PageUp"
+      ? addMonths(date, -1)
+      : event.key === "PageDown"
+      ? addMonths(date, 1)
+      : null;
+    if (nextDate == null) return;
+    event.preventDefault();
+    moveFocus(nextDate);
+  };
 
   return (
     <div
@@ -163,6 +232,7 @@ export function Calendar({
                 const date = new Date(year, month, day);
                 const selected = value != null && isSameDay(value, date);
                 const isToday = isSameDay(today, date);
+                const active = isSameDay(activeDate, date);
                 return (
                   // aria-selected belongs on the gridcell: ARIA defines it for
                   // gridcell/option/row/tab, not for role="button". The button
@@ -175,9 +245,13 @@ export function Calendar({
                     className="p-0"
                   >
                     <button
+                      ref={active ? activeButtonRef : undefined}
                       type="button"
+                      tabIndex={active ? 0 : -1}
                       aria-pressed={selected}
                       data-today={isToday ? "true" : undefined}
+                      onFocus={() => setActiveDate(date)}
+                      onKeyDown={(event) => handleDayKeyDown(event, date)}
                       onClick={() => select(day)}
                       className={cn(
                         "inline-flex size-9 items-center justify-center rounded-md text-sm text-[var(--foreground)]",

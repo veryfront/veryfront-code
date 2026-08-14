@@ -237,7 +237,9 @@ export function NavigationMenuTrigger({
       }}
       onPointerEnter={(event: React.PointerEvent<HTMLButtonElement>) => {
         onPointerEnter?.(event);
-        if (!event.defaultPrevented) ctx.setOpenItemId(itemId);
+        if (!event.defaultPrevented && !event.currentTarget.disabled) {
+          ctx.setOpenItemId(itemId);
+        }
       }}
       onPointerLeave={(event: React.PointerEvent<HTMLButtonElement>) => {
         onPointerLeave?.(event);
