@@ -1347,7 +1347,12 @@ function resolveFlags(): void {
       },
     );
   } else {
-    logger.info("Worker isolation posture resolved", {
+    // Resolution is operator-relevant only once something is actually
+    // configured. A project that asked for no isolation has nothing to act on,
+    // and this line would otherwise be the only output a successful dev request
+    // produces, so keep the default posture at DEBUG.
+    const report = effectiveSurfaces > 0 ? logger.info : logger.debug;
+    report.call(logger, "Worker isolation posture resolved", {
       master,
       effectiveSurfaces,
       workerIsolationApi: _apiIsolation,
