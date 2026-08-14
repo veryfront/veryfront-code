@@ -417,15 +417,18 @@ requires both Create and Update grants for the target `sobjectType`; if the matr
 cannot enforce both grants for one call, remove `upsert_record` from the shipped
 surface.
 
-**Tool tally (single source of truth; Appendix B is canonical):**
+**Tool tally (single source of truth; Appendix B is canonical):** The connector
+has 16 tools today, but v1 removes or hides existing `run_soql_query` until the
+SOQL authorization gate is live. The other curated tools stay in v1 with
+arbitrary `q` overrides disabled.
 
 | | Tools | Count |
 | --- | --- | --- |
-| **Existing** (curated + escape) | the 16 in `connector.json` today | 16 |
+| **Existing curated v1 baseline** | the 16 in `connector.json` today, minus existing `run_soql_query` while it is gated | 15 |
 | **Add - helpers (v1)** | `update_case_reason` (`Reason`-only `case-dispose` write), `get_picklist_values_for_record_type` | +2 |
-| **Add - read escape hatches (deferred)** | `run_soql_query`, curated arbitrary `q` overrides, `search` (SOSL), pending fail-closed query parsing and authorization | - |
+| **Read escape hatches (deferred)** | existing `run_soql_query`, curated arbitrary `q` overrides, `search` (SOSL), pending fail-closed query parsing and authorization | - |
 | **Add - generic CRUD (deferred)** | `get_record`, `create_record`, `update_record`, `upsert_record`, `delete_record` (pending fail-closed per-CRUD enforcement) | +5 |
-| **v1 total** | | **18** |
+| **v1 total** | | **17** |
 | **Optional curated wrappers** | `create_contact`, `update_account`, `create/update_opportunity`, `create_task`, `convert_lead` - sugar, not counted in core | - |
 
 **Authorization tests (acceptance gate).** Every least-privilege grant needs an
