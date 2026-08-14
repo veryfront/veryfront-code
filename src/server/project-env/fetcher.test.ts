@@ -516,12 +516,13 @@ describe("project-env/fetcher", () => {
     }
   });
 
-  it("rejects masked values returned by the internal endpoint and names the offending key", async () => {
+  it("rejects masked values without exposing the tenant-defined key", async () => {
+    const tenantDefinedKey = "TENANT_PRIVATE_INVENTORY_KEY";
     const { server, port } = createMockServer((req: Request) => {
       if (new URL(req.url).pathname === "/projects/my-project/environment-variables") {
         return Response.json({ data: [] });
       }
-      return Response.json({ data: [{ key: "API_KEY", value: "********" }] });
+      return Response.json({ data: [{ key: tenantDefinedKey, value: "********" }] });
     });
 
     try {
@@ -532,9 +533,11 @@ describe("project-env/fetcher", () => {
         })
       );
       assertEquals((error as { slug?: string }).slug, "network-error");
-      assertEquals((error as Error).message.includes("masked"), true);
-      // Key names are not secret; the offending key makes the refusal diagnosable.
-      assertEquals((error as Error).message.includes("API_KEY"), true);
+      assertEquals(
+        (error as Error).message,
+        "Refusing masked environment variable response: the internal endpoint returned a masked value",
+      );
+      assertEquals((error as Error).message.includes(tenantDefinedKey), false);
     } finally {
       await server.shutdown();
     }

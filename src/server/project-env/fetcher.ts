@@ -78,7 +78,7 @@ async function readBoundedEnvironmentResponse(
 /** Which endpoint produced the parsed body; masked values mean different things per source. */
 type EnvironmentResponseSource = "management" | "internal";
 
-function maskedEnvironmentError(source: EnvironmentResponseSource, key: string): Error {
+function maskedEnvironmentError(source: EnvironmentResponseSource): Error {
   if (source === "management") {
     // The management endpoint masks every value by contract. Reaching a masked
     // value here means the host has no internal credentials configured, so the
@@ -88,9 +88,8 @@ function maskedEnvironmentError(source: EnvironmentResponseSource, key: string):
         "and VERYFRONT_API_INTERNAL_USER/VERYFRONT_API_INTERNAL_PASS are not configured on this host",
     );
   }
-  // Key names are not secret; values are never logged.
   return invalidEnvironmentResponse(
-    `Refusing masked environment variable response: the internal endpoint returned a masked value for "${key}"`,
+    "Refusing masked environment variable response: the internal endpoint returned a masked value",
   );
 }
 
@@ -134,7 +133,7 @@ function parseEnvironmentResponse(
     }
     keys.add(key);
     if (value === MASKED_ENV_VALUE) {
-      throw maskedEnvironmentError(source, key);
+      throw maskedEnvironmentError(source);
     }
     result[key] = value;
   }
