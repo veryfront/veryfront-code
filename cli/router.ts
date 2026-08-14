@@ -178,15 +178,21 @@ async function formatDuplicatedBinaryHint(args: ParsedArgs): Promise<string> {
     );
 
     if (equalsIndex > 0) {
+      const formattedOption = formatCommandHintArgument(option, sanitizeUrlCredentials);
       const value = sensitiveOption
         ? "'<REDACTED>'"
         : formatCommandHintArgument(argument.slice(equalsIndex + 1), sanitizeUrlCredentials);
-      formatted.push(`${option}=${value}`);
+      formatted.push(`${formattedOption}=${value}`);
       continue;
     }
 
     formatted.push(formatCommandHintArgument(argument, sanitizeUrlCredentials));
-    if (sensitiveOption && hintArguments[index + 1] !== undefined) {
+    const parsedOptionValue = args[option.replace(/^-+/u, "")];
+    if (
+      sensitiveOption &&
+      parsedOptionValue !== true &&
+      hintArguments[index + 1] !== undefined
+    ) {
       formatted.push("'<REDACTED>'");
       index++;
     }

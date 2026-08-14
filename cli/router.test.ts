@@ -572,6 +572,45 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("preserves flags after a boolean sensitive option", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "login",
+          "--token",
+          "--help",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront login --token --help",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("shell-quotes equals-style option names in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "deploy",
+          "--label;echo injected=x",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront deploy '--label;echo injected'=x",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("command validation failure with --json outputs a JSON error envelope", async () => {
       stubExit();
       stubConsole();
