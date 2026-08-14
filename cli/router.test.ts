@@ -595,6 +595,26 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("redacts root-relative paths outside build route filters", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "login",
+          "--include",
+          "/private/route-config",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront login --include '<REDACTED>'",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("redacts opaque payload option values in the correction", async () => {
       stubExit();
       stubLogger();

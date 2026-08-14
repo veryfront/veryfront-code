@@ -258,7 +258,8 @@ export async function formatDuplicatedBinaryHint(
     const redactOptionValue = sensitiveOption || opaqueIssueOption ||
       opaqueConnectionOption ||
       (opaquePayloadOptions.has(option) && !fileOption);
-    const allowRootRelativeRoute = rootRelativeRouteOptions.has(option);
+    const allowRootRelativeRoute = correctedCommand === "build" &&
+      rootRelativeRouteOptions.has(option);
     const booleanOption = optionDefinition !== undefined && !optionDefinition.flag.includes("<");
     const nextArgument = hintArguments[index + 1];
     const hasSeparateRawValue = isCliOptionValue(nextArgument);
