@@ -103,6 +103,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "installation.md",
   "create-frontend.md",
   "create-project.md",
+  "add-to-existing-project.md",
   "create-api.md",
   "deploy-project.md",
   "integrations.md",
@@ -1002,6 +1003,69 @@ describe("Guide: create-project.md", () => {
     for (const templateId of templateIds) {
       assertStringIncludes(guide, `\`${templateId}\``);
       assertExists(await getTemplate(templateId));
+    }
+  });
+});
+
+describe("Guide: add-to-existing-project.md", () => {
+  it("documents the compiler options the scaffold actually sets", async () => {
+    const guide = await readGuide("add-to-existing-project.md");
+
+    // The page tells an existing-project reader to set by hand what the
+    // scaffolded template already carries. If the template ever drops one of
+    // these, the guidance is wrong and this fails.
+    const template = await getTemplate("ai-agent");
+    assertExists(template);
+    const tsconfig = template.find((file) => file.path === "tsconfig.json");
+    assertExists(tsconfig, "expected the ai-agent template to ship a tsconfig.json");
+
+    for (const option of ['"jsx": "react-jsx"', '"skipLibCheck": true']) {
+      assertStringIncludes(guide, option);
+      assertStringIncludes(tsconfig.content, option);
+    }
+  });
+
+  it("documents a package-exports-aware moduleResolution", async () => {
+    const guide = await readGuide("add-to-existing-project.md");
+
+    // Veryfront's entry points are subpath exports (`veryfront/agent`), which
+    // the older `node`/`classic` modes cannot resolve. The scaffold sets
+    // `bundler`; an adopting project must pick an equivalent mode or the
+    // linked next steps fail to typecheck.
+    assertStringIncludes(guide, '"moduleResolution": "bundler"');
+
+    const template = await getTemplate("ai-agent");
+    assertExists(template);
+    const tsconfig = template.find((file) => file.path === "tsconfig.json");
+    assertExists(tsconfig);
+    assertStringIncludes(tsconfig.content.toLowerCase(), '"moduleresolution": "bundler"');
+  });
+
+  it("points at the base config the package actually publishes", async () => {
+    const guide = await readGuide("add-to-existing-project.md");
+    assertStringIncludes(guide, '"extends": "veryfront/tsconfig.json"');
+
+    // The page's shortest path is extending the shipped config, so the npm
+    // build must keep publishing it under that exact export key. Resolved from
+    // import.meta.url, not the process cwd: test files share one process under
+    // --parallel and a sibling isolate can hold `withCwd` while this runs.
+    const dnt = await Deno.readTextFile(
+      new URL("../../scripts/build/build-npm-dnt.ts", import.meta.url),
+    );
+    assertStringIncludes(dnt, './tsconfig.json"] = "./tsconfig.json"');
+  });
+
+  it("documents the install command and the entry route the server needs", async () => {
+    const guide = await readGuide("add-to-existing-project.md");
+
+    for (
+      const snippet of [
+        "npm install veryfront",
+        "// app/page.tsx",
+        "npx veryfront dev",
+      ]
+    ) {
+      assertStringIncludes(guide, snippet);
     }
   });
 });
