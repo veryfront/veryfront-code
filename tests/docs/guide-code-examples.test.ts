@@ -1046,8 +1046,12 @@ describe("Guide: add-to-existing-project.md", () => {
     assertStringIncludes(guide, '"extends": "veryfront/tsconfig.json"');
 
     // The page's shortest path is extending the shipped config, so the npm
-    // build must keep publishing it under that exact export key.
-    const dnt = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
+    // build must keep publishing it under that exact export key. Resolved from
+    // import.meta.url, not the process cwd: test files share one process under
+    // --parallel and a sibling isolate can hold `withCwd` while this runs.
+    const dnt = await Deno.readTextFile(
+      new URL("../../scripts/build/build-npm-dnt.ts", import.meta.url),
+    );
     assertStringIncludes(dnt, './tsconfig.json"] = "./tsconfig.json"');
   });
 
