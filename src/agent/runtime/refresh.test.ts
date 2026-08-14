@@ -2816,11 +2816,12 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(finishedResponse.text, "Checking the requested update.");
   });
 
-  it("streams provider events after a partial recovery replay prefix", async () => {
+  it("treats text after a provider boundary as a new recovery segment", async () => {
     let finishedResponse: AgentResponse | undefined;
     let callCount = 0;
     let providerEventObserved = false;
     let observedProviderEventBeforeReplayCompleted = false;
+    const chunks: string[] = [];
     const studioSuggestions = tool({
       id: "studio_suggestions",
       description: "Capture Studio suggestions",
@@ -2879,7 +2880,7 @@ describe("agent runtime refresh hooks", () => {
               }
               await new Promise((resolve) => setTimeout(resolve, 0));
               observedProviderEventBeforeReplayCompleted = providerEventObserved;
-              controller.enqueue({ type: "text-delta", text: "the requested update." });
+              controller.enqueue({ type: "text-delta", text: "Done." });
               controller.enqueue({
                 type: "tool-result",
                 toolCallId: "provider-search-partial-replay",
@@ -2906,6 +2907,7 @@ describe("agent runtime refresh hooks", () => {
 
     const response = (await assistant.stream({
       input: "Check the update",
+      onChunk: (chunk) => chunks.push(chunk),
       onFinish: (result) => {
         finishedResponse = result;
       },
@@ -2920,8 +2922,20 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(observedProviderEventBeforeReplayCompleted, true);
     assertEquals(body.match(/Checking the requested update\./g)?.length ?? 0, 1);
     assertEquals(body.includes("provider-search-partial-replay"), true);
+    assertEquals(chunks, ["Checking the requested update.", "Done."]);
+    assertEquals(
+      body.indexOf("provider-search-partial-replay") < body.lastIndexOf("Done."),
+      true,
+    );
     assertExists(finishedResponse);
-    assertEquals(finishedResponse.text, "Checking the requested update.");
+    assertEquals(finishedResponse.text, "Done.");
+    assertEquals(
+      finishedResponse.messages
+        .filter((message) => message.role === "assistant")
+        .flatMap((message) => message.parts)
+        .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : []),
+      ["Checking the requested update.", "Done."],
+    );
   });
 
   it("streams provider events before recovery replay text begins", async () => {

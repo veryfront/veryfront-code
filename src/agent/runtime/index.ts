@@ -1957,6 +1957,7 @@ export class AgentRuntime {
       const previousRecoveryText = interruptedLocalToolBatchRecoveryText ?? "";
       let deferredRecoverySseText = "";
       let deferredRecoveryCallbackText = "";
+      let suppressedRecoveryTextLength = 0;
       let releasedDeferredRecoveryOutput = false;
       let releasedRecoveryReplacementTextPartId: string | undefined;
       const stepTextPartId = textPartId === undefined || step === 0
@@ -2056,8 +2057,22 @@ export class AgentRuntime {
           return;
         }
 
+        const sseTextIsReplayPrefix = previousRecoveryText.startsWith(
+          deferredRecoverySseText,
+        );
+        const callbackTextIsReplayPrefix = callbacks?.onChunk === undefined ||
+          previousRecoveryText.startsWith(deferredRecoveryCallbackText);
+        if (
+          deferredRecoverySseText.length > 0 && sseTextIsReplayPrefix &&
+          callbackTextIsReplayPrefix
+        ) {
+          suppressedRecoveryTextLength += deferredRecoverySseText.length;
+          deferredRecoverySseText = "";
+          deferredRecoveryCallbackText = "";
+        }
         const retainedOutput = deferredRecoveryOutput.filter((output) =>
-          output.kind === "callback" || output.isTextEvent
+          (output.kind === "callback" || output.isTextEvent) &&
+          !(sseTextIsReplayPrefix && callbackTextIsReplayPrefix)
         );
         for (const output of deferredRecoveryOutput) {
           if (output.kind === "sse" && !output.isTextEvent) {
@@ -2089,8 +2104,8 @@ export class AgentRuntime {
             isTextEvent,
           });
           releaseDeferredRecoveryOutputAfterDivergence();
-          releaseDeferredRecoveryOutputAfterExactReplay(isTextEvent);
           releaseDeferredRecoveryNonTextOutput(isTextEvent);
+          releaseDeferredRecoveryOutputAfterExactReplay(isTextEvent);
         },
       } as ReadableStreamDefaultController;
       await processStream(streamSource, state, stepController, encoder, stepTextPartId, {
@@ -2120,24 +2135,29 @@ export class AgentRuntime {
         },
       }, abortSignal);
       throwIfAborted(abortSignal);
-      const interruptedRecoveryPrefixLength = deferredRecoveryOutput === undefined
+      const activeRecoveryText = state.accumulatedText.slice(
+        suppressedRecoveryTextLength,
+      );
+      const activeRecoveryPrefixLength = deferredRecoveryOutput === undefined
         ? 0
-        : state.accumulatedText.startsWith(previousRecoveryText)
+        : activeRecoveryText.startsWith(previousRecoveryText)
         ? previousRecoveryText.length
-        : previousRecoveryText.startsWith(state.accumulatedText)
-        ? state.accumulatedText.length
+        : previousRecoveryText.startsWith(activeRecoveryText)
+        ? activeRecoveryText.length
         : 0;
-      const recoveryPresentationText = state.accumulatedText.slice(
-        interruptedRecoveryPrefixLength,
+      const interruptedRecoveryPrefixLength = suppressedRecoveryTextLength +
+        activeRecoveryPrefixLength;
+      const recoveryPresentationText = activeRecoveryText.slice(
+        activeRecoveryPrefixLength,
       );
       const repeatsInterruptedRecoveryText = interruptedRecoveryPrefixLength > 0 &&
         recoveryPresentationText.length === 0;
       if (deferredRecoveryOutput !== undefined && !releasedDeferredRecoveryOutput) {
         flushDeferredRecoveryOutput(
-          interruptedRecoveryPrefixLength,
+          activeRecoveryPrefixLength,
           repeatsInterruptedRecoveryText,
-          previousRecoveryText.length > 0 && interruptedRecoveryPrefixLength === 0 &&
-            !repeatsInterruptedRecoveryText && state.accumulatedText.length > 0,
+          previousRecoveryText.length > 0 && activeRecoveryPrefixLength === 0 &&
+            !repeatsInterruptedRecoveryText && activeRecoveryText.length > 0,
         );
       }
       finalFinishReason = state.finishReason ?? finalFinishReason;
@@ -2207,7 +2227,10 @@ export class AgentRuntime {
 
       const stepAssistantText = getTextFromParts(assistantMessage.parts);
       if (step === interruptedLocalToolBatchRecoveryStep && interruptedRecoveryPrefixLength > 0) {
-        latestAssistantText = previousRecoveryText.startsWith(state.accumulatedText)
+        latestAssistantText = suppressedRecoveryTextLength > 0 &&
+            hasSubstantiveAssistantText(stepAssistantText)
+          ? stepAssistantText
+          : previousRecoveryText.startsWith(state.accumulatedText)
           ? previousRecoveryText
           : state.accumulatedText;
       } else if (
