@@ -1945,9 +1945,13 @@ export class AgentRuntime {
         },
       }, abortSignal);
       throwIfAborted(abortSignal);
-      const interruptedRecoveryPrefixLength = deferredRecoveryOutput !== undefined &&
-          state.accumulatedText.startsWith(interruptedLocalToolBatchRecoveryText ?? "")
-        ? interruptedLocalToolBatchRecoveryText?.length ?? 0
+      const previousRecoveryText = interruptedLocalToolBatchRecoveryText ?? "";
+      const interruptedRecoveryPrefixLength = deferredRecoveryOutput === undefined
+        ? 0
+        : state.accumulatedText.startsWith(previousRecoveryText)
+        ? previousRecoveryText.length
+        : previousRecoveryText.startsWith(state.accumulatedText)
+        ? state.accumulatedText.length
         : 0;
       const recoveryPresentationText = state.accumulatedText.slice(
         interruptedRecoveryPrefixLength,
@@ -2052,7 +2056,9 @@ export class AgentRuntime {
 
       const stepAssistantText = getTextFromParts(assistantMessage.parts);
       if (step === interruptedLocalToolBatchRecoveryStep && interruptedRecoveryPrefixLength > 0) {
-        latestAssistantText = state.accumulatedText;
+        latestAssistantText = previousRecoveryText.startsWith(state.accumulatedText)
+          ? previousRecoveryText
+          : state.accumulatedText;
       } else if (
         hasSubstantiveAssistantText(stepAssistantText) ||
         step !== interruptedLocalToolBatchRecoveryStep
