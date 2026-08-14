@@ -8,15 +8,17 @@ import type {
 } from "#veryfront/extensions/content/index.ts";
 import { MARKDOWN_COMPILE_ERROR, VeryfrontError } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { isFrontmatterSyntaxError } from "../../mdx/compiler/frontmatter-extractor.ts";
 
 const logger = rendererLogger.component("md-compiler");
 
 function isMarkdownSourceCompileError(error: Error): boolean {
-  return error.name === "SyntaxError" &&
+  const isLegacyYamlError = error.name === "SyntaxError" &&
     /\bline \d+, column \d+\b/i.test(error.message) &&
     (error.stack?.includes("/src/platform/compat/std/front-matter-yaml.ts") === true ||
       error.stack?.includes("/src/platform/compat/std/yaml.ts") === true ||
       error.stack?.includes("/extensions/ext-yaml/src/adapter.ts") === true);
+  return isLegacyYamlError || isFrontmatterSyntaxError(error);
 }
 
 export function compileMarkdownRuntime(
