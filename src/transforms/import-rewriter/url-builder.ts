@@ -34,7 +34,13 @@ type EsmShOptions = {
 
 const ObjectEntries = Object.entries;
 const ReflectApply = Reflect.apply;
+const RegExpTest = RegExp.prototype.test;
 const RegExpSymbolReplace = RegExp.prototype[Symbol.replace];
+const MODULE_EXTENSION_PATTERN = /\.(js|mjs|jsx|ts|tsx|mdx)$/;
+
+function regexTest(search: RegExp, value: string): boolean {
+  return ReflectApply(RegExpTest, search, [value]) as boolean;
+}
 
 function regexReplace(
   value: string,
@@ -445,7 +451,7 @@ export function buildCrossProjectUrl(
   version: string | null,
   path: string,
 ): string {
-  const modulePath = /\.(js|mjs|jsx|ts|tsx|mdx)$/.test(path) ? path : `${path}.tsx`;
+  const modulePath = regexTest(MODULE_EXTENSION_PATTERN, path) ? path : `${path}.tsx`;
   const projectRef = version && version !== "latest" ? `${projectSlug}@${version}` : projectSlug;
   return `/_vf_modules/_cross/${projectRef}/@/${modulePath}`;
 }

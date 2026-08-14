@@ -83,6 +83,13 @@ import { bar } from "./local.js";
       assertEquals(result.paths, ["/_vf_modules/components/Lazy.js"]);
     });
 
+    it("detects unresolved dynamic _vf_modules imports in non-interpolated templates", () => {
+      const code = "export const load = () => import(`/_vf_modules/components/Lazy.js`);";
+      const result = hasUnresolvedImports(code);
+      assertEquals(result.count, 1);
+      assertEquals(result.paths, ["/_vf_modules/components/Lazy.js"]);
+    });
+
     it("returns empty for normal resolved file:// imports", () => {
       const code =
         `import { foo } from "file:///home/user/.cache/veryfront-mdx-esm/proj/vfmod.mjs";`;

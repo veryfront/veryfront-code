@@ -374,6 +374,32 @@ describe("transforms/import-rewriter/url-builder", () => {
         "/_vf_modules/_cross/proj@1.0.0/@/components/Button.tsx",
       );
     });
+
+    it("should use captured test for escaped alias extension checks", () => {
+      const originalTest = Object.getOwnPropertyDescriptor(RegExp.prototype, "test")!;
+      let poisonCalls = 0;
+      try {
+        Object.defineProperty(RegExp.prototype, "test", {
+          ...originalTest,
+          value() {
+            poisonCalls += 1;
+            throw new Error("poisoned RegExp.prototype.test");
+          },
+        });
+
+        assertEquals(
+          buildCrossProjectUrl("proj", "1.0.0", "components/Button.tsx"),
+          "/_vf_modules/_cross/proj@1.0.0/@/components/Button.tsx",
+        );
+        assertEquals(
+          buildCrossProjectUrl("proj", "1.0.0", "components/Button"),
+          "/_vf_modules/_cross/proj@1.0.0/@/components/Button.tsx",
+        );
+        assertEquals(poisonCalls, 0);
+      } finally {
+        Object.defineProperty(RegExp.prototype, "test", originalTest);
+      }
+    });
   });
 
   describe("buildVeryfrontModuleUrl", () => {

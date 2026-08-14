@@ -243,11 +243,17 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       assertEquals(specifiers(`/* import("./a.js") */ const x = 1;`), []);
     });
 
-    // A template literal with no substitution is a valid specifier, but the
-    // scanner only treats quoted strings as literals, so it stays unresolved
-    // rather than being rewritten from a form it cannot verify.
-    it("skips a template-literal specifier", () => {
-      assertEquals(specifiers("import(`./a.js`);"), []);
+    it("finds a non-interpolated template-literal specifier", () => {
+      const source = "import(`./a.js`);";
+      const [span] = findDynamicImportSpans(source, matchRelative, UNBOUNDED);
+      assertEquals(span?.original, "`./a.js`");
+      assertEquals(span?.path, "./a.js");
+      assertEquals(
+        replaceSourceSpans(source, [
+          { start: span!.start, end: span!.end, replacement: `"file:///out/a.js"` },
+        ]),
+        `import("file:///out/a.js");`,
+      );
     });
 
     it("spans only the quoted specifier when comments surround it", () => {

@@ -167,6 +167,33 @@ function readQuotedSpecifier(
   return null;
 }
 
+function readLiteralSpecifier(
+  source: string,
+  literalIndex: number,
+): { end: number; specifier: string } | null {
+  const quote = source[literalIndex];
+  if (quote === '"' || quote === "'") return readQuotedSpecifier(source, literalIndex);
+  if (quote !== "`") return null;
+
+  let cursor = literalIndex + 1;
+  while (cursor < source.length) {
+    if (source[cursor] === "\\") {
+      cursor += 2;
+      continue;
+    }
+    if (source[cursor] === "$" && source[cursor + 1] === "{") return null;
+    if (source[cursor] === "`") {
+      return {
+        end: cursor + 1,
+        specifier: source.slice(literalIndex + 1, cursor),
+      };
+    }
+    cursor++;
+  }
+
+  return null;
+}
+
 function findFromSpan(
   source: string,
   statementStart: number,
@@ -322,9 +349,9 @@ export function findDynamicImportSpans(
       continue;
     }
 
-    const quoteIndex = skipWhitespaceAndComments(source, parenIndex + 1);
-    const quoted = readQuotedSpecifier(source, quoteIndex);
-    if (!quoted) {
+    const literalIndex = skipWhitespaceAndComments(source, parenIndex + 1);
+    const literal = readLiteralSpecifier(source, literalIndex);
+    if (!literal) {
       cursor = parenIndex + 1;
       continue;
     }
@@ -332,21 +359,21 @@ export function findDynamicImportSpans(
     // The literal must be the whole first argument. `)` closes the call and `,`
     // starts the import-attributes argument; anything else (`+`, a template
     // continuation, a ternary) means the runtime specifier is not this string.
-    const afterSpecifier = skipWhitespaceAndComments(source, quoted.end);
+    const afterSpecifier = skipWhitespaceAndComments(source, literal.end);
     const isWholeArgument = source[afterSpecifier] === ")" || source[afterSpecifier] === ",";
 
-    const matchedPath = isWholeArgument ? matcher(quoted.specifier) : null;
+    const matchedPath = isWholeArgument ? matcher(literal.specifier) : null;
     if (matchedPath) {
       spans.push({
-        original: source.slice(quoteIndex, quoted.end),
+        original: source.slice(literalIndex, literal.end),
         path: matchedPath,
-        start: quoteIndex,
-        end: quoted.end,
+        start: literalIndex,
+        end: literal.end,
       });
       if (spans.length >= maxMatches) return spans;
     }
 
-    cursor = quoted.end;
+    cursor = literal.end;
   }
 
   return spans;
