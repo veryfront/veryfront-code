@@ -997,4 +997,127 @@ describe("hydration-script-builder/runtime/router", () => {
       );
     });
   });
+
+  // Cross-cutting invariants of the navigation lifecycle: soft navigations stay
+  // inside the document and history mutates exactly once per navigation, while
+  // every path that leaves the SPA (redirects, server layouts) hands the
+  // history entry to the browser's document loader untouched.
+  describe("navigation contract", () => {
+    it("completes a soft navigation inside the current document without console errors", async () => {
+      const errorLogs: unknown[][] = [];
+      const originalConsoleError = console.error;
+      console.error = (...args: unknown[]) => {
+        errorLogs.push(args);
+      };
+
+      try {
+        const harness = createRouterHarness();
+        harness.window.__veryfrontHydrationComplete?.();
+        harness.setNextPageData({ pagePath: "page", params: {} });
+
+        await harness.runtime.navigateSPA("/next");
+
+        assertEquals(harness.router.pathname, "/next", "the SPA router must own the route");
+        assertEquals(
+          harness.historyCalls,
+          [{ method: "push", href: "/next" }],
+          "one soft navigation must mutate history exactly once",
+        );
+        assertEquals(harness.reloads(), 0, "a soft navigation must not reload the document");
+        assertEquals(
+          harness.window.location.href,
+          "https://veryfront.test/",
+          "a soft navigation must not tear down the document",
+        );
+        assertEquals(errorLogs, [], "a successful navigation must stay silent on console.error");
+      } finally {
+        console.error = originalConsoleError;
+      }
+    });
+
+    it("records a replace instead of a push when requested", async () => {
+      const harness = createRouterHarness();
+      harness.window.__veryfrontHydrationComplete?.();
+      harness.setNextPageData({ pagePath: "page", params: {} });
+
+      await harness.runtime.navigateSPA("/swapped", "replace");
+
+      assertEquals(
+        harness.historyCalls,
+        [{ method: "replace", href: "/swapped" }],
+        "replace-style navigation must not grow the history stack",
+      );
+    });
+
+    it("renders from prefetched page data even when the network refresh hangs", async () => {
+      const harness = createRouterHarness({
+        fetchImpl: (_url, options) => {
+          if (options.headers?.["X-Veryfront-Prefetch"] === "1") {
+            return Promise.resolve(pageDataResponse("prefetched"));
+          }
+          // The stale-while-revalidate refresh never answers; navigation must
+          // not depend on it.
+          return new Promise<RuntimeResponse>(() => {});
+        },
+      });
+      harness.window.__veryfrontHydrationComplete?.();
+
+      harness.router.prefetch("/prefetched");
+      await flushUntil(() => harness.fetchCalls.length === 1);
+      for (let i = 0; i < 20; i++) await flushMicrotasks();
+
+      await harness.runtime.navigateSPA("/prefetched");
+
+      assertEquals(
+        harness.router.pathname,
+        "/prefetched",
+        "the cached payload alone must complete the navigation",
+      );
+      assertEquals(harness.reloads(), 0, "a cache-served navigation must not reload");
+    });
+
+    it("leaves history untouched when a redirect hands over to the document loader", async () => {
+      const harness = createRouterHarness();
+      harness.window.__veryfrontHydrationComplete?.();
+      harness.setNextPageData({ redirect: { destination: "/moved" } });
+
+      await harness.runtime.navigateSPA("/from");
+
+      assertEquals(harness.window.location.href, "https://veryfront.test/moved");
+      assertEquals(
+        harness.historyCalls,
+        [],
+        "the document loader owns the history entry for a redirect",
+      );
+      assertEquals(
+        harness.fetchCalls.length,
+        1,
+        "a redirect must resolve from a single page-data request",
+      );
+    });
+
+    it("restores a page from history state on popstate without a network request", async () => {
+      const harness = createRouterHarness({
+        pathname: "/posts/42",
+        hydrationParams: { id: "42" },
+      });
+      harness.window.__veryfrontHydrationComplete?.();
+
+      harness.window.location.pathname = "/posts/7";
+      const popstate = harness.listeners.popstate?.[0];
+      if (!popstate) throw new Error("popstate handler was not registered");
+      await popstate(
+        {
+          state: { pageData: { pagePath: "page", params: { id: "7" } } },
+        } as unknown as RuntimeEvent,
+      );
+
+      assertEquals(harness.router.params, { id: "7" });
+      assertEquals(
+        harness.fetchCalls,
+        [],
+        "history state already carries the page data; popstate must not refetch",
+      );
+    });
+  });
 });
