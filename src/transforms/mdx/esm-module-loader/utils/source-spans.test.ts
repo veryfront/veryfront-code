@@ -135,6 +135,14 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       return findDynamicImportSpans(source, matchRelative, UNBOUNDED).map((span) => span.path);
     }
 
+    function vfModuleSpecifiers(source: string): string[] {
+      return findDynamicImportSpans(
+        source,
+        (specifier) => specifier.startsWith("/_vf_modules/") ? specifier : null,
+        UNBOUNDED,
+      ).map((span) => span.path);
+    }
+
     it("requires a positive safe match bound", () => {
       for (const maxMatches of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
         assertThrows(
@@ -233,6 +241,15 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("finds executable imports after regex literals following closed blocks", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'const html = `${(() => { if (ok) {} /}/.test(x); })() && import("/_vf_modules/lazy.js")}`;',
+        ),
+        ["/_vf_modules/lazy.js"],
+      );
+    });
+
     it("finds executable imports after regex braces following control conditions", () => {
       assertEquals(
         specifiers(
@@ -296,6 +313,12 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       assertEquals(
         specifiers('const value = maybe?.count / 2; import("./after-optional-chain.js");'),
         ["./after-optional-chain.js"],
+      );
+      assertEquals(
+        specifiers(
+          'const html = `${constValue = {} / 2} ${import("./after-object-division.js")}`;',
+        ),
+        ["./after-object-division.js"],
       );
     });
 

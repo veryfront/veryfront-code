@@ -276,12 +276,49 @@ function isControlConditionCloseParen(source: string, index: number, rangeStart:
   return false;
 }
 
+function matchingOpenBraceIndex(source: string, index: number, rangeStart: number): number | null {
+  let depth = 1;
+  let cursor = index - 1;
+
+  while (cursor >= rangeStart) {
+    const char = source[cursor];
+
+    if (char === "}") {
+      depth++;
+      cursor--;
+      continue;
+    }
+
+    if (char === "{") {
+      depth--;
+      if (depth === 0) return cursor;
+      cursor--;
+      continue;
+    }
+
+    cursor--;
+  }
+
+  return null;
+}
+
+function isControlBlockCloseBrace(source: string, index: number, rangeStart: number): boolean {
+  const openBrace = matchingOpenBraceIndex(source, index, rangeStart);
+  if (openBrace === null) return false;
+
+  const beforeOpenBrace = previousSignificantIndex(source, openBrace);
+  return beforeOpenBrace >= rangeStart &&
+    source[beforeOpenBrace] === ")" &&
+    isControlConditionCloseParen(source, beforeOpenBrace, rangeStart);
+}
+
 function canStartRegexLiteral(source: string, index: number, rangeStart: number): boolean {
   const previous = previousSignificantIndex(source, index);
   if (previous < rangeStart) return true;
 
   const char = source[previous];
   if (char === ")" && isControlConditionCloseParen(source, previous, rangeStart)) return true;
+  if (char === "}" && isControlBlockCloseBrace(source, previous, rangeStart)) return true;
   if (
     (char === "+" || char === "-") &&
     previous - 1 >= rangeStart &&
