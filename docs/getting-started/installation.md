@@ -206,9 +206,14 @@ On Windows PowerShell, run:
 irm https://veryfront.com/install.ps1 | iex
 ```
 
-Both commands execute a script fetched at run time, and neither the script nor
-the binary it downloads is checksum-verified. To read the script before running
-it, and to pin a version instead of tracking latest:
+Both installers verify what they download. Each release publishes a `SHA256SUMS`
+manifest; the binary is staged, checked against it, and only then moved into
+place, so a mismatch installs nothing. Releases published before that manifest
+existed have none, so pinning to one of those fails unless you set
+`VERYFRONT_INSTALL_SKIP_CHECKSUM=1` deliberately.
+
+The commands still execute a script fetched at run time. To read it first, and
+to pin a version instead of tracking latest:
 
 ```bash
 curl -fsSL https://veryfront.com/install.sh -o install.sh
@@ -218,7 +223,11 @@ sh install.sh --version <VERSION>
 
 To skip the installer entirely, download the binary for your platform from the
 [release assets](https://github.com/veryfront/veryfront/releases) and put it on
-your path.
+your path. Check it against the `SHA256SUMS` published with the same release:
+
+```bash
+sha256sum --check --ignore-missing SHA256SUMS
+```
 
 The installer downloads the binary for the current platform and adds it to your
 shell path. Embedded ONNX inference is not available from compiled standalone
