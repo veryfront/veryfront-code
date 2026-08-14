@@ -11,6 +11,7 @@ import {
 import { agent } from "../index.ts";
 import type { AgentConfig } from "../types.ts";
 import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
+import { flattenSystemInstructions, withRuntimeToolInventory } from "./tool-inventory.ts";
 
 function toolNames(options: unknown): string[] {
   const value = (options as { tools?: unknown }).tools;
@@ -137,12 +138,14 @@ it("deferred generate searches, exposes on the next step, and executes once", as
 
 it("deferred generate can reload create_agent after a successful agent write", async () => {
   const observedTools: string[][] = [];
+  const observedSystems: string[] = [];
   let step = 0;
   const model: ModelRuntime = {
     provider: "hosted",
     modelId: "hosted/deferred-agent-authoring",
     async doGenerate(options: unknown) {
       observedTools.push(toolNames(options));
+      observedSystems.push(systemPrompt(options));
       step++;
       if (step === 1 || step === 3) {
         return {
@@ -183,7 +186,12 @@ it("deferred generate can reload create_agent after a successful agent write", a
     {
       id: "deferred-agent-authoring-test",
       model: "hosted/deferred-agent-authoring",
-      system: "Create both requested agents, loading create_agent when needed.",
+      system: flattenSystemInstructions(
+        withRuntimeToolInventory(
+          "Create both requested agents, loading create_agent when needed.",
+          [],
+        ),
+      ),
       tools: {
         load_skill: tool({
           id: "load_skill",
@@ -216,6 +224,10 @@ it("deferred generate can reload create_agent after a successful agent write", a
     ["create_agent", "load_skill"],
     ["load_skill", "tool_search"],
   ]);
+  assertEquals(
+    observedSystems[2]?.includes("- create_agent: Create a project agent"),
+    true,
+  );
   assertEquals(executionCount, 2);
   assertEquals(response.text, "Created both agents.");
 });

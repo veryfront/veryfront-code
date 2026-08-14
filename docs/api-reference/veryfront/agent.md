@@ -1040,7 +1040,7 @@ Input delivered to a hosted agent-service detached execution callback.
 
 | Name                                 | Description                                       | Source                                                                                                             |
 | ------------------------------------ | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `AgentRuntime`                       | Implement agent runtime.                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/runtime/index.ts#L718)                    |
+| `AgentRuntime`                       | Implement agent runtime.                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/runtime/index.ts#L724)                    |
 | `AgentRuntimeMessageConversionError` | Error shape for agent runtime message conversion. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/runtime/message-adapter.ts#L138)          |
 | `AgentServiceAuthError`              | Error shape for hosted service auth.              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/service/auth.ts#L14)                      |
 | `AppendConversationRunEventsError`   | Error shape for append conversation run events.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/conversation/durable-append-errors.ts#L4) |

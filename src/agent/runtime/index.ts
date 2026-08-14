@@ -103,6 +103,7 @@ import {
 } from "./agent-runtime-step.ts";
 import { buildStreamedAssistantMessage } from "./streamed-assistant-message.ts";
 import {
+  type DeferredToolSummary,
   flattenSystemInstructions,
   hasRuntimeToolInventory,
   withRuntimeToolInventory,
@@ -436,12 +437,17 @@ function applyAgentWriteFinalResponseGuard(
 function synchronizeRuntimeToolInventory(
   systemPrompt: string,
   runtimeTools: Record<string, unknown> | undefined,
+  deferredTools: readonly DeferredToolSummary[] = [],
 ): string {
   if (!hasRuntimeToolInventory(systemPrompt)) {
     return systemPrompt;
   }
   return flattenSystemInstructions(
-    withRuntimeToolInventory(systemPrompt, Object.keys(runtimeTools ?? {}).sort()),
+    withRuntimeToolInventory(
+      systemPrompt,
+      Object.keys(runtimeTools ?? {}).sort(),
+      deferredTools,
+    ),
   );
 }
 
@@ -1136,6 +1142,7 @@ export class AgentRuntime {
           sandbox: undefined,
         }
         : runConfig;
+      const runtimeStepToolLoading = resolveRuntimeToolLoading(runtimeStepConfig);
       const allowedRemoteToolNames = hasToolReplacements
         ? undefined
         : getRuntimeAllowedRemoteTools(this.config);
@@ -1176,7 +1183,7 @@ export class AgentRuntime {
           config: runtimeStepConfig,
           effectiveModel,
           excludedToolNames: agentWriteFinalResponseToolGuardEnabled &&
-              toolLoadingResolution.mode === "eager"
+              runtimeStepToolLoading.mode === "eager"
             ? AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES
             : undefined,
           forwardedRemoteToolDefinitions,
@@ -1204,12 +1211,12 @@ export class AgentRuntime {
         const toolContext = preparedStep.toolContext;
         const effectiveToolExposurePlan = agentWriteFinalResponseToolGuardEnabled
           ? applyAgentWriteFinalResponseGuard(preparedStep.toolExposurePlan, {
-            reloadable: toolLoadingResolution.mode === "deferred",
+            reloadable: runtimeStepToolLoading.mode === "deferred",
           })
           : preparedStep.toolExposurePlan;
         const tools = effectiveToolExposurePlan.visible;
         setSpanAttributes(loopSpan, {
-          "tool.loading.mode": resolveRuntimeToolLoading(runtimeStepConfig).mode,
+          "tool.loading.mode": runtimeStepToolLoading.mode,
           "tool.loading.provenance": toolLoadingResolution.provenance,
           "tool.catalog.authorized_count": preparedStep.toolExposurePlan.authorized.length,
           "tool.catalog.visible_count": tools.length,
@@ -1230,7 +1237,11 @@ export class AgentRuntime {
           providerTools: stepProviderTools,
         });
         currentSystemPrompt = withIntegrationToolDiscoveryStatus(
-          synchronizeRuntimeToolInventory(currentSystemPrompt, runtimeTools),
+          synchronizeRuntimeToolInventory(
+            currentSystemPrompt,
+            runtimeTools,
+            effectiveToolExposurePlan.deferred,
+          ),
           preparedStep.integrationToolDiscovery,
         );
         const response = await withSpan("agent.generate_text", async (span) => {
@@ -1844,7 +1855,11 @@ export class AgentRuntime {
         providerTools: stepProviderTools,
       });
       currentSystemPrompt = withIntegrationToolDiscoveryStatus(
-        synchronizeRuntimeToolInventory(currentSystemPrompt, runtimeTools),
+        synchronizeRuntimeToolInventory(
+          currentSystemPrompt,
+          runtimeTools,
+          effectiveToolExposurePlan.deferred,
+        ),
         preparedStep.integrationToolDiscovery,
       );
       const runtimeToolNames = Object.keys(runtimeTools ?? {}).sort();
