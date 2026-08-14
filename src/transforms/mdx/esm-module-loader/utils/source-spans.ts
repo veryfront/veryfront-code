@@ -237,6 +237,13 @@ function canStartRegexLiteral(source: string, index: number, rangeStart: number)
   if (previous < rangeStart) return true;
 
   const char = source[previous];
+  if (
+    (char === "+" || char === "-") &&
+    previous - 1 >= rangeStart &&
+    source[previous - 1] === char
+  ) {
+    return false;
+  }
   if (char !== undefined && "([{=,:;!~?&|+-*%^<>".includes(char)) return true;
 
   return [

@@ -233,6 +233,36 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("finds imports after division following postfix operators", () => {
+      assertEquals(
+        specifiers('let x = 1; x++ / 2; import("./after-plus-plus.js");'),
+        ["./after-plus-plus.js"],
+      );
+      assertEquals(
+        specifiers('let x = 1; x-- / 2; import("./after-minus-minus.js");'),
+        ["./after-minus-minus.js"],
+      );
+      assertEquals(
+        specifiers('const html = `${x++ / 2} ${import("./inside-plus-plus.js")}`;'),
+        ["./inside-plus-plus.js"],
+      );
+      assertEquals(
+        specifiers('const html = `${x-- / 2} ${import("./inside-minus-minus.js")}`;'),
+        ["./inside-minus-minus.js"],
+      );
+    });
+
+    it("finds imports after nearby division forms", () => {
+      assertEquals(
+        specifiers('const ratio = value / 2; import("./after-numeric-division.js");'),
+        ["./after-numeric-division.js"],
+      );
+      assertEquals(
+        specifiers('const value = maybe?.count / 2; import("./after-optional-chain.js");'),
+        ["./after-optional-chain.js"],
+      );
+    });
+
     it("ignores a static import and a property called import", () => {
       assertEquals(specifiers(`import x from "./foo.js";`), []);
       assertEquals(specifiers(`obj.import("./foo.js");`), []);
