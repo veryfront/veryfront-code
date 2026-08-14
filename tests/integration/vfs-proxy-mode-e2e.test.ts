@@ -48,7 +48,14 @@ async function requestViaLoopbackWithHost(options: {
       "",
       "",
     ].join("\r\n");
-    await conn.write(new TextEncoder().encode(request));
+    // `Deno.Conn.write` is a low-level write and may consume fewer bytes than
+    // supplied. Dropping the returned count would leave the server waiting for
+    // the rest of the headers while this helper waits for a response — a hang
+    // rather than a failure. Loop until the whole request is on the wire.
+    const payload = new TextEncoder().encode(request);
+    for (let written = 0; written < payload.length;) {
+      written += await conn.write(payload.subarray(written));
+    }
 
     const chunks: Uint8Array[] = [];
     const buffer = new Uint8Array(4096);
