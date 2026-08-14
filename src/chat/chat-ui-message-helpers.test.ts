@@ -248,15 +248,18 @@ describe("chat/chat-ui-message-helpers", () => {
       { type: "text-start", id: "msg-1" },
       { type: "text-delta", id: "msg-1", delta: "Created the assistant." },
       { type: "text-start", id: "msg-1" },
-      { type: "text-delta", id: "msg-1", delta: "Created the workflow." },
+      { type: "text-delta", id: "msg-1", delta: "Created the " },
+      { type: "text-delta", id: "msg-1", delta: "workflow." },
       { type: "text-end", id: "msg-1" },
     ])));
 
     assertEquals(result, [
       { type: "text-start", id: "msg-1" },
       { type: "text-delta", id: "msg-1", delta: "Created the assistant." },
-      { type: "text-delta", id: "msg-1", delta: "workflow." },
       { type: "text-end", id: "msg-1" },
+      { type: "text-start", id: "msg-1:replay:1" },
+      { type: "text-delta", id: "msg-1:replay:1", delta: "Created the workflow." },
+      { type: "text-end", id: "msg-1:replay:1" },
     ]);
   });
 
