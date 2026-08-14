@@ -194,6 +194,80 @@ function readLiteralSpecifier(
   return null;
 }
 
+function skipFullTemplateLiteral(source: string, templateIndex: number): number {
+  let cursor = templateIndex + 1;
+
+  while (cursor < source.length) {
+    if (source[cursor] === "\\") {
+      cursor += 2;
+      continue;
+    }
+
+    if (source[cursor] === "`") return cursor + 1;
+
+    if (source[cursor] === "$" && source[cursor + 1] === "{") {
+      const expressionEnd = findTemplateExpressionEnd(source, cursor + 2);
+      if (expressionEnd === null) return source.length;
+      cursor = expressionEnd + 1;
+      continue;
+    }
+
+    cursor++;
+  }
+
+  return source.length;
+}
+
+function skipExpressionIgnored(source: string, index: number): number {
+  const char = source[index];
+  const next = source[index + 1];
+
+  if (char === "/" && next === "/") {
+    const newline = source.indexOf("\n", index + 2);
+    return newline === -1 ? source.length : newline + 1;
+  }
+
+  if (char === "/" && next === "*") {
+    const end = source.indexOf("*/", index + 2);
+    return end === -1 ? source.length : end + 2;
+  }
+
+  if (char === '"' || char === "'") return skipIgnored(source, index);
+  if (char === "`") return skipFullTemplateLiteral(source, index);
+
+  return index;
+}
+
+function findTemplateExpressionEnd(source: string, expressionIndex: number): number | null {
+  let cursor = expressionIndex;
+  let braceDepth = 1;
+
+  while (cursor < source.length) {
+    const skipped = skipExpressionIgnored(source, cursor);
+    if (skipped !== cursor) {
+      cursor = skipped;
+      continue;
+    }
+
+    if (source[cursor] === "{") {
+      braceDepth++;
+      cursor++;
+      continue;
+    }
+
+    if (source[cursor] === "}") {
+      braceDepth--;
+      if (braceDepth === 0) return cursor;
+      cursor++;
+      continue;
+    }
+
+    cursor++;
+  }
+
+  return null;
+}
+
 function findFromSpan(
   source: string,
   statementStart: number,
@@ -301,6 +375,130 @@ export function findStaticImportFromSpans(
   return spans;
 }
 
+function scanTemplateExpressionDynamicImports(
+  source: string,
+  templateIndex: number,
+  rangeEnd: number,
+  matcher: SpecifierMatcher,
+  maxMatches: number,
+  spans: StaticImportSpan[],
+): number {
+  let cursor = templateIndex + 1;
+
+  while (cursor < rangeEnd && cursor < source.length) {
+    if (source[cursor] === "\\") {
+      cursor += 2;
+      continue;
+    }
+
+    if (source[cursor] === "`") return cursor + 1;
+
+    if (source[cursor] === "$" && source[cursor + 1] === "{") {
+      const expressionStart = cursor + 2;
+      const expressionEnd = findTemplateExpressionEnd(source, expressionStart);
+      if (expressionEnd === null) return source.length;
+
+      scanDynamicImportRange(source, expressionStart, expressionEnd, matcher, maxMatches, spans);
+      if (spans.length >= maxMatches) return expressionEnd + 1;
+
+      cursor = expressionEnd + 1;
+      continue;
+    }
+
+    cursor++;
+  }
+
+  return source.length;
+}
+
+function scanDynamicImportRange(
+  source: string,
+  rangeStart: number,
+  rangeEnd: number,
+  matcher: SpecifierMatcher,
+  maxMatches: number,
+  spans: StaticImportSpan[],
+): void {
+  let cursor = rangeStart;
+
+  while (cursor < rangeEnd) {
+    const char = source[cursor];
+    const next = source[cursor + 1];
+
+    if (
+      (char === "/" && (next === "/" || next === "*")) ||
+      char === '"' ||
+      char === "'"
+    ) {
+      cursor = skipIgnored(source, cursor);
+      continue;
+    }
+
+    if (char === "`") {
+      cursor = scanTemplateExpressionDynamicImports(
+        source,
+        cursor,
+        rangeEnd,
+        matcher,
+        maxMatches,
+        spans,
+      );
+      if (spans.length >= maxMatches) return;
+      continue;
+    }
+
+    // `import` used as an expression: not preceded by an identifier char or a
+    // dot (which would make it `foo.import` or part of a longer word).
+    if (
+      !source.startsWith("import", cursor) ||
+      isIdentifierChar(source[cursor - 1]) ||
+      source[cursor - 1] === "." ||
+      isIdentifierChar(source[cursor + "import".length])
+    ) {
+      cursor++;
+      continue;
+    }
+
+    const parenIndex = skipWhitespaceAndComments(source, cursor + "import".length);
+    if (parenIndex >= rangeEnd || source[parenIndex] !== "(") {
+      cursor++;
+      continue;
+    }
+
+    const literalIndex = skipWhitespaceAndComments(source, parenIndex + 1);
+    if (literalIndex >= rangeEnd) {
+      cursor = parenIndex + 1;
+      continue;
+    }
+
+    const literal = readLiteralSpecifier(source, literalIndex);
+    if (!literal || literal.end > rangeEnd) {
+      cursor = parenIndex + 1;
+      continue;
+    }
+
+    // The literal must be the whole first argument. `)` closes the call and `,`
+    // starts the import-attributes argument; anything else (`+`, a template
+    // continuation, a ternary) means the runtime specifier is not this string.
+    const afterSpecifier = skipWhitespaceAndComments(source, literal.end);
+    const isWholeArgument = afterSpecifier < rangeEnd &&
+      (source[afterSpecifier] === ")" || source[afterSpecifier] === ",");
+
+    const matchedPath = isWholeArgument ? matcher(literal.specifier) : null;
+    if (matchedPath) {
+      spans.push({
+        original: source.slice(literalIndex, literal.end),
+        path: matchedPath,
+        start: literalIndex,
+        end: literal.end,
+      });
+      if (spans.length >= maxMatches) return;
+    }
+
+    cursor = literal.end;
+  }
+}
+
 /**
  * Find `import("…")` expressions with a literal specifier.
  *
@@ -322,60 +520,7 @@ export function findDynamicImportSpans(
   assertMaxMatches(maxMatches);
 
   const spans: StaticImportSpan[] = [];
-  let cursor = 0;
-
-  while (cursor < source.length) {
-    const skipped = skipIgnored(source, cursor);
-    if (skipped !== cursor) {
-      cursor = skipped;
-      continue;
-    }
-
-    // `import` used as an expression: not preceded by an identifier char or a
-    // dot (which would make it `foo.import` or part of a longer word).
-    if (
-      !source.startsWith("import", cursor) ||
-      isIdentifierChar(source[cursor - 1]) ||
-      source[cursor - 1] === "." ||
-      isIdentifierChar(source[cursor + "import".length])
-    ) {
-      cursor++;
-      continue;
-    }
-
-    const parenIndex = skipWhitespaceAndComments(source, cursor + "import".length);
-    if (source[parenIndex] !== "(") {
-      cursor++;
-      continue;
-    }
-
-    const literalIndex = skipWhitespaceAndComments(source, parenIndex + 1);
-    const literal = readLiteralSpecifier(source, literalIndex);
-    if (!literal) {
-      cursor = parenIndex + 1;
-      continue;
-    }
-
-    // The literal must be the whole first argument. `)` closes the call and `,`
-    // starts the import-attributes argument; anything else (`+`, a template
-    // continuation, a ternary) means the runtime specifier is not this string.
-    const afterSpecifier = skipWhitespaceAndComments(source, literal.end);
-    const isWholeArgument = source[afterSpecifier] === ")" || source[afterSpecifier] === ",";
-
-    const matchedPath = isWholeArgument ? matcher(literal.specifier) : null;
-    if (matchedPath) {
-      spans.push({
-        original: source.slice(literalIndex, literal.end),
-        path: matchedPath,
-        start: literalIndex,
-        end: literal.end,
-      });
-      if (spans.length >= maxMatches) return spans;
-    }
-
-    cursor = literal.end;
-  }
-
+  scanDynamicImportRange(source, 0, source.length, matcher, maxMatches, spans);
   return spans;
 }
 

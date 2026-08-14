@@ -189,6 +189,26 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       assertEquals(specifiers("await import(`./${name}.js`);"), []);
     });
 
+    it("finds executable imports inside template substitutions", () => {
+      assertEquals(
+        specifiers('const html = `<p>${await import("./inside.js")}</p>`;'),
+        ["./inside.js"],
+      );
+      assertEquals(
+        specifiers('const html = `<p>${`${await import("./nested.js")}`}</p>`;'),
+        ["./nested.js"],
+      );
+    });
+
+    it("ignores import-looking template text around substitutions", () => {
+      assertEquals(
+        specifiers(
+          'const html = `import("./text.js") ${await import("./real.js")} import("./after.js")`;',
+        ),
+        ["./real.js"],
+      );
+    });
+
     it("ignores a static import and a property called import", () => {
       assertEquals(specifiers(`import x from "./foo.js";`), []);
       assertEquals(specifiers(`obj.import("./foo.js");`), []);
