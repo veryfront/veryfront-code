@@ -1872,9 +1872,6 @@ export class AgentRuntime {
         },
       }, abortSignal);
       throwIfAborted(abortSignal);
-      if (suppressInterruptedRecoveryText) {
-        state.accumulatedText = "";
-      }
       finalFinishReason = state.finishReason ?? finalFinishReason;
 
       const streamedToolCalls = Array.from(state.toolCalls.values());
@@ -1887,7 +1884,10 @@ export class AgentRuntime {
       const shouldRecoverInterruptedLocalToolBatch = canRecoverInterruptedLocalToolBatch &&
         shouldContinue &&
         streamedToolCalls.some(isInterruptedClientToolCall);
-      const assistantMessage = buildStreamedAssistantMessage(state, {
+      const assistantMessage = buildStreamedAssistantMessage({
+        ...state,
+        accumulatedText: suppressInterruptedRecoveryText ? "" : state.accumulatedText,
+      }, {
         id: `msg_${Date.now()}_${step}`,
         timestamp: Date.now(),
       }, {

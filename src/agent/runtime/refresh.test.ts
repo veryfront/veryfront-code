@@ -1997,6 +1997,103 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(repeatedToolCall.status, "error");
   });
 
+  it("stops after suppressed recovery text with a finalized provider result", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Checking the requested update." },
+              {
+                type: "tool-input-start",
+                id: "toolu_interrupted_suggestions",
+                toolName: "studio_suggestions",
+              },
+              { type: "tool-input-delta", id: "toolu_interrupted_suggestions", delta: "{}" },
+              { type: "finish", finishReason: "tool-calls" },
+            ]),
+          };
+        }
+        if (callCount === 2) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "The provider lookup completed." },
+              {
+                type: "tool-call",
+                toolCallId: "provider-search",
+                toolName: "web_search",
+                input: '{"query":"status"}',
+                providerExecuted: true,
+              },
+              {
+                type: "tool-result",
+                toolCallId: "provider-search",
+                toolName: "web_search",
+                output: { results: [] },
+                providerExecuted: true,
+              },
+              { type: "finish", finishReason: "stop" },
+            ]),
+          };
+        }
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "Unexpected continuation." },
+            { type: "finish", finishReason: "stop" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Recover an interrupted local placeholder once.",
+      tools: { studio_suggestions: studioSuggestions },
+      providerTools: ["web_search"],
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const body = await (await assistant.stream({
+      input: "Check the update",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse().text();
+
+    assertEquals(callCount, 2);
+    assertEquals(body.includes("Checking the requested update."), true);
+    assertEquals(body.includes("The provider lookup completed."), false);
+    assertEquals(body.includes("Unexpected continuation."), false);
+    assertExists(finishedResponse);
+    assertEquals(finishedResponse.text, "Checking the requested update.");
+    assertEquals(
+      finishedResponse.messages
+        .filter((message) => message.role === "assistant")
+        .flatMap((message) => message.parts)
+        .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : []),
+      ["Checking the requested update."],
+    );
+  });
+
   it("applies loaded skill maxSteps overrides to generate() invoke_agent calls", async () => {
     const toolResults: ToolExecutionResultRequest[] = [];
     let callCount = 0;
