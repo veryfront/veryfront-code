@@ -4,6 +4,12 @@ import { HOSTED_STUDIO_ORIGINS } from "#veryfront/security/http/studio-origin-po
 import { isCorsPolicyResponseHeaderName } from "#veryfront/utils/cors-policy-limits.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import {
+  CSP_REPORT_ENDPOINT_NAME,
+  CSP_REPORT_PATH,
+} from "#veryfront/security/http/csp-report-endpoint.ts";
+import {
+  PLATFORM_FONT_FILE_ORIGINS,
+  PLATFORM_FONT_STYLE_ORIGINS,
   PLATFORM_IMAGE_ORIGINS,
   PLATFORM_SCRIPT_ORIGINS,
 } from "#veryfront/security/http/platform-asset-origins.ts";
@@ -12,6 +18,10 @@ import type { SecurityConfig } from "./types.ts";
 
 const logger = serverLogger.component("security-headers");
 const warnedReservedCorsHeaderConfigs = new WeakSet<object>();
+// Same suppression as above: applySecurityHeaders runs per response, so an
+// unguarded warning would repeat for every request a misconfigured project
+// serves.
+const warnedReservedCspHeaderConfigs = new WeakSet<object>();
 
 /**
  * Response headers whose values and omissions are owned by the centralized
@@ -21,10 +31,17 @@ const warnedReservedCorsHeaderConfigs = new WeakSet<object>();
 export const SECURITY_POLICY_RESPONSE_HEADER_NAMES = Object.freeze(
   [
     "content-security-policy",
+    // Owned for the same reason as the enforced header: the floor may be
+    // served report-only (see `cspHeaderName`), and a project-provided value
+    // must not survive into a response the platform is deciding the policy for.
+    "content-security-policy-report-only",
     "cross-origin-embedder-policy",
     "cross-origin-opener-policy",
     "cross-origin-resource-policy",
     "referrer-policy",
+    // Names where violation reports go. A project-provided value would send
+    // them somewhere else, or nowhere, and the policy would look healthy.
+    "reporting-endpoints",
     "strict-transport-security",
     "x-content-type-options",
     "x-frame-options",
@@ -32,12 +49,17 @@ export const SECURITY_POLICY_RESPONSE_HEADER_NAMES = Object.freeze(
   ] as const,
 );
 
-const SECURITY_POLICY_RESPONSE_HEADER_NAME_SET: ReadonlySet<string> = new Set(
-  SECURITY_POLICY_RESPONSE_HEADER_NAMES,
-);
+/** Response header defining the reporting groups the policy refers to. */
+const REPORTING_ENDPOINTS_HEADER = "reporting-endpoints";
 
-export function isSecurityPolicyResponseHeaderName(name: string): boolean {
-  return SECURITY_POLICY_RESPONSE_HEADER_NAME_SET.has(name.toLowerCase());
+/** The two names the computed policy may be delivered under. */
+const CSP_RESPONSE_HEADER_NAMES: ReadonlySet<string> = new Set([
+  "content-security-policy",
+  "content-security-policy-report-only",
+]);
+
+function isCspResponseHeaderName(name: string): boolean {
+  return CSP_RESPONSE_HEADER_NAMES.has(name.toLowerCase());
 }
 
 /** HSTS max-age default: 1 year in seconds */
@@ -62,8 +84,8 @@ export function generateNonce(): string {
  * are intentionally excluded because tenant project domains
  * (`{slug}.preview.veryfront.com`, etc.) live under the same suffix and
  * would otherwise be allowed to iframe each other (tenant-vs-tenant
- * clickjacking). Dev hosts (`veryfront.dev`) are omitted because dev mode
- * skips the default CSP entirely.
+ * clickjacking). Local development hosts (`*.localhost`) are omitted because
+ * dev mode skips the default CSP entirely.
  */
 const VERYFRONT_FRAME_ANCESTORS = ["'self'", ...HOSTED_STUDIO_ORIGINS];
 
@@ -77,8 +99,10 @@ const VERYFRONT_FRAME_ANCESTORS = ["'self'", ...HOSTED_STUDIO_ORIGINS];
  * the renderer emitted `esm.sh` and no hosted page hydrated.
  *
  * The rule this encodes: the floor contains what the platform emits, never a
- * guess at what a project needs. Project-specific origins (fonts, analytics,
- * embeds) belong in `security.csp`, which is merged on top.
+ * guess at what a project needs. Project-specific origins (analytics, embeds)
+ * belong in `security.csp`, which is merged on top. Google Fonts is in the
+ * baseline rather than here because the platform does emit it -- but only via
+ * `veryfront/fonts`, so a project that never calls it may drop it.
  *
  * Notes on individual directives:
  * - script-src carries the nonce. Style directives must not: browsers ignore
@@ -116,6 +140,10 @@ function requiredDirectives(
     "frame-ancestors": isVeryfrontDomain ? [...VERYFRONT_FRAME_ANCESTORS] : ["'none'"],
     "base-uri": ["'self'"],
     "form-action": ["'self'"],
+    // Both spellings: `report-to` is the current one, `report-uri` is
+    // deprecated but still the only one several shipping browsers honour.
+    "report-to": [CSP_REPORT_ENDPOINT_NAME],
+    "report-uri": [CSP_REPORT_PATH],
   };
 }
 
@@ -125,10 +153,10 @@ function requiredDirectives(
  * the project's own content — never the platform's.
  */
 const BASELINE_DIRECTIVES: ReadonlyMap<string, readonly string[]> = new Map([
-  ["style-src", ["'unsafe-inline'"]],
+  ["style-src", ["'unsafe-inline'", ...PLATFORM_FONT_STYLE_ORIGINS]],
   ["style-src-attr", ["'unsafe-inline'"]],
   ["img-src", ["data:"]],
-  ["font-src", ["data:"]],
+  ["font-src", ["data:", ...PLATFORM_FONT_FILE_ORIGINS]],
   ["media-src", ["blob:"]],
   ["worker-src", ["blob:"]],
 ]);
@@ -159,6 +187,7 @@ function mergeCspDirectives(
   required: Record<string, string[]>,
   projectCsp: SecurityConfig["csp"],
   nonce: string,
+  derived?: SecurityConfig["derivedCsp"],
 ): Record<string, string[]> {
   const project = new Map<string, readonly string[] | null>();
   for (const [key, value] of Object.entries(projectCsp ?? {})) {
@@ -190,6 +219,7 @@ function mergeCspDirectives(
   const names = new Set([
     ...requiredByName.keys(),
     ...BASELINE_DIRECTIVES.keys(),
+    ...Object.keys(derived ?? {}),
     ...project.keys(),
   ]);
 
@@ -197,10 +227,16 @@ function mergeCspDirectives(
   for (const name of names) {
     const configured = project.get(name);
     const baseline = configured === null ? [] : BASELINE_DIRECTIVES.get(name) ?? [];
+    // Derived origins sit above the floor and below project config, and follow
+    // the baseline's `null` semantics: a project that explicitly drops a
+    // directive means it, and static analysis must not put back what the
+    // project just said it does not want.
+    const derivedForName = configured === null ? [] : derived?.[name as never] ?? [];
     const additions = configured ?? [];
     merged[name] = normalizeSources([
       ...(requiredByName.get(name) ?? []),
       ...baseline,
+      ...derivedForName,
       ...additions,
     ]);
   }
@@ -242,8 +278,155 @@ export function buildCSP(
   if (isDev) return "";
 
   return serializeDirectives(
-    mergeCspDirectives(requiredDirectives(nonce, isVeryfrontDomain ?? false), config?.csp, nonce),
+    mergeCspDirectives(
+      requiredDirectives(nonce, isVeryfrontDomain ?? false),
+      config?.csp,
+      nonce,
+      config?.derivedCsp,
+    ),
   );
+}
+
+/**
+ * Whether the whole policy is enforced.
+ *
+ * Only `VERYFRONT_CSP`, a full policy override, binds everything: setting it is
+ * an explicit ops act. Otherwise enforcement is per directive -- see
+ * {@link buildEnforcedCSP}.
+ */
+function isCspEnforced(hasEnvOverride: boolean): boolean {
+  return hasEnvOverride;
+}
+
+/**
+ * Directives enforced for every project, whatever it configured.
+ *
+ * A report-only policy protects nothing, so the two directives safe to bind
+ * unconditionally are bound unconditionally. Both close real injection vectors
+ * and neither has a use a project would notice losing: `object-src 'none'`
+ * blocks `<object>`/`<embed>` payloads, and `base-uri 'self'` blocks a `<base>`
+ * tag rewriting every relative URL on the page.
+ *
+ * Deliberately excluded, because each breaks working sites: `form-action`
+ * (projects post forms to HubSpot and the like), `frame-ancestors` (projects
+ * are legitimately embedded), and `script-src` with the asset directives, which
+ * are the reason the floor reports rather than binds.
+ */
+const ALWAYS_ENFORCED_DIRECTIVES: ReadonlySet<string> = new Set([
+  "object-src",
+  "base-uri",
+]);
+
+/**
+ * Directives that inherit from another when absent.
+ *
+ * CSP resolves a missing directive by walking a fallback chain, so a policy
+ * containing `script-src` but not `worker-src` does not leave workers
+ * unconstrained -- it constrains them *by* `script-src`. Emitting a subset of
+ * directives is therefore not the same as emitting those directives alone, and
+ * a companion policy that omitted the descendants would silently tighten them:
+ * a project declaring only `scriptSrc` would find its `blob:` workers blocked
+ * by an enforced `script-src` that never mentioned them, while the reported
+ * `worker-src` said they were fine.
+ *
+ * Keyed by the directive that would absorb the others.
+ */
+const CSP_FALLBACK_DEPENDENTS: ReadonlyMap<string, readonly string[]> = new Map([
+  ["script-src", ["script-src-elem", "script-src-attr", "child-src", "worker-src", "frame-src"]],
+  ["child-src", ["worker-src", "frame-src"]],
+  ["style-src", ["style-src-elem", "style-src-attr"]],
+  ["default-src", [
+    "script-src",
+    "script-src-elem",
+    "script-src-attr",
+    "style-src",
+    "style-src-elem",
+    "style-src-attr",
+    "img-src",
+    "font-src",
+    "connect-src",
+    "media-src",
+    "object-src",
+    "manifest-src",
+    "child-src",
+    "worker-src",
+    "frame-src",
+  ]],
+]);
+
+/** Every directive that must travel with `names` so none is tightened by fallback. */
+function withFallbackDependents(names: Iterable<string>): Set<string> {
+  const closed = new Set(names);
+  // Fixed point: `default-src` pulls in `script-src`, which pulls in its own.
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const name of [...closed]) {
+      for (const dependent of CSP_FALLBACK_DEPENDENTS.get(name) ?? []) {
+        if (!closed.has(dependent)) {
+          closed.add(dependent);
+          changed = true;
+        }
+      }
+    }
+  }
+  return closed;
+}
+
+/**
+ * The enforced companion to the reported floor.
+ *
+ * Carries the always-enforced directives plus every directive the project
+ * declared, and then whatever those would otherwise absorb through CSP's
+ * fallback chain. Declaring a directive is taken as meaning it -- a project
+ * that lists its image origins wants `img-src` to hold -- while directives it
+ * never mentioned keep reporting rather than binding. That is the difference
+ * between honouring a project's configuration and inferring, from one image
+ * origin, that it also wants `script-src` bound across the site.
+ *
+ * Values come from the same merged policy the reported header carries, so a
+ * directive pulled in by fallback is enforced exactly as it was reported.
+ *
+ * @returns the enforced policy, or "" when the full policy already binds
+ */
+export function buildEnforcedCSP(
+  isDev: boolean,
+  nonce: string,
+  config?: SecurityConfig | null,
+  isVeryfrontDomain?: boolean,
+  hasEnvOverride = false,
+): string {
+  if (isDev || isCspEnforced(hasEnvOverride)) return "";
+
+  // `undefined` means absent, exactly as the merge treats it. Without this a
+  // project writing `scriptSrc: undefined` would enforce the merged
+  // `script-src` it never configured.
+  const declared = Object.entries(config?.csp ?? {})
+    .filter(([, value]) => value !== undefined)
+    .map(([key]) => toCspDirectiveName(key));
+
+  const binding = withFallbackDependents([...ALWAYS_ENFORCED_DIRECTIVES, ...declared]);
+
+  const full = mergeCspDirectives(
+    requiredDirectives(nonce, isVeryfrontDomain ?? false),
+    config?.csp,
+    nonce,
+    config?.derivedCsp,
+  );
+
+  const enforced = Object.fromEntries(
+    Object.entries(full).filter(([name]) => binding.has(name)),
+  );
+
+  return Object.keys(enforced).length > 0 ? serializeDirectives(enforced) : "";
+}
+
+/** Header name carrying the policy, per {@link isCspEnforced}. */
+function cspHeaderName(
+  hasEnvOverride = false,
+): "Content-Security-Policy" | "Content-Security-Policy-Report-Only" {
+  return isCspEnforced(hasEnvOverride)
+    ? "Content-Security-Policy"
+    : "Content-Security-Policy-Report-Only";
 }
 
 export function getSecurityHeader(
@@ -298,7 +481,24 @@ export function applySecurityHeaders(
   headers.set("X-XSS-Protection", getHeaderOverride("x-xss-protection") ?? "0");
 
   const csp = buildCSP(isDev, nonce, config, adapter, isVeryfrontDomain);
-  if (csp) headers.set("Content-Security-Policy", csp);
+  if (csp) {
+    const hasEnvOverride = Boolean(adapter?.env?.get?.("VERYFRONT_CSP")?.trim());
+    const headerName = cspHeaderName(hasEnvOverride);
+    headers.set(headerName, csp);
+
+    // A report-only floor protects nothing on its own, so the directives that
+    // are safe to bind for everyone are served enforced beside it.
+    if (headerName === "Content-Security-Policy-Report-Only") {
+      const enforced = buildEnforcedCSP(isDev, nonce, config, isVeryfrontDomain, hasEnvOverride);
+      if (enforced) headers.set("Content-Security-Policy", enforced);
+    }
+    // Names the group the policy's `report-to` refers to. Without this header
+    // the directive names nothing and the browser sends no reports at all.
+    headers.set(
+      REPORTING_ENDPOINTS_HEADER,
+      `${CSP_REPORT_ENDPOINT_NAME}="${CSP_REPORT_PATH}"`,
+    );
+  }
 
   if (!isDev) {
     const hstsMaxAge = config?.hsts?.maxAge ?? HSTS_MAX_AGE_SECONDS;
@@ -331,10 +531,23 @@ export function applySecurityHeaders(
   const extraHeaders = config?.headers;
   if (extraHeaders) {
     let ignoredCorsPolicyHeader = false;
+    let ignoredCspHeader = false;
     for (const [key, value] of Object.entries(extraHeaders)) {
       if (value === undefined) continue;
       if (isCorsPolicyResponseHeaderName(key)) {
         ignoredCorsPolicyHeader = true;
+        continue;
+      }
+      // The policy is computed above and is not a project-settable header.
+      // Every other name here has a deliberate override path through
+      // `getHeaderOverride`; CSP has none, so a value arriving via
+      // `security.headers` would silently replace the merged platform floor --
+      // and, now that the floor may be delivered report-only, could also flip
+      // which mode is served. Header names are case-insensitive, so match that
+      // way.
+      const headerName = key.toLowerCase();
+      if (isCspResponseHeaderName(headerName) || headerName === REPORTING_ENDPOINTS_HEADER) {
+        ignoredCspHeader = true;
         continue;
       }
       headers.set(key, value);
@@ -346,6 +559,15 @@ export function applySecurityHeaders(
       warnedReservedCorsHeaderConfigs.add(extraHeaders);
       logger.warn(
         "Ignored reserved Access-Control-* entries in security.headers; configure security.cors instead",
+      );
+    }
+    if (
+      ignoredCspHeader &&
+      !warnedReservedCspHeaderConfigs.has(extraHeaders)
+    ) {
+      warnedReservedCspHeaderConfigs.add(extraHeaders);
+      logger.warn(
+        "Ignored Content-Security-Policy entries in security.headers; configure security.csp instead",
       );
     }
   }

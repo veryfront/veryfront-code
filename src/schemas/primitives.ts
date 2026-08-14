@@ -50,14 +50,23 @@ export type Timestamp = InferSchema<ReturnType<typeof getTimestampSchema>>;
 export type JsonValue = BoundedJsonValue;
 
 export const getJsonValueSchema = defineSchema<JsonValue>((v): Schema<JsonValue> => {
-  const jsonValueShape = v.union([
+  // The representable union must remain the pipe output for JSON Schema
+  // conversion. Pass the canonical snapshot beneath a safe key because an
+  // object passthrough may copy `__proto__` with assignment. In Node that
+  // invokes the legacy prototype setter instead of preserving a data key.
+  const jsonValueShape = (v.union([
     v.string(),
     v.number(),
     v.boolean(),
     v.null(),
     v.array(v.unknown()),
     v.object({}).passthrough(),
-  ]) as Schema<JsonValue>;
+  ]) as Schema<JsonValue>).transform((carrier): JsonValue => {
+    if (carrier === null || typeof carrier !== "object" || Array.isArray(carrier)) {
+      return null;
+    }
+    return carrier.value ?? null;
+  });
 
   return v
     .custom<unknown>(() => true)
@@ -66,7 +75,9 @@ export const getJsonValueSchema = defineSchema<JsonValue>((v): Schema<JsonValue>
       (snapshot) => snapshot.success,
       "Expected an acyclic, bounded, data-only JSON value",
     )
-    .transform((snapshot): JsonValue => snapshot.success ? snapshot.value : null)
+    .transform((snapshot): JsonValue => ({
+      value: snapshot.success ? snapshot.value : null,
+    }))
     .pipe(jsonValueShape);
 });
 

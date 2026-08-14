@@ -1,10 +1,15 @@
-import { createError, toError } from "veryfront/errors";
+import { createError, TEMPLATE_NOT_FOUND, toError } from "veryfront/errors";
 import { cliLogger as logger } from "#cli/utils";
 import { createFileSystem } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { ensureDir } from "#std/fs.ts";
-import { createDenoConfig } from "../commands/init/deno-config-generator.ts";
-import { createPackageJson } from "../commands/init/config-generator.ts";
+import { buildDenoConfig, createDenoConfig } from "../commands/init/deno-config-generator.ts";
+import {
+  buildPackageJson,
+  createPackageJson,
+  type CreatePackageJsonOptions,
+  FALLBACK_PROJECT_NAME,
+} from "../commands/init/config-generator.ts";
 import type { InitRuntime, InitTemplate } from "../commands/init/types.ts";
 import {
   type EnvPromptResult,
@@ -21,20 +26,21 @@ import {
   loadIntegrationBaseFilesFromDirectory,
   loadIntegrations,
   validateIntegrations,
-} from "../templates/integration-loader.ts";
+} from "../../templates/integration-loader.ts";
 import {
   loadFeature,
   mergeFiles,
   resolveFeatures,
   validateFeatures,
-} from "../templates/feature-loader.ts";
+} from "../../templates/feature-loader.ts";
+import { STARTER_TEMPLATE_NAMES } from "../../templates/types.ts";
 import type {
   EnvVarConfig,
   FeatureName,
   IntegrationName,
   ResolvedIntegration,
   TemplateFile,
-} from "../templates/types.ts";
+} from "../../templates/types.ts";
 import { validateProjectName } from "./project-name.ts";
 
 export interface CreateProjectRequest {
@@ -218,13 +224,19 @@ async function loadTemplateFiles(
   }
 > {
   const { getAiRuleTemplate, getTemplate, getTemplateConfig } = await import(
-    "../templates/index.ts"
+    "../../templates/index.ts"
   );
 
   let files = await getTemplate(template);
   const templateConfig = getTemplateConfig(template);
 
-  if (!files) throw createConfigError(`Template ${template} not found`);
+  if (!files) {
+    throw TEMPLATE_NOT_FOUND.create({
+      detail: `Unknown template "${template}". Available templates: ${
+        STARTER_TEMPLATE_NAMES.join(", ")
+      }`,
+    });
+  }
 
   const agentsGuide = getAiRuleTemplate("agents.md");
   if (!agentsGuide) throw createConfigError("Project agent guide template not found");
@@ -439,6 +451,55 @@ async function installProjectDependencies(
   return status;
 }
 
+interface ScaffoldAssembly {
+  /** Template, feature and integration files, in write order. */
+  files: TemplateFile[];
+  envVars: EnvVarConfig[];
+  tips: string[];
+  packageJsonOptions: CreatePackageJsonOptions;
+}
+
+/**
+ * Resolve a template into the files a new project starts with.
+ *
+ * The single assembly both `createProject` (which writes them to disk) and
+ * {@link materializeScaffold} (which returns them) go through, so no caller
+ * can drift from another.
+ */
+async function assembleScaffold(request: {
+  template: InitTemplate;
+  features: FeatureName[];
+  integrations: IntegrationName[];
+}): Promise<ScaffoldAssembly> {
+  const template = await loadTemplateFiles(request.template);
+  const envVars = [...template.envVars];
+
+  const featureAssembly = await assembleFeatureFiles(
+    request.features,
+    template.files,
+    envVars,
+  );
+  const integrationAssembly = await assembleIntegrationFiles(
+    request.integrations,
+    featureAssembly.files,
+    envVars,
+  );
+
+  return {
+    files: integrationAssembly.files,
+    envVars,
+    tips: [...featureAssembly.tips, ...integrationAssembly.tips],
+    packageJsonOptions: {
+      dependencies: template.dependencies,
+      firstPartyExtensions: template.firstPartyExtensions,
+      integrations: integrationAssembly.loadedIntegrations.map((integration) => ({
+        name: integration.config.name,
+        npmDependencies: integration.config.npmDependencies,
+      })),
+    },
+  };
+}
+
 export async function createProject(
   request: CreateProjectRequest,
   dependencies: CreateProjectDependencies = {},
@@ -465,34 +526,16 @@ export async function createProject(
     throw createConfigError(`Directory "${projectName}" already exists`);
   }
 
-  const template = await loadTemplateFiles(request.template);
-  const allEnvVars = [...template.envVars];
-
-  const featureAssembly = await assembleFeatureFiles(
-    request.features,
-    template.files,
-    allEnvVars,
-  );
-  const integrationAssembly = await assembleIntegrationFiles(
-    request.integrations,
-    featureAssembly.files,
-    allEnvVars,
-  );
+  const assembly = await assembleScaffold(request);
 
   if (projectName !== undefined) await ensureDir(projectDir);
 
-  const createdPaths = await writeScaffoldFiles(projectDir, integrationAssembly.files);
-  const featureTips = [...featureAssembly.tips, ...integrationAssembly.tips];
+  const createdPaths = await writeScaffoldFiles(projectDir, assembly.files);
+  const featureTips = assembly.tips;
+  const allEnvVars = assembly.envVars;
 
   if (request.includePackageMetadata) {
-    await createPackageJson(projectDir, projectName, {
-      dependencies: template.dependencies,
-      firstPartyExtensions: template.firstPartyExtensions,
-      integrations: integrationAssembly.loadedIntegrations.map((integration) => ({
-        name: integration.config.name,
-        npmDependencies: integration.config.npmDependencies,
-      })),
-    });
+    await createPackageJson(projectDir, projectName, assembly.packageJsonOptions);
     createdPaths.push("package.json");
 
     if (request.runtime === "deno") {
@@ -532,5 +575,132 @@ export async function createProject(
     dependencyInstallation,
     gitInitialization,
     featureTips,
+  };
+}
+
+/**
+ * Slugs other product surfaces use for a template this CLI names differently.
+ *
+ * Studio's "blank" project is the CLI's `minimal` starter. Mapping the two
+ * vocabularies here is what lets a hosted caller materialize the same bytes
+ * `veryfront init` writes instead of copying a separately maintained project.
+ */
+export const SCAFFOLD_TEMPLATE_ALIASES: Readonly<Record<string, InitTemplate>> = Object.freeze({
+  blank: "minimal",
+  "pages-router": "ai-agent",
+  "app-router": "ai-agent",
+});
+
+/** Canonical starter template for a slug, or `null` when nothing matches. */
+export function resolveScaffoldTemplate(slug: string): InitTemplate | null {
+  const canonical = SCAFFOLD_TEMPLATE_ALIASES[slug] ?? slug;
+  return (STARTER_TEMPLATE_NAMES as readonly string[]).includes(canonical)
+    ? canonical as InitTemplate
+    : null;
+}
+
+/** Every template slug a caller may ask for, canonical names and aliases. */
+export function listScaffoldTemplates(): string[] {
+  return [...STARTER_TEMPLATE_NAMES, ...Object.keys(SCAFFOLD_TEMPLATE_ALIASES)].sort();
+}
+
+/** What to build: which starter, under what name, for which runtime. */
+export interface MaterializeScaffoldRequest {
+  /** Canonical template name or a slug from {@link SCAFFOLD_TEMPLATE_ALIASES}. */
+  template: string;
+  /**
+   * Written into `package.json#name`. Validated exactly as `veryfront init`
+   * validates it, so neither path can produce a project the other rejects.
+   */
+  projectName?: string;
+  runtime?: InitRuntime;
+  features?: FeatureName[];
+  integrations?: IntegrationName[];
+  environmentValues?: Record<string, string>;
+  /** Include `package.json` (and `deno.json` on the Deno runtime). */
+  includePackageMetadata?: boolean;
+}
+
+/** A new project: every file it starts with, plus anything worth telling the author. */
+export interface MaterializedScaffold {
+  /** Canonical template the requested slug resolved to. */
+  template: InitTemplate;
+  /** Complete project contents, sorted by path. */
+  files: TemplateFile[];
+  tips: string[];
+}
+
+/**
+ * Produce the complete contents of a new project without touching a disk.
+ *
+ * This is the artifact a hosted "create project" flow should write, so a
+ * project created outside the CLI is byte-identical to one `veryfront init`
+ * scaffolds from the same template. It runs the same assembly and the same
+ * `package.json` / `deno.json` / `.gitignore` / `.env` generators that
+ * {@link createProject} writes, so the two cannot report different files for
+ * the same request.
+ */
+export async function materializeScaffold(
+  request: MaterializeScaffoldRequest,
+): Promise<MaterializedScaffold> {
+  const template = resolveScaffoldTemplate(request.template);
+  if (!template) {
+    throw TEMPLATE_NOT_FOUND.create({
+      detail: `Unknown template "${request.template}". Available templates: ${
+        listScaffoldTemplates().join(", ")
+      }`,
+    });
+  }
+
+  if (request.projectName !== undefined) {
+    const nameError = validateProjectName(request.projectName);
+    if (nameError) throw createConfigError(nameError);
+  }
+
+  const features = request.features ?? [];
+  const integrations = request.integrations ?? [];
+  validateOrThrow("features", features, validateFeatures);
+  validateOrThrow("integrations", integrations, validateIntegrations);
+
+  const assembly = await assembleScaffold({ template, features, integrations });
+
+  // Keyed by path, because the generated files below are the same files the
+  // CLI writes last: whatever a template ships at those paths is merged in,
+  // never emitted twice.
+  const files = new Map(assembly.files.map((file) => [file.path, file.content]));
+  files.delete(".env");
+  files.delete(".env.example");
+
+  if (request.includePackageMetadata !== false) {
+    const shipped = files.get("package.json");
+    files.set(
+      "package.json",
+      buildPackageJson(request.projectName ?? FALLBACK_PROJECT_NAME, {
+        ...assembly.packageJsonOptions,
+        existingDependencies: shipped ? JSON.parse(shipped).dependencies ?? {} : undefined,
+      }),
+    );
+    if (request.runtime === "deno") {
+      files.set("deno.json", buildDenoConfig());
+    }
+  }
+
+  if (assembly.envVars.length) {
+    const env = await promptForEnvVars(dedupeEnvVars(assembly.envVars), {
+      skipPrompt: true,
+      prefilledValues: request.environmentValues ?? {},
+    });
+    files.set(".env", env.envContent);
+    files.set(".env.example", env.envExampleContent);
+  }
+
+  files.set(".gitignore", generateGitignoreContent(files.get(".gitignore")));
+
+  return {
+    template,
+    files: [...files]
+      .map(([path, content]) => ({ path, content }))
+      .sort((a, b) => a.path.localeCompare(b.path)),
+    tips: assembly.tips,
   };
 }

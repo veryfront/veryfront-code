@@ -32,6 +32,31 @@ const baseLogger = getBaseLogger("SERVER");
 
 const logger = baseLogger.component("adapter-factory");
 
+/**
+ * Which path produced `config`, so a caller that degrades on a missing config
+ * can say why it is missing.
+ *
+ * `config` being `undefined` is reached from four unrelated places -- an
+ * inherited caller config, a deliberate defer, a published project that has no
+ * config file, and a hosted 404 -- and the result alone cannot tell them
+ * apart. Downstream, `resolveProjectRuntimeContext` silently substitutes the
+ * process-wide security config for an absent project config, which serves a
+ * correct-looking 200 carrying the platform-default CSP instead of the
+ * project's. That degradation was undiagnosable from production logs because
+ * every branch that reaches it logs at debug.
+ */
+export type ConfigResolutionOutcome =
+  /** No project-specific load ran; whatever the caller passed through stands. */
+  | "inherited"
+  /** Loaded from a local project directory. */
+  | "local"
+  /** Deliberately skipped: see `shouldDeferConfigLoad`. */
+  | "deferred"
+  /** Loaded from the control plane for this project. */
+  | "hosted"
+  /** The control plane answered 404: the project publishes no config file. */
+  | "hosted-absent";
+
 interface AdapterResolutionResult {
   /** The effective project directory to use */
   projectDir: string;
@@ -39,6 +64,8 @@ interface AdapterResolutionResult {
   adapter: RuntimeAdapter;
   /** The config for this project */
   config: VeryfrontConfig | undefined;
+  /** Which branch produced `config`. */
+  configOutcome: ConfigResolutionOutcome;
   /** Whether this is a local project (filesystem-first) */
   isLocalProject: boolean;
 }
@@ -163,6 +190,7 @@ export async function resolveAdapter(
   let effectiveProjectDir = opts.projectDir;
   let effectiveAdapter = opts.adapter;
   let effectiveConfig = opts.config;
+  let configOutcome: ConfigResolutionOutcome = "inherited";
 
   // Check if this is a local project.
   // In proxy mode, skip local discovery unless there's an explicit header path override —
@@ -194,20 +222,31 @@ export async function resolveAdapter(
       projectDir: effectiveProjectDir,
     });
 
-    // Get or create local adapter
-    if (!cache.adapters.has(effectiveProjectDir)) {
-      const baseAdapter = await runtime.get();
-      cache.adapters.set(effectiveProjectDir, baseAdapter);
+    // Get or create local adapter.
+    //
+    // Hold the adapter rather than reading it back: the cache is an LRU that
+    // estimates each value's size and can evict an oversized entry as part of
+    // the same set(), so a write is not guaranteed to be readable afterwards.
+    // A RuntimeAdapter crosses that budget under Bun, where set() then leaves
+    // has() === false and size === 0, and the non-null assertion this replaces
+    // turned that miss into an undefined adapter that reached getConfig and
+    // threw "undefined is not an object (evaluating 'adapter.fs')" on every
+    // request. Caching stays best effort; correctness no longer depends on it.
+    let localAdapter = cache.adapters.get(effectiveProjectDir);
+    if (!localAdapter) {
+      localAdapter = await runtime.get();
+      cache.adapters.set(effectiveProjectDir, localAdapter);
       logger.debug("Created local adapter for project", {
         projectSlug: opts.projectSlug,
         projectDir: effectiveProjectDir,
       });
     }
 
-    effectiveAdapter = cache.adapters.get(effectiveProjectDir)!;
+    effectiveAdapter = localAdapter;
 
     if (shouldDeferConfigLoad(opts)) {
       effectiveConfig = undefined;
+      configOutcome = "deferred";
     } else if (opts.isProxyMode) {
       const hosted = await prepareProxyConfigLoad(opts, true);
       effectiveConfig = await timeAsync(
@@ -218,11 +257,13 @@ export async function resolveAdapter(
             signal: opts.req.signal,
           }),
       );
+      configOutcome = "hosted";
     } else {
       effectiveConfig = await timeAsync(
         "config:load-project",
         () => getConfig(effectiveProjectDir, effectiveAdapter),
       );
+      configOutcome = "local";
 
       logger.debug("Loaded project-specific config", {
         projectSlug: opts.projectSlug,
@@ -243,6 +284,7 @@ export async function resolveAdapter(
         projectDir: effectiveProjectDir,
         adapter: effectiveAdapter,
         config: effectiveConfig,
+        configOutcome: "deferred",
         isLocalProject,
       };
     }
@@ -290,6 +332,8 @@ export async function resolveAdapter(
         return loadCurrentConfig();
       });
 
+      configOutcome = "hosted";
+
       logger.debug("Loaded config in proxy mode", {
         projectSlug: opts.projectSlug,
         hasConfig: !!effectiveConfig,
@@ -306,10 +350,21 @@ export async function resolveAdapter(
         // Defaults, not whatever a caller happened to pass in: a project with no
         // published config must not silently inherit another config's routes.
         effectiveConfig = undefined;
-        logger.debug("No hosted config for this release; using defaults", {
+        configOutcome = "hosted-absent";
+        // Warn, not debug. For a project that publishes no config at all this
+        // is routine, but it is indistinguishable here from a project whose
+        // config momentarily 404s -- and the two produce the same silently
+        // degraded response downstream (platform-default security headers in
+        // place of the project's). At debug it was invisible in production
+        // while a preview served the wrong CSP on a third of its renders.
+        logger.warn("No hosted config for this release; using defaults", {
           projectSlug: opts.projectSlug,
           projectId: opts.projectId,
           releaseId: opts.releaseId,
+          proxyEnv: opts.proxyEnv,
+          branch: opts.branch ?? null,
+          environmentName: opts.environmentName ?? null,
+          pathname: opts.pathname ?? null,
         });
       } else {
         // Log at error level — this is a real failure that will affect rendering.
@@ -333,6 +388,7 @@ export async function resolveAdapter(
     projectDir: effectiveProjectDir,
     adapter: effectiveAdapter,
     config: effectiveConfig,
+    configOutcome,
     isLocalProject,
   };
 }

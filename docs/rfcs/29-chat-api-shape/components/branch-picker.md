@@ -2,7 +2,12 @@
 
 Previous/next navigation between message branches - a namespace re-export of `Message.BranchPicker`.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `BranchPicker`, `BranchPicker.Count`, `BranchPicker.Next`, `BranchPicker.Previous`, `BranchPicker.Root`
+> - **Not exported today:** none
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 `BranchPicker` **is** `Message.BranchPicker` - one implementation, re-exported under a standalone name. It is a thin surface over the `getBranches` / `switchBranch` capabilities that **already exist on `useChat`**, via `useMessageBranches`. Today the wiring is split: a presentational `BranchPicker` (controlled `current`/`total`/`onPrev`/`onNext` props) plus a `Message.BranchPicker` wrapper that feeds it from message context - including the off-by-one bookkeeping (`BranchInfo.current` is 1-based, `switchBranch` takes a 0-based index, so prev/next are `switchBranch(id, current - 2)` / `switchBranch(id, current)`). The proposal hides that math inside `useMessageBranches`.
 

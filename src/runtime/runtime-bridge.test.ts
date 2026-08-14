@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { VeryfrontError } from "#veryfront/errors";
-import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { metricsManager } from "#veryfront/observability/metrics/index.ts";
 import { type AgentRunEvent, runWithRunEventSink } from "../agent/index.ts";
 import { runWithMandatoryRunEventSink } from "./run-event-sink-context.ts";
 import { generateText, streamText } from "./runtime-bridge.ts";
@@ -11,8 +11,17 @@ import {
   createStreamModel,
 } from "./runtime-bridge.test-helpers.ts";
 
+function readableStreamFrom<T>(values: Iterable<T>): ReadableStream<T> {
+  return new ReadableStream({
+    start(controller) {
+      for (const value of values) controller.enqueue(value);
+      controller.close();
+    },
+  });
+}
+
 describe("runtime-bridge", () => {
-  it("rejects non-cloneable model context with a stable registered error", async () => {
+  it("skips non-cloneable model context without failing model dispatch", async () => {
     const sensitiveValue = "CUSTOMER_SECRET_123";
     for (
       const testCase of [
@@ -47,41 +56,26 @@ describe("runtime-bridge", () => {
       const model = createGenerateModel("test", `test/${testCase.name}`, async () => {
         dispatches += 1;
         return {
-          content: [{ type: "text", text: "must not dispatch" }],
+          content: [{ type: "text", text: "dispatched" }],
           finishReason: "stop",
           usage: {},
         };
       });
 
-      const error = await assertRejects(async () =>
-        await runWithRunEventSink(
-          () => {
-            sinkCalls += 1;
-          },
-          () =>
-            generateText({
-              model,
-              messages: testCase.messages,
-              tools: testCase.tools as never,
-            }),
-        )
+      const result = await runWithRunEventSink(
+        () => {
+          sinkCalls += 1;
+        },
+        () =>
+          generateText({
+            model,
+            messages: testCase.messages,
+            tools: testCase.tools as never,
+          }),
       );
-
-      assertInstanceOf(error, VeryfrontError);
-      assertEquals(error.slug, "durable-run-event-persistence-failed");
-      assertEquals(
-        error.message,
-        "Model call context contains data that cannot be persisted safely",
-      );
-      assertEquals(error.cause, undefined);
-      assertEquals(
-        JSON.stringify(error, Object.getOwnPropertyNames(error)).includes(
-          sensitiveValue,
-        ),
-        false,
-      );
+      assertEquals(result.text, "dispatched");
       assertEquals(sinkCalls, 0);
-      assertEquals(dispatches, 0);
+      assertEquals(dispatches, 1);
     }
   });
 
@@ -321,7 +315,7 @@ describe("runtime-bridge", () => {
         ...createStreamModel("test", `test/${mode}-record`, async () => {
           order.push("dispatch");
           return {
-            stream: ReadableStream.from([
+            stream: readableStreamFrom([
               { type: "text-delta", delta: "ok" },
               { type: "finish", finishReason: "stop", usage: {} },
             ]),
@@ -411,6 +405,78 @@ describe("runtime-bridge", () => {
     assertEquals(order, ["mandatory", "public", "dispatch"]);
   });
 
+  it("delivers a successful sink clone and sanitizes another clone failure", async () => {
+    const sensitiveFailureClass = "CUSTOMER_SECRET_FAILURE_CLASS";
+    const cloneError = new Error("clone failed");
+    cloneError.name = sensitiveFailureClass;
+    let cloneReads = 0;
+    const statefulInput = {};
+    Object.defineProperty(statefulInput, "value", {
+      enumerable: true,
+      get() {
+        cloneReads += 1;
+        if (cloneReads === 1) throw cloneError;
+        return "safe";
+      },
+    });
+
+    const recorder = metricsManager.getRecorder();
+    const originalRecordError = recorder?.recordError;
+    const failureClasses: string[] = [];
+    if (recorder) {
+      recorder.recordError = (attributes) => {
+        if (
+          attributes?.slug === "model-call-context-clone-failed" &&
+          typeof attributes.failure_class === "string"
+        ) {
+          failureClasses.push(attributes.failure_class);
+        }
+      };
+    }
+
+    let mandatoryCalls = 0;
+    let publicEvent: AgentRunEvent | undefined;
+    let dispatches = 0;
+    const model = createGenerateModel("test", "test/partial-clone", async () => {
+      dispatches += 1;
+      return { content: [], finishReason: "stop", usage: {} };
+    });
+
+    try {
+      await runWithMandatoryRunEventSink(
+        () => {
+          mandatoryCalls += 1;
+        },
+        () =>
+          runWithRunEventSink(
+            (event) => {
+              publicEvent = event;
+            },
+            () =>
+              generateText({
+                model,
+                messages: [{
+                  role: "assistant",
+                  content: [{
+                    type: "tool-call",
+                    toolCallId: "call-1",
+                    toolName: "stateful",
+                    input: statefulInput,
+                  }],
+                }, { role: "user", content: "Continue" }],
+              }),
+          ),
+      );
+    } finally {
+      if (recorder && originalRecordError) recorder.recordError = originalRecordError;
+    }
+
+    assertEquals(mandatoryCalls, 0);
+    assertEquals(publicEvent?.type, "AGENT_RUN_MODEL_CALL_CONTEXT");
+    assertEquals(dispatches, 1);
+    assertEquals(failureClasses, ["unknown"]);
+  });
+
   it("calls a sink shared by both lanes only once", async () => {
     let calls = 0;
     const sink = () => {
@@ -489,7 +555,7 @@ describe("runtime-bridge", () => {
         : createStreamModel("test", "test/mutation-stream", async (options) => {
           assertProviderInput(options);
           return {
-            stream: ReadableStream.from([
+            stream: readableStreamFrom([
               { type: "finish", finishReason: "stop", usage: {} },
             ]),
           };
@@ -602,7 +668,7 @@ describe("runtime-bridge", () => {
             content: [{ type: "text", text: "Hello" }],
           }]);
           return {
-            stream: ReadableStream.from([
+            stream: readableStreamFrom([
               { type: "text-delta", delta: "Hel" },
               { type: "text-delta", delta: "lo" },
               {
@@ -640,7 +706,7 @@ describe("runtime-bridge", () => {
     const model = {
       ...createStreamModel("veryfront-cloud", "veryfront-cloud/anthropic/claude-test", async () => {
         return {
-          stream: ReadableStream.from([
+          stream: readableStreamFrom([
             { type: "tool-input-start", id: "tool-1", toolName: "search" },
             { type: "tool-input-delta", id: "tool-1", delta: '{"query":' },
             { type: "tool-input-delta", id: "tool-1", delta: '"webgpu"}' },
@@ -682,7 +748,7 @@ describe("runtime-bridge", () => {
         content: [{ type: "text", text: "Hello" }],
       }]);
       return {
-        stream: ReadableStream.from([
+        stream: readableStreamFrom([
           { type: "text-delta", delta: "Hel" },
           { type: "text-delta", delta: "lo" },
           {
@@ -726,7 +792,7 @@ describe("runtime-bridge", () => {
 
   it("rejects a second stream view started after direct consumption", async () => {
     const model = createStreamModel("test", "test/late-second-stream", async () => ({
-      stream: ReadableStream.from([
+      stream: readableStreamFrom([
         { type: "text-delta", delta: "Hel" },
         { type: "text-delta", delta: "lo" },
       ]),
@@ -791,7 +857,7 @@ describe("runtime-bridge", () => {
     const model = createStreamModel("test", "test/reasoning-stream", async (options) => {
       assertEquals(options.reasoning, { enabled: true, budgetTokens: 2048 });
       return {
-        stream: ReadableStream.from([
+        stream: readableStreamFrom([
           { type: "text-delta", delta: "ok" },
           { type: "finish", finishReason: "stop", usage: { inputTokens: 1, outputTokens: 1 } },
         ]),
@@ -895,7 +961,7 @@ describe("runtime-bridge", () => {
         },
       }]);
       return {
-        stream: ReadableStream.from([
+        stream: readableStreamFrom([
           { type: "tool-input-start", id: "tool-1", toolName: "weather" },
           { type: "tool-input-delta", id: "tool-1", delta: '{"city":' },
           { type: "tool-input-delta", id: "tool-1", delta: '"Tokyo"}' },
@@ -984,7 +1050,7 @@ describe("runtime-bridge", () => {
         }]);
 
         return {
-          stream: ReadableStream.from([
+          stream: readableStreamFrom([
             {
               type: "tool-call",
               toolCallId: "tool-web-1",
@@ -1186,6 +1252,69 @@ describe("runtime-bridge", () => {
     }]);
   });
 
+  it("keeps providerExecuted on direct generate provider tool results", async () => {
+    // Mirrors what ext-llm-anthropic's buildAnthropicGenerateResult and
+    // ext-llm-openai's Responses normalizer actually return from doGenerate:
+    // server-side tool results always carry providerExecuted: true.
+    const model = createGenerateModel(
+      "anthropic",
+      "anthropic/test-direct-provider-executed-generate",
+      async () => ({
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "tool-web-3",
+            toolName: "web_search",
+            input: '{"query":"Veryfront"}',
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: "tool-web-3",
+            toolName: "web_search",
+            result: [{ url: "https://veryfront.com", title: "Veryfront" }],
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: "tool-web-4",
+            toolName: "web_fetch",
+            result: { message: "fetch blocked" },
+            isError: true,
+            providerExecuted: true,
+          },
+        ],
+        finishReason: { unified: "stop", raw: "stop" },
+        usage: {
+          inputTokens: { total: 6 },
+          outputTokens: { total: 9 },
+        },
+      }),
+    );
+
+    const result = await generateText({
+      model,
+      messages: [{ role: "user", content: "Research Veryfront" }],
+      temperature: 0,
+    });
+
+    assertEquals(result.toolResults, [
+      {
+        toolCallId: "tool-web-3",
+        toolName: "web_search",
+        result: [{ url: "https://veryfront.com", title: "Veryfront" }],
+        providerExecuted: true,
+      },
+      {
+        toolCallId: "tool-web-4",
+        toolName: "web_fetch",
+        result: { message: "fetch blocked" },
+        isError: true,
+        providerExecuted: true,
+      },
+    ]);
+  });
+
   it("uses the direct stream path for provider-native web_fetch", async () => {
     const model = createStreamModel(
       "anthropic",
@@ -1203,7 +1332,7 @@ describe("runtime-bridge", () => {
         }]);
 
         return {
-          stream: ReadableStream.from([
+          stream: readableStreamFrom([
             {
               type: "tool-call",
               toolCallId: "tool-fetch-1",
@@ -1433,7 +1562,7 @@ describe("runtime-bridge", () => {
           content: [{ type: "text", text: "Continue after the tool result." }],
         }]);
         return {
-          stream: ReadableStream.from([
+          stream: readableStreamFrom([
             { type: "text-delta", delta: "Continuing" },
             { type: "finish", finishReason: { unified: "stop", raw: "stop" } },
           ]),

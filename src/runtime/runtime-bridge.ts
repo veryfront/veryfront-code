@@ -6,7 +6,8 @@
  * types and calls into this bridge at the edge.
  */
 import type { TextGenerationRuntimeMessage } from "#veryfront/agent/runtime/text-generation-runtime-message-types.ts";
-import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
+import { recordErrorCount } from "#veryfront/observability/metrics/index.ts";
+import { serverLogger } from "#veryfront/utils";
 import type {
   RuntimeGenerateTextResult,
   RuntimeStreamPart,
@@ -28,6 +29,7 @@ import type {
 import { getActiveRunEventSinks } from "./run-event-sink-context.ts";
 
 const cloneStructuredValue = globalThis.structuredClone;
+const logger = serverLogger.component("runtime-bridge");
 
 type GenerateTextOptions = {
   model: ModelRuntime;
@@ -493,20 +495,30 @@ async function emitModelCallContextEvent(directOptions: DirectModelOptions): Pro
     ...(directOptions.tools ? { tools: directOptions.tools } : {}),
   };
 
-  const cloneEvent = (): AgentRunModelCallContextEvent => {
+  const cloneEvent = (): AgentRunModelCallContextEvent | null => {
     try {
       return cloneStructuredValue(event);
-    } catch {
-      throw DURABLE_RUN_EVENT_PERSISTENCE_FAILED.create({
-        detail: "Model call context contains data that cannot be persisted safely",
+    } catch (error) {
+      const failureClass = error instanceof DOMException && error.name === "DataCloneError"
+        ? "DataCloneError"
+        : "unknown";
+      recordErrorCount({
+        slug: "model-call-context-clone-failed",
+        failure_class: failureClass,
       });
+      logger.warn("Model call context event was not persisted because it is not cloneable", {
+        failureClass,
+      });
+      return null;
     }
   };
-  if (sinks.mandatory) {
-    await sinks.mandatory(cloneEvent());
+  const mandatoryEvent = sinks.mandatory ? cloneEvent() : undefined;
+  const publicEvent = sinks.public && sinks.public !== sinks.mandatory ? cloneEvent() : undefined;
+  if (sinks.mandatory && mandatoryEvent) {
+    await sinks.mandatory(mandatoryEvent);
   }
-  if (sinks.public && sinks.public !== sinks.mandatory) {
-    await sinks.public(cloneEvent());
+  if (sinks.public && sinks.public !== sinks.mandatory && publicEvent) {
+    await sinks.public(publicEvent);
   }
 }
 
@@ -540,6 +552,7 @@ function isDirectToolResultPart(
   toolName: string;
   result: unknown;
   isError?: boolean;
+  providerExecuted?: boolean;
 } {
   return !!part &&
     typeof part === "object" &&
@@ -579,6 +592,7 @@ function buildDirectGenerateResult(
         toolName: part.toolName,
         result: part.result,
         ...(part.isError === true ? { isError: true } : {}),
+        ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
       });
     }
   }

@@ -1,7 +1,7 @@
 ---
 title: "veryfront/schemas"
 description: "Reusable validation schemas and the `defineSchema` helper. Schema materialization requires a registered `SchemaValidator`. Veryfront runtime bootstrap registers the built-in validator before handlers run. `lazySchema` keeps module-scope schema constants import-safe before bootstrap."
-order: 31
+order: 32
 ---
 
 ## Import
@@ -56,11 +56,11 @@ export function parseEmail(input: unknown) {
 
 | Name             | Description                                                                                                                      | Source                                                                                                   |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `AbsolutePath`   |                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L105)           |
+| `AbsolutePath`   |                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L116)           |
 | `DateRange`      |                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L124)               |
 | `Email`          |                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L118)               |
-| `FilePath`       |                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L93)            |
-| `HexColor`       |                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L76)            |
+| `FilePath`       |                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L104)           |
+| `HexColor`       |                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L87)            |
 | `JsonSchema`     |                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/schema/json-schema.ts#L18) |
 | `JsonValue`      | Recursive JSON value type: a string, number, boolean, null, array of JsonValue, or object with string keys and JsonValue values. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L50)            |
 | `NonEmptyString` |                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L22)            |
@@ -69,7 +69,7 @@ export function parseEmail(input: unknown) {
 | `PhoneNumber`    |                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L122)               |
 | `PortNumber`     |                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L41)            |
 | `PositiveInt`    |                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L27)            |
-| `Semver`         |                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L84)            |
+| `Semver`         |                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L95)            |
 | `Slug`           |                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L120)               |
 | `StrongPassword` |                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L125)               |
 | `Timestamp`      |                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L44)            |
@@ -78,23 +78,23 @@ export function parseEmail(input: unknown) {
 
 ### Constants
 
-| Name                      | Description | Source                                                                                        |
-| ------------------------- | ----------- | --------------------------------------------------------------------------------------------- |
-| `getAbsolutePathSchema`   |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L95) |
-| `getDateRangeSchema`      |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L62)     |
-| `getEmailSchema`          |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L28)     |
-| `getFilePathSchema`       |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L86) |
-| `getHexColorSchema`       |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L73) |
-| `getJsonValueSchema`      |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L52) |
-| `getNonEmptyStringSchema` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L19) |
-| `getNonNegativeIntSchema` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L29) |
-| `getPaginationSchema`     |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L40)     |
-| `getPhoneNumberSchema`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L36)     |
-| `getPortNumberSchema`     |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L34) |
-| `getPositiveIntSchema`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L24) |
-| `getSemverSchema`         |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L78) |
-| `getSlugSchema`           |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L30)     |
-| `getStrongPasswordSchema` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L73)     |
-| `getTimestampSchema`      |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L43) |
-| `getUrlSchema`            |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L33)     |
-| `getUuidSchema`           |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L29)     |
+| Name                      | Description | Source                                                                                         |
+| ------------------------- | ----------- | ---------------------------------------------------------------------------------------------- |
+| `getAbsolutePathSchema`   |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L106) |
+| `getDateRangeSchema`      |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L62)      |
+| `getEmailSchema`          |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L28)      |
+| `getFilePathSchema`       |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L97)  |
+| `getHexColorSchema`       |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L84)  |
+| `getJsonValueSchema`      |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L52)  |
+| `getNonEmptyStringSchema` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L19)  |
+| `getNonNegativeIntSchema` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L29)  |
+| `getPaginationSchema`     |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L40)      |
+| `getPhoneNumberSchema`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L36)      |
+| `getPortNumberSchema`     |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L34)  |
+| `getPositiveIntSchema`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L24)  |
+| `getSemverSchema`         |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L89)  |
+| `getSlugSchema`           |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L30)      |
+| `getStrongPasswordSchema` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L73)      |
+| `getTimestampSchema`      |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/primitives.ts#L43)  |
+| `getUrlSchema`            |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L33)      |
+| `getUuidSchema`           |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L29)      |

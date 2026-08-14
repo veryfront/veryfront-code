@@ -16,6 +16,7 @@ import {
   normalizeHttpUrl,
   prepareHttpCacheRequestOptions,
   resolveBareSpecifier,
+  SERVER_ESM_TARGET,
 } from "./http-cache-helpers.ts";
 describe("transforms/esm/http-cache-helpers", () => {
   describe("cache identity", () => {
@@ -283,6 +284,61 @@ describe("transforms/esm/http-cache-helpers", () => {
       assertEquals(definePropertyCalls, 0);
       assertEquals(urlCalls, 0);
       assertEquals(urlPrototypeCalls, 0);
+    });
+
+    it("preserves query identity with captured query intrinsics", async () => {
+      const importMap = { imports: {}, scopes: {} };
+      const originalIterator = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator);
+      const originalAppend = Object.getOwnPropertyDescriptor(
+        URLSearchParams.prototype,
+        "append",
+      );
+      const baselineUrl = "https://esm.sh/pkg@1?dup=one&dup=two&encoded=a%2Bb&q=a+b";
+      const expectedNormalized =
+        "https://esm.sh/pkg@1?dup=one&dup=two&encoded=a%2Bb&external=react&q=a+b&target=es2022";
+      const baselineIdentity = await buildHttpCacheIdentity(baselineUrl, { importMap });
+      let iteratorCalls = 0;
+      let appendCalls = 0;
+      let poisonedNormalized = "";
+      let poisonedIdentity = "";
+
+      try {
+        Object.defineProperty(Array.prototype, Symbol.iterator, {
+          configurable: true,
+          value() {
+            iteratorCalls++;
+            return (originalIterator?.value as () => Iterator<unknown>).call([]);
+          },
+          writable: true,
+        });
+        Object.defineProperty(URLSearchParams.prototype, "append", {
+          configurable: true,
+          value() {
+            appendCalls++;
+            throw new Error("poisoned URLSearchParams.prototype.append");
+          },
+          writable: true,
+        });
+
+        poisonedNormalized = normalizeHttpUrl(baselineUrl);
+        poisonedIdentity = await buildHttpCacheIdentity(baselineUrl, { importMap });
+      } finally {
+        if (originalIterator) {
+          Object.defineProperty(Array.prototype, Symbol.iterator, originalIterator);
+        } else {
+          Reflect.deleteProperty(Array.prototype, Symbol.iterator);
+        }
+        if (originalAppend) {
+          Object.defineProperty(URLSearchParams.prototype, "append", originalAppend);
+        } else {
+          Reflect.deleteProperty(URLSearchParams.prototype, "append");
+        }
+      }
+
+      assertEquals(poisonedNormalized, expectedNormalized);
+      assertEquals(poisonedIdentity, baselineIdentity);
+      assertEquals(iteratorCalls, 0);
+      assertEquals(appendCalls, 0);
     });
 
     it("does not consult inherited toJSON hooks while fingerprinting import maps", async () => {
@@ -580,6 +636,16 @@ describe("transforms/esm/http-cache-helpers", () => {
       assertEquals(result.includes("/denonext/"), false);
     });
 
+    it("preserves inner /denonext/ segments in esm.sh paths", () => {
+      const result = normalizeHttpUrl(
+        "https://esm.sh/pkg@1/X-abc/denonext/pkg.mjs",
+      );
+      assertEquals(
+        new URL(result).pathname,
+        "/pkg@1/X-abc/denonext/pkg.mjs",
+      );
+    });
+
     it("returns raw string for malformed URLs", () => {
       assertEquals(normalizeHttpUrl("not-a-url"), "not-a-url");
     });
@@ -697,12 +763,26 @@ describe("transforms/esm/http-cache-helpers", () => {
     it("resolves bare specifiers to esm.sh URLs", () => {
       const result = resolveBareSpecifier("lodash", emptyImportMap);
       assertEquals(result.startsWith("https://esm.sh/"), true);
-      assertEquals(result.includes("target=es2022"), true);
+      assertEquals(result.includes(`target=${SERVER_ESM_TARGET}`), true);
     });
 
     it("preserves pinned package versions", () => {
       const result = resolveBareSpecifier("@tanstack/react-query@5.94.4", emptyImportMap);
-      assertEquals(result, "https://esm.sh/@tanstack/react-query@5.94.4?target=es2022");
+      assertEquals(
+        result,
+        `https://esm.sh/@tanstack/react-query@5.94.4?target=${SERVER_ESM_TARGET}`,
+      );
+    });
+
+    it("requests a server build, not the browser one", () => {
+      // Both pull decode-named-character-reference, whose browser build calls
+      // document.createElement at module scope and throws during SSG.
+      assertEquals(SERVER_ESM_TARGET, "node");
+      for (const specifier of ["react-markdown@9.0.3", "remark-gfm@4.0.1"]) {
+        const result = resolveBareSpecifier(specifier, emptyImportMap);
+        assertEquals(result.includes("target=es2022"), false, specifier);
+        assertEquals(result.includes(`target=${SERVER_ESM_TARGET}`), true, specifier);
+      }
     });
 
     it("resolves react subpaths", () => {

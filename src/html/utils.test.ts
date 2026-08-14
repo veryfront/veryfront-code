@@ -376,6 +376,10 @@ describe("html-generation/utils", () => {
       assertEquals(imports["veryfront/head"], "/_vf_modules/_veryfront/react/runtime/core.js");
       assertEquals(imports["veryfront/context"], "/_vf_modules/_veryfront/react/runtime/core.js");
       assertEquals(imports["veryfront/fonts"], "/_vf_modules/_veryfront/react/fonts/index.js");
+      assertEquals(
+        imports["veryfront/ui"],
+        "/_vf_modules/_veryfront/react/components/ui/index.js",
+      );
 
       // React must come from esm.sh even under unpkg — unpkg only ships UMD
       // globals, which cannot be loaded through an import map, so hydration would

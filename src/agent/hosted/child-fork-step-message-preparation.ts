@@ -25,15 +25,20 @@ export type PrepareHostedChildForkRuntimeStepMessagesInput = {
   forkToolNames: readonly string[];
   resolveSystem?: HostedChildForkRuntimeStepSystemResolver;
   /**
-   * Pinned tool names (local/essential) that are always present.
-   * Required when `getActivatedToolNames` is provided.
+   * Tool names that are always present. Required when `getActivatedToolNames`
+   * is supplied.
+   *
+   * @deprecated No framework path supplies this. Retained because
+   * `PrepareHostedChildForkRuntimeStepMessagesInput` is public API.
    */
   pinnedToolNames?: readonly string[];
   /**
-   * When provided, returns the current activated remote tool names from the
-   * live run context. The result is merged with `pinnedToolNames` and returned
-   * as `forkToolNames` in the step preparation result, enabling per-step tool
-   * schema refresh without mutating the caller's fixed forkToolNames array.
+   * Returns the currently activated tool names. The result is merged with
+   * `pinnedToolNames` and returned as `forkToolNames`, letting a caller refresh
+   * the exposed tool set per step without mutating its own fixed array.
+   *
+   * @deprecated Use `tool_search` deferred loading. See
+   * `docs/architecture/28-model-driven-tool-discovery.md`.
    */
   getActivatedToolNames?: () => readonly string[];
 };
@@ -43,9 +48,9 @@ export type HostedChildForkRuntimeStepMessages = {
   messages: AgentMessage[];
   system: string;
   /**
-   * Present only when `getActivatedToolNames` was provided in the input.
-   * Contains the live `pinned ∪ activated` set the caller should use for the
-   * current step instead of its fixed forkToolNames.
+   * The live `pinned + activated` set for this step. Present only when
+   * `getActivatedToolNames` was supplied; callers otherwise keep their own
+   * fixed `forkToolNames`.
    */
   forkToolNames?: readonly string[];
 };
@@ -134,9 +139,6 @@ export function prepareHostedChildForkRuntimeStepMessages(
     compactedMessages,
   });
 
-  // Compute live forkToolNames = pinned ∪ activated when the caller supplies
-  // a getActivatedToolNames getter. This allows each step to see newly
-  // activated tool schemas without the caller mutating its fixed array.
   const liveForkToolNames = input.getActivatedToolNames
     ? [
       ...new Set([

@@ -1,111 +1,81 @@
 ---
-title: "Quickstart"
-description: "Build your first Veryfront agent app."
-order: -1
+title: "Local quickstart"
+description: "Build, run, and evaluate your first Veryfront agent app locally."
+order: 1
 ---
+
+Build a working agent app on your machine with a direct model provider. This
+tutorial does not require a Veryfront account or Veryfront Cloud.
 
 ## Prerequisites
 
 - Node.js 22.3 or later.
-
-The examples use `veryfront` commands. If you have not installed the CLI
-globally, run them with `npx veryfront ...`.
+- An OpenAI API key for model inference.
 
 ## Create the app
 
 ```bash
-npm create veryfront@latest support-agent
+npm create veryfront@latest support-agent -- --template ai-agent
 cd support-agent
 ```
 
-The `ai-agent` starter is the default. Pass `-- --template <template>` when you
-want a different starting point.
+The starter contains an assistant agent, `calculator.ts` tool, chat page,
+AG-UI route, and smoke eval.
 
-The `ai-agent` template creates a runnable chat app:
+## Configure inference
+
+Set the API key in the terminal where you run Veryfront:
+
+```bash
+export OPENAI_API_KEY="<API_KEY>"
+```
+
+The starter uses `openai/gpt-5.4-nano`. Veryfront sends the requests directly
+to OpenAI.
+
+## Run the app
+
+```bash
+npm run dev
+```
+
+The CLI confirms the server and available inference path:
 
 ```text
-support-agent/
-  AGENTS.md
-  agents/
-    assistant.ts
-  tools/
-    calculator.ts
-  app/
-    page.tsx
-    api/
-      ag-ui/
-        route.ts
+✓ Ready in 1.3s
+http://localhost:3000
+Inference OpenAI direct
 ```
-
-The template includes the agent, calculator tool, chat page, AG-UI route, and
-`AGENTS.md` project guide for coding agents.
-
-## Authenticate
-
-From the project directory, authenticate with Veryfront Cloud:
-
-```bash
-veryfront login
-```
-
-This lets the app use the Veryfront Cloud gateway for model inference. You can
-also set `VERYFRONT_API_TOKEN` directly. Direct provider keys such as
-`OPENAI_API_KEY` or `ANTHROPIC_API_KEY` also work; see
-[Providers](../guides/providers.md).
-
-## Run it locally
-
-```bash
-veryfront dev
-```
-
-`veryfront dev` also starts the development MCP server on the app port plus 2.
-With the default app port, coding agents can connect to
-`http://localhost:3002/mcp` and call `vf_bootstrap` once at session start.
-Use [Coding agents](../guides/coding-agents.md) for setup details.
 
 ## Verify it worked
 
-Open `http://localhost:3000` and ask:
+Open the local URL printed by the CLI and ask:
 
 ```text
 What is 128 divided by 8?
 ```
 
-To test the route without the UI:
+The assistant calls the calculator tool and returns `16`.
+
+## Run the eval
+
+Stop the dev server with `Ctrl+C`, then run:
 
 ```bash
-curl -N -X POST http://localhost:3000/api/ag-ui \
-  -H "Content-Type: application/json" \
-  -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"What is 128 divided by 8?"}]}]}'
+npm run eval -- assistant
 ```
 
-The answer should stream. The curl response should emit `data:` lines.
+The command exits successfully after the agent calls the calculator and returns
+the expected answer.
 
-## Preview and deploy it
+## Next steps
 
-From the project directory, push the source to its cloud preview:
-
-```bash
-npx veryfront push
-```
-
-The command creates or links the cloud project, stores that local identity in
-ignored `.veryfront/project.json`, and prints the preview URL. When the preview
-is ready for production, deploy the exact pushed source digest:
-
-Push preserves remote-only files by default. Use
-`npx veryfront push --prune --dry-run` to preview an exact remote mirror, then
-run `npx veryfront push --prune` only when those deletions are intentional.
-
-```bash
-npx veryfront deploy --env production
-```
-
-Deploy uses the last verified Push receipt. If no receipt exists yet, it first
-runs a quiet Push so the first production deploy still works as one command.
-
-Project reference precedence is `VERYFRONT_PROJECT_SLUG` or environment
-configuration, then `veryfront.config.ts`, then legacy `veryfront.json`, then
-lower-level tenant or project-ID environment references, then the ignored local
-link.
+- [Use another inference provider](../guides/providers.md), including Anthropic,
+  Google, Ollama, LM Studio, or a built-in local model.
+- [Self-host the app](../guides/self-hosting.md) in your own environment.
+- [Use the Veryfront Cloud AI Gateway](./cloud-quickstart.md) and deploy with
+  Veryfront Cloud.
+- Continue with [Create project](./create-project.md), or consult the
+  [Agent](../api-reference/veryfront/agent.md),
+  [Tool](../api-reference/veryfront/tool.md), and
+  [Chat](../api-reference/veryfront/chat.md) references.

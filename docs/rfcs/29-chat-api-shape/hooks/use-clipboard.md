@@ -2,7 +2,12 @@
 
 Copies a string to the clipboard and reports transient "copied" feedback.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `useClipboard`
+> - **Not exported today:** none
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 > **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): this is a generic browser util (already shared with the code-block copy button), not a chat hook - **proposed** to reposition as a generic util or fold into `useMessageContext.copy`. The signature reshape vs today is disclosed in the `changed` note under Signature below.
 

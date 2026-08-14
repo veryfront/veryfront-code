@@ -4,6 +4,7 @@ import { filterToolsForSkill, type SkillToolAvailability } from "#veryfront/skil
 import type { ToolConfigEntry } from "./tool-helpers.ts";
 import { filterToolsAfterSubmittedFormInput } from "./skill-policy-enforcement.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import type { RemoteIntegrationToolDiscoveryResult } from "#veryfront/integrations/remote-tools.ts";
 import {
   resolveRuntimeToolLoading,
   SOURCE_INTEGRATION_POLICY_CONTEXT_KEY,
@@ -22,6 +23,7 @@ import {
   withRuntimeToolInventory,
 } from "./tool-inventory.ts";
 import { getProviderToolProfile } from "./provider-tool-compat.ts";
+import { createProviderNativeToolExposureDefinitions } from "./provider-native-tool-inventory.ts";
 
 export type AgentRuntimeStepMode = "generate" | "stream";
 
@@ -34,6 +36,7 @@ export type RuntimeStepToolLoader = (
     forwardedRemoteToolDefinitions?: ToolDefinition[];
     remoteToolSources?: RemoteToolSource[];
     remoteToolContext?: ToolExecutionContext;
+    onIntegrationToolDiscovery?: (result: RemoteIntegrationToolDiscoveryResult) => void;
     sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
     strictConfiguredToolsOnly?: boolean;
     callerAgentId?: string;
@@ -56,7 +59,6 @@ export type RuntimeStepStateResolver = (
 export interface PrepareAgentRuntimeStepInput {
   agentId: string;
   activeSkillId?: string | undefined;
-  activeSkillPolicy: string[] | undefined;
   activeSkillToolAvailability: SkillToolAvailability | undefined;
   allowedRemoteToolNames: string[] | undefined;
   config: AgentConfig;
@@ -81,11 +83,52 @@ export interface PrepareAgentRuntimeStepInput {
 }
 
 export interface PreparedAgentRuntimeStep {
+  integrationToolDiscovery?: RemoteIntegrationToolDiscoveryResult;
   runtimeContext: Record<string, unknown> | undefined;
   systemPrompt: string;
   toolContext: ToolExecutionContext;
   tools: ToolDefinition[];
   toolExposurePlan: ToolExposurePlan;
+}
+
+const INTEGRATION_TOOL_DISCOVERY_STATUS_HEADER = "Integration tool discovery status:";
+const INTEGRATION_TOOL_DISCOVERY_STATUS_FOOTER = "End integration tool discovery status.";
+
+function removeIntegrationToolDiscoveryStatus(systemPrompt: string): string {
+  let result = systemPrompt;
+  while (true) {
+    const headerIndex = result.indexOf(INTEGRATION_TOOL_DISCOVERY_STATUS_HEADER);
+    if (headerIndex < 0) return result;
+    const footerIndex = result.indexOf(
+      INTEGRATION_TOOL_DISCOVERY_STATUS_FOOTER,
+      headerIndex + INTEGRATION_TOOL_DISCOVERY_STATUS_HEADER.length,
+    );
+    if (footerIndex < 0) return result;
+
+    result = [
+      result.slice(0, headerIndex).trimEnd(),
+      result.slice(
+        footerIndex + INTEGRATION_TOOL_DISCOVERY_STATUS_FOOTER.length,
+      ).trimStart(),
+    ].filter(Boolean).join("\n\n");
+  }
+}
+
+export function withIntegrationToolDiscoveryStatus(
+  systemPrompt: string,
+  discovery: RemoteIntegrationToolDiscoveryResult | undefined,
+): string {
+  const basePrompt = removeIntegrationToolDiscoveryStatus(systemPrompt);
+  let message: string | undefined;
+  if (discovery?.status === "unavailable") {
+    message =
+      "Integration tool discovery is temporarily unavailable for this run. You must not treat this failure as an empty integration catalog. If the user needs an integration tool, explain that discovery is temporarily unavailable and ask the user to retry.";
+  }
+
+  if (!message) return basePrompt;
+  const statusBlock =
+    `${INTEGRATION_TOOL_DISCOVERY_STATUS_HEADER}\n\n${message}\n\n${INTEGRATION_TOOL_DISCOVERY_STATUS_FOOTER}`;
+  return basePrompt.length > 0 ? `${basePrompt}\n\n${statusBlock}` : statusBlock;
 }
 
 function shouldIncludeSkillTools(config: AgentConfig): boolean {
@@ -131,6 +174,7 @@ export async function prepareAgentRuntimeStep(
     toolContext.activeSkillToolAvailability = input.activeSkillToolAvailability;
   }
 
+  let integrationToolDiscovery: RemoteIntegrationToolDiscoveryResult | undefined;
   let tools = input.supportsToolCalling
     ? await input.getAvailableTools(input.config.tools, {
       callerAgentId: input.agentId,
@@ -139,17 +183,16 @@ export async function prepareAgentRuntimeStep(
       forwardedRemoteToolDefinitions: input.forwardedRemoteToolDefinitions,
       remoteToolSources: input.remoteToolSources,
       remoteToolContext: toolContext,
+      onIntegrationToolDiscovery: (result) => {
+        integrationToolDiscovery = result;
+      },
       sourceIntegrationPolicy: input.sourceIntegrationPolicy,
       strictConfiguredToolsOnly: input.strictConfiguredToolsOnly,
     })
     : [];
 
-  if (input.activeSkillPolicy || input.activeSkillToolAvailability) {
-    tools = filterToolsForSkill(
-      tools,
-      input.activeSkillPolicy,
-      input.activeSkillToolAvailability,
-    );
+  if (input.activeSkillToolAvailability) {
+    tools = filterToolsForSkill(tools, input.activeSkillToolAvailability);
   }
   tools = filterToolsAfterSubmittedFormInput(
     tools,
@@ -164,6 +207,26 @@ export async function prepareAgentRuntimeStep(
   if (excludedToolNames !== undefined) {
     tools = tools.filter((tool) => !excludedToolNames.has(tool.name));
   }
+  if (
+    integrationToolDiscovery?.status === "unavailable" &&
+    input.forwardedRemoteToolDefinitions?.length
+  ) {
+    const forwardedToolNames = new Set(
+      input.forwardedRemoteToolDefinitions.map((tool) => tool.name),
+    );
+    const usableForwardedTools = tools.filter((tool) => forwardedToolNames.has(tool.name));
+    if (usableForwardedTools.length > 0) {
+      integrationToolDiscovery = { status: "ok", tools: usableForwardedTools };
+    }
+  }
+  const existingToolNames = new Set(tools.map((tool) => tool.name));
+  tools = [
+    ...tools,
+    ...createProviderNativeToolExposureDefinitions({
+      model: input.effectiveModel ?? input.config.model,
+      toolNames: input.providerToolNames ?? [],
+    }).filter((tool) => !existingToolNames.has(tool.name)),
+  ];
   const toolExposureState = input.toolExposureState ?? createToolExposureState();
   if (input.toolExposureCheckpoint) {
     const restoredState = restoreToolExposureState(input.toolExposureCheckpoint, tools);
@@ -178,13 +241,12 @@ export async function prepareAgentRuntimeStep(
     state: toolExposureState,
     maxVisibleTools: getProviderToolProfile(input.effectiveModel ?? input.config.model).maxTools,
   });
-  const systemPrompt = hasRuntimeToolInventory(runtimeState.systemPrompt)
+  const baseSystemPrompt = removeIntegrationToolDiscoveryStatus(runtimeState.systemPrompt);
+  const systemPrompt = hasRuntimeToolInventory(baseSystemPrompt)
     ? flattenSystemInstructions(
       withRuntimeToolInventory(
-        runtimeState.systemPrompt,
-        [...toolExposurePlan.visible.map((tool) => tool.name), ...(input.providerToolNames ?? [])]
-          .filter((name, index, names) => names.indexOf(name) === index)
-          .sort(),
+        baseSystemPrompt,
+        toolExposurePlan.visible.map((tool) => tool.name),
         // Naming what is deferred is the difference between a tool the model
         // can seek and one it has no reason to believe exists.
         toolExposurePlan.deferred.map((tool) => ({
@@ -193,9 +255,10 @@ export async function prepareAgentRuntimeStep(
         })),
       ),
     )
-    : runtimeState.systemPrompt;
+    : baseSystemPrompt;
 
   return {
+    integrationToolDiscovery,
     runtimeContext: trustedAllowedSkillIds === undefined
       ? runtimeState.context
       : { ...runtimeState.context, allowedSkillIds: [...trustedAllowedSkillIds] },

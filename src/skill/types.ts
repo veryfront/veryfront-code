@@ -193,7 +193,6 @@ export interface SkillContent {
   /** Markdown instructions (body after frontmatter) */
   instructions: string;
   /** Tool access restrictions from frontmatter */
-  allowedTools?: string[];
   /** Available reference file paths */
   references: string[];
   /** Available script file paths */
@@ -307,8 +306,7 @@ export interface SkillScriptExecutor {
   execute(input: SkillScriptExecutorInput): Promise<SkillScriptResult>;
 }
 
-/** Active skill context for runtime policy tracking */
+/** Active skill context for runtime availability and delegation tracking */
 export interface ActiveSkillContext {
   skillId: string;
-  allowedTools?: string[];
 }

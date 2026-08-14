@@ -7,11 +7,7 @@
  */
 
 import { createError, toError } from "#veryfront/errors";
-import {
-  isNativeErrorWithoutHooks,
-  isProxyWithoutHooks,
-} from "#veryfront/platform/compat/error-introspection.ts";
-import { validateAllowedToolPatterns, validateStrictAllowedToolPatterns } from "./allowed-tools.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import {
   SKILL_ALLOWED_TOOL_MAX_PATTERNS,
   SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH,
@@ -43,10 +39,8 @@ const ownKeys = Reflect.ownKeys;
 const NativeRegExp = RegExp;
 const NativeString = String;
 const regExpExec = RegExp.prototype.exec;
-const stringCharAt = String.prototype.charAt;
 const stringCharCodeAt = String.prototype.charCodeAt;
 const stringSlice = String.prototype.slice;
-const stringToLowerCase = String.prototype.toLowerCase;
 const stringTrim = String.prototype.trim;
 
 // Keep authorization regexes private: the exported compatibility regexes are
@@ -555,11 +549,10 @@ function parseLegacyAllowedTools(
   }
 
   if (patterns.length === 0) return undefined;
-  try {
-    return validateAllowedToolPatterns(patterns);
-  } catch (error) {
-    throwAllowedToolsValidationError(error, skillName);
-  }
+  // Patterns are recorded verbatim. `allowed-tools` is pre-approval metadata in the
+  // Agent Skills spec, not an authorization boundary, so the runtime does not act on
+  // it and must not reject spec-conformant values such as `Bash(git:*)`.
+  return patterns;
 }
 
 function parseLegacyAllowedToolString(value: string): string[] {
@@ -702,35 +695,7 @@ function parseStrictAllowedTools(
     }
   }
 
-  try {
-    return validateStrictAllowedToolPatterns(patterns);
-  } catch (error) {
-    throwAllowedToolsValidationError(error, skillName);
-  }
-}
-
-function throwAllowedToolsValidationError(error: unknown, skillName: string): never {
-  const message = readNativeErrorMessage(error) ?? "Invalid allowed-tools declaration";
-  const firstCharacter = apply(stringCharAt, message, [0]) as string;
-  const normalizedMessage = firstCharacter
-    ? `${apply(stringToLowerCase, firstCharacter, []) as string}${apply(stringSlice, message, [
-      1,
-    ]) as string}`
-    : message;
-  throw toError(
-    createError({
-      type: "agent",
-      message: `Skill "${skillName}" has ${normalizedMessage}`,
-    }),
-  );
-}
-
-function readNativeErrorMessage(error: unknown): string | undefined {
-  if (isProxyWithoutHooks(error) || !isNativeErrorWithoutHooks(error)) return undefined;
-  const descriptor = getOwnPropertyDescriptor(error, "message");
-  return descriptor && hasOwn(descriptor, "value") && typeof descriptor.value === "string"
-    ? descriptor.value
-    : undefined;
+  return patterns;
 }
 
 function parseStrictAllowedToolString(value: string): string[] {

@@ -308,6 +308,120 @@ describe("first-party extension imports", () => {
         ]),
         true,
       );
+
+      const denoMissingDependency = new Error(
+        `Import "@veryfront/ext-auth-jwt" not a dependency`,
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(denoMissingDependency, [
+          "@veryfront/ext-auth-jwt",
+        ]),
+        true,
+      );
+    });
+
+    it("parses the Deno npm-referrer missing-package shape", () => {
+      // Deno reports an unresolvable npm package differently when the importer
+      // itself lives inside the npm cache, which is exactly what a scaffolded
+      // `deno task dev` hits while probing optional first-party extensions.
+      const denoNpmReferrer = Object.assign(
+        new Error(
+          `Could not find package '@veryfront/ext-auth-jwt' from referrer 'file:///app/node_modules/.deno/veryfront@0.1.0/node_modules/veryfront/esm/src/extensions/first-party-import.js'.`,
+        ),
+        { code: "ERR_MODULE_NOT_FOUND" },
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(denoNpmReferrer, [
+          "@veryfront/ext-auth-jwt",
+        ]),
+        true,
+      );
+
+      // A broken transitive dependency of an installed extension must still be
+      // surfaced rather than swallowed as "extension not installed".
+      const transitiveFailure = Object.assign(
+        new Error(
+          `Could not find package 'jose' from referrer 'file:///app/node_modules/@veryfront/ext-auth-jwt/esm/src/index.js'.`,
+        ),
+        { code: "ERR_MODULE_NOT_FOUND" },
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(transitiveFailure, [
+          "@veryfront/ext-auth-jwt",
+        ]),
+        false,
+      );
+    });
+
+    it("parses the Deno npm-referrer shape when it names the owning package", () => {
+      // `deno add npm:veryfront` / `deno install -g npm:veryfront` resolve the
+      // CLI out of the global Deno npm cache, and from that referrer Deno
+      // appends the owning package identifier to the message. Home directory
+      // redacted; only the trailing ` (pkg@version)` suffix is under test.
+      const denoCacheReferrer = Object.assign(
+        new Error(
+          `Could not find package '@veryfront/ext-db-sqlite' from referrer 'file:///home/<redacted>/.cache/deno/npm/registry.npmjs.org/veryfront/0.1.1228/esm/src/extensions/first-party-import.js' (veryfront@0.1.1228).`,
+        ),
+        { code: "ERR_MODULE_NOT_FOUND" },
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(denoCacheReferrer, [
+          "@veryfront/ext-db-sqlite",
+        ]),
+        true,
+      );
+
+      // The owning-package suffix must not turn a transitive dependency
+      // failure inside an installed extension into a tolerated skip.
+      const transitiveFromCache = Object.assign(
+        new Error(
+          `Could not find package 'jose' from referrer 'file:///home/<redacted>/.cache/deno/npm/registry.npmjs.org/@veryfront/ext-auth-jwt/0.1.1228/esm/src/index.js' (@veryfront/ext-auth-jwt@0.1.1228).`,
+        ),
+        { code: "ERR_MODULE_NOT_FOUND" },
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(transitiveFromCache, [
+          "@veryfront/ext-auth-jwt",
+        ]),
+        false,
+      );
+    });
+
+    it("parses Bun relative, package, and object-shaped missing-module errors", () => {
+      const relativeError = Object.assign(
+        new Error(
+          `ResolveMessage: Cannot find module './index.ts' from '/app/extensions/ext-auth-jwt/src/loader.ts'`,
+        ),
+        { code: "ERR_MODULE_NOT_FOUND" },
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(relativeError, [
+          "file:///app/extensions/ext-auth-jwt/src/index.ts",
+        ]),
+        true,
+      );
+
+      const packageError = new Error(
+        `Cannot find module '@veryfront/ext-auth-jwt' from '/app/index.ts'`,
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(packageError, [
+          "@veryfront/ext-auth-jwt",
+        ]),
+        true,
+      );
+
+      const objectError = {
+        code: "ERR_MODULE_NOT_FOUND",
+        message:
+          `Cannot find module '@veryfront/ext-parser-babel/parser-only' from '/app/index.ts'`,
+      };
+      assertEquals(
+        isMissingFirstPartyExtensionModule(objectError, [
+          "@veryfront/ext-parser-babel/parser-only",
+        ]),
+        true,
+      );
     });
 
     it("uses stable codes unanchored and parses exact resolver messages", () => {
@@ -325,6 +439,44 @@ describe("first-party extension imports", () => {
         code: "ECONNRESET",
       });
       assertEquals(isMissingFirstPartyExtensionModule(unrelated), false);
+    });
+
+    it("parses Bun missing-module reports from strings and object-shaped errors", () => {
+      const relative = {
+        message:
+          "ResolveMessage: Cannot find module './parser-only' from '/app/extensions/ext-parser-babel/src/index.ts'",
+      };
+      assertEquals(
+        isMissingFirstPartyExtensionModule(relative, [
+          "extensions/ext-parser-babel/src/parser-only",
+        ]),
+        true,
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(relative, [
+          "extensions/ext-parser-babel/src/other",
+        ]),
+        false,
+      );
+
+      const packageSpecifier = {
+        message:
+          "Cannot find module '@veryfront/ext-parser-babel/parser-only' from '/app/loader.js'",
+      };
+      assertEquals(
+        isMissingFirstPartyExtensionModule(packageSpecifier, [
+          "@veryfront/ext-parser-babel/parser-only",
+        ]),
+        true,
+      );
+
+      assertEquals(
+        isMissingFirstPartyExtensionModule(
+          "Cannot find module '@veryfront/ext-parser-babel' from '/app/loader.js'",
+          ["@veryfront/ext-parser-babel"],
+        ),
+        true,
+      );
     });
 
     it("requires a full recognized message when no stable code is present", () => {

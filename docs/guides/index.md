@@ -64,22 +64,33 @@ details, see [API reference](../api-reference/index.md).
 
 ## Connect external systems
 
-| Goal                                               | Guide                               |
-| -------------------------------------------------- | ----------------------------------- |
-| Sign users in with OAuth                           | [OAuth](./oauth.md)                 |
-| Add connector-backed service tools                 | [Integrations](./integrations.md)   |
-| Expose tools, prompts, and resources to assistants | [MCP server](./mcp-server.md)       |
-| Connect coding agents to the dev server            | [Coding agents](./coding-agents.md) |
-| Run isolated commands or file operations           | [Sandbox](./sandbox.md)             |
+| Goal                                               | Guide                                      |
+| -------------------------------------------------- | ------------------------------------------ |
+| Sign users in with OAuth                           | [OAuth](./oauth.md)                        |
+| Add connector-backed service tools                 | [Integrations](./integrations.md)          |
+| Set up GitHub                                      | [GitHub](./integrations/github.md)         |
+| Set up Jira                                        | [Jira](./integrations/jira.md)             |
+| Set up Salesforce                                  | [Salesforce](./integrations/salesforce.md) |
+| Expose tools, prompts, and resources to assistants | [MCP server](./mcp-server.md)              |
+| Connect coding agents to the dev server            | [Coding agents](./coding-agents.md)        |
+| Run isolated commands or file operations           | [Sandbox](./sandbox.md)                    |
 
 ## Deploy and extend
 
-| Goal                                    | Guide                                                           |
-| --------------------------------------- | --------------------------------------------------------------- |
-| Build and deploy a project              | [Build and deploy](./deploying.md)                              |
-| Deploy a reviewed Git commit from CI    | [Deploy from CI](./deploy-from-ci.md)                           |
-| Move an immutable Studio release to Git | [Move Studio changes into Git](./move-studio-changes-to-git.md) |
-| Review shipped UI components            | [Storybook UI workbench](./storybook-ui-workbench.md)           |
-| Run agents as separate services         | [Agent service runtime](./agent-service-runtime.md)             |
-| Enable reusable runtime infrastructure  | [Extensions](./extensions.md)                                   |
-| Write, test, and package an extension   | [Author extensions](./extension-authoring.md)                   |
+| Goal                                    | Guide                                                            |
+| --------------------------------------- | ---------------------------------------------------------------- |
+| Run Veryfront in your own environment   | [Self-host Veryfront Code](./self-hosting.md)                    |
+| Manage Veryfront Cloud deployments      | [Manage Cloud deployments](./deploying.md)                       |
+| Configure Cloud environment access      | [Manage Cloud environment access](./cloud-environment-access.md) |
+| Deploy a reviewed Git commit from CI    | [Deploy from CI](./deploy-from-ci.md)                            |
+| Move an immutable Studio release to Git | [Move Studio changes into Git](./move-studio-changes-to-git.md)  |
+| Review shipped UI components            | [Storybook UI workbench](./storybook-ui-workbench.md)            |
+| Run agents as separate services         | [Agent service runtime](./agent-service-runtime.md)              |
+| Enable reusable runtime infrastructure  | [Extensions](./extensions.md)                                    |
+| Write, test, and package an extension   | [Author extensions](./extension-authoring.md)                    |
+
+## Troubleshoot
+
+| Goal                                 | Guide                          |
+| ------------------------------------ | ------------------------------ |
+| Look up an error slug you were shown | [Error reference](./errors.md) |

@@ -4,16 +4,22 @@
  * @module server/project-env/fetcher
  */
 
-import { encodeBase64, getBaseLogger } from "#veryfront/utils";
+import { getBaseLogger } from "#veryfront/utils";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import {
   AUTHENTICATION_REQUIRED,
+  CONFIG_INVALID,
   isVeryfrontError,
   NETWORK_ERROR,
   PERMISSION_DENIED,
 } from "#veryfront/errors";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 import { createProjectEnvSnapshot } from "./snapshot.ts";
+import {
+  getMissingProjectEnvInternalCredentialDetail,
+  getProjectEnvInternalAuthorization,
+  requiresProjectEnvInternalAuthorization,
+} from "./internal-authorization.ts";
 
 const baseLogger = getBaseLogger("PROJECT-ENV");
 
@@ -118,13 +124,6 @@ function parseEnvironmentResponse(text: string): Readonly<Record<string, string>
   }
 }
 
-function getInternalAuthorization(): string | undefined {
-  const username = getHostEnv("VERYFRONT_API_INTERNAL_USER");
-  const password = getHostEnv("VERYFRONT_API_INTERNAL_PASS");
-  if (!username || !password) return undefined;
-  return `Basic ${encodeBase64(`${username}:${password}`)}`;
-}
-
 async function fetchEnvironmentVariables(
   url: string,
   authorization: string,
@@ -149,7 +148,7 @@ async function fetchEnvironmentVariables(
       error: error instanceof Error ? error.message : String(error),
     });
     if (signal?.aborted) {
-      throw signal.reason instanceof Error
+      throw isErrorAcrossRealms(signal.reason)
         ? signal.reason
         : new DOMException("Project environment request was cancelled", "AbortError");
     }
@@ -225,7 +224,14 @@ export async function fetchProjectEnvVars(
 
   // Do not even materialize the host credential until the tenant credential
   // has proved access to this canonical project/environment pair.
-  const internalAuthorization = getInternalAuthorization();
+  const internalAuthorization = getProjectEnvInternalAuthorization();
+  if (!internalAuthorization && requiresProjectEnvInternalAuthorization()) {
+    discardResponseBody(response);
+    throw CONFIG_INVALID.create({
+      detail: getMissingProjectEnvInternalCredentialDetail() ??
+        "Internal project environment authorization is unavailable in hosted proxy mode",
+    });
+  }
   if (internalAuthorization) {
     discardResponseBody(response);
     response = await fetchEnvironmentVariables(

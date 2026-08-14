@@ -18,6 +18,41 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/constants/limits.ts";
 import type { ImportMapConfig } from "./types.ts";
 
+interface RuntimeWorker {
+  subscribe(
+    onMessage: (value: unknown) => void,
+    onError: (error: unknown) => void,
+  ): void;
+  terminate(): void;
+}
+
+async function createRuntimeWorker(url: URL): Promise<RuntimeWorker> {
+  if (typeof globalThis.Worker === "function") {
+    const worker = new globalThis.Worker(url, { type: "module" });
+    return {
+      subscribe(onMessage, onError) {
+        worker.onmessage = (event) => onMessage(event.data);
+        worker.onerror = (event) => onError(event.error ?? new Error(event.message));
+      },
+      terminate() {
+        worker.terminate();
+      },
+    };
+  }
+
+  const { Worker: NodeWorker } = await import("node:worker_threads");
+  const worker = new NodeWorker(url);
+  return {
+    subscribe(onMessage, onError) {
+      worker.once("message", onMessage);
+      worker.once("error", onError);
+    },
+    terminate() {
+      void worker.terminate();
+    },
+  };
+}
+
 /**
  * Budget for loads whose deadline must not fire during the test.
  *
@@ -1556,9 +1591,8 @@ describe("modules/import-map/preloader", () => {
     });
 
     it("keeps variant identity and capacity deterministic after primordial poisoning", async () => {
-      const worker = new Worker(
+      const worker = await createRuntimeWorker(
         new URL("./preloader-primordial-poisoning.worker.ts", import.meta.url),
-        { type: "module" },
       );
       try {
         const result = await new Promise<{
@@ -1573,18 +1607,17 @@ describe("modules/import-map/preloader", () => {
             () => reject(new Error("primordial poisoning worker timed out")),
             30_000,
           );
-          worker.onmessage = (event) => {
+          worker.subscribe((value) => {
             clearTimeout(timeoutId);
-            const message = event.data as
+            const message = value as
               | { ok: true; result: Parameters<typeof resolve>[0] }
               | { ok: false; error: string };
             if (message.ok) resolve(message.result);
             else reject(new Error(message.error));
-          };
-          worker.onerror = (event) => {
+          }, (error) => {
             clearTimeout(timeoutId);
-            reject(event.error ?? new Error(event.message));
-          };
+            reject(error);
+          });
         });
 
         assertEquals(result.firstLoaded, "1");

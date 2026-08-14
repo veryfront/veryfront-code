@@ -12,7 +12,16 @@ export const ERROR_OUTPUT_MAX_LENGTH_CHARS = 64 * 1_024;
 /** Maximum source characters accepted for the error-docs path segment. */
 export const ERROR_DOCS_SLUG_MAX_LENGTH_CHARS = 256;
 
-export const ERROR_DOCS_BASE_URL = "https://veryfront.com/docs/errors/";
+/**
+ * Base for every error documentation link printed at a boundary.
+ *
+ * Slugs are anchors on one generated reference page, not separate pages: a
+ * registry entry carries only a title and a one-line suggestion, which is too
+ * little for a page of its own. docs/guides/errors.md is generated from the
+ * registry by scripts/docs/generate-error-reference.ts, and
+ * tests/docs/error-docs-links.test.ts asserts every slug has an anchor there.
+ */
+export const ERROR_DOCS_BASE_URL = "https://veryfront.com/docs/code/guides/errors#";
 
 const TRUNCATION_MARKER = "...[truncated]";
 const UNKNOWN_ERROR_SLUG = "unknown-error";

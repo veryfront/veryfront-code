@@ -1608,6 +1608,79 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("returns 404 for a hosted environment root that names no project", async () => {
+      // staging.veryfront.com parses as an environment root: a veryfront domain
+      // with slug null. It used to be forwarded with x-project-slug: "", which
+      // the runtime answers 502 "Missing project context" — a config gap
+      // reported as an upstream failure. It is the same condition a custom
+      // domain answers 404 for.
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/auth/token") return createTokenResponse();
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        for (
+          const host of [
+            "staging.veryfront.com",
+            "preview.veryfront.com",
+            "production.veryfront.com",
+            "staging.veryfront.org",
+          ]
+        ) {
+          const ctx = await handler.processRequest(
+            new Request(`http://${host}/page`, { headers: { host } }),
+          );
+
+          assertEquals(ctx.projectSlug, undefined);
+          assertEquals(ctx.error?.status, 404);
+          assertEquals(ctx.error?.message, `No project configured for domain: ${host}`);
+        }
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("keeps project-less local dev hosts reachable for the project chooser", async () => {
+      // Locally a project-less veryfront host is not a misconfiguration: it is
+      // how the chooser is reached. ProjectsHandler is enabled for exactly
+      // `isVeryfrontDomain && !projectSlug`, so these must keep forwarding
+      // rather than 404 like their hosted counterparts.
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/auth/token") return createTokenResponse();
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        for (
+          const host of [
+            "localhost",
+            "preview.localhost",
+            "staging.localhost",
+          ]
+        ) {
+          const ctx = await handler.processRequest(
+            new Request(`http://${host}/`, { headers: { host } }),
+          );
+
+          assertEquals(ctx.error, undefined, `${host} must not be an error context`);
+          assertEquals(ctx.contentSourceId, "no-project");
+        }
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
     it("returns 404 error when custom domain not found", async () => {
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
@@ -2010,7 +2083,7 @@ describe("Proxy Handler", () => {
         },
       });
 
-      const req = new Request("http://my-project.preview.lvh.me:3001/page");
+      const req = new Request("http://my-project.preview.localhost:3001/page");
 
       const ctx = await handler.processRequest(req);
 

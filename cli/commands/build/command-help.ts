@@ -8,7 +8,7 @@ export const buildHelp: CommandHelp = {
   options: [
     {
       flag: "-o, --output <dir>",
-      description: "Output directory",
+      description: "Output directory (also configurable via build.outDir)",
       default: "dist",
     },
     {

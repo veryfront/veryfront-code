@@ -5,6 +5,7 @@ import {
   finalizeConversationAgentRun,
 } from "./durable.ts";
 import { prepareConversationRunStreamEvents } from "./run-event-preparation.ts";
+import { ConversationRunEventEncoder } from "./run-events.ts";
 import {
   type InvokeAgentChildRunProgressEvent,
   type InvokeAgentChildRunProgressInput,
@@ -134,14 +135,27 @@ export function createConversationHostedLifecycleAdapter<TChunk>(
 
 /** Create conversation hosted stream lifecycle adapter. */
 export function createConversationHostedStreamLifecycleAdapter(
-  options: Omit<
-    CreateConversationHostedLifecycleAdapterOptions<ChatStreamEvent>,
-    "mapChunkToEvents"
-  >,
+  options:
+    & Omit<
+      CreateConversationHostedLifecycleAdapterOptions<ChatStreamEvent>,
+      "mapChunkToEvents"
+    >
+    & {
+      /** Encoder to reuse for the run. Defaults to a clocked run-scoped encoder. */
+      encoder?: ConversationRunEventEncoder;
+    },
 ): HostedLifecycleAdapter<ConversationRunProjection, ChatStreamEvent> {
+  // One encoder for the whole run, not one per chunk. It carries stepCount and
+  // the active message across chunks, so a per-chunk encoder restarts every step
+  // at step-1 and loses the message identity the events are grouped by. Its
+  // creation is also the anchor `elapsedMs` is measured from, so a fresh encoder
+  // would reset elapsed to zero on every event.
+  const encoder = options.encoder ??
+    new ConversationRunEventEncoder({ nowMs: () => performance.now() });
+
   return createConversationHostedLifecycleAdapter({
     ...options,
-    mapChunkToEvents: (chunk) => prepareConversationRunStreamEvents([chunk]),
+    mapChunkToEvents: (chunk) => prepareConversationRunStreamEvents([chunk], encoder),
   });
 }
 

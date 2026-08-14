@@ -23,6 +23,7 @@
  * @module react/components/chat/hooks/use-uploads-registry
  */
 import * as React from "react";
+import { csrfMutationHeaders } from "#veryfront/security/csrf/browser-mutation-headers.ts";
 import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
 import type { UploadedFile } from "../components/attachments-panel.tsx";
 import { isSafeUploadId, isSafeUploadUrl } from "../upload-url.ts";
@@ -506,7 +507,10 @@ export function useAttachments(
             const response = await fetch(endpoint, {
               method: "POST",
               body: form,
-              headers: headersRef.current,
+              // A production build turns `security.csrf` on by default, so this
+              // POST has to echo the `__Host-vf_csrf` cookie back or the server
+              // answers 403 — dev, where CSRF is off, would never show it.
+              headers: csrfMutationHeaders(endpoint, headersRef.current),
               signal: controller.signal,
             });
             if (!response.ok) throw new Error(`Upload failed: ${response.status}`);
@@ -549,9 +553,12 @@ export function useAttachments(
       activeRemovalsRef.current.set(id, active);
       controllersRef.current.add(controller);
       try {
-        const response = await fetch(setQueryParameter(endpoint, "id", id), {
+        const target = setQueryParameter(endpoint, "id", id);
+        const response = await fetch(target, {
           method: "DELETE",
-          headers: headersRef.current,
+          // Same CSRF requirement as the upload POST above. The token is keyed
+          // off the request target, so pass the `?id=` URL actually being hit.
+          headers: csrfMutationHeaders(target, headersRef.current),
           signal: controller.signal,
         });
         if (!response.ok) {

@@ -15,7 +15,10 @@ import {
   readFileWithinLimit,
   withFileHandle,
 } from "../../bounded-file-read.ts";
-import { markNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
+import {
+  isDirectConstruction,
+  markNativeFileSystemAdapter,
+} from "../../native-file-system-provenance.ts";
 import { constants as nodeFsConstants } from "node:fs";
 import { resolve } from "../../../compat/path/index.ts";
 import { runtimeUsesWindowsPaths } from "../../../compat/path/portable.ts";
@@ -394,6 +397,25 @@ async function createNodeFileBytesExclusive(
 }
 
 /**
+ * Resolve the `O_NOFOLLOW` open flag that binds an exact-inode snapshot read.
+ *
+ * `constants` is `undefined` in a runtime without `node:fs` — e.g. a browser
+ * bundle that transitively imports this adapter. Dereferencing `.O_NOFOLLOW` on
+ * it unconditionally threw `Cannot read properties of undefined (reading
+ * 'O_NOFOLLOW')` during construction and aborted client hydration (#3661).
+ * Treat the missing constants as "unavailable" (`undefined`) — the same meaning
+ * {@link NodeFileSystemCapabilityOptions.noFollow} already documents for an own
+ * `undefined` — so `canOpenExactSnapshot` degrades to `false` instead of the
+ * constructor exploding. An own `noFollow` on `options` still wins (the test seam).
+ */
+export function resolveNoFollowFlag(
+  options: NodeFileSystemCapabilityOptions,
+  constants: { readonly O_NOFOLLOW?: number } | undefined,
+): number | undefined {
+  return hasOwn(options, "noFollow") ? options.noFollow : constants?.O_NOFOLLOW;
+}
+
+/**
  * Filesystem implementation shared by runtimes that provide Node-compatible
  * `node:fs` APIs (currently Node.js and Bun).
  */
@@ -406,7 +428,7 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
       ...nodeFileSystemOperations,
       ...options.operations,
     } as NodeFileSystemOperations;
-    const noFollow = hasOwn(options, "noFollow") ? options.noFollow : nodeFsConstants.O_NOFOLLOW;
+    const noFollow = resolveNoFollowFlag(options, nodeFsConstants);
     const platform = options.platform ?? (runtimeUsesWindowsPaths() ? "windows" : "posix");
     const canOpenExactSnapshot = platform === "windows"
       ? hasUsableWindowsSnapshotIdentity(detectNodeCompatibleRuntime())
@@ -432,7 +454,7 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
         enumerable: true,
       });
     }
-    if (new.target === NodeCompatibleFileSystemAdapter) {
+    if (isDirectConstruction(this, NodeCompatibleFileSystemAdapter)) {
       markNativeFileSystemAdapter(this);
     }
   }
@@ -562,7 +584,18 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
 
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
     const fs = await import("node:fs/promises");
-    await fs.rm(path, { recursive: options?.recursive, force: true });
+    const recursive = options?.recursive ?? false;
+    try {
+      await fs.rm(path, { recursive, force: true });
+    } catch (error) {
+      // Same divergence as `platform/compat/fs.ts`: Deno removes an empty
+      // directory without `recursive`, `node:fs` `rm` refuses one, and `force`
+      // does not cover it -- it suppresses a missing path, not a directory.
+      if (recursive) throw error;
+      const info = await fs.lstat(path).catch(() => undefined);
+      if (!info?.isDirectory()) throw error;
+      await fs.rmdir(path);
+    }
   }
 
   async makeTempDir(prefix: string): Promise<string> {

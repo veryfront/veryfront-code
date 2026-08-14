@@ -8,6 +8,7 @@ import {
   __resetLogRecordEmitterForTests,
   type LogEntry,
 } from "#veryfront/utils/logger/logger.ts";
+import { isNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 import { NodeFileSystemAdapter } from "./filesystem-adapter.ts";
 
 function captureDebugLogs(): { entries: LogEntry[]; restore: () => void } {
@@ -134,5 +135,32 @@ describe("NodeFileSystemAdapter", () => {
     } finally {
       logs.restore();
     }
+  });
+
+  it("marks only direct built-in instances as native", () => {
+    class DerivedAdapter extends NodeFileSystemAdapter {}
+
+    assertEquals(isNativeFileSystemAdapter(new NodeFileSystemAdapter()), true);
+    assertEquals(isNativeFileSystemAdapter(new DerivedAdapter()), false);
+  });
+
+  it("refuses a subclass that hides its own prototype.constructor", () => {
+    class ConstructorDeletingAdapter extends NodeFileSystemAdapter {}
+    Reflect.deleteProperty(ConstructorDeletingAdapter.prototype, "constructor");
+
+    class ConstructorSpoofingAdapter extends NodeFileSystemAdapter {}
+    Object.defineProperty(ConstructorSpoofingAdapter.prototype, "constructor", {
+      configurable: true,
+      value: NodeFileSystemAdapter,
+    });
+
+    assertEquals(
+      isNativeFileSystemAdapter(new ConstructorDeletingAdapter()),
+      false,
+    );
+    assertEquals(
+      isNativeFileSystemAdapter(new ConstructorSpoofingAdapter()),
+      false,
+    );
   });
 });

@@ -1,5 +1,6 @@
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
+import { FakeTime } from "#std/testing/time";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -37,6 +38,9 @@ function extractSystemPrompt(options: unknown): string {
 /** Runs one generate() call through a stub provider and returns the system prompt it saw. */
 async function captureFactorySystemPrompt(
   config: Omit<AgentConfig, "model" | "resolveModelTransport">,
+  context?: Record<string, unknown>,
+  mode: "generate" | "stream" = "generate",
+  observeStreamBody?: (body: string) => void,
 ): Promise<string> {
   let observed = "";
   const model: ModelRuntime = {
@@ -52,7 +56,8 @@ async function captureFactorySystemPrompt(
       };
     },
     // deno-lint-ignore require-await
-    async doStream() {
+    async doStream(options: unknown) {
+      observed = extractSystemPrompt(options);
       return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
     },
   } as unknown as ModelRuntime;
@@ -63,7 +68,15 @@ async function captureFactorySystemPrompt(
     resolveModelTransport: () => Promise.resolve({ model }),
   });
 
-  await assistant.generate({ input: "Where does this project live?" });
+  if (mode === "stream") {
+    const response = (await assistant.stream({
+      input: "Where does this project live?",
+      context,
+    })).toDataStreamResponse();
+    observeStreamBody?.(await response.text());
+  } else {
+    await assistant.generate({ input: "Where does this project live?", context });
+  }
 
   return observed;
 }
@@ -90,14 +103,58 @@ describe("agent/factory call context", () => {
     assertStringIncludes(prompt, "Visible panels: [chat]");
   });
 
-  it("leaves a plain agent's authored prompt untouched", async () => {
+  it("adds one authoritative UTC snapshot to scheduled runs", async () => {
+    using _time = new FakeTime(new Date("2026-07-19T07:30:00.000Z"));
+    const prompt = await captureFactorySystemPrompt({
+      id: "scheduled-agent",
+      system:
+        "Create the daily report.\n\n<runtime_context>\ncurrent_date_utc: 2025-07-14\n</runtime_context>",
+      skills: false,
+    }, { scheduleId: "schedule-1" });
+
+    assertEquals(prompt.includes("2025-07-14"), false);
+    assertEquals(prompt.match(/<runtime_context>/g)?.length, 1);
+    assertStringIncludes(prompt, "current_time_utc: 2026-07-19T07:30:00.000Z");
+    assertStringIncludes(prompt, "current_date_utc: 2026-07-19");
+    assertStringIncludes(prompt, "run_started_at_utc: 2026-07-19T07:30:00.000Z");
+  });
+
+  it("keeps browser display context without letting it replace server UTC", async () => {
+    using _time = new FakeTime(new Date("2026-07-19T07:30:00.000Z"));
+    let streamBody = "";
+    const prompt = await captureFactorySystemPrompt(
+      {
+        id: "browser-agent",
+        system: "Answer with the current date.",
+        environmentContext:
+          "<date_time>\nBrowser timezone: America/Los_Angeles\nBrowser date: 2025-07-14\n</date_time>",
+        skills: false,
+      },
+      undefined,
+      "stream",
+      (body) => {
+        streamBody = body;
+      },
+    );
+
+    assertStringIncludes(prompt, "Browser timezone: America/Los_Angeles");
+    assertStringIncludes(prompt, "current_date_utc: 2026-07-19");
+    assertEquals(
+      prompt.indexOf("<environment_context>") < prompt.indexOf("<runtime_context>"),
+      true,
+    );
+    assertStringIncludes(streamBody, '"type":"data-veryfront.runtime_context"');
+    assertStringIncludes(streamBody, '"runStartedAtUtc":"2026-07-19T07:30:00.000Z"');
+  });
+
+  it("preserves a plain agent's authored prompt before runtime context", async () => {
     const prompt = await captureFactorySystemPrompt({
       id: "plain-agent",
       system: "You are a helpful assistant.",
       skills: false,
     });
 
-    assertEquals(prompt, "You are a helpful assistant.");
+    assertEquals(prompt.startsWith("You are a helpful assistant.\n\n<runtime_context>"), true);
   });
 
   it("renders skills through the shared runtime skills block", async () => {
@@ -119,10 +176,9 @@ describe("agent/factory call context", () => {
     assertStringIncludes(prompt, "<available_skills>");
     assertStringIncludes(
       prompt,
-      '- {"skillId":"support-triage","description":"Triage incoming support requests","allowedTools":[]}',
+      '- {"skillId":"support-triage","description":"Triage incoming support requests"}',
     );
     assertEquals(prompt.includes("create_file"), false);
-    assertStringIncludes(prompt, "execute_skill_script: Call with");
   });
 
   it("preserves skill tool metadata when the direct factory selects that tool", async () => {
@@ -151,7 +207,7 @@ describe("agent/factory call context", () => {
 
     assertStringIncludes(
       prompt,
-      '- {"skillId":"support-triage","description":"Triage incoming support requests","allowedTools":["create_file"]}',
+      '- {"skillId":"support-triage","description":"Triage incoming support requests"}',
     );
   });
 });

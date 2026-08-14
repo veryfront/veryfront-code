@@ -5,6 +5,7 @@ import {
   applySkillDelegationOverridesToToolInput,
   extractSkillDelegationOverrides,
 } from "./skill-delegation-overrides.ts";
+import { createInvokeAgentTool } from "./agent-delegation.ts";
 
 describe("skill delegation overrides", () => {
   it("extracts loaded skill model, thinking, and max step overrides", () => {
@@ -129,6 +130,23 @@ describe("skill delegation overrides", () => {
         thinking: 0,
         max_steps: 160,
       },
+    );
+  });
+
+  it("does not inject hosted child overrides into direct invoke_agent", () => {
+    const input = {
+      prompt: "Research reference system",
+      description: "Research reference system",
+    };
+
+    assertEquals(
+      applySkillDelegationOverridesToToolInput(
+        "invoke_agent",
+        input,
+        { model: "opus", thinking: false, maxSteps: 160 },
+        createInvokeAgentTool(),
+      ),
+      input,
     );
   });
 });

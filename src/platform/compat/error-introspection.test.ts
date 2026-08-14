@@ -6,6 +6,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   canInspectErrorStackDescriptorWithoutHooks,
+  isErrorAcrossRealms,
   isNativeAsyncFunctionWithoutHooks,
   isNativeErrorWithoutHooks,
   isNativePromiseWithoutHooks,
@@ -303,6 +304,30 @@ describe("platform error introspection", () => {
     assertEquals(isNativeErrorWithoutHooks(proxied), false);
     assertEquals(isProxyWithoutHooks(proxied), true);
     assertEquals(trapCalls, 0);
+  });
+
+  it("recognizes Errors from another realm and rejects error-shaped objects", () => {
+    const crossRealmError = runInNewContext("new Error('from another realm')") as unknown;
+    const detachedError = Object.setPrototypeOf(new Error("detached"), { name: "Detached" });
+
+    // Both shapes are what a real cross-realm Error looks like to `instanceof`.
+    assertEquals(crossRealmError instanceof Error, false);
+    assertEquals(detachedError instanceof Error, false);
+
+    assertEquals(isErrorAcrossRealms(crossRealmError), true);
+    assertEquals(isErrorAcrossRealms(detachedError), true);
+    assertEquals(isErrorAcrossRealms(new Error("same realm")), true);
+    assertEquals(isErrorAcrossRealms(new TypeError("same realm subclass")), true);
+    assertEquals(isErrorAcrossRealms(new DOMException("aborted", "AbortError")), true);
+
+    assertEquals(isErrorAcrossRealms({ name: "Error", message: "shaped like one" }), false);
+    assertEquals(
+      isErrorAcrossRealms({ name: "Error", message: "tagged", [Symbol.toStringTag]: "Error" }),
+      false,
+    );
+    assertEquals(isErrorAcrossRealms("aborted"), false);
+    assertEquals(isErrorAcrossRealms(undefined), false);
+    assertEquals(isErrorAcrossRealms(null), false);
   });
 
   it("recognizes Uint8Array values without invoking proxy traps", () => {

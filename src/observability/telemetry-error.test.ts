@@ -681,17 +681,8 @@ describe("observability/telemetry-error", () => {
     });
 
     const snapshot = sanitizeErrorForTelemetry(source);
-    const stackDescriptor = Object.getOwnPropertyDescriptor(new Error(), "stack");
-    const canInspectStackWithoutFormatting = Boolean(
-      stackDescriptor &&
-        Object.prototype.hasOwnProperty.call(stackDescriptor, "get") &&
-        typeof stackDescriptor.get === "function",
-    );
 
     assertEquals(snapshot.message.length, MAX_STRING_DISPLAY_LENGTH);
-    assertEquals(
-      snapshot.stack?.length,
-      canInspectStackWithoutFormatting ? MAX_STRING_DISPLAY_LENGTH : undefined,
-    );
+    assertEquals(snapshot.stack?.length, MAX_STRING_DISPLAY_LENGTH);
   });
 });

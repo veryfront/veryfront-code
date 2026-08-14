@@ -26,7 +26,10 @@ import {
 } from "#veryfront/utils/path-utils.ts";
 import { normalizeChunkPath } from "../../utils/chunk-utils.ts";
 import { computeEtag } from "../../handlers/utils/etag.ts";
-import { getContentType as getContentTypeFromExt } from "../../handlers/utils/content-types.ts";
+import {
+  CONTENT_TYPES,
+  getContentType as getContentTypeFromExt,
+} from "../../handlers/utils/content-types.ts";
 
 const logger = serverLogger.component("static-file-service");
 
@@ -198,6 +201,15 @@ export class StaticFileService {
       const root = joinPath(options.projectDir, dir);
       const absPath = normalizePath(joinPath(root, normalizedPath));
       if (isWithinDirectory(root, absPath)) addCandidate(absPath, dir);
+    }
+
+    if (this.shouldProbeIndexPage(normalizedPath)) {
+      const indexPath = `${normalizedPath.replace(/\/$/, "")}/index.html`;
+      for (const dir of dirs) {
+        const root = joinPath(options.projectDir, dir);
+        const absPath = normalizePath(joinPath(root, indexPath));
+        if (isWithinDirectory(root, absPath)) addCandidate(absPath, dir);
+      }
     }
 
     return candidates;
@@ -372,6 +384,13 @@ export class StaticFileService {
     if (this.isDeniedDotfile(pathname)) return false;
     return pathname.includes(".") || pathname.startsWith("/_veryfront/") ||
       pathname.startsWith("/_vf/assets/");
+  }
+
+  private shouldProbeIndexPage(pathname: string): boolean {
+    if (pathname === "/index.html") return false;
+    if (pathname.startsWith("/_veryfront/") || pathname.startsWith("/_vf/assets/")) return false;
+    if (!this.isAssetRequest(pathname)) return true;
+    return !Object.hasOwn(CONTENT_TYPES, getExtension(pathname).toLowerCase());
   }
 
   private isDeniedDotfile(pathname: string): boolean {

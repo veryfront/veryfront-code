@@ -248,6 +248,23 @@ describe("Filesystem Compat", () => {
       assertEquals(await exists(dirPath), false);
     });
 
+    it("removes an empty directory without the recursive option", async () => {
+      const dirPath = join(testDir, "to-remove-empty-dir");
+      await mkdir(dirPath);
+
+      await remove(dirPath);
+      assertEquals(await exists(dirPath), false);
+    });
+
+    it("refuses a non-empty directory without the recursive option", async () => {
+      const dirPath = join(testDir, "to-remove-populated-dir");
+      await mkdir(dirPath);
+      await writeTextFile(join(dirPath, "file.txt"), "test");
+
+      await assertRejects(() => remove(dirPath), Error);
+      assertEquals(await exists(dirPath), true);
+    });
+
     it("surfaces a missing path even when recursive", async () => {
       await assertRejects(
         () => remove(join(testDir, "missing-recursive-remove"), { recursive: true }),

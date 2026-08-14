@@ -1,4 +1,5 @@
 import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { Server as NativeHttpServer } from "node:http";
 import {
   createVeryfrontServer,
   startNodeVeryfrontServer,
@@ -336,9 +337,15 @@ Deno.test("Node service shutdown runs runtime stop when server close fails", asy
 });
 
 Deno.test("Node service startup preserves transport error when lifecycle rollback fails", async () => {
+  const transportError = new Error("node listen failed");
   const cleanupError = new Error("lifecycle cleanup failed");
   const warnings: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
   const events: string[] = [];
+  const listenDescriptor = Object.getOwnPropertyDescriptor(
+    NativeHttpServer.prototype,
+    "listen",
+  );
+  const originalListen = NativeHttpServer.prototype.listen;
   const runtime = createVeryfrontServer({
     modules: [{
       name: "test",
@@ -350,26 +357,39 @@ Deno.test("Node service startup preserves transport error when lifecycle rollbac
       },
     }],
   });
-  const server = await startNodeVeryfrontServer({
-    runtime,
-    port: -1,
-    bindAddress: "127.0.0.1",
-    signals: [],
-    logger: {
-      warn: (message, metadata) => warnings.push({ message, metadata }),
-    },
-  });
 
-  const rejected = await assertRejects(() => server.ready, RangeError, "options.port");
-  const startupErrorMessage = rejected instanceof Error ? rejected.message : String(rejected);
+  NativeHttpServer.prototype.listen = function (): NativeHttpServer {
+    throw transportError;
+  } as typeof originalListen;
 
-  assertStrictEquals(rejected === cleanupError, false);
-  assertEquals(events, ["runtime-shutdown", "runtime-stop"]);
-  assertEquals(warnings, [{
-    message: "Veryfront service server cleanup failed during startup rollback",
-    metadata: {
-      startupError: startupErrorMessage,
-      cleanupError: cleanupError.message,
-    },
-  }]);
+  try {
+    const server = await startNodeVeryfrontServer({
+      runtime,
+      port: 0,
+      bindAddress: "127.0.0.1",
+      signals: [],
+      logger: {
+        warn: (message, metadata) => warnings.push({ message, metadata }),
+      },
+    });
+
+    const rejected = await assertRejects(() => server.ready, Error, "node listen failed");
+    const startupErrorMessage = rejected instanceof Error ? rejected.message : String(rejected);
+
+    assertStrictEquals(rejected, transportError);
+    assertEquals(events, ["runtime-shutdown", "runtime-stop"]);
+    assertEquals(warnings, [{
+      message: "Veryfront service server cleanup failed during startup rollback",
+      metadata: {
+        startupError: startupErrorMessage,
+        cleanupError: cleanupError.message,
+      },
+    }]);
+  } finally {
+    if (listenDescriptor !== undefined) {
+      Object.defineProperty(NativeHttpServer.prototype, "listen", listenDescriptor);
+    } else {
+      Reflect.deleteProperty(NativeHttpServer.prototype, "listen");
+    }
+  }
 });

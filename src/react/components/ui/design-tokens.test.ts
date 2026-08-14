@@ -44,4 +44,48 @@ describe("design-tokens dual scope", () => {
     assertStringIncludes(css, '[data-theme="dark"][data-vf-chat]:not([data-vf-theme])');
     assertStringIncludes(css, '[data-theme="dark"][data-vf-ui]:not([data-vf-theme])');
   });
+
+  it("keeps light alert fills and provides dark-mode alert surfaces", () => {
+    const css = generateTokenCSS();
+
+    assertStringIncludes(css, "--alert-error-bg:#ECD3D1");
+    assertStringIncludes(
+      css,
+      "--alert-warning-bg:color-mix(in oklch,var(--status-warning) 18%,var(--background))",
+    );
+    assertStringIncludes(
+      css,
+      "--alert-error-bg:color-mix(in oklch,var(--status-error) 18%,var(--background))",
+    );
+    assertStringIncludes(
+      css,
+      "--alert-success-bg:color-mix(in oklch,var(--status-success) 18%,var(--background))",
+    );
+    assertStringIncludes(
+      css,
+      "--alert-info-bg:color-mix(in oklch,var(--status-info) 18%,var(--background))",
+    );
+  });
+
+  it("ships a border token for every alert fill, in both color modes", () => {
+    const css = generateTokenCSS();
+
+    // `Alert` resolves `border-[var(--alert-*-border)]`. A fill without its
+    // border token would leave the border color invalid and fall back to
+    // currentColor, so the pairs must stay in lockstep.
+    for (
+      const [variant, light] of Object.entries({
+        warning: "#F5BA67",
+        error: "#E06E7B",
+        success: "#6FB57C",
+        info: "#ADADAA",
+      })
+    ) {
+      assertStringIncludes(css, `--alert-${variant}-border:${light}`);
+      assertStringIncludes(
+        css,
+        `--alert-${variant}-border:color-mix(in oklch,var(--status-${variant}) 40%,var(--background))`,
+      );
+    }
+  });
 });

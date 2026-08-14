@@ -28,6 +28,10 @@ const recommendations = new Map<string, string>([
   ["SqliteStore", "@veryfront/ext-db-sqlite"],
   ["SandboxShellToolsProvider", "@veryfront/ext-sandbox-shell-tools"],
   ["NodeWebSocketServerProvider", "@veryfront/ext-node-websocket-ws"],
+  // Skill frontmatter decoding and general YAML decoding are both satisfied by
+  // the single parser bundled in ext-yaml.
+  ["SkillDocumentParserProvider", "@veryfront/ext-yaml"],
+  ["YamlParserProvider", "@veryfront/ext-yaml"],
 ]);
 
 /** Return recommendation. */

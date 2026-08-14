@@ -13,7 +13,7 @@ import {
   getConnectorNames,
   getIcon,
   getRemoteIntegrationToolDefinitions,
-  isRemoteIntegrationTool,
+  getRemoteIntegrationToolDiscovery,
 } from "veryfront/integrations";
 ```
 
@@ -24,12 +24,14 @@ import {
   getConnector,
   getIcon,
   getRemoteIntegrationToolDefinitions,
+  getRemoteIntegrationToolDiscovery,
   listConnectors,
 } from "veryfront/integrations";
 
 const connectors = listConnectors();
 const slack = getConnector("slack");
 const slackIcon = getIcon("slack"); // raw SVG string
+const discovery = await getRemoteIntegrationToolDiscovery();
 const runtimeTools = await getRemoteIntegrationToolDefinitions();
 ```
 
@@ -52,25 +54,27 @@ const runtimeTools = await getRemoteIntegrationToolDefinitions();
 
 | Name                                  | Description                                                                                                                                                                                                                                                   | Source                                                                                                |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `executeRemoteIntegrationTool`        | Execute a remote integration tool via the API. Called by the agent runtime when a tool isn't found in the local registry. The request, response, and caller-supplied cancellation signal remain bounded for the complete network and response-body lifecycle. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts#L665) |
-| `getConnector`                        | Return connector.                                                                                                                                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/index.ts#L49)         |
-| `getConnectorNames`                   | Return connector names.                                                                                                                                                                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/index.ts#L60)         |
-| `getIcon`                             | Return icon.                                                                                                                                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/index.ts#L65)         |
-| `getRemoteIntegrationToolDefinitions` | Fetch integration tool definitions for the current request context. Returns ToolDefinition[] that the agent runtime merges into the model's available tools. Returns empty array if no API config or no tools.                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts#L618) |
-| `isRemoteIntegrationTool`             | Check if a tool name looks like a remote integration tool. Integration tools use "integration__tool_id" format (double underscore separator).                                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts#L655) |
-| `listConnectors`                      | List connectors.                                                                                                                                                                                                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/index.ts#L55)         |
+| `executeRemoteIntegrationTool`        | Execute a remote integration tool via the API. Called by the agent runtime when a tool isn't found in the local registry. The request, response, and caller-supplied cancellation signal remain bounded for the complete network and response-body lifecycle. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts#L827) |
+| `getConnector`                        | Return connector.                                                                                                                                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/index.ts#L51)         |
+| `getConnectorNames`                   | Return connector names.                                                                                                                                                                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/index.ts#L62)         |
+| `getIcon`                             | Return icon.                                                                                                                                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/index.ts#L67)         |
+| `getRemoteIntegrationToolDefinitions` | Fetch integration tool definitions for the current request context.                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts#L806) |
+| `getRemoteIntegrationToolDiscovery`   | Discover integration tools for the current request context.                                                                                                                                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts#L757) |
+| `isRemoteIntegrationTool`             | Check if a tool name looks like a remote integration tool. Integration tools use "integration__tool_id" format (double underscore separator).                                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts#L817) |
+| `listConnectors`                      | List connectors.                                                                                                                                                                                                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/index.ts#L57)         |
 
 ### Types
 
-| Name                                   | Description                                                                           | Source                                                                                          |
-| -------------------------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `EnvVarConfig`                         | Configuration used by env var.                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L482) |
-| `IntegrationConfig`                    | Configuration used by integration.                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L496) |
-| `IntegrationConnector`                 | Public API contract for integration connector.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/types.ts#L75)   |
-| `IntegrationEndpointHistoricalSummary` | Provider-declared summary contract for old tool outputs kept actionable across turns. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L490) |
-| `IntegrationName`                      | Public API contract for integration name.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L480) |
-| `IntegrationPrompt`                    | Public API contract for integration prompt.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L494) |
-| `IntegrationTool`                      | Public API contract for integration tool.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/types.ts#L66)   |
-| `IntegrationToolMeta`                  | Public API contract for integration tool meta.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L488) |
-| `OAuthConfig`                          | Configuration used by oauth.                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L486) |
-| `OAuthField`                           | Public API contract for oauth field.                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L484) |
+| Name                                   | Description                                                                           | Source                                                                                               |
+| -------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `EnvVarConfig`                         | Configuration used by env var.                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L482)      |
+| `IntegrationConfig`                    | Configuration used by integration.                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L496)      |
+| `IntegrationConnector`                 | Public API contract for integration connector.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/types.ts#L75)        |
+| `IntegrationEndpointHistoricalSummary` | Provider-declared summary contract for old tool outputs kept actionable across turns. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L490)      |
+| `IntegrationName`                      | Public API contract for integration name.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L480)      |
+| `IntegrationPrompt`                    | Public API contract for integration prompt.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L494)      |
+| `IntegrationTool`                      | Public API contract for integration tool.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/types.ts#L66)        |
+| `IntegrationToolMeta`                  | Public API contract for integration tool meta.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L488)      |
+| `OAuthConfig`                          | Configuration used by oauth.                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L486)      |
+| `OAuthField`                           | Public API contract for oauth field.                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L484)      |
+| `RemoteIntegrationToolDiscoveryResult` | Result of listing the integration tools available to the current run.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts#L84) |

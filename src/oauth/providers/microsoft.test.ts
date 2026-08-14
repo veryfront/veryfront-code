@@ -8,7 +8,7 @@ describe("Microsoft OAuth provider configs", () => {
     for (const config of [outlookConfig, teamsConfig, sharePointConfig, oneDriveConfig]) {
       const connector = JSON.parse(
         await Deno.readTextFile(
-          `cli/templates/integrations/${config.serviceId}/connector.json`,
+          `templates/integrations/${config.serviceId}/connector.json`,
         ),
       ) as { auth: { scopes: string[] } };
       assertEquals(config.defaultScopes, connector.auth.scopes);

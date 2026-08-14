@@ -45,7 +45,9 @@ jobs:
         run: |
           case "${{ matrix.check }}" in
             format) deno fmt --check ;;
-            lint) deno task lint && deno task lint:core-deps && deno task lint:dependency-boundaries && deno task lint:module-boundaries && deno task lint:extension-contracts && deno task lint:extension-capabilities && deno task lint:ban-test-only && deno task lint:sanitizer-baseline && deno task lint:skipped-tests && deno task lint:chat-ratchets && deno task lint:esm-sh-codemod && deno task lint:test-typecheck && deno task storybook:check && deno task docs:api-reference:check && deno test --frozen --config=scripts/test.deno.json --no-check --allow-read --allow-write scripts/ci/setup-deno-workflow.test.ts scripts/build/generated-artifact-checks.test.ts ;;
+            # The chain lives in the lint:ci task so a contributor can run this
+            # shard locally instead of learning what it covers from a red CI run.
+            lint) deno task lint:ci ;;
             typecheck) deno task typecheck ;;
           esac
 
@@ -89,6 +91,49 @@ jobs:
           max_attempts: 3
           retry_wait_seconds: 10
           command: VF_DISABLE_LRU_INTERVAL=1 deno task test:integration --no-lock
+
+  tests-node:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    name: tests (node)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+        with:
+          warm-cache: "true"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Run Node runtime suite
+        run: deno task test:node
+
+  tests-bun:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    name: tests (bun)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+        with:
+          warm-cache: "true"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.6"
+      - name: Run Bun runtime suite
+        run: deno task test:bun
 
   coverage-shards:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -182,7 +227,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
-      - name: Configure apt retries and mirrors
+      - name: Configure apt sources, retries, and mirrors
         run: |
           sudo sed -i \
             -e 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
@@ -194,6 +239,29 @@ jobs:
             echo 'Acquire::http::Timeout "30";'
             echo 'Acquire::https::Timeout "30";'
           } | sudo tee /etc/apt/apt.conf.d/99veryfront-ci-retries
+
+          # `playwright install --with-deps` shells out to `apt-get update`, which
+          # consults every repository configured on the runner image and fails the
+          # whole install when any single one of them is unreachable. The image
+          # ships third-party repositories (packages.microsoft.com/repos/azure-cli,
+          # packages.microsoft.com/ubuntu/24.04/prod, dl.google.com, ...) that
+          # Chromium's system libraries never come from, so an outage there is pure
+          # noise -- and because it is a persistent 403 rather than a blip, retrying
+          # cannot clear it. Park every non-Ubuntu source for the life of this job so
+          # only the archive that actually serves the dependencies can gate us.
+          if grep -rqE '\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
+            sudo mkdir -p /etc/apt/sources.list.d.disabled
+            for source_file in /etc/apt/sources.list.d/*; do
+              [ -f "${source_file}" ] || continue
+              if grep -qE '\.ubuntu\.com' "${source_file}"; then
+                continue
+              fi
+              sudo mv "${source_file}" /etc/apt/sources.list.d.disabled/
+              echo "Disabled apt source unrelated to Chromium deps: ${source_file}"
+            done
+          else
+            echo "::warning::No Ubuntu archive apt source detected; leaving apt sources untouched"
+          fi
       - name: Install Chromium
         timeout-minutes: 15
         run: |
@@ -251,7 +319,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
-      - name: Configure apt retries and mirrors
+      - name: Configure apt sources, retries, and mirrors
         run: |
           sudo sed -i \
             -e 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
@@ -263,6 +331,29 @@ jobs:
             echo 'Acquire::http::Timeout "30";'
             echo 'Acquire::https::Timeout "30";'
           } | sudo tee /etc/apt/apt.conf.d/99veryfront-ci-retries
+
+          # `playwright install --with-deps` shells out to `apt-get update`, which
+          # consults every repository configured on the runner image and fails the
+          # whole install when any single one of them is unreachable. The image
+          # ships third-party repositories (packages.microsoft.com/repos/azure-cli,
+          # packages.microsoft.com/ubuntu/24.04/prod, dl.google.com, ...) that
+          # Chromium's system libraries never come from, so an outage there is pure
+          # noise -- and because it is a persistent 403 rather than a blip, retrying
+          # cannot clear it. Park every non-Ubuntu source for the life of this job so
+          # only the archive that actually serves the dependencies can gate us.
+          if grep -rqE '\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
+            sudo mkdir -p /etc/apt/sources.list.d.disabled
+            for source_file in /etc/apt/sources.list.d/*; do
+              [ -f "${source_file}" ] || continue
+              if grep -qE '\.ubuntu\.com' "${source_file}"; then
+                continue
+              fi
+              sudo mv "${source_file}" /etc/apt/sources.list.d.disabled/
+              echo "Disabled apt source unrelated to Chromium deps: ${source_file}"
+            done
+          else
+            echo "::warning::No Ubuntu archive apt source detected; leaving apt sources untouched"
+          fi
       - name: Install Chromium
         timeout-minutes: 15
         run: |
@@ -334,6 +425,10 @@ jobs:
         run: npm --prefix storybook ci --ignore-scripts
       - name: Check published package types
         run: deno task typecheck:consumer
+      - name: Report npm package size
+        run: |
+          deno run --allow-read --allow-run=npm scripts/build/report-artifact-sizes.ts --npm-package npm \
+            | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Clean-room install/import smoke
         run: bash scripts/test/npm-install-smoke.sh
 
@@ -471,7 +566,25 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
-      - run: deno task build:prepare
+      # Caches npm packages from the registry. A truncated response
+      # ("error reading a body from connection") fails the whole leg, so retry
+      # before giving up rather than reddening a build on registry weather.
+      - name: Prepare build dependencies
+        shell: bash
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3; do
+            if deno task build:prepare; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              delay=$((attempt * 10))
+              echo "build:prepare failed (attempt ${attempt}/3); retrying in ${delay}s" >&2
+              sleep "$delay"
+            fi
+          done
+          echo "build:prepare failed after 3 attempts" >&2
+          exit 1
       - name: Verify proxy dependency lock is current
         run: |
           deno task build:proxy-lock
@@ -541,7 +654,25 @@ jobs:
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
 
-      - run: deno task build:prepare
+      # Caches npm packages from the registry. A truncated response
+      # ("error reading a body from connection") fails the whole leg, so retry
+      # before giving up rather than reddening a build on registry weather.
+      - name: Prepare build dependencies
+        shell: bash
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3; do
+            if deno task build:prepare; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              delay=$((attempt * 10))
+              echo "build:prepare failed (attempt ${attempt}/3); retrying in ${delay}s" >&2
+              sleep "$delay"
+            fi
+          done
+          echo "build:prepare failed after 3 attempts" >&2
+          exit 1
 
       - name: Verify proxy dependency lock is current
         if: matrix.profile == 'proxy'
@@ -558,6 +689,12 @@ jobs:
             --profile ${{ matrix.profile }} \
             --target ${{ matrix.target }} \
             --output ${{ matrix.name }}
+
+      - name: Report binary size
+        shell: bash
+        run: |
+          deno run --allow-read scripts/build/report-artifact-sizes.ts ./${{ matrix.name }} \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Smoke test proxy binary
         if: matrix.name == 'veryfront-proxy-linux-x64'
@@ -629,7 +766,10 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
+          deno run -A scripts/ci/prepare-rc-build.ts
           deno task build:npm
+          deno run --allow-read --allow-run=npm scripts/build/report-artifact-sizes.ts --npm-package npm \
+            | tee -a "$GITHUB_STEP_SUMMARY"
           scripts/ci/publish-npm-packages.sh rc-publish
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -796,6 +936,8 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           deno task build:npm
+          deno run --allow-read --allow-run=npm scripts/build/report-artifact-sizes.ts --npm-package npm \
+            | tee -a "$GITHUB_STEP_SUMMARY"
           scripts/ci/publish-npm-packages.sh release-publish
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -837,6 +979,19 @@ jobs:
           echo "Available binaries: $BINARIES"
           echo "Available SBOMs: $SBOMS"
 
+          # Publish a checksum manifest alongside the assets. install.sh verifies a
+          # downloaded binary against this before moving it into place, so the
+          # manifest must name assets exactly as they are uploaded -- basenames,
+          # not the artifact paths they were downloaded to.
+          SUMS_FILE="SHA256SUMS"
+          : > "$SUMS_FILE"
+          for f in $BINARIES scripts/install.sh scripts/install.ps1; do
+            [ -f "$f" ] || continue
+            sha256sum "$f" | sed "s#  .*/#  #" >> "$SUMS_FILE"
+          done
+          echo "Checksum manifest:"
+          cat "$SUMS_FILE"
+
           # Clean up rc pre-releases (created by the prerelease job on main pushes)
           gh release list --repo veryfront/veryfront --json tagName -q ".[].tagName" \
             | grep "^v${VERSION}-rc\." \
@@ -856,6 +1011,7 @@ jobs:
           npm install -g veryfront
           ```' \
             $BINARIES \
+            "$SUMS_FILE" \
             scripts/install.sh \
             scripts/install.ps1 \
             $SBOMS

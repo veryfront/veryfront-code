@@ -62,7 +62,7 @@ await loader.teardownAll();
 | `discoverPackageExtensions`      | Discover auto-activated package extensions without exposing identity internals.                                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L396)                          |
 | `discoverProjectExtensions`      | Discover project extension paths without exposing identity internals.                                                                                                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L530)                          |
 | `formatCapabilities`             | Format capabilities as human-readable strings for logging.                                                                                                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L36)                        |
-| `getRecommendation`              | Return recommendation.                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/recommendations.ts#L34)                     |
+| `getRecommendation`              | Return recommendation.                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/recommendations.ts#L38)                     |
 | `isSupportedDenoSystemReadApi`   |                                                                                                                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L110)                       |
 | `loadExtensionFactory`           | Dynamically import an extension factory from `path` and resolve it.                                                                                                                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/factory-loader.ts#L100)                     |
 | `mapToDenoPermissions`           | Map capabilities to Deno CLI permission flags.                                                                                                                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L795)                       |
@@ -651,22 +651,22 @@ import {
 
 | Name                               | Description                                                        | Source                                                                                                           |
 | ---------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `createEvalReportExporterRegistry` | Create an eval report exporter registry.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L304) |
-| `redactEvalReportForExport`        | Create an eval report copy with external-export redaction applied. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L225) |
+| `createEvalReportExporterRegistry` | Create an eval report exporter registry.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L327) |
+| `redactEvalReportForExport`        | Create an eval report copy with external-export redaction applied. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L247) |
 
 #### Types
 
 | Name                           | Description                                                                 | Source                                                                                                           |
 | ------------------------------ | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `EvalReportExportContext`      | Context passed to eval report exporters.                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L56)  |
-| `EvalReportExporter`           | Vendor or backend implementation that receives sanitized eval reports.      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L80)  |
-| `EvalReportExporterRegistry`   | Registry contract. Single impl created at bootstrap.                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L109) |
-| `EvalReportExportFailure`      | Failed exporter result. Failures are captured so later exporters still run. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L97)  |
-| `EvalReportExportReceipt`      | Optional receipt returned by a vendor exporter.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L73)  |
+| `EvalReportExportContext`      | Context passed to eval report exporters.                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L59)  |
+| `EvalReportExporter`           | Vendor or backend implementation that receives sanitized eval reports.      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L83)  |
+| `EvalReportExporterRegistry`   | Registry contract. Single impl created at bootstrap.                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L112) |
+| `EvalReportExportFailure`      | Failed exporter result. Failures are captured so later exporters still run. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L100) |
+| `EvalReportExportReceipt`      | Optional receipt returned by a vendor exporter.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L76)  |
 | `EvalReportExportRedaction`    | Redaction policy applied before reports leave the process.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L25)  |
-| `EvalReportExportResult`       | Result for one exporter invocation.                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L104) |
-| `EvalReportExportSuccess`      | Successful exporter result.                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L90)  |
-| `EvalReportExportTraceContext` | Trace correlation fields that connect eval exports to runtime spans.        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L49)  |
+| `EvalReportExportResult`       | Result for one exporter invocation.                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L107) |
+| `EvalReportExportSuccess`      | Successful exporter result.                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L93)  |
+| `EvalReportExportTraceContext` | Trace correlation fields that connect eval exports to runtime spans.        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/eval/eval-report-exporter.ts#L52)  |
 
 ### `veryfront/extensions/first-party-import`
 
@@ -801,12 +801,12 @@ import {
 
 ### `veryfront/extensions/parser`
 
-Parser category barrel - CodeParser (AST traversal) contract.
+Parser category barrel: CodeParser (AST traversal), SkillDocumentParser (Skill frontmatter decoding), and YamlParser (general YAML decoding) contracts.
 
 ```ts
 import {
   createSkillDocumentParserProvider,
-  SkillDocumentParserProviderName,
+  createYamlParserProvider,
   snapshotSkillDocumentParserProvider,
 } from "veryfront/extensions/parser";
 ```
@@ -816,28 +816,33 @@ import {
 | Name                              | Description                                                       | Source                                                                                                              |
 | --------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `SkillDocumentParserProviderName` | Stable runtime identifier for the Skill document parser contract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/skill-document-parser.ts#L158) |
+| `YamlParserProviderName`          | Stable runtime identifier for the general YAML parser contract.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/yaml-parser.ts#L22)            |
 
 #### Functions
 
 | Name                                  | Description                                                                                                                                       | Source                                                                                                              |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `createSkillDocumentParserProvider`   | Create immutable provider registration metadata from a standalone parser.                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/skill-document-parser.ts#L261) |
+| `createYamlParserProvider`            | Create immutable provider registration metadata from a standalone parser.                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/yaml-parser.ts#L101)           |
 | `snapshotSkillDocumentParserProvider` | Capture one immutable provider generation without retaining its mutable registration object or invoking extension-owned accessors or Proxy traps. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/skill-document-parser.ts#L183) |
+| `snapshotYamlParserProvider`          | Capture one immutable provider generation.                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/yaml-parser.ts#L68)            |
 
 #### Types
 
-| Name                            | Description                                                           | Source                                                                                                              |
-| ------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `ASTNode`                       | A single node in an abstract syntax tree.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L10)            |
-| `CodeParser`                    | Public API contract for code parser.                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L90)            |
-| `FunctionDirectiveOptions`      | Options for a parser-owned function directive check.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L54)            |
-| `GenerateOptions`               | Options passed to `CodeParser.generate`.                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L60)            |
-| `GenerateResult`                | Result returned from `CodeParser.generate`.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L70)            |
-| `InjectJsxNodePositionsOptions` | Options for `CodeParser.injectJsxNodePositions`.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L84)            |
-| `NodePath`                      | Wrapper providing traversal context for a visited node.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L22)            |
-| `ParseOptions`                  | Options passed to `CodeParser.parse`.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L44)            |
-| `SkillDocumentParserProvider`   | Dependency-free contract implemented by Skill YAML parser extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/skill-document-parser.ts#L161) |
-| `TraverseVisitor`               | Visitor callbacks keyed by node type.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L34)            |
+| Name                            | Description                                                                                                                                         | Source                                                                                                              |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `ASTNode`                       | A single node in an abstract syntax tree.                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L10)            |
+| `CodeParser`                    | Public API contract for code parser.                                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L90)            |
+| `FunctionDirectiveOptions`      | Options for a parser-owned function directive check.                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L54)            |
+| `GenerateOptions`               | Options passed to `CodeParser.generate`.                                                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L60)            |
+| `GenerateResult`                | Result returned from `CodeParser.generate`.                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L70)            |
+| `InjectJsxNodePositionsOptions` | Options for `CodeParser.injectJsxNodePositions`.                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L84)            |
+| `NodePath`                      | Wrapper providing traversal context for a visited node.                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L22)            |
+| `ParseOptions`                  | Options passed to `CodeParser.parse`.                                                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L44)            |
+| `SkillDocumentParserProvider`   | Dependency-free contract implemented by Skill YAML parser extensions.                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/skill-document-parser.ts#L161) |
+| `TraverseVisitor`               | Visitor callbacks keyed by node type.                                                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L34)            |
+| `YamlParseOptions`              | Decoding options, named after the `@std/yaml` options the framework's call sites already pass so that repointing a call site is a specifier change. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/yaml-parser.ts#L28)            |
+| `YamlParserProvider`            | Dependency-free contract implemented by YAML parser extensions.                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/yaml-parser.ts#L43)            |
 
 ### `veryfront/extensions/rendering`
 

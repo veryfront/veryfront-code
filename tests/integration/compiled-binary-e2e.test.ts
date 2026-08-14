@@ -717,6 +717,38 @@ export function GET() {
     });
   });
 
+  it("should expose root package exports to compiled-binary API routes", async () => {
+    const projectDir = await createTestProject(
+      "api-root-exports-test",
+      `
+export default function Home() {
+  return <div>Home Page</div>;
+}
+`,
+      {
+        "pages/api/validated.ts": `
+import { createValidatedHandler } from "veryfront";
+
+export function GET() {
+  return Response.json({ exportType: typeof createValidatedHandler });
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/validated`);
+      const body = await response.text();
+
+      assertEquals(
+        response.status,
+        200,
+        `Should return 200\nResponse body: ${body}\n${server.logs.join("").slice(-16000)}`,
+      );
+      assertEquals(JSON.parse(body), { exportType: "function" });
+    });
+  });
+
   // Production ran exactly this flag combination and every project API route
   // returned a masked 500.
   it("serves API routes when a compiled binary cannot honour WORKER_ISOLATION_API but host execution is granted", async () => {
@@ -3283,6 +3315,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         PRODUCTION_MODE: "1",
         VERYFRONT_TRUST_FORWARDED_HEADERS: "1",
         VERYFRONT_API_BASE_URL: UNREACHABLE_LOCAL_PROXY_API_BASE_URL,
+        VERYFRONT_API_INTERNAL_USER: "test-internal-user",
+        VERYFRONT_API_INTERNAL_PASS: "test-internal-pass",
         VERYFRONT_API_TOKEN: "",
       },
     );
@@ -3354,6 +3388,8 @@ export default function Home() {
         PRODUCTION_MODE: "1",
         VERYFRONT_TRUST_FORWARDED_HEADERS: "1",
         VERYFRONT_API_BASE_URL: UNREACHABLE_LOCAL_PROXY_API_BASE_URL,
+        VERYFRONT_API_INTERNAL_USER: "test-internal-user",
+        VERYFRONT_API_INTERNAL_PASS: "test-internal-pass",
         VERYFRONT_API_TOKEN: "",
       },
     );

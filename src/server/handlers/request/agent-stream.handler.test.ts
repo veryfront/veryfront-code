@@ -2953,7 +2953,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(result.response.headers.get("content-type"), "application/problem+json");
       assertEquals(
         (await result.response.json()).type,
-        "https://veryfront.com/docs/errors/permission-denied",
+        "https://veryfront.com/docs/code/guides/errors#permission-denied",
       );
       assertEquals(discoveryCalls, 0);
       assertEquals(redirect, "error");

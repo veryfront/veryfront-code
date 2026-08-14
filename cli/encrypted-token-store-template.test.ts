@@ -13,9 +13,9 @@ import {
   createEncryptedTokenStore,
   type EncryptedKvBackend,
   generateEncryptionKey,
-} from "./templates/integrations/_base/files/lib/encrypted-token-store.ts";
-import { createMemoryKvBackend } from "./templates/integrations/_base/files/lib/token-store-examples.ts";
-import { createTokenStore } from "./templates/integrations/_base/files/lib/token-store.ts";
+} from "../templates/integrations/_base/files/lib/encrypted-token-store.ts";
+import { createMemoryKvBackend } from "../templates/integrations/_base/files/lib/token-store-examples.ts";
+import { createTokenStore } from "../templates/integrations/_base/files/lib/token-store.ts";
 
 const ENVELOPE_PREFIX = "vf-aes-gcm.v2:";
 const LEGACY_ENVELOPE_PREFIX = "vf-aes-gcm.v1:";

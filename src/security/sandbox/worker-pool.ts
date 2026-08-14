@@ -1242,6 +1242,42 @@ let _flagsResolved = false;
 let _apiIsolation = false;
 let _dataIsolation = false;
 let _ssrIsolation = false;
+let _posture: IsolationPosture | null = null;
+
+/** What one isolation surface was asked for versus what it resolved to. */
+export interface IsolationSurfacePosture {
+  /** The operator set both the master switch and this surface's flag. */
+  requested: boolean;
+  /** The resolved gate this surface's callers actually consult. */
+  effective: boolean;
+}
+
+/**
+ * The resolved isolation configuration, as an operator would need to read it.
+ *
+ * `requested` and `effective` are separate fields because they diverge: API
+ * isolation is requested and not effective when it is downgraded under an
+ * explicit host-execution grant. `inForce` is the field that answers the
+ * question the per-surface booleans cannot: whether the configuration as a
+ * whole isolates anything at all.
+ */
+export interface IsolationPosture {
+  /** WORKER_ISOLATION_ENABLED. On its own it enables no surface. */
+  master: boolean;
+  api: IsolationSurfacePosture;
+  data: IsolationSurfacePosture;
+  ssr: IsolationSurfacePosture;
+  /**
+   * Whether this runtime can prepare isolated API route source at all
+   * (security/sandbox/isolation-capability.ts). When false with
+   * `api.effective` true, API routes fail closed rather than execute.
+   */
+  apiPreparationSupported: boolean;
+  /** VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION. */
+  hostExecutionGranted: boolean;
+  /** True when at least one surface actually resolved to isolated execution. */
+  inForce: boolean;
+}
 
 /**
  * Resolve the host-owned isolation flags once per process.
@@ -1259,9 +1295,12 @@ function resolveFlags(): void {
   // Isolation is host-owned security policy. Project env overlays must never
   // enable or disable it for the framework process.
   const master = getHostEnvBoolean("WORKER_ISOLATION_ENABLED", false);
-  const apiRequested = master && getHostEnvBoolean("WORKER_ISOLATION_API", false);
-  _dataIsolation = master && getHostEnvBoolean("WORKER_ISOLATION_DATA", false);
-  _ssrIsolation = master && getHostEnvBoolean("WORKER_ISOLATION_SSR", false);
+  const apiFlag = getHostEnvBoolean("WORKER_ISOLATION_API", false);
+  const dataFlag = getHostEnvBoolean("WORKER_ISOLATION_DATA", false);
+  const ssrFlag = getHostEnvBoolean("WORKER_ISOLATION_SSR", false);
+  const apiRequested = master && apiFlag;
+  _dataIsolation = master && dataFlag;
+  _ssrIsolation = master && ssrFlag;
 
   const preparationSupported = isIsolatedApiPreparationSupported();
   const hostExecutionGranted = isHostProjectExecutionOverrideEnabled();
@@ -1269,6 +1308,59 @@ function resolveFlags(): void {
 
   _apiIsolation = apiRequested && !downgraded;
   _flagsResolved = true;
+
+  const effectiveSurfaces = [_apiIsolation, _dataIsolation, _ssrIsolation]
+    .filter(Boolean).length;
+  _posture = {
+    master,
+    api: { requested: apiRequested, effective: _apiIsolation },
+    data: { requested: _dataIsolation, effective: _dataIsolation },
+    ssr: { requested: _ssrIsolation, effective: _ssrIsolation },
+    apiPreparationSupported: preparationSupported,
+    hostExecutionGranted,
+    inForce: effectiveSurfaces > 0,
+  };
+
+  // A capability configured on that quietly resolves to off reads as safe to
+  // anyone auditing the environment, so say so once at resolution. The master
+  // switch is a gate, not a surface: on its own it isolates nothing, and a
+  // surface flag without it is inert in the other direction.
+  if (master && effectiveSurfaces === 0) {
+    logger.warn(
+      "WORKER_ISOLATION_ENABLED is set but no isolation surface is in force; the master switch enables nothing on its own",
+      {
+        effectiveSurfaces,
+        requiredFlags: ["WORKER_ISOLATION_API", "WORKER_ISOLATION_DATA", "WORKER_ISOLATION_SSR"],
+        workerIsolationApi: apiFlag,
+        workerIsolationData: dataFlag,
+        workerIsolationSsr: ssrFlag,
+      },
+    );
+  } else if (!master && (apiFlag || dataFlag || ssrFlag)) {
+    logger.warn(
+      "Worker isolation surface flags are set but WORKER_ISOLATION_ENABLED is not; every surface resolves to off",
+      {
+        effectiveSurfaces,
+        workerIsolationApi: apiFlag,
+        workerIsolationData: dataFlag,
+        workerIsolationSsr: ssrFlag,
+      },
+    );
+  } else {
+    // Resolution is operator-relevant only once something is actually
+    // configured. A project that asked for no isolation has nothing to act on,
+    // and this line would otherwise be the only output a successful dev request
+    // produces, so keep the default posture at DEBUG.
+    const report = effectiveSurfaces > 0 ? logger.info : logger.debug;
+    report.call(logger, "Worker isolation posture resolved", {
+      master,
+      effectiveSurfaces,
+      workerIsolationApi: _apiIsolation,
+      workerIsolationData: _dataIsolation,
+      workerIsolationSsr: _ssrIsolation,
+      apiPreparationSupported: preparationSupported,
+    });
+  }
 
   if (downgraded) {
     logger.warn(
@@ -1295,8 +1387,34 @@ function resolveFlags(): void {
 }
 
 /**
+ * The resolved isolation configuration, for the startup log.
+ *
+ * The boolean accessors below each answer for one surface and cannot tell an
+ * operator that the configuration as a whole resolved to nothing. Resolves the
+ * flags on first call, exactly as those accessors do.
+ *
+ * Do not publish this snapshot on an unauthenticated response such as
+ * `/_health`: it tells an anonymous caller which realm tenant code runs in.
+ */
+export function getIsolationPosture(): IsolationPosture {
+  resolveFlags();
+  // resolveFlags always assigns _posture; the fallback keeps the type honest.
+  return _posture ?? {
+    master: false,
+    api: { requested: false, effective: false },
+    data: { requested: false, effective: false },
+    ssr: { requested: false, effective: false },
+    apiPreparationSupported: isIsolatedApiPreparationSupported(),
+    hostExecutionGranted: false,
+    inForce: false,
+  };
+}
+
+/**
  * Whether worker isolation is enabled for API routes.
- * Controlled by WORKER_ISOLATION_API=1 (or WORKER_ISOLATION_ENABLED=1 as master switch).
+ *
+ * Requires both WORKER_ISOLATION_ENABLED=1 and WORKER_ISOLATION_API=1. The
+ * master switch alone enables no surface; see `getIsolationPosture`.
  */
 export function isWorkerIsolationEnabled(): boolean {
   resolveFlags();
@@ -1393,5 +1511,6 @@ export function __resetPoolForTests(): Promise<void> {
   _apiIsolation = false;
   _dataIsolation = false;
   _ssrIsolation = false;
+  _posture = null;
   return pool?.shutdown() ?? Promise.resolve();
 }

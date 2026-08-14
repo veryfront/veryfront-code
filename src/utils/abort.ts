@@ -1,6 +1,18 @@
-/** Convert an arbitrary abort reason into the framework's stable Error shape. */
+import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
+
+/**
+ * Convert an arbitrary abort reason into the framework's stable Error shape.
+ *
+ * A cancellation reason is one of the few values that routinely crosses a realm
+ * on its way here — it is minted by whoever called `abort()`, which can be a
+ * worker, a host runtime, or another instance of this module graph. Testing it
+ * with `instanceof` would drop those reasons on the floor and replace the real
+ * cause of a cancellation with a generic message, so the brand check is used
+ * instead. Reasons that are not errors at all (a string, `undefined`, a plain
+ * object) still become the framework's AbortError, as before.
+ */
 export function createAbortError(reason?: unknown): Error {
-  if (reason instanceof Error) {
+  if (isErrorAcrossRealms(reason)) {
     return reason;
   }
 

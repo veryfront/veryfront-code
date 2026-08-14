@@ -41,6 +41,7 @@ function buildContext(
     dependencyPinningSource: options.dependencyPinningSource,
     onDependencyResolutionObserved: options.onDependencyResolutionObserved,
     onProgress: options.onProgress,
+    abortSignal: options.abortSignal,
   };
 }
 

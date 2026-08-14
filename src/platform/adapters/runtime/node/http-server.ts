@@ -6,6 +6,7 @@ import {
 } from "../../base.ts";
 import type { NodeHttpServer, WSWebSocket, WSWebSocketServer } from "./types.ts";
 import { DEFAULT_PORT } from "../../../compat/constants.ts";
+import { isErrorAcrossRealms } from "../../../compat/error-introspection.ts";
 import { TIMEOUT_ERROR } from "#veryfront/errors/error-registry/general.ts";
 import {
   captureNodeWebSocketServer,
@@ -22,10 +23,15 @@ const pendingWebSocketUpgrades = new Map<
 const NODE_WEBSOCKET_UPGRADE_TIMEOUT_MS = 30_000;
 
 function isServerNotRunningError(error: Error): boolean {
-  const descriptor = Object.getOwnPropertyDescriptor(error, "code");
-  return descriptor !== undefined &&
-    "value" in descriptor &&
-    descriptor.value === "ERR_SERVER_NOT_RUNNING";
+  let current: object | null = error;
+  while (current && current !== Error.prototype && current !== Object.prototype) {
+    const descriptor = Object.getOwnPropertyDescriptor(current, "code");
+    if (descriptor !== undefined) {
+      return "value" in descriptor && descriptor.value === "ERR_SERVER_NOT_RUNNING";
+    }
+    current = Object.getPrototypeOf(current);
+  }
+  return false;
 }
 
 /** Private correlation header injected by Node upgrade transports. */
@@ -117,14 +123,9 @@ export class NodeServer implements Server {
               // startup coordinator retains ownership of any later
               // listening/error outcome.
               if (isServerNotRunningError(error)) {
-                if (
-                  this.transportState === "close-observed" ||
-                  this.transportState === "idle"
-                ) {
-                  settle();
-                  return;
-                }
                 if (observesClose && this.transportState === "pending") return;
+                settle();
+                return;
               }
               settle(error);
             });
@@ -580,14 +581,17 @@ async function createNodeServerInternal(
   if (onRuntimeError !== undefined && typeof onRuntimeError !== "function") {
     throw new TypeError("Node server runtime error callback must be a function");
   }
+  if (!Number.isInteger(port) || port < 0 || port > 65_535) {
+    throw new RangeError(`Node server port must be an integer from 0 to 65535, got ${port}`);
+  }
   if (signal?.aborted) {
-    throw signal.reason instanceof Error
+    throw isErrorAcrossRealms(signal.reason)
       ? signal.reason
       : new DOMException("Node server startup was aborted", "AbortError");
   }
   const { createServer } = await import("node:http");
   if (signal?.aborted) {
-    throw signal.reason instanceof Error
+    throw isErrorAcrossRealms(signal.reason)
       ? signal.reason
       : new DOMException("Node server startup was aborted", "AbortError");
   }
@@ -874,7 +878,7 @@ async function createNodeServerInternal(
     let invokingOnListen = false;
     let nativeListenOutcomePending = false;
     const abortError = (): Error =>
-      signal?.reason instanceof Error
+      isErrorAcrossRealms(signal?.reason)
         ? signal.reason
         : new DOMException("Node server startup was aborted", "AbortError");
     const rejectAfterCleanup = (error: unknown, cleanup: Promise<void>): void => {

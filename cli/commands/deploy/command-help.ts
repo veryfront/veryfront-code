@@ -7,6 +7,14 @@ export const deployHelp: CommandHelp = {
   usage: "veryfront deploy [options]",
   options: [
     {
+      flag: "-p, --project <slug>",
+      description: "Project to deploy (default: the project this directory is linked to)",
+    },
+    {
+      flag: "-d, --dir <path>",
+      description: "Project directory (default: current directory)",
+    },
+    {
       flag: "-b, --branch <name>",
       description: "Branch to release from (default: main)",
     },
@@ -33,13 +41,16 @@ export const deployHelp: CommandHelp = {
     "veryfront deploy --branch feature-x --environment staging",
     "veryfront deploy --release-name v1.2.0",
     "veryfront deploy --dry-run",
+    "veryfront deploy --project my-app --environment production",
   ],
   notes: [
     "Requires VERYFRONT_API_TOKEN or an authenticated Veryfront login",
     "Creates or links a project when veryfront.json is not present",
     "Promotes main when --branch is omitted",
     "Pushes main before the first deploy when no verified push exists",
+    "With --project, promotes only: the working directory is never pushed, so the selected project directory's push receipt must already name that project",
     "Creates a new release from the resolved branch",
     "Verifies the target environment points to the created deployment before succeeding",
+    "Warns when only the environment's access gate answered the readiness probe, so the app itself was never observed serving",
   ],
 };

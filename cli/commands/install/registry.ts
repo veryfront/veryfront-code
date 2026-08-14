@@ -1,4 +1,4 @@
-import manifest from "../../templates/manifest.json" with { type: "json" };
+import manifest from "../../../templates/manifest.json" with { type: "json" };
 import { type AITool, type AIToolId, AIToolIdSchema, AIToolSchema } from "./types.ts";
 
 const AI_TOOLS_RAW = [

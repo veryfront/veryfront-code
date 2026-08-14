@@ -38,12 +38,45 @@ export interface AgUiBrowserEncoderState {
   activeTextContentId: string | null;
   textContentIndex: number;
   reasoningMessageId: string | null;
+  /**
+   * How many reasoning spans have opened in this run. Optional so a state
+   * object built before this counter existed stays valid; absent reads as 0.
+   */
+  reasoningSpanIndex?: number;
   activeStepName: string | null;
   stepCount: number;
   streamedToolInputIds: Set<string>;
   sawVisibleOutput: boolean;
   sawTerminalError: boolean;
   metadata: AgUiBrowserRunFinishedMetadata;
+  /**
+   * Clock for `elapsedMs`, and the run-relative anchor it measures from. Absent
+   * only when a caller opts out; see `createAgUiBrowserEncoderState`.
+   */
+  nowMs?: () => number;
+  startedMs?: number;
+  /**
+   * Wall clock for `emittedAt`, in epoch milliseconds. Separate from `nowMs`
+   * because the two answer different questions and fail differently:
+   * `elapsedMs` is monotonic and safe for durations inside one run, while
+   * `emittedAt` is comparable across events, runs and services but can move
+   * backwards if the host clock is adjusted.
+   */
+  epochMs?: () => number;
+}
+
+/** Options for create AG-UI browser encoder state. */
+export interface AgUiBrowserEncoderStateOptions {
+  /**
+   * Clock used to stamp `elapsedMs`. Defaults to `performance.now`. Pass null
+   * to omit the stamp, which keeps exact-payload assertions deterministic.
+   */
+  nowMs?: (() => number) | null;
+  /**
+   * Wall clock used to stamp `emittedAt`, in epoch milliseconds. Defaults to
+   * `Date.now`. Pass null to omit the stamp.
+   */
+  epochMs?: (() => number) | null;
 }
 
 /** Event emitted for AG-UI browser encoded. */
@@ -53,13 +86,23 @@ export interface AgUiBrowserEncodedEvent {
 }
 
 /** State for create AG-UI browser encoder. */
-export function createAgUiBrowserEncoderState(): AgUiBrowserEncoderState {
+export function createAgUiBrowserEncoderState(
+  options: AgUiBrowserEncoderStateOptions = {},
+): AgUiBrowserEncoderState {
+  // Clocked by default. This state is built at three separate composition
+  // roots, so an opt-in clock only has to be forgotten once to lose elapsedMs
+  // for every run -- which is exactly what happened twice before.
+  const nowMs = options.nowMs === null ? undefined : options.nowMs ?? (() => performance.now());
+  const epochMs = options.epochMs === null ? undefined : options.epochMs ?? (() => Date.now());
   return {
+    ...(nowMs ? { nowMs, startedMs: nowMs() } : {}),
+    ...(epochMs ? { epochMs } : {}),
     messageId: null,
     textOpen: false,
     activeTextContentId: null,
     textContentIndex: 0,
     reasoningMessageId: null,
+    reasoningSpanIndex: 0,
     activeStepName: null,
     stepCount: 0,
     streamedToolInputIds: new Set<string>(),
@@ -94,24 +137,32 @@ function getMessageId(state: AgUiBrowserEncoderState, event: AgUiRuntimeStreamEv
   return state.messageId;
 }
 
+// A reasoning span is identified by its position in the run, not by the
+// provider's part id. Providers restart part ids at `reasoning-0` on every step,
+// so a part-id-derived id collides across every span of a multi-step run.
+// Ordinals also match the scheme veryfront-api uses when it rebuilds these
+// events for snapshots and terminal replay, so one span keeps one id whichever
+// path renders it.
+function openReasoningMessageId(state: AgUiBrowserEncoderState): string {
+  const index = state.reasoningSpanIndex ?? 0;
+  state.reasoningSpanIndex = index + 1;
+  state.reasoningMessageId = state.messageId
+    ? `${state.messageId}:reasoning:${index}`
+    : `reasoning:${index}`;
+  return state.reasoningMessageId;
+}
+
 function getReasoningMessageId(
   state: AgUiBrowserEncoderState,
-  event: AgUiRuntimeStreamEvent,
+  intent: "open" | "continue",
 ): string {
-  if (typeof event.id === "string" && event.id.length > 0) {
-    state.reasoningMessageId = state.messageId
-      ? `${state.messageId}:reasoning:${event.id}`
-      : event.id;
+  // Deltas and ends belong to the span that is already open, whatever part id
+  // they carry. Only a start — or a delta with nothing open — begins a new one.
+  if (intent === "continue" && state.reasoningMessageId !== null) {
     return state.reasoningMessageId;
   }
 
-  if (!state.reasoningMessageId) {
-    state.reasoningMessageId = state.messageId
-      ? `${state.messageId}:reasoning:${crypto.randomUUID()}`
-      : crypto.randomUUID();
-  }
-
-  return state.reasoningMessageId;
+  return openReasoningMessageId(state);
 }
 
 function getTextMessageIdentity(
@@ -563,7 +614,10 @@ function createReasoningEvent(
   event: AgUiRuntimeStreamEvent,
   type: "ReasoningMessageStart" | "ReasoningMessageContent" | "ReasoningMessageEnd",
 ): AgUiBrowserEncodedEvent {
-  const messageId = getReasoningMessageId(state, event);
+  const messageId = getReasoningMessageId(
+    state,
+    type === "ReasoningMessageStart" ? "open" : "continue",
+  );
   return {
     event: type,
     payload: type === "ReasoningMessageStart"
@@ -624,6 +678,42 @@ function closeOpenReasoningEvent(state: AgUiBrowserEncoderState): AgUiBrowserEnc
 
 /** Map runtime stream event to AG-UI browser events. */
 export function mapRuntimeStreamEventToAgUiBrowserEvents(
+  state: AgUiBrowserEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiBrowserEncodedEvent[] {
+  return stampTiming(state, mapRuntimeStreamEventToAgUiBrowserEventsUnstamped(state, event));
+}
+
+function stampTiming(
+  state: AgUiBrowserEncoderState,
+  events: AgUiBrowserEncodedEvent[],
+): AgUiBrowserEncodedEvent[] {
+  if (events.length === 0) {
+    return events;
+  }
+
+  // `elapsedMs` is anchored to this encoder's construction, so reading it
+  // correctly requires knowing which encoder produced it. `emittedAt` carries
+  // no anchor and means the same thing everywhere, which is what makes it the
+  // durable one: it supports durations between any two events, lines up with
+  // wall-clock traces and logs, and turns ingest lag into `created_at -
+  // emittedAt`. Both are stamped because wall clocks can step backwards and
+  // the monotonic reading cannot.
+  const timing: Record<string, number> = {};
+  if (state.nowMs && state.startedMs !== undefined) {
+    timing.elapsedMs = Math.max(0, Math.round(state.nowMs() - state.startedMs));
+  }
+  if (state.epochMs) {
+    timing.emittedAt = Math.round(state.epochMs());
+  }
+  if (Object.keys(timing).length === 0) {
+    return events;
+  }
+
+  return events.map((entry) => ({ ...entry, payload: { ...entry.payload, ...timing } }));
+}
+
+function mapRuntimeStreamEventToAgUiBrowserEventsUnstamped(
   state: AgUiBrowserEncoderState,
   event: AgUiRuntimeStreamEvent,
 ): AgUiBrowserEncodedEvent[] {
@@ -720,11 +810,11 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
       return events;
     }
 
-    case "reasoning-end": {
-      const reasoningEvent = createReasoningEvent(state, event, "ReasoningMessageEnd");
-      state.reasoningMessageId = null;
-      return [reasoningEvent];
-    }
+    case "reasoning-end":
+      // An end with no span open has nothing to close. Emitting one anyway
+      // would send a ReasoningMessageEnd with no matching start and burn a
+      // span ordinal, shifting every later span's id.
+      return closeOpenReasoningEvent(state);
 
     case "tool-input-start": {
       const events = [
@@ -859,6 +949,13 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
 
 /** Finalize AG-UI browser events helper. */
 export function finalizeAgUiBrowserEvents(
+  state: AgUiBrowserEncoderState,
+  response: AgentResponse | null,
+): AgUiBrowserEncodedEvent[] {
+  return stampTiming(state, finalizeAgUiBrowserEventsUnstamped(state, response));
+}
+
+function finalizeAgUiBrowserEventsUnstamped(
   state: AgUiBrowserEncoderState,
   response: AgentResponse | null,
 ): AgUiBrowserEncodedEvent[] {

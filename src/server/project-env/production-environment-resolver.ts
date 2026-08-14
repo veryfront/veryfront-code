@@ -15,6 +15,7 @@ import {
   PERMISSION_DENIED,
 } from "#veryfront/errors";
 import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
+import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 
 export const MAX_ENVIRONMENT_LIST_RESPONSE_BYTES = 256 * 1024;
 const MAX_ENVIRONMENT_COUNT = 100;
@@ -94,7 +95,7 @@ function normalizeEnvironmentName(value: string): string {
 
 function mapLookupError(error: unknown, signal?: AbortSignal): Error {
   if (signal?.aborted) {
-    return signal.reason instanceof Error
+    return isErrorAcrossRealms(signal.reason)
       ? signal.reason
       : new DOMException("Project environment lookup was cancelled", "AbortError");
   }
@@ -170,7 +171,12 @@ function parseNamedEnvironmentIdentity(
         detail: "Project environment lookup returned an invalid environment entry",
       });
     }
-    const rawActiveReleaseId = (entry as { active_release_id?: unknown }).active_release_id;
+    // The environments endpoint carries the active release nested under the
+    // environment's deployment. `active_release_id` is read first so a flat
+    // response keeps working, but the nested path is what production returns.
+    const deployment = (entry as { deployment?: { release?: { id?: unknown } } | null }).deployment;
+    const rawActiveReleaseId = (entry as { active_release_id?: unknown }).active_release_id ??
+      deployment?.release?.id;
     if (
       rawActiveReleaseId !== undefined &&
       rawActiveReleaseId !== null &&

@@ -36,13 +36,13 @@ export const { POST, GET, DELETE } = createUploadHandler(store, {
 | --------------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `chunk`                     | Splits text into overlapping chunks for embedding.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/chunk.ts#L24)           |
 | `clearEmbeddingProviders`   | Clear all registered embedding providers (for testing).                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/resolve.ts#L160)        |
-| `createUploadHandler`       | Creates HTTP route handlers for upload, listing, and deletion.                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L248) |
+| `createUploadHandler`       | Creates HTTP route handlers for upload, listing, and deletion.                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L286) |
 | `embedding`                 | Creates an embedding facade.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/embedding.ts#L28)       |
 | `loadUpload`                | Extracts embedding-ready text or Markdown from upload formats.                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-loader.ts#L19)   |
 | `ragStore`                  | Creates a persistent RAG store with lazy embedding and similarity search.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/rag-store.ts#L212)      |
 | `registerEmbeddingProvider` | Register an embedding provider factory.                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/resolve.ts#L25)         |
 | `resolveEmbeddingModel`     | Resolve a "provider/model" string to an embedding runtime instance.                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/resolve.ts#L116)        |
-| `similarity`                | Compute cosine similarity between two numeric vectors.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runtime/runtime-bridge.ts#L973)   |
+| `similarity`                | Compute cosine similarity between two numeric vectors.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runtime/runtime-bridge.ts#L987)   |
 | `vectorStore`               | Creates an in-memory vector store with integrated embedding and similarity search. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/vector-store.ts#L46)    |
 
 ### Types
@@ -63,9 +63,9 @@ export const { POST, GET, DELETE } = createUploadHandler(store, {
 | `RagStoreData`              | Public API contract for rag store data.                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts#L85)           |
 | `SearchOptions`             | Options accepted by search.                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts#L38)           |
 | `SearchResult`              | Result returned from search.                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts#L47)           |
-| `UploadAuthorizationResult` |                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L90)  |
-| `UploadAuthorize`           |                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L92)  |
-| `UploadHandlerAuthConfig`   |                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L96)  |
-| `UploadHandlerConfig`       |                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L100) |
+| `UploadAuthorizationResult` |                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L95)  |
+| `UploadAuthorize`           |                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L97)  |
+| `UploadHandlerAuthConfig`   |                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L101) |
+| `UploadHandlerConfig`       |                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L105) |
 | `VectorStore`               | Public API contract for vector store.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts#L54)           |
 | `VectorStoreConfig`         | Configuration used by vector store.                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts#L33)           |

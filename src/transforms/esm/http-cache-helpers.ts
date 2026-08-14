@@ -16,6 +16,7 @@ import {
 import { rendererLogger } from "#veryfront/utils";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
+import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
 import { buildEsmShUrl } from "../import-rewriter/url-builder.ts";
 import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
 import { DEFAULT_REACT_VERSION, getReactImportMap } from "./react-cdn.ts";
@@ -33,10 +34,15 @@ const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const RegExpExec = RegExp.prototype.exec;
 const ReflectApply = Reflect.apply;
 const StringIncludes = String.prototype.includes;
+const StringIndexOf = String.prototype.indexOf;
 const StringReplace = String.prototype.replace;
 const StringSlice = String.prototype.slice;
 const StringSplit = String.prototype.split;
 const StringStartsWith = String.prototype.startsWith;
+const TextDecoderDecode = TextDecoder.prototype.decode;
+const TextEncoderEncode = TextEncoder.prototype.encode;
+const URLSearchGet = ObjectGetOwnPropertyDescriptor(IntrinsicURL.prototype, "search")!.get!;
+const URLSearchSet = ObjectGetOwnPropertyDescriptor(IntrinsicURL.prototype, "search")!.set!;
 const URLHostnameGet = ObjectGetOwnPropertyDescriptor(
   IntrinsicURL.prototype,
   "hostname",
@@ -56,8 +62,13 @@ const URLSearchParamsGet = ObjectGetOwnPropertyDescriptor(
 const URLToString = IntrinsicURL.prototype.toString;
 const URLSearchParamsGetValue = IntrinsicURLSearchParams.prototype.get;
 const URLSearchParamsHas = IntrinsicURLSearchParams.prototype.has;
+const URLSearchParamsAppend = IntrinsicURLSearchParams.prototype.append;
 const URLSearchParamsSetValue = IntrinsicURLSearchParams.prototype.set;
 const URLSearchParamsSort = IntrinsicURLSearchParams.prototype.sort;
+const URLSearchParamsToString = IntrinsicURLSearchParams.prototype.toString;
+const Uint8ArraySubarray = Uint8Array.prototype.subarray;
+const queryTextDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
+const queryTextEncoder = new TextEncoder();
 
 function getURLHostname(url: URL): string {
   return ReflectApply(URLHostnameGet, url, []);
@@ -79,6 +90,14 @@ function stringifyURL(url: URL): string {
   return ReflectApply(URLToString, url, []);
 }
 
+function getURLSearch(url: URL): string {
+  return ReflectApply(URLSearchGet, url, []);
+}
+
+function setURLSearch(url: URL, search: string): void {
+  ReflectApply(URLSearchSet, url, [search]);
+}
+
 function getURLSearchParam(searchParams: URLSearchParams, name: string): string | null {
   return ReflectApply(URLSearchParamsGetValue, searchParams, [name]);
 }
@@ -93,6 +112,10 @@ function setURLSearchParam(searchParams: URLSearchParams, name: string, value: s
 
 function sortURLSearchParams(searchParams: URLSearchParams): void {
   ReflectApply(URLSearchParamsSort, searchParams, []);
+}
+
+function stringifyURLSearchParams(searchParams: URLSearchParams): string {
+  return ReflectApply(URLSearchParamsToString, searchParams, []);
 }
 
 function arrayIncludesValue<T>(values: readonly T[], value: T): boolean {
@@ -111,6 +134,10 @@ function stringIncludes(value: string, search: string): boolean {
   return ReflectApply(StringIncludes, value, [search]);
 }
 
+function stringIndexOf(value: string, search: string): number {
+  return ReflectApply(StringIndexOf, value, [search]);
+}
+
 function stringReplace(value: string, search: string, replacement: string): string {
   return ReflectApply(StringReplace, value, [search, replacement]);
 }
@@ -125,6 +152,64 @@ function stringSplit(value: string, separator: string): string[] {
 
 function stringStartsWith(value: string, search: string): boolean {
   return ReflectApply(StringStartsWith, value, [search]);
+}
+
+function decodeHexDigit(byte: number): number {
+  if (byte >= 48 && byte <= 57) return byte - 48;
+  if (byte >= 65 && byte <= 70) return byte - 55;
+  if (byte >= 97 && byte <= 102) return byte - 87;
+  return -1;
+}
+
+function decodeQueryComponent(value: string): string {
+  const input = ReflectApply(TextEncoderEncode, queryTextEncoder, [value]) as Uint8Array;
+  const output = new Uint8Array(input.length);
+  let outputIndex = 0;
+
+  for (let inputIndex = 0; inputIndex < input.length; inputIndex++) {
+    const byte = input[inputIndex]!;
+    if (byte === 43) {
+      output[outputIndex++] = 32;
+      continue;
+    }
+    if (byte === 37 && inputIndex + 2 < input.length) {
+      const high = decodeHexDigit(input[inputIndex + 1]!);
+      const low = decodeHexDigit(input[inputIndex + 2]!);
+      if (high >= 0 && low >= 0) {
+        output[outputIndex++] = (high << 4) | low;
+        inputIndex += 2;
+        continue;
+      }
+    }
+    output[outputIndex++] = byte;
+  }
+
+  const decoded = ReflectApply(Uint8ArraySubarray, output, [0, outputIndex]) as Uint8Array;
+  return ReflectApply(TextDecoderDecode, queryTextDecoder, [decoded]);
+}
+
+function parseURLSearchParams(url: URL): URLSearchParams {
+  const search = getURLSearch(url);
+  const searchParams = new IntrinsicURLSearchParams();
+  if (search.length <= 1) return searchParams;
+
+  const parts = stringSplit(stringSlice(search, 1), "&");
+  for (let index = 0; index < parts.length; index++) {
+    const part = parts[index]!;
+    if (part.length === 0) continue;
+    const separatorIndex = stringIndexOf(part, "=");
+    const name = separatorIndex < 0 ? part : stringSlice(part, 0, separatorIndex);
+    const value = separatorIndex < 0 ? "" : stringSlice(part, separatorIndex + 1);
+    ReflectApply(URLSearchParamsAppend, searchParams, [
+      decodeQueryComponent(name),
+      decodeQueryComponent(value),
+    ]);
+  }
+  return searchParams;
+}
+
+function writeURLSearchParams(url: URL, searchParams: URLSearchParams): void {
+  setURLSearch(url, stringifyURLSearchParams(searchParams));
 }
 
 function decodeEncodedCommas(value: string): string {
@@ -172,6 +257,10 @@ export type CacheOptions = {
   moduleServerOrigin?: string;
   /** Request-scoped dependency-pinning state used to isolate module-server URLs. */
   dependencyPinningCacheKey?: string;
+  /** Cancels request-scoped fetch, rewrite, and cache work. */
+  abortSignal?: AbortSignal;
+  /** Reports completed remote-module fetches as idle-deadline heartbeats. */
+  onProgress?: TransformProgressListener;
 };
 
 export type HttpCacheIdentityOptions = Pick<CacheOptions, "importMap" | "reactVersion">;
@@ -287,6 +376,16 @@ export function ensurePreparedHttpCacheRequestOptions<T extends CacheOptions>(op
   return getHttpCacheRequestIdentityContext(options)
     ? options
     : prepareHttpCacheRequestOptions(options);
+}
+
+/** Clone runtime options while preserving one request graph's identity snapshot. */
+export function deriveHttpCacheRequestOptions<T extends CacheOptions>(
+  options: T,
+  overrides: Pick<CacheOptions, "abortSignal" | "onProgress">,
+): T {
+  const derived = { ...options, ...overrides } as T;
+  const context = getHttpCacheRequestIdentityContext(options) ?? {};
+  return attachHttpCacheRequestIdentityContext(derived, context);
 }
 
 function getRequestImportMapFingerprint(
@@ -461,15 +560,34 @@ export function isInternalBare(specifier: string): boolean {
     stringStartsWith(specifier, "/_veryfront/");
 }
 
-export function normalizeEsmShUrl(url: URL): void {
+/**
+ * esm.sh target for modules this cache evaluates server-side. Browser targets
+ * get the `browser` export condition, which resolves DOM implementations that
+ * throw under SSG.
+ *
+ * `node`, not `denonext`: this cache keeps SSR runtime-agnostic across Deno,
+ * Node, and Bun, and Deno's condition can select Deno-only APIs.
+ *
+ * Not the `normalizeEsmShUrl` default: that also canonicalizes browser-facing
+ * release-asset URLs.
+ */
+export const SERVER_ESM_TARGET = "node";
+
+const ESM_SH_LEADING_DENONEXT = "/denonext/";
+
+function normalizeEsmShUrlWithSearchParams(url: URL, searchParams: URLSearchParams): void {
   if (getURLHostname(url) !== "esm.sh") return;
 
+  // Only a leading `/denonext/` selects a target. An inner one belongs to a
+  // resolved build path (`/pkg@1/X-abc/denonext/pkg.mjs`).
   const originalPathname = getURLPathname(url);
-  if (stringIncludes(originalPathname, "/denonext/")) {
-    setURLPathname(url, stringReplace(originalPathname, "/denonext/", "/"));
+  if (stringStartsWith(originalPathname, ESM_SH_LEADING_DENONEXT)) {
+    setURLPathname(
+      url,
+      stringSlice(originalPathname, ESM_SH_LEADING_DENONEXT.length - 1),
+    );
   }
 
-  const searchParams = getURLSearchParams(url);
   if (!hasURLSearchParam(searchParams, "target")) {
     setURLSearchParam(searchParams, "target", "es2022");
   }
@@ -487,12 +605,20 @@ export function normalizeEsmShUrl(url: URL): void {
   }
 }
 
+export function normalizeEsmShUrl(url: URL): void {
+  normalizeEsmShUrlWithSearchParams(url, getURLSearchParams(url));
+}
+
 export function normalizeHttpUrl(raw: string): string {
   try {
     const url = new IntrinsicURL(raw);
-    normalizeEsmShUrl(url);
-    const searchParams = getURLSearchParams(url);
+    // Node lazily parses URL.searchParams through mutable Array prototype
+    // methods. Decode the raw query first so project code cannot redirect
+    // cache identities by replacing those methods.
+    const searchParams = parseURLSearchParams(url);
+    normalizeEsmShUrlWithSearchParams(url, searchParams);
     sortURLSearchParams(searchParams);
+    writeURLSearchParams(url, searchParams);
     const normalized = stringifyURL(url);
 
     // esm.sh misbehaves when list-valued params such as
@@ -542,13 +668,14 @@ export function resolveBareSpecifier(
 
   const parsed = parseBarePackageSpecifier(specifier);
   if (parsed == null) {
-    return `https://esm.sh/${specifier}?target=es2022`;
+    return `https://esm.sh/${specifier}?target=${SERVER_ESM_TARGET}`;
   }
 
   return buildEsmShUrl(
     parsed.packageName,
     parsed.version ?? undefined,
     parsed.subpath ?? undefined,
+    { target: SERVER_ESM_TARGET },
   );
 }
 

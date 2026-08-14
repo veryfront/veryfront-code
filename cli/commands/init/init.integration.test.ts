@@ -15,7 +15,7 @@ import { VERSION } from "#cli/utils";
 import { join } from "#veryfront/compat/path/index.ts";
 import { exists, makeTempDir, readTextFile, remove, stat } from "#veryfront/testing/deno-compat.ts";
 import { runCommand } from "#veryfront/compat/process.ts";
-import { STARTER_TEMPLATE_NAMES } from "../../templates/types.ts";
+import { STARTER_TEMPLATE_NAMES } from "../../../templates/types.ts";
 import type { InitOptions } from "./types.ts";
 
 const TEST_DIR = await makeTempDir({ prefix: "veryfront-init-test-" });
@@ -187,6 +187,7 @@ describe("init command integration", () => {
       assertEquals(result.stdout?.includes("Deploy:"), true);
       assertEquals(result.stdout?.includes("Project structure"), false);
       assertEquals(result.stdout?.includes("npm run deploy"), true);
+      assertEquals(result.stdout?.includes("npx veryfront@latest deploy"), false);
       assertEquals(result.stdout?.includes("npx veryfront deploy"), false);
       assertEquals(result.stdout?.includes("Project files created"), false);
       assertEquals(result.stdout?.includes("Dependencies installed"), false);

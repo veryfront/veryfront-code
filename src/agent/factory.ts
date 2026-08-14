@@ -38,7 +38,11 @@ import {
 } from "#veryfront/security/input-validation/limits.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-schema-validator.ts";
-import { buildAgentDelegateTools } from "./runtime/agent-delegation.ts";
+import {
+  buildAgentDelegateTools,
+  createInvokeAgentTool,
+  INVOKE_AGENT_TOOL_ID,
+} from "./runtime/agent-delegation.ts";
 import { normalizeAgentDelegateIds } from "./runtime/agent-delegation-names.ts";
 import { buildAgentCallContext } from "./runtime/call-context.ts";
 import type { RuntimeSkillDefinition } from "./runtime/skill-metadata.ts";
@@ -309,6 +313,11 @@ function resolveToolsConfiguration(input: {
 
   if (config.tools !== true) {
     const configuredTools = { ...(config.tools ?? {}) };
+    if (delegates !== undefined) {
+      delete configuredTools[INVOKE_AGENT_TOOL_ID];
+    } else if (configuredTools[INVOKE_AGENT_TOOL_ID] === true) {
+      configuredTools[INVOKE_AGENT_TOOL_ID] = createInvokeAgentTool({ selfId: id });
+    }
     for (const registration of SKILL_TOOL_REGISTRATIONS) {
       if (!exposeSkillTools) {
         delete configuredTools[registration.id];
@@ -328,17 +337,19 @@ function resolveToolsConfiguration(input: {
     merged = hasConfiguredTools || config.tools !== undefined ? configuredTools : undefined;
   }
 
-  if (delegates?.length) {
+  if (delegates !== undefined) {
     if (merged === true) {
       throw INVALID_ARGUMENT.create({
         detail: `Agent "${id}" cannot combine delegates with tools: true. ` +
           "Declare the required tools by name so delegate capabilities remain explicit.",
       });
     }
-    merged = {
-      ...(merged ?? {}),
-      ...buildAgentDelegateTools({ delegates, selfId: id }),
-    };
+    if (delegates.length > 0) {
+      merged = {
+        ...(merged ?? {}),
+        ...buildAgentDelegateTools({ delegates, selfId: id }),
+      };
+    }
   }
 
   return merged;
@@ -353,10 +364,9 @@ function resolveToolsConfiguration(input: {
  */
 function createAugmentedSystem(input: {
   config: AgentConfig;
-  configuredToolNames: string[] | undefined;
   resolveSkillSnapshot: () => Pick<ResolvedSkillSelectorSnapshot<Skill>, "definitions">;
 }): () => Promise<string> {
-  const { config, configuredToolNames, resolveSkillSnapshot } = input;
+  const { config, resolveSkillSnapshot } = input;
   const originalSystem = config.system;
 
   return async () => {
@@ -371,8 +381,6 @@ function createAugmentedSystem(input: {
     return flattenSystemInstructions(buildAgentCallContext({
       instructions: basePrompt,
       skills: snapshot.definitions.map(toRuntimeSkillDefinition),
-      includeSkillToolUsage: true,
-      ...(configuredToolNames === undefined ? {} : { availableToolNames: configuredToolNames }),
       ...(config.projectContext ? { projectContext: config.projectContext } : {}),
       ...(config.environmentContext ? { environmentContext: config.environmentContext } : {}),
     }));
@@ -419,13 +427,8 @@ export function agent(config: AgentConfig): Agent {
     resolveSkillSnapshot,
   });
 
-  const configuredToolNames = resolveConfiguredToolNames(mergedToolsConfig, {
-    exposeSkillTools: shouldExposeSkillTools,
-    providerTools: config.providerTools,
-  });
   const augmentedSystem = createAugmentedSystem({
     config,
-    configuredToolNames,
     resolveSkillSnapshot,
   });
 
@@ -507,24 +510,6 @@ let agentIdCounter = 0;
  * off with `false`. `undefined` advertises nothing, which is distinct from an
  * empty list: the caller renders no inventory at all.
  */
-function resolveConfiguredToolNames(
-  toolsConfig: AgentConfig["tools"],
-  options: { exposeSkillTools: boolean; providerTools: readonly string[] | undefined },
-): string[] | undefined {
-  if (toolsConfig === true) {
-    return [
-      "form_input",
-      ...(options.exposeSkillTools ? ["load_skill"] : []),
-      "tool_search",
-      ...(options.providerTools ?? []),
-    ].sort();
-  }
-  if (toolsConfig === undefined) return undefined;
-  return Object.entries(toolsConfig)
-    .filter(([, entry]) => entry !== false)
-    .map(([name]) => name)
-    .sort();
-}
 
 /** Reject a platform that cannot run this configuration, and warn about the rest. */
 function assertPlatformCompatible(config: AgentConfig, id: string): void {

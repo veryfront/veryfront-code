@@ -35,12 +35,12 @@ import {
   resolveHostedRuntimeAllowedToolNames,
 } from "./runtime-essential-tools.ts";
 import type { HostedSubmittedFormInputResult } from "./chat-runtime-contract.ts";
-import type { RuntimeToolDiscoveryContext } from "../runtime/tool-discovery-context.ts";
 import {
   applySourceIntegrationPolicy,
   isIntegrationToolAllowedBySourcePolicy,
   type SourceIntegrationPolicyManifest,
 } from "#veryfront/integrations/source-policy.ts";
+import type { RuntimeToolDiscoveryContext } from "../runtime/tool-discovery-context.ts";
 import type { RuntimeToolLoadingMode } from "../runtime/runtime-tool-config.ts";
 import { TOOL_SEARCH_TOOL_NAME } from "../runtime/tool-exposure.ts";
 
@@ -114,10 +114,14 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   onStudioProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler;
   preloadLatestConversationUserText?: boolean;
   /**
-   * Per-run tool discovery context. When provided, its `activatedRemoteToolNames`
-   * Set is passed (by reference) to every remote tool source as the live
-   * execution gate. The same Set is mutated by `load_tools`, so newly activated
-   * tools become executable without re-creating the sources.
+   * Per-run tool activation context. When its `activatedRemoteToolNames` Set is
+   * present, it is passed by reference to every remote tool source as the live
+   * execution gate, so growing the Set exposes tools without re-creating the
+   * sources. Deprecated: no framework path populates this. It is retained
+   * because `PrepareHostedChatRuntimeToolAssemblyInput` is public API.
+   *
+   * @deprecated Use `tool_search` deferred loading. See
+   * `docs/architecture/28-model-driven-tool-discovery.md`.
    */
   toolDiscoveryContext?: RuntimeToolDiscoveryContext;
   /** Exact project-source restriction applied before tool inventory is exposed. */
@@ -264,8 +268,11 @@ export async function prepareHostedChatRuntimeToolAssembly<
     agentId: input.taskContext.agentId,
     localTools: authorizedLocalTools,
   });
+  const normalizedAllowedToolNames = normalizeHostedRuntimeAllowedToolNames(
+    ownerScopedAllowedToolNames,
+  );
   const allowedToolNames = resolveHostedRuntimeAllowedToolNames({
-    allowedToolNames: ownerScopedAllowedToolNames,
+    allowedToolNames: normalizedAllowedToolNames,
     localToolNames: Object.keys(authorizedLocalTools),
     availableSkillIds: input.taskContext.availableSkillIds,
     includeRuntimeEssentialToolsWhenEmpty: input.includeRuntimeEssentialToolsWhenEmpty,
@@ -355,7 +362,7 @@ export async function prepareHostedChatRuntimeToolAssembly<
     input.sourceIntegrationPolicy,
   );
   const localToolNames = Object.keys(localHostTools);
-  const toolLoadingMode: RuntimeToolLoadingMode = input.allowedToolNames === null
+  const toolLoadingMode: RuntimeToolLoadingMode = normalizedAllowedToolNames === null
     ? "deferred"
     : "eager";
   const authorizedToolNames = [
@@ -374,9 +381,7 @@ export async function prepareHostedChatRuntimeToolAssembly<
   const compatibleRemoteToolNames = toolLoadingMode === "deferred"
     ? remoteToolNames
     : remoteToolNames.filter((toolName) => compatibleToolNames.has(toolName));
-  const bootstrapToolNames = availableToolNames.filter((toolName) =>
-    toolName === "form_input" || toolName === "load_skill"
-  );
+  const bootstrapToolNames = availableToolNames.filter((toolName) => toolName === "load_skill");
   const hasDeferredTools = availableToolNames.length > bootstrapToolNames.length;
   const modelVisibleToolNames = toolLoadingMode === "deferred"
     ? [

@@ -34,6 +34,16 @@ export interface SecurityConfig {
    * renderer requires.
    */
   csp?: Partial<Record<string, string | string[] | null>>;
+  /**
+   * Origins derived from the project's own released source, merged between the
+   * platform floor and `csp`.
+   *
+   * Platform-owned: `deriveSecurityContext` overwrites whatever a project
+   * config carries under this key, because `SecurityConfig` has an index
+   * signature and would otherwise let a project declare its own derived layer.
+   * Projects extend the policy through `csp`, which is merged on top of this.
+   */
+  derivedCsp?: import("../security/http/derived-csp-origins.ts").DerivedCspOrigins;
   coop?: "same-origin" | "same-origin-allow-popups" | "unsafe-none";
   corp?: "same-origin" | "same-site" | "cross-origin";
   coep?: "require-corp" | "unsafe-none";

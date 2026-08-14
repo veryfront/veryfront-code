@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withCwd } from "#veryfront/testing/cwd.ts";
 import { COMMANDS } from "./help/command-definitions.ts";
 import { parseLoginMethod } from "./auth/utils.ts";
 import { routeCommand } from "./router.ts";
@@ -73,6 +74,7 @@ describe("cli/command-definitions integrity", () => {
       "uploads",
       "files",
       "knowledge",
+      "project",
     ];
 
     for (const cmd of expectedCommands) {
@@ -552,7 +554,6 @@ describe("cli/router helpers", () => {
     });
 
     it("reports missing credentials for schedule remote JSON runs as JSON command failure", async () => {
-      const originalCwd = Deno.cwd();
       const projectDir = await Deno.makeTempDir({ prefix: "vf-schedule-json-auth-" });
       const configHome = await Deno.makeTempDir({ prefix: "vf-schedule-json-auth-config-" });
       const environmentNames = [
@@ -573,18 +574,20 @@ describe("cli/router helpers", () => {
           `${projectDir}/veryfront.json`,
           JSON.stringify({ projectSlug: "json-auth-project" }),
         );
-        Deno.chdir(projectDir);
         Deno.env.delete("VERYFRONT_API_URL");
         Deno.env.delete("VERYFRONT_API_TOKEN");
         Deno.env.delete("VERYFRONT_PROJECT_SLUG");
         Deno.env.set("XDG_CONFIG_HOME", configHome);
         _resetEnvironmentConfig();
 
-        const code = await runAndCaptureExit({
-          _: ["schedule", "run", "process-job-submissions"],
-          remote: true,
-          json: true,
-        } as ParsedArgs);
+        // Scoped to the call that resolves veryfront.json from the cwd, rather
+        // than held across the whole test.
+        const code = await withCwd(projectDir, () =>
+          runAndCaptureExit({
+            _: ["schedule", "run", "process-job-submissions"],
+            remote: true,
+            json: true,
+          } as ParsedArgs));
         assertEquals(code, 1);
         assertEquals(consoleOutput.length, 1);
         const parsed = JSON.parse(consoleOutput[0] ?? "{}");
@@ -596,7 +599,6 @@ describe("cli/router helpers", () => {
         assertEquals(parsed.error.message, "Authentication required for this operation.");
         assertEquals(consoleErrorOutput, []);
       } finally {
-        Deno.chdir(originalCwd);
         for (const name of environmentNames) {
           const value = originalEnvironment[name];
           if (value === undefined) Deno.env.delete(name);

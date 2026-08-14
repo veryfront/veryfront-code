@@ -48,7 +48,7 @@ export function renderHelpView(state: AppState): string {
     lines.push(`    ${dim('"mcpServers": {')}`);
     lines.push(`    ${dim('  "veryfront": {')}`);
     lines.push(`    ${dim('    "type": "url",')}`);
-    lines.push(`    ${dim(`    "url": "http://veryfront.me:${state.mcp.httpPort}/mcp"`)}`);
+    lines.push(`    ${dim(`    "url": "http://localhost:${state.mcp.httpPort}/mcp"`)}`);
     lines.push(`    ${dim("  }")}`);
     lines.push(`    ${dim("}")}`);
     lines.push("");

@@ -21,12 +21,6 @@ const EMPTY_SKILL_MANIFEST_TOOL_NAMES = [
   ...SKILL_SCRIPT_TOOL_NAMES,
 ] as const;
 
-/**
- * Tool discovery tools are unconditionally essential: they must never be
- * truncated by the provider cap, regardless of skill availability.
- */
-const TOOL_DISCOVERY_TOOL_NAMES = ["search_tools", "load_tools"] as const;
-
 /** Normalize hosted runtime allowed tools. */
 export function normalizeHostedRuntimeAllowedToolNames(
   toolNames: HostedRuntimeAllowedToolNames | undefined,
@@ -68,19 +62,6 @@ export function resolveHostedRuntimeAllowedToolNames(
   if (hasKnownSkillManifest && !hasAuthorizedSkills) {
     for (const toolName of EMPTY_SKILL_MANIFEST_TOOL_NAMES) {
       resolvedToolNames.delete(toolName);
-    }
-  }
-
-  // Tool discovery is essential only when the agent already has at least one
-  // tool in its resolved set. Under deny-all (empty allowedToolNames), discovery
-  // tools are intentionally excluded: activating new tools is a broader
-  // capability than running pre-configured skills (load_skill), so the two are
-  // treated asymmetrically when allowedToolNames is empty.
-  if (resolvedToolNames.size > 0) {
-    for (const toolName of TOOL_DISCOVERY_TOOL_NAMES) {
-      if (localToolNames.has(toolName)) {
-        resolvedToolNames.add(toolName);
-      }
     }
   }
 

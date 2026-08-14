@@ -1,6 +1,8 @@
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withEnv } from "#veryfront/testing";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import {
   guardedEgressFetch,
   WorkerEgressBlockedError,
@@ -8,6 +10,7 @@ import {
 import {
   createOutboundFetchBoundary,
   guardedOutboundFetch,
+  HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV,
   OutboundRequestBlockedError,
 } from "./outbound-fetch.ts";
 
@@ -50,6 +53,26 @@ describe("guardedOutboundFetch", () => {
     );
     await assertRejects(
       () => boundary.guardedFetch("http://169.254.169.254/metadata"),
+      OutboundRequestBlockedError,
+      "internal host",
+    );
+    assertEquals(calls, 0);
+  });
+
+  it("does not accept an untyped internal-egress capability from callers", async () => {
+    let calls = 0;
+    const boundary = createTestBoundary(() => {
+      calls++;
+      return Promise.resolve(new Response("unexpected"));
+    });
+
+    await assertRejects(
+      () =>
+        boundary.guardedFetch(
+          "http://127.0.0.1/private",
+          undefined,
+          { allowInternalEgress: true } as never,
+        ),
       OutboundRequestBlockedError,
       "internal host",
     );
@@ -176,5 +199,83 @@ describe("guardedOutboundFetch", () => {
       "unexpected redirect",
     );
     assertEquals(calls, 1);
+  });
+
+  it("allows only an exact host-approved internal provider origin", async () => {
+    const seen: string[] = [];
+    const fetchImpl: typeof fetch = (input) => {
+      seen.push(String(input));
+      return Promise.resolve(Response.json({ ok: true }));
+    };
+
+    await withEnv(
+      { [HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV]: "http://localhost:11434" },
+      async () => {
+        const boundary = createTestBoundary(fetchImpl);
+        const allowedFetch = boundary.createOriginBoundFetch("http://localhost:11434/v1");
+        const deniedFetch = boundary.createOriginBoundFetch("http://localhost:1234/v1");
+
+        assertEquals(
+          (await allowedFetch("http://localhost:11434/v1/chat/completions")).status,
+          200,
+        );
+        await assertRejects(
+          () => deniedFetch("http://localhost:1234/v1/chat/completions"),
+          OutboundRequestBlockedError,
+          "internal host",
+        );
+      },
+    );
+
+    assertEquals(seen, ["http://localhost:11434/v1/chat/completions"]);
+  });
+
+  it("does not let project environment grant internal provider access", async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = () => {
+      calls++;
+      return Promise.resolve(Response.json({ ok: true }));
+    };
+
+    await withEnv({ [HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV]: "" }, async () => {
+      await runWithProjectEnv(
+        { [HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV]: "http://localhost:11434" },
+        async () => {
+          const providerFetch = createTestBoundary(fetchImpl).createOriginBoundFetch(
+            "http://localhost:11434/v1",
+          );
+          await assertRejects(
+            () => providerFetch("http://localhost:11434/v1/chat/completions"),
+            OutboundRequestBlockedError,
+            "internal host",
+          );
+        },
+      );
+    });
+
+    assertEquals(calls, 0);
+  });
+
+  it("rejects malformed internal provider origin configuration", async () => {
+    for (
+      const value of [
+        "localhost:11434",
+        "file:///tmp/provider",
+        "http://user:secret@localhost:11434",
+        "http://localhost:11434/v1",
+        "http://localhost:11434?mode=dev",
+        "http://localhost:11434#local",
+      ]
+    ) {
+      await withEnv({ [HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV]: value }, async () => {
+        assertThrows(
+          () =>
+            createTestBoundary(() => Promise.resolve(Response.json({ ok: true })))
+              .createOriginBoundFetch("http://localhost:11434/v1"),
+          TypeError,
+          HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV,
+        );
+      });
+    }
   });
 });

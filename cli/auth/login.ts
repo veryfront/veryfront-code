@@ -7,7 +7,12 @@ import { isTTY, promptUser } from "../utils/index.ts";
 import { brand, dim, error, warning } from "../ui/colors.ts";
 import { createSpinner, type SpinnerController } from "../ui/progress.ts";
 import { PromptInterruptedError, select } from "../utils/terminal-select.ts";
-import { DEFAULT_CALLBACK_PORT, DEFAULT_LOGIN_TIMEOUT_MS, getApiUrl } from "../shared/constants.ts";
+import {
+  API_KEYS_URL,
+  DEFAULT_CALLBACK_PORT,
+  DEFAULT_LOGIN_TIMEOUT_MS,
+  getApiUrl,
+} from "../shared/constants.ts";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../shared/json-output.ts";
 import { isInteractive } from "../shared/interactive.ts";
 
@@ -242,7 +247,7 @@ async function loginWithOAuth(
 async function loginWithToken(): Promise<string | null> {
   console.log();
   console.log("  " + brand("Enter your API token"));
-  console.log("  " + dim("You can get a token from veryfront.com/settings/api-keys"));
+  console.log("  " + dim(`You can get a token from ${API_KEYS_URL}`));
   console.log();
 
   const token = (await promptUser("  API token: ")).trim();

@@ -22,7 +22,7 @@ describe("ProjectsHandler method policy", () => {
     const cancellationGate = new Promise<void>((resolve) => {
       releaseCancellation = resolve;
     });
-    const request = new Request("http://veryfront.me/_projects", {
+    const init: RequestInit & { duplex: "half" } = {
       method: "POST",
       body: new ReadableStream<Uint8Array>({
         cancel() {
@@ -30,7 +30,9 @@ describe("ProjectsHandler method policy", () => {
           return cancellationGate;
         },
       }),
-    });
+      duplex: "half",
+    };
+    const request = new Request("http://localhost/_projects", init);
     let responseSettled = false;
     const responsePromise = new ProjectsHandler(PROVIDER).handle(request, projectsContext());
     void responsePromise.then(() => {
@@ -51,11 +53,11 @@ describe("ProjectsHandler method policy", () => {
     const handler = new ProjectsHandler(PROVIDER);
     for (const path of ["/_projects", "/_projects/ui/index.js", "/_projects/api/config"]) {
       const getResponse = (await handler.handle(
-        new Request(`http://veryfront.me${path}`),
+        new Request(`http://localhost${path}`),
         projectsContext(),
       )).response!;
       const headResponse = (await handler.handle(
-        new Request(`http://veryfront.me${path}`, { method: "HEAD" }),
+        new Request(`http://localhost${path}`, { method: "HEAD" }),
         projectsContext(),
       )).response!;
 
@@ -69,7 +71,7 @@ describe("ProjectsHandler method policy", () => {
     }
 
     const unavailable = (await new ProjectsHandler().handle(
-      new Request("http://veryfront.me/_projects", { method: "HEAD" }),
+      new Request("http://localhost/_projects", { method: "HEAD" }),
       projectsContext(),
     )).response!;
     assertEquals(unavailable.status, 503);

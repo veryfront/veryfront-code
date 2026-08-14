@@ -297,4 +297,53 @@ describe("message-parts", () => {
       assertEquals(getAnswerPartsForRendering(parts, { isAssistant: false }), parts);
     });
   });
+
+  describe("groupPartsInOrder — empty reasoning", () => {
+    it("drops a reasoning part that closed with nothing to show", () => {
+      // This is the shape a conversation loaded back from storage has: the
+      // empty part was persisted, so the fix has to live at the render
+      // boundary to reach it.
+      const parts: ChatMessagePart[] = [
+        { type: "reasoning", text: "", state: "done" },
+        { type: "text", text: "answer", state: "done" },
+      ];
+
+      assertEquals(groupPartsInOrder(parts), [
+        { type: "text", content: "answer" },
+      ]);
+    });
+
+    it("keeps an empty reasoning part while it is still streaming", () => {
+      const parts: ChatMessagePart[] = [
+        { type: "reasoning", text: "", state: "streaming" },
+      ];
+
+      assertEquals(groupPartsInOrder(parts), [
+        { type: "reasoning", text: "", isStreaming: true },
+      ]);
+    });
+
+    it("keeps a redacted or signed reasoning part with no visible text", () => {
+      const parts: ChatMessagePart[] = [
+        { type: "reasoning", text: "", redactedData: "opaque", state: "done" },
+        { type: "reasoning", text: "", signature: "sig", state: "done" },
+      ];
+
+      assertEquals(groupPartsInOrder(parts).length, 2);
+    });
+
+    it("does not split surrounding text into two blocks", () => {
+      // Skipping has to happen before the text buffer flushes, or a list or
+      // paragraph spanning the gap renders as two separate markdown blocks.
+      const parts: ChatMessagePart[] = [
+        { type: "text", text: "- one\n", state: "done" },
+        { type: "reasoning", text: "", state: "done" },
+        { type: "text", text: "- two", state: "done" },
+      ];
+
+      assertEquals(groupPartsInOrder(parts), [
+        { type: "text", content: "- one\n- two" },
+      ]);
+    });
+  });
 });

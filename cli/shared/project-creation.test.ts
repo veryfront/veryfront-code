@@ -1,9 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import { join } from "veryfront/platform/path";
+import { formatCLIError, VeryfrontError } from "veryfront/errors";
+import { STARTER_TEMPLATE_NAMES } from "../../templates/types.ts";
 import {
   createProject,
   type CreateProjectRequest,
@@ -184,10 +191,43 @@ describe("createProject", () => {
             template: "missing-template" as CreateProjectRequest["template"],
           }),
         Error,
-        "Template missing-template not found",
+        'Unknown template "missing-template"',
       );
 
       assertEquals(await exists(projectDir), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("reports an unknown template as a typed error that lists the valid templates", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-unknown-template-" });
+
+    try {
+      const error = await assertRejects(
+        () =>
+          createProject({
+            ...baseRequest(parentDir),
+            name: "unknown-template",
+            template: "blog" as CreateProjectRequest["template"],
+          }),
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "template-not-found");
+      assertEquals(error.exitCode, 2);
+
+      const rendered = formatCLIError(error, { color: false, verbose: false });
+      assertStringIncludes(rendered, "[template-not-found]");
+      assertEquals(
+        rendered.includes("[unknown-error]"),
+        false,
+        "an unknown --template value must not degrade to the unclassified error",
+      );
+      assertStringIncludes(rendered, 'Unknown template "blog"');
+      for (const name of STARTER_TEMPLATE_NAMES) {
+        assertStringIncludes(rendered, name);
+      }
     } finally {
       await remove(parentDir, { recursive: true }).catch(() => {});
     }

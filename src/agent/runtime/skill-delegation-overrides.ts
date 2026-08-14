@@ -5,6 +5,7 @@ import {
   MAX_RUNTIME_SKILL_THINKING_TOKENS,
 } from "./skill-metadata.ts";
 import { readToolResultOwnDataProperty } from "#veryfront/tool/result.ts";
+import { supportsSkillDelegationOverrides } from "./local-tool.ts";
 
 export type SkillDelegationOverrides = {
   model?: string;
@@ -68,8 +69,13 @@ export function applySkillDelegationOverridesToToolInput(
   toolName: string,
   input: Record<string, unknown>,
   overrides: SkillDelegationOverrides | undefined,
+  tool?: unknown,
 ): Record<string, unknown> {
-  if (toolName !== INVOKE_AGENT_TOOL_ID || !overrides) {
+  if (
+    toolName !== INVOKE_AGENT_TOOL_ID ||
+    !overrides ||
+    !supportsSkillDelegationOverrides(tool)
+  ) {
     return input;
   }
 

@@ -7,6 +7,7 @@ import {
   encodeConversationRunEvents,
   normalizeEncodedConversationRunEvents,
 } from "./run-events.ts";
+import { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "./run-event-normalization.ts";
 
 describe("agent/conversation-run-events", () => {
   it("captures active message ids from start events", () => {
@@ -209,6 +210,48 @@ describe("agent/conversation-run-events", () => {
     }]);
   });
 
+  it("gives an unresolved provider-executed tool call a durable terminal result", () => {
+    // The reported incident read as TOOL_CALL_START + TOOL_CALL_END with no
+    // TOOL_CALL_RESULT in the persisted run-event log, so the runs panel showed
+    // a tool call that never finished.
+    //
+    // The stream handler synthesizes a terminal `tool-output-error` chunk for a
+    // provider-executed call the provider never resolved. Chat-stream-handler
+    // tests cover that it is emitted. This covers the other half of the chain:
+    // that chunk must encode to a TOOL_CALL_RESULT, because the durable lane the
+    // runs panel reads is fed by teeing these chunks into the run mirror. Change
+    // this mapping and the live SSE card recovers while the runs panel silently
+    // regresses to the original signature.
+    const encoder = new ConversationRunEventEncoder();
+    const toolCallId = "srvtoolu_provider_fetch";
+
+    const types = [
+      { type: "tool-input-start", toolCallId, toolName: "web_fetch", providerExecuted: true },
+      { type: "tool-input-delta", toolCallId, inputTextDelta: '{"url":"https://example.com"}' },
+      {
+        type: "tool-input-available",
+        toolCallId,
+        toolName: "web_fetch",
+        input: { url: "https://example.com" },
+        providerExecuted: true,
+      },
+      {
+        type: "tool-output-error",
+        toolCallId,
+        errorText:
+          'Provider-executed tool "web_fetch" returned no result before the model turn ended.',
+        providerExecuted: true,
+      },
+    ].flatMap((chunk) => encoder.encode(chunk as never)).map((event) => event.type);
+
+    assertEquals(types, [
+      conversationRunEventTypes.toolCallStart,
+      conversationRunEventTypes.toolCallArgs,
+      conversationRunEventTypes.toolCallEnd,
+      conversationRunEventTypes.toolCallResult,
+    ]);
+  });
+
   it("encodes and normalizes whole event lists", () => {
     const events = [
       { type: "text-start", id: "msg-1" },
@@ -219,5 +262,65 @@ describe("agent/conversation-run-events", () => {
     assertEquals(encoded[0]?.type, conversationRunEventTypes.textMessageStart);
     const normalized = normalizeEncodedConversationRunEvents(events as never);
     assertEquals(normalized.length > encoded.length, true);
+  });
+
+  // These records are what lands in `agent_run_event`. Its `created_at` is the
+  // row's insert time, so without a stamp taken here nothing downstream can say
+  // when an event actually happened, and durations describe the writer instead
+  // of the run.
+  it("stamps elapsedMs from the run's own clock when one is supplied", () => {
+    let now = 5_000;
+    const encoder = new ConversationRunEventEncoder({ nowMs: () => now });
+    encoder.encode({ type: "start", messageId: "msg-clock" });
+
+    now = 5_400;
+    const first = encoder.encode({ type: "text-delta", id: "text:0", delta: "hi" });
+
+    now = 12_000;
+    const later = encoder.encode({ type: "text-end", id: "text:0" });
+
+    assertEquals(first[0]?.elapsedMs, 400, "elapsed is relative to encoder creation");
+    assertEquals(later[0]?.elapsedMs, 7000, "a later event carries a later elapsed");
+  });
+
+  it("omits elapsedMs entirely when no clock is supplied", () => {
+    const encoder = new ConversationRunEventEncoder();
+    encoder.encode({ type: "start", messageId: "msg-no-clock" });
+    const encoded = encoder.encode({ type: "text-delta", id: "text:0", delta: "hi" });
+
+    assertEquals(
+      Object.hasOwn(encoded[0] ?? {}, "elapsedMs"),
+      false,
+      "an unclocked encoder must emit exactly what it emitted before",
+    );
+  });
+
+  // Normalization splits oversized events and rewrites others. A stamp that does
+  // not survive it never reaches the API, which is the gap that made the first
+  // attempt at this change inert.
+  it("carries elapsedMs through normalization onto every split part", () => {
+    let now = 0;
+    const encoder = new ConversationRunEventEncoder({ nowMs: () => now });
+    now = 250;
+    const events = [
+      { type: "start", messageId: "msg-normalized" },
+      { type: "text-start", id: "text:0" },
+      {
+        type: "text-delta",
+        id: "text:0",
+        delta: "x".repeat(MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES + 4096),
+      },
+    ];
+    const normalized = normalizeEncodedConversationRunEvents(events as never, encoder);
+
+    const contentParts = normalized.filter(
+      (event) => event.type === conversationRunEventTypes.textMessageContent,
+    );
+    assertEquals(contentParts.length > 1, true, "the oversized delta should split");
+    assertEquals(
+      contentParts.every((event) => event.elapsedMs === 250),
+      true,
+      "every split part keeps the elapsed of the event it came from",
+    );
   });
 });

@@ -26,7 +26,7 @@ export const MISSING_MARKDOWN_RENDERER_WARNING =
   '  import { MarkdownRendererProvider } from "veryfront/markdown";\n' +
   "  <MarkdownRendererProvider renderer={MarkdownRenderer}><Chat /></MarkdownRendererProvider>\n" +
   "New projects scaffold this in app/markdown-renderer.tsx. See " +
-  "https://veryfront.com/docs/guides/chat-ui#render-markdown-in-chat";
+  "https://veryfront.com/docs/code/guides/chat-ui#render-markdown-in-chat";
 
 let warnedMissingMarkdownRenderer = false;
 

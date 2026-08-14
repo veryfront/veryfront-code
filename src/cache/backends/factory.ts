@@ -35,7 +35,7 @@ export function isApiCacheAvailable(): boolean {
 
   const isProduction = proxyMode === "1" ||
     nodeEnv === "production" ||
-    !!(apiUrl && !apiUrl.includes("localhost") && !apiUrl.includes("lvh.me"));
+    !!(apiUrl && !apiUrl.includes("localhost"));
 
   return isProduction && !!apiUrl;
 }

@@ -1,5 +1,6 @@
 import { RENDER_ERROR } from "#veryfront/errors";
 import { SSR_MAX_BUFFERED_BYTES, SSR_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
+import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   getReactVersionInfo,
@@ -91,7 +92,7 @@ function pipeToReadableStream(
       abortOnce();
 
       if (passThrough && !passThrough.destroyed) {
-        passThrough.destroy(reason instanceof Error ? reason : undefined);
+        passThrough.destroy(isErrorAcrossRealms(reason) ? reason : undefined);
       }
     },
   });

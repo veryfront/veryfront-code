@@ -25,7 +25,6 @@ import {
   type ReleaseAssetBuildClient,
   type ReleaseAssetBuildInput,
   type ReleaseAssetBuildResult,
-  releaseAssetDependencyUrlForSpecifier,
   type ReleaseAssetHttpDependencyVendor,
   type ReleaseAssetVendorResult,
   routeForPage,
@@ -462,43 +461,11 @@ describe("release asset build executor", () => {
     assertEquals([...Deno.readDirSync(tempDir)], []);
   });
 
-  it("keeps distinct HTTP query variants as distinct dependency identities", () => {
-    const baseUrl = "https://cdn.example/pkg.js";
-    const dependencyUrls = new Map([[baseUrl, "/_vf/assets/es2020.js"]]);
-
-    assertEquals(
-      releaseAssetDependencyUrlForSpecifier(
-        dependencyUrls,
-        `${baseUrl}?target=es2022`,
-      ),
-      null,
-    );
-  });
-
-  it("keeps distinct HTTP fragment variants as distinct dependency identities", () => {
-    const baseUrl = "https://cdn.example/pkg.js";
-    const dependencyUrls = new Map([
-      [
-        `${baseUrl}#a`,
-        "/_vf/assets/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.js#a",
-      ],
-      [
-        `${baseUrl}#b`,
-        "/_vf/assets/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.js#b",
-      ],
-    ]);
-
-    assertEquals(
-      releaseAssetDependencyUrlForSpecifier(dependencyUrls, `${baseUrl}#a`),
-      dependencyUrls.get(`${baseUrl}#a`),
-    );
-    assertEquals(
-      releaseAssetDependencyUrlForSpecifier(dependencyUrls, `${baseUrl}#b`),
-      dependencyUrls.get(`${baseUrl}#b`),
-    );
-  });
-
-  it("fails closed when one module transform fails", async () => {
+  it("never admits a module whose transform failed", async () => {
+    // Previously this failed the whole build. It no longer does -- a broken page
+    // costs only its own route -- but the safety half still holds: the module
+    // that failed must never reach the manifest, so the browser-module endpoint
+    // keeps refusing it.
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       { path: "pages/index.tsx", content: "export default () => null;" },
@@ -514,7 +481,14 @@ describe("release asset build executor", () => {
 
     const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
 
-    assertCoverageFailure(result, rec, "module-transform-failed:pages/broken.tsx");
+    assertEquals(result.success, true);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.modules["pages/broken.tsx"], undefined);
+    assertEquals(manifest.routes["/broken"], undefined);
+    // The healthy page is unaffected.
+    assertExists(manifest.modules["pages/index.tsx"]);
+    assertEquals(manifest.routes["/"]?.modules, ["pages/index.tsx"]);
   });
 
   it("fails closed when HTTP dependency vendoring fails", async () => {
@@ -626,6 +600,70 @@ describe("release asset build executor", () => {
     );
 
     assertCoverageFailure(result, rec, "module-rewrite-failed:pages/index.tsx");
+  });
+
+  it("publishes healthy routes when one page has an unresolvable import", async () => {
+    // A production outage: one leftover scratch page imported a URL that had
+    // since become a sign-in redirect. Its coverage gap failed the entire
+    // manifest, so the renderer had no manifest to admit against and 503'd
+    // every browser module on every route -- the whole site went dead over one
+    // page nothing linked to. The broken page must cost only itself.
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient([
+      { path: "pages/index.tsx", content: "export default () => null;" },
+      { path: "pages/scratch.tsx", content: 'import "./missing.ts"; export default null;' },
+    ], rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true);
+    assertEquals(result.state, "ready");
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    // The healthy page ships and stays admissible.
+    assertEquals(manifest.routes["/"]?.modules, ["pages/index.tsx"]);
+    assertExists(manifest.modules["pages/index.tsx"]);
+    // The broken page ships nowhere: no route, and no manifest entry, so the
+    // browser-module endpoint still refuses it rather than serving a hole.
+    assertEquals(manifest.routes["/scratch"], undefined);
+    assertEquals(manifest.modules["pages/scratch.tsx"], undefined);
+  });
+
+  it("still fails closed when every page fails to transform", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient([
+      { path: "pages/index.tsx", content: "export default () => null;" },
+      { path: "pages/other.tsx", content: "export default () => null;" },
+    ], rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, () => Promise.reject(new Error("compile error"))),
+      await tmp(),
+    );
+
+    assertCoverageFailure(result, rec, "module-transform-failed:pages/");
+  });
+
+  it("still fails closed when every page is unbuildable", async () => {
+    // Degrading per route must not become "publish an empty manifest". With no
+    // serveable route left there is nothing to ship, so the build fails and the
+    // previous release keeps serving.
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient([
+      { path: "pages/index.tsx", content: 'import "./missing.ts"; export default null;' },
+      { path: "pages/other.tsx", content: 'import "./gone.ts"; export default null;' },
+    ], rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertCoverageFailure(result, rec, "module-rewrite-failed:pages/");
   });
 
   it("never publishes project modules with unresolved relative imports", async () => {

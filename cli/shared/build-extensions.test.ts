@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { EvalReportExporterRegistryName } from "veryfront/extensions/eval";
+import { LLMProviderRegistryName } from "veryfront/extensions/llm";
 import { setupBuildCliExtensions } from "./build-extensions.ts";
 
 /** Minimal stand-in for the loader; the build path only needs it to resolve. */
@@ -59,6 +61,18 @@ describe("cli/shared/build-extensions", () => {
     const names = extensionNames(builtins);
     assertEquals(names.has("ext-bundler-esbuild"), true);
     assertEquals(names.has("ext-content-mdx"), true);
+  });
+
+  it("primes the contracts required by built-in providers and exporters", async () => {
+    let primeContracts: Record<string, unknown> = {};
+
+    await setupBuildCliExtensions("/projects/app", {}, (options) => {
+      primeContracts = options.primeContracts ?? {};
+      return Promise.resolve(loaderStub);
+    });
+
+    assertExists(primeContracts[LLMProviderRegistryName]);
+    assertExists(primeContracts[EvalReportExporterRegistryName]);
   });
 
   it("hands orchestration a logger it can actually log through", async () => {

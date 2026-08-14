@@ -2,7 +2,12 @@
 
 The conversation list - browse, create, rename, and delete conversation threads.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `ChatSidebar`, `ChatSidebar.Empty`, `ChatSidebar.Group`, `ChatSidebar.Item`, `ChatSidebar.Item.Delete`, `ChatSidebar.Item.Menu`, `ChatSidebar.Item.Rename`, `ChatSidebar.List`, `ChatSidebar.NewButton`, `ChatSidebar.Root`
+> - **Not exported today:** `ChatSidebar.Item.Menu.Trigger`, `ChatSidebar.Item.Title`
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 `ChatSidebar` is the compound over the conversations domain. Each part renders exactly one node, `extends` the native attributes of that node, spreads `{...props}` onto it, and accepts `asChild`. It is **conversation-native**: inside a `ConversationsProvider` it needs no props - the list, active id, and select/new/delete/rename actions come from context; explicit props override (precedence: explicit prop > nearest context > default). `<ChatSidebar />` (no `.Root`) is the one-shot preset: Root + `.NewButton` + auto `.List`, wrapped in the standalone rail chrome.
 

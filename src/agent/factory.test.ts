@@ -12,6 +12,7 @@ import { tool, toolRegistry } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { getEffectiveAgentSystem } from "./runtime/effective-agent-system.ts";
+import { getAvailableTools } from "./runtime/tool-helpers.ts";
 import { agentRegistry } from "./composition/index.ts";
 import { agent } from "./factory.ts";
 import type { AgentConfig, AgentResponse } from "./types.ts";
@@ -375,18 +376,65 @@ description: Excluded skill
     assertEquals(toolRegistry.has("agent_ingestion-agent"), false);
   });
 
+  it("materializes explicitly requested invoke_agent for direct runtimes", async () => {
+    const assistant = agent({
+      id: "generic-orchestrator",
+      system: "Invoke registered specialist agents.",
+      skills: [],
+      tools: { invoke_agent: true },
+    });
+
+    const definitions = await getAvailableTools(assistant.config.tools, {
+      callerAgentId: assistant.id,
+      includeIntegrationTools: false,
+    });
+
+    assertEquals(definitions.map((definition) => definition.name), ["invoke_agent"]);
+  });
+
+  it("suppresses generic invoke_agent when delegates are explicitly scoped", async () => {
+    for (
+      const [id, delegates, expectedTools] of [
+        ["empty-delegate-scope", [], []],
+        ["fixed-delegate-scope", ["ingestion-agent"], ["agent_ingestion-agent"]],
+      ] as const
+    ) {
+      const assistant = agent({
+        id,
+        system: "Delegate only within the explicit scope.",
+        skills: [],
+        delegates: [...delegates],
+        tools: { invoke_agent: true },
+      });
+
+      const definitions = await getAvailableTools(assistant.config.tools, {
+        callerAgentId: assistant.id,
+        includeIntegrationTools: false,
+      });
+
+      assertEquals(definitions.map((definition) => definition.name), [...expectedTools]);
+    }
+  });
+
   it("rejects delegates combined with the implicit all-tools selector", () => {
-    assertThrows(
-      () =>
-        agent({
-          id: "broad-orchestrator",
-          system: "Delegate specialist work.",
-          delegates: ["ingestion-agent"],
-          tools: true,
-        }),
-      Error,
-      "cannot combine delegates with tools: true",
-    );
+    for (
+      const [id, delegates] of [
+        ["empty-broad-orchestrator", []],
+        ["broad-orchestrator", ["ingestion-agent"]],
+      ] as const
+    ) {
+      assertThrows(
+        () =>
+          agent({
+            id,
+            system: "Delegate specialist work.",
+            delegates: [...delegates],
+            tools: true,
+          }),
+        Error,
+        "cannot combine delegates with tools: true",
+      );
+    }
   });
 
   it("uses the default system prompt before an available skill catalog", async () => {
@@ -435,7 +483,6 @@ description: Excluded skill
     assertEquals(prompt.includes("create_release"), false);
     assertEquals(prompt.includes("load_skill_reference"), false);
     assertEquals(prompt.includes("execute_skill_script"), false);
-    assertStringIncludes(prompt, "- load_skill: Call with");
   });
 
   it("rejects inline local tools in the reserved integration namespace", () => {

@@ -115,8 +115,8 @@ async function install() {
 
     console.log('✅ Veryfront CLI installed successfully!');
     console.log('\n🚀 Get started:');
-    console.log('   npx veryfront --help');
-    console.log('   npx veryfront create my-app');
+    console.log('   npx veryfront@latest --help');
+    console.log('   npx veryfront@latest create my-app');
 
   } catch (error) {
     // Clean up unverified binary so the JS fallback is used instead

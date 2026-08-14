@@ -5,7 +5,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { TransformOptions } from "#veryfront/transforms/esm-transform.ts";
 import { serverLogger, VERSION } from "#veryfront/utils";
-import { HTTP_BAD_REQUEST, HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "#veryfront/utils";
+import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "#veryfront/utils";
 import { getContentTypeForPath } from "#veryfront/server/handlers/utils/content-types.ts";
 import { createSecureFs } from "#veryfront/security";
 import { getErrorMessage } from "#veryfront/errors";
@@ -60,6 +60,14 @@ import {
   rememberReleaseModuleResponse,
 } from "./module-response-cache.ts";
 import { findFirstExistingFile } from "./fs-probe.ts";
+import {
+  moduleBadRequest,
+  moduleMethodNotAllowed,
+  moduleNotFound,
+  moduleRejected,
+  moduleServiceUnavailable,
+  unknownDependencySnapshot,
+} from "./module-response.ts";
 import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/filename-default-export.ts";
 import { classifyModuleRequest, DEV_MODULE_PREFIX } from "./classify.ts";
 import { transformModuleToServable } from "./module-transform.ts";
@@ -399,11 +407,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       const method = req.method.toUpperCase();
       const isHeadRequest = method === "HEAD";
       if (method !== "GET" && method !== "HEAD") {
-        return createModuleResponse(method, "Method not allowed", HttpStatus.METHOD_NOT_ALLOWED, {
-          "Allow": "GET, HEAD",
-          "Cache-Control": "no-store",
-          "Content-Type": "text/plain; charset=utf-8",
-        });
+        return moduleMethodNotAllowed(method);
       }
       const queryPinValues = url.searchParams.getAll("pins");
       const requestedPinKey = pathPin.found ? pathPin.cacheKey : queryPinValues[0];
@@ -427,7 +431,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         (!hasRequestedPinKey && dependencyPinningEnabled &&
           isProjectInDependencyPinningCohort(effectiveProjectId))
       ) {
-        return unknownDependencySnapshotModuleResponse(method);
+        return unknownDependencySnapshot(method);
       }
       const dependencySource = options.dependencyPinningSource ??
         createDependencyPinningSource({
@@ -508,10 +512,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       const kind = classifyModuleRequest(url);
 
       if (kind.kind === "not-module") {
-        return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Cache-Control": "no-cache",
-        });
+        return moduleNotFound(method);
       }
 
       if (kind.kind === "invalid-module") {
@@ -519,22 +520,16 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           namespace: kind.namespace,
           path: url.pathname,
         });
-        return createModuleResponse(method, "Invalid module path", HTTP_BAD_REQUEST, {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Cache-Control": "no-cache",
-        });
+        return moduleBadRequest(method, "Invalid module path");
       }
 
       if (kind.kind === "snippet") {
         const { hash } = kind;
         if (!hash) {
-          return createModuleResponse(method, "Missing snippet hash", HTTP_NOT_FOUND, {
-            "Content-Type": "text/plain; charset=utf-8",
-            "Cache-Control": "no-cache",
-          });
+          return moduleNotFound(method, "Missing snippet hash");
         }
         const dependencyState = await resolveDependencyState();
-        if (!dependencyState) return unknownDependencySnapshotModuleResponse(method);
+        if (!dependencyState) return unknownDependencySnapshot(method);
         const {
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
@@ -548,10 +543,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
         if (!snippetCode) {
           logger.warn("Snippet not found in cache", { hash });
-          return createModuleResponse(method, "Snippet not found", HTTP_NOT_FOUND, {
-            "Content-Type": "text/plain; charset=utf-8",
-            "Cache-Control": "no-cache",
-          });
+          return moduleNotFound(method, "Snippet not found");
         }
 
         const { slug: snippetProjectSlug, branch: snippetBranch } = parseProjectDomain(url.host);
@@ -568,10 +560,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               hash,
               reason: boundaryReason,
             });
-            return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-              "Content-Type": "text/plain; charset=utf-8",
-              "Cache-Control": "no-store",
-            });
+            return moduleRejected(method);
           }
         }
 
@@ -660,10 +649,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         const crossPath = kind.path;
 
         if (!crossProjectSlug || !crossPath) {
-          return createModuleResponse(method, "Invalid cross-project import path", HTTP_NOT_FOUND, {
-            "Content-Type": "text/plain; charset=utf-8",
-            "Cache-Control": "no-cache",
-          });
+          return moduleNotFound(method, "Invalid cross-project import path");
         }
 
         // The remote project's configuration is unavailable here, so enforce
@@ -673,13 +659,10 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             project: crossProjectSlug,
             path: crossPath,
           });
-          return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-            "Content-Type": "text/plain; charset=utf-8",
-            "Cache-Control": "no-store",
-          });
+          return moduleRejected(method);
         }
         const dependencyState = await resolveDependencyState();
-        if (!dependencyState) return unknownDependencySnapshotModuleResponse(method);
+        if (!dependencyState) return unknownDependencySnapshot(method);
         const {
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
@@ -699,14 +682,9 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         try {
           const source = await fetchCrossProjectSource(projectRef, crossPath);
           if (!source) {
-            return createModuleResponse(
+            return moduleNotFound(
               method,
               `Cross-project module not found: ${projectRef}/@/${crossPath}`,
-              HTTP_NOT_FOUND,
-              {
-                "Content-Type": "text/plain; charset=utf-8",
-                "Cache-Control": "no-cache",
-              },
             );
           }
 
@@ -719,10 +697,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
                 path: crossPath,
                 reason: boundaryReason,
               });
-              return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-                "Content-Type": "text/plain; charset=utf-8",
-                "Cache-Control": "no-store",
-              });
+              return moduleRejected(method);
             }
           }
           const crossProjectModuleServerUrl = `/_vf_modules/_cross/${projectRef}/@`;
@@ -815,10 +790,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         logger.warn("Rejected protected project path from browser module endpoint", {
           modulePath,
         });
-        return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Cache-Control": "no-store",
-        });
+        return moduleRejected(method);
       }
 
       const requiresProductionManifestAdmission = !isSSR &&
@@ -831,7 +803,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         isReservedFrameworkModulePath(filePathWithoutExt);
       let dependencyState = resolveBeforeSourceLookup ? await resolveDependencyState() : undefined;
       if (resolveBeforeSourceLookup && !dependencyState) {
-        return unknownDependencySnapshotModuleResponse(method);
+        return unknownDependencySnapshot(method);
       }
 
       if (
@@ -842,10 +814,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         logger.warn("Rejected hosted production browser module without a release", {
           modulePath,
         });
-        return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Cache-Control": "no-store",
-        });
+        return moduleRejected(method);
       }
 
       const canUseReleaseModuleResponseCache = method === "GET" || method === "HEAD";
@@ -946,10 +915,9 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             projectSlug,
             projectDir,
           });
-          return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-            "Content-Type": "text/plain; charset=utf-8",
-            "Cache-Control": "no-store",
-          });
+          // no-store, not no-cache: this miss is probed against the tenant's projectDir
+          // after admission, so a cacheable answer would leak project layout (see #3290).
+          return moduleRejected(method);
         }
 
         const { path: sourceFile, isFrameworkFile, embeddedContent } = findResult;
@@ -958,6 +926,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           : classifyBrowserModuleAbsoluteSourcePath(sourceFile, projectDir, {
             config: options.config,
             rscEnabled: isRSCEnabled(options.config),
+            isLocalProject: options.isLocalProject,
           });
         const exactSourceKey = sourcePolicy?.canonicalPath ?? null;
 
@@ -968,10 +937,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             exactSourceKey,
             reason: sourcePolicy?.protectionReason ?? "outside-project",
           });
-          return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-            "Content-Type": "text/plain; charset=utf-8",
-            "Cache-Control": "no-store",
-          });
+          return moduleRejected(method);
         }
 
         let productionAdmissionManifest: ReleaseAssetManifest | null = null;
@@ -981,10 +947,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               modulePath,
               sourceFile,
             });
-            return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-              "Content-Type": "text/plain; charset=utf-8",
-              "Cache-Control": "no-store",
-            });
+            return moduleRejected(method);
           }
           const admissionManifest = await getReadyManifestForBrowserModuleAdmission(
             options.releaseId,
@@ -996,15 +959,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               sourceFile,
               releaseId: options.releaseId,
             });
-            return createModuleResponse(
-              method,
-              "Browser module manifest unavailable",
-              HttpStatus.SERVICE_UNAVAILABLE,
-              {
-                "Content-Type": "text/plain; charset=utf-8",
-                "Cache-Control": "no-store",
-              },
-            );
+            return moduleServiceUnavailable(method, "Browser module manifest unavailable");
           }
           if (!exactSourceKey || !Object.hasOwn(admissionManifest.modules, exactSourceKey)) {
             logger.warn("Rejected production browser source absent from release manifest", {
@@ -1014,10 +969,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               releaseId: options.releaseId,
               manifestVersion: admissionManifest.manifestVersion,
             });
-            return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-              "Content-Type": "text/plain; charset=utf-8",
-              "Cache-Control": "no-store",
-            });
+            return moduleRejected(method);
           }
           productionAdmissionManifest = admissionManifest;
         }
@@ -1048,7 +1000,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               ? { requestedDependencyPinningCacheKey: requestedPinKey }
               : undefined;
             if (!dependencyPinningOptions) {
-              return unknownDependencySnapshotModuleResponse(method);
+              return unknownDependencySnapshot(method);
             }
             await ensureDefaultParserContracts();
             bundledClientBoundary = await bundleBrowserModuleWithMetadata(sourceFile, {
@@ -1106,10 +1058,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
                 dependencyPath: dependencyAdmission.path,
                 reason: dependencyAdmission.reason,
               });
-              return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-                "Content-Type": "text/plain; charset=utf-8",
-                "Cache-Control": "no-store",
-              });
+              return moduleRejected(method);
             }
           } else {
             inspectedBrowserSource = await readSourceFileForVersion(secureFs, findResult);
@@ -1122,16 +1071,13 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
                 modulePath,
                 reason: boundaryReason,
               });
-              return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-                "Content-Type": "text/plain; charset=utf-8",
-                "Cache-Control": "no-store",
-              });
+              return moduleRejected(method);
             }
           }
         }
 
         dependencyState ??= await resolveDependencyState();
-        if (!dependencyState) return unknownDependencySnapshotModuleResponse(method);
+        if (!dependencyState) return unknownDependencySnapshot(method);
         const {
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
@@ -1287,16 +1233,13 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         return createModuleResponse(method, code, HTTP_OK, headers);
       } catch (error) {
         if (error instanceof BrowserModuleDependencySnapshotError) {
-          return unknownDependencySnapshotModuleResponse(method);
+          return unknownDependencySnapshot(method);
         }
         if (
           error instanceof BrowserModuleEntryRejectedError ||
           error instanceof BrowserModuleBoundaryError
         ) {
-          return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-            "Content-Type": "text/plain; charset=utf-8",
-            "Cache-Control": "no-store",
-          });
+          return moduleRejected(method);
         }
         const errorMsg = getErrorMessage(error);
         logger.error("Module transform error", { modulePath, error: errorMsg });
@@ -1749,13 +1692,6 @@ function createModuleErrorBody(modulePath: string, errorMessage: string): string
   }
 
   return `// Transform Error\nthrow new Error(${JSON.stringify(errorMessage)});`;
-}
-
-function unknownDependencySnapshotModuleResponse(method: string): Response {
-  return createModuleResponse(method, "Unknown dependency snapshot", HttpStatus.CONFLICT, {
-    "Content-Type": "text/plain; charset=utf-8",
-    "Cache-Control": "no-store",
-  });
 }
 
 function classifyModuleServeStatus(status: number): ModuleServeStatus {

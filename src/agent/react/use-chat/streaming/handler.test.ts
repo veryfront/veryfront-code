@@ -259,6 +259,42 @@ describe("use-chat streaming handler", () => {
     ]);
   });
 
+  it("upserts a child-agent stream into one durable message part", async () => {
+    const rec = recorder();
+    const childEvents = Array.from({ length: 1_001 }, (_, index) => ({
+      type: "data-veryfront.invoke_agent.stream",
+      data: {
+        toolCallId: "parent-invoke",
+        agentId: "case-ingest",
+        event: { type: "text-delta", id: "child-text", delta: String(index % 10) },
+      },
+    }));
+
+    await handleStreamingResponse(
+      sseStream([
+        { type: "message-start", messageId: "msg-child-stream" },
+        ...childEvents,
+        { type: "message-finish" },
+      ]),
+      rec.callbacks,
+    );
+
+    const childParts = rec.messages[0]!.parts.filter((part) =>
+      part.type === "data-veryfront.invoke_agent.stream"
+    );
+    assertEquals(childParts.length, 1);
+    assertEquals(
+      (childParts[0] as {
+        data: { events: Array<{ type: string; id: string; delta: string }> };
+      }).data.events,
+      [{
+        type: "text-delta",
+        id: "child-text",
+        delta: Array.from({ length: 1_001 }, (_, index) => String(index % 10)).join(""),
+      }],
+    );
+  });
+
   it("skips malformed JSON lines without throwing", async () => {
     const encoder = new TextEncoder();
     const rec = recorder();
@@ -448,6 +484,198 @@ describe("use-chat streaming handler", () => {
     assertEquals(rec.messages[0]!.id, "agui-msg");
     assertEquals(rec.messages[0]!.parts, [
       { type: "text", text: "split", state: "done" },
+    ]);
+  });
+
+  it("keeps a step-2 reasoning block after the step-1 tool calls when the provider reuses the reasoning id", async () => {
+    const rec = recorder();
+    const reasoningId = "msg-abc:reasoning:reasoning-0";
+
+    await handleAgUiStreamingResponse(
+      agUiSseStream([
+        { event: "RunStarted", data: { runId: "run-1", threadId: "t-1" } },
+        { event: "StepStarted", data: { stepName: "step-1" } },
+        { event: "ReasoningMessageStart", data: { messageId: reasoningId, role: "reasoning" } },
+        {
+          event: "ReasoningMessageContent",
+          data: { messageId: reasoningId, delta: "first thought" },
+        },
+        { event: "ReasoningMessageEnd", data: { messageId: reasoningId } },
+        { event: "ToolCallStart", data: { toolCallId: "call-1", toolCallName: "calculator" } },
+        { event: "ToolCallArgs", data: { toolCallId: "call-1", delta: '{"a":1}' } },
+        { event: "ToolCallEnd", data: { toolCallId: "call-1" } },
+        { event: "ToolCallResult", data: { toolCallId: "call-1", result: { result: 1 } } },
+        { event: "StepFinished", data: { stepName: "step-1" } },
+        { event: "StepStarted", data: { stepName: "step-2" } },
+        { event: "ReasoningMessageStart", data: { messageId: reasoningId, role: "reasoning" } },
+        {
+          event: "ReasoningMessageContent",
+          data: { messageId: reasoningId, delta: "second thought" },
+        },
+        { event: "ReasoningMessageEnd", data: { messageId: reasoningId } },
+        {
+          event: "TextMessageStart",
+          data: { messageId: "msg-abc", contentId: "text-0", role: "assistant" },
+        },
+        {
+          event: "TextMessageContent",
+          data: { messageId: "msg-abc", contentId: "text-0", delta: "answer" },
+        },
+        { event: "TextMessageEnd", data: { messageId: "msg-abc", contentId: "text-0" } },
+        { event: "RunFinished", data: {} },
+      ]),
+      rec.callbacks,
+    );
+
+    const parts = rec.messages[0]!.parts.filter((part) =>
+      part.type === "reasoning" || part.type.startsWith("tool-") || part.type === "text"
+    );
+
+    assertEquals(
+      parts.map((
+        part,
+      ) => (part.type === "reasoning"
+        ? `reasoning:${(part as { text: string }).text}`
+        : part.type)
+      ),
+      [
+        "reasoning:first thought",
+        "tool-calculator",
+        "reasoning:second thought",
+        "text",
+      ],
+    );
+  });
+
+  it("keeps text and position when a still-open reasoning span restarts", async () => {
+    const rec = recorder();
+
+    await handleStreamingResponse(
+      sseStream([
+        { type: "message-start", messageId: "msg-replay" },
+        { type: "reasoning-start", id: "r1" },
+        { type: "reasoning-delta", id: "r1", delta: "partial" },
+        { type: "reasoning-start", id: "r1" },
+        { type: "reasoning-delta", id: "r1", delta: " more" },
+        { type: "reasoning-end", id: "r1" },
+        { type: "text-start", id: "t1" },
+        { type: "text-delta", id: "t1", delta: "answer" },
+        { type: "text-end", id: "t1" },
+        { type: "message-finish" },
+      ]),
+      rec.callbacks,
+    );
+
+    assertEquals(rec.messages[0]!.parts, [
+      { type: "reasoning", text: "partial more", state: "done" },
+      { type: "text", text: "answer", state: "done" },
+    ]);
+  });
+
+  it("keeps a step-2 answer after the step-1 text when the provider reuses the text id", async () => {
+    const rec = recorder();
+
+    await handleStreamingResponse(
+      sseStream([
+        { type: "message-start", messageId: "msg-text-reuse" },
+        { type: "text-start", id: "text-0" },
+        { type: "text-delta", id: "text-0", delta: "first answer" },
+        { type: "text-end", id: "text-0" },
+        { type: "tool-input-start", toolCallId: "call-1", toolName: "calculator" },
+        {
+          type: "tool-input-available",
+          toolCallId: "call-1",
+          toolName: "calculator",
+          input: { a: 1 },
+        },
+        { type: "tool-output-available", toolCallId: "call-1", output: { result: 1 } },
+        { type: "text-start", id: "text-0" },
+        { type: "text-delta", id: "text-0", delta: "second answer" },
+        { type: "text-end", id: "text-0" },
+        { type: "message-finish" },
+      ]),
+      rec.callbacks,
+    );
+
+    assertEquals(
+      rec.messages[0]!.parts.map((part) =>
+        part.type === "text" ? `text:${(part as { text: string }).text}` : part.type
+      ),
+      ["text:first answer", "tool-calculator", "text:second answer"],
+    );
+  });
+
+  it("keeps text and position when a still-open text block restarts", async () => {
+    const rec = recorder();
+
+    await handleStreamingResponse(
+      sseStream([
+        { type: "message-start", messageId: "msg-text-replay" },
+        { type: "text-start", id: "t1" },
+        { type: "text-delta", id: "t1", delta: "partial" },
+        { type: "text-start", id: "t1" },
+        { type: "text-delta", id: "t1", delta: " more" },
+        { type: "text-end", id: "t1" },
+        { type: "message-finish" },
+      ]),
+      rec.callbacks,
+    );
+
+    assertEquals(rec.messages[0]!.parts, [
+      { type: "text", text: "partial more", state: "done" },
+    ]);
+  });
+
+  it("keeps a reasoning span that closed without content, for the renderer to drop", async () => {
+    const rec = recorder();
+
+    await handleStreamingResponse(
+      sseStream([
+        { type: "message-start", messageId: "msg-empty-reasoning" },
+        // A step that produced no reasoning still opens and closes the span.
+        { type: "reasoning-start", id: "reasoning-0" },
+        { type: "reasoning-end", id: "reasoning-0" },
+        { type: "reasoning-start", id: "reasoning-0" },
+        { type: "reasoning-delta", id: "reasoning-0", delta: "real thinking" },
+        { type: "reasoning-end", id: "reasoning-0" },
+        { type: "text-start", id: "t1" },
+        { type: "text-delta", id: "t1", delta: "answer" },
+        { type: "text-end", id: "t1" },
+        { type: "message-finish" },
+      ]),
+      rec.callbacks,
+    );
+
+    // Assembly stays faithful to the stream: AG-UI sent two reasoning messages,
+    // so the message carries two. Suppressing the empty one is a display
+    // decision, which the spec leaves to the consumer and `groupPartsInOrder`
+    // makes — there, it also covers conversations loaded back from storage.
+    assertEquals(rec.messages[0]!.parts, [
+      { type: "reasoning", text: "", state: "done" },
+      { type: "reasoning", text: "real thinking", state: "done" },
+      { type: "text", text: "answer", state: "done" },
+    ]);
+  });
+
+  it("keeps a redacted reasoning span that carries no visible text", async () => {
+    const rec = recorder();
+
+    await handleStreamingResponse(
+      sseStream([
+        { type: "message-start", messageId: "msg-redacted" },
+        { type: "reasoning-start", id: "r1" },
+        { type: "reasoning-end", id: "r1", redactedData: "opaque" },
+        { type: "text-start", id: "t1" },
+        { type: "text-delta", id: "t1", delta: "answer" },
+        { type: "text-end", id: "t1" },
+        { type: "message-finish" },
+      ]),
+      rec.callbacks,
+    );
+
+    assertEquals(rec.messages[0]!.parts, [
+      { type: "reasoning", text: "", redactedData: "opaque", state: "done" },
+      { type: "text", text: "answer", state: "done" },
     ]);
   });
 });

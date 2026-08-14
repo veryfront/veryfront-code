@@ -9,7 +9,10 @@
  */
 
 import type { ImportSpecifier, ModuleLexer } from "veryfront/extensions/bundler";
-import { init, parse } from "npm:es-module-lexer@2.3.1";
+// Bare specifier, mapped to the pinned npm package by this extension's
+// deno.json -- as `esbuild` is. Writing the `npm:` specifier inline instead
+// resolves only under Deno, which is what broke `deno task test:bun`.
+import { init, parse } from "es-module-lexer";
 
 /** es-module-lexer-backed {@link ModuleLexer} implementation. */
 export class EsModuleLexer implements ModuleLexer {

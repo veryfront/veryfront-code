@@ -34,13 +34,8 @@ describe("dashboard access policy", () => {
         "http://localhost:8000/_dev",
         "http://127.0.0.1:8000/_dev/api/stats",
         "http://[::1]:8000/_dev/ui/index.js",
-        "http://veryfront.me:8000/_dev",
-        "http://my-project.veryfront.me:8000/_dev/api/stats",
-        "http://my-project.preview.veryfront.me:8000/_dev/ui/index.js",
         "http://my-project.localhost:8000/_dev",
-        "http://lvh.me:8000/_dev",
-        "http://my-project.lvh.me:8000/_dev/api/stats",
-        "http://my-project.preview.lvh.me:8000/_dev/ui/index.js",
+        "http://my-project.preview.localhost:8000/_dev/ui/index.js",
       ]
     ) {
       assertEquals(isTrustedDashboardRequest(dashboardRequest(url)), true, url);
@@ -51,20 +46,19 @@ describe("dashboard access policy", () => {
     for (
       const url of [
         "http://0.0.0.0:8000/_dev",
-        "http://production.veryfront.me:8000/_dev",
-        "http://staging.veryfront.me:8000/_dev",
-        "http://my-project.production.veryfront.me:8000/_dev",
-        "http://my-project.staging.veryfront.me:8000/_dev",
-        "http://my-project.unknown.veryfront.me:8000/_dev",
-        "http://production.lvh.me:8000/_dev",
-        "http://my-project.production.lvh.me:8000/_dev",
-        "http://my-project.staging.lvh.me:8000/_dev",
-        "http://example.com.prod.lvh.me:8000/_dev",
-        "http://my-project.unknown.lvh.me:8000/_dev",
-        "http://veryfront.me.attacker.example:8000/_dev",
-        "http://lvh.me.attacker.example:8000/_dev",
-        "http://veryfront.dev:8000/_dev",
-        "http://my-project.veryfront.dev:8000/_dev",
+        "http://production.localhost:8000/_dev",
+        "http://staging.localhost:8000/_dev",
+        "http://my-project.production.localhost:8000/_dev",
+        "http://my-project.staging.localhost:8000/_dev",
+        "http://my-project.unknown.localhost:8000/_dev",
+        "http://example.com.prod.localhost:8000/_dev",
+        "http://a.b.c.localhost:8000/_dev",
+        "http://localhost.attacker.example:8000/_dev",
+        // Public wildcard-DNS roots resolving to 127.0.0.1 are ordinary
+        // registrable domains, not dashboard authorities.
+        "http://wildcard-dns.example:8000/_dev",
+        "http://my-project.wildcard-dns.example:8000/_dev",
+        "http://my-project.preview.wildcard-dns.example:8000/_dev",
       ]
     ) {
       assertEquals(isTrustedDashboardRequest(dashboardRequest(url)), false, url);

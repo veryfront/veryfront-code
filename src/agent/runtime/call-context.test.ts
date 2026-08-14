@@ -132,41 +132,40 @@ describe("agent/runtime/call-context", () => {
   });
 
   describe("skills rendering", () => {
-    it("renders skill metadata and scopes delegation to the available tools", () => {
+    it("renders only the skill catalogue, with no orchestration prose", () => {
       const [message] = buildAgentCallContext({
         instructions: "Base",
         skills: createSkills(),
-        availableToolNames: ["agent_reviewer", "load_skill"],
       });
 
       const content = message?.content ?? "";
       assertStringIncludes(content, "<available_skills>");
+      // Identity only: model/thinking/maxSteps are returned structurally by
+      // load_skill, which is when a caller needs them.
       assertStringIncludes(
         content,
-        '- {"skillId":"deploy","name":"Deploy","displayName":"Deploy Skill","description":"Deployment guidance","allowedTools":[],"model":"openai/gpt-5.4","thinking":512,"maxSteps":4}',
+        '- {"skillId":"deploy","name":"Deploy","displayName":"Deploy Skill","description":"Deployment guidance"}',
       );
-      assertEquals(content.includes("create_file"), false);
       assertStringIncludes(
         content,
         '- {"skillId":"review","name":"Review","description":"Review guidance"}',
       );
-      assertStringIncludes(
-        content,
-        'When delegating, use only these available scoped delegation tools: "agent_reviewer".',
-      );
-    });
+      assertEquals(content.includes("create_file"), false);
 
-    it("adds the skill tool call signatures only when the caller opts in", () => {
-      const [without] = buildAgentCallContext({ instructions: "Base", skills: createSkills() });
-      const [with_] = buildAgentCallContext({
-        instructions: "Base",
-        skills: createSkills(),
-        includeSkillToolUsage: true,
-      });
-
-      assertEquals((without?.content ?? "").includes("execute_skill_script"), false);
-      assertStringIncludes(with_?.content ?? "", "load_skill_reference: Call with");
-      assertStringIncludes(with_?.content ?? "", "execute_skill_script: Call with");
+      // The block carries no orchestration policy; that lives in the
+      // load_skill tool description and the agent's own instructions.
+      for (
+        const prose of [
+          "Continue the same turn",
+          "Keep the root assistant",
+          "When delegating",
+          "Delegate only when",
+          "Do not mention child agents",
+          "Do NOT attempt tools",
+        ]
+      ) {
+        assertEquals(content.includes(prose), false);
+      }
     });
   });
 

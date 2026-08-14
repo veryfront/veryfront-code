@@ -1,6 +1,7 @@
 import {
   type AgUiBrowserEncodedEvent,
   type AgUiBrowserEncoderState,
+  type AgUiBrowserEncoderStateOptions,
   type AgUiBrowserRunFinishedMetadata,
   type AgUiRuntimeStreamEvent,
   createAgUiBrowserEncoderState,
@@ -19,13 +20,19 @@ export interface AgUiRuntimeEventEncoder {
 /** Options accepted by create AG-UI runtime event encoder. */
 export interface CreateAgUiRuntimeEventEncoderOptions {
   initialMetadata?: Partial<AgUiBrowserRunFinishedMetadata>;
+  /**
+   * Timing clocks forwarded verbatim to the encoder state. A single object so
+   * that adding a clock is one edit in `AgUiBrowserEncoderStateOptions`, not a
+   * sweep through every wrapper that happens to sit in between.
+   */
+  timing?: AgUiBrowserEncoderStateOptions;
 }
 
 /** Create AG-UI runtime event encoder. */
 export function createAgUiRuntimeEventEncoder(
   options: CreateAgUiRuntimeEventEncoderOptions = {},
 ): AgUiRuntimeEventEncoder {
-  const state = createAgUiBrowserEncoderState();
+  const state = createAgUiBrowserEncoderState(options.timing ?? {});
   const toolInputs = new Map<string, unknown>();
 
   Object.assign(state.metadata, options.initialMetadata ?? {});

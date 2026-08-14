@@ -613,7 +613,10 @@ function createLocalEvalAgentFetch(input: {
   const agent = agentRegistry.get(input.agentId);
   if (!agent) return undefined;
 
-  const handler = createAgUiHandler({ agent });
+  const handler = createAgUiHandler({
+    agent,
+    context: { runIdBindsToolAuthorization: false },
+  });
   return async (requestInput, init) => {
     const request = new Request(requestInput, init);
     if (!isLocalAgUiEndpoint(request.url)) return fetch(request);

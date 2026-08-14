@@ -2,6 +2,7 @@ import { dirname, join } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
 import { ensureDir, fileExists } from "../utils/fs.ts";
 import { toComponentName, toSlug } from "../utils/string.ts";
+import { filenameToId } from "veryfront/discovery";
 
 export type ScaffoldRouter = "app-router" | "pages-router";
 export const SCAFFOLD_TYPES = [
@@ -94,7 +95,10 @@ const SCAFFOLD_DEFINITIONS: Record<ScaffoldType, ScaffoldDefinition> = {
   },
   tool: {
     getPath: ({ projectDir, slug }) => join(projectDir, "tools", `${slug}.ts`),
-    getContent: ({ name }) => generateToolTemplate(name),
+    // Discovery derives a tool's id from its filename, and an explicit `id`
+    // overrides that. Declare the id discovery would have derived so the
+    // generated tool registers under the name the filename promises.
+    getContent: ({ slug }) => generateToolTemplate(filenameToId(`${slug}.ts`)),
   },
   agent: {
     getPath: ({ projectDir, slug }) => join(projectDir, "agents", `${slug}.ts`),
@@ -270,7 +274,7 @@ export function ${componentName}({ children }: ${componentName}Props) {
 `;
 }
 
-function generateToolTemplate(name: string): string {
+function generateToolTemplate(id: string): string {
   return `import { defineSchema } from "veryfront/schemas";
 import { tool } from "veryfront/tool";
 
@@ -279,7 +283,7 @@ const inputSchema = defineSchema((v) => v.object({
 }))();
 
 export default tool({
-  id: "${name}",
+  id: "${id}",
   description: "Description of what this tool does",
   inputSchema,
   execute: ({ input }) => {

@@ -133,6 +133,7 @@ export interface TransformContext {
   reactVersion: string;
   projectDir: string;
   fs: ReturnType<typeof createFileSystem>;
+  abortSignal?: AbortSignal;
   importMap?: ImportMapConfig;
   importMapFingerprint?: string;
   onProgress?: TransformProgressListener;

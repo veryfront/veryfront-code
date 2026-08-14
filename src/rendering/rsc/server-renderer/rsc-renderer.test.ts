@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import "#veryfront/react/compat/ssr-adapter/test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RSCRenderer } from "./rsc-renderer.ts";

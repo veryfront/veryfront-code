@@ -294,6 +294,7 @@ Deno.test("local-only delegates preserve the trusted MCP source for a grandchild
   let childModelCalls = 0;
   let rootModelCalls = 0;
   const listedBy: string[] = [];
+  let grandchildRuntimeToolNames: string[] = [];
 
   const injectedStudioSource: RemoteToolSource = {
     id: VERYFRONT_STUDIO_MCP_SOURCE_ID,
@@ -312,8 +313,9 @@ Deno.test("local-only delegates preserve the trusted MCP source for a grandchild
     provider: "test",
     modelId: "test/delegate-grandchild",
     doGenerate: () => Promise.reject(new Error("unused")),
-    doStream() {
+    doStream(options) {
       grandchildModelCalls++;
+      grandchildRuntimeToolNames = getRuntimeToolNames(options);
       return Promise.resolve({
         stream: createRuntimeStream([
           { type: "text-delta", text: "grandchild completed" },
@@ -433,6 +435,7 @@ Deno.test("local-only delegates preserve the trusted MCP source for a grandchild
     assertEquals(childModelCalls, 2);
     assertEquals(rootModelCalls, 2);
     assertEquals(listedBy.includes(grandchildId), true);
+    assertEquals(grandchildRuntimeToolNames.includes("get_file"), true);
     assertEquals(body.includes("root completed"), true);
     assertEquals(body.includes('"type":"error"'), false);
   } finally {

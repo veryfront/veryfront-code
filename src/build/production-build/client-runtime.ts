@@ -66,6 +66,13 @@ const unresolvedInternalAlias = /(?:^|["'])#veryfront\//;
 const clientAliasPaths = new Map([
   ["#veryfront/config", "src/rendering/client/browser-stubs/config.ts"],
   ["#veryfront/errors/error-registry.ts", "src/rendering/client/browser-stubs/error-registry.ts"],
+  // Client code reaches SECURITY_VIOLATION through the leaf category module so
+  // that other bundlers do not retain the whole registry; the stub has to cover
+  // that spelling too or the definitions come back in through the side door.
+  [
+    "#veryfront/errors/error-registry/general.ts",
+    "src/rendering/client/browser-stubs/error-registry.ts",
+  ],
   ["#veryfront/routing", "src/routing/client/index.ts"],
 ]);
 

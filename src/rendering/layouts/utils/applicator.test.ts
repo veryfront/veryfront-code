@@ -1,13 +1,15 @@
+import * as React from "react";
+import * as ReactDOMServer from "react-dom/server";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { applyLayoutsESM, applyLayoutsFunctionBody } from "./applicator.ts";
-import * as React from "react";
 import { renderToStringAdapter } from "#veryfront/react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem } from "#veryfront/types";
+import { applyLayoutsESM, applyLayoutsFunctionBody } from "./applicator.ts";
 import { createLayoutComponentCache } from "./component-loader.ts";
 import {
+  __injectReactDOMServerForTests,
   __setServerModuleLoaderForTests,
   resetReactCache,
 } from "../../../react/compat/ssr-adapter/server-loader.ts";
@@ -160,6 +162,7 @@ describe(
           "content-source-id",
         );
 
+        __injectReactDOMServerForTests(ReactDOMServer);
         const html = await renderToStringAdapter(result);
         assertEquals(html.includes('<html lang="en">'), true);
         assertEquals(html.includes("<body>"), true);

@@ -76,6 +76,9 @@ export interface ToolExecutionContext {
   agentId?: string;
   /** ID of the current agent run when the runtime is tracking run lifecycles */
   runId?: string;
+  /** False when `runId` is not a control-plane run and must not be sent as a
+   * run authorization binding. Absent means it may be. */
+  runIdBindsToolAuthorization?: boolean;
   /** Stable ID for the current tool call when the runtime is tracking tool lifecycles */
   toolCallId?: string;
   /** Project identity used by integration token resolution */

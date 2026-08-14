@@ -1,12 +1,12 @@
 import {
-  convertUiMessagesToProviderModelMessages,
   copyProviderModelMessageSourceId,
-  findProviderVisibleToolReplayMatches,
   getStringField,
   isReasoningPart,
   isToolCallPart,
   isToolResultPart,
 } from "./conversation.ts";
+import { convertUiMessagesToProviderModelMessages } from "./provider-message-conversion.ts";
+import { findProviderVisibleToolReplayMatches } from "./tool-replay-reconciliation.ts";
 import {
   buildDataFileAnnotation,
   type ChatAssistantContentPart,

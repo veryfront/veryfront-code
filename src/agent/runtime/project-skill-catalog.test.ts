@@ -480,7 +480,7 @@ Deno.test("project catalog snapshots builtin definitions before awaiting project
     allowedTools: ["*"],
   };
   builtin.id = "mutated";
-  builtin.allowedTools.push("*");
+  builtin.allowedTools?.push("*");
   builtin.references?.push("assets/injected.txt");
   builtin.metadata!.owner = "mutated";
   releaseListing();

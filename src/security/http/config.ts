@@ -19,6 +19,11 @@ export interface DeriveSecurityContextOptions {
    * classification may override it explicitly.
    */
   productionDefaults?: boolean;
+  /**
+   * Origins derived from the project's released source. Platform-supplied;
+   * anything a project config carries under this name is discarded.
+   */
+  derivedCsp?: SecurityConfig["derivedCsp"];
 }
 
 const MAX_SECURITY_CONFIG_DEPTH = 32;
@@ -189,8 +194,12 @@ function readProductionDefaults(options: unknown): boolean | undefined {
   try {
     const prototype = Object.getPrototypeOf(options);
     if (prototype !== Object.prototype && prototype !== null) return invalidSecurityConfig();
+    // Allowlisted rather than ignored: this object reaches a security decision,
+    // so an unrecognised key is a caller mistake worth failing on, not a
+    // silently discarded one.
+    const allowed = new Set<PropertyKey>(["productionDefaults", "derivedCsp"]);
     const keys = Reflect.ownKeys(options);
-    if (keys.some((key) => key !== "productionDefaults")) return invalidSecurityConfig();
+    if (keys.some((key) => !allowed.has(key))) return invalidSecurityConfig();
     const descriptor = Object.getOwnPropertyDescriptor(options, "productionDefaults");
     if (!descriptor) return undefined;
     if (!descriptor.enumerable || !("value" in descriptor)) return invalidSecurityConfig();
@@ -261,6 +270,17 @@ export function deriveSecurityContext(
   const productionDefaults = readProductionDefaults(options) ?? isProduction();
   if (normalized.csrf === undefined && productionDefaults) {
     normalized.csrf = true;
+  }
+
+  // Assigned unconditionally, never merged. `SecurityConfig` carries an index
+  // signature, so the clone above would happily copy a `derivedCsp` a project
+  // wrote in its own config; overwriting here makes the platform the only
+  // author of this layer. Deleting when absent keeps a stale project value
+  // from surviving as the derived set.
+  if (options.derivedCsp && Object.keys(options.derivedCsp).length > 0) {
+    normalized.derivedCsp = options.derivedCsp;
+  } else {
+    delete normalized.derivedCsp;
   }
 
   const securityConfig = Object.freeze(normalized);

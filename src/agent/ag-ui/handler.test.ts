@@ -157,6 +157,7 @@ describe("agent/ag-ui-handler", () => {
     assertEquals(testAgent.capturedContext?.tenant, "acme");
     assertEquals(testAgent.capturedContext?.threadId !== undefined, true);
     assertEquals(testAgent.capturedContext?.runId !== undefined, true);
+    assertEquals(testAgent.capturedContext?.runIdBindsToolAuthorization, false);
     assertEquals(
       testAgent.capturedContext?.agUi,
       {
@@ -178,6 +179,59 @@ describe("agent/ag-ui-handler", () => {
     assertStringIncludes(body, '"provider":"anthropic"');
     assertStringIncludes(body, '"model":"anthropic/claude-sonnet-4-6"');
     assertStringIncludes(body, '"delta":"hello from runtime"');
+    assertStringIncludes(body, `"runId":"${testAgent.capturedContext?.runId}"`);
+  });
+
+  it("keeps a client-supplied direct AG-UI run ID eligible for binding", async () => {
+    const testAgent = createTestAgent();
+    const handler = createAgUiHandler({ agent: testAgent.agent });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: "run_client_1",
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          }],
+        }),
+      }),
+    );
+
+    assertEquals(response.status, 200);
+    assertEquals(testAgent.capturedContext?.runId, "run_client_1");
+    assertEquals(testAgent.capturedContext?.runIdBindsToolAuthorization, undefined);
+    assertStringIncludes(await response.text(), '"runId":"run_client_1"');
+  });
+
+  it("keeps client run IDs non-binding in a trusted local eval context", async () => {
+    const testAgent = createTestAgent();
+    const handler = createAgUiHandler({
+      agent: testAgent.agent,
+      context: { runIdBindsToolAuthorization: false },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: "eval-run-local",
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          }],
+        }),
+      }),
+    );
+
+    assertEquals(response.status, 200);
+    assertEquals(testAgent.capturedContext?.runId, "eval-run-local");
+    assertEquals(testAgent.capturedContext?.runIdBindsToolAuthorization, false);
   });
 
   it("omits provider-owned remote tool history before direct streaming", async () => {
@@ -370,6 +424,8 @@ describe("agent/ag-ui-handler", () => {
       _messages,
       context,
     ): Promise<ReadableStream<Uint8Array>> {
+      assertEquals(context?.runId, "run_data_1");
+      assertEquals(context?.runIdBindsToolAuthorization, undefined);
       const publishDataEvent = context?.publishDataEvent;
       if (typeof publishDataEvent === "function") {
         await publishDataEvent({
@@ -452,7 +508,11 @@ describe("agent/ag-ui-handler", () => {
               text: `Retrieved context for: ${lastUserText}`,
             }],
           }],
-          context: { ...context, retrieval: "complete" },
+          context: {
+            threadId: context.threadId,
+            runId: context.runId,
+            retrieval: "complete",
+          },
         };
       },
     });
@@ -491,6 +551,7 @@ describe("agent/ag-ui-handler", () => {
     );
     assertEquals(testAgent.capturedMessages[1]?.id, "msg-1");
     assertEquals(testAgent.capturedContext?.retrieval, "complete");
+    assertEquals(testAgent.capturedContext?.runIdBindsToolAuthorization, false);
   });
 
   it("lets beforeStream short-circuit AG-UI requests", async () => {
@@ -734,6 +795,7 @@ describe("agent/ag-ui-handler", () => {
       isError: boolean;
     }>();
     const originalStream = AgentRuntime.prototype.stream;
+    let streamedRunId: string | undefined;
 
     AgentRuntime.prototype.stream = async function (
       messages,
@@ -812,7 +874,11 @@ describe("agent/ag-ui-handler", () => {
       });
 
       assertEquals(messages[0]?.role, "user");
-      assertEquals(context?.runId, "run_1");
+      if (typeof context?.runId !== "string") throw new Error("Expected a generated run ID");
+      streamedRunId = context.runId;
+      assertMatch(streamedRunId, /^run_[a-z0-9]+$/);
+      assertEquals(context.replacement, true);
+      assertEquals(context.runIdBindsToolAuthorization, false);
       return stream;
     };
 
@@ -820,6 +886,13 @@ describe("agent/ag-ui-handler", () => {
       const handler = createAgUiHandler({
         agent: createTestAgent().agent,
         sessionManager,
+        beforeStream: ({ context }) => ({
+          context: {
+            threadId: context.threadId,
+            runId: context.runId,
+            replacement: true,
+          },
+        }),
       });
 
       const response = await handler(
@@ -827,7 +900,6 @@ describe("agent/ag-ui-handler", () => {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            runId: "run_1",
             threadId: crypto.randomUUID(),
             messages: [{
               id: "msg-1",
@@ -840,9 +912,10 @@ describe("agent/ag-ui-handler", () => {
       );
 
       assertEquals(response.status, 200);
+      if (streamedRunId === undefined) throw new Error("Expected the runtime to capture a run ID");
 
       const bodyPromise = response.text();
-      const submitOutcome = sessionManager.submitSignal("run_1", {
+      const submitOutcome = sessionManager.submitSignal(streamedRunId, {
         waitKey: "tool-call-1",
         value: { result: { approved: true }, isError: false },
       });

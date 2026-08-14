@@ -1,4 +1,4 @@
-import type { FeatureName, IntegrationName } from "../../templates/types.ts";
+import type { FeatureName, IntegrationName } from "../../../templates/types.ts";
 
 export type InitTemplate =
   | "ai-agent"

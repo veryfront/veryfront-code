@@ -1,8 +1,19 @@
-import { type EnvironmentConfig, getConfig, getEnvironmentConfig } from "veryfront/config";
+import {
+  type EnvironmentConfig,
+  findHostedConfigIncompatibility,
+  findVeryfrontConfigFile,
+  formatHostedConfigIncompatibility,
+  getConfig,
+  getEnvironmentConfig,
+} from "veryfront/config";
 import { createFileSystem, isNotFoundError, runtime } from "veryfront/platform";
 import { join, relative, resolve } from "veryfront/platform/path";
 import { isWithinDirectory, normalizePath } from "veryfront/utils";
-import { parseProjectDomain } from "veryfront/server";
+import {
+  HOSTED_ENVIRONMENT_NAMES,
+  isHostedEnvironmentName,
+  parseProjectDomain,
+} from "veryfront/server";
 import {
   describeReadyReleaseAssetManifestRejection,
   isSafeBoundedText,
@@ -13,8 +24,10 @@ import {
   routeForPage,
 } from "veryfront/release-assets";
 import {
+  CONFIG_NOT_DEPLOYABLE,
   DEPLOYMENT_ERROR,
   ENVIRONMENT_NOT_FOUND,
+  ENVIRONMENT_NOT_ROUTABLE,
   RELEASE_MISSING_VERSION,
   SOURCE_DIGEST_MISMATCH,
   VeryfrontError,
@@ -102,7 +115,7 @@ export type DeployEvent =
   }
   | {
     kind: "warning";
-    code: "routing-convergence-unconfirmed";
+    code: "routing-convergence-unconfirmed" | "environment-url-unverified";
     message: string;
   };
 
@@ -547,6 +560,46 @@ function resolveProjectRouteDirectory(
   return routeRoot;
 }
 
+/**
+ * Refuse a configuration file Veryfront Cloud can never read.
+ *
+ * A hosted project's config is evaluated as data, not imported, so a config
+ * that imports an extension is rejected on every request: the deploy reports
+ * success and the environment answers 500 to all traffic. Deciding it here
+ * costs one parse and turns that into a message before anything is created.
+ *
+ * Only rejections the source alone decides reach this far (see
+ * `findHostedConfigIncompatibility`), so a config whose values depend on
+ * deployment environment variables is never blocked by a difference between
+ * that environment and the developer's.
+ */
+async function assertConfigIsDeployable(projectDir: string): Promise<void> {
+  const fs = createFileSystem();
+  const configFile = await findVeryfrontConfigFile(projectDir, (path) => fs.exists(path));
+  if (!configFile) return;
+
+  let source: string;
+  try {
+    source = await fs.readTextFile(configFile.path);
+  } catch (error) {
+    if (isNotFoundError(error)) return;
+    throw error;
+  }
+
+  const incompatibility = await findHostedConfigIncompatibility(source, configFile.fileName);
+  if (!incompatibility) return;
+
+  throw CONFIG_NOT_DEPLOYABLE.create({
+    detail: formatHostedConfigIncompatibility(incompatibility, configFile.fileName),
+    context: {
+      configFile: configFile.fileName,
+      code: incompatibility.code,
+      reason: incompatibility.reason,
+      ...(incompatibility.line === undefined ? {} : { line: incompatibility.line }),
+    },
+  });
+}
+
 async function collectProjectPageRoutes(projectDir: string): Promise<string[]> {
   const fs = createFileSystem();
   const directories = await getProjectRouteDirectories(projectDir);
@@ -618,16 +671,46 @@ function assertReadyManifestCoversPageRoutes(
 /** Upper bound for a plausible manifest state value from the control plane. */
 const MAX_MANIFEST_STATE_LENGTH = 64;
 
-function releaseAssetPollingTimeoutError(
-  timeoutMs: number,
-  lastState: string,
-  lastTransientFailure: string | null,
-): Error {
-  const timeoutSeconds = Math.ceil(timeoutMs / 1000);
+/**
+ * The manifest row appears the moment the project runtime begins the build, so
+ * never seeing one is a different failure from a build that is merely slow: the
+ * control plane's signed `task:release-asset-build` dispatch never reached the
+ * builder. Something in front of the runtime's control-plane handler answered
+ * it, and the operator needs to be told that rather than sent to inspect a
+ * build that never started.
+ */
+const RELEASE_ASSET_BUILD_NEVER_STARTED_HINT =
+  "No manifest was ever created for this release, so the release asset build " +
+  'dispatch (POST /api/control-plane/runs/{runId}/execute, target "task:release-asset-build") ' +
+  "never reached the builder on the deployed runtime. Check the runtime logs for this " +
+  "release, and any request gate in front of it such as the project's middleware.ts or a " +
+  "security policy in veryfront.config.";
+
+function releaseAssetPollingTimeoutError(options: {
+  timeoutMs: number;
+  lastState: string;
+  /** The most recent retryable read failure, or `null` if the last read succeeded. */
+  lastTransientFailure: string | null;
+  /** Whether any read ever returned a manifest row. */
+  observedManifest: boolean;
+  /** Whether any read ever failed retryably, including reads a later success followed. */
+  observedTransientFailure: boolean;
+}): Error {
+  const { lastState, lastTransientFailure, observedManifest, observedTransientFailure } = options;
+  const timeoutSeconds = Math.ceil(options.timeoutMs / 1000);
+  // Only claim the dispatch never landed when nothing else can explain the
+  // silence: a manifest read that failed leaves the build state unknown for
+  // that window, so it rules out the stronger claim even if later reads
+  // succeeded and returned no row.
+  const neverStarted = !observedManifest && !observedTransientFailure;
   return new Error(
     `Release assets were not ready within ${timeoutSeconds}s (last state: ${lastState}${
       lastTransientFailure === null ? "" : `; last control-plane failure: ${lastTransientFailure}`
-    }). Check the release asset build and run deploy again.`,
+    }). ${
+      neverStarted
+        ? RELEASE_ASSET_BUILD_NEVER_STARTED_HINT
+        : "Check the release asset build and run deploy again."
+    }`,
   );
 }
 
@@ -675,14 +758,18 @@ export async function waitForReleaseAssetManifest(
   const deadline = Date.now() + timeoutMs;
   let lastState = "missing";
   let lastTransientFailure: string | null = null;
+  let observedManifest = false;
+  let observedTransientFailure = false;
 
   for (;;) {
     const remainingMs = deadline - Date.now();
-    const timeoutError = releaseAssetPollingTimeoutError(
+    const timeoutError = releaseAssetPollingTimeoutError({
       timeoutMs,
       lastState,
       lastTransientFailure,
-    );
+      observedManifest,
+      observedTransientFailure,
+    });
     if (remainingMs <= 0) throw timeoutError;
 
     let raw: Awaited<ReturnType<DeployControlPlane["getReleaseAssetManifest"]>> = null;
@@ -702,8 +789,10 @@ export async function waitForReleaseAssetManifest(
       lastTransientFailure = status === undefined
         ? "a transient connection failure"
         : `HTTP ${status}`;
+      observedTransientFailure = true;
     }
     if (raw !== null) {
+      observedManifest = true;
       const state = readUntrustedOwnDataProperty(raw, "state");
       if (!isSafeBoundedText(state, MAX_MANIFEST_STATE_LENGTH)) {
         throw new Error(`Release assets for ${releaseId} returned an invalid state response`);
@@ -754,14 +843,51 @@ export async function waitForReleaseAssetManifest(
   }
 }
 
-function buildEnvironmentUrl(projectSlug: string, environment: DeployEnvironment): string {
+/** The environment's own domain, or null when it has none configured. */
+function configuredEnvironmentDomain(environment: DeployEnvironment): string | null {
   const domain = environment.domains?.[0];
-  if (domain) {
-    return domain.startsWith("http://") || domain.startsWith("https://")
-      ? domain
-      : `https://${domain}`;
-  }
-  return `https://${projectSlug}.${environment.name}.veryfront.com`;
+  if (!domain) return null;
+  return domain.startsWith("http://") || domain.startsWith("https://")
+    ? domain
+    : `https://${domain}`;
+}
+
+/**
+ * Rejects an environment whose name has no address the deploy could ever reach.
+ *
+ * The hosted URL is synthesised as `{slug}.{environment}.veryfront.com`, which
+ * only resolves for the labels in `HOSTED_ENVIRONMENT_NAMES`. Any other label —
+ * `development`, `qa`, anything an operator invented in Studio — has no wildcard
+ * certificate and no routing rule, so the readiness probe cannot succeed: it
+ * fails the TLS handshake, or the proxy answers `404 No project configured for
+ * domain`. Both are retried as transient, so without this check the deploy
+ * pushes source, builds assets, commits a deployment, and only then spends the
+ * full readiness window before failing with a message about the deployment.
+ *
+ * A configured custom domain removes the constraint entirely — routing then has
+ * nothing to do with the environment's name — so this only guards the fallback.
+ *
+ * Call this only for a deploy that will actually ask for that address. A project
+ * with no static page route probes nothing, so its name never has to resolve.
+ */
+function assertEnvironmentIsReachable(environment: DeployEnvironment): void {
+  if (configuredEnvironmentDomain(environment) !== null) return;
+  if (isHostedEnvironmentName(environment.name)) return;
+
+  throw ENVIRONMENT_NOT_ROUTABLE.create({
+    detail: `Environment "${environment.name}" has no Veryfront-hosted address. ` +
+      `Veryfront serves ${
+        HOSTED_ENVIRONMENT_NAMES.join(", ")
+      } at https://<slug>.<environment>.veryfront.com; ` +
+      `no other environment name resolves. Deploy to one of those, or attach a custom domain ` +
+      `to "${environment.name}" in Studio under Environments and deploy again.`,
+    context: { environmentName: environment.name, hostedEnvironments: HOSTED_ENVIRONMENT_NAMES },
+  });
+}
+
+function buildEnvironmentUrl(projectSlug: string, environment: DeployEnvironment): string {
+  return configuredEnvironmentDomain(environment) ??
+    buildCanonicalEnvironmentUrl(projectSlug, environment.name);
 }
 
 function buildCanonicalEnvironmentUrl(projectSlug: string, environmentName: string): string {
@@ -829,34 +955,86 @@ function isMatchingVeryfrontHostedUrl(
     parsed.environment === target.environmentName.toLowerCase();
 }
 
+const MAX_JWT_SEGMENT_CODE_UNITS = 8 * 1024;
+
+/** Decode one base64url JWT segment into a plain object, or null if it is not one. */
+function decodeJwtSegment(segment: string | undefined): object | null {
+  if (segment === undefined) return null;
+  if (segment.length === 0 || segment.length > MAX_JWT_SEGMENT_CODE_UNITS) return null;
+  try {
+    const base64 = segment.replaceAll("-", "+").replaceAll("_", "/");
+    const binary = atob(base64 + "=".repeat((4 - base64.length % 4) % 4));
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const parsed = JSON.parse(new TextDecoder().decode(bytes));
+    return typeof parsed === "object" && parsed !== null ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether a stored credential could satisfy the protected-environment gate.
+ *
+ * The gate reads `userId` from the verified JWT payload and has no API-key
+ * branch, so presenting an opaque key only leaks it. Reads what the gate
+ * reads, and withholds anything it cannot recognise.
+ */
+function isSessionCredential(apiToken: string): boolean {
+  const segments = apiToken.split(".");
+  if (segments.length !== 3) return false;
+
+  const header = decodeJwtSegment(segments[0]);
+  if (header === null || typeof readUntrustedOwnDataProperty(header, "alg") !== "string") {
+    return false;
+  }
+
+  const payload = decodeJwtSegment(segments[1]);
+  if (payload === null) return false;
+  const userId = readUntrustedOwnDataProperty(payload, "userId");
+  return typeof userId === "string" && userId.length > 0;
+}
+
 function buildEnvironmentReadinessProbes(
   target: EnvironmentReadinessTarget,
 ): EnvironmentReadinessProbe[] {
   const route = target.route === undefined ? "/" : target.route;
   if (route === null) return [];
 
+  // Without a session credential the probe cannot get past the gate. Its
+  // challenge still proves routing resolves and the proxy is serving this
+  // environment — the most this step can establish, and the deployment it
+  // would otherwise fail is already committed and verified. Same allowance the
+  // protected custom-domain probe below already makes.
+  const canAuthenticate = isSessionCredential(target.apiToken);
+
   const targetUrl = buildEnvironmentProbeUrl(target.url, route);
   if (target.protected && !isMatchingVeryfrontHostedUrl(new URL(targetUrl), target)) {
+    const challengeProbe = {
+      url: targetUrl,
+      authenticate: false,
+      acceptAuthenticationChallenge: true,
+    };
+    // The canonical companion probe only exists where the platform routes it.
+    // An environment on a custom domain may be named anything, and synthesising
+    // an address for a name hosting cannot serve would poll an unreachable host
+    // to the deadline after the custom domain has already answered.
+    if (!isHostedEnvironmentName(target.environmentName)) return [challengeProbe];
     return [
-      {
-        url: targetUrl,
-        authenticate: false,
-        acceptAuthenticationChallenge: true,
-      },
+      challengeProbe,
       {
         url: buildEnvironmentProbeUrl(
           buildCanonicalEnvironmentUrl(target.projectSlug, target.environmentName),
           route,
         ),
-        authenticate: true,
-        acceptAuthenticationChallenge: false,
+        authenticate: canAuthenticate,
+        acceptAuthenticationChallenge: !canAuthenticate,
       },
     ];
   }
   return [{
     url: target.protected ? secureEnvironmentProbeUrl(targetUrl) : targetUrl,
-    authenticate: target.protected,
-    acceptAuthenticationChallenge: false,
+    authenticate: target.protected && canAuthenticate,
+    acceptAuthenticationChallenge: target.protected && !canAuthenticate,
   }];
 }
 
@@ -878,6 +1056,21 @@ function isSignInRedirect(response: Response, requestUrl: string): boolean {
   }
 }
 
+/** A challenge is a sign-in redirect, a 401, or a 403; say which one arrived. */
+function describeAuthenticationChallenge(
+  probe: EnvironmentReadinessProbe,
+  status: number,
+  signInRedirect: boolean,
+): string {
+  if (probe.authenticate) {
+    return `Could not authenticate the protected environment URL ${probe.url}. Run veryfront login and deploy again.`;
+  }
+  if (signInRedirect) {
+    return `Environment URL ${probe.url} redirected to sign-in. Check its protection settings and deploy again.`;
+  }
+  return `Environment URL ${probe.url} returned HTTP ${status}. Check its protection settings and deploy again.`;
+}
+
 function isTransientEnvironmentStatus(status: number): boolean {
   return status === 404 || status === 408 || status === 425 || status === 429 || status >= 500;
 }
@@ -890,10 +1083,25 @@ async function cancelResponseBody(response: Response): Promise<void> {
   }
 }
 
+/**
+ * What the readiness step actually established about the environment URL.
+ *
+ * `served` is the only outcome in which the app itself was observed answering.
+ * A protected environment challenges an unauthenticated probe at the access
+ * gate, and this CLI cannot get past that gate holding an API key rather than a
+ * session, so `gated` means routing resolves and nothing more: the app behind
+ * it may be answering 503 to every signed-in visitor. Reporting the two the
+ * same way is what lets a broken deployment finish with a green tick.
+ */
+export type EnvironmentReadiness =
+  | Readonly<{ kind: "served" }>
+  | Readonly<{ kind: "unprobed" }>
+  | Readonly<{ kind: "gated"; url: string; status: number }>;
+
 export async function waitForEnvironmentReady(
   target: EnvironmentReadinessTarget,
   options: { pollIntervalMs?: number; timeoutMs?: number } = {},
-): Promise<void> {
+): Promise<EnvironmentReadiness> {
   const pollIntervalMs = options.pollIntervalMs === undefined ||
       !Number.isFinite(options.pollIntervalMs)
     ? DEFAULT_ENVIRONMENT_POLL_INTERVAL_MS
@@ -902,7 +1110,11 @@ export async function waitForEnvironmentReady(
     ? DEFAULT_ENVIRONMENT_TIMEOUT_MS
     : Math.max(1, Math.trunc(options.timeoutMs));
   const deadline = Date.now() + timeoutMs;
-  for (const probe of buildEnvironmentReadinessProbes(target)) {
+  const probes = buildEnvironmentReadinessProbes(target);
+  let servedBy: EnvironmentReadiness | null = null;
+  let gatedBy: EnvironmentReadiness | null = null;
+
+  for (const probe of probes) {
     const headers = new Headers({ "Cache-Control": "no-cache" });
     if (probe.authenticate) {
       headers.set("Cookie", `authToken=${target.apiToken}`);
@@ -928,36 +1140,92 @@ export async function waitForEnvironmentReady(
         const authenticationChallenge = signInRedirect ||
           response.status === 401 ||
           response.status === 403;
-        const ready = response.status >= 200 && response.status < 300 ||
-          response.status >= 300 && response.status < 400 && !signInRedirect ||
-          probe.acceptAuthenticationChallenge && authenticationChallenge;
+        const served = response.status >= 200 && response.status < 300 ||
+          response.status >= 300 && response.status < 400 && !signInRedirect;
+        const gated = !served && probe.acceptAuthenticationChallenge && authenticationChallenge;
+        const ready = served || gated;
         await cancelResponseBody(response);
 
-        if (ready) break;
+        if (ready) {
+          if (served) servedBy = { kind: "served" };
+          else if (gated && !gatedBy) {
+            gatedBy = { kind: "gated", url: probe.url, status: response.status };
+          }
+          break;
+        }
         if (authenticationChallenge) {
-          const message = probe.authenticate
-            ? `Could not authenticate the protected environment URL ${probe.url}. Run veryfront login and deploy again.`
-            : `Environment URL ${probe.url} redirected to sign-in. Check its protection settings and deploy again.`;
-          throw new Error(message);
+          // A bare Error here reaches the operator as `unknown-error`.
+          throw DEPLOYMENT_ERROR.create({
+            detail: describeAuthenticationChallenge(probe, response.status, signInRedirect),
+            context: { url: probe.url, status: response.status },
+          });
         }
         if (!isTransientEnvironmentStatus(response.status)) {
-          throw new Error(
-            `Environment URL ${probe.url} returned HTTP ${response.status}. Check the environment configuration and deploy again.`,
-          );
+          throw DEPLOYMENT_ERROR.create({
+            detail:
+              `Environment URL ${probe.url} returned HTTP ${response.status}. Check the environment configuration and deploy again.`,
+            context: { url: probe.url, status: response.status },
+          });
         }
       }
 
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) {
-        throw new Error(
-          `Environment URL ${probe.url} did not become ready within ${
+        throw DEPLOYMENT_ERROR.create({
+          detail: `Environment URL ${probe.url} did not become ready within ${
             Math.ceil(timeoutMs / 1000)
           }s (last response: ${lastResponse}). Check the deployment and run deploy again.`,
-        );
+          context: { url: probe.url, timeoutMs },
+        });
       }
       await wait(Math.min(pollIntervalMs, remainingMs));
     }
   }
+
+  // Order matters: one probe seeing the app answer outweighs another that only
+  // reached the gate. With no probe at all, or, unreachably, a loop that neither
+  // broke nor threw, the honest answer is that nothing was checked, never that
+  // the app served.
+  if (servedBy) return servedBy;
+  if (gatedBy) return gatedBy;
+  return { kind: "unprobed" };
+}
+
+/**
+ * The remedy that actually changes the probe credential for this token source.
+ *
+ * `veryfront login` only helps when nothing outranks the stored session.
+ * `resolveApiTokenForMode` in `cli/shared/config.ts` resolves a shell
+ * `VERYFRONT_API_TOKEN` and a `veryfront.json` `apiToken` ahead of the token
+ * store, so for those two sources signing in leaves the next deploy gated the
+ * same way. Naming the overriding key is the only step an operator can act on.
+ */
+function getProbeCredentialRemedy(source: ResolvedConfig["apiTokenSource"]): string {
+  if (source === "env") {
+    return "VERYFRONT_API_TOKEN is set in this shell and is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or unset that variable, run veryfront login, and deploy again, to confirm the app responds.";
+  }
+  if (source === "config-file") {
+    return "The apiToken in veryfront.json is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or remove that token, run veryfront login, and deploy again, to confirm the app responds.";
+  }
+  return "Open the URL signed in, or run veryfront login and deploy again, to confirm the app responds.";
+}
+
+/**
+ * The signal a deploy owes an operator when it never saw the app answer.
+ *
+ * Failing here is wrong, because the deployment is committed and verified, and
+ * a protected environment challenging an API key is the expected case for CI.
+ * Reporting it as a verified URL is what let a permanently-503 app deploy with
+ * a green tick and no signal at all.
+ */
+function getEnvironmentUrlWarning(
+  readiness: EnvironmentReadiness,
+  apiTokenSource: ResolvedConfig["apiTokenSource"],
+): string | null {
+  if (readiness.kind !== "gated") return null;
+  return `Deployment committed, but ${readiness.url} was never observed serving this app: the access gate answered HTTP ${readiness.status} and this CLI has no session credential to probe past it. ${
+    getProbeCredentialRemedy(apiTokenSource)
+  }`;
 }
 
 function getDeploymentRoutingConvergenceWarning(deployment: DeployDeployment): string | null {
@@ -981,6 +1249,7 @@ function createDeployResult({
   environment,
   deployment,
   environmentUrl,
+  readiness,
   config,
   branch,
 }: {
@@ -989,6 +1258,7 @@ function createDeployResult({
   environment: DeployEnvironment;
   deployment: DeployDeployment;
   environmentUrl: string;
+  readiness: EnvironmentReadiness;
   config: ResolvedConfig;
   branch: string;
 }): DeployResult {
@@ -1004,6 +1274,7 @@ function createDeployResult({
     environmentId: verification.environmentId,
     deploymentId: verification.deploymentId,
     url: environmentUrl,
+    urlVerification: readiness.kind,
     protected: environment.protected,
     routingConvergence: deployment.routingConvergence as DeploymentRoutingConvergence | undefined ??
       null,
@@ -1063,7 +1334,15 @@ export function createDeployProject(options: {
       const environmentConfig = await step(
         observer,
         "resolve-config",
-        async () => getEnvironmentConfig(),
+        async () => {
+          // Naming a project deploys what that project already has, so the
+          // working directory is not the source under review and its config
+          // must not decide this deploy.
+          if (request.projectSlug === undefined) {
+            await assertConfigIsDeployable(request.projectDir);
+          }
+          return await getEnvironmentConfig();
+        },
       );
       const receipt = await readPushReceipt(request.projectDir);
       const branch = request.branch ?? "main";
@@ -1107,6 +1386,12 @@ export function createDeployProject(options: {
         controlPlane = createControlPlane(config);
       }
 
+      // Read from the project directory, before the environment is resolved,
+      // because whether this deploy needs a hosted address at all decides
+      // whether an unroutable environment name is fatal to it.
+      const expectedPageRoutes = await collectProjectPageRoutes(request.projectDir);
+      const readinessRoute = expectedPageRoutes.find((route) => !route.includes("[")) ?? null;
+
       const environment = await step(observer, "resolve-target", async () => {
         if (!project) project = await controlPlane.getProject(projectApiReference(config));
         const resolvedEnvironment = await controlPlane.getEnvironment(
@@ -1119,11 +1404,27 @@ export function createDeployProject(options: {
           });
         }
         assertProjectOwnership("Environment", resolvedEnvironment, project.id);
+        // Only a deploy that will ask the platform for a page address depends on
+        // the name resolving. A project with no static page route sends no
+        // readiness probe at all, so its deploy never touches the synthesised
+        // host and must not be refused for a name it never resolves. When the
+        // address is needed this still runs before any release or deployment
+        // exists, so an unreachable target costs one API call rather than a full
+        // deploy and a readiness window.
+        if (readinessRoute !== null) assertEnvironmentIsReachable(resolvedEnvironment);
         return resolvedEnvironment;
       });
 
       if (request.mode === "dry-run") {
-        if (!bootstrapPush && request.source.kind === "ensure-pushed") {
+        // Naming a project also makes the source already-pushed, which would
+        // otherwise skip this check: the dry run then reported a deploy that
+        // the byte-identical apply refused, because the apply compares the
+        // receipt against the named project. `--skip-source-push` keeps its
+        // existing dry-run behaviour; the caller has said the source is handled.
+        if (
+          !bootstrapPush &&
+          (request.source.kind === "ensure-pushed" || request.projectSlug !== undefined)
+        ) {
           await resolvePushedSource({
             projectDir: request.projectDir,
             controlPlane: config.apiUrl,
@@ -1146,17 +1447,14 @@ export function createDeployProject(options: {
         };
       }
 
-      const { source, expectedPageRoutes } = await step(observer, "verify-source", async () => {
-        const source = await resolvePushedSource({
+      const source = await step(observer, "verify-source", async () =>
+        resolvePushedSource({
           projectDir: request.projectDir,
           controlPlane: config.apiUrl,
           projectId: project!.id,
           projectSlug: project!.slug,
           branch,
-        });
-        const expectedPageRoutes = await collectProjectPageRoutes(request.projectDir);
-        return { source, expectedPageRoutes };
-      });
+        }));
 
       const release = await step(observer, "create-release", async () => {
         const created = await controlPlane.createRelease(project!.id, {
@@ -1217,23 +1515,35 @@ export function createDeployProject(options: {
           }, { verifiedRelease }),
       );
 
-      const readinessRoute = expectedPageRoutes.find((route) => !route.includes("[")) ?? null;
       const environmentUrl = buildReadyEnvironmentUrl(
         buildEnvironmentUrl(verification.projectSlug, environment),
         readinessRoute,
       );
-      await step(observer, "wait-environment-url", async () =>
-        waitForEnvironmentReady({
-          projectSlug: verification.projectSlug,
-          environmentName: environment.name,
-          url: environmentUrl,
-          route: readinessRoute,
-          protected: environment.protected,
-          apiToken: config.apiToken,
-        }, {
-          pollIntervalMs: polling.environmentPollIntervalMs,
-          timeoutMs: polling.environmentTimeoutMs,
-        }));
+      const readiness = await step(
+        observer,
+        "wait-environment-url",
+        async () =>
+          waitForEnvironmentReady({
+            projectSlug: verification.projectSlug,
+            environmentName: environment.name,
+            url: environmentUrl,
+            route: readinessRoute,
+            protected: environment.protected,
+            apiToken: config.apiToken,
+          }, {
+            pollIntervalMs: polling.environmentPollIntervalMs,
+            timeoutMs: polling.environmentTimeoutMs,
+          }),
+      );
+
+      const urlWarning = getEnvironmentUrlWarning(readiness, config.apiTokenSource);
+      if (urlWarning) {
+        await emit(observer, {
+          kind: "warning",
+          code: "environment-url-unverified",
+          message: urlWarning,
+        });
+      }
 
       const warning = getDeploymentRoutingConvergenceWarning(deployment);
       if (warning) {
@@ -1252,6 +1562,7 @@ export function createDeployProject(options: {
           environment,
           deployment,
           environmentUrl,
+          readiness,
           config,
           branch,
         }),

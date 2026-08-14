@@ -146,8 +146,41 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps empty allowed tools as exp
     preloadLatestConversationUserText: false,
   });
 
+  assertEquals(toolAssembly.toolLoadingMode, "eager");
   assertEquals(toolAssembly.localToolNames, []);
   assertEquals(taskContext.availableToolNames, []);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly defers an omitted allowed tools catalog", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {
+      form_input: localTool("Form input"),
+      load_skill: localTool("Load skill"),
+      sleep: localTool("Sleep"),
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.toolLoadingMode, "deferred");
+  assertEquals(toolAssembly.availableToolNames, [
+    "create_file",
+    "form_input",
+    "load_skill",
+    "sleep",
+  ]);
+  assertEquals(taskContext.availableToolNames, ["load_skill", "tool_search"]);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly defers an unrestricted tools true catalog", async () => {

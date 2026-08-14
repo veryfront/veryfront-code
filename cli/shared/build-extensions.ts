@@ -26,6 +26,11 @@
  */
 
 import { orchestrateExtensions } from "veryfront/extensions";
+import {
+  createEvalReportExporterRegistry,
+  EvalReportExporterRegistryName,
+} from "veryfront/extensions/eval";
+import { createLLMProviderRegistry, LLMProviderRegistryName } from "veryfront/extensions/llm";
 import { cliLogger } from "#cli/utils";
 import { createBuiltinExtensions } from "../../src/extensions/builtin-extensions.ts";
 
@@ -46,6 +51,10 @@ export async function setupBuildCliExtensions(
     projectDir,
     config,
     logger: cliLogger.component("build-extensions"),
+    primeContracts: {
+      [LLMProviderRegistryName]: createLLMProviderRegistry(),
+      [EvalReportExporterRegistryName]: createEvalReportExporterRegistry(),
+    },
     builtinExtensions: createBuiltinExtensions(),
   });
 }

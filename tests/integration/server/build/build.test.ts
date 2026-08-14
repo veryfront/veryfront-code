@@ -13,11 +13,12 @@
 import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
-import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { exists, mkdir, readTextFile, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { buildProduction } from "../../../../src/build/production-build/index.ts";
 import type { BuildStats } from "../../../../src/server/build-types.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
 
 async function removeAppDir(projectDir: string): Promise<void> {
   await remove(join(projectDir, "app"), { recursive: true });
@@ -63,6 +64,41 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
         assertEquals(typeof stats.pages, "number");
         assertEquals(typeof stats.duration, "number");
         assert(stats.duration >= 0);
+      });
+    });
+
+    // Regression: outside production the cache root is `<project>/.cache`, so a
+    // build drops generated bundles into the user's project — a dry run
+    // included. Server startup writes a self-ignoring `.gitignore` there, but
+    // `veryfront build` never starts a server, so a project that adopted
+    // Veryfront (its own .gitignore predates `veryfront init`) saw the bundles
+    // as untracked files and `git add -A` committed them.
+    it("marks the local cache root as ignored so a build cannot dirty the project's git history", async () => {
+      await withTestContext("build-cache-ignore", async (context) => {
+        const outputDir = join(context.projectDir, "dist");
+        const cacheRoot = join(context.projectDir, ".cache");
+
+        await removeAppDir(context.projectDir);
+
+        const pagesDir = await ensurePagesDir(context.projectDir);
+        await writeTextFile(join(pagesDir, "index.mdx"), "# Home Page");
+
+        await runWithCacheDir(cacheRoot, () =>
+          buildProduction({
+            projectDir: context.projectDir,
+            outputDir,
+            enableSplitting: false,
+            enableCompression: false,
+            enablePrefetch: false,
+            dryRun: true,
+          }));
+
+        const ignorePath = join(cacheRoot, ".gitignore");
+        assertEquals(await exists(ignorePath), true);
+        assertEquals(
+          (await readTextFile(ignorePath)).split(/\r?\n/).includes("*"),
+          true,
+        );
       });
     });
 
@@ -592,6 +628,82 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
 
         assertExists(stats);
         assert(stats.pages >= 1);
+      });
+    });
+  });
+
+  describe("output directory", () => {
+    it("leaves an existing output directory alone on a dry run", async () => {
+      // "Dry run: no files will be written" was printed while the build
+      // cleared the output directory first, so a dry run destroyed the
+      // project's previous build output and wrote nothing back.
+      await withTestContext("build-dry-run-keeps-output", async (context) => {
+        const outputDir = join(context.projectDir, "dist");
+        await removeAppDir(context.projectDir);
+
+        const pagesDir = await ensurePagesDir(context.projectDir);
+        await writeTextFile(join(pagesDir, "index.mdx"), "# Home");
+
+        await mkdir(join(outputDir, "nested"), { recursive: true });
+        await writeTextFile(join(outputDir, "index.js"), "PRECIOUS-HOST-ARTIFACT");
+        await writeTextFile(join(outputDir, "nested", "deep.txt"), "keepme");
+
+        await buildProduction({
+          projectDir: context.projectDir,
+          outputDir,
+          enableSplitting: false,
+          enableCompression: false,
+          enablePrefetch: false,
+          dryRun: true,
+          ssg: true,
+        });
+
+        assertEquals(
+          await readTextFile(join(outputDir, "index.js")),
+          "PRECIOUS-HOST-ARTIFACT",
+          "a dry run must not delete existing build output",
+        );
+        assertEquals(
+          await readTextFile(join(outputDir, "nested", "deep.txt")),
+          "keepme",
+          "a dry run must not delete nested build output",
+        );
+      });
+    });
+
+    it("sends `veryfront build` to build.outDir from veryfront.config.js", async () => {
+      // `build.outDir` was parsed into the config object and then dropped: the
+      // CLI reported and wrote `dist` no matter what the project configured,
+      // with no warning, so the documented way to keep the framework out of a
+      // project's own dist/ silently did nothing. Driven through buildCommand
+      // because that is where the output directory is decided.
+      await withTestContext("build-config-out-dir", async (context) => {
+        await removeAppDir(context.projectDir);
+
+        const pagesDir = await ensurePagesDir(context.projectDir);
+        await writeTextFile(join(pagesDir, "index.mdx"), "# Home");
+        await writeTextFile(
+          join(context.projectDir, "veryfront.config.js"),
+          `export default { build: { outDir: "custom-out" } };`,
+        );
+
+        const { buildCommand } = await import("../../../../cli/commands/build/command.ts");
+        const printed: string[] = [];
+        const originalLog = console.log;
+        console.log = (...args: unknown[]) => {
+          printed.push(args.map((arg) => String(arg)).join(" "));
+        };
+        try {
+          await buildCommand({ projectDir: context.projectDir, dryRun: true } as never);
+        } finally {
+          console.log = originalLog;
+        }
+
+        const output = printed.join("\n");
+        assert(
+          output.includes(" in custom-out"),
+          `expected the build to report custom-out, got:\n${output}`,
+        );
       });
     });
   });

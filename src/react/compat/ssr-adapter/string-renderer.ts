@@ -3,7 +3,11 @@ import { isCompiledBinary, rendererLogger as logger } from "#veryfront/utils";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getProjectReact, getReactDOMServer } from "./server-loader.ts";
-import { getSSRAdapterTimeoutMs, getSSRBufferLimitBytes } from "./timeout.ts";
+import {
+  getSSRAdapterDeadlineRuntime,
+  getSSRAdapterTimeoutMs,
+  getSSRBufferLimitBytes,
+} from "./timeout.ts";
 import type { SSROptions } from "./types.ts";
 import { wrapWithServerRenderContext } from "../../server-render-context.ts";
 
@@ -19,9 +23,10 @@ interface RenderDeadline {
 }
 
 function createRenderDeadline(timeoutMs: number): RenderDeadline {
+  const runtime = getSSRAdapterDeadlineRuntime();
   const controller = new AbortController();
   const error = new Error(`SSR timeout: buffered React render exceeded ${timeoutMs}ms`);
-  const expiresAt = performance.now() + timeoutMs;
+  const expiresAt = runtime.now() + timeoutMs;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   let expired = false;
   let rejectTimeout!: (error: Error) => void;
@@ -36,7 +41,7 @@ function createRenderDeadline(timeoutMs: number): RenderDeadline {
     }
     rejectTimeout(error);
   };
-  timeoutId = setTimeout(expire, timeoutMs);
+  timeoutId = runtime.setTimer(expire, timeoutMs);
 
   return {
     error,
@@ -44,12 +49,12 @@ function createRenderDeadline(timeoutMs: number): RenderDeadline {
     promise,
     signal: controller.signal,
     throwIfExpired() {
-      if (!expired && performance.now() < expiresAt) return;
+      if (!expired && runtime.now() < expiresAt) return;
       expire();
       throw error;
     },
     dispose() {
-      if (timeoutId !== undefined) clearTimeout(timeoutId);
+      if (timeoutId !== undefined) runtime.clearTimer(timeoutId);
       timeoutId = undefined;
     },
   };

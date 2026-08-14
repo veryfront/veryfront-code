@@ -14,6 +14,30 @@ const ROUTING_INVALIDATION_ACK_PREFIX = `${ROUTING_INVALIDATION_CHANNEL}:ack:`;
 const EVENT_SIGNATURE_DOMAIN = "vf-proxy-routing-invalidation:event:v1";
 const ACK_SIGNATURE_DOMAIN = "vf-proxy-routing-invalidation:ack:v1";
 const TEST_NOW_MS = 1_800_000_000_000;
+const TIMEOUT_NOT_UNDER_TEST_MS = 600_000;
+
+async function settleWithin<T>(promise: Promise<T>, label: string): Promise<T> {
+  let outcome:
+    | { ok: true; value: T }
+    | { error: unknown; ok: false }
+    | undefined;
+  void promise.then(
+    (value) => {
+      outcome = { ok: true, value };
+    },
+    (error) => {
+      outcome = { error, ok: false };
+    },
+  );
+  for (let turn = 0; turn < 200 && outcome === undefined; turn++) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  if (outcome === undefined) {
+    throw new Error(`${label} did not settle within 200 event-loop turns`);
+  }
+  if (!outcome.ok) throw outcome.error;
+  return outcome.value;
+}
 
 function createFakeRedisServer() {
   const subscriptions = new Map<RoutingInvalidationRedisClient, Map<string, RedisListener>>();
@@ -198,16 +222,25 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "redis://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-a",
-      acknowledgementTimeoutMs: 20,
+      acknowledgementTimeoutMs: TIMEOUT_NOT_UNDER_TEST_MS,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: () => {},
     });
+    assert(bus);
 
-    const result = await bus?.publish(createEvent());
+    const publish = bus.publish(createEvent());
+    try {
+      const result = await settleWithin(
+        publish,
+        "single-recipient invalidation",
+      );
 
-    assertEquals(result, { acknowledged: 1, converged: false, recipients: 1 });
-    await bus?.close();
+      assertEquals(result, { acknowledged: 1, converged: false, recipients: 1 });
+    } finally {
+      await bus.close();
+      await publish.catch(() => undefined);
+    }
   });
 
   it("keeps overlapping publish acknowledgement subscriptions isolated", async () => {

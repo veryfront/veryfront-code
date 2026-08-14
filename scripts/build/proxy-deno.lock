@@ -1,7 +1,6 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@std/yaml@1.1.0": "1.1.0",
     "npm:@opentelemetry/api-logs@0.220.0": "0.220.0",
     "npm:@opentelemetry/api@1.9.1": "1.9.1",
     "npm:@opentelemetry/auto-instrumentations-node@0.78.0": "0.78.0_@opentelemetry+api@1.9.1_@opentelemetry+core@2.9.0__@opentelemetry+api@1.9.1",
@@ -23,11 +22,6 @@
     "npm:jose@5.9.6": "5.9.6",
     "npm:redis@5.11.0": "5.11.0",
     "npm:zod@4.3.6": "4.3.6"
-  },
-  "jsr": {
-    "@std/yaml@1.1.0": {
-      "integrity": "fc1c5c63e05c4c5eb6118355f557958035d41940d6c29d35b306ef7155d6edb0"
-    }
   },
   "npm": {
     "@apm-js-collab/code-transformer-bundler-plugins@0.7.1": {
@@ -1510,8 +1504,7 @@
       "jsr:@std/fmt@1.0.9",
       "jsr:@std/fs@1.0.23",
       "jsr:@std/path@1.1.4",
-      "jsr:@std/testing@1.0.17",
-      "jsr:@std/yaml@1.1.0"
+      "jsr:@std/testing@1.0.17"
     ],
     "members": {
       "extensions/ext-auth-jwt": {
@@ -1604,7 +1597,7 @@
       "extensions/ext-db-sqlite": {
         "dependencies": [
           "npm:@types/better-sqlite3@7.6.13",
-          "npm:better-sqlite3@9.6.0"
+          "npm:better-sqlite3@13.0.3"
         ]
       },
       "extensions/ext-dev-ui-react": {
@@ -1743,7 +1736,7 @@
         "dependencies": [
           "jsr:@std/assert@1.0.19",
           "jsr:@std/testing@1.0.17",
-          "jsr:@std/yaml@1.1.0"
+          "npm:yaml@2.9.0"
         ]
       }
     }

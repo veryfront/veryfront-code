@@ -3,6 +3,7 @@ import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/pr
 import type { AgUiBrowserChunkEncoder } from "./browser-chunk-encoder.ts";
 import { createAgUiBrowserFinalizeTracker } from "./browser-finalize-tracker.ts";
 import {
+  type AgUiBrowserEncoderStateOptions,
   type AgUiBrowserRunFinishedMetadata,
   type AgUiRuntimeStreamEvent,
 } from "./browser-encoder.ts";
@@ -20,6 +21,12 @@ export type AgUiChatUiChunkBrowserEncoder = Pick<
 
 /** Options accepted by create AG-UI chat UI chunk browser encoder. */
 export interface CreateAgUiChatUiChunkBrowserEncoderOptions {
+  /**
+   * Timing clocks forwarded verbatim to the encoder state. A single object so
+   * that adding a clock is one edit in `AgUiBrowserEncoderStateOptions`, not a
+   * sweep through every wrapper that happens to sit in between.
+   */
+  timing?: AgUiBrowserEncoderStateOptions;
   modelId?: string;
   resolveProvider?: (modelId: string) => string | undefined;
 }
@@ -264,6 +271,7 @@ export function createAgUiChatUiChunkBrowserEncoder(
     },
     getMetadataFromChunk: (chunk) => getAgUiChatUiMessageChunkMetadata(chunk, options),
     getRuntimeEvents: (chunk) => [normalizeChatUiMessageChunkToAgUiRuntimeEvent(chunk)],
+    ...(options.timing === undefined ? {} : { timing: options.timing }),
   });
 }
 

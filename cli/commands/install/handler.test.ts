@@ -1,8 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { handleInstallCommand, handleUninstallCommand } from "./handler.ts";
+import { handleInstallCommand, handleUninstallCommand, parseInstallArgs } from "./handler.ts";
+import { parseCliArgs } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
+
+function parseCommandLine(argv: string[]) {
+  const result = parseInstallArgs(parseCliArgs(argv));
+  if (!result.success) throw result.error;
+  return result.data;
+}
 
 function extractInstallArgs(args: ParsedArgs) {
   const target = typeof args.target === "string" ? args.target : undefined;
@@ -115,6 +122,45 @@ describe("commands/install/handler", () => {
     it("does not use -y as force alias (unlike clean/lock)", () => {
       const result = extractInstallArgs({ _: ["install"], y: true });
       assertEquals(result.force, false);
+    });
+  });
+
+  describe("bare positional target", () => {
+    it("reads the target from the first positional argument", () => {
+      assertEquals(parseCommandLine(["install", "agents"]).target, "agents");
+    });
+
+    it("reads a comma-separated positional target", () => {
+      assertEquals(
+        parseCommandLine(["install", "cursor,claude-code"]).target,
+        "cursor,claude-code",
+      );
+    });
+
+    it("lets --target win over the positional", () => {
+      assertEquals(
+        parseCommandLine(["install", "agents", "--target", "cursor"]).target,
+        "cursor",
+      );
+    });
+
+    it("leaves the target unset when no positional is given", () => {
+      assertEquals(parseCommandLine(["install"]).target, undefined);
+    });
+
+    it("reads the positional for uninstall too", () => {
+      assertEquals(parseCommandLine(["uninstall", "agents"]).target, "agents");
+    });
+
+    it("fails argument parsing for an unknown positional tool id", () => {
+      const result = parseInstallArgs(parseCliArgs(["install", "not-a-tool"]));
+      assertEquals(result.success, false);
+      assertEquals(result.error?.message.includes("Valid targets"), true);
+    });
+
+    it("fails argument parsing for an unknown --target too", () => {
+      const result = parseInstallArgs(parseCliArgs(["install", "--target", "not-a-tool"]));
+      assertEquals(result.success, false);
     });
   });
 

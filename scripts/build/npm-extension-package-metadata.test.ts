@@ -70,6 +70,31 @@ describe("manifestDependencies", () => {
     assertEquals(manifestDependencies(manifest), { sharp: "0.35.3" });
   });
 
+  it("pins SQLite to a release that ships prebuilt binaries", async () => {
+    const manifest = JSON.parse(
+      await Deno.readTextFile("extensions/ext-db-sqlite/deno.json"),
+    ) as ExtensionManifest;
+
+    assertEquals(manifestDependencies(manifest)["better-sqlite3"], "13.0.3");
+  });
+
+  it("rejects native dependencies pinned below their prebuilt-binary floor", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-db-sqlite",
+      exports: "./src/index.ts",
+      veryfront: { extension: true },
+      imports: {
+        "better-sqlite3": "npm:better-sqlite3@9.6.0",
+      },
+    };
+
+    assertThrows(
+      () => manifestDependencies(manifest),
+      Error,
+      "better-sqlite3@9.6.0 predates 13.0.0",
+    );
+  });
+
   it("pins bash-tool's required AI SDK peer in the sandbox extension", async () => {
     const manifest = JSON.parse(
       await Deno.readTextFile(

@@ -2,7 +2,26 @@
 
 The sole owner of composer input state - value, submit fold/guard/clear, attachments, and voice - with prop getters for headless rendering.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - partly landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `useChatInput`, `UseChatInputResult`, `mergeProps`, `ChatInputContextProvider`
+> - **Not exported today:** none
+> - **Not in `src/` today:** `submitMode`, `getDropTargetProps`
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+
+## Landed so far
+
+### `useChatInput` - `new` - `partly shipped` (src/react/components/chat/chat/hooks/use-chat-input.ts:155)
+
+[#3277](https://github.com/veryfront/veryfront-code/pull/3277) shipped the hook and the prop-getter surface it exists for. On `main` today `useChatInput()` returns `getFormProps`, `getFieldProps`, `getSubmitProps`, `getAttachProps`, `getVoiceProps` - each taking `(overrides?)` and merging through the public [`mergeProps`](../helpers.md), so the L2 leaves and an L3 hand-rolled composer share one merge. `getFieldProps` carries the real IME-composition guard.
+
+**Still proposed**, and every table below documents the target, not `main`:
+
+- **The options argument.** `useChatInput()` takes no options today; it reads the nearest `ChatInput` context and throws outside one. `chat` / `upload` / `voice` / `value` / `onChange` / `submitMode` are all unimplemented.
+- **The state names.** Today's result exposes `input` / `setInput` / `isLoading` / `canUseVoice` / `canAttach` / `model` / `models`; the proposed `value` / `status` / `isStreaming` renames have not happened.
+- **The actions.** `submit`, `stop`, `clear`, and `attach` are not on the result - submission still routes through the context's `onSubmit`.
+- **`getDropTargetProps`.** Not implemented; the drop zone still lives in the composer's own `useDropZone`.
 
 ## Import
 

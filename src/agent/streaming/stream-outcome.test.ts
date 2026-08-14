@@ -123,7 +123,7 @@ describe("resolveStreamOutcome", () => {
     }
   });
 
-  it("keeps late body-read completion behind output and finish gates", () => {
+  it("keeps post-completion provider failures behind output and finish gates", () => {
     assertEquals(
       resolveStreamOutcome({
         snapshot: snapshot("completed", "stop", true),
@@ -131,6 +131,22 @@ describe("resolveStreamOutcome", () => {
         thrownError: new Error("Error reading a body from connection"),
       }).status,
       "completed",
+    );
+    assertEquals(
+      resolveStreamOutcome({
+        snapshot: snapshot("tool_handoff", "tool-calls", true),
+        elapsedMs: 10,
+        thrownError: new Error("Provider request failed with status 502"),
+      }).status,
+      "tool_handoff",
+    );
+    assertEquals(
+      resolveStreamOutcome({
+        snapshot: snapshot("tool_handoff", "tool-calls", true),
+        elapsedMs: 300_000,
+        thrownError: new Error("Chat stream idle timeout after 300000ms"),
+      }).status,
+      "failed",
     );
     assertEquals(
       resolveStreamOutcome({

@@ -1,5 +1,6 @@
 import "../_helpers/contract-init.ts";
 import React from "react";
+import { renderToString } from "react-dom/server";
 import {
   assert,
   assertEquals,
@@ -65,7 +66,7 @@ import { buildKnowledgeIngestRunResult } from "../../cli/commands/knowledge/resu
 import { parsePullArgs } from "../../cli/commands/pull/command.ts";
 import { parsePushArgs } from "../../cli/commands/push/command.ts";
 import { parseCliArgs } from "../../cli/shared/args.ts";
-import { getTemplate } from "../../cli/templates/index.ts";
+import { getTemplate } from "../../templates/index.ts";
 
 const EXISTING_GUIDE_EXAMPLE_SUITE = [
   "agents.md",
@@ -90,6 +91,8 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "chat-ui.md",
   "cli-knowledge-ingestion.md",
   "coding-agents.md",
+  "cloud-environment-access.md",
+  "cloud-quickstart.md",
   "create-agent.md",
   "deploy-from-ci.md",
   "deploying.md",
@@ -97,10 +100,10 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "extension-authoring.md",
   "extensions.md",
   "head-and-seo.md",
-  "index.md",
   "installation.md",
   "create-frontend.md",
   "create-project.md",
+  "add-to-existing-project.md",
   "create-api.md",
   "deploy-project.md",
   "integrations.md",
@@ -114,6 +117,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "schedule.md",
   "webhook.md",
   "security-headers.md",
+  "self-hosting.md",
   "skills.md",
   "storybook-ui-workbench.md",
   "tasks.md",
@@ -253,26 +257,6 @@ describe("Guide: agent-service-runtime.md", () => {
   });
 });
 
-describe("Guide: index.md", () => {
-  it("documents the CLI and coding-agent workflow from the overview", async () => {
-    const guide = await readGuide("index.md");
-
-    for (
-      const snippet of [
-        "npm create veryfront",
-        "cd <PROJECT_NAME>",
-        "veryfront dev",
-        "veryfront generate <type> <name>",
-        "veryfront schema --json",
-        "AGENTS.md",
-        "vf_bootstrap",
-      ]
-    ) {
-      assertStringIncludes(guide, snippet);
-    }
-  });
-});
-
 describe("Guide: project-metrics.md", () => {
   it("uses the public project metrics SDK hook", async () => {
     const guide = await readGuide("project-metrics.md");
@@ -308,25 +292,41 @@ describe("Guide: security-headers.md", () => {
     }
   });
 
-  it("documents a Google Fonts config that actually admits the fonts", async () => {
+  it("documents that Google Fonts needs no config, and it actually does not", async () => {
     const guide = await readGuide("security-headers.md");
-    assertStringIncludes(guide, 'styleSrc: ["https://fonts.googleapis.com"]');
-    assertStringIncludes(guide, 'fontSrc: ["https://fonts.gstatic.com"]');
+    assertStringIncludes(guide, "Google Fonts therefore works with no configuration");
 
-    const csp = buildCSP(false, "n", {
-      csp: {
-        styleSrc: ["https://fonts.googleapis.com"],
-        fontSrc: ["https://fonts.gstatic.com"],
-      },
-    });
+    // The claim the guide now makes: a project that configures nothing can
+    // still load what `veryfront/fonts` emits.
+    const csp = buildCSP(false, "n", null);
     const directive = (name: string) =>
       csp.split("; ").find((part) => part.startsWith(`${name} `)) ?? "";
 
     assertStringIncludes(directive("style-src"), "https://fonts.googleapis.com");
     assertStringIncludes(directive("font-src"), "https://fonts.gstatic.com");
-    // The guide promises the floor survives an addition.
     assertStringIncludes(directive("script-src"), "'nonce-n'");
     assert(!csp.includes("style-src-elem"), "no directive shadows the documented style-src");
+  });
+
+  it("documents a third-party font service addition that actually admits it", async () => {
+    const guide = await readGuide("security-headers.md");
+    assertStringIncludes(guide, 'styleSrc: ["https://use.typekit.net"]');
+    assertStringIncludes(guide, 'fontSrc: ["https://use.typekit.net"]');
+
+    const csp = buildCSP(false, "n", {
+      csp: {
+        styleSrc: ["https://use.typekit.net"],
+        fontSrc: ["https://use.typekit.net"],
+      },
+    });
+    const directive = (name: string) =>
+      csp.split("; ").find((part) => part.startsWith(`${name} `)) ?? "";
+
+    assertStringIncludes(directive("style-src"), "https://use.typekit.net");
+    assertStringIncludes(directive("font-src"), "https://use.typekit.net");
+    // The guide promises the floor survives an addition.
+    assertStringIncludes(directive("style-src"), "https://fonts.googleapis.com");
+    assertStringIncludes(directive("script-src"), "'nonce-n'");
   });
 
   it("documents a null opt-out that keeps the required sources", async () => {
@@ -372,6 +372,60 @@ describe("Guide: chat-ui.md", () => {
       ),
     );
     assertEquals(element.type, ChatRoot);
+  });
+
+  it("gates the custom layout's empty state so it cannot outlive an empty thread", async () => {
+    const guide = await readGuide("chat-ui.md");
+
+    // `<Chat.Empty>` is prop-driven and never hides itself. A custom layout
+    // that drops it straight into `<Chat.Root>` keeps the hero mounted under
+    // an active conversation, so the sample must gate it on `ctx.isEmpty`.
+    const layout = guide.slice(guide.indexOf("## Compose a custom layout"));
+    const gate = layout.indexOf("<Chat.If condition={(ctx) => ctx.isEmpty}>");
+    const empty = layout.indexOf("<Chat.Empty");
+    assert(gate !== -1, "custom layout sample gates the empty state with <Chat.If>");
+    assert(gate < empty, "the <Chat.If> gate wraps <Chat.Empty>");
+
+    const chatComponents = Chat as unknown as Record<
+      string,
+      React.ComponentType<Record<string, unknown>>
+    >;
+    const Root = chatComponents.Root;
+    const If = chatComponents.If;
+    const Empty = chatComponents.Empty;
+    const MessageList = chatComponents.MessageList;
+    assertExists(Root);
+    assertExists(If);
+    assertExists(Empty);
+    assertExists(MessageList);
+
+    const messages = [
+      { id: "u1", role: "user", parts: [{ type: "text", text: "128 / 8?" }] },
+      { id: "a1", role: "assistant", parts: [{ type: "text", text: "128 / 8 = 16" }] },
+    ];
+    const layoutElement = (msgs: unknown[]) =>
+      React.createElement(
+        Root,
+        { messages: msgs, input: "" },
+        React.createElement(
+          If,
+          { condition: (ctx: { isEmpty: boolean }) => ctx.isEmpty },
+          React.createElement(Empty, {
+            title: "What can I help with?",
+            suggestions: ["Explain React hooks", "Write a regex"],
+          }),
+        ),
+        React.createElement(MessageList, { messages: msgs }),
+      );
+
+    const active = renderToString(layoutElement(messages));
+    assertEquals(active.includes("What can I help with?"), false);
+    assertEquals(active.includes("Explain React hooks"), false);
+    assertStringIncludes(active, "128 / 8 = 16");
+
+    const fresh = renderToString(layoutElement([]));
+    assertStringIncludes(fresh, "What can I help with?");
+    assertStringIncludes(fresh, "Explain React hooks");
   });
 });
 
@@ -525,8 +579,8 @@ describe("Guide: deploying.md", () => {
         "veryfront dev",
         "veryfront build",
         "veryfront serve",
-        "npx veryfront deploy",
-        "npx veryfront deploy --branch feature-x --env staging",
+        "npx veryfront@latest deploy",
+        "npx veryfront@latest deploy --branch feature-x --env staging",
         "veryfront open",
       ]
     ) {
@@ -908,8 +962,8 @@ describe("Guide: installation.md", () => {
       "pnpm add -g veryfront",
       "yarn global add veryfront",
       "bun add -g veryfront",
-      "npx veryfront",
-      "veryfront install agents",
+      "npx veryfront@latest",
+      "veryfront install --target agents",
       "veryfront --version",
     ];
 
@@ -953,6 +1007,69 @@ describe("Guide: create-project.md", () => {
   });
 });
 
+describe("Guide: add-to-existing-project.md", () => {
+  it("documents the compiler options the scaffold actually sets", async () => {
+    const guide = await readGuide("add-to-existing-project.md");
+
+    // The page tells an existing-project reader to set by hand what the
+    // scaffolded template already carries. If the template ever drops one of
+    // these, the guidance is wrong and this fails.
+    const template = await getTemplate("ai-agent");
+    assertExists(template);
+    const tsconfig = template.find((file) => file.path === "tsconfig.json");
+    assertExists(tsconfig, "expected the ai-agent template to ship a tsconfig.json");
+
+    for (const option of ['"jsx": "react-jsx"', '"skipLibCheck": true']) {
+      assertStringIncludes(guide, option);
+      assertStringIncludes(tsconfig.content, option);
+    }
+  });
+
+  it("documents a package-exports-aware moduleResolution", async () => {
+    const guide = await readGuide("add-to-existing-project.md");
+
+    // Veryfront's entry points are subpath exports (`veryfront/agent`), which
+    // the older `node`/`classic` modes cannot resolve. The scaffold sets
+    // `bundler`; an adopting project must pick an equivalent mode or the
+    // linked next steps fail to typecheck.
+    assertStringIncludes(guide, '"moduleResolution": "bundler"');
+
+    const template = await getTemplate("ai-agent");
+    assertExists(template);
+    const tsconfig = template.find((file) => file.path === "tsconfig.json");
+    assertExists(tsconfig);
+    assertStringIncludes(tsconfig.content.toLowerCase(), '"moduleresolution": "bundler"');
+  });
+
+  it("points at the base config the package actually publishes", async () => {
+    const guide = await readGuide("add-to-existing-project.md");
+    assertStringIncludes(guide, '"extends": "veryfront/tsconfig.json"');
+
+    // The page's shortest path is extending the shipped config, so the npm
+    // build must keep publishing it under that exact export key. Resolved from
+    // import.meta.url, not the process cwd: test files share one process under
+    // --parallel and a sibling isolate can hold `withCwd` while this runs.
+    const dnt = await Deno.readTextFile(
+      new URL("../../scripts/build/build-npm-dnt.ts", import.meta.url),
+    );
+    assertStringIncludes(dnt, './tsconfig.json"] = "./tsconfig.json"');
+  });
+
+  it("documents the install command and the entry route the server needs", async () => {
+    const guide = await readGuide("add-to-existing-project.md");
+
+    for (
+      const snippet of [
+        "npm install veryfront",
+        "// app/page.tsx",
+        "npx veryfront dev",
+      ]
+    ) {
+      assertStringIncludes(guide, snippet);
+    }
+  });
+});
+
 describe("Guide: create-api.md", () => {
   it("documents the AG-UI route for the first agent", async () => {
     const guide = await readGuide("create-api.md");
@@ -990,21 +1107,73 @@ describe("Guide: create-frontend.md", () => {
 });
 
 describe("Guide: deploy-project.md", () => {
-  it("documents the build, serve, deploy, and open sequence", async () => {
+  it("documents the focused Push, Deploy, and open sequence", async () => {
     const guide = await readGuide("deploy-project.md");
 
     for (
       const command of [
-        "veryfront build",
-        "veryfront serve",
-        "npx veryfront deploy",
-        "npx veryfront push --branch feature-x",
-        "veryfront open",
+        "veryfront login",
+        "npx veryfront@latest push",
+        "npx veryfront@latest deploy",
+        "veryfront open --site",
       ]
     ) {
       assertStringIncludes(guide, command);
     }
     assertEquals(guide.includes("veryfront start"), false);
+  });
+});
+
+describe("Guide: cloud-quickstart.md", () => {
+  it("keeps the gateway tutorial on one runnable command sequence", async () => {
+    const guide = await readGuide("cloud-quickstart.md");
+
+    for (
+      const command of [
+        "npm create veryfront@latest support-agent -- --template ai-agent",
+        "npx veryfront@latest login",
+        "npx veryfront@latest push",
+        "npm run dev",
+        "npm run eval -- assistant",
+        "npx veryfront@latest deploy --env production",
+      ]
+    ) {
+      assertStringIncludes(guide, command);
+    }
+  });
+});
+
+describe("Guide: self-hosting.md", () => {
+  it("documents a complete container path without Cloud commands", async () => {
+    const guide = await readGuide("self-hosting.md");
+
+    for (
+      const command of [
+        "veryfront build",
+        "veryfront serve",
+        "FROM node:22-slim",
+        "COPY package.json package-lock.json ./",
+        "RUN npm ci",
+        "RUN npm run build",
+        'CMD ["npm", "start"]',
+        "docker build -t veryfront-app .",
+        "docker run --rm -p 3000:3000 --env-file .env veryfront-app",
+      ]
+    ) {
+      assertStringIncludes(guide, command);
+    }
+    assertEquals(guide.includes("veryfront login"), false);
+    assertEquals(guide.includes("FROM denoland/deno"), false);
+  });
+});
+
+describe("Guide: cloud-environment-access.md", () => {
+  it("probes a concrete route and documents both sign-in apexes", async () => {
+    const guide = await readGuide("cloud-environment-access.md");
+
+    assertStringIncludes(guide, "<environment-url>/<route>");
+    assertStringIncludes(guide, "https://veryfront.com/sign-in");
+    assertStringIncludes(guide, "https://veryfront.org/sign-in");
   });
 });
 

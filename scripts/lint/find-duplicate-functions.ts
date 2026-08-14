@@ -153,7 +153,7 @@ const DEFAULT_EXCLUDES = [
   "dist/",
   "coverage/",
   "npm/",
-  "cli/templates/",
+  "templates/",
 ];
 
 const SEMANTIC_IDENTIFIER_NODE_TYPES = new Set([

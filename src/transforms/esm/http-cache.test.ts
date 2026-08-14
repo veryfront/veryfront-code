@@ -25,6 +25,7 @@ import {
   cacheModuleToLocal,
   ensureHttpBundlesExist,
   extractSourceUrl,
+  HTTP_MODULE_FETCH_MAX_WAIT_MS,
   normalizeHttpUrl,
 } from "./http-cache.ts";
 import { __setDistributedCacheAccessorForTests } from "./http-cache-wrapper.ts";
@@ -33,7 +34,16 @@ import { buildHttpCacheIdentity } from "./http-cache-helpers.ts";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
+import { HTTP_MODULE_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
+import { MODULE_LOAD_TIMEOUT_MS } from "#veryfront/rendering/orchestrator/module-collection.ts";
+import { FakeTime } from "#std/testing/time";
+import {
+  __getMaxInFlightHttpFetchWaiterCountForTests,
+  createInFlightHttpFetch,
+  inFlightHttpFetches,
+  waitForSharedInFlightHttpFetch,
+} from "./in-flight-manager.ts";
 
 /** Duplicated from http-cache.ts for isolated unit testing of the pattern. */
 const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
@@ -95,7 +105,136 @@ async function withIsolatedHttpCache<T>(
   }
 }
 
+async function runNextFakeTimer(time: FakeTime, tempDir: string): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await Deno.stat(tempDir);
+    if (await time.nextAsync()) return;
+  }
+  throw new Error("Expected a fake timer to be scheduled");
+}
+
+/** Iterations either driving helper takes before it reports a stuck wait. */
+const MAX_FAKE_TIMER_STEPS = 200;
+
+/**
+ * Give pending real filesystem work turns, without moving the clock, until
+ * `isReady` reports done.
+ *
+ * A caller reaches the shared-fetch registry through real filesystem work, so
+ * which of two concurrent callers registers the shared flight is decided by
+ * I/O completion order, not by call order. Draining microtasks once assumes the
+ * first caller already won that race; on a loaded runner it can lose, the two
+ * callers swap roles, and a test written around one of them then exercises the
+ * other. Waiting on the registry itself makes the roles explicit.
+ */
+async function runRealTurnsUntil(
+  time: FakeTime,
+  tempDir: string,
+  isReady: () => boolean,
+  description: string,
+): Promise<void> {
+  for (let step = 0; step < MAX_FAKE_TIMER_STEPS; step++) {
+    if (isReady()) return;
+    await Deno.stat(tempDir);
+    await time.runMicrotasks();
+  }
+  throw new Error(
+    `${description} did not happen within ${MAX_FAKE_TIMER_STEPS} filesystem turns`,
+  );
+}
+
+/**
+ * Run scheduled fake timers, one at a time, until `isSettled` reports done.
+ *
+ * A caller whose only release is its own bounded-wait timer arms that timer
+ * once its real I/O reaches the wait. Advancing the fake clock by a fixed span
+ * instead assumes the timer already exists, and a timer armed after that span
+ * is never run. Awaiting such a caller blocks forever with nothing left on the
+ * event loop, which Deno reports as "Promise resolution is still pending but
+ * the event loop has already resolved" — a whole test file silently dropped.
+ *
+ * Stepping from the settled state keeps the wait reachable whenever it is
+ * armed, and the step budget turns a genuinely stuck wait into a failure
+ * instead of a hang. The budget is a stuck detector, not a patience dial: a
+ * caller that re-arms a fresh bounded wait after every timeout exhausts any
+ * budget, and the answer is to stop it re-arming, never to raise the budget.
+ */
+async function runFakeTimersUntil(
+  time: FakeTime,
+  tempDir: string,
+  isSettled: () => boolean,
+  description: string,
+): Promise<void> {
+  for (let step = 0; step < MAX_FAKE_TIMER_STEPS; step++) {
+    if (isSettled()) return;
+    // A real filesystem call lets pending I/O reach its bounded wait; only
+    // then can the timer that releases it exist.
+    await Deno.stat(tempDir);
+    if (await time.nextAsync()) await time.runMicrotasks();
+  }
+  throw new Error(
+    `${description} did not settle within ${MAX_FAKE_TIMER_STEPS} fake timer steps`,
+  );
+}
+
 describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, () => {
+  it("keeps the full fetch retry window within the module-loading idle deadline", () => {
+    assert(HTTP_MODULE_FETCH_MAX_WAIT_MS <= MODULE_LOAD_TIMEOUT_MS);
+  });
+
+  it("reports progress after the distributed cache lookup before fetching", async () => {
+    const lookupRelease = Promise.withResolvers<void>();
+    const lookupStarted = Promise.withResolvers<void>();
+    const events: string[] = [];
+    const backend: CacheBackend = {
+      type: "memory",
+      get: async () => {
+        events.push("lookup-started");
+        lookupStarted.resolve();
+        await lookupRelease.promise;
+        events.push("lookup-completed");
+        return null;
+      },
+      set: () => Promise.resolve(),
+      del: () => Promise.resolve(),
+    };
+
+    await withIsolatedHttpCache(
+      "vf-esm-cache-lookup-progress-",
+      (() => {
+        events.push("fetch-started");
+        return Promise.resolve(
+          new Response("export const cached = true;", {
+            headers: { "content-type": "application/javascript" },
+          }),
+        );
+      }) as typeof fetch,
+      async (tempDir) => {
+        __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+        const result = cacheHttpImportsToLocal(
+          'import "https://93.184.216.34/cache-lookup-progress.js";',
+          {
+            cacheDir: tempDir,
+            importMap: { imports: {}, scopes: {} },
+            onProgress: ({ phase }) => events.push(phase),
+          },
+        );
+
+        await lookupStarted.promise;
+        assertEquals(events, ["lookup-started"]);
+        lookupRelease.resolve();
+        await result;
+
+        assertEquals(events.slice(0, 4), [
+          "lookup-started",
+          "lookup-completed",
+          "http-cache:cache-lookup-complete",
+          "fetch-started",
+        ]);
+      },
+    );
+  });
+
   it("rejects internal module URLs before invoking fetch", async () => {
     let fetchCount = 0;
     await withIsolatedHttpCache(
@@ -137,6 +276,668 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       assert(cachedUrl.startsWith("file://"));
       assertEquals(fetchCount, 2);
     });
+  });
+
+  it("allows a cold HTTP module response to exceed five seconds", async () => {
+    let fetchCount = 0;
+
+    const mockFetch = ((_input, init) => {
+      fetchCount += 1;
+      return new Promise<Response>((resolve, reject) => {
+        const signal = init?.signal;
+        const timeoutId = setTimeout(() => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve(
+            new Response("export const cold = true;", {
+              headers: { "content-type": "application/javascript" },
+            }),
+          );
+        }, 6_000);
+        const onAbort = () => {
+          clearTimeout(timeoutId);
+          reject(signal?.reason ?? new DOMException("aborted", "AbortError"));
+        };
+
+        signal?.addEventListener("abort", onAbort, { once: true });
+      });
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-cold-fetch-", mockFetch, async (tempDir) => {
+      const cachedUrl = await cacheModuleToLocal(
+        "https://esm.sh/cold-package",
+        tempDir,
+      );
+
+      assert(cachedUrl.startsWith("file://"));
+      assertEquals(fetchCount, 1);
+    });
+  });
+
+  it("stops HTTP module retries when module loading is cancelled", async () => {
+    let fetchCount = 0;
+    let markFetchStarted!: () => void;
+    let releaseFetch!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve;
+    });
+    const fetchReleased = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+
+    const mockFetch = ((_input, init) => {
+      fetchCount += 1;
+      markFetchStarted();
+      return new Promise<Response>((resolve, reject) => {
+        const signal = init?.signal;
+        const onAbort = () => reject(signal?.reason);
+        signal?.addEventListener("abort", onAbort, { once: true });
+        fetchReleased.then(() => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve(new Response("upstream failure", { status: 502 }));
+        });
+      });
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-cancel-fetch-", mockFetch, async (tempDir) => {
+      const controller = new AbortController();
+      const abortReason = new DOMException("module loading cancelled", "AbortError");
+      const pending = cacheHttpImportsToLocal(
+        'import "https://esm.sh/cancelled-package";',
+        {
+          cacheDir: tempDir,
+          importMap: { imports: {}, scopes: {} },
+          abortSignal: controller.signal,
+        },
+      );
+
+      await fetchStarted;
+      controller.abort(abortReason);
+      releaseFetch();
+
+      const error = await assertRejects(() => pending);
+      assertEquals(error, abortReason);
+      assertEquals(fetchCount, 1);
+    });
+  });
+
+  it("stops an uncancelled caller after one wait on a retained flight", async () => {
+    using time = new FakeTime();
+    const moduleUrl = "https://93.184.216.34/retained-timeout.js";
+
+    await withIsolatedHttpCache(
+      "vf-esm-retained-timeout-",
+      (() => Promise.reject(new Error("unexpected fetch"))) as typeof fetch,
+      async (tempDir) => {
+        const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+        const cacheIdentity = await buildHttpCacheIdentity(moduleUrl, options);
+        const cacheKey = `${tempDir}:${cacheIdentity}`;
+        const release = Promise.withResolvers<void>();
+        const renderController = new AbortController();
+        let sharedSignal: AbortSignal | undefined;
+        const flight = createInFlightHttpFetch(cacheKey, async (abortSignal) => {
+          sharedSignal = abortSignal;
+          await release.promise;
+          abortSignal.throwIfAborted();
+          return "/path/to/retained-timeout.mjs";
+        });
+        const renderWaiter = waitForSharedInFlightHttpFetch(
+          cacheKey,
+          flight,
+          null,
+          renderController.signal,
+        );
+        const uncancelledCaller = cacheHttpImportsToLocal(
+          `import "${moduleUrl}";`,
+          options,
+        );
+
+        try {
+          for (
+            let attempt = 0;
+            attempt < 100 && __getMaxInFlightHttpFetchWaiterCountForTests() < 2;
+            attempt++
+          ) {
+            await time.tickAsync(0);
+          }
+          assertEquals(__getMaxInFlightHttpFetchWaiterCountForTests(), 2);
+
+          await time.tickAsync(HTTP_MODULE_FETCH_MAX_WAIT_MS);
+          await assertRejects(
+            () => uncancelledCaller,
+            Error,
+            "Failed to cache absolute HTTP module",
+          );
+          assertEquals(sharedSignal?.aborted, false);
+          assertEquals(inFlightHttpFetches.get(cacheKey), flight);
+
+          release.resolve();
+          assertEquals(await renderWaiter, "/path/to/retained-timeout.mjs");
+        } finally {
+          release.resolve();
+          await Promise.allSettled([flight, renderWaiter, uncancelledCaller]);
+        }
+      },
+    );
+  });
+
+  it("does not let an abandoned HTTP owner overwrite its replacement", async () => {
+    const moduleUrl = "https://93.184.216.34/abandoned-owner.js";
+    const oldWriteStarted = Promise.withResolvers<void>();
+    const releaseOldWrite = Promise.withResolvers<void>();
+    const originalWriteTextFile = Deno.writeTextFile.bind(Deno);
+    const distributed = new Map<string, string>();
+    let fetchCount = 0;
+
+    Deno.writeTextFile = async (path, data, options) => {
+      if (typeof data === "string" && data.includes('generation = "stale"')) {
+        oldWriteStarted.resolve();
+        await releaseOldWrite.promise;
+      }
+      await originalWriteTextFile(path, data, options);
+    };
+
+    try {
+      const mockFetch = (() => {
+        fetchCount++;
+        const generation = fetchCount === 1 ? "stale" : "fresh";
+        return Promise.resolve(
+          new Response(`export const generation = "${generation}";`, {
+            headers: { "content-type": "application/javascript" },
+          }),
+        );
+      }) as typeof fetch;
+
+      await withIsolatedHttpCache("vf-esm-abandoned-owner-", mockFetch, async (tempDir) => {
+        __setDistributedCacheAccessorForTests(() =>
+          Promise.resolve(createMemoryBackend(distributed))
+        );
+        const controller = new AbortController();
+        const source = `import { generation } from "${moduleUrl}"; export { generation };`;
+        const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+        const abandoned = cacheHttpImportsToLocal(source, {
+          ...options,
+          abortSignal: controller.signal,
+        });
+
+        await oldWriteStarted.promise;
+        controller.abort(new DOMException("render abandoned", "AbortError"));
+        await assertRejects(() => abandoned, DOMException, "render abandoned");
+
+        const replacement = await cacheHttpImportsToLocal(source, options);
+        assert(replacement.code.includes("file://"));
+        releaseOldWrite.resolve();
+        while (inFlightHttpFetches.size > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+
+        const bundleFiles: string[] = [];
+        for await (const entry of readDir(tempDir)) {
+          if (entry.isFile && entry.name.startsWith("http-") && entry.name.endsWith(".mjs")) {
+            bundleFiles.push(entry.name);
+          }
+        }
+        assertEquals(bundleFiles.length, 1);
+        const publishedCode = await readTextFile(join(tempDir, bundleFiles[0]!));
+        assert(publishedCode.includes('generation = "fresh"'));
+        assertEquals(publishedCode.includes('generation = "stale"'), false);
+        assertEquals(
+          [...distributed.values()].some((value) => value.includes('generation = "stale"')),
+          false,
+        );
+        assertEquals(fetchCount, 2);
+      });
+    } finally {
+      releaseOldWrite.resolve();
+      Deno.writeTextFile = originalWriteTextFile;
+    }
+  });
+
+  it("lets an optional distributed write time out before publication expires", async () => {
+    using time = new FakeTime();
+    const distributedWriteStarted = Promise.withResolvers<void>();
+    const backend: CacheBackend = {
+      type: "memory",
+      get: () => Promise.resolve(null),
+      set: async () => {
+        distributedWriteStarted.resolve();
+        await new Promise<void>((_, reject) =>
+          setTimeout(
+            () => reject(new DOMException("Distributed cache write timed out", "TimeoutError")),
+            HTTP_MODULE_FETCH_TIMEOUT_MS,
+          )
+        );
+      },
+      del: () => Promise.resolve(),
+    };
+    const mockFetch = (() =>
+      Promise.resolve(
+        new Response("export const cached = true;", {
+          headers: { "content-type": "application/javascript" },
+        }),
+      )) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-distributed-timeout-", mockFetch, async (tempDir) => {
+      __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+      const source = 'import "https://93.184.216.34/distributed-timeout.js";';
+      const resultPromise = cacheHttpImportsToLocal(source, {
+        cacheDir: tempDir,
+        importMap: { imports: {}, scopes: {} },
+      });
+
+      await time.runMicrotasks();
+      await distributedWriteStarted.promise;
+      await time.tickAsync(HTTP_MODULE_FETCH_TIMEOUT_MS);
+
+      const result = await resultPromise;
+      assert(result.code.includes("file://"));
+      assertEquals(inFlightHttpFetches.size, 0);
+    });
+  });
+
+  it("rechecks publication quarantine after a cache lookup yields", async () => {
+    using time = new FakeTime();
+    const moduleUrl = "https://93.184.216.34/committed-distributed-owner.js";
+    const cacheLookupStarted = Promise.withResolvers<void>();
+    const releaseCacheLookup = Promise.withResolvers<void>();
+    const firstDistributedWriteStarted = Promise.withResolvers<void>();
+    const releaseFirstDistributedWrite = Promise.withResolvers<void>();
+    const distributed = new Map<string, string>();
+    const originalStat = Deno.stat.bind(Deno);
+    let cacheLookupBlocked = false;
+    let distributedWriteCount = 0;
+    let fetchCount = 0;
+
+    const backend: CacheBackend = {
+      type: "memory",
+      get: (key) => Promise.resolve(distributed.get(key) ?? null),
+      set: async (key, value) => {
+        distributedWriteCount++;
+        distributed.set(key, value);
+        if (distributedWriteCount === 1) {
+          firstDistributedWriteStarted.resolve();
+          await releaseFirstDistributedWrite.promise;
+        }
+      },
+      del: (key) => {
+        distributed.delete(key);
+        return Promise.resolve();
+      },
+    };
+    const mockFetch = (() => {
+      fetchCount++;
+      return Promise.resolve(
+        new Response('export const generation = "committed";', {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      await withIsolatedHttpCache(
+        "vf-esm-committed-distributed-",
+        mockFetch,
+        async (tempDir) => {
+          Deno.stat = async (path) => {
+            if (
+              !cacheLookupBlocked && String(path).startsWith(tempDir) &&
+              String(path).endsWith(".mjs")
+            ) {
+              cacheLookupBlocked = true;
+              cacheLookupStarted.resolve();
+              await releaseCacheLookup.promise;
+            }
+            return await originalStat(path);
+          };
+          __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+          const controller = new AbortController();
+          const source = `import { generation } from "${moduleUrl}"; export { generation };`;
+          const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+          const lateEntrant = cacheHttpImportsToLocal(source, options);
+          let abandoned: ReturnType<typeof cacheHttpImportsToLocal> | undefined;
+          let recovery: ReturnType<typeof cacheHttpImportsToLocal> | undefined;
+
+          try {
+            await cacheLookupStarted.promise;
+            const abandonedOwner = cacheHttpImportsToLocal(source, {
+              ...options,
+              abortSignal: controller.signal,
+            });
+            abandoned = abandonedOwner;
+            await firstDistributedWriteStarted.promise;
+            controller.abort(new DOMException("render abandoned", "AbortError"));
+            await assertRejects(() => abandonedOwner, DOMException, "render abandoned");
+
+            await runNextFakeTimer(time, tempDir);
+            await time.runMicrotasks();
+
+            assertEquals(inFlightHttpFetches.size, 0);
+            assertEquals(fetchCount, 1);
+            assertEquals(
+              [...distributed.values()].some((value) => value.includes('generation = "committed"')),
+              true,
+            );
+
+            releaseCacheLookup.resolve();
+            const lateEntrantOutcome = lateEntrant.catch((error) => error);
+            await runNextFakeTimer(time, tempDir);
+            await time.runMicrotasks();
+
+            const lateEntrantError = await lateEntrantOutcome;
+            assertInstanceOf(lateEntrantError, Error);
+            assert(lateEntrantError.message.includes("Failed to cache absolute HTTP module"));
+            assertEquals(inFlightHttpFetches.size, 0);
+            assertEquals(fetchCount, 1);
+
+            recovery = cacheHttpImportsToLocal(source, options);
+            await time.runMicrotasks();
+            releaseFirstDistributedWrite.resolve();
+            const result = await recovery;
+            assert(result.code.includes("file://"));
+            const bundleFiles: string[] = [];
+            for await (const entry of readDir(tempDir)) {
+              if (
+                entry.isFile && entry.name.startsWith("http-") &&
+                entry.name.endsWith(".mjs")
+              ) {
+                bundleFiles.push(entry.name);
+              }
+            }
+            assertEquals(bundleFiles.length, 1);
+            const publishedCode = await readTextFile(join(tempDir, bundleFiles[0]!));
+            assert(publishedCode.includes('generation = "committed"'));
+            assertEquals(fetchCount, 1);
+          } finally {
+            releaseCacheLookup.resolve();
+            releaseFirstDistributedWrite.resolve();
+            await Promise.allSettled(
+              [lateEntrant, abandoned, recovery].filter((value) => value),
+            );
+          }
+        },
+      );
+    } finally {
+      releaseCacheLookup.resolve();
+      releaseFirstDistributedWrite.resolve();
+      Deno.stat = originalStat;
+    }
+  });
+
+  it("keeps a publishing generation authoritative through an atomic rename", async () => {
+    using time = new FakeTime();
+    const moduleUrl = "https://93.184.216.34/committed-rename-owner.js";
+    const renameStarted = Promise.withResolvers<void>();
+    const releaseRename = Promise.withResolvers<void>();
+    const originalRename = Deno.rename.bind(Deno);
+    let fetchCount = 0;
+
+    Deno.rename = async (from, to) => {
+      const stagedCode = await readTextFile(String(from));
+      if (stagedCode.includes('generation = "committed"')) {
+        renameStarted.resolve();
+        await releaseRename.promise;
+        await originalRename(from, to);
+        return;
+      }
+      await originalRename(from, to);
+    };
+
+    const mockFetch = (() => {
+      fetchCount++;
+      return Promise.resolve(
+        new Response('export const generation = "committed";', {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      await withIsolatedHttpCache("vf-esm-committed-rename-", mockFetch, async (tempDir) => {
+        const controller = new AbortController();
+        const source = `import { generation } from "${moduleUrl}"; export { generation };`;
+        const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+        const abandoned = cacheHttpImportsToLocal(source, {
+          ...options,
+          abortSignal: controller.signal,
+        });
+        let boundedFollower: ReturnType<typeof cacheHttpImportsToLocal> | undefined;
+        let recovery: ReturnType<typeof cacheHttpImportsToLocal> | undefined;
+
+        try {
+          await renameStarted.promise;
+          controller.abort(new DOMException("render abandoned", "AbortError"));
+          await assertRejects(() => abandoned, DOMException, "render abandoned");
+
+          await runNextFakeTimer(time, tempDir);
+          await time.runMicrotasks();
+
+          assertEquals(inFlightHttpFetches.size, 0);
+          assertEquals(fetchCount, 1);
+
+          boundedFollower = cacheHttpImportsToLocal(source, options);
+          const boundedFollowerOutcome = boundedFollower.catch((error) => error);
+          await runNextFakeTimer(time, tempDir);
+          await time.runMicrotasks();
+
+          const boundedFollowerError = await boundedFollowerOutcome;
+          assertInstanceOf(boundedFollowerError, Error);
+          assert(boundedFollowerError.message.includes("Failed to cache absolute HTTP module"));
+          assertEquals(inFlightHttpFetches.size, 0);
+          assertEquals(fetchCount, 1);
+
+          recovery = cacheHttpImportsToLocal(source, options);
+          await time.runMicrotasks();
+          releaseRename.resolve();
+          const recoveryResult = await recovery;
+          assert(recoveryResult.code.includes("file://"));
+          const bundleFiles: string[] = [];
+          for await (const entry of readDir(tempDir)) {
+            if (entry.isFile && entry.name.startsWith("http-") && entry.name.endsWith(".mjs")) {
+              bundleFiles.push(entry.name);
+            }
+          }
+          assertEquals(bundleFiles.length, 1);
+          const publishedCode = await readTextFile(join(tempDir, bundleFiles[0]!));
+          assert(publishedCode.includes('generation = "committed"'));
+          assertEquals(fetchCount, 1);
+        } finally {
+          releaseRename.resolve();
+          await Promise.allSettled(
+            [abandoned, boundedFollower, recovery].filter((value) => value),
+          );
+        }
+      });
+    } finally {
+      releaseRename.resolve();
+      Deno.rename = originalRename;
+    }
+  });
+
+  it("keeps a shared HTTP fetch alive while another caller is still waiting", async () => {
+    let fetchCount = 0;
+    let releaseFetch!: () => void;
+    const fetchStarted = Promise.withResolvers<void>();
+
+    const mockFetch = ((_input, init) => {
+      fetchCount += 1;
+      fetchStarted.resolve();
+      return new Promise<Response>((resolve, reject) => {
+        const signal = init?.signal;
+        const onAbort = () => reject(signal?.reason);
+        signal?.addEventListener("abort", onAbort, { once: true });
+        releaseFetch = () => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve(
+            new Response("export const shared = true;", {
+              headers: { "content-type": "application/javascript" },
+            }),
+          );
+        };
+      });
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-shared-fetch-", mockFetch, async (tempDir) => {
+      const source = 'import "https://esm.sh/shared-package";';
+      const importMap = { imports: {}, scopes: {} };
+      const firstController = new AbortController();
+      const secondController = new AbortController();
+      const firstAbortReason = new DOMException("first render cancelled", "AbortError");
+      const secondProgress: Array<{ phase: string; filePath?: string }> = [];
+      const first = cacheHttpImportsToLocal(source, {
+        cacheDir: tempDir,
+        importMap,
+        abortSignal: firstController.signal,
+      });
+
+      await fetchStarted.promise;
+      const second = cacheHttpImportsToLocal(source, {
+        cacheDir: tempDir,
+        importMap,
+        abortSignal: secondController.signal,
+        onProgress: (event) => secondProgress.push(event),
+      });
+      const secondOutcome = second.then(
+        (value) => ({ value, error: undefined }),
+        (error: unknown) => ({ value: undefined, error }),
+      );
+      while (__getMaxInFlightHttpFetchWaiterCountForTests() < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      assertEquals(__getMaxInFlightHttpFetchWaiterCountForTests(), 2);
+
+      firstController.abort(firstAbortReason);
+      const firstError = await assertRejects(() => first);
+      releaseFetch();
+
+      const { value: secondResult, error: secondError } = await secondOutcome;
+      assertEquals(firstError, firstAbortReason);
+      assertEquals(secondError, undefined);
+      assert(secondResult?.code.includes("file://"));
+      assertEquals(fetchCount, 1);
+      assertEquals(secondProgress.map(({ phase }) => phase), [
+        "http-cache:module-fetched",
+      ]);
+      assertEquals(secondProgress.every(({ filePath }) => filePath?.startsWith("http-")), true);
+    });
+  });
+
+  it("runs a bounded wait whose timer landed past a fixed clock advance", async () => {
+    using time = new FakeTime();
+    const tempDir = await makeTempDir({ prefix: "vf-esm-late-armed-wait-" });
+
+    try {
+      let settled = false;
+      // A follower that only reaches its bounded wait after real filesystem
+      // work can arm that wait once the clock has already moved, leaving the
+      // timer past the span the test advanced. Encode that end state directly:
+      // a wait no single HTTP_MODULE_FETCH_MAX_WAIT_MS advance can reach.
+      const work = (async () => {
+        await Deno.stat(tempDir);
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, HTTP_MODULE_FETCH_MAX_WAIT_MS * 3);
+        });
+        settled = true;
+      })();
+
+      await runFakeTimersUntil(
+        time,
+        tempDir,
+        () => settled,
+        "The late-armed bounded wait",
+      );
+
+      assertEquals(settled, true);
+      await work;
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("returns a signal-less cache follower after its bounded wait", async () => {
+    using time = new FakeTime();
+    const distributedRead = Promise.withResolvers<string | null>();
+    const backend: CacheBackend = {
+      type: "memory",
+      get: () => distributedRead.promise,
+      set: () => Promise.resolve(),
+      del: () => Promise.resolve(),
+    };
+    const moduleUrl = "https://93.184.216.34/signal-less-cache-follower.js";
+    const source = `import { value } from "${moduleUrl}"; export { value };`;
+
+    await withIsolatedHttpCache(
+      "vf-esm-signal-less-follower-",
+      (() => Promise.reject(new Error("network fetch must not start"))) as typeof fetch,
+      async (tempDir) => {
+        __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+        const ownerController = new AbortController();
+        const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+        const owner = cacheHttpImportsToLocal(source, {
+          ...options,
+          abortSignal: ownerController.signal,
+        });
+        const ownerOutcome = owner.catch((error) => error);
+
+        // The follower must join the owner's flight, not start its own. Both
+        // calls reach the registry through real filesystem work, so the owner
+        // owns the flight only once it is registered. Starting the follower
+        // before that lets the roles invert: the signal-less call becomes the
+        // owner and parks on the distributed read that never resolves, while
+        // the signal-bearing call keeps its waiter lease and re-arms a fresh
+        // bounded wait after every timeout — one fake timer per step, forever.
+        await runRealTurnsUntil(
+          time,
+          tempDir,
+          () => inFlightHttpFetches.size === 1,
+          "The owner's shared flight",
+        );
+        assertEquals(inFlightHttpFetches.size, 1);
+        const [ownerFlight] = [...inFlightHttpFetches.values()];
+
+        const follower = cacheHttpImportsToLocal(source, options);
+        let followerSettled = false;
+        const followerOutcome = follower.then(
+          (value) => {
+            followerSettled = true;
+            return { error: undefined, value };
+          },
+          (error: unknown) => {
+            followerSettled = true;
+            return { error, value: undefined };
+          },
+        );
+
+        try {
+          // The follower reaches the shared flight through real filesystem
+          // work, which draining microtasks alone never advances.
+          await runRealTurnsUntil(
+            time,
+            tempDir,
+            () => __getMaxInFlightHttpFetchWaiterCountForTests() >= 2,
+            "The follower joining the owner's flight",
+          );
+          assertEquals(__getMaxInFlightHttpFetchWaiterCountForTests(), 2);
+          // Both callers share one generation, and it is still the owner's.
+          assertEquals([...inFlightHttpFetches.values()], [ownerFlight]);
+
+          await runFakeTimersUntil(
+            time,
+            tempDir,
+            () => followerSettled,
+            "The signal-less follower's bounded wait",
+          );
+
+          const { error } = await followerOutcome;
+          assertInstanceOf(error, Error);
+          assert(error.message.includes("Failed to cache absolute HTTP module"));
+          assertEquals(inFlightHttpFetches.size, 1);
+        } finally {
+          ownerController.abort(new DOMException("owner cancelled", "AbortError"));
+          __clearInFlightHttpFetches();
+          distributedRead.resolve(null);
+          await Promise.allSettled([ownerOutcome, followerOutcome]);
+        }
+      },
+    );
   });
 
   it("pins same-origin module-server imports before fetching", async () => {
@@ -255,6 +1056,153 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     );
 
     assertEquals(fetchedUrls, [parentUrl, childUrl]);
+  });
+
+  it("reports progress after cache lookup and fetch for each recursive HTTP module", async () => {
+    const parentUrl = "https://93.184.216.34/progress/parent.js";
+    const childUrl = "https://93.184.216.34/progress/child.js";
+    const progressEvents: Array<{ phase: string; filePath?: string }> = [];
+
+    await withIsolatedHttpCache(
+      "vf-esm-recursive-progress-",
+      ((input) => {
+        const url = String(input);
+        const code = url === parentUrl
+          ? `export { value } from "${childUrl}";`
+          : `export const value = "child";`;
+        return Promise.resolve(
+          new Response(code, {
+            headers: { "content-type": "application/javascript" },
+          }),
+        );
+      }) as typeof fetch,
+      async (tempDir) => {
+        await cacheHttpImportsToLocal(`export { value } from "${parentUrl}";`, {
+          cacheDir: tempDir,
+          importMap: { imports: {}, scopes: {} },
+          onProgress: (event) => progressEvents.push(event),
+        });
+      },
+    );
+
+    assertEquals(progressEvents.map(({ phase }) => phase), [
+      "http-cache:cache-lookup-complete",
+      "http-cache:module-fetched",
+      "http-cache:cache-lookup-complete",
+      "http-cache:module-fetched",
+    ]);
+    assertEquals(progressEvents.every(({ filePath }) => filePath?.startsWith("http-")), true);
+    assertEquals(new Set(progressEvents.map(({ filePath }) => filePath)).size, 2);
+  });
+
+  it("fingerprints one import map once across recursive HTTP modules", async () => {
+    const parentUrl = "https://93.184.216.34/fingerprint/parent.js";
+    const childUrl = "https://93.184.216.34/fingerprint/child.js";
+    let importEnumerations = 0;
+    const imports = new Proxy({
+      [parentUrl]: parentUrl,
+      [childUrl]: childUrl,
+    }, {
+      ownKeys(target) {
+        importEnumerations++;
+        return Reflect.ownKeys(target);
+      },
+    });
+
+    await withIsolatedHttpCache(
+      "vf-esm-recursive-fingerprint-",
+      ((input) => {
+        const url = String(input);
+        const code = url === parentUrl
+          ? `export { value } from "${childUrl}";`
+          : `export const value = "child";`;
+        return Promise.resolve(
+          new Response(code, {
+            headers: { "content-type": "application/javascript" },
+          }),
+        );
+      }) as typeof fetch,
+      async (tempDir) => {
+        await cacheHttpImportsToLocal(`export { value } from "${parentUrl}";`, {
+          cacheDir: tempDir,
+          importMap: { imports, scopes: {} },
+        });
+      },
+    );
+
+    assertEquals(importEnumerations, 1);
+  });
+
+  it("completes cross-request circular module fetches", async () => {
+    const firstUrl = "https://93.184.216.34/cross-flight/first.js";
+    const secondUrl = "https://93.184.216.34/cross-flight/second.js";
+    const startedUrls = new Set<string>();
+    const bothFetchesStarted = Promise.withResolvers<void>();
+    const delayedWriteStarted = Promise.withResolvers<void>();
+    const releaseDelayedWrite = Promise.withResolvers<void>();
+    const originalWriteTextFile = Deno.writeTextFile.bind(Deno);
+    let bundleWriteCount = 0;
+
+    Deno.writeTextFile = async (path, data, options) => {
+      if (typeof data === "string" && data.startsWith("/*! @vf-source:")) {
+        bundleWriteCount++;
+        if (bundleWriteCount === 2) {
+          delayedWriteStarted.resolve();
+          await releaseDelayedWrite.promise;
+        }
+      }
+      await originalWriteTextFile(path, data, options);
+    };
+
+    const mockFetch = (async (input) => {
+      const url = String(input);
+      startedUrls.add(url);
+      if (startedUrls.size === 2) bothFetchesStarted.resolve();
+      await bothFetchesStarted.promise;
+      const dependencyUrl = url === firstUrl ? secondUrl : firstUrl;
+      return new Response(`import "${dependencyUrl}"; export const loaded = true;`, {
+        headers: { "content-type": "application/javascript" },
+      });
+    }) as typeof fetch;
+
+    try {
+      await withIsolatedHttpCache("vf-esm-cross-flight-cycle-", mockFetch, async (tempDir) => {
+        __injectCachesForTests({ processingStack: null });
+        const importMap = { imports: {}, scopes: {} };
+        const firstResult = cacheHttpImportsToLocal(`import "${firstUrl}";`, {
+          cacheDir: tempDir,
+          importMap,
+        });
+        const secondResult = cacheHttpImportsToLocal(`import "${secondUrl}";`, {
+          cacheDir: tempDir,
+          importMap,
+        });
+
+        try {
+          await delayedWriteStarted.promise;
+          let settledResults = 0;
+          void firstResult.then(() => settledResults++);
+          void secondResult.then(() => settledResults++);
+          await Promise.resolve();
+          await Promise.resolve();
+          assertEquals(settledResults, 0);
+
+          releaseDelayedWrite.resolve();
+          const [first, second] = await Promise.all([firstResult, secondResult]);
+          assert(first.code.includes("file://"));
+          assert(second.code.includes("file://"));
+          assert(first.bundleManifestId);
+          assertEquals(second.bundleManifestId, first.bundleManifestId);
+          assertEquals(startedUrls, new Set([firstUrl, secondUrl]));
+        } finally {
+          releaseDelayedWrite.resolve();
+          await Promise.allSettled([firstResult, secondResult]);
+        }
+      });
+    } finally {
+      releaseDelayedWrite.resolve();
+      Deno.writeTextFile = originalWriteTextFile;
+    }
   });
 
   it("does not retry permanent HTTP module failures", async () => {

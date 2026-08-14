@@ -5,7 +5,8 @@ export const PORT_IN_USE = defineError({
   category: "SERVER",
   status: 409,
   title: "Server port already in use",
-  suggestion: "Use a different port or stop the process using this port",
+  suggestion:
+    "Stop the process using the port, or pick another with: veryfront dev --port <number>",
 });
 
 export const SERVER_START_ERROR = defineError({

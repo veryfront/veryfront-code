@@ -9,6 +9,7 @@ import {
 import { isBun, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { ESBUILD_WASM_URL } from "#veryfront/platform/compat/esbuild-shared.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
 import { buildConfigCacheKey, type VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
@@ -47,6 +48,7 @@ import {
   evaluatePreparedDeclarativeConfigInWorker,
 } from "./declarative-evaluator-worker-runner.ts";
 import { createDeclarativeConfigWorkerInfrastructureError } from "./declarative-evaluator-worker-protocol.ts";
+import { describeHostedConfigRejection } from "./hosted-compatibility.ts";
 
 // Capture the collection and reflection intrinsics before trusted executable
 // project configuration can mutate the shared host realm. Hosted configuration
@@ -767,6 +769,13 @@ async function readHostedConfigSource(
       }
       if (isPreservedConfigLoadError(error)) throw error;
       logger.warn("Failed to load config file", { configFile });
+      // Deliberately generic, unlike the three evaluation sites. Everything
+      // reaching here came out of `adapter.fs.readFile`, so the cause describes
+      // the storage backend -- internal hostnames, paths, account identifiers --
+      // not the project's own config module. CONFIG_PARSE_ERROR is a 400, and
+      // the HTTP boundary strips `detail` only at 5xx
+      // (src/errors/middleware/http-error-boundary.ts:113-116), so a cause
+      // repeated here would reach the tenant. It stays on `cause` for the logs.
       throw CONFIG_PARSE_ERROR.create({
         detail: `Failed to load ${configFile}`,
         cause: error,
@@ -1477,8 +1486,12 @@ function translateHostedConfigEvaluationError(
     });
   }
 
+  // The code/reason pair is what operators correlate on, so it stays first
+  // and unchanged. The sentence after it is for the developer whose project
+  // this is: without it the only signal a rejected config gives is a 500.
   return CONFIG_PARSE_ERROR.create({
-    detail: `Hosted configuration rejected (${error.code}: ${error.reason})`,
+    detail: `Hosted configuration rejected (${error.code}: ${error.reason}). ` +
+      describeHostedConfigRejection(error.reason),
     cause: error,
     context,
   });
@@ -1486,6 +1499,59 @@ function translateHostedConfigEvaluationError(
 
 function isPreservedConfigLoadError(error: unknown): boolean {
   return error instanceof VeryfrontError;
+}
+
+/**
+ * How much of a config module's own failure the report repeats.
+ *
+ * The cause is authored by the project being loaded, so a hosted build log must
+ * not become a paste surface for it. One line, bounded, control characters
+ * removed.
+ */
+const MAX_CONFIG_LOAD_CAUSE_CHARACTERS = 200;
+
+// deno-lint-ignore no-control-regex
+const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/g;
+
+/**
+ * Return the one-line summary of `error`, or `undefined` when it has none.
+ *
+ * Redaction runs over the complete message before anything is cut away, the
+ * order `sanitizeBoundedDiagnosticText` documents: taking the first line or the
+ * first 200 characters can split `scheme://user:password@host` before the
+ * trailing `@host` the redactor matches on, which would leave the password
+ * prefix in a status-400 detail.
+ */
+function summarizeConfigLoadCause(error: unknown): string | undefined {
+  const message = error instanceof Error
+    ? error.message
+    : typeof error === "string"
+    ? error
+    : undefined;
+  if (message === undefined) return undefined;
+  const redacted = sanitizeUrlCredentials(message);
+  const firstLine = redacted.split("\n", 1)[0]?.replace(CONTROL_CHARACTERS, " ").trim() ?? "";
+  if (firstLine.length === 0) return undefined;
+  return firstLine.length > MAX_CONFIG_LOAD_CAUSE_CHARACTERS
+    ? `${firstLine.slice(0, MAX_CONFIG_LOAD_CAUSE_CHARACTERS - 1)}…`
+    : firstLine;
+}
+
+/**
+ * Report why the config module failed, not only which file did.
+ *
+ * `cause` is attached to the error, but nothing between here and the terminal
+ * reads it, at any log level. A reader whose config imports a subpath the
+ * package does not export got "Failed to load veryfront.config.ts" and a
+ * suggestion to check their syntax -- while the runtime had already said
+ * "Package subpath './config' is not defined by exports". Repeating that line
+ * is the difference between a build the reader can fix and one they cannot.
+ */
+function configLoadFailureDetail(configFile: string, error: unknown): string {
+  const summary = summarizeConfigLoadCause(error);
+  return summary === undefined
+    ? `Failed to load ${configFile}`
+    : `Failed to load ${configFile}: ${summary}`;
 }
 
 async function loadConfigFromTempFile(
@@ -2145,7 +2211,7 @@ function getConfigInternal(
                 if (isPreservedConfigLoadError(error)) throw error;
                 logger.warn("Failed to load config file", { configFile });
                 throw CONFIG_PARSE_ERROR.create({
-                  detail: `Failed to load ${configFile}`,
+                  detail: configLoadFailureDetail(configFile, error),
                   cause: error,
                   context: { configFile },
                 });
@@ -2215,7 +2281,7 @@ function getConfigInternal(
             if (isPreservedConfigLoadError(error)) throw error;
             logger.warn("Failed to load config file", { configFile });
             throw CONFIG_PARSE_ERROR.create({
-              detail: `Failed to load ${configFile}`,
+              detail: configLoadFailureDetail(configFile, error),
               cause: error,
               context: { configFile },
             });
@@ -2345,7 +2411,7 @@ export async function evaluateHostedConfigSource(
     }
     if (isPreservedConfigLoadError(error)) throw error;
     throw CONFIG_PARSE_ERROR.create({
-      detail: `Failed to load ${options.source.fileName}`,
+      detail: configLoadFailureDetail(options.source.fileName, error),
       cause: error,
       context: { configFile: options.source.fileName },
     });

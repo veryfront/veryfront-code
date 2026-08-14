@@ -210,7 +210,7 @@ describe("parseFormData", () => {
   });
 
   it("bounds a chunked form body before parsing it", async () => {
-    const request = new Request("http://localhost/form", {
+    const init: RequestInit & { duplex: "half" } = {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new ReadableStream<Uint8Array>({
@@ -220,7 +220,9 @@ describe("parseFormData", () => {
           controller.close();
         },
       }),
-    });
+      duplex: "half",
+    };
+    const request = new Request("http://localhost/form", init);
 
     await assertRejects(
       () => parseFormData(request, schema, { limits: { maxBodySize: 5 } }),

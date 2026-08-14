@@ -56,6 +56,8 @@ export type ConfigCommandData = {
   debug: boolean;
   ci: boolean;
   hasApiToken: boolean;
+  hasStoredToken: boolean;
+  authenticated: boolean;
   configSource: string | null;
   envOverrides: string[];
 };
@@ -69,6 +71,7 @@ export async function getConfigCommandData(projectDir: string): Promise<ConfigCo
     PROJECT_LINK_RELATIVE_PATH,
     readProjectLinkForControlPlane,
   } = await import("../../shared/project-link.ts");
+  const { hasToken } = await import("../../auth/token-store.ts");
 
   const detectedConfigSource = await detectConfigSource(projectDir);
   const envOverrides = getEnvOverrides();
@@ -82,6 +85,12 @@ export async function getConfigCommandData(projectDir: string): Promise<ConfigCo
     ))?.projectSlug
     : undefined;
 
+  // `whoami` authenticates from the CLI token store as well as the environment
+  // token, so `config` has to consult both or it reports "Authenticated: no"
+  // for a developer who is logged in.
+  const hasApiToken = !!(config.apiToken ?? fileConfig?.apiToken);
+  const hasStoredToken = await hasToken(config);
+
   return {
     projectSlug: config.projectSlug ?? fileConfig?.projectSlug ?? environmentProjectReference ??
       linkedProjectSlug ?? null,
@@ -90,7 +99,9 @@ export async function getConfigCommandData(projectDir: string): Promise<ConfigCo
     apiBaseUrl: config.apiBaseUrl,
     debug: config.debug,
     ci: config.ci,
-    hasApiToken: !!(config.apiToken ?? fileConfig?.apiToken),
+    hasApiToken,
+    hasStoredToken,
+    authenticated: hasApiToken || hasStoredToken,
     configSource: linkedProjectSlug
       ? PROJECT_LINK_RELATIVE_PATH
       : detectedConfigSource === ".veryfront/project.json"
@@ -124,7 +135,7 @@ export async function handleConfigCommand(_args: ParsedArgs): Promise<void> {
   console.log(`  ${dim("Debug:")}         ${configData.debug}`);
   console.log(`  ${dim("CI:")}            ${configData.ci}`);
   console.log(
-    `  ${dim("Authenticated:")} ${configData.hasApiToken ? "yes" : "no"}`,
+    `  ${dim("Authenticated:")} ${configData.authenticated ? "yes" : "no"}`,
   );
   console.log(
     `  ${dim("Config file:")}   ${configData.configSource ?? "(none)"}`,

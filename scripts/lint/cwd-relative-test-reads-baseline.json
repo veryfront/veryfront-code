@@ -1,0 +1,23 @@
+{
+  "scripts/build/browser-safe-exports.test.ts": 1,
+  "scripts/build/compile-binary.test.ts": 9,
+  "scripts/build/npm-dependency-sources.test.ts": 1,
+  "scripts/build/npm-extension-package-metadata.test.ts": 6,
+  "scripts/build/npm-package-metadata.test.ts": 22,
+  "scripts/build/sentry-runtime-packages.test.ts": 1,
+  "scripts/ci/setup-deno-workflow.test.ts": 1,
+  "scripts/docs/generate-api-reference.test.ts": 1,
+  "scripts/lint/lint-config.test.ts": 1,
+  "scripts/security/audit-npm.test.ts": 2,
+  "src/integrations/_data.test.ts": 7,
+  "src/oauth/providers/atlassian.test.ts": 1,
+  "src/oauth/providers/common.test.ts": 5,
+  "src/oauth/providers/google.test.ts": 1,
+  "src/platform/adapters/token/veryfront/api-client.test.ts": 1,
+  "src/server/services/rsc/endpoints/handler-registry.test.ts": 1,
+  "tests/docs/guide-code-examples.test.ts": 1,
+  "tests/docs/guide-content.test.ts": 29,
+  "tests/unit/build/compile-binary-includes.test.ts": 1,
+  "tests/validation/005-router-divergence/005.2-ssg-app-router-pages.test.ts": 1,
+  "tests/validation/014-deployment-modes/014.1-node-env-validation.test.ts": 2
+}

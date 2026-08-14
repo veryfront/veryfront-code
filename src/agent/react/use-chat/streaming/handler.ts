@@ -10,6 +10,10 @@ import type { ChatStreamEvent } from "../../../../chat/protocol.ts";
 import type { ChatMessagePart, ChatToolPart } from "#veryfront/agent/react/use-chat/types.ts";
 import { createAssistantMessage, generateClientId } from "#veryfront/agent/react/use-chat/utils.ts";
 import { buildCurrentParts } from "#veryfront/agent/react/use-chat/streaming/parts-builder.ts";
+import {
+  appendInvokeAgentStreamSnapshot,
+  INVOKE_AGENT_STREAM_EVENT_NAME,
+} from "#veryfront/chat/invoke-agent-stream.ts";
 import type {
   OrderedMessagePart,
   OrderedReasoning,
@@ -21,8 +25,12 @@ import type {
 
 interface StreamingState {
   textBlocks: Map<string, TextBlock>;
+  /** Closed text blocks whose content id was reused by a later block. */
+  closedTextBlocks: TextBlock[];
   toolCalls: Map<string, OrderedToolCall>;
   reasoningBlocks: Map<string, OrderedReasoning>;
+  /** Closed reasoning spans whose wire id was reused by a later span. */
+  closedReasoningBlocks: OrderedReasoning[];
   steps: Map<number, OrderedStep>;
   messageParts: ChatMessagePart[];
   dataParts: OrderedMessagePart[];
@@ -36,8 +44,10 @@ interface StreamingState {
 function createStreamingState(): StreamingState {
   return {
     textBlocks: new Map(),
+    closedTextBlocks: [],
     toolCalls: new Map(),
     reasoningBlocks: new Map(),
+    closedReasoningBlocks: [],
     steps: new Map(),
     messageParts: [],
     dataParts: [],
@@ -64,6 +74,8 @@ export async function handleStreamingResponse(
       state.toolCalls,
       state.steps,
       state.dataParts,
+      state.closedReasoningBlocks,
+      state.closedTextBlocks,
     );
 
   let buffer = "";
@@ -127,6 +139,8 @@ export async function handleAgUiStreamingResponse(
       state.toolCalls,
       state.steps,
       state.dataParts,
+      state.closedReasoningBlocks,
+      state.closedTextBlocks,
     );
 
   const processDecodedEvents = (events: ChatStreamEvent[]) => {
@@ -390,8 +404,10 @@ function handleStart(
 ): void {
   state.messageId = typeof parsed.messageId === "string" ? parsed.messageId : "";
   state.textBlocks.clear();
+  state.closedTextBlocks.length = 0;
   state.toolCalls.clear();
   state.reasoningBlocks.clear();
+  state.closedReasoningBlocks.length = 0;
   state.messageParts.length = 0;
   state.dataParts.length = 0;
   state.messageMetadata = {};
@@ -422,6 +438,22 @@ function handleTextStart(parsed: Record<string, unknown>, state: StreamingState)
   if (!state.messageId) {
     state.messageId = getTextMessageId(parsed) ?? state.currentTextId;
   }
+
+  const existing = state.textBlocks.get(state.currentTextId);
+
+  // Same rule as reasoning spans, for the same reason: a start on a block that
+  // is still open is a replayed start, so the accumulated text and the order it
+  // already holds both survive. Re-creating it here would blank the answer and
+  // move it below everything that streamed in between.
+  if (existing && existing.state !== "done") return;
+
+  // A start after the block closed is a new answer under a reused id. Providers
+  // hand out per-step content ids, so step 2 can arrive as `text-0` again.
+  if (existing) {
+    state.closedTextBlocks.push(existing);
+    state.textBlocks.delete(state.currentTextId);
+  }
+
   state.textBlocks.set(state.currentTextId, { text: "", state: "streaming", order: null });
 }
 
@@ -478,6 +510,30 @@ function handleDataPart(
 
   if (!state.messageId) {
     state.messageId = generateClientId("msg");
+  }
+
+  if (parsed.type === `data-${INVOKE_AGENT_STREAM_EVENT_NAME}`) {
+    const existing = state.dataParts.find(({ part }) => {
+      const dataPart = part as { type: string; data?: unknown };
+      if (dataPart.type !== parsed.type || !dataPart.data || typeof dataPart.data !== "object") {
+        return false;
+      }
+      const existingData = dataPart.data as Record<string, unknown>;
+      const nextData = parsed.data as Record<string, unknown> | undefined;
+      return existingData.toolCallId === nextData?.toolCallId &&
+        existingData.agentId === nextData?.agentId;
+    });
+    if (existing) {
+      const snapshot = appendInvokeAgentStreamSnapshot(
+        (existing.part as { data?: unknown }).data,
+        parsed.data,
+      );
+      if (snapshot) {
+        existing.part = { type: parsed.type as `data-${string}`, data: snapshot };
+        emitUpdate(state, onUpdate, getBuildParts);
+        return;
+      }
+    }
   }
 
   state.dataParts.push({
@@ -697,6 +753,25 @@ function handleReasoningStart(
   }
 
   const reasoningId = (parsed.id as string) || generateClientId("reasoning");
+  const existing = state.reasoningBlocks.get(reasoningId);
+
+  // A start for a span that is still open is a duplicate (a resumed stream
+  // replays it). Keep the accumulated text and, crucially, the order it was
+  // first assigned — re-creating the block here would move it below every part
+  // that streamed in the meantime.
+  if (existing && !existing.isComplete) {
+    emitUpdate(state, onUpdate, getBuildParts);
+    return;
+  }
+
+  // A start after that id has closed is a genuinely new span. Providers reuse
+  // per-step part ids (`reasoning-0` in every step), so the closed span is
+  // retired to keep its own text and position instead of being overwritten.
+  if (existing) {
+    state.closedReasoningBlocks.push(existing);
+    state.reasoningBlocks.delete(reasoningId);
+  }
+
   const reasoning: OrderedReasoning = {
     id: reasoningId,
     text: "",

@@ -22,6 +22,17 @@ export function createStreamLifecycleLiveAdapter(
   input: { textPartId?: string },
 ) {
   const tools = new Map<string, LiveAdapterToolState>();
+  let activeTextPartId: string | undefined;
+  let nextTextSegmentIndex = 0;
+  const openTextPartId = (eventId: string | undefined): string => {
+    activeTextPartId = input.textPartId === undefined
+      ? eventId ?? "text"
+      : nextTextSegmentIndex === 0
+      ? input.textPartId
+      : `${input.textPartId}:${nextTextSegmentIndex}`;
+    nextTextSegmentIndex += 1;
+    return activeTextPartId;
+  };
   return {
     encode(frame: StreamLifecycleFrame): ChatStreamEvent[] {
       if (frame.class === "diagnostic") return [];
@@ -41,19 +52,22 @@ export function createStreamLifecycleLiveAdapter(
         case "text_start":
           return [{
             type: "text-start",
-            id: input.textPartId ?? event.id ?? "text",
+            id: openTextPartId(event.id),
           }];
         case "text_content":
           return [{
             type: "text-delta",
-            id: input.textPartId ?? event.id ?? "text",
+            id: activeTextPartId ?? openTextPartId(event.id),
             delta: event.delta,
           }];
-        case "text_end":
+        case "text_end": {
+          const id = activeTextPartId ?? input.textPartId ?? event.id ?? "text";
+          activeTextPartId = undefined;
           return [{
             type: "text-end",
-            id: input.textPartId ?? event.id ?? "text",
+            id,
           }];
+        }
         case "reasoning_start":
           return [{ type: "reasoning-start", id: event.id }];
         case "reasoning_content":

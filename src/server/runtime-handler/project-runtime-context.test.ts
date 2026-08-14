@@ -134,7 +134,7 @@ function createHostedConfigAdapter(source: string): RuntimeAdapter {
 function makeRuntimeContextInput(
   overrides: Record<string, unknown> = {},
 ): Parameters<typeof resolveProjectRuntimeContext>[0] {
-  const req = new Request("http://remote-project.preview.lvh.me/page", {
+  const req = new Request("http://remote-project.preview.localhost/page", {
     headers: {
       "x-project-slug": "remote-project",
       "x-project-id": "proj-remote",
@@ -210,7 +210,7 @@ describe("prepareProjectRequest", () => {
     const req = new Request("http://localhost/page", {
       headers: {
         host: "localhost",
-        "x-forwarded-host": "forwarded-project.preview.lvh.me",
+        "x-forwarded-host": "forwarded-project.preview.localhost",
         "x-project-slug": "header-project",
         "x-token": "proxy-token",
         "x-release-id": "rel_123",
@@ -574,7 +574,7 @@ describe("resolveProjectIdentity", () => {
 
   it("derives identity from forwarded host only when proxy trust is explicit true", async () => {
     const req = new Request("http://localhost/", {
-      headers: { "x-forwarded-host": "forwarded-project.preview.lvh.me" },
+      headers: { "x-forwarded-host": "forwarded-project.preview.localhost" },
     });
     const url = new URL(req.url);
 
@@ -1070,7 +1070,7 @@ describe("resolveProjectRuntimeContext", () => {
           },
         }));
       `);
-      const req = new Request(`http://${projectSlug}.preview.lvh.me/page`, {
+      const req = new Request(`http://${projectSlug}.preview.localhost/page`, {
         headers: {
           "x-project-slug": projectSlug,
           "x-project-id": projectId,
@@ -1323,6 +1323,9 @@ describe("resolveProjectRuntimeContext", () => {
   });
 
   it("keeps exact-source control-plane config undefined at the runtime-context boundary", async () => {
+    __resetLoggerConfigForTests();
+    const entries: LogEntry[] = [];
+    __registerLogRecordEmitter((entry) => entries.push(entry));
     let outerContextCalls = 0;
     const adapter = createExtendedMockAdapter({
       onRunWithContext: () => {
@@ -1359,6 +1362,76 @@ describe("resolveProjectRuntimeContext", () => {
     assertEquals(outerContextCalls, 0);
     assertEquals(result.adapter.config, undefined);
     assertEquals(result.handlerContext?.config, undefined);
+    // A config-less control-plane request is the intended shape, so it must
+    // stay distinguishable from a project whose config failed to resolve.
+    assertEquals(result.adapter.configOutcome, "deferred");
+    // And it must stay silent. The exclusion is the whole reason the outcome
+    // is threaded through: without it this path would warn on every
+    // control-plane request and drown the signal it exists to carry.
+    assertEquals(
+      entries.filter((entry) => entry.message.includes("serving platform-default security headers"))
+        .length,
+      0,
+    );
+  });
+
+  it("records the security fallback when a proxied request resolves no project config", async () => {
+    // No proxy token, so no project-specific config load runs at all and the
+    // caller's (absent) config stands. The response still gets security
+    // headers -- from the process-wide config rather than the project's.
+    const adapter = createExtendedMockAdapter();
+    const req = new Request("http://localhost/page", {
+      headers: {
+        "x-project-slug": "proxy-project",
+        "x-project-id": "proj-proxy",
+      },
+    });
+    const url = new URL(req.url);
+    const securityConfig = { allowedOrigins: ["*"] };
+    __resetLoggerConfigForTests();
+    const entries: LogEntry[] = [];
+    __registerLogRecordEmitter((entry) => entries.push(entry));
+
+    const result = await resolveProjectRuntimeContext(makeRuntimeContextInput({
+      req,
+      url,
+      adapter,
+      config: undefined,
+      securityConfig,
+      headers: extractRequestHeaders(req, url),
+      requestContext: createRequestContext(req),
+      isProxyMode: true,
+      projectIdentity: {
+        projectSlug: "proxy-project",
+        projectId: "proj-proxy",
+        releaseId: "rel-proxy",
+        environmentName: "Preview",
+        proxyEnv: "preview",
+        parsedDomain: defaultParsedDomain,
+      },
+    }));
+
+    assertEquals(result.adapter.config, undefined);
+    // The outcome names the branch, which is what makes the accompanying warn
+    // actionable: several unrelated paths leave `config` undefined and are
+    // otherwise indistinguishable at the point of the fallback.
+    assertEquals(result.adapter.configOutcome, "inherited");
+    // And the degradation this records: the request falls back to the
+    // process-wide security config, so the response carries platform-default
+    // headers in place of the project's policy.
+    assertStrictEquals(result.handlerContext?.securityConfig, securityConfig);
+
+    // The whole point of the change: this is visible above debug level, and
+    // carries the branch that produced the absent config.
+    const warning = entries.find((entry) =>
+      entry.level === "warn" &&
+      entry.message.includes("serving platform-default security headers")
+    );
+    assertExists(warning);
+    assertEquals(
+      (warning.context as Record<string, unknown> | undefined)?.configOutcome,
+      "inherited",
+    );
   });
 
   it("rejects proxy config load failures at the runtime-context boundary", async () => {

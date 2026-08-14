@@ -9,11 +9,17 @@ import {
 } from "@std/assert";
 import {
   createRuntimeLoadSkillTool,
-  RUNTIME_LOAD_SKILL_CONTINUATION_NOTE,
+  RUNTIME_LOAD_SKILL_DESCRIPTION,
   type RuntimeLoadSkillBuiltinStore,
   type RuntimeLoadSkillToolContext,
   type RuntimeLoadSkillToolOptions,
 } from "./load-skill-tool.ts";
+import {
+  LOAD_SKILL_CONTINUE_SAME_TURN,
+  LOAD_SKILL_DELEGATION_THRESHOLD,
+  LOAD_SKILL_OVERRIDE_FORWARDING,
+  LOAD_SKILL_ROOT_OWNERSHIP,
+} from "../conversation/delegation-policy.ts";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import {
   SKILL_DOCUMENT_MAX_CHARACTERS,
@@ -31,6 +37,7 @@ import type {
 import { createRuntimeProjectSkillLoader } from "./project-skill-loader.ts";
 import { getRuntimeProjectSkillCatalog } from "./project-skill-catalog.ts";
 import type { RuntimeLoadedSkillResponse } from "./skill-metadata.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 
 // The advertised input schema is intentionally STATIC and project-independent
 // (RFC 0001, layered context): skill IDs are surfaced in <available_skills>, not
@@ -43,10 +50,9 @@ const STATIC_LOAD_SKILL_INPUT_SCHEMA = {
   properties: {
     skillId: {
       type: "string",
-      maxLength: 259,
-      pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
-      description:
-        'The skill ID to load. A lowercase ".md" suffix is accepted when it is the canonical ID or an unambiguous alias (e.g., "react-components" or "react-components.md").',
+      maxLength: 256,
+      pattern: "^[a-zA-Z0-9_-]+$",
+      description: "The skill ID to load. Use an ID from <available_skills>.",
     },
     file: {
       type: "string",
@@ -113,8 +119,7 @@ function createProjectContext(
 function isRuntimeLoadedSkillResponse(result: unknown): result is RuntimeLoadedSkillResponse {
   return !!result && typeof result === "object" && "skillId" in result &&
     typeof result.skillId === "string" && "instructions" in result &&
-    typeof result.instructions === "string" && "nextStep" in result &&
-    typeof result.nextStep === "string";
+    typeof result.instructions === "string";
 }
 
 function expectLoadedSkillResponse(result: unknown): RuntimeLoadedSkillResponse {
@@ -167,35 +172,8 @@ Deno.test("createRuntimeLoadSkillTool loads project skills before builtin skills
   assertEquals(result, {
     skillId: "plan",
     instructions: "# Project plan",
-    nextStep: RUNTIME_LOAD_SKILL_CONTINUATION_NOTE,
     references: ["references/project.md"],
-    referenceNote:
-      "After this skill is loaded, use load_skill with the `file` parameter only for one of these listed reference files.",
   });
-});
-
-Deno.test("createRuntimeLoadSkillTool omits delegation advice when tool inventory is unknown", async () => {
-  const tool = createRuntimeLoadSkillTool({
-    context: createProjectContext(),
-    skillsDir: "/skills",
-    projectSkillLoader: createProjectSkillLoader({
-      skills: new Map([[
-        "plan",
-        {
-          instructions: "---\nmodel: sonnet\n---\n# Project plan",
-          references: [],
-        },
-      ]]),
-    }),
-    builtinStore: createBuiltinStore({}),
-  });
-
-  const result = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
-
-  assertEquals(result.nextStep.includes("invoke_agent"), false);
-  assertEquals(result.nextStep.includes("multi-step or isolated work"), false);
-  assertEquals(result.delegationNote, undefined);
-  assertEquals(result.overrideNote, undefined);
 });
 
 Deno.test("createRuntimeLoadSkillTool forwards the exact execution cancellation to project reads", async () => {
@@ -453,7 +431,7 @@ Deno.test("createRuntimeLoadSkillTool preserves canonical .md skill IDs", async 
   );
 });
 
-Deno.test("createRuntimeLoadSkillTool normalizes .md aliases without a known skill manifest", async () => {
+it("keeps legacy .md alias execution behind the static slug schema when no manifest is available", async () => {
   const loaderCalls: string[] = [];
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext(),
@@ -471,10 +449,7 @@ Deno.test("createRuntimeLoadSkillTool normalizes .md aliases without a known ski
     builtinStore: createBuiltinStore({}),
   });
 
-  assertStringIncludes(
-    JSON.stringify(tool.inputSchemaJson),
-    'A lowercase \\".md\\" suffix is accepted',
-  );
+  assertEquals(tool.inputSchemaJson, STATIC_LOAD_SKILL_INPUT_SCHEMA);
   const result = expectLoadedSkillResponse(await tool.execute({ skillId: "plan.md" }));
   const reload = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
 
@@ -488,164 +463,6 @@ Deno.test("createRuntimeLoadSkillTool normalizes .md aliases without a known ski
       "input validation failed",
     );
   }
-});
-
-Deno.test("createRuntimeLoadSkillTool falls back to builtin skills and filters allowed tools", async () => {
-  const tool = createRuntimeLoadSkillTool({
-    context: createProjectContext({
-      availableToolNames: ["read_file", "invoke_agent"],
-    }),
-    skillsDir: "/skills",
-    projectSkillLoader: createProjectSkillLoader({}),
-    builtinStore: createBuiltinStore({
-      skills: new Map([
-        [
-          "write",
-          `---
-allowed-tools:
-  - read_file
-  - write_file
-model: sonnet
-max-steps: 8
----
-Write carefully.`,
-        ],
-      ]),
-    }),
-  });
-
-  const result = expectLoadedSkillResponse(await tool.execute({ skillId: "write" }));
-
-  assertEquals(result.skillId, "write");
-  assertEquals(result.allowedTools, ["read_file"]);
-  assertEquals(result.delegationTools, ["read_file", "write_file"]);
-  assertEquals(result.unavailableCurrentRunTools, ["write_file"]);
-  assertEquals(result.model, "sonnet");
-  assertEquals(result.maxSteps, 8);
-});
-
-Deno.test("createRuntimeLoadSkillTool enforces an explicitly empty allowed-tools policy", async () => {
-  const tool = createRuntimeLoadSkillTool({
-    context: createProjectContext({
-      availableToolNames: ["read_file"],
-    }),
-    skillsDir: "/skills",
-    projectSkillLoader: createProjectSkillLoader({}),
-    builtinStore: createBuiltinStore({
-      skills: new Map([
-        [
-          "read-only",
-          `---
-allowed-tools: []
----
-Read without direct tools.`,
-        ],
-      ]),
-    }),
-  });
-
-  const result = expectLoadedSkillResponse(await tool.execute({ skillId: "read-only" }));
-
-  assertEquals(result.allowedTools, []);
-  assertEquals(result.delegationTools, []);
-  assertStringIncludes(result.note ?? "", "intentionally empty");
-});
-
-Deno.test("createRuntimeLoadSkillTool omits scoped delegates blocked by the effective policy", async () => {
-  const tool = createRuntimeLoadSkillTool({
-    context: createProjectContext({
-      availableToolNames: ["read_file", "agent_writer", "load_skill"],
-    }),
-    skillsDir: "/skills",
-    projectSkillLoader: createProjectSkillLoader({}),
-    builtinStore: createBuiltinStore({
-      skills: new Map([
-        [
-          "write",
-          `---
-allowed-tools:
-  - read_file
-  - write_file
-model: sonnet
-max-steps: 8
----
-Write carefully.`,
-        ],
-      ]),
-    }),
-  });
-
-  const result = expectLoadedSkillResponse(await tool.execute({ skillId: "write" }));
-
-  assertEquals(result.allowedTools, ["read_file"]);
-  assertEquals(result.unavailableCurrentRunTools, ["write_file"]);
-  assertEquals(result.nextStep.includes("agent_writer"), false);
-  assertEquals(result.delegationNote, undefined);
-  assertEquals(JSON.stringify(result).includes("invoke_agent"), false);
-  assertEquals(result.overrideNote, undefined);
-});
-
-Deno.test("createRuntimeLoadSkillTool names only delegates allowed by the effective policy", async () => {
-  const tool = createRuntimeLoadSkillTool({
-    context: createProjectContext({
-      availableToolNames: ["agent_admin", "agent_writer", "load_skill"],
-    }),
-    skillsDir: "/skills",
-    projectSkillLoader: createProjectSkillLoader({}),
-    builtinStore: createBuiltinStore({
-      skills: new Map([
-        [
-          "write",
-          `---
-allowed-tools:
-  - agent_writer
-  - write_file
----
-Write carefully.`,
-        ],
-      ]),
-    }),
-  });
-
-  const result = expectLoadedSkillResponse(await tool.execute({ skillId: "write" }));
-
-  assertEquals(result.allowedTools, ["agent_writer"]);
-  assertEquals(result.unavailableCurrentRunTools, ["write_file"]);
-  assertStringIncludes(result.nextStep, "`agent_writer`");
-  assertEquals(result.nextStep.includes("agent_admin"), false);
-  assertStringIncludes(result.delegationNote ?? "", "`agent_writer`");
-  assertEquals((result.delegationNote ?? "").includes("agent_admin"), false);
-});
-
-Deno.test("createRuntimeLoadSkillTool omits delegation advice without delegate tools", async () => {
-  const tool = createRuntimeLoadSkillTool({
-    context: createProjectContext({
-      availableToolNames: ["read_file", "load_skill"],
-    }),
-    skillsDir: "/skills",
-    projectSkillLoader: createProjectSkillLoader({}),
-    builtinStore: createBuiltinStore({
-      skills: new Map([
-        [
-          "write",
-          `---
-allowed-tools:
-  - read_file
-  - write_file
----
-Write carefully.`,
-        ],
-      ]),
-    }),
-  });
-
-  const result = expectLoadedSkillResponse(await tool.execute({ skillId: "write" }));
-
-  assertEquals(result.allowedTools, ["read_file"]);
-  assertEquals(result.unavailableCurrentRunTools, ["write_file"]);
-  assertEquals(result.delegationNote, undefined);
-  assertEquals(result.nextStep.includes("multi-step or isolated work"), false);
-  assertEquals(JSON.stringify(result).includes("invoke_agent"), false);
 });
 
 Deno.test("createRuntimeLoadSkillTool makes same-skill reloads concise and idempotent", async () => {
@@ -682,9 +499,6 @@ Use form_input once, then produce the plan.`,
   assertStringIncludes(secondResult.instructions, 'Skill "write" is already loaded');
   assertStringIncludes(secondResult.instructions, "Do not call load_skill");
   assertStringIncludes(secondResult.instructions, "do not call form_input again");
-  assertEquals(secondResult.allowedTools, ["read_file"]);
-  assertEquals(secondResult.delegationTools, ["read_file", "write_file"]);
-  assertEquals(secondResult.unavailableCurrentRunTools, ["write_file"]);
   assertEquals(secondResult.maxSteps, 8);
   assertEquals(secondResult.references, ["references/write.md"]);
 });
@@ -794,7 +608,6 @@ Deno.test("hydrated reference caches are authorized only after authoritative rev
       '["writer",null,"project-1","branch-1",null]': {
         skillId: "writer",
         instructions: "",
-        nextStep: "",
         references: ["references/extra.md"],
       },
     },
@@ -1478,42 +1291,12 @@ Deno.test("cache record replacement invalidates private duplicate payload state"
   assertEquals(referenceReads, 2);
 });
 
-Deno.test("duplicate body loads use private trusted policy instead of mutable cache values", async () => {
-  const context = createProjectContext({
-    availableToolNames: ["read_file"],
-  });
-  const tool = createRuntimeLoadSkillTool({
-    context,
-    skillsDir: "/skills",
-    projectSkillLoader: createProjectSkillLoader({}),
-    builtinStore: createBuiltinStore({
-      skills: new Map([[
-        "writer",
-        "---\nallowed-tools:\n  - read_file\nmax-steps: 8\n---\n# Writer",
-      ]]),
-    }),
-  });
-
-  await tool.execute({ skillId: "writer" });
-  const [cached] = Object.values(context.loadedSkillResponses ?? {});
-  if (!cached) throw new Error("Expected a loaded skill cache entry");
-  assertEquals(Object.hasOwn(cached, "allowedTools"), false);
-  assertEquals(Object.hasOwn(cached, "maxSteps"), false);
-  cached.allowedTools = undefined;
-  cached.maxSteps = 999;
-
-  const duplicate = expectLoadedSkillResponse(await tool.execute({ skillId: "writer" }));
-  assertEquals(duplicate.allowedTools, ["read_file"]);
-  assertEquals(duplicate.maxSteps, 8);
-});
-
 Deno.test("public markers cannot fabricate current-scope duplicate payloads", async () => {
   const context = createProjectContext({
     loadedSkillResponses: {
       '["writer",null,"project-1","branch-1",null]': {
         skillId: "writer",
         instructions: "",
-        nextStep: "",
         references: ["references/guide.md"],
       },
     },
@@ -1594,40 +1377,6 @@ Deno.test("public marker deletion cannot revoke current-scope private authorizat
   );
   assertEquals(bodyReads, 1);
   assertEquals(referenceReads, 1);
-});
-
-Deno.test("duplicate body policy is revalidated after in-place tool inventory narrowing", async () => {
-  const availableToolNames = ["read_file", "write_file"];
-  const context = createProjectContext({ availableToolNames });
-  let bodyReads = 0;
-  const tool = createRuntimeLoadSkillTool({
-    context,
-    skillsDir: "/skills",
-    projectSkillLoader: {
-      listProjectSkillReferences: () => Promise.resolve([]),
-      loadProjectSkill: () => {
-        bodyReads += 1;
-        return Promise.resolve({
-          instructions: "---\nallowed-tools:\n  - read_file\n  - write_file\n---\n# Writer",
-          references: [],
-        });
-      },
-      loadProjectSkillReference: () => Promise.resolve(null),
-    },
-    builtinStore: createBuiltinStore({}),
-  });
-
-  assertEquals(
-    expectLoadedSkillResponse(await tool.execute({ skillId: "writer" })).allowedTools,
-    ["read_file", "write_file"],
-  );
-  availableToolNames.splice(1, 1);
-
-  assertEquals(
-    expectLoadedSkillResponse(await tool.execute({ skillId: "writer" })).allowedTools,
-    ["read_file"],
-  );
-  assertEquals(bodyReads, 2);
 });
 
 Deno.test("in-place skill source path cycles invalidate private authorization", async () => {
@@ -2060,7 +1809,6 @@ Deno.test("runtime skill availability snapshots do not invoke cache accessors", 
   });
   const accessorResponse = {
     instructions: "",
-    nextStep: "",
   } as RuntimeLoadedSkillResponse;
   Object.defineProperties(accessorResponse, {
     skillId: {
@@ -2141,7 +1889,6 @@ Deno.test("createRuntimeLoadSkillTool schema disallows body reloads for already-
       "veryfront-key": {
         skillId: "veryfront",
         instructions: "# Veryfront",
-        nextStep: "Continue.",
         references: ["references/create-agent.md"],
       },
     },
@@ -2156,7 +1903,7 @@ Deno.test("createRuntimeLoadSkillTool schema disallows body reloads for already-
   assertEquals(tool.inputSchemaJson, STATIC_LOAD_SKILL_INPUT_SCHEMA);
 });
 
-Deno.test("createRuntimeLoadSkillTool advertises a static provider schema unchanged across a skill body load", async () => {
+it("createRuntimeLoadSkillTool advertises a static provider schema unchanged across a skill body load", async () => {
   const context = createProjectContext({
     availableSkillIds: ["veryfront"],
   });
@@ -2187,14 +1934,13 @@ Deno.test("createRuntimeLoadSkillTool advertises a static provider schema unchan
   await assertRejects(() => tool.execute({ skillId: "veryfront" }));
 });
 
-Deno.test("createRuntimeLoadSkillTool advertises a static schema even when all known skills are loaded", async () => {
+it("createRuntimeLoadSkillTool advertises a static schema even when all known skills are loaded", async () => {
   const context = createProjectContext({
     availableSkillIds: ["veryfront"],
     loadedSkillResponses: {
       "veryfront-key": {
         skillId: "veryfront",
         instructions: "# Veryfront",
-        nextStep: "Continue.",
         references: ["references/create-agent.md"],
       },
     },
@@ -2210,7 +1956,7 @@ Deno.test("createRuntimeLoadSkillTool advertises a static schema even when all k
   assertEquals(tool.inputSchemaJson, STATIC_LOAD_SKILL_INPUT_SCHEMA);
 });
 
-Deno.test("createRuntimeLoadSkillTool advertises a static schema after loading a skill without references (reload/extra-file guarded at runtime)", async () => {
+it("createRuntimeLoadSkillTool advertises a static schema after loading a skill without references (reload/extra-file guarded at runtime)", async () => {
   const context = createProjectContext({
     availableSkillIds: ["veryfront"],
   });
@@ -2249,7 +1995,7 @@ Deno.test("createRuntimeLoadSkillTool advertises a static schema after loading a
   assertEquals(rejectedUnexpectedFile, true);
 });
 
-Deno.test("createRuntimeLoadSkillTool advertises a static schema when every skill is loaded", async () => {
+it("createRuntimeLoadSkillTool advertises a static schema when every skill is loaded", async () => {
   const context = createProjectContext({
     availableSkillIds: ["plain", "with-reference"],
   });
@@ -2274,7 +2020,7 @@ Deno.test("createRuntimeLoadSkillTool advertises a static schema when every skil
   assertEquals(toolToProviderDefinition(tool).parameters, STATIC_LOAD_SKILL_INPUT_SCHEMA);
 });
 
-Deno.test("createRuntimeLoadSkillTool loads references and bodies under a static advertised schema", async () => {
+it("createRuntimeLoadSkillTool loads references and bodies under a static advertised schema", async () => {
   const context = createProjectContext({
     availableSkillIds: ["create", "plain", "with-reference"],
   });
@@ -2316,14 +2062,13 @@ Deno.test("createRuntimeLoadSkillTool loads references and bodies under a static
   );
 });
 
-Deno.test("createRuntimeLoadSkillTool advertises a static schema, ignoring stale loaded skills outside the current manifest", async () => {
+it("createRuntimeLoadSkillTool advertises a static schema, ignoring stale loaded skills outside the current manifest", async () => {
   const context = createProjectContext({
     availableSkillIds: ["veryfront"],
     loadedSkillResponses: {
       "old-plan-key": {
         skillId: "plan",
         instructions: "# Old plan",
-        nextStep: "Continue.",
       },
     },
   });
@@ -2367,56 +2112,6 @@ Deno.test("createRuntimeLoadSkillTool reloads same skill after project context c
   assertEquals(firstResult.instructions, "# project-1 plan");
   assertEquals(secondResult.instructions, "# project-2 plan");
   assertEquals(secondResult.references, ["references/project-2.md"]);
-});
-
-Deno.test("createRuntimeLoadSkillTool preserves policy on a duplicate body load", async () => {
-  const context = createProjectContext({
-    availableToolNames: ["form_input", "studio_suggestions", "list_files", "create_file"],
-  });
-  const tool = createRuntimeLoadSkillTool({
-    context,
-    skillsDir: "/skills",
-    projectSkillLoader: createProjectSkillLoader({}),
-    builtinStore: createBuiltinStore({
-      skills: new Map([
-        [
-          "plan",
-          `---
-allowed-tools:
-  - form_input
-  - studio_suggestions
-  - list_files
-  - create_file
----
-# Plan
-
-Use one form, then write the plan.`,
-        ],
-      ]),
-    }),
-  });
-
-  const firstResult = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
-  const secondResult = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
-
-  assertEquals(firstResult.allowedTools, [
-    "form_input",
-    "studio_suggestions",
-    "list_files",
-    "create_file",
-  ]);
-  assertEquals(secondResult.allowedTools, [
-    "form_input",
-    "studio_suggestions",
-    "list_files",
-    "create_file",
-  ]);
-  assertEquals(secondResult.delegationTools, [
-    "form_input",
-    "studio_suggestions",
-    "list_files",
-    "create_file",
-  ]);
 });
 
 Deno.test("createRuntimeLoadSkillTool rejects reference files before the skill body is loaded", async () => {
@@ -2794,7 +2489,7 @@ Deno.test("createRuntimeLoadSkillTool bounds and sanitizes schema input strings"
   );
 });
 
-Deno.test("createRuntimeLoadSkillTool keeps skill IDs out of the description and points to <available_skills>", () => {
+it("createRuntimeLoadSkillTool keeps skill IDs out of the description and points to <available_skills>", () => {
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext({
       availableSkillIds: ["daily-briefing"],
@@ -2809,7 +2504,7 @@ Deno.test("createRuntimeLoadSkillTool keeps skill IDs out of the description and
   // definition, so the description is byte-identical across projects (RFC 0001).
   assertEquals(tool.description.includes("daily-briefing"), false);
   assertStringIncludes(tool.description, "<available_skills>");
-  assertStringIncludes(tool.description, "do not invent IDs");
+  assertStringIncludes(tool.description, "You must not invent IDs");
 });
 
 Deno.test("createRuntimeLoadSkillTool snapshots skill inventories without invoking iterators", () => {
@@ -3018,27 +2713,6 @@ Deno.test("createRuntimeLoadSkillTool treats an empty availableSkillIds manifest
   assertEquals(builtinReads, 0);
 });
 
-Deno.test("createRuntimeLoadSkillTool allows host copy overrides", async () => {
-  const tool = createRuntimeLoadSkillTool({
-    context: createProjectContext(),
-    skillsDir: "/skills",
-    projectSkillLoader: createProjectSkillLoader({}),
-    builtinStore: createBuiltinStore({
-      skills: new Map([["plan", "# Plan"]]),
-    }),
-    description: "Custom load skill description.",
-    nextStep: "Custom next step.",
-    messages: {
-      referenceNote: "Custom reference note.",
-    },
-  });
-
-  assertEquals(tool.description, "Custom load skill description.");
-  const result = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
-  assertEquals(result.nextStep, "Custom next step.");
-  assertStringIncludes(JSON.stringify(result), "Custom next step.");
-});
-
 Deno.test("runtime load_skill rejects oversized production-loader documents", async () => {
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext(),
@@ -3220,24 +2894,6 @@ Deno.test("runtime load_skill propagates caller cancellation through the shared 
   await assertRejects(() => pending, Error, reason.message);
 });
 
-Deno.test("createRuntimeLoadSkillTool validates the final configured next step", async () => {
-  const tool = createRuntimeLoadSkillTool({
-    context: createProjectContext(),
-    skillsDir: "/skills",
-    projectSkillLoader: createProjectSkillLoader({}),
-    builtinStore: createBuiltinStore({
-      skills: new Map([["writer", "# Writer"]]),
-    }),
-    nextStep: "x".repeat(SKILL_DOCUMENT_MAX_CHARACTERS + 1),
-  });
-
-  await assertRejects(
-    () => tool.execute({ skillId: "writer" }),
-    RangeError,
-    `${SKILL_DOCUMENT_MAX_CHARACTERS}`,
-  );
-});
-
 Deno.test("createRuntimeLoadSkillTool snapshots tool inventory without invoking iterators", async () => {
   let iteratorCalls = 0;
   const availableToolNames = ["agent_writer"];
@@ -3257,44 +2913,24 @@ Deno.test("createRuntimeLoadSkillTool snapshots tool inventory without invoking 
     builtinStore: createBuiltinStore({}),
   });
 
-  const response = expectLoadedSkillResponse(await tool.execute({ skillId: "writer" }));
-
-  assertStringIncludes(response.nextStep, "agent_writer");
-  assertEquals(response.nextStep.length <= SKILL_DOCUMENT_MAX_CHARACTERS, true);
+  expectLoadedSkillResponse(await tool.execute({ skillId: "writer" }));
   assertEquals(iteratorCalls, 0);
 });
 
-Deno.test("createRuntimeLoadSkillTool rejects message accessors without invoking them", async () => {
-  let getterReads = 0;
-  const messages = {};
-  Object.defineProperty(messages, "unavailableCurrentRunToolsDelegationNote", {
-    configurable: true,
-    enumerable: true,
-    get() {
-      getterReads += 1;
-      return getterReads === 1 ? "safe note" : "x".repeat(SKILL_DOCUMENT_MAX_CHARACTERS + 1);
-    },
-  });
-  const tool = createRuntimeLoadSkillTool({
-    context: createProjectContext({ availableToolNames: ["agent_writer"] }),
-    skillsDir: "/skills",
-    projectSkillLoader: createProjectSkillLoader({
-      skills: new Map([[
-        "writer",
-        {
-          instructions: "---\nallowed-tools:\n  - read_file\n  - agent_writer\n---\n# Writer",
-          references: [],
-        },
-      ]]),
-    }),
-    builtinStore: createBuiltinStore({}),
-    messages,
-  });
-
-  await assertRejects(
-    () => tool.execute({ skillId: "writer" }),
-    TypeError,
-    "data property",
-  );
-  assertEquals(getterReads, 0);
+Deno.test("load_skill tool description carries the orchestration policy the result no longer does", () => {
+  // Regression for the gap Codex found on veryfront/veryfront-code#3473.
+  // buildAgentCallContext (call-context.ts) skips the generated
+  // <available_skills> block when an agent authors its own, so the system
+  // prompt cannot be relied on to carry this policy. The tool description is
+  // always sent, which makes it the trusted layer that must hold it.
+  for (
+    const clause of [
+      LOAD_SKILL_CONTINUE_SAME_TURN,
+      LOAD_SKILL_ROOT_OWNERSHIP,
+      LOAD_SKILL_DELEGATION_THRESHOLD,
+      LOAD_SKILL_OVERRIDE_FORWARDING,
+    ]
+  ) {
+    assertStringIncludes(RUNTIME_LOAD_SKILL_DESCRIPTION, clause);
+  }
 });

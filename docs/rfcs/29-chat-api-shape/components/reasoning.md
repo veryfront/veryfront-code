@@ -2,7 +2,12 @@
 
 A disclosure for a model's reasoning part - auto-opens while streaming, auto-closes when done. Render it whole, or compose the parts.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `Reasoning`, `Reasoning.Content`, `Reasoning.Root`, `Reasoning.Trigger`
+> - **Not exported today:** none
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 `Reasoning` is the same component as `Message.Reasoning`'s disclosure family - a namespace re-export for use outside a `Message`, never a parallel implementation.
 

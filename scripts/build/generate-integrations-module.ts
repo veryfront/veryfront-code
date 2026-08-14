@@ -17,7 +17,7 @@ if (!tryResolve<SchemaValidator>("SchemaValidator")) {
   register<SchemaValidator>("SchemaValidator", createZodAdapter());
 }
 
-const integrationsDir = "./cli/templates/integrations";
+const integrationsDir = "./templates/integrations";
 const dataPath = "./src/integrations/_data.ts";
 const summaryPath = "./src/integrations/_tool_summaries.ts";
 

@@ -121,22 +121,28 @@ describe("createToolExecutionDataEventBridgeStream", () => {
 
   it("cancel still forwards the reason to the base reader on the happy path", async () => {
     let cancelledWith: unknown = "unset";
+    let publishDataEvent = (_event: ToolExecutionDataEvent) => {};
     const stream = createToolExecutionDataEventBridgeStream({
       baseStream: new ReadableStream<Uint8Array>({
         start(controller) {
           controller.enqueue(new TextEncoder().encode('data: {"type":"message-start"}\n\n'));
         },
-        cancel(reason) {
+        async cancel(reason) {
           cancelledWith = reason;
+          await Promise.resolve();
         },
       }),
-      installPublisher() {},
+      installPublisher(nextPublishDataEvent) {
+        publishDataEvent = nextPublishDataEvent;
+      },
     });
 
     const reader = stream.getReader();
     await reader.read();
     const reason = new DOMException("client disconnected", "AbortError");
-    await reader.cancel(reason);
+    const cancellation = reader.cancel(reason);
+    publishDataEvent({ type: "late-child-event", data: { status: "still-stopping" } });
+    await cancellation;
 
     assertEquals(cancelledWith, reason);
   });

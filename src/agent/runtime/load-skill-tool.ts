@@ -1,16 +1,12 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
-import { matchesAllowedTool } from "#veryfront/skill/allowed-tools.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool/types.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema/zod-json-schema.ts";
 import {
-  LOAD_SKILL_CONTINUE_SAME_TURN,
-  LOAD_SKILL_DELEGATION_THRESHOLD,
   LOAD_SKILL_OVERRIDE_FORWARDING,
-  LOAD_SKILL_ROOT_OWNERSHIP,
-  LOAD_SKILL_TOOL_INTERSECTION,
-} from "../conversation/delegation-policy.ts";
+  LOAD_SKILL_POLICY_CLAUSES,
+} from "#veryfront/skill/load-skill-policy.ts";
 import {
   listRuntimeBuiltinSkillReferencesWithinLimit,
   readRuntimeBuiltinSkillReferenceWithinLimit,
@@ -21,8 +17,6 @@ import {
   type SkillOperationBudget,
 } from "#veryfront/skill/operation-budget.ts";
 import {
-  SKILL_ALLOWED_TOOL_MAX_PATTERNS,
-  SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH,
   SKILL_DOCUMENT_MAX_CHARACTERS,
   SKILL_FILE_OPERATION_TIMEOUT_MS,
   SKILL_ID_MAX_LENGTH,
@@ -41,7 +35,6 @@ import {
   buildStrictRuntimeLoadedSkillResponse,
   normalizeStrictRuntimeSkillReferencePath,
   type RuntimeLoadedSkillResponse,
-  type RuntimeLoadedSkillResponseMessages,
   type RuntimeSkillMetadataLogger,
 } from "./skill-metadata.ts";
 import type { ResolvedSkillSelectorPolicy } from "#veryfront/skill/selector.ts";
@@ -66,92 +59,9 @@ function isRuntimeLoadSkillArray(value: unknown): boolean {
   }
 }
 
-/** Fail-closed continuation note used when no delegation tool is known available. */
-export const RUNTIME_LOAD_SKILL_CONTINUATION_NOTE =
-  `IMPORTANT: load_skill only loads instructions. It does not perform the task or finish the turn. ${LOAD_SKILL_CONTINUE_SAME_TURN} ${LOAD_SKILL_ROOT_OWNERSHIP} ${LOAD_SKILL_TOOL_INTERSECTION}`;
-
 /** Shared runtime load skill description value. */
 export const RUNTIME_LOAD_SKILL_DESCRIPTION =
-  `Load the full instructions for a skill. Use this when you need detailed guidance for a specific task type. If the skill specifies allowed-tools, you MUST only use those tools while following this skill. load_skill does not perform the task by itself. ${LOAD_SKILL_CONTINUE_SAME_TURN} ${LOAD_SKILL_ROOT_OWNERSHIP} ${LOAD_SKILL_DELEGATION_THRESHOLD} First call load_skill with only skillId. Use the optional \`file\` parameter only after the skill is loaded and only for a reference file listed by that loaded skill.`;
-
-const DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES: RuntimeLoadedSkillResponseMessages = {
-  allowedToolsNote:
-    "IMPORTANT: While following this skill, you MUST only use the tools listed in allowedTools.",
-  noCurrentRunToolsNote:
-    "IMPORTANT: While following this skill, no direct-execution tools from this skill are available in the current run. allowedTools is intentionally empty; do not attempt direct tool execution in this run.",
-  unavailableCurrentRunToolsDelegationNote:
-    "IMPORTANT: Some tools required by this skill are not available in the current run. Use an available scoped agent_<id> delegation tool for the isolated work, or invoke_agent only when that exact legacy tool is present.",
-  overrideNote: LOAD_SKILL_OVERRIDE_FORWARDING,
-  referenceNote:
-    "After this skill is loaded, use load_skill with the `file` parameter only for one of these listed reference files.",
-};
-
-function getAvailableScopedDelegateToolNames(availableToolNames?: readonly string[]): string[] {
-  return (availableToolNames ?? [])
-    .filter((toolName) => toolName.startsWith("agent_"))
-    .sort();
-}
-
-function buildRuntimeLoadSkillDelegationAdvice(availableToolNames?: readonly string[]): string {
-  if (availableToolNames === undefined) {
-    return `For multi-step or isolated work, call invoke_agent; otherwise keep working directly with the allowed tools. ${LOAD_SKILL_DELEGATION_THRESHOLD} ${LOAD_SKILL_OVERRIDE_FORWARDING}`;
-  }
-
-  const scopedDelegateToolNames = getAvailableScopedDelegateToolNames(availableToolNames);
-  if (scopedDelegateToolNames.length > 0) {
-    const tools = scopedDelegateToolNames.map((toolName) => `\`${toolName}\``).join(", ");
-    return `For multi-step or isolated work, use only these available scoped delegation tools: ${tools}; otherwise keep working directly with the allowed tools. ${LOAD_SKILL_DELEGATION_THRESHOLD}`;
-  }
-
-  if (availableToolNames.includes("invoke_agent")) {
-    return `For multi-step or isolated work, call the available legacy invoke_agent tool; otherwise keep working directly with the allowed tools. ${LOAD_SKILL_DELEGATION_THRESHOLD} ${LOAD_SKILL_OVERRIDE_FORWARDING}`;
-  }
-
-  return "";
-}
-
-function buildRuntimeLoadSkillContinuationNote(availableToolNames?: readonly string[]): string {
-  const delegationAdvice = buildRuntimeLoadSkillDelegationAdvice(availableToolNames);
-  return [
-    "IMPORTANT: load_skill only loads instructions. It does not perform the task or finish the turn.",
-    LOAD_SKILL_CONTINUE_SAME_TURN,
-    LOAD_SKILL_ROOT_OWNERSHIP,
-    delegationAdvice,
-    LOAD_SKILL_TOOL_INTERSECTION,
-  ].filter((part) => part.length > 0).join(" ");
-}
-
-function buildUnavailableCurrentRunToolsDelegationNote(
-  availableToolNames?: readonly string[],
-): string {
-  if (availableToolNames === undefined) {
-    return DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES.unavailableCurrentRunToolsDelegationNote;
-  }
-
-  const scopedDelegateToolNames = getAvailableScopedDelegateToolNames(availableToolNames);
-  if (scopedDelegateToolNames.length > 0) {
-    const tools = scopedDelegateToolNames.map((toolName) => `\`${toolName}\``).join(", ");
-    return `IMPORTANT: Some tools required by this skill are not available in the current run. Use only these available scoped delegation tools for isolated work: ${tools}.`;
-  }
-
-  if (availableToolNames.includes("invoke_agent")) {
-    return "IMPORTANT: Some tools required by this skill are not available in the current run. Use the available legacy invoke_agent tool for isolated work.";
-  }
-
-  return "";
-}
-
-function getEffectiveAvailableToolNames(
-  response: RuntimeLoadedSkillResponse,
-  availableToolNames: readonly string[] | undefined,
-): string[] {
-  const allowedTools = response.allowedTools;
-  if (availableToolNames === undefined) return [];
-  if (allowedTools === undefined) return [...availableToolNames];
-  return availableToolNames.filter((toolName) =>
-    allowedTools.some((pattern) => matchesAllowedTool(toolName, pattern))
-  );
-}
+  `Load the full instructions for a skill. Use this when you need detailed guidance for a specific task type. load_skill does not perform the task by itself. ${LOAD_SKILL_POLICY_CLAUSES} ${LOAD_SKILL_OVERRIDE_FORWARDING} First call load_skill with only skillId. Use the optional \`file\` parameter only after the skill is loaded and only for a reference file listed by that loaded skill.`;
 
 function rememberBoundedRecordValue<T>(
   record: Record<string, T>,
@@ -299,7 +209,6 @@ function compactLoadedSkillResponse(
   return {
     ...copy,
     instructions: "",
-    nextStep: "",
   };
 }
 
@@ -309,7 +218,6 @@ function buildPublicLoadedSkillMarker(
   return {
     skillId: response.skillId,
     instructions: "",
-    nextStep: "",
     ...(response.references === undefined ? {} : { references: [...response.references] }),
   };
 }
@@ -319,13 +227,6 @@ function copyLoadedSkillResponse(
 ): RuntimeLoadedSkillResponse {
   return {
     ...response,
-    ...(response.allowedTools === undefined ? {} : { allowedTools: [...response.allowedTools] }),
-    ...(response.delegationTools === undefined
-      ? {}
-      : { delegationTools: [...response.delegationTools] }),
-    ...(response.unavailableCurrentRunTools === undefined
-      ? {}
-      : { unavailableCurrentRunTools: [...response.unavailableCurrentRunTools] }),
     ...(response.references === undefined ? {} : { references: [...response.references] }),
   };
 }
@@ -397,7 +298,6 @@ export type RuntimeLoadSkillBuiltinStore = {
 };
 
 /** Public API contract for runtime load skill tool messages. */
-export type RuntimeLoadSkillToolMessages = Partial<RuntimeLoadedSkillResponseMessages>;
 
 /** Options accepted by runtime load skill tool. */
 export type RuntimeLoadSkillToolOptions = {
@@ -407,8 +307,6 @@ export type RuntimeLoadSkillToolOptions = {
   builtinSkillIds?: readonly string[];
   builtinStore?: RuntimeLoadSkillBuiltinStore;
   description?: string;
-  nextStep?: string;
-  messages?: RuntimeLoadSkillToolMessages;
   logger?: RuntimeSkillMetadataLogger;
   skillDocumentParserProvider?: SkillDocumentParserProvider;
 };
@@ -442,6 +340,24 @@ export const getRuntimeLoadSkillToolInputSchema = defineSchema((v) =>
 
 /** @deprecated Use getRuntimeLoadSkillToolInputSchema() */
 const runtimeLoadSkillToolInputSchema = lazySchema(getRuntimeLoadSkillToolInputSchema);
+
+const getStaticRuntimeLoadSkillToolInputSchema = defineSchema((v) =>
+  v.object({
+    skillId: v.string().max(SKILL_ID_MAX_LENGTH)
+      .regex(
+        /^[a-zA-Z0-9_-]+$/,
+        'skillId must contain only letters, numbers, "_" or "-"',
+      )
+      .describe("The skill ID to load. Use an ID from <available_skills>."),
+    file: getRuntimeLoadSkillReferenceFileInputSchema().optional().describe(
+      "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+    ),
+  })
+);
+
+const staticRuntimeLoadSkillToolInputSchema = lazySchema(
+  getStaticRuntimeLoadSkillToolInputSchema,
+);
 
 /** Input payload for runtime load skill tool. */
 export type RuntimeLoadSkillToolInput = InferSchema<
@@ -502,20 +418,6 @@ function assertLoadedSkillInstructions(instructions: string): void {
   }
 }
 
-function assertRuntimeResponseMetadata(response: RuntimeLoadedSkillResponse): void {
-  const tools = response.delegationTools ?? [];
-  if (tools.length > SKILL_ALLOWED_TOOL_MAX_PATTERNS) {
-    throw new RangeError(
-      `Skill allowed-tools may contain at most ${SKILL_ALLOWED_TOOL_MAX_PATTERNS} entries`,
-    );
-  }
-  if (tools.some((entry) => entry.length > SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH)) {
-    throw new RangeError(
-      `Skill allowed-tool patterns may contain at most ${SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH} characters`,
-    );
-  }
-}
-
 function readRuntimeLoadSkillDataProperty(
   value: unknown,
   key: PropertyKey,
@@ -558,57 +460,6 @@ function snapshotRuntimeLoadSkillAvailableToolNames(
   });
 }
 
-function snapshotRuntimeLoadSkillResponseMessages(
-  messages: unknown,
-  availableToolNames: readonly string[] | undefined,
-): {
-  configuredDelegationNote: string | undefined;
-  messages: RuntimeLoadedSkillResponseMessages;
-} {
-  if (messages !== undefined && (!messages || typeof messages !== "object")) {
-    throw new TypeError("Runtime load skill messages must be an object");
-  }
-  const allowedToolsNote = messages === undefined
-    ? undefined
-    : readRuntimeLoadSkillDataProperty(messages, "allowedToolsNote", "Runtime load skill messages");
-  const noCurrentRunToolsNote = messages === undefined
-    ? undefined
-    : readRuntimeLoadSkillDataProperty(
-      messages,
-      "noCurrentRunToolsNote",
-      "Runtime load skill messages",
-    );
-  const configuredDelegationNote = messages === undefined
-    ? undefined
-    : readRuntimeLoadSkillDataProperty(
-      messages,
-      "unavailableCurrentRunToolsDelegationNote",
-      "Runtime load skill messages",
-    );
-  const overrideNote = messages === undefined
-    ? undefined
-    : readRuntimeLoadSkillDataProperty(messages, "overrideNote", "Runtime load skill messages");
-  const referenceNote = messages === undefined
-    ? undefined
-    : readRuntimeLoadSkillDataProperty(messages, "referenceNote", "Runtime load skill messages");
-
-  return {
-    configuredDelegationNote: configuredDelegationNote as string | undefined,
-    messages: {
-      allowedToolsNote: (allowedToolsNote as string | undefined) ??
-        DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES.allowedToolsNote,
-      noCurrentRunToolsNote: (noCurrentRunToolsNote as string | undefined) ??
-        DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES.noCurrentRunToolsNote,
-      unavailableCurrentRunToolsDelegationNote: (configuredDelegationNote as string | undefined) ??
-        buildUnavailableCurrentRunToolsDelegationNote(availableToolNames),
-      overrideNote: (overrideNote as string | undefined) ??
-        DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES.overrideNote,
-      referenceNote: (referenceNote as string | undefined) ??
-        DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES.referenceNote,
-    },
-  };
-}
-
 function buildLoadedSkillResponse(input: {
   options: RuntimeLoadSkillToolOptions;
   skillId: string;
@@ -616,23 +467,6 @@ function buildLoadedSkillResponse(input: {
   references?: readonly string[];
 }): RuntimeLoadedSkillResponse {
   assertLoadedSkillInstructions(input.instructions);
-  const configuredNextStep = readRuntimeLoadSkillDataProperty(
-    input.options,
-    "nextStep",
-    "Runtime load skill options",
-  ) as string | undefined;
-  const messagesInput = readRuntimeLoadSkillDataProperty(
-    input.options,
-    "messages",
-    "Runtime load skill options",
-  );
-  const availableToolNames = snapshotRuntimeLoadSkillAvailableToolNames(
-    readRuntimeLoadSkillDataProperty(
-      input.options.context,
-      "availableToolNames",
-      "Runtime load skill context",
-    ),
-  );
   const logger = readRuntimeLoadSkillDataProperty(
     input.options,
     "logger",
@@ -643,41 +477,13 @@ function buildLoadedSkillResponse(input: {
     "skillDocumentParserProvider",
     "Runtime load skill options",
   ) as SkillDocumentParserProvider | undefined;
-  const { configuredDelegationNote, messages: responseMessages } =
-    snapshotRuntimeLoadSkillResponseMessages(messagesInput, availableToolNames);
-  const preliminaryResponse = buildStrictRuntimeLoadedSkillResponse({
-    skillId: input.skillId,
-    instructions: input.instructions,
-    nextStep: configuredNextStep ?? "",
-    messages: responseMessages,
-    references: input.references,
-    availableToolNames,
-    skillDocumentParserProvider,
-  });
-  const effectiveAvailableToolNames = getEffectiveAvailableToolNames(
-    preliminaryResponse,
-    availableToolNames,
-  );
-  const nextStep = configuredNextStep ??
-    buildRuntimeLoadSkillContinuationNote(effectiveAvailableToolNames);
-  const generatedDelegationNote = buildUnavailableCurrentRunToolsDelegationNote(
-    effectiveAvailableToolNames,
-  );
   const response = buildStrictRuntimeLoadedSkillResponse({
     skillId: input.skillId,
     instructions: input.instructions,
-    nextStep,
-    messages: {
-      ...responseMessages,
-      unavailableCurrentRunToolsDelegationNote: configuredDelegationNote ??
-        generatedDelegationNote,
-    },
     references: input.references,
-    availableToolNames,
     logger,
     skillDocumentParserProvider,
   });
-  assertRuntimeResponseMetadata(response);
   return response;
 }
 
@@ -691,8 +497,6 @@ function buildAlreadyLoadedSkillResponse(
       `Skill "${skillId}" is already loaded in this turn. Do not call load_skill for "${skillId}" again. ` +
       "Continue from the existing user request and any submitted tool results, then produce the next useful response now. " +
       "If a form_input result already exists, treat it as final for this turn and do not call form_input again.",
-    nextStep:
-      "Continue now. Do not reload this skill or restart intake; use the existing context and finish the current turn.",
   };
 }
 
@@ -1349,7 +1153,7 @@ function buildRuntimeLoadSkillDescription(options: RuntimeLoadSkillToolOptions):
   // <available_skills> context block, not in the tool definition. Keeping skill
   // IDs out of the description (and the advertised input schema) lets the tools
   // array join the shared cache prefix. See RFC 0001 (layered context).
-  return `${RUNTIME_LOAD_SKILL_DESCRIPTION} Skill IDs are listed in the <available_skills> context block; do not invent IDs.`;
+  return `${RUNTIME_LOAD_SKILL_DESCRIPTION} Skill IDs are listed in the <available_skills> context block. You must not invent IDs.`;
 }
 
 function snapshotRuntimeSkillIdInventory(
@@ -2247,7 +2051,7 @@ export function createRuntimeLoadSkillTool(
       // enforcement (valid IDs, reload/body rules) is preserved; the model
       // just no longer sees the per-project enum.
       refreshPrivateAuthorityScope();
-      return zodToJsonSchema(runtimeLoadSkillToolInputSchema);
+      return zodToJsonSchema(staticRuntimeLoadSkillToolInputSchema);
     },
     execute,
   };

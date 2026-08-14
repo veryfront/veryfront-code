@@ -34,6 +34,7 @@ describe("eval/metrics", () => {
       severity: "gate",
       score: 1,
       pass: true,
+      label: "Answer matched the reference exactly",
     });
     assertEquals((await contains.evaluate(createRecord())).pass, true);
     assertEquals((await regex.evaluate(createRecord())).pass, true);
@@ -240,6 +241,7 @@ describe("eval/metrics", () => {
         severity: "budget",
         score: 0,
         pass: false,
+        label: "Cost stayed under $0.05",
         evidence: {
           costUsd: 0.1,
           maxUsd: 0.05,
@@ -280,6 +282,7 @@ describe("eval/metrics", () => {
         severity: "gate",
         score: 1,
         pass: true,
+        label: 'Agent called tool "orders_lookup"',
         evidence: {
           tool: "orders_lookup",
           calls: 1,
@@ -296,6 +299,7 @@ describe("eval/metrics", () => {
         severity: "gate",
         score: 1,
         pass: true,
+        label: 'Agent did not call tool "refunds_issue"',
         evidence: { tool: "refunds_issue", calls: 0 },
       },
     );
@@ -307,6 +311,7 @@ describe("eval/metrics", () => {
         severity: "gate",
         score: 1,
         pass: true,
+        label: 'Agent call count for tool "orders_lookup" was in range',
         evidence: { tool: "orders_lookup", calls: 1, expected: { exact: 1 } },
       },
     );
@@ -321,6 +326,7 @@ describe("eval/metrics", () => {
         severity: "gate",
         score: 0,
         pass: false,
+        label: 'Agent called tool "orders_lookup"',
         evidence: {
           tool: "orders_lookup",
           calls: 1,
@@ -349,6 +355,7 @@ describe("eval/metrics", () => {
       score: 0.95,
       pass: true,
       explanation: "The answer names Paris.",
+      label: "LLM as a judge passed",
     });
 
     const belowThreshold = metrics.judge.rubric({
@@ -402,6 +409,7 @@ describe("eval/metrics", () => {
         severity: "gate",
         score: 0.5,
         pass: true,
+        label: "Knowledge recall@2",
         evidence: {
           tool: "search_knowledge",
           k: 2,
@@ -434,6 +442,7 @@ describe("eval/metrics", () => {
         severity: "gate",
         score: 0.5,
         pass: true,
+        label: "Knowledge precision@2",
         evidence: {
           tool: "search_knowledge",
           k: 2,
@@ -462,6 +471,7 @@ describe("eval/metrics", () => {
         severity: "gate",
         score: 1 / 3,
         pass: true,
+        label: "Knowledge MRR",
         evidence: {
           tool: "search_knowledge",
           k: 3,
@@ -540,6 +550,7 @@ describe("eval/metrics", () => {
         severity: "gate",
         score: 1,
         pass: true,
+        label: "Knowledge recall@2",
         evidence: {
           tool: "search_knowledge",
           k: 2,
@@ -602,6 +613,7 @@ describe("eval/metrics", () => {
         severity: "soft",
         score: 0.5,
         pass: true,
+        label: "Knowledge citations were precise",
         evidence: {
           tool: "search_knowledge",
           citations: [
@@ -629,6 +641,7 @@ describe("eval/metrics", () => {
         severity: "gate",
         score: 0.5,
         pass: true,
+        label: "Knowledge citations were complete",
         evidence: {
           tool: "search_knowledge",
           citations: [
@@ -685,6 +698,7 @@ describe("eval/metrics", () => {
         severity: "gate",
         score: 0.5,
         pass: true,
+        label: "Knowledge citations were precise",
         evidence: {
           tool: "search_knowledge",
           citations: [
@@ -741,6 +755,7 @@ describe("eval/metrics", () => {
         score: 0.9,
         pass: true,
         explanation: "Answer is supported by the retrieved SSO runbook.",
+        label: "Answer was grounded in its sources",
         evidence: {
           tool: "search_knowledge",
           evidenceCount: 1,
@@ -802,6 +817,7 @@ describe("eval/metrics", () => {
         score: 0.95,
         pass: true,
         explanation: "Compact knowledge result contains enough support for the answer.",
+        label: "Answer was grounded in its sources",
         evidence: {
           tool: "search_knowledge",
           evidenceCount: 2,

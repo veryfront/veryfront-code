@@ -25,6 +25,8 @@ import {
 } from "../../../src/integrations/source-policy.ts";
 import { saveToken } from "../../auth/token-store.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
+import { setQuietMode } from "../../utils/index.ts";
+import { stripAnsi } from "../../ui/ansi.ts";
 import {
   applyGatewayBillingGroupFinalization,
   createAgentAdapter,
@@ -343,24 +345,25 @@ async function captureConsoleOutput(fn: () => Promise<unknown>): Promise<{
 
 function relevantEvalHumanLines(output: { stdout: string[]; stderr: string[] }): string[] {
   return [...output.stdout, ...output.stderr]
+    .map((line) => stripAnsi(line))
     .map((line) => {
       // Strip logger text-mode prefix before matching content.
       // Server preset (default in tests): "HH:MM:SS  TAGNAME    G " = 23 chars (PREFIX_WIDTH).
       // CLI preset (when entry point sets it): "  G " = 4 chars.
       if (/^\d{2}:\d{2}:\d{2}\s{2}/.test(line)) return line.slice(23);
       if (/^\s{2}[·●!✗]\s/.test(line)) return line.slice(4);
+      // The eval command writes its own lines to stdout at a 2-space indent, no logger involved.
+      if (line.startsWith("  ")) return line.slice(2);
       return line;
     })
     .filter((line) =>
-      line.startsWith("Eval ") ||
+      line.startsWith("Eval:") ||
       line.startsWith("Target: ") ||
       line.startsWith("Result: ") ||
-      line.startsWith("Report directory: ") ||
-      line.startsWith("Report markdown: ") ||
       line.startsWith("Report: ") ||
+      line.startsWith("Report JSON: ") ||
       line.startsWith("JUnit: ") ||
       line.startsWith("Baseline written: ") ||
-      line.startsWith("Suite report: ") ||
       line.startsWith("Model: ") ||
       line.startsWith("Recommendation: ") ||
       line.startsWith("  - ") ||
@@ -368,6 +371,14 @@ function relevantEvalHumanLines(output: { stdout: string[]; stderr: string[] }):
       line.startsWith("Comparison markdown: ") ||
       line.startsWith("Eval suite: ")
     );
+}
+
+/** The `●` lines, which mark individual metric assertions and nothing else. */
+function evalMetricLines(output: { stdout: string[] }): string[] {
+  return output.stdout
+    .map((line) => stripAnsi(line))
+    .filter((line) => line.startsWith("  ● "))
+    .map((line) => line.slice(4));
 }
 
 function parseLastJsonEnvelope(output: { stdout: string[] }): {
@@ -1156,6 +1167,253 @@ describe("eval CLI command helpers", () => {
     }
   });
 
+  it("describes each metric in prose, naming the tool it asserted on", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-metric-labels-" });
+    const configHome = await Deno.makeTempDir({ prefix: "vf-eval-metric-labels-auth-" });
+    const fixtureAgent = {
+      id: "fixture",
+      config: {},
+      generate: async () => ({
+        text: "expected",
+        messages: [],
+        status: "completed",
+        toolCalls: [],
+      } satisfies AgentResponse),
+    } as unknown as Agent;
+    const labelled = evalAgent({
+      id: "eval:labelled",
+      name: "Assistant smoke test",
+      target: "agent:fixture",
+      dataset: [{ id: "only", input: "only" }],
+      metrics: [
+        metrics.agent.calledTool("calculator").gate(),
+        metrics.agent.noFailedTools().gate(),
+        metrics.answer.contains({ text: "expected" }).gate(),
+      ],
+    });
+    labelled.source = { filePath: `${projectDir}/evals/labelled.eval.ts`, exportName: "default" };
+    const runtime = createProjectRuntimeDiscovery(normalizeSourceIntegrationPolicy({ allow: {} }));
+    runtime.agents.set(fixtureAgent.id, fixtureAgent);
+    runtime.evals.set(labelled.id, labelled);
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+
+      const output = await captureConsoleOutput(async () => {
+        await runEvalCommand(
+          {
+            id: "labelled",
+            list: false,
+            exporters: [],
+            debug: false,
+            candidateModels: [],
+            projectDir,
+            reportDir: `${projectDir}/report`,
+          },
+          { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
+        );
+      });
+
+      // The definition name heads the block, not the generated eval id.
+      assertEquals(relevantEvalHumanLines(output)[0], "Eval:   Assistant smoke test");
+      assertEquals(evalMetricLines(output), [
+        'Agent called tool "calculator": 0/1 passed (0%)',
+        "Agent had no failed tool calls: 1/1 passed (100%)",
+        'Answer contained "expected": 1/1 passed (100%)',
+      ]);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("prints why a gated metric failed, without restating it as a record error", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-reasons-" });
+    const configHome = await Deno.makeTempDir({ prefix: "vf-eval-reasons-auth-" });
+    const fixtureAgent = {
+      id: "fixture",
+      config: {},
+      generate: async () => ({
+        text: "The split is $33.2366 each.",
+        messages: [],
+        status: "completed",
+        toolCalls: [],
+      } satisfies AgentResponse),
+    } as unknown as Agent;
+    const failing = evalAgent({
+      id: "eval:reasons",
+      target: "agent:fixture",
+      dataset: [{ id: "calculator", input: "split the bill" }],
+      metrics: [
+        metrics.judge.rubric({
+          rubric: "Every amount must be exact to the cent.",
+          judge: () =>
+            Promise.resolve({
+              score: 0.2,
+              pass: false,
+              explanation: "The answer states $33.2366, which is not exact to the cent.",
+            }),
+        }).gate({ min: 0.8 }),
+      ],
+    });
+    failing.source = { filePath: `${projectDir}/evals/reasons.eval.ts`, exportName: "default" };
+    const runtime = createProjectRuntimeDiscovery(normalizeSourceIntegrationPolicy({ allow: {} }));
+    runtime.agents.set(fixtureAgent.id, fixtureAgent);
+    runtime.evals.set(failing.id, failing);
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+
+      const output = await captureConsoleOutput(async () => {
+        await runEvalCommand(
+          {
+            id: "reasons",
+            list: false,
+            exporters: [],
+            debug: false,
+            candidateModels: [],
+            projectDir,
+            reportDir: `${projectDir}/report`,
+          },
+          { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
+        );
+      });
+
+      const printed = [...output.stdout].map((line) => stripAnsi(line));
+      assertEquals(
+        printed.some((line) =>
+          line ===
+            "    calculator: The answer states $33.2366, which is not exact to the cent."
+        ),
+        true,
+      );
+      // The runner flips `completed` off whenever a gate fails, so "Record did not complete."
+      // would only restate the judge verdict above it.
+      assertEquals(printed.some((line) => line.includes("Record did not complete")), false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("keeps a record error that carries detail of its own", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-adapter-" });
+    const configHome = await Deno.makeTempDir({ prefix: "vf-eval-adapter-auth-" });
+    const fixtureAgent = {
+      id: "boom",
+      config: {},
+      generate: () => Promise.reject(new Error("upstream refused the connection")),
+    } as unknown as Agent;
+    const failing = evalAgent({
+      id: "eval:adapter",
+      target: "agent:boom",
+      dataset: [{ id: "calculator", input: "split the bill" }],
+      metrics: [metrics.agent.calledTool("calculator").gate()],
+    });
+    failing.source = { filePath: `${projectDir}/evals/adapter.eval.ts`, exportName: "default" };
+    const runtime = createProjectRuntimeDiscovery(normalizeSourceIntegrationPolicy({ allow: {} }));
+    runtime.agents.set(fixtureAgent.id, fixtureAgent);
+    runtime.evals.set(failing.id, failing);
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+
+      const output = await captureConsoleOutput(async () => {
+        await runEvalCommand(
+          {
+            id: "adapter",
+            list: false,
+            exporters: [],
+            debug: false,
+            candidateModels: [],
+            projectDir,
+            reportDir: `${projectDir}/report`,
+          },
+          { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
+        );
+      });
+
+      // The gate fails too, so the record error is suppressed by the recordId rule alone.
+      // Its text is the only report of why the agent never answered, so it has to survive.
+      const printed = [...output.stdout].map((line) => stripAnsi(line));
+      assertEquals(
+        printed.some((line) => line.includes("upstream refused the connection")),
+        true,
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("prints no report output under --quiet", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-quiet-" });
+    const configHome = await Deno.makeTempDir({ prefix: "vf-eval-quiet-auth-" });
+    const fixtureAgent = {
+      id: "fixture",
+      config: {},
+      generate: async () => ({
+        text: "expected",
+        messages: [],
+        status: "completed",
+        toolCalls: [],
+      } satisfies AgentResponse),
+    } as unknown as Agent;
+    const quiet = evalAgent({
+      id: "eval:quiet",
+      target: "agent:fixture",
+      dataset: [{ id: "only", input: "only" }],
+      metrics: [metrics.answer.contains({ text: "expected" }).gate()],
+    });
+    quiet.source = { filePath: `${projectDir}/evals/quiet.eval.ts`, exportName: "default" };
+    const runtime = createProjectRuntimeDiscovery(normalizeSourceIntegrationPolicy({ allow: {} }));
+    runtime.agents.set(fixtureAgent.id, fixtureAgent);
+    runtime.evals.set(quiet.id, quiet);
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+      setQuietMode(true);
+
+      const output = await captureConsoleOutput(async () => {
+        await runEvalCommand(
+          {
+            id: "quiet",
+            list: false,
+            exporters: [],
+            debug: false,
+            candidateModels: [],
+            projectDir,
+            reportDir: `${projectDir}/report`,
+          },
+          { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
+        );
+      });
+
+      assertEquals(relevantEvalHumanLines(output), []);
+      assertEquals(evalMetricLines(output), []);
+    } finally {
+      setQuietMode(false);
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
   it("prints single, suite, and comparison eval output in CLI-owned order", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-output-order-" });
     const configHome = await Deno.makeTempDir({ prefix: "vf-eval-output-order-auth-" });
@@ -1212,12 +1470,11 @@ describe("eval CLI command helpers", () => {
         assertEquals(exitCode, 0);
       });
       assertEquals(relevantEvalHumanLines(singleOutput), [
-        "Eval eval:single-output",
+        "Eval:   eval:single-output",
         "Target: agent:fixture",
         "Result: 1/1 passed (100%)",
-        `Report directory: ${projectDir}/single`,
-        `Report markdown: ${projectDir}/single/report.md`,
-        `Report: ${projectDir}/single/report.json`,
+        `Report: ${projectDir}/single/report.md`,
+        `Report JSON: ${projectDir}/single/report.json`,
         `JUnit: ${projectDir}/single/junit.xml`,
         `Baseline written: ${projectDir}/single/baseline.json`,
       ]);
@@ -1238,17 +1495,14 @@ describe("eval CLI command helpers", () => {
         assertEquals(typeof exitCode, "number");
       });
       assertEquals(relevantEvalHumanLines(suiteOutput), [
-        "Eval eval:single-output",
+        "Eval:   eval:single-output",
         "Target: agent:fixture",
         "Result: 1/1 passed (100%)",
-        `Report directory: ${projectDir}/suite/001-single-output`,
-        "Eval eval:suite-output",
+        "Eval:   eval:suite-output",
         "Target: agent:fixture",
         "Result: 1/1 passed (100%)",
-        `Report directory: ${projectDir}/suite/002-suite-output`,
         "Eval suite: 2/2 passed",
-        `Report directory: ${projectDir}/suite`,
-        `Suite report: ${projectDir}/suite/report.md`,
+        `Report: ${projectDir}/suite/report.md`,
         `JUnit: ${projectDir}/suite/junit.xml`,
       ]);
 
@@ -1271,12 +1525,12 @@ describe("eval CLI command helpers", () => {
       });
       const comparisonLines = relevantEvalHumanLines(comparisonOutput);
       assertEquals(comparisonLines.slice(0, 8), [
-        "Model: test/baseline",
-        "Eval eval:single-output",
+        "Model:  test/baseline",
+        "Eval:   eval:single-output",
         "Target: agent:fixture",
         "Result: 1/1 passed (100%)",
-        "Model: test/candidate",
-        "Eval eval:single-output",
+        "Model:  test/candidate",
+        "Eval:   eval:single-output",
         "Target: agent:fixture",
         "Result: 1/1 passed (100%)",
       ]);
@@ -1287,10 +1541,9 @@ describe("eval CLI command helpers", () => {
       ]);
       assertStringIncludes(comparisonLines[11] ?? "", "  - ");
       assertEquals(comparisonLines.slice(12), [
-        `Report directory: ${projectDir}/comparison`,
         `Comparison: ${projectDir}/comparison/comparison.json`,
         `Comparison markdown: ${projectDir}/comparison/comparison.md`,
-        `Report: ${projectDir}/comparison/report.json`,
+        `Report JSON: ${projectDir}/comparison/report.json`,
       ]);
     } finally {
       await Deno.remove(projectDir, { recursive: true });

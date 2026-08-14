@@ -87,6 +87,8 @@ export interface TransformOptions {
   ) => void;
   /** Internal observer for meaningful transform milestones. */
   onProgress?: TransformProgressListener;
+  /** Cancels request-scoped transform work after module loading stops. */
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -142,6 +144,8 @@ export interface TransformContext {
   ) => void;
   /** Internal observer for meaningful transform milestones. */
   onProgress?: TransformProgressListener;
+  /** Cancels request-scoped transform work after module loading stops. */
+  abortSignal?: AbortSignal;
 }
 
 /**

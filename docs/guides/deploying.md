@@ -1,161 +1,161 @@
 ---
-title: "Build and deploy"
-description: "Take a Veryfront project from local development to production."
-order: 43
+title: "Manage Cloud deployments"
+description: "Control source, environments, access, and verification for Veryfront Cloud deployments."
+order: 44
 ---
 
-Use this guide to build a production bundle, run it locally, and deploy it.
-Keep the first production path narrow: one route, one check, one deploy.
+Use this guide after the first successful deployment when you need explicit
+control over the source and environment that Veryfront Cloud serves.
 
 ## Prerequisites
 
-- A Veryfront project that runs with `veryfront dev`.
-- Production credentials for providers, integrations, and deployment targets.
-- For Veryfront Cloud: run `veryfront login` or set `VERYFRONT_API_TOKEN`.
-- For self-hosting: the current Node.js LTS or a container host that can serve
-  the build output.
+- A project that works with `veryfront dev`.
+- A Veryfront login or `VERYFRONT_API_TOKEN`.
+- A page, API route, or agent request that you can verify after deployment.
 
-## Pick one production path
+For a first deployment, use [Deploy with Veryfront Cloud](../getting-started/deploy-project.md).
+For your own infrastructure, use [Self-host Veryfront Code](./self-hosting.md).
 
-Choose one route or API boundary to verify across every stage.
+## Pick one deployment boundary
 
-| Boundary                 | Add                                          | Verify locally                               |
-| ------------------------ | -------------------------------------------- | -------------------------------------------- |
-| Page                     | `app/page.tsx` or another route under `app/` | Open the route in the browser                |
-| API route                | `app/api/<name>/route.ts`                    | Run `curl http://localhost:3000/api/<name>`  |
-| Agent chat               | Page plus `app/api/ag-ui/route.ts`           | Send one message and confirm streamed output |
-| Workflow or task trigger | API route or CLI command                     | Trigger one run and inspect the result       |
+Choose one behavior to check in development, preview, and production:
 
-Add only the primitive that route needs now. Use
-[Choose a primitive](./choose-a-primitive.md) when more than one option looks
-valid.
+| Boundary         | Local check                                  |
+| ---------------- | -------------------------------------------- |
+| Page             | Open the route in the browser                |
+| API route        | Request the route with `curl`                |
+| Agent chat       | Send one message and confirm streamed output |
+| Workflow or task | Trigger one run and inspect the result       |
 
-## Build
-
-Create a production build:
-
-```bash
-veryfront build
-```
-
-This compiles pages, bundles assets, pre-renders static routes, and writes the
-output to `dist/` by default.
-
-Choose a different output directory explicitly:
-
-```bash
-veryfront build --output build-output
-```
-
-`build.outDir` and `build.trailingSlash` remain accepted configuration fields
-for compatibility, but the production builder does not consume them.
-
-## Run the build locally
+## Build and serve locally
 
 ```bash
 veryfront build
 veryfront serve
 ```
 
-Open the same route you tested in development. For API routes, compare the dev
-and production responses with `curl`.
+`veryfront build` writes browser assets to `dist/`. API routes, agents,
+workflows, and tasks remain in the project source and are loaded by
+`veryfront serve`.
 
-## Preview on Veryfront Cloud
+Verify the chosen boundary before uploading source.
 
-Create or link the cloud project and push the current source to its preview:
-
-```bash
-npx veryfront push
-```
-
-`veryfront push` stores local project identity in ignored
-`.veryfront/project.json`, records the pushed source digest in
-`.veryfront/push-receipt.json`, and prints the preview URL. It does not write
-`veryfront.json`.
-
-Push preserves remote-only files by default. Use
-`npx veryfront push --prune --dry-run` to preview an exact remote mirror, then
-run `npx veryfront push --prune` only when those deletions are intentional.
-
-For an existing nonproduction environment named `staging`:
+## Push a preview
 
 ```bash
-npx veryfront push --branch feature-x
-npx veryfront deploy --branch feature-x --env staging
+npx veryfront@latest push
 ```
 
-Deploy uses the last verified Push receipt and verifies the release was built
-from that exact source digest before assigning it to the environment. If no Push
-receipt exists, Deploy first runs a quiet Push so the first deployment still
-works as one command. Use `veryfront open` after deployment to open the project.
-Deploy prints the environment URL; use `veryfront open --json` when automation
-needs the same URL later.
+Push creates or links the Cloud project, uploads the current source, and prints
+the preview URL. It stores project identity in ignored
+`.veryfront/project.json` and the source digest in
+`.veryfront/push-receipt.json`. It does not write `veryfront.json`.
 
-Project reference precedence is `VERYFRONT_PROJECT_SLUG` or environment
-configuration, then `veryfront.config.ts`, then legacy `veryfront.json`, then
-lower-level tenant or project-ID environment references, then the ignored local
-link. Keep `.veryfront/project.json` ignored unless you intentionally use
-committed configuration instead.
-
-## Set production environment variables
-
-Set provider and integration credentials on the deployment platform:
+Push preserves remote-only files by default. Preview an exact mirror before
+removing them:
 
 ```bash
-OPENAI_API_KEY=<API_KEY>
-ANTHROPIC_API_KEY=<API_KEY>
+npx veryfront@latest push --prune --dry-run
 ```
 
-For Veryfront Cloud, set the same variables in the target environment before
-deploying.
+Apply the mirror only when those deletions are intentional:
 
-## Deploy somewhere else
-
-Self-hosted deployments can use the build output or a container:
-
-```dockerfile
-FROM denoland/deno:2.6.0
-
-WORKDIR /app
-COPY . .
-RUN deno task build
-
-EXPOSE 3000
-CMD ["deno", "task", "start"]
+```bash
+npx veryfront@latest push --prune
 ```
 
-Use infrastructure that supports your chosen runtime and can serve the build
-output.
+## Deploy an environment
+
+```bash
+npx veryfront@latest deploy --env production
+```
+
+Deploy uses the last verified Push receipt, confirms the release source digest,
+and prints the environment URL. If the receipt is missing, Deploy first runs a
+quiet Push.
+
+For a named nonproduction environment:
+
+```bash
+npx veryfront@latest push --branch feature-x
+npx veryfront@latest deploy --branch feature-x --env staging
+```
+
+## Resolve project identity
+
+Project references use this precedence:
+
+1. `VERYFRONT_PROJECT_SLUG` or environment configuration.
+2. `veryfront.config.ts`.
+3. Legacy `veryfront.json`.
+4. Tenant or project ID environment references.
+5. The ignored `.veryfront/project.json` link.
+
+Keep `.veryfront/project.json` ignored unless the project intentionally uses
+committed configuration.
+
+## Check environment access
+
+Veryfront Cloud environments are protected by default. Open a protected URL in
+a browser signed in as a project member. To make an environment public, enable
+**Public Environment** in Veryfront Studio.
+
+See [Cloud environment access](./cloud-environment-access.md) for sign-in
+redirects, non-browser clients, API-token behavior, and public access.
+
+## Recover environment URLs
+
+Deploy prints the environment URL. To reopen the canonical site URL:
+
+```bash
+npx veryfront@latest open --site --env production
+```
+
+For automation:
+
+```bash
+npx veryfront@latest open --site --env production --json
+```
+
+`veryfront open` opens the project in the Cloud dashboard, not the deployed
+site. `open --site` constructs the canonical Veryfront domain and cannot
+discover a configured custom domain. Record the URL Deploy printed when
+automation must use the custom domain.
+
+## Understand readiness checks
+
+Deploy chooses a readiness route only from static page routes. An API-only
+project or a project with only dynamic pages can deploy successfully without a
+root page returning `200`; Deploy skips the browser readiness probe when there
+is no static route to check.
+
+An acknowledged release can still report a data-plane warning after commit. Do
+not retry only because a shared proxy acknowledgment is delayed.
 
 ## Verify it worked
 
-After `veryfront build`:
+Use the environment URL that Deploy printed and repeat the check from
+development and preview. Validate the status or behavior that the selected
+route normally returns.
 
-- `dist/`, or the directory passed to `--output`, contains compiled assets.
-- `veryfront serve` serves the build locally.
-- The route you chose responds the same way it did in development.
+For a protected environment, verify in a browser signed in as a project member.
+For a public agent route:
 
-After `veryfront deploy`:
+```bash
+curl -sSf -N -X POST <environment-url>/api/ag-ui \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Reply in one sentence."}]}]}'
+```
 
-- The CLI confirms the release, environment, and verified source digest.
-- The CLI reports whether every shared proxy acknowledged the active release. An
-  unconfirmed data-plane update is a warning after commit, not a failed deploy;
-  do not retry solely because of that warning.
-- `veryfront open` opens the deployed project.
-- The same page, API route, agent, workflow, task, or run path works in
-  production.
-- The Cloud dashboard lists the deployment under the project.
+The response emits AG-UI `data:` lines.
 
-## Next
+## Tear a project down
 
-- [Configuration](./configuration.md): Configure build and environment behavior
-- [Deploy from CI](./deploy-from-ci.md): Push and deploy reviewed Git commits from CI
-- [Move Studio changes into Git](./move-studio-changes-to-git.md): Review a Studio release through a Git pull request
-- [Providers](./providers.md): Configure model providers
+Delete the project and its environments, releases, files, and uploads:
 
-## Related
+```bash
+veryfront project delete
+```
 
-- [veryfront](../api-reference/veryfront/index.md): Framework entrypoint
-- [veryfront/cli](../api-reference/veryfront/cli.md): Pull, Push, and Deploy command catalog
-- [veryfront/server](../api-reference/veryfront/server.md): Server runtime APIs
-- [veryfront/observability](../api-reference/veryfront/observability.md): Runtime observability
+Use [Deploy from CI](./deploy-from-ci.md) for reviewed Git commits and protected
+production environments.

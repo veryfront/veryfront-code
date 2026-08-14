@@ -10,6 +10,7 @@
  */
 
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { LOAD_SKILL_POLICY_CLAUSES } from "./load-skill-policy.ts";
 import { tool } from "#veryfront/tool/factory.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -482,8 +483,8 @@ function assertActiveSkillFileAvailable(
 export function createLoadSkillTool(options: SkillSelectorToolOptions = {}): Tool {
   return tool({
     id: "load_skill",
-    description: "Load a skill's full instructions. Returns the skill's markdown instructions, " +
-      "allowed tools policy, and lists of available reference files and scripts.",
+    description: "Load a skill's full instructions. Returns the skill's markdown instructions " +
+      `and lists of available reference files and scripts. ${LOAD_SKILL_POLICY_CLAUSES}`,
     inputSchema: getLoadSkillInputSchema(),
     execute: async (input, context): Promise<SkillContent> => {
       const budget = createFileBudget(context);
@@ -538,7 +539,6 @@ export function createLoadSkillTool(options: SkillSelectorToolOptions = {}): Too
       return {
         skillId: skill.id,
         instructions: parsed.body,
-        ...(skill.metadata.allowedTools ? { allowedTools: skill.metadata.allowedTools } : {}),
         references: loadableReferences,
         scripts,
       };

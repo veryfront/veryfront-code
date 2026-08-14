@@ -9,7 +9,6 @@ export type CreateVeryfrontCloudRuntimeSystemMessagesInput = {
   agent: RuntimeAgentMarkdownDefinition;
   instructions?: string;
   skills?: readonly RuntimeSkillDefinition[];
-  availableToolNames?: readonly string[];
   projectId?: string | null;
   branchId?: string | null;
   environmentContext?: string;
@@ -31,9 +30,6 @@ export function createVeryfrontCloudRuntimeSystemMessages(
       }
       : {}),
     ...(input.skills === undefined ? {} : { skills: input.skills }),
-    ...(input.availableToolNames === undefined
-      ? {}
-      : { availableToolNames: input.availableToolNames }),
     ...(input.environmentContext === undefined
       ? {}
       : { environmentContext: input.environmentContext }),
@@ -48,7 +44,6 @@ export function buildVeryfrontCloudRuntimeInstructions(
     agent: input.agentConfig,
     instructions: input.instructions || undefined,
     skills: input.skills.length > 0 ? input.skills : undefined,
-    availableToolNames: input.availableToolNames,
     projectId: input.projectId,
     branchId: input.branchId,
     environmentContext: input.environmentContext,

@@ -62,7 +62,7 @@ function UncontrolledChat(
   // box — no `isLoading` wiring from the consumer.
   const agentInitializing = Boolean(resolvedAgentId) && !agent && !agentError;
 
-  // Agent-driven empty state: avatar + name + description, shown once the
+  // Agent-driven empty state: avatar + name, shown once the
   // agent resolves (the skeleton covers the load, so the generic
   // "What can I help with?" placeholder never flashes). A consumer-supplied
   // `emptyState` still wins.
@@ -78,7 +78,6 @@ function UncontrolledChat(
         />
       ),
       title: agent.name,
-      description: agent.description ?? undefined,
     };
   }, [emptyState, agent]);
 

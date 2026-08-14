@@ -1,3 +1,9 @@
+import { isCspReportRequest } from "#veryfront/security/http/csp-report-endpoint.ts";
+import { isPlatformLivenessProbe } from "#veryfront/security/http/platform-liveness-probe.ts";
+import {
+  isSignedChannelDispatch,
+  isSignedControlPlaneDispatch,
+} from "#veryfront/channels/control-plane.ts";
 import { BaseHandler } from "./base-handler.ts";
 import type {
   HandlerContext,
@@ -161,6 +167,73 @@ export class AuthHandler extends BaseHandler {
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (req.method.toUpperCase() === "OPTIONS") return Promise.resolve(this.continue());
+
+    const pathname = new URL(req.url).pathname;
+
+    // The orchestrator's own liveness and readiness probes are not site
+    // visitors, and a project that gates them takes its site offline rather
+    // than protecting it. See `isPlatformLivenessProbe` for why exempting them
+    // discloses nothing.
+    //
+    // This sits ahead of `resolveAuth` for the same reason the CSP report
+    // exemption does: an auth config the runtime cannot resolve still fails
+    // closed for every browser request, but a project's config typo must not
+    // fail the readiness probe and pull the pod out of service.
+    if (isPlatformLivenessProbe(req.method, pathname)) return Promise.resolve(this.continue());
+
+    // Same reasoning as the CSRF gate: a browser reports a violation without
+    // credentials, so a protected project would collect nothing. See
+    // `isCspReportRequest` for why exempting it discloses nothing.
+    if (isCspReportRequest(req.method, pathname)) {
+      return Promise.resolve(this.continue());
+    }
+
+    // A control-plane dispatch is not a site visitor. Run execute/stream/resume
+    // /cancel and agent listing arrive from the platform carrying a signed
+    // operation envelope, verified before the receiving handler acts on it. The
+    // platform cannot hold the credential this gate demands: it sends a
+    // per-run service `Bearer` JWT the Basic branch can never match, and the
+    // Bearer branch compares against a secret the project authored. Challenging
+    // it protects nothing and instead kills the run — 401 is not retryable, so
+    // the release asset manifest row is never created and `deploy` fails at its
+    // 120s deadline naming neither auth nor config. Studio's agent listing 401s
+    // the same way, on a call that sends no `Authorization` header at all.
+    //
+    // The exemption is keyed on a registered surface, not on a path shape:
+    // `isSignedControlPlaneDispatch` requires both a method/path pair that a
+    // control-plane handler owns and the signature header that handler
+    // verifies. The `/api/control-plane/` namespace is reserved but not
+    // exclusively routed, so a project App or Pages API route can sit under it
+    // in a custom runtime; such a route is not a registered surface and keeps
+    // its auth gate.
+    //
+    // The predicate cannot tell a genuine dispatch from a set header, and it
+    // does not try to. Assume an attacker can set it. What bounds the
+    // exemption is that the routes it admits terminate at a handler that
+    // verifies the envelope, ahead of `ApiHandlerWrapper`, so a forged header
+    // reaches a 401 rather than project code.
+    //
+    // This sits ahead of `resolveAuth` for the same reason the CSP report
+    // exemption does: an auth config the runtime cannot resolve still fails
+    // closed for every browser request, but a project's config typo must not
+    // brick the platform's own dispatch, which authenticates itself downstream.
+    if (isSignedControlPlaneDispatch(req)) return Promise.resolve(this.continue());
+
+    // A platform channel dispatch is not a site visitor either, for the same
+    // reasons and with the same consequence. The channel dispatcher POSTs
+    // `/channels/invoke` carrying a signed dispatch envelope, and the runtime
+    // re-dispatches to the same route when another instance owns the run;
+    // neither caller can hold a Basic credential or a Bearer secret the project
+    // authored. A 401 here does not protect the site, it takes the project's
+    // Slack and Discord agents offline with a silence that names no gate.
+    //
+    // Two predicates, not one. A channel dispatch carries a different envelope
+    // under a different header, verified by `verifyDispatchJws` against the
+    // dispatch id, platform, project id and body hash rather than by
+    // `verifyControlPlaneJws` against a method and path, so neither header may
+    // stand in for the other. What must be shared is the set of gates each is
+    // exempt from. See `security/http/dispatch-exemption-matrix.test.ts`.
+    if (isSignedChannelDispatch(req)) return Promise.resolve(this.continue());
 
     const auth = this.resolveAuth(ctx);
     if (!auth) return Promise.resolve(this.continue());

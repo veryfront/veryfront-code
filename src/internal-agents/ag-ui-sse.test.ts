@@ -44,7 +44,7 @@ describe("internal-agents/ag-ui-sse", () => {
   });
 
   it("maps runtime tool and text events to AG-UI wire events", () => {
-    const state = createStreamTransformState();
+    const state = createStreamTransformState({ nowMs: null, epochMs: null });
 
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "message-start", messageId: "assistant-1" }),
@@ -99,7 +99,7 @@ describe("internal-agents/ag-ui-sse", () => {
   });
 
   it("covers implicit text start, tool transitions, steps, metadata, and terminal errors", () => {
-    const state = createStreamTransformState();
+    const state = createStreamTransformState({ nowMs: null, epochMs: null });
 
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "message-start", id: "assistant-2" }),
@@ -176,7 +176,7 @@ describe("internal-agents/ag-ui-sse", () => {
   });
 
   it("maps browser-facing custom, tool fallback, and tool error events", () => {
-    const state = createStreamTransformState();
+    const state = createStreamTransformState({ nowMs: null, epochMs: null });
 
     assertEquals(
       mapRuntimeEventToAgUi(state, {
@@ -260,7 +260,7 @@ describe("internal-agents/ag-ui-sse", () => {
   });
 
   it("maps runtime reasoning events to AG-UI reasoning message events", () => {
-    const state = createStreamTransformState();
+    const state = createStreamTransformState({ nowMs: null, epochMs: null });
 
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "message-start", messageId: "assistant-3" }),
@@ -270,7 +270,7 @@ describe("internal-agents/ag-ui-sse", () => {
       mapRuntimeEventToAgUi(state, { type: "reasoning-start", id: "reasoning-1" }),
       [{
         event: "ReasoningMessageStart",
-        payload: { messageId: "assistant-3:reasoning:reasoning-1", role: "reasoning" },
+        payload: { messageId: "assistant-3:reasoning:0", role: "reasoning" },
       }],
     );
     assertEquals(
@@ -281,20 +281,20 @@ describe("internal-agents/ag-ui-sse", () => {
       }),
       [{
         event: "ReasoningMessageContent",
-        payload: { messageId: "assistant-3:reasoning:reasoning-1", delta: "thinking..." },
+        payload: { messageId: "assistant-3:reasoning:0", delta: "thinking..." },
       }],
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "reasoning-end", id: "reasoning-1" }),
       [{
         event: "ReasoningMessageEnd",
-        payload: { messageId: "assistant-3:reasoning:reasoning-1" },
+        payload: { messageId: "assistant-3:reasoning:0" },
       }],
     );
   });
 
   it("finalizes open assistant text with usage metadata", () => {
-    const state = createStreamTransformState();
+    const state = createStreamTransformState({ nowMs: null, epochMs: null });
     mapRuntimeEventToAgUi(state, { type: "message-start", messageId: "assistant-1" });
     mapRuntimeEventToAgUi(state, { type: "text-start", id: "text-1" });
 
@@ -334,7 +334,7 @@ describe("internal-agents/ag-ui-sse", () => {
   });
 
   it("fails closed when the runtime completed without assistant-visible output", () => {
-    const state = createStreamTransformState();
+    const state = createStreamTransformState({ nowMs: null, epochMs: null });
 
     assertEquals(
       finalizeRunEvents(state, {
@@ -373,6 +373,54 @@ describe("internal-agents/ag-ui-sse", () => {
     assertEquals(
       new TextDecoder().decode(payload),
       'event: RunStarted\ndata: {"runId":"run_1","threadId":"thread-1","agentId":"assistant-1"}\n\n',
+    );
+  });
+
+  it("carries elapsedMs through to the wire without widening the allow-list", () => {
+    // These payload schemas are an allow-list and `parse` returns only what
+    // they declare, so a stamped field missing from a schema is dropped
+    // silently between the encoder and the wire. That is how elapsedMs went
+    // missing through two releases after it was already being stamped, so
+    // both halves are pinned: the field survives, and nothing else does.
+    const stamped = new TextDecoder().decode(
+      formatAgUiEvent("StepStarted", { stepName: "step-1", elapsedMs: 42 }),
+    );
+    assertEquals(
+      stamped.includes('"elapsedMs":42'),
+      true,
+      `elapsedMs must reach the wire, got ${JSON.stringify(stamped)}`,
+    );
+
+    const withEmittedAt = new TextDecoder().decode(
+      formatAgUiEvent("StepStarted", { stepName: "step-1", emittedAt: 1_786_000_000_123 }),
+    );
+    assertEquals(
+      withEmittedAt.includes('"emittedAt":1786000000123'),
+      true,
+      `emittedAt must reach the wire, got ${JSON.stringify(withEmittedAt)}`,
+    );
+
+    const leaked = new TextDecoder().decode(
+      formatAgUiEvent("StepStarted", { stepName: "step-1", unexpected: "x" }),
+    );
+    assertEquals(
+      leaked.includes("unexpected"),
+      false,
+      `the allow-list must still drop undeclared fields, got ${JSON.stringify(leaked)}`,
+    );
+  });
+
+  it("stamps elapsedMs end to end from the runtime encoder root", () => {
+    const state = createStreamTransformState();
+    mapRuntimeEventToAgUi(state, { type: "message-start", messageId: "assistant-1" });
+    const events = mapRuntimeEventToAgUi(state, { type: "start-step" });
+    const frame = new TextDecoder().decode(
+      formatAgUiEvent(events[0]!.event, events[0]!.payload),
+    );
+    assertEquals(
+      /"elapsedMs":\d+/.test(frame),
+      true,
+      `the production encoder root must emit elapsedMs, got ${JSON.stringify(frame)}`,
     );
   });
 
@@ -456,7 +504,7 @@ describe("internal-agents/ag-ui-sse", () => {
   });
 
   it("matches the canonical assistant text and tool trace used across repos", () => {
-    const state = createStreamTransformState();
+    const state = createStreamTransformState({ nowMs: null, epochMs: null });
 
     const mappedEvents = [
       { type: "message-start", messageId: "assistant-msg-1" },

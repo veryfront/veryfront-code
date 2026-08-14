@@ -218,10 +218,14 @@ describe("proxy routing invalidation ingress", () => {
       },
     });
     const response = await handleProxyRoutingInvalidationRequest(
-      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
-        method: "POST",
-        body,
-      }),
+      new Request(
+        `http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`,
+        {
+          method: "POST",
+          body,
+          duplex: "half",
+        } as RequestInit & { duplex: "half" },
+      ),
       {
         publicKeyPem: "configured",
         publisher: {

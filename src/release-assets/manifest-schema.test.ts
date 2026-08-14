@@ -54,6 +54,150 @@ function validManifest(): ReleaseAssetManifest {
   };
 }
 
+/**
+ * A stored v1 body, shaped exactly as production holds it: `fallback` present,
+ * `dependencyMode` absent, and a CSS entry whose `styleProfileHash` is the
+ * legacy short token rather than a sha256.
+ */
+function legacyV1Manifest(): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    projectId: "11111111-1111-1111-1111-111111111111",
+    releaseId: "22222222-2222-2222-2222-222222222222",
+    releaseVersion: 7,
+    manifestVersion: 1,
+    builderVersion: "0.1.841",
+    sourceContentHash: "d".repeat(64),
+    createdAt: "2026-06-12T00:00:00.000Z",
+    assetBasePath: "/_vf/assets",
+    modules: {
+      "pages/index.tsx": {
+        contentHash: "a".repeat(64),
+        size: 1234,
+        contentType: "text/javascript",
+      },
+    },
+    css: [
+      {
+        contentHash: "b".repeat(64),
+        size: 4321,
+        contentType: "text/css",
+        styleProfileHash: "-4ij92d",
+      },
+    ],
+    routes: {
+      "/": { modules: ["pages/index.tsx"], css: ["b".repeat(64)] },
+    },
+    dependencies: {},
+    fallback: { mode: "none", gaps: [] },
+  };
+}
+
+const LEGACY = { acceptLegacyV1: true } as const;
+
+describe("legacy v1 manifest consumption", () => {
+  it("admits modules from a stored v1 body", () => {
+    const manifest = parseReleaseAssetManifest(legacyV1Manifest(), LEGACY);
+    assertExists(manifest);
+    assertEquals(manifest.schemaVersion, RELEASE_ASSET_MANIFEST_SCHEMA_VERSION);
+    assertEquals(manifest.modules["pages/index.tsx"]?.contentHash, "a".repeat(64));
+    assertEquals(manifest.routes["/"]?.modules, ["pages/index.tsx"]);
+  });
+
+  it("drops legacy CSS rather than inventing v2 identities", () => {
+    // v1 CSS carries no `cssPipelineIdentity` and a non-sha256 profile hash.
+    // Synthesizing either would fabricate a cache-correctness key, so the
+    // adapter reports no manifest CSS and the renderer keeps its own pipeline.
+    const manifest = parseReleaseAssetManifest(legacyV1Manifest(), LEGACY);
+    assertExists(manifest);
+    assertEquals(manifest.css, []);
+    assertEquals(manifest.routes["/"]?.css, []);
+  });
+
+  it("reports source dependency mode for a v1 body", () => {
+    const manifest = parseReleaseAssetManifest(legacyV1Manifest(), LEGACY);
+    assertExists(manifest);
+    assertEquals(manifest.dependencyMode, "source");
+  });
+
+  it("applies v2 bounds to the adapted body", () => {
+    const corruptModuleKey = legacyV1Manifest();
+    corruptModuleKey.modules = {
+      "../escape.tsx": { contentHash: "a".repeat(64), size: 1, contentType: "text/javascript" },
+    };
+    assertEquals(parseReleaseAssetManifest(corruptModuleKey, LEGACY), null);
+
+    const danglingRoute = legacyV1Manifest();
+    danglingRoute.routes = { "/": { modules: ["pages/missing.tsx"], css: [] } };
+    assertEquals(parseReleaseAssetManifest(danglingRoute, LEGACY), null);
+  });
+
+  it("rejects a __proto__ route key instead of silently dropping it", () => {
+    // Route keys are untrusted. The adapter accumulates them on a
+    // null-prototype object so `__proto__` arrives at the validator as an
+    // ordinary own property and is rejected for not being a canonical route
+    // path. On a plain `{}` it would hit the prototype setter instead, which
+    // swallows the key and reshapes the accumulator -- a different route to
+    // the same rejection, but one that hides which key was at fault.
+    const hostile = legacyV1Manifest();
+    const routes: Record<string, unknown> = Object.create(null);
+    routes["/"] = { modules: ["pages/index.tsx"], css: [] };
+    routes["__proto__"] = { modules: ["pages/index.tsx"], css: [] };
+    hostile.routes = routes;
+
+    assertEquals(parseReleaseAssetManifest(hostile, LEGACY), null);
+    // Pollution shows up as a property reachable from an unrelated object, not
+    // as a changed prototype identity, so probe for the injected value itself.
+    assertEquals(
+      ({} as Record<string, unknown>).modules,
+      undefined,
+      "a route entry leaked onto Object.prototype while parsing",
+    );
+    assertEquals(
+      ({} as Record<string, unknown>).css,
+      undefined,
+      "a route entry leaked onto Object.prototype while parsing",
+    );
+  });
+
+  it("accepts a ready response carrying a v1 body", () => {
+    const response = {
+      state: "ready",
+      manifest_version: 1,
+      manifest: legacyV1Manifest(),
+    };
+    const parsed = parseReadyReleaseAssetManifestResponse(
+      response,
+      "22222222-2222-2222-2222-222222222222",
+      LEGACY,
+    );
+    assertExists(parsed);
+    assertEquals(parsed.manifest.modules["pages/index.tsx"]?.size, 1234);
+  });
+
+  it("keeps the strict validator v2-only so builds cannot emit v1", () => {
+    assertEquals(getReleaseAssetManifestSchema().safeParse(legacyV1Manifest()).success, false);
+  });
+
+  it("rejects a v1 body unless the caller opts in", () => {
+    // The default has to stay strict. Producer-side callers -- the build
+    // executor verifying what it just emitted, the CLI waiting on a deploy --
+    // rely on it to surface a builder/framework skew instead of absorbing it.
+    assertEquals(parseReleaseAssetManifest(legacyV1Manifest()), null);
+    assertEquals(
+      parseReleaseAssetManifest(legacyV1Manifest(), { acceptLegacyV1: false }),
+      null,
+    );
+    assertEquals(
+      parseReadyReleaseAssetManifestResponse(
+        { state: "ready", manifest_version: 1, manifest: legacyV1Manifest() },
+        "22222222-2222-2222-2222-222222222222",
+      ),
+      null,
+    );
+  });
+});
+
 describe("release asset manifest schema", () => {
   it("round-trips a valid manifest through the zod validator", () => {
     const manifest = validManifest();
@@ -304,7 +448,7 @@ describe("release asset manifest schema", () => {
         throw new Error("hostile ownKeys");
       },
     });
-    assertEquals(parseReleaseAssetManifest(hostile), null);
+    assertEquals(parseReleaseAssetManifest(hostile, LEGACY), null);
   });
 
   it("rejects accessor-backed input without executing accessors", () => {
@@ -373,6 +517,30 @@ describe("describeReadyReleaseAssetManifestRejection", () => {
     assertStringIncludes(reason, "schema version 1");
     assertStringIncludes(reason, `version ${RELEASE_ASSET_MANIFEST_SCHEMA_VERSION}`);
     assertStringIncludes(reason, "different framework version");
+  });
+
+  it("does not call a malformed v1 body a skew for a caller that reads v1", () => {
+    // A runtime read accepts v1, so a v1 body that still fails is corrupt.
+    // Reporting skew would send operators to upgrade the builder for something
+    // an upgrade cannot fix.
+    const reason = describeReadyReleaseAssetManifestRejection(
+      { state: "ready", manifest_version: 1, manifest: { schemaVersion: 1, releaseId: "r1" } },
+      "r1",
+      { acceptLegacyV1: true },
+    );
+
+    assertEquals(reason, "the manifest body did not match the expected schema");
+  });
+
+  it("still names a skew for a version no caller reads", () => {
+    const reason = describeReadyReleaseAssetManifestRejection(
+      { state: "ready", manifest_version: 1, manifest: { schemaVersion: 3, releaseId: "r1" } },
+      "r1",
+      { acceptLegacyV1: true },
+    );
+
+    assertStringIncludes(reason, "schema version 3");
+    assertStringIncludes(reason, `versions 1 and ${RELEASE_ASSET_MANIFEST_SCHEMA_VERSION}`);
   });
 
   it("distinguishes the other rejection paths", () => {

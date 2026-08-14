@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join, toFileUrl } from "#veryfront/compat/path";
 import {
+  clearAllLocalCaches,
   clearMdxEsmCacheNamespace,
   clearModulePathCache,
   getLocalFs,
@@ -18,7 +19,7 @@ import {
   waitForDiskCleanup,
 } from "./index.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
-import { exists, remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { exists, readTextFile, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { cacheModule } from "../module-fetcher/module-cache.ts";
 import { rendererLogger as log } from "#veryfront/utils";
@@ -1251,6 +1252,33 @@ describe("invalidateModulePaths — edge cases", () => {
       );
     } finally {
       await remove(cacheDir, { recursive: true }).catch(() => {});
+      clearModulePathCache();
+    }
+  });
+});
+
+describe("local cache root version-control hygiene", () => {
+  // Regression: `veryfront dev` writes its ESM/bundle caches into
+  // `<project>/.cache`. Projects that adopted Veryfront without scaffolding
+  // (their .gitignore predates `veryfront init`) have no `.cache/` entry, so
+  // the generated .mjs bundles showed up as untracked files and a `git add -A`
+  // committed them. Server startup must leave the cache root ignoring itself.
+  it("marks the local cache root as ignored on startup", async () => {
+    const cacheBase = await makeTempDir({ prefix: "vf-cache-root-ignore-" });
+
+    try {
+      await runWithCacheDir(cacheBase, async () => {
+        await clearAllLocalCaches();
+      });
+
+      const ignorePath = join(cacheBase, ".gitignore");
+      assertEquals(await exists(ignorePath), true);
+      assertEquals(
+        (await readTextFile(ignorePath)).split(/\r?\n/).includes("*"),
+        true,
+      );
+    } finally {
+      await remove(cacheBase, { recursive: true });
       clearModulePathCache();
     }
   });

@@ -498,8 +498,8 @@ describe("Auto-Instrumentation", () => {
       await instrumentReactRender(renderFn, "SlowComponent");
       const duration = performance.now() - start;
 
-      // With time scaling, delay(10) may be shorter, so just check some time passed
-      assertEquals(duration >= scaleMs(10), true);
+      // Timer resolution can report slightly below the requested delay in Bun.
+      assertEquals(duration >= scaleMs(8), true);
     });
 
     it("should handle render errors", async () => {
@@ -655,8 +655,8 @@ describe("Auto-Instrumentation", () => {
       await instrumented();
       const duration = performance.now() - start;
 
-      // With time scaling, delay(10) may be shorter
-      assertEquals(duration >= scaleMs(10), true);
+      // Timer resolution can report slightly below the requested delay in Bun.
+      assertEquals(duration >= scaleMs(8), true);
     });
 
     it("should handle errors and rethrow", async () => {

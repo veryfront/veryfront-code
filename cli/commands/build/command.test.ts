@@ -1,10 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildCommand,
   formatBuildOutputPath,
   releaseBuildExtensions,
+  resolveBuildOutputDir,
   runWithBundlerShutdown,
 } from "./command.ts";
 import type { BuildOptions } from "./types.ts";
@@ -99,6 +105,80 @@ describe("commands/build/command", () => {
       assertEquals(
         formatBuildOutputPath("/workspace/project", "/workspace/shared/dist"),
         "../shared/dist",
+      );
+    });
+  });
+
+  describe("resolveBuildOutputDir", () => {
+    it("honors build.outDir from veryfront.config.ts", () => {
+      // build.outDir was parsed into the config and then ignored: the build
+      // wrote and cleared dist/ anyway, so a project could not move the
+      // framework's output away from its own dist/.
+      assertEquals(
+        resolveBuildOutputDir("/workspace/project", undefined, {
+          build: { outDir: "custom-out" },
+        }),
+        "/workspace/project/custom-out",
+      );
+    });
+
+    it("lets -o/--output override build.outDir", () => {
+      assertEquals(
+        resolveBuildOutputDir("/workspace/project", "flagout", {
+          build: { outDir: "custom-out" },
+        }),
+        "flagout",
+      );
+    });
+
+    it("falls back to dist when no output is configured", () => {
+      assertEquals(
+        resolveBuildOutputDir("/workspace/project", undefined, {}),
+        "/workspace/project/dist",
+      );
+    });
+
+    it("keeps an absolute build.outDir absolute", () => {
+      assertEquals(
+        resolveBuildOutputDir("/workspace/project", undefined, {
+          build: { outDir: "/var/www/site" },
+        }),
+        "/var/www/site",
+      );
+    });
+
+    it("rejects a build.outDir that is the project directory", () => {
+      // The build clears its output directory before writing, so honoring
+      // `outDir: "."` would recursively delete the project's own source.
+      assertThrows(
+        () => resolveBuildOutputDir("/workspace/project", undefined, { build: { outDir: "." } }),
+        Error,
+        "build.outDir",
+      );
+    });
+
+    it("rejects a build.outDir that contains the project directory", () => {
+      assertThrows(
+        () => resolveBuildOutputDir("/workspace/project", undefined, { build: { outDir: ".." } }),
+        Error,
+        "/workspace",
+      );
+    });
+
+    it("rejects an -o/--output that contains the project directory", () => {
+      assertThrows(
+        () => resolveBuildOutputDir("/workspace/project", "..", {}),
+        Error,
+        "-o/--output",
+      );
+    });
+
+    it("allows an output directory beside the project", () => {
+      assertEquals(
+        resolveBuildOutputDir("/workspace/project", undefined, {
+          build: { outDir: "../shared-dist" },
+        }),
+        "/workspace/shared-dist",
       );
     });
   });

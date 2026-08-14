@@ -84,9 +84,22 @@ function readNativeErrorMessage(error: Error): string {
 }
 
 function readNativeErrorStack(error: Error): string | undefined {
-  // Real runtime errors expose `stack` as an accessor, so the descriptor's
-  // value alone never carries one. The compat reader invokes the runtime's own
-  // getter behind a shadowed formatter and fails closed on foreign accessors.
+  if (
+    readOwnErrorString(error, "message") === INVALID_ERROR_FIELD ||
+    readOwnErrorString(error, "name") === INVALID_ERROR_FIELD
+  ) {
+    return undefined;
+  }
+  try {
+    const descriptor = getOwnPropertyDescriptor(error, "stack");
+    if (descriptor && hasOwn(descriptor, "value")) {
+      return typeof descriptor.value === "string" ? descriptor.value : undefined;
+    }
+  } catch (_) {
+    return undefined;
+  }
+  // Accessor-valued runtime stacks are delegated to the compat reader, which
+  // shadows the formatter and fails closed on foreign accessors.
   return readNativeErrorStackWithoutHooks(error);
 }
 

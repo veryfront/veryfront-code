@@ -35,8 +35,10 @@ const importMap: Record<string, string> = denoConfig.imports ?? {};
 // Barrel imports that pull in heavy server-side deps. Redirect to the
 // specific file that actually contains the export the client scripts need.
 const BARREL_OVERRIDES: Record<string, string> = {
-  // html-sanitizer.ts only needs SECURITY_VIOLATION — error-registry.ts
-  // exports it without pulling in tracing, middleware, OpenTelemetry, etc.
+  // The errors barrel drags in tracing, middleware, and OpenTelemetry.
+  // error-registry.ts is the cheapest module that still exports every
+  // definition. Cheaper still is a leaf module under error-registry/, which is
+  // what client code should import; this only catches whatever misses that.
   "#veryfront/errors": "./src/errors/error-registry.ts",
 };
 

@@ -20,6 +20,9 @@ import { computeHash } from "#veryfront/utils";
 /** Additive eval report contract version written by new reports and summary artifacts. */
 export const EVAL_REPORT_SCHEMA_VERSION = 2;
 
+/** Stand-in explanation when a record is incomplete but carries no error of its own. */
+export const RECORD_INCOMPLETE_EXPLANATION = "Record did not complete.";
+
 const USAGE_NUMERIC_KEYS = [
   "inputTokens",
   "outputTokens",
@@ -185,7 +188,7 @@ function createRecordFailure(record: EvalRecord): EvalGateFailureSummary | null 
     name: "record.error",
     family: "check",
     severity: "gate",
-    explanation: record.error ?? "Record did not complete.",
+    explanation: record.error ?? RECORD_INCOMPLETE_EXPLANATION,
   };
 }
 
@@ -272,7 +275,8 @@ function summarizeMetricResults(records: EvalRecord[]): EvalMetricSummary[] {
   for (const record of records) {
     for (const result of allResults(record)) {
       const key = `${result.name}:${result.family}:${result.severity}`;
-      const summary = summaries.get(key) ?? {
+      const existing = summaries.get(key);
+      const summary = existing ?? {
         name: result.name,
         family: result.family,
         severity: result.severity,
@@ -280,7 +284,13 @@ function summarizeMetricResults(records: EvalRecord[]): EvalMetricSummary[] {
         failed: 0,
         skipped: 0,
         passRate: 0,
+        ...(result.label !== undefined ? { label: result.label } : {}),
       };
+
+      // Metrics share a summary row when the whole key matches, so two `calledTool` gates on
+      // different tools land here together. No single label describes both, so drop it rather
+      // than credit the row to whichever ran first.
+      if (existing && existing.label !== result.label) delete existing.label;
 
       if (result.skipped) {
         summary.skipped += 1;

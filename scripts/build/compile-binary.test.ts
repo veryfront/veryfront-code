@@ -1,5 +1,5 @@
 import { walk } from "#std/fs/walk";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES } from "#veryfront/extensions/first-party-defaults.ts";
 import {
@@ -7,6 +7,79 @@ import {
   DEFAULT_INCLUDES,
   PROXY_INCLUDES,
 } from "./compile-binary.ts";
+
+interface DenoInfoDependency {
+  code?: { specifier: string };
+  type?: { specifier: string };
+}
+
+interface DenoInfoModule {
+  dependencies?: DenoInfoDependency[] | null;
+  specifier: string;
+}
+
+interface DenoInfoGraph {
+  roots: string[];
+  modules: DenoInfoModule[];
+}
+
+function isResolvedDependency(value: unknown): value is DenoInfoDependency {
+  if (!value || typeof value !== "object") return false;
+  const dependency = value as Record<string, unknown>;
+  if (
+    typeof dependency.specifier !== "string" ||
+    dependency.specifier.length === 0
+  ) {
+    return false;
+  }
+
+  const targets = [dependency.code, dependency.type].filter((target) =>
+    target != null
+  );
+  return targets.length > 0 &&
+    targets.every((target) =>
+      typeof target === "object" &&
+      target !== null &&
+      typeof (target as Record<string, unknown>).specifier === "string" &&
+      ((target as Record<string, unknown>).specifier as string).length > 0
+    );
+}
+
+function parseDenoInfoGraph(value: unknown): DenoInfoGraph {
+  if (!value || typeof value !== "object") {
+    throw new TypeError("Invalid deno info graph");
+  }
+  const graph = value as Record<string, unknown>;
+  if (
+    !Array.isArray(graph.roots) ||
+    graph.roots.length === 0 ||
+    !graph.roots.every((root) => typeof root === "string" && root.length > 0) ||
+    !Array.isArray(graph.modules) ||
+    graph.modules.length === 0
+  ) {
+    throw new TypeError("Invalid deno info graph");
+  }
+
+  for (const module of graph.modules) {
+    if (!module || typeof module !== "object") {
+      throw new TypeError("Invalid deno info module");
+    }
+    const record = module as Record<string, unknown>;
+    if (typeof record.specifier !== "string" || record.specifier.length === 0) {
+      throw new TypeError("Invalid deno info module specifier");
+    }
+    if (
+      record.dependencies !== undefined &&
+      record.dependencies !== null &&
+      (!Array.isArray(record.dependencies) ||
+        !record.dependencies.every(isResolvedDependency))
+    ) {
+      throw new TypeError("Invalid deno info dependency");
+    }
+  }
+
+  return graph as unknown as DenoInfoGraph;
+}
 
 it("compiled CLI embeds the default Node WebSocket extension for HMR", () => {
   const args = createCompileArgs({
@@ -181,6 +254,67 @@ it("proxy binary embeds only the runtime-resolved proxy entrypoint", async () =>
       false,
       `proxy lock must not contain ${unrelated}`,
     );
+  }
+});
+
+it("proxy binary cannot reach declarative config worker modules", async () => {
+  const command = new Deno.Command(Deno.execPath(), {
+    args: ["info", "--json", "cli/proxy-main.ts"],
+    stdout: "piped",
+    stderr: "piped",
+  });
+  const output = await command.output();
+  assertEquals(
+    output.success,
+    true,
+    new TextDecoder().decode(output.stderr),
+  );
+
+  const info = parseDenoInfoGraph(
+    JSON.parse(new TextDecoder().decode(output.stdout)),
+  );
+  const modules = new Map(
+    info.modules.map((module) => [module.specifier, module]),
+  );
+  for (const root of info.roots) {
+    if (!modules.has(root)) {
+      throw new TypeError("Deno info root is missing from the module graph");
+    }
+  }
+  const reachable = new Set(info.roots);
+  const pending = [...reachable];
+  while (pending.length > 0) {
+    const specifier = pending.shift()!;
+    for (const dependency of modules.get(specifier)?.dependencies ?? []) {
+      const dependencySpecifier = dependency.code?.specifier;
+      if (!dependencySpecifier || reachable.has(dependencySpecifier)) continue;
+      reachable.add(dependencySpecifier);
+      pending.push(dependencySpecifier);
+    }
+  }
+  const evaluatorWorkerModules = [...reachable]
+    .filter((specifier) => specifier.includes("declarative-evaluator-worker"));
+
+  assertEquals(
+    evaluatorWorkerModules,
+    [],
+    "the proxy must not reach project config evaluation; it only forwards requests to the production server",
+  );
+});
+
+it("proxy graph validation rejects incomplete metadata", () => {
+  for (
+    const graph of [
+      {},
+      { roots: [], modules: [] },
+      { roots: ["proxy"], modules: [{}] },
+      {
+        roots: ["proxy"],
+        modules: [{ specifier: "proxy", dependencies: [{}] }],
+      },
+    ]
+  ) {
+    assertThrows(() => parseDenoInfoGraph(graph), TypeError);
   }
 });
 

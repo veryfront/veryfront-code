@@ -1346,6 +1346,61 @@ describe("agent/hosted-chat-execution-runtime", () => {
     assertEquals(terminalStates, [{ status: "completed" }]);
   });
 
+  it("fails response finalization with a local web_fetch input still open", async () => {
+    let streamOptions: HostedChatRuntimeToUiMessageStreamOptions | undefined;
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: new AbortController().signal,
+      bootstrap: {
+        cleanup: async () => {},
+        lifecycleAdapter: createLifecycleAdapter({ terminalStates }),
+        rootStreamWatchdog: createRootStreamWatchdog(),
+        streamResult: createStreamResult({
+          finalStep: {},
+          captureOptions: (options) => {
+            streamOptions = options;
+          },
+        }),
+        streamingMessageId: "stream-message-1",
+        capturedMessageId: "stream-message-1",
+        capturedConversationId: "conversation-1",
+        mirroredToolChunkState: createMirroredToolChunkState(),
+      },
+    });
+    if (!streamOptions) {
+      throw new Error("stream options were not captured");
+    }
+
+    await streamOptions.onFinish?.({
+      messages: [],
+      isContinuation: false,
+      responseMessage: createResponseMessage({
+        parts: [
+          { type: "text", text: "done" },
+          {
+            type: "tool-web_fetch",
+            toolCallId: "local-fetch",
+            input: { url: "https://veryfront.com/docs/agent/create-agent" },
+            state: "input-available",
+          },
+        ],
+      }),
+      isAborted: false,
+      finishReason: "stop",
+    });
+    await runtime.waitForFinish();
+
+    assertEquals(terminalStates.length, 1);
+    assertEquals(terminalStates[0]?.status, "failed");
+    // The status alone does not identify the cause, and a local tool left at
+    // `input-available` must fail for this reason rather than any other.
+    assertEquals(terminalStates[0]?.terminalErrorCode, "INCOMPLETE_TOOL_CALLS");
+  });
+
   it("records stream errors before detached finalization fallback", async () => {
     let streamOptions: HostedChatRuntimeToUiMessageStreamOptions | undefined;
     const terminalStates: HostedLifecycleTerminalState[] = [];

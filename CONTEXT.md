@@ -15,6 +15,19 @@ provider errors. The agent **runtime** layer starts streams and the **hosted**
 layer finishes them; both consult this module rather than re-deriving the
 interpretation, so provider behavior changes land in one file.
 
+## Agent Loop Skill State
+
+`src/agent/runtime/agent-loop-skill-state.ts` (`AgentLoopSkillState`) is the
+single owner of the request-scoped active-skill policy for one agent loop
+attempt: which skill is active, what it permits, and how that changes when a
+skill activates or a form input is submitted. Each loop owns its own instance.
+`hydrate` builds it once per attempt from replay history, and the loop mutates
+it in place as tool results arrive. It is never module-level and never shared
+across concurrent runs. `executeAgentLoop` and `executeAgentLoopStreaming` in
+`src/agent/runtime/index.ts` each construct one instance and consult it
+rather than maintaining their own copies of the same policy transitions, so
+a skill-policy fix lands once instead of being hand-applied to both loops.
+
 ## Stream Lifecycle
 
 The single owner of one provider stream attempt, from the first provider read
@@ -53,6 +66,23 @@ never the decision. There is exactly one persisted link format
 (inferred or local-link) and never on a dry run. The project client
 (control plane over HTTP, CLI API client, fake in tests) is its one seam.
 
+## Tool Replay Reconciliation
+
+The single owner of deciding which tool-call and tool-result occurrences in
+UI-message replay history are authoritative for provider conversion:
+`src/chat/tool-replay-reconciliation.ts`. Matching is by part **object
+identity**, so one pass over history marks parts as matched, superseded,
+batch-starting, or transient-but-preserved without mutating them. Provider
+conversion and message preparation both consult this module rather than
+re-deriving which occurrence wins.
+
+## Message Part Interpretation
+
+The single owner of interpreting one message part — tool, text, reasoning, or
+file — into a normalized shape: `src/chat/message-part-parsing.ts`. Provider
+conversion and Tool Replay Reconciliation both read parts through it, so a
+change to how a part is recognized lands in one file.
+
 ## Stream Delivery
 
 The separate agent-loop fan-out boundary that will route lifecycle frames to
@@ -60,3 +90,12 @@ live, durable, diagnostic, and usage Adapters (Phase 5, separately designed).
 Through Gate 4, hosted durable and AG-UI production projections still consume
 compatibility UI chunks, and production runs stay on stream protocol
 version 1.
+
+## Provider Message Conversion
+
+The single owner of turning a chat's replay history into the ordered message
+list a provider sees: `src/chat/provider-message-conversion.ts`. It asks Tool
+Replay Reconciliation which tool occurrences are authoritative, maps each role's
+parts into provider content, and settles into one `ProviderModelMessage[]`.
+Message preparation and the compatibility layer are callers; neither re-derives
+the mapping.

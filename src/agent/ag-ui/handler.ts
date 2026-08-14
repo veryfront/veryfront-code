@@ -143,10 +143,18 @@ function buildStreamContext(
   threadId: string,
   runId: string,
 ): Record<string, unknown> {
+  const configuredRunIdBinding = baseContext.runIdBindsToolAuthorization;
   return {
     ...baseContext,
     threadId,
     runId,
+    // A trusted server context can mark locally generated client IDs, such as
+    // eval IDs, as non-binding. Other client-supplied IDs keep existing behavior.
+    runIdBindsToolAuthorization: typeof configuredRunIdBinding === "boolean"
+      ? configuredRunIdBinding
+      : request.runId === undefined
+      ? false
+      : undefined,
     agUi: {
       context: request.context,
       forwardedProps: request.forwardedProps,
@@ -338,7 +346,11 @@ async function createAgUiDirectStreamResponse(
   if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
 
   messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
-  const finalContext = beforeStreamResult?.context ?? context;
+  // beforeStream may return a fresh context, dropping the generated-run marker.
+  const finalContext = {
+    ...(beforeStreamResult?.context ?? context),
+    runIdBindsToolAuthorization: context.runIdBindsToolAuthorization,
+  };
 
   await agent.clearMemory();
 
@@ -409,7 +421,11 @@ async function createAgUiInjectedToolsStreamResponse(
   if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
 
   messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
-  const finalContext = beforeStreamResult?.context ?? context;
+  // beforeStream may return a fresh context, dropping the generated-run marker.
+  const finalContext = {
+    ...(beforeStreamResult?.context ?? context),
+    runIdBindsToolAuthorization: context.runIdBindsToolAuthorization,
+  };
 
   try {
     sessionManager.startRun({ runId, threadId });

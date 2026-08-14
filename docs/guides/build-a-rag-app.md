@@ -13,7 +13,7 @@ document sources.
 ```bash title="Terminal"
 veryfront init my-rag --template docs-agent
 cd my-rag
-npx veryfront dev
+npx veryfront@latest dev
 ```
 
 ## How RAG works
@@ -254,7 +254,7 @@ Set Veryfront Cloud bootstrap variables before starting the app:
 ```bash title="Terminal"
 export VERYFRONT_API_TOKEN=<TOKEN>
 export VERYFRONT_PROJECT_SLUG=<PROJECT_SLUG>
-npx veryfront dev
+npx veryfront@latest dev
 ```
 
 With cloud bootstrap:

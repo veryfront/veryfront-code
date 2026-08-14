@@ -9,11 +9,6 @@ import {
 } from "#veryfront/extensions/parser/skill-document-parser.ts";
 import { loadDefaultSkillDocumentParserProvider } from "#veryfront/extensions/parser/skill-defaults.ts";
 import {
-  matchesAllowedTool,
-  snapshotAllowedToolPatterns,
-  validateStrictAllowedToolPatterns,
-} from "#veryfront/skill/allowed-tools.ts";
-import {
   SKILL_ALLOWED_TOOL_MAX_PATTERNS,
   SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH,
   SKILL_DOCUMENT_MAX_CHARACTERS,
@@ -21,7 +16,6 @@ import {
   SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
   SKILL_PATH_SEGMENT_MAX_LENGTH,
   SKILL_RELATIVE_PATH_MAX_LENGTH,
-  SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES,
   SKILL_SUBDIR_MAX_ENTRIES,
 } from "#veryfront/skill/limits.ts";
 import {
@@ -97,7 +91,24 @@ function normalizeStrictAllowedTools(value: string | string[]): string[] {
     throw new TypeError("Allowed-tools patterns must not be empty");
   }
 
-  return validateStrictAllowedToolPatterns(patterns.filter((entry) => entry.length > 0));
+  const kept = patterns.filter((entry) => entry.length > 0);
+  // Bounded but not grammar-checked: `allowed-tools` is spec pre-approval
+  // metadata the runtime never enforces, so any spec-conformant value must
+  // parse (including `Bash(git:*)`). Bounds still apply because the value
+  // comes from untrusted frontmatter.
+  if (kept.length > SKILL_ALLOWED_TOOL_MAX_PATTERNS) {
+    throw new RangeError(
+      `Allowed-tools accepts at most ${SKILL_ALLOWED_TOOL_MAX_PATTERNS} patterns`,
+    );
+  }
+  for (const entry of kept) {
+    if (entry.length > SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH) {
+      throw new RangeError(
+        `Allowed-tools patterns must be at most ${SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH} characters`,
+      );
+    }
+  }
+  return kept;
 }
 
 function normalizeStrictMetadata(value: unknown): Record<string, string> | undefined {
@@ -270,14 +281,12 @@ export type RuntimeSkillDefinition = {
   displayName?: string;
   description: string;
   instructions: string;
-  allowedTools: string[];
   /**
-   * Serializable discriminator used by strict runtime catalogs to distinguish
-   * an omitted policy from an explicitly empty deny-all policy. Legacy/public
-   * definitions may omit it; a non-empty allowedTools array still implies a
-   * declared policy.
+   * `allowed-tools` frontmatter, recorded verbatim. The Agent Skills spec
+   * defines this as pre-approval metadata, so the runtime carries it but never
+   * enforces it. See veryfront/veryfront-issue-inbox#406.
    */
-  allowedToolsDeclared?: boolean;
+  allowedTools?: string[];
   metadata?: Record<string, string>;
   model?: string;
   thinking?: false | number;
@@ -296,21 +305,6 @@ export type RuntimeSkillDefinition = {
    */
   sourcePath?: string;
 };
-
-/**
- * Catalog-policy check that preserves the legacy public definition contract.
- *
- * Non-empty arrays always describe a policy. Strict builders persist the
- * omitted-versus-empty distinction in an additive serializable discriminator;
- * legacy definitions without it retain their historical empty-array
- * interpretation until their instructions are loaded and parsed.
- */
-export function hasRuntimeSkillAllowedToolsPolicy(
-  definition: RuntimeSkillDefinition,
-): boolean {
-  if (definition.allowedTools.length > 0) return true;
-  return definition.allowedToolsDeclared === true;
-}
 
 /**
  * Whether a runtime skill definition is visible to the caller identified by
@@ -391,31 +385,20 @@ export function resolveRuntimeSkillSelectorForAgent(input: {
   return snapshot;
 }
 
-/** Public API contract for runtime loaded skill response messages. */
-export type RuntimeLoadedSkillResponseMessages = {
-  allowedToolsNote: string;
-  noCurrentRunToolsNote: string;
-  unavailableCurrentRunToolsDelegationNote: string;
-  overrideNote: string;
-  referenceNote: string;
-};
-
 /** Response payload for runtime loaded skill. */
 export type RuntimeLoadedSkillResponse = {
+  /** Which skill was loaded. Echoed so the caller can correlate the result. */
   skillId: string;
+  /** The skill's markdown body. The only instruction content in this result. */
   instructions: string;
-  nextStep: string;
-  allowedTools?: string[];
-  note?: string;
-  delegationTools?: string[];
-  unavailableCurrentRunTools?: string[];
-  delegationNote?: string;
-  model?: string;
-  thinking?: false | number;
-  maxSteps?: number;
-  overrideNote?: string;
+  /** Reference files this skill advertises, loadable via load_skill's `file` parameter. */
   references?: string[];
-  referenceNote?: string;
+  /** Model override the skill declares, for the caller to forward when delegating. */
+  model?: string;
+  /** Thinking-token override the skill declares, for the caller to forward when delegating. */
+  thinking?: false | number;
+  /** Step-budget override the skill declares, for the caller to forward when delegating. */
+  maxSteps?: number;
 };
 
 /** Public API contract for runtime skill metadata logger. */
@@ -431,91 +414,6 @@ export type RuntimeSkillMetadataParseOptions = {
   /** Accept the provider-safe name grammar used by owner-scoped catalog ids. */
   providerSafeName?: boolean;
 };
-
-function canUseLegacyInvokeAgent(availableToolNameSet: ReadonlySet<string> | null): boolean {
-  return availableToolNameSet?.has("invoke_agent") === true;
-}
-
-function isDelegationToolName(toolName: string): boolean {
-  return toolName === "invoke_agent" || toolName.startsWith("agent_");
-}
-
-function isToolAllowedByResolvedPolicy(
-  toolName: string,
-  declaredAllowedTools: readonly string[],
-  hasDeclaredAllowedTools: boolean,
-): boolean {
-  return !hasDeclaredAllowedTools ||
-    declaredAllowedTools.some((pattern) => matchesAllowedTool(toolName, pattern));
-}
-
-function hasAllowedAvailableDelegationTool(
-  availableToolNameSet: ReadonlySet<string> | null,
-  declaredAllowedTools: readonly string[],
-  hasDeclaredAllowedTools: boolean,
-): boolean {
-  if (availableToolNameSet === null) return false;
-  for (const toolName of availableToolNameSet) {
-    if (
-      isDelegationToolName(toolName) &&
-      isToolAllowedByResolvedPolicy(
-        toolName,
-        declaredAllowedTools,
-        hasDeclaredAllowedTools,
-      )
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function snapshotAvailableRuntimeToolNames(
-  value: readonly string[] | undefined,
-): ReadonlySet<string> | null {
-  if (value === undefined) return null;
-  if (!ArrayIsArray(value)) {
-    throw new TypeError("Runtime availableToolNames must be an array");
-  }
-  let lengthDescriptor: PropertyDescriptor | undefined;
-  try {
-    lengthDescriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
-      value,
-      "length",
-    ]) as PropertyDescriptor | undefined;
-  } catch {
-    throw new TypeError("Runtime availableToolNames length must be a data property");
-  }
-  const length = isOwnDataPropertyDescriptor(lengthDescriptor) ? lengthDescriptor.value : undefined;
-  if (!Number.isSafeInteger(length) || length < 0) {
-    throw new TypeError("Runtime availableToolNames length must be a data property");
-  }
-  if (length > SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES) {
-    throw new RangeError(
-      `Runtime availableToolNames accepts at most ${SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES} entries`,
-    );
-  }
-
-  const snapshot = new Set<string>();
-  for (let index = 0; index < length; index += 1) {
-    const descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
-      value,
-      index,
-    ]) as PropertyDescriptor | undefined;
-    if (
-      !isOwnDataPropertyDescriptor(descriptor) ||
-      typeof descriptor.value !== "string" ||
-      descriptor.value.length === 0 ||
-      descriptor.value.length > SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH ||
-      !isWellFormedUtf16(descriptor.value) ||
-      hasControlCharacters(descriptor.value)
-    ) {
-      throw new TypeError(`Runtime available tool name ${index} is invalid`);
-    }
-    snapshot.add(descriptor.value);
-  }
-  return snapshot;
-}
 
 /** Public API contract for parsed runtime skill document. */
 export type ParsedRuntimeSkillDocument = {
@@ -922,9 +820,9 @@ function parseRuntimeSkillDirectoryDocument(
         ...source.document.metadata,
         name: metadata.name,
         description: metadata.description,
-        allowedTools: metadata.allowedTools === undefined
-          ? []
-          : snapshotAllowedToolPatterns(metadata.allowedTools),
+        allowedTools: Object.freeze(
+          metadata.allowedTools === undefined ? [] : [...metadata.allowedTools],
+        ) as string[],
         metadata: metadata.metadata === undefined
           ? undefined
           : Object.freeze({ ...metadata.metadata }),
@@ -980,8 +878,7 @@ function buildRuntimeSkillDefinitionFromDocument(
     ...(displayName === undefined ? {} : { displayName }),
     description: metadata.description ?? extractDescriptionFromMarkdown(body, input.id),
     instructions: input.content,
-    allowedTools: snapshotAllowedToolPatterns(metadata.allowedTools),
-    allowedToolsDeclared: parsed.allowedToolsDeclared,
+    allowedTools: Object.freeze([...metadata.allowedTools]) as string[],
     ...(metadataSnapshot === undefined ? {} : { metadata: metadataSnapshot }),
     ...(metadata.model ? { model: metadata.model } : {}),
     ...(metadata.thinking !== undefined ? { thinking: metadata.thinking } : {}),
@@ -1117,46 +1014,10 @@ export function normalizeRuntimeSkillReferencePath(path: string): string | null 
 type BuildRuntimeLoadedSkillResponseInput = {
   skillId: string;
   instructions: string;
-  nextStep: string;
-  messages: RuntimeLoadedSkillResponseMessages;
   references?: readonly string[];
-  availableToolNames?: readonly string[];
   logger?: RuntimeSkillMetadataLogger;
   skillDocumentParserProvider?: SkillDocumentParserProvider;
 };
-
-const RUNTIME_LOADED_SKILL_MESSAGE_FIELDS = [
-  "allowedToolsNote",
-  "noCurrentRunToolsNote",
-  "unavailableCurrentRunToolsDelegationNote",
-  "overrideNote",
-  "referenceNote",
-] as const satisfies readonly (keyof RuntimeLoadedSkillResponseMessages)[];
-
-function requireBoundedRuntimeLoadedSkillText(value: unknown, label: string): string {
-  if (typeof value !== "string") {
-    throw new TypeError(`Runtime loaded skill ${label} must be a string`);
-  }
-  if (value.length > SKILL_DOCUMENT_MAX_CHARACTERS) {
-    throw new RangeError(
-      `Runtime loaded skill ${label} must be at most ${SKILL_DOCUMENT_MAX_CHARACTERS} characters`,
-    );
-  }
-  return value;
-}
-
-function snapshotRuntimeLoadedSkillResponseMessages(
-  input: unknown,
-): RuntimeLoadedSkillResponseMessages {
-  const snapshot = {} as RuntimeLoadedSkillResponseMessages;
-  for (const field of RUNTIME_LOADED_SKILL_MESSAGE_FIELDS) {
-    snapshot[field] = requireBoundedRuntimeLoadedSkillText(
-      readOwnDataInputProperty(input, field, "Runtime loaded skill messages", true),
-      `messages.${field}`,
-    );
-  }
-  return Object.freeze(snapshot);
-}
 
 function snapshotRuntimeLoadedSkillResponseInput(
   input: BuildRuntimeLoadedSkillResponseInput,
@@ -1174,32 +1035,9 @@ function snapshotRuntimeLoadedSkillResponseInput(
       "Runtime loaded skill response",
       true,
     ) as string,
-    nextStep: requireBoundedRuntimeLoadedSkillText(
-      readOwnDataInputProperty(
-        input,
-        "nextStep",
-        "Runtime loaded skill response",
-        true,
-      ),
-      "nextStep",
-    ),
-    messages: snapshotRuntimeLoadedSkillResponseMessages(
-      readOwnDataInputProperty(
-        input,
-        "messages",
-        "Runtime loaded skill response",
-        true,
-      ),
-    ),
     references: readOwnDataInputProperty(
       input,
       "references",
-      "Runtime loaded skill response",
-      false,
-    ) as readonly string[] | undefined,
-    availableToolNames: readOwnDataInputProperty(
-      input,
-      "availableToolNames",
       "Runtime loaded skill response",
       false,
     ) as readonly string[] | undefined,
@@ -1243,70 +1081,14 @@ export function buildStrictRuntimeLoadedSkillResponse(
     skillDocumentParserProvider: snapshot.skillDocumentParserProvider,
   });
   const metadata = parsedSource?.document.metadata ?? null;
-  const invalidMetadata = parsedSource === null;
-  const declaredAllowedTools = metadata?.allowedTools ?? [];
-  const availableToolNameSet = snapshotAvailableRuntimeToolNames(snapshot.availableToolNames);
-  const isAvailableAllowedToolPattern = (pattern: string): boolean => {
-    if (availableToolNameSet === null) return false;
-    for (const toolName of availableToolNameSet) {
-      if (matchesAllowedTool(toolName, pattern)) return true;
-    }
-    return false;
-  };
-  const currentRunAllowedTools = availableToolNameSet
-    ? declaredAllowedTools.filter(isAvailableAllowedToolPattern)
-    : declaredAllowedTools;
-  const unavailableCurrentRunTools = availableToolNameSet && declaredAllowedTools.length > 0
-    ? declaredAllowedTools.filter((pattern) => !isAvailableAllowedToolPattern(pattern))
-    : [];
-  const hasOverrides = metadata?.model !== undefined || metadata?.thinking !== undefined ||
-    metadata?.maxSteps !== undefined;
-  const hasDeclaredAllowedTools = invalidMetadata || parsedSource.allowedToolsDeclared;
 
   return {
     skillId: snapshot.skillId,
     instructions: snapshot.instructions,
-    nextStep: snapshot.nextStep,
-    ...(hasDeclaredAllowedTools
-      ? {
-        allowedTools: currentRunAllowedTools,
-        note: currentRunAllowedTools.length > 0
-          ? snapshot.messages.allowedToolsNote
-          : snapshot.messages.noCurrentRunToolsNote,
-      }
-      : {}),
-    ...(hasDeclaredAllowedTools ? { delegationTools: declaredAllowedTools } : {}),
-    ...(unavailableCurrentRunTools.length > 0
-      ? {
-        unavailableCurrentRunTools,
-        ...(hasAllowedAvailableDelegationTool(
-            availableToolNameSet,
-            declaredAllowedTools,
-            hasDeclaredAllowedTools,
-          )
-          ? { delegationNote: snapshot.messages.unavailableCurrentRunToolsDelegationNote }
-          : {}),
-      }
-      : {}),
     ...(metadata?.model ? { model: metadata.model } : {}),
     ...(metadata?.thinking !== undefined ? { thinking: metadata.thinking } : {}),
     ...(metadata?.maxSteps !== undefined ? { maxSteps: metadata.maxSteps } : {}),
-    ...(hasOverrides && canUseLegacyInvokeAgent(availableToolNameSet) &&
-        isToolAllowedByResolvedPolicy(
-          "invoke_agent",
-          declaredAllowedTools,
-          hasDeclaredAllowedTools,
-        )
-      ? {
-        overrideNote: snapshot.messages.overrideNote,
-      }
-      : {}),
-    ...(references && references.length > 0
-      ? {
-        references: [...references],
-        referenceNote: snapshot.messages.referenceNote,
-      }
-      : {}),
+    ...(references && references.length > 0 ? { references: [...references] } : {}),
   };
 }
 

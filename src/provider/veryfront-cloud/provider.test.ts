@@ -16,6 +16,15 @@ const CLOUD_ENV_KEYS = [
   "MISTRAL_API_KEY",
 ] as const;
 
+function readableStreamFrom<T>(values: Iterable<T>): ReadableStream<T> {
+  return new ReadableStream({
+    start(controller) {
+      for (const value of values) controller.enqueue(value);
+      controller.close();
+    },
+  });
+}
+
 function clearCloudEnv(): void {
   for (const key of CLOUD_ENV_KEYS) {
     try {
@@ -129,7 +138,7 @@ describe("provider/veryfront-cloud", () => {
 
       if (requestUrl.endsWith("/responses")) {
         return new Response(
-          ReadableStream.from([
+          readableStreamFrom([
             encoder.encode(
               'data: {"type":"response.output_item.added","item":{"id":"rs_1","type":"reasoning"}}\n\n',
             ),
@@ -158,7 +167,7 @@ describe("provider/veryfront-cloud", () => {
       }
 
       return new Response(
-        ReadableStream.from([
+        readableStreamFrom([
           encoder.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'),
           encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
           encoder.encode("data: [DONE]\n\n"),

@@ -333,7 +333,7 @@ function printFailureResults(results: CheckResult[]): void {
 }
 
 async function main(): Promise<void> {
-  const testFiles = [...listTestFiles("src"), ...listTestFiles("cli")].sort();
+  const testFiles = [...listTestFiles("src"), ...listTestFiles("cli"), ...listTestFiles("templates")].sort();
   const baseline = new Set<string>(
     JSON.parse(
       Deno.readTextFileSync("scripts/lint/test-typecheck-baseline.json"),

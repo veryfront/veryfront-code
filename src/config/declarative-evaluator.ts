@@ -251,6 +251,7 @@ export type DeclarativeConfigErrorReason =
   | "worker-aborted"
   | "worker-overloaded"
   | "worker-protocol"
+  | "worker-memory-limit-unavailable"
   | "worker-timeout"
   | "worker-unavailable";
 

@@ -1,3 +1,4 @@
+import { withCwd } from "#veryfront/testing/cwd.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -22,16 +23,6 @@ async function withTempSkill(
     await fn(dir);
   } finally {
     await Deno.remove(rootDir, { recursive: true });
-  }
-}
-
-async function withTempCwd(dir: string, fn: () => Promise<void>): Promise<void> {
-  const previous = Deno.cwd();
-  try {
-    Deno.chdir(dir);
-    await fn();
-  } finally {
-    Deno.chdir(previous);
   }
 }
 
@@ -66,7 +57,7 @@ description: Review code changes.
 Review the submitted changes.
 `,
     }, async (dir) => {
-      await withTempCwd(dir, async () => {
+      await withCwd(dir, async () => {
         const issues = await validateSkillDirectory(".");
         assertEquals(issues, []);
       });

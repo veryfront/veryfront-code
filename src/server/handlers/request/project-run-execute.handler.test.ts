@@ -33,6 +33,7 @@ function createStreamingAgent(
   id: string,
   text: string,
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number },
+  onContext?: (context: Record<string, unknown> | undefined) => void,
 ): Agent {
   let capturedMessages: Message[] = [];
 
@@ -47,6 +48,7 @@ function createStreamingAgent(
       throw new Error("not used");
     },
     stream: async (input) => {
+      onContext?.(input.context);
       capturedMessages = input.messages ?? [];
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
@@ -953,13 +955,14 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   });
 
   it("runs localized eval AG-UI requests through discovered source agents", async () => {
+    let capturedContext: Record<string, unknown> | undefined;
     agentRegistry.register(
       "researcher",
       createStreamingAgent("researcher", "Paris", {
         promptTokens: 12,
         completionTokens: 8,
         totalTokens: 20,
-      }),
+      }, (context) => capturedContext = context),
     );
     const handler = new ProjectRunExecuteHandler(createDeps({
       findEvalById: async (target) =>
@@ -1021,6 +1024,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         totalTokens: 20,
       });
       assertStringIncludes(JSON.stringify(payload.result.records[0]?.output), "Paris");
+      assertEquals(capturedContext?.runIdBindsToolAuthorization, false);
     } finally {
       agentRegistry.delete("researcher");
     }

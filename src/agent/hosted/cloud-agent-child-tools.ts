@@ -453,14 +453,14 @@ export function buildHostedDelegateTools(
   });
 }
 
-/** The shape of a hosted delegation binding (scoped vs. legacy). */
+/** The shape of a hosted delegation binding (fixed-target vs. generic). */
 export type HostedDelegationBinding =
   | { kind: "scoped"; delegateIds: string[] }
-  | { kind: "legacy" };
+  | { kind: "generic" };
 
 /**
  * Resolves the delegation binding from an agent config. Agents with an explicit
- * `delegates` list use scoped delegation; all others fall back to legacy invoke_agent.
+ * `delegates` list use scoped delegation; all others use generic invoke_agent.
  */
 export function resolveHostedDelegationBinding(
   agentConfig: RuntimeAgentMarkdownDefinition | undefined,
@@ -468,5 +468,5 @@ export function resolveHostedDelegationBinding(
   if (agentConfig?.delegates !== undefined) {
     return { kind: "scoped", delegateIds: agentConfig.delegates };
   }
-  return { kind: "legacy" };
+  return { kind: "generic" };
 }

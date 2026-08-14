@@ -23,15 +23,31 @@ Create a client page:
 // app/page.tsx
 "use client";
 import { Chat, useChat } from "veryfront/chat";
+import { MarkdownRendererProvider } from "veryfront/markdown";
+import { MarkdownRenderer } from "./markdown-renderer.tsx";
 
 export default function ChatPage() {
   const chat = useChat();
-  return <Chat chat={chat} placeholder="Ask me anything..." />;
+  return (
+    <MarkdownRendererProvider renderer={MarkdownRenderer}>
+      <Chat chat={chat} placeholder="Ask me anything..." />
+    </MarkdownRendererProvider>
+  );
 }
 ```
 
 `useChat()` connects to `/api/ag-ui` by default. `Chat` renders the composer,
 message list, loading state, and scroll behavior.
+
+The `MarkdownRendererProvider` wrapper is required for readable answers.
+Assistants reply in Markdown, and `veryfront/markdown` presents plain escaped
+source until a renderer is installed, so a `<Chat>` without one shows
+`## Heading` rather than a heading. The chat starters scaffold the
+`app/markdown-renderer.tsx` this sample imports; the `minimal` and
+`agentic-workflow` templates do not. Create the file first if your project does
+not already have it. See
+[Render Markdown in chat](#render-markdown-in-chat). Wrap the other samples on
+this page the same way.
 
 ## Add request preprocessing
 
@@ -155,6 +171,13 @@ export default function CustomLayout() {
       <header className="border-b p-4">
         <h1>Assistant</h1>
       </header>
+      <Chat.If condition={(ctx) => ctx.isEmpty}>
+        <Chat.Empty
+          title="What can I help with?"
+          suggestions={["Explain React hooks", "Write a regex"]}
+          onSuggestionSelect={(suggestion) => chat.setInput(suggestion.prompt)}
+        />
+      </Chat.If>
       <Chat.MessageList messages={chat.messages} />
       <Chat.Input.Root
         input={chat.input}
@@ -168,15 +191,17 @@ export default function CustomLayout() {
           <Chat.Input.Send />
         </Chat.Input.Toolbar>
       </Chat.Input.Root>
-      <Chat.Empty
-        title="What can I help with?"
-        suggestions={["Explain React hooks", "Write a regex"]}
-        onSuggestionSelect={(suggestion) => chat.setInput(suggestion.prompt)}
-      />
     </Chat.Root>
   );
 }
 ```
+
+`<Chat.Empty>` renders whatever it is given; it does not hide itself. The preset
+`<Chat>` decides when to show its empty state for you, but a custom layout owns
+that decision, so gate the empty state on the thread being empty. `<Chat.If>`
+reads the nearest `<Chat.Root>`, where `ctx.isEmpty` is true only while
+`messages` is empty. Without the gate, the empty state stays mounted below the
+conversation once the first message is sent.
 
 Use `Message` when individual message rendering needs custom structure:
 
@@ -311,10 +336,12 @@ installed, so `<Chat>` shows raw Markdown on its own. Every chat starter
 scaffolds a renderer in `app/markdown-renderer.tsx` and installs it around
 `<Chat>`, so a new project renders assistant answers with no extra setup.
 
-Add the same two pieces to an existing project. Install the parser:
+Add the same two pieces to a project without one. Install the parser, pinned to
+an exact version: these packages reach the browser through the module pipeline,
+where a floating `^` range resolves to whatever is latest at request time.
 
 ```bash
-npm install react-markdown@9.0.3 remark-gfm@4.0.1
+npm install --save-exact react-markdown@9.0.3 remark-gfm@4.0.1
 ```
 
 Then create the renderer and install it for the chat subtree:
@@ -462,12 +489,17 @@ Run `veryfront dev` and open the page that renders the chat UI:
 - The preset renders its default controls.
 - Custom layouts keep the message list and composer wired to the same AG-UI
   stream.
+- In a custom layout, the empty state disappears after the first message is
+  sent and does not reappear below the conversation.
 - A persisted conversation remains in the sidebar after a page reload.
 - A conversation persistence failure renders an alert with the failed
   operation.
 - A chat using `memoryConversationStore()` starts empty after a page reload.
 - Standalone Markdown source is escaped and readable in the initial server
   HTML; an injected renderer is used only in the subtree where it is installed.
+- An assistant answer containing a list or a heading renders as formatted
+  Markdown, not raw Markdown source, and the browser console reports no
+  missing-Markdown-renderer warning.
 
 If the assistant response is empty, check the dev-server log for provider or
 agent errors and confirm the AG-UI route is mounted.

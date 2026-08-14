@@ -27,6 +27,9 @@ function boundedDeployProject(): DeployProject {
 
 const PROJECT_ID = "550e8400-e29b-41d4-a716-446655440000";
 const ENVIRONMENT_ID = "660e8400-e29b-41d4-a716-446655440000";
+/** A project this directory never pushed, resolvable so only the receipt refuses. */
+const OTHER_PROJECT_SLUG = "other-project";
+const OTHER_PROJECT_ID = "770e8400-e29b-41d4-a716-446655440000";
 const RELEASE_ID = "770e8400-e29b-41d4-a716-446655440000";
 const DEPLOYMENT_ID = "880e8400-e29b-41d4-a716-446655440000";
 const PUSHED_SOURCE = "export const value = 1;\n";
@@ -128,6 +131,26 @@ function createDeployFetchHandler(options: {
     }
     if (request.method === "GET" && url.pathname === "/api/projects/my-project") {
       return Response.json({ id: PROJECT_ID, slug: "my-project" });
+    }
+    // Resolves cleanly on purpose. Without it a test naming another project
+    // fails on this lookup, which looks like the refusal it was written to
+    // prove and is not.
+    if (request.method === "GET" && url.pathname === `/api/projects/${OTHER_PROJECT_SLUG}`) {
+      return Response.json({ id: OTHER_PROJECT_ID, slug: OTHER_PROJECT_SLUG });
+    }
+    if (
+      request.method === "GET" &&
+      url.pathname === `/api/projects/${OTHER_PROJECT_ID}/environments`
+    ) {
+      return Response.json({
+        data: [{
+          id: ENVIRONMENT_ID,
+          name: "production",
+          project_id: OTHER_PROJECT_ID,
+          protected: false,
+          domains: [],
+        }],
+      });
     }
     if (request.method === "GET" && url.pathname === "/api/projects/my-project/files") {
       return Response.json({ data: [], page_info: {} });
@@ -602,6 +625,129 @@ it("bootstraps exactly one quiet push when no verified push receipt exists", asy
       requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`),
       true,
     );
+  });
+});
+
+it("never uploads the working directory when deploy names a project", async () => {
+  const projectDir = await Deno.makeTempDir();
+  await withDeployEnv(projectDir, async ({ sourceDigest }) => {
+    const requests: string[] = [];
+    const uploadedPaths: string[] = [];
+
+    await withMockFetch(
+      createDeployFetchHandler({ requests, sourceDigest, uploadedPaths }),
+      () =>
+        assertRejects(
+          () =>
+            deployCommand({
+              projectSlug: "my-project",
+              projectDir,
+              branch: "main",
+              env: "production",
+              dryRun: false,
+              force: false,
+              quiet: true,
+              deployProject: boundedDeployProject(),
+            }),
+          Error,
+          'No verified push found for branch "main"',
+        ),
+    );
+
+    assertEquals(uploadedPaths, []);
+    assertEquals(requests.some((request) => request.startsWith("PUT ")), false);
+    assertEquals(requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`), false);
+  });
+});
+
+it("refuses to deploy a project this directory did not push", async () => {
+  // The incident this flag exists for: standing in one project's directory and
+  // naming another. The receipt here is valid -- for `my-project` -- so nothing
+  // but the slug mismatch can stop the deploy, and nothing may be uploaded on
+  // the way to stopping it.
+  const projectDir = await Deno.makeTempDir();
+  await withDeployEnv(projectDir, async ({ sourceDigest }) => {
+    await writePushReceipt(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      commitSha: `${"2".repeat(40)}`,
+      sourceDigest,
+      clean: true,
+      pushedAt: "2026-07-10T09:20:00.000Z",
+    });
+
+    const requests: string[] = [];
+    const uploadedPaths: string[] = [];
+
+    await withMockFetch(
+      createDeployFetchHandler({ requests, sourceDigest, uploadedPaths }),
+      () =>
+        assertRejects(
+          () =>
+            deployCommand({
+              projectSlug: OTHER_PROJECT_SLUG,
+              projectDir,
+              branch: "main",
+              env: "production",
+              dryRun: false,
+              force: false,
+              quiet: true,
+              deployProject: boundedDeployProject(),
+            }),
+          Error,
+          "The latest push targeted a different project.",
+        ),
+    );
+
+    assertEquals(uploadedPaths, [], "a named project must never receive this directory");
+    assertEquals(requests.some((request) => request.startsWith("PUT ")), false);
+    assertEquals(requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`), false);
+  });
+});
+
+it("refuses the same mismatch in a dry run as in an apply", async () => {
+  // A dry run is read in order to trust the apply that follows. Naming a
+  // project makes the source already-pushed, which used to skip the receipt
+  // check here -- so the dry run reported a deploy the identical apply refused.
+  const projectDir = await Deno.makeTempDir();
+  await withDeployEnv(projectDir, async ({ sourceDigest }) => {
+    await writePushReceipt(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      commitSha: `${"3".repeat(40)}`,
+      sourceDigest,
+      clean: true,
+      pushedAt: "2026-07-10T09:20:00.000Z",
+    });
+
+    const requests: string[] = [];
+    const uploadedPaths: string[] = [];
+
+    await withMockFetch(
+      createDeployFetchHandler({ requests, sourceDigest, uploadedPaths }),
+      () =>
+        assertRejects(
+          () =>
+            deployCommand({
+              projectSlug: OTHER_PROJECT_SLUG,
+              projectDir,
+              branch: "main",
+              env: "production",
+              dryRun: true,
+              force: false,
+              quiet: true,
+              deployProject: boundedDeployProject(),
+            }),
+          Error,
+          "The latest push targeted a different project.",
+        ),
+    );
+
+    assertEquals(uploadedPaths, [], "a dry run must not upload either");
   });
 });
 

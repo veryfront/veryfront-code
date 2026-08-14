@@ -62,6 +62,92 @@ function createDeferred<T>(): {
 }
 
 describe("NodeServer lifecycle", () => {
+  it("accepts the lowest and highest valid listener ports", async () => {
+    if (!isNode) return;
+    const listenDescriptor = Object.getOwnPropertyDescriptor(
+      NativeHttpServer.prototype,
+      "listen",
+    );
+    const addressDescriptor = Object.getOwnPropertyDescriptor(
+      NativeHttpServer.prototype,
+      "address",
+    );
+    const closeDescriptor = Object.getOwnPropertyDescriptor(
+      NativeHttpServer.prototype,
+      "close",
+    );
+    const originalListen = NativeHttpServer.prototype.listen;
+    const originalAddress = NativeHttpServer.prototype.address;
+    const originalClose = NativeHttpServer.prototype.close;
+    const listenedPorts: number[] = [];
+    let currentPort = 0;
+
+    NativeHttpServer.prototype.listen = function (
+      this: NativeHttpServer,
+      port?: number,
+    ): NativeHttpServer {
+      currentPort = port ?? 0;
+      listenedPorts.push(currentPort);
+      queueMicrotask(() => this.emit("listening"));
+      return this;
+    } as typeof originalListen;
+    NativeHttpServer.prototype.address = function () {
+      return { address: "127.0.0.1", family: "IPv4", port: currentPort };
+    } as typeof originalAddress;
+    NativeHttpServer.prototype.close = function (
+      this: NativeHttpServer,
+      callback?: (error?: Error) => void,
+    ): NativeHttpServer {
+      queueMicrotask(() => {
+        this.emit("close");
+        callback?.();
+      });
+      return this;
+    } as typeof originalClose;
+
+    try {
+      for (const port of [0, 65_535]) {
+        const server = await createNodeServer(() => new Response("ok"), {
+          hostname: "127.0.0.1",
+          port,
+        });
+        assertEquals(server.addr.port, port);
+        await server.stop();
+      }
+    } finally {
+      if (listenDescriptor) {
+        Object.defineProperty(NativeHttpServer.prototype, "listen", listenDescriptor);
+      } else {
+        Reflect.deleteProperty(NativeHttpServer.prototype, "listen");
+      }
+      if (addressDescriptor) {
+        Object.defineProperty(NativeHttpServer.prototype, "address", addressDescriptor);
+      } else {
+        Reflect.deleteProperty(NativeHttpServer.prototype, "address");
+      }
+      if (closeDescriptor) {
+        Object.defineProperty(NativeHttpServer.prototype, "close", closeDescriptor);
+      } else {
+        Reflect.deleteProperty(NativeHttpServer.prototype, "close");
+      }
+    }
+    assertEquals(listenedPorts, [0, 65_535]);
+  });
+
+  it("rejects invalid listener ports with the exact validation message", async () => {
+    for (const port of [-1, 65_536, 1.5]) {
+      await assertRejects(
+        () =>
+          createNodeServer(() => new Response("unreachable"), {
+            hostname: "127.0.0.1",
+            port,
+          }),
+        RangeError,
+        `Node server port must be an integer from 0 to 65535, got ${port}`,
+      );
+    }
+  });
+
   it("shares shutdown and retries only the failed HTTP close phase", async () => {
     let upgradeDisposeCalls = 0;
     let closeCalls = 0;
@@ -216,6 +302,32 @@ describe("NodeServer lifecycle", () => {
     });
 
     assertEquals(outcome, "stopped");
+  });
+
+  it("accepts Bun's inherited not-running close result after binding", async () => {
+    const prototype = Object.create(Error.prototype, {
+      code: {
+        value: "ERR_SERVER_NOT_RUNNING",
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      },
+    });
+    const notRunning = Object.create(prototype) as Error;
+    Object.defineProperty(notRunning, "message", {
+      value: "Server is not running.",
+      writable: true,
+      configurable: true,
+    });
+    const server = new NodeServer(
+      createHttpServer((callback) => callback(notRunning)),
+      "127.0.0.1",
+      3_000,
+    );
+    server.setListeningPort(3_000);
+
+    await server.stop();
+    await server.stop();
   });
 
   it("rejects startup without listening when the signal is already aborted", async () => {

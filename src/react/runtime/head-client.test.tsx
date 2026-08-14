@@ -34,12 +34,12 @@ function installDom(
     `<!doctype html><html><head>${options.head ?? ""}</head><body>${
       options.body ?? '<div id="root"></div>'
     }</body></html>`,
-    {
-      url: "https://example.com/",
-      ...(options.runScripts && { runScripts: options.runScripts }),
-    },
+    { url: "https://example.com/" },
   );
   const window = dom.window;
+  const restoreScriptExecution = options.runScripts
+    ? installInlineScriptExecution(window)
+    : () => {};
   const keys = [
     "window",
     "document",
@@ -81,6 +81,7 @@ function installDom(
   return {
     dom,
     restore: () => {
+      restoreScriptExecution();
       for (const key of keys) {
         const descriptor = previous.get(key);
         if (descriptor) Object.defineProperty(globalThis, key, descriptor);
@@ -88,6 +89,60 @@ function installDom(
       }
       dom.window.close();
     },
+  };
+}
+
+function installInlineScriptExecution(
+  window: InstanceType<typeof JSDOM>["window"],
+): () => void {
+  const executedScripts = new WeakSet<HTMLScriptElement>();
+  const execute = (node: Node): void => {
+    if (!(node instanceof window.HTMLScriptElement) || !node.isConnected) return;
+    const script = node as HTMLScriptElement;
+    if (executedScripts.has(script)) return;
+    executedScripts.add(script);
+
+    const type = (script.getAttribute("type") ?? "").trim().toLowerCase();
+    if (
+      script.hasAttribute("src") ||
+      (type !== "" && type !== "text/javascript" && type !== "application/javascript")
+    ) return;
+
+    new Function("window", "document", script.textContent ?? "")(
+      window,
+      window.document,
+    );
+  };
+
+  for (const script of window.document.querySelectorAll("script")) execute(script);
+
+  const nodePrototype = window.Node.prototype;
+  const appendChild = nodePrototype.appendChild;
+  const insertBefore = nodePrototype.insertBefore;
+  const replaceChild = nodePrototype.replaceChild;
+  nodePrototype.appendChild = function <T extends Node>(child: T): T {
+    const appended = appendChild.call(this, child) as T;
+    execute(appended);
+    return appended;
+  };
+  nodePrototype.insertBefore = function <T extends Node>(
+    child: T,
+    reference: Node | null,
+  ): T {
+    const inserted = insertBefore.call(this, child, reference) as T;
+    execute(inserted);
+    return inserted;
+  };
+  nodePrototype.replaceChild = function <T extends Node>(child: Node, oldChild: T): T {
+    const replaced = replaceChild.call(this, child, oldChild) as T;
+    execute(child);
+    return replaced;
+  };
+
+  return () => {
+    nodePrototype.appendChild = appendChild;
+    nodePrototype.insertBefore = insertBefore;
+    nodePrototype.replaceChild = replaceChild;
   };
 }
 

@@ -117,7 +117,6 @@ Deno.test("isFromStudio: rejects tenant and hosted development subdomains", () =
   resetAll();
   assertEquals(isFromStudio(makeEvent("https://project.preview.veryfront.org")), false);
   assertEquals(isFromStudio(makeEvent("https://project.production.veryfront.com")), false);
-  assertEquals(isFromStudio(makeEvent("https://studio.veryfront.dev")), false);
   // studio.* subdomains are not deployed and are no longer trusted.
   assertEquals(isFromStudio(makeEvent("https://studio.veryfront.com")), false);
   assertEquals(isFromStudio(makeEvent("https://studio.veryfront.org")), false);

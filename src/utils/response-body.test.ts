@@ -158,31 +158,33 @@ describe("utils/response-body", () => {
       }
     }
 
-    Object.defineProperty(OriginalUint8Array, Symbol.species, {
-      configurable: true,
-      get() {
-        throw new Error("ambient typed-array species must not run");
-      },
-    });
-    Object.defineProperty(globalThis, "Uint8Array", {
-      configurable: true,
-      value: PoisonedUint8Array,
-      writable: true,
-    });
-    Object.defineProperty(OriginalTextDecoder.prototype, "decode", {
-      configurable: true,
-      value() {
-        throw new Error("ambient TextDecoder.decode must not run");
-      },
-      writable: true,
-    });
-    Object.defineProperty(globalThis, "TextDecoder", {
-      configurable: true,
-      value: PoisonedTextDecoder,
-      writable: true,
-    });
-
     try {
+      Object.defineProperty(OriginalUint8Array, Symbol.species, {
+        configurable: true,
+        get() {
+          throw new Error("ambient typed-array species must not run");
+        },
+      });
+      Object.defineProperty(globalThis, "Uint8Array", {
+        configurable: true,
+        value: PoisonedUint8Array,
+        writable: true,
+      });
+      if (originalDecode === undefined || !("value" in originalDecode)) {
+        throw new Error("TextDecoder.decode must be a data property");
+      }
+      Object.defineProperty(OriginalTextDecoder.prototype, "decode", {
+        ...originalDecode,
+        value() {
+          throw new Error("ambient TextDecoder.decode must not run");
+        },
+      });
+      Object.defineProperty(globalThis, "TextDecoder", {
+        configurable: true,
+        value: PoisonedTextDecoder,
+        writable: true,
+      });
+
       const bytes = await readResponseJsonStringBytesWithinLimit(response, "value", 8, 128);
       assertEquals(bytes?.byteLength, 5);
       assertEquals([...bytes!], [0x73, 0x6d, 0x61, 0x6c, 0x6c]);

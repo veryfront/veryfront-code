@@ -206,7 +206,140 @@ Root middleware has the same ordering and short-circuit contract in local develo
 
 Production middleware is cached by project, environment, and immutable release or preview branch. Preview cache invalidation reloads the file after source changes, and the cache has a fixed entry limit. A missing file passes through normally.
 
+Root middleware runs in front of your project's routes, not in front of the platform's. A control-plane dispatch is the signed request the platform sends to your runtime to build a release asset manifest for a deploy, or to start, resume, or cancel a run. It bypasses root middleware and goes straight to the handler that verifies its signature.
+
+Middleware could not authorize one of these requests in any case. Infrastructure headers, including the dispatch signature, are withheld from project code, so middleware that gates on a credential rejects the platform's request to build your own deploy.
+
+The signature-keyed bypass is narrow. It applies only to a request that both addresses one of those platform routes and carries the signature header the receiving handler verifies. An unsigned request to `POST /api/control-plane/runs/{runId}/execute`, an unsigned request to the agents list route, and any other path under `/api/control-plane/`, including your own routes in that namespace, still run your middleware.
+
+Three run-lifecycle routes are a longstanding exception and bypass middleware whether or not they are signed: `POST /api/control-plane/runs/{runId}/stream`, `POST /api/control-plane/runs/{runId}/resume`, and `DELETE /api/control-plane/runs/{runId}`. Do not rely on middleware to gate those three paths.
+
+A signed channel dispatch bypasses root middleware on the same terms. This is the request the platform sends to `POST /channels/invoke` to run one of your agents on a message from Slack or Discord, and it carries its own envelope under its own header, verified by the channel handler rather than by the control-plane signature check. Your middleware does not run for your project's channel traffic. An unsigned request to `POST /channels/invoke` still runs your middleware.
+
 Production loading is fail-closed. If a declared middleware file cannot be read, compiled, or validated as a middleware export, a dedicated server does not start and a shared server returns an error only for the affected project request. Failed shared loads are not cached, so a corrected deployment can recover without restarting unrelated projects. Development loading remains nonfatal and reports the loading error in the server log.
+
+## Example: site-wide HTTP Basic Auth
+
+A common use of root middleware is password-gating an entire site: a staging
+environment, a preview, an internal tool.
+
+### Prefer the built-in gate
+
+Before writing middleware, know that the runtime ships this as configuration.
+Set the operator environment variables in the deployment environment:
+
+```bash
+VERYFRONT_BASIC_USER=demo-user
+VERYFRONT_BASIC_PASS=demo-pass
+```
+
+or configure it per project:
+
+```ts
+// veryfront.config.ts
+import { getEnv } from "veryfront";
+
+export default {
+  security: {
+    auth: {
+      basic: {
+        username: "demo-user",
+        // An unset password fails config validation, which is the safe failure.
+        password: getEnv("BASIC_AUTH_PASS") ?? "",
+        realm: "Staging",
+      },
+    },
+  },
+};
+```
+
+Read config secrets through `getEnv` from `veryfront`, not `process.env`: the
+hosted declarative config evaluator rejects `process.env` access as a
+forbidden capability, while `getEnv` works in local, dedicated, and shared
+runtimes.
+
+The built-in gate compares credentials in constant time and keeps the
+platform's health probes and signed control-plane traffic working, so prefer
+it whenever "one username and password for the whole site" is all you need.
+(`security.auth.bearer` is the token-header equivalent; configure one or the
+other, not both.)
+
+### Custom Basic Auth middleware
+
+Write it yourself when you need logic the built-in gate does not have, say,
+exempting a public path or accepting several credential pairs. This is the
+root `middleware.ts` file described above, which every runtime, including the
+shared hosted runtime, compiles and runs. Do not confuse it with the
+`middleware.custom` config option: config-declared middleware functions are
+rejected by hosted runtimes and work only when you run or self-host the
+project yourself.
+
+```ts
+// middleware.ts
+import type { MiddlewareHandler } from "veryfront/middleware";
+
+function unauthorized(): Response {
+  return new Response("Authentication required", {
+    status: 401,
+    headers: {
+      "WWW-Authenticate": 'Basic realm="Demo", charset="UTF-8"',
+    },
+  });
+}
+
+const basicAuth: MiddlewareHandler = async (c, next) => {
+  // Credentials come from the project environment: the shared hosted runtime
+  // delivers it through `c.env`, while local development and dedicated
+  // servers expose it as `process.env`. Fail closed: if none are configured,
+  // nobody gets in. Never ship fallback credentials in code.
+  const user = String(c.env.BASIC_AUTH_USER ?? process.env.BASIC_AUTH_USER ?? "");
+  const pass = String(c.env.BASIC_AUTH_PASS ?? process.env.BASIC_AUTH_PASS ?? "");
+  if (!user || !pass) return unauthorized();
+
+  const header = c.request.headers.get("authorization") ?? "";
+  // The scheme name is case-insensitive: "basic" is as valid as "Basic".
+  if (header.slice(0, 6).toLowerCase() !== "basic ") return unauthorized();
+
+  let decoded: string;
+  try {
+    // atob() yields one byte per character; decode those bytes as UTF-8 so
+    // non-ASCII credentials compare correctly.
+    const binary = atob(header.slice(6));
+    decoded = new TextDecoder("utf-8", { fatal: true }).decode(
+      Uint8Array.from(binary, (character) => character.charCodeAt(0)),
+    );
+  } catch {
+    return unauthorized(); // malformed base64 or invalid UTF-8
+  }
+
+  const sep = decoded.indexOf(":");
+  if (sep === -1) return unauthorized();
+
+  if (decoded.slice(0, sep) === user && decoded.slice(sep + 1) === pass) {
+    return next();
+  }
+  return unauthorized();
+};
+
+export default basicAuth;
+```
+
+Set `BASIC_AUTH_USER` and `BASIC_AUTH_PASS` in the project environment
+(`.env` locally, the environment settings of your deployment in production)
+and try it:
+
+```bash
+# Expect 401 with a WWW-Authenticate challenge
+curl -i http://localhost:3000/
+
+# Expect the page with the demo credentials
+curl -i -u demo-user:demo-pass http://localhost:3000/
+```
+
+Two things the hand-rolled version gives up relative to the built-in gate:
+the `===` comparisons are not constant-time, and the exemptions described
+above still apply: signed platform dispatches bypass root middleware, so
+this gates your visitors, not the platform's own traffic.
 
 ## Verify it worked
 

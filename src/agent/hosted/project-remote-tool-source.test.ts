@@ -1,4 +1,10 @@
-import { assertEquals, assertRejects, assertThrows } from "@std/assert";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import type {
   RemoteMCPToolSourceConfig,
   RemoteToolSource,
@@ -9,7 +15,7 @@ import {
   createHostedProjectRemoteToolSource,
   createHostedProjectRemoteToolSources,
 } from "./project-remote-tool-source.ts";
-import { VeryfrontError } from "#veryfront/errors";
+import { NETWORK_ERROR, PERMISSION_DENIED, VeryfrontError } from "#veryfront/errors";
 import { createUnconfirmedProjectContextSwitchResult } from "../project/context.ts";
 
 function projectFileTool(name: string): ToolDefinition {
@@ -89,6 +95,12 @@ async function resolveTestHeaders(
   return typeof headers === "function" ? await headers(context) : headers;
 }
 
+async function resolveTestEndpoint(
+  endpoint: RemoteMCPToolSourceConfig["endpoint"],
+): Promise<string> {
+  return typeof endpoint === "function" ? await endpoint() : endpoint;
+}
+
 Deno.test("hosted remote tool sources do not carry legacy end-user identity plumbing", async () => {
   const forbidden = [
     ["get", "End", "User", "Id"].join(""),
@@ -149,6 +161,174 @@ Deno.test("createHostedProjectRemoteToolSource scopes tool listings and hydrates
       context: { projectId: "project-1" },
     },
   ]);
+});
+
+describe("hosted project remote tool catalog resilience", () => {
+  it("retains file tools after a catalog timeout", async () => {
+    let listCalls = 0;
+    const executeCalls: Array<{ toolName: string; args: unknown }> = [];
+    const source = createHostedProjectRemoteToolSource({
+      source: {
+        id: "veryfront-mcp",
+        async listTools() {
+          listCalls++;
+          if (listCalls > 1) {
+            throw new DOMException(
+              "Chat stream idle timeout after 120000ms during response_pending",
+              "TimeoutError",
+            );
+          }
+          return [
+            projectFileTool("create_file"),
+            projectFileTool("get_file"),
+            projectFileTool("update_file"),
+          ];
+        },
+        async executeTool(toolName, args) {
+          executeCalls.push({ toolName, args });
+          return { success: true, version: 2 };
+        },
+      },
+      defaultProjectId: "project-1",
+    });
+
+    assertEquals((await source.listTools()).map((tool) => tool.name), [
+      "create_file",
+      "get_file",
+      "update_file",
+    ]);
+    assertEquals((await source.listTools()).map((tool) => tool.name), [
+      "create_file",
+      "get_file",
+      "update_file",
+    ]);
+    assertEquals(
+      await source.executeTool("update_file", {
+        path: "plans/inbox-agent.md",
+        content: "Refined plan",
+      }),
+      { success: true, version: 2 },
+    );
+    assertEquals(listCalls, 2);
+    assertEquals(executeCalls, [{
+      toolName: "update_file",
+      args: {
+        path: "plans/inbox-agent.md",
+        content: "Refined plan",
+        project_reference: "project-1",
+      },
+    }]);
+  });
+
+  it("does not reuse a catalog after a project switch", async () => {
+    let projectId = "project-1";
+    let listCalls = 0;
+    const source = createHostedProjectRemoteToolSource({
+      source: {
+        id: "veryfront-mcp",
+        async listTools() {
+          listCalls++;
+          if (listCalls > 1) throw new DOMException("Timed out", "TimeoutError");
+          return [projectFileTool("update_file")];
+        },
+        async executeTool() {
+          return { success: true };
+        },
+      },
+      defaultProjectId: () => projectId,
+    });
+
+    assertEquals((await source.listTools()).map((tool) => tool.name), ["update_file"]);
+    projectId = "project-2";
+
+    await assertRejects(
+      () => source.listTools(),
+      DOMException,
+      "Timed out",
+    );
+  });
+
+  it("does not reuse a catalog across authorization contexts", async () => {
+    let listCalls = 0;
+    const source = createHostedProjectRemoteToolSource({
+      source: {
+        id: "veryfront-mcp",
+        async listTools() {
+          listCalls++;
+          if (listCalls > 1) throw new DOMException("Timed out", "TimeoutError");
+          return [projectFileTool("update_file")];
+        },
+        async executeTool() {
+          return { success: true };
+        },
+      },
+      defaultProjectId: "project-1",
+    });
+
+    assertEquals(
+      (await source.listTools({ authToken: "credential-a" })).map((tool) => tool.name),
+      ["update_file"],
+    );
+    await assertRejects(
+      () => source.listTools({ authToken: "credential-b" }),
+      DOMException,
+      "Timed out",
+    );
+  });
+
+  it("does not retain a catalog after a permission failure", async () => {
+    let listCalls = 0;
+    const source = createHostedProjectRemoteToolSource({
+      source: {
+        id: "veryfront-mcp",
+        async listTools() {
+          listCalls++;
+          if (listCalls === 2) {
+            throw PERMISSION_DENIED.create({ detail: "Catalog access denied" });
+          }
+          if (listCalls === 3) throw new DOMException("Timed out", "TimeoutError");
+          return [projectFileTool("update_file")];
+        },
+        async executeTool() {
+          return { success: true };
+        },
+      },
+      defaultProjectId: "project-1",
+    });
+
+    assertEquals((await source.listTools()).map((tool) => tool.name), ["update_file"]);
+    const error = await assertRejects(() => source.listTools(), VeryfrontError);
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "permission-denied");
+    await assertRejects(() => source.listTools(), DOMException, "Timed out");
+  });
+
+  it("does not retain a catalog after a validation failure", async () => {
+    let listCalls = 0;
+    const source = createHostedProjectRemoteToolSource({
+      source: {
+        id: "veryfront-mcp",
+        async listTools() {
+          listCalls++;
+          if (listCalls === 2) {
+            throw NETWORK_ERROR.create({ detail: "Malformed remote tool catalog" });
+          }
+          if (listCalls === 3) throw new DOMException("Timed out", "TimeoutError");
+          return [projectFileTool("update_file")];
+        },
+        async executeTool() {
+          return { success: true };
+        },
+      },
+      defaultProjectId: "project-1",
+    });
+
+    assertEquals((await source.listTools()).map((tool) => tool.name), ["update_file"]);
+    const error = await assertRejects(() => source.listTools(), VeryfrontError);
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "network-error");
+    await assertRejects(() => source.listTools(), DOMException, "Timed out");
+  });
 });
 
 Deno.test("createHostedProjectRemoteToolSource replaces model-supplied project references", async () => {
@@ -499,8 +679,8 @@ Deno.test("createHostedProjectRemoteToolSources defaults to first-party MCP serv
   });
 
   assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp"]);
-  assertEquals(configs.map((config) => config.endpoint), [
-    "https://api.example/mcp",
+  assertEquals(await Promise.all(configs.map((config) => resolveTestEndpoint(config.endpoint))), [
+    "https://api.example/projects/project-1/mcp",
     "https://studio.example/mcp",
   ]);
 });
@@ -616,8 +796,8 @@ Deno.test("createHostedProjectRemoteToolSources builds API and explicit gated St
   });
 
   assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp"]);
-  assertEquals(configs.map((config) => config.endpoint), [
-    "https://api.example/mcp",
+  assertEquals(await Promise.all(configs.map((config) => resolveTestEndpoint(config.endpoint))), [
+    "https://api.example/projects/project-1/mcp",
     "https://studio.example/mcp",
   ]);
   assertEquals(await resolveTestHeaders(configs[0]?.headers), {
@@ -628,6 +808,10 @@ Deno.test("createHostedProjectRemoteToolSources builds API and explicit gated St
   });
 
   activeProjectId = "project-2";
+  assertEquals(
+    await resolveTestEndpoint(configs[0]?.endpoint ?? ""),
+    "https://api.example/projects/project-2/mcp",
+  );
   assertEquals(await resolveTestHeaders(configs[1]?.headers), {
     Authorization: "Bearer token-1",
     "x-conversation-id": "conversation-1",
@@ -655,6 +839,7 @@ Deno.test("createHostedProjectRemoteToolSources throws for explicit Studio MCP w
     VeryfrontError,
     "studioMcpUrl was not provided",
   );
+  assertInstanceOf(error, VeryfrontError);
   assertEquals(error.slug, "config-invalid");
 });
 
@@ -679,6 +864,7 @@ Deno.test("createHostedProjectRemoteToolSources throws for explicit Studio MCP f
     VeryfrontError,
     'client "veryfront-cli" is not allowed to use Studio MCP',
   );
+  assertInstanceOf(error, VeryfrontError);
   assertEquals(error.slug, "permission-denied");
 });
 
@@ -709,8 +895,8 @@ Deno.test("createHostedProjectRemoteToolSources infers Studio MCP from allowed S
   });
 
   assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp"]);
-  assertEquals(configs.map((config) => config.endpoint), [
-    "https://api.example/mcp",
+  assertEquals(await Promise.all(configs.map((config) => resolveTestEndpoint(config.endpoint))), [
+    "https://api.example/projects/project-1/mcp",
     "https://studio.example/mcp",
   ]);
   assertEquals(
@@ -719,7 +905,7 @@ Deno.test("createHostedProjectRemoteToolSources infers Studio MCP from allowed S
   );
 });
 
-Deno.test("createHostedProjectRemoteToolSources does not infer Studio when explicit API-only MCP is set", () => {
+it("does not infer Studio when explicit API-only MCP is set", async () => {
   const configs: RemoteMCPToolSourceConfig[] = [];
   const sources = createHostedProjectRemoteToolSources({
     authToken: "token-1",
@@ -744,7 +930,9 @@ Deno.test("createHostedProjectRemoteToolSources does not infer Studio when expli
   });
 
   assertEquals(sources.map((source) => source.id), ["veryfront-mcp"]);
-  assertEquals(configs.map((config) => config.endpoint), ["https://api.example/mcp"]);
+  assertEquals(await Promise.all(configs.map((config) => resolveTestEndpoint(config.endpoint))), [
+    "https://api.example/projects/project-1/mcp",
+  ]);
 });
 
 Deno.test("createHostedProjectRemoteToolSources preserves an explicit MCP opt-out", () => {
@@ -851,8 +1039,8 @@ Deno.test("createHostedProjectRemoteToolSources builds explicit MCP server lists
   });
 
   assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp", "linear"]);
-  assertEquals(configs.map((config) => config.endpoint), [
-    "https://api.example/mcp",
+  assertEquals(await Promise.all(configs.map((config) => resolveTestEndpoint(config.endpoint))), [
+    "https://api.example/projects/project-1/mcp",
     "https://studio.example/mcp",
     "https://linear.example/mcp",
   ]);

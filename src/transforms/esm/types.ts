@@ -9,6 +9,8 @@ import type { DependencyResolutionObservation } from "../import-rewriter/depende
 export interface TransformOptions {
   dev?: boolean;
   projectId: string;
+  /** Internal request-scoped cancellation for transform dependencies. */
+  abortSignal?: AbortSignal;
   jsxImportSource?: string;
   moduleServerUrl?: string;
   /** Absolute request origin used to identify same-origin module URLs. */

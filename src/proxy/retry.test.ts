@@ -269,6 +269,35 @@ describe("shouldRetryUpstreamRequest", () => {
 });
 
 describe("getReplayableRequestBodies", () => {
+  async function readBodyBytes(body: ReadableStream<Uint8Array> | null): Promise<number[]> {
+    const bytes = await new Response(body).arrayBuffer();
+    return [...new Uint8Array(bytes)];
+  }
+
+  it("replays a multi-chunk body sequentially across retries", async () => {
+    const encoder = new TextEncoder();
+    const chunks = ["alpha", ":", "beta"].map((chunk) => encoder.encode(chunk));
+    const expected = chunks.flatMap((chunk) => [...chunk]);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(chunk);
+        controller.close();
+      },
+    });
+    const request = {
+      method: "POST",
+      headers: new Headers({ "content-length": "10" }),
+      body,
+    } as Request;
+
+    const bodies = getReplayableRequestBodies(request, 3);
+
+    assertEquals(bodies.length, 4);
+    for (const replay of bodies) {
+      assertEquals(await readBodyBytes(replay), expected);
+    }
+  });
+
   it("creates an independent signed payload stream for every attempt", async () => {
     const payload = JSON.stringify({ run: { runId: "run_1" } });
     const request = new Request(RUN_STREAM_URL, {

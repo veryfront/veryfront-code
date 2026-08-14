@@ -164,7 +164,7 @@ describe("createRequestContext", () => {
     it("ignores x-forwarded-host by default (untrusted) and uses the host header", () => {
       const req = makeRequest("https://127.0.0.1/page", {
         "x-forwarded-host": "evil.preview.veryfront.com",
-        host: "my-app.lvh.me",
+        host: "my-app.localhost",
       });
       const ctx = createRequestContext(req);
       // Untrusted default: a client-supplied x-forwarded-host must not flip mode
@@ -177,8 +177,8 @@ describe("createRequestContext", () => {
       Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
       try {
         const req = makeRequest("https://127.0.0.1/page", {
-          "x-forwarded-host": "my-app.preview.lvh.me",
-          host: "other.lvh.me",
+          "x-forwarded-host": "my-app.preview.localhost",
+          host: "other.localhost",
         });
         const ctx = createRequestContext(req);
         assertEquals(ctx.slug, "my-app");
@@ -190,8 +190,8 @@ describe("createRequestContext", () => {
 
     it("honours x-forwarded-host after request-scoped proxy verification", () => {
       const req = makeRequest("https://127.0.0.1/page", {
-        "x-forwarded-host": "my-app.preview.lvh.me",
-        host: "other.lvh.me",
+        "x-forwarded-host": "my-app.preview.localhost",
+        host: "other.localhost",
       });
       const ctx = createRequestContext(req, { proxyTrusted: true });
       assertEquals(ctx.slug, "my-app");
@@ -200,7 +200,7 @@ describe("createRequestContext", () => {
 
     it("host header takes priority over URL hostname", () => {
       const req = makeRequest("https://127.0.0.1/page", {
-        host: "my-app.lvh.me",
+        host: "my-app.localhost",
       });
       const ctx = createRequestContext(req);
       assertEquals(ctx.slug, "my-app");
@@ -209,7 +209,7 @@ describe("createRequestContext", () => {
 
     it("falls back to URL hostname when no host headers", () => {
       // Deno's Request does not auto-set a host header, so hostname from URL is used
-      const req = makeRequest("https://my-app.lvh.me/page");
+      const req = makeRequest("https://my-app.localhost/page");
       assertEquals(req.headers.get("host"), null);
       const ctx = createRequestContext(req);
       assertEquals(ctx.slug, "my-app");
@@ -237,7 +237,7 @@ describe("createRequestContext", () => {
 
     it("x-project-slug takes priority over domain-parsed slug", () => {
       const req = makeRequest("https://127.0.0.1/page", {
-        host: "my-app.lvh.me",
+        host: "my-app.localhost",
         "x-project-slug": "override-slug",
       });
       const ctx = createRequestContext(req);
@@ -246,7 +246,7 @@ describe("createRequestContext", () => {
 
     it("falls back to the parsed domain slug when x-project-slug is blank", () => {
       const req = makeRequest("https://127.0.0.1/page", {
-        host: "my-app.preview.lvh.me",
+        host: "my-app.preview.localhost",
         "x-project-slug": "   ",
       });
       const ctx = createRequestContext(req);
@@ -255,7 +255,7 @@ describe("createRequestContext", () => {
 
     it("falls back to the parsed domain slug when x-project-slug is empty string", () => {
       const req = makeRequest("https://127.0.0.1/page", {
-        host: "my-app.preview.lvh.me",
+        host: "my-app.preview.localhost",
         "x-project-slug": "",
       });
       const ctx = createRequestContext(req);
@@ -266,7 +266,7 @@ describe("createRequestContext", () => {
       Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
       try {
         const req = makeRequest("https://127.0.0.1/page", {
-          "x-forwarded-host": "my-app.preview.lvh.me, proxy2.internal",
+          "x-forwarded-host": "my-app.preview.localhost, proxy2.internal",
         });
         const ctx = createRequestContext(req);
         assertEquals(ctx.slug, "my-app");
@@ -319,7 +319,7 @@ describe("createRequestContext", () => {
 
     it("returns null branch when no branch in domain", () => {
       const req = makeRequest("https://127.0.0.1/", {
-        host: "my-app.lvh.me",
+        host: "my-app.localhost",
       });
       const ctx = createRequestContext(req);
       assertEquals(ctx.branch, null);

@@ -52,7 +52,7 @@ async function createRepository(): Promise<{
 }> {
   const cwd = await Deno.makeTempDir();
   const scriptPath = await Deno.realPath(
-    "scripts/ci/stable-release-requested.sh",
+    new URL("../../scripts/ci/stable-release-requested.sh", import.meta.url),
   );
 
   await git(cwd, "init", "--quiet");

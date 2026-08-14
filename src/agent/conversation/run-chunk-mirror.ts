@@ -160,7 +160,13 @@ function resolveQueueController(
 export function createConversationRunChunkMirror(
   input: ConversationRunChunkMirrorOptions,
 ): ConversationRunChunkMirror {
-  const encoder = input.encoder ?? new ConversationRunEventEncoder();
+  // The mirror owns one encoder for the whole run, so a clock installed here
+  // makes every durable event carry a run-relative `elapsedMs`. Runs are
+  // headless -- a scheduled run has no client attached -- so this is the only
+  // point that observes emission time. Callers injecting their own encoder
+  // choose their own clock, or none.
+  const encoder = input.encoder ??
+    new ConversationRunEventEncoder({ nowMs: () => performance.now() });
   const immediateFlushEventCount = input.immediateFlushEventCount ??
     DEFAULT_IMMEDIATE_FLUSH_EVENT_COUNT;
   const mirror = createConversationRunMirror({

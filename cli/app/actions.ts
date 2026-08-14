@@ -104,7 +104,7 @@ export function createLauncher(host: LauncherHost): Launcher {
   return {
     openInBrowser(project, port) {
       return open(
-        `http://${project.slug}.veryfront.me:${port}`,
+        `http://${project.slug}.localhost:${port}`,
         (url) => `Opened ${url}`,
       );
     },

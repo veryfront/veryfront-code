@@ -24,7 +24,11 @@ import {
 	readDenoConfigSet,
 } from "./npm-dependency-sources.ts";
 import { buildExtensionPackages } from "./build-npm-extension-packages.ts";
-import { patchDntArgvPolyfill } from "./dnt-polyfill.ts";
+import {
+	patchDntArgvPolyfill,
+	patchDntCryptoShim,
+	patchDntDenoShim,
+} from "./dnt-polyfill.ts";
 import { normalizeNpmPackageMetadata } from "./npm-package-metadata.ts";
 import { assertNpmRuntimeHelperContract } from "./npm-runtime-helper-contract.ts";
 import { normalizeEsmShReactNpmShims } from "./npm-react-shims.ts";
@@ -232,6 +236,27 @@ await build({
 			{ required: true },
 		);
 
+		// dnt re-exports `@deno/shim-deno` unconditionally, so `deno run -A
+		// npm:veryfront` ran the Node reimplementations of Deno APIs instead of
+		// the runtime's own. Deno.listen in particular reads `server._handle.fd`
+		// off a node:net server, which is null under Deno's node compatibility
+		// layer, so every command that binds a port died before starting.
+		await patchDntDenoShim(
+			"./npm/esm/_dnt.shims.js",
+			{ required: true },
+		);
+
+		// Both shims must be lazy, not just the Deno one. The esm transform
+		// rewrites each bare specifier into an absolute file:// bundle, and Deno
+		// cannot prepare that graph node when node_modules is unmanaged, which is
+		// what `deno install -g` writes (`nodeModulesDir: "manual"`). A single
+		// remaining static shim import keeps a globally installed CLI failing
+		// every request with "Loading unprepared module".
+		await patchDntCryptoShim(
+			"./npm/esm/_dnt.shims.js",
+			{ required: true },
+		);
+
 		const patchedReactShimCount = normalizeEsmShReactNpmShims("./npm/esm/deps/esm.sh");
 		if (patchedReactShimCount > 0) {
 			console.log(`📝 Patched ${patchedReactShimCount} React ecosystem esm.sh npm shims`);
@@ -285,6 +310,12 @@ await build({
 		await Deno.mkdir("./npm/bin", { recursive: true });
 		await Deno.copyFile("./scripts/build/bin-wrapper.js", "./npm/bin/veryfront.js");
 		await Deno.chmod("./npm/bin/veryfront.js", 0o755);
+		// The shim imports this before any framework module, so it has to sit
+		// beside it and stay loadable on Node releases below the supported floor.
+		await Deno.copyFile(
+			"./scripts/build/node-engine-precondition.js",
+			"./npm/bin/node-engine-precondition.js",
+		);
 
 		// Copy package documentation files (must exist at repo root)
 		await Deno.mkdir("./npm/assets", { recursive: true });

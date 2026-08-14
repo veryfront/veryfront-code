@@ -96,6 +96,22 @@ describe("chat/upload-handler", () => {
     }));
 
   describe("POST", () => {
+    it("accepts a pages-router context instead of a Request", () =>
+      withTempDir(async (dir) => {
+        const { POST } = createChatUploadHandler({
+          storage: new LocalBlobStorage(dir),
+          authorize: () => true,
+        });
+        // The pages executor calls method handlers with the APIContext, not a
+        // Request. `ctx.body` is a reader *function*, so `!request.body` passes
+        // and `request.body.getReader()` throws, turning a valid upload into a
+        // 500. See the same defect fixed for createValidatedHandler in #3673.
+        const request = postFile(txt("hello"));
+        const ctx = { request, req: request, body: async <T>() => ({} as T) };
+        const res = await POST(ctx as unknown as Request);
+        assertEquals(res.status, 200);
+      }));
+
     it("stores a file and returns id, url, name, mediaType, and size", () =>
       withTempDir(async (dir) => {
         const { POST } = createChatUploadHandler({
@@ -250,11 +266,15 @@ describe("chat/upload-handler", () => {
       });
 
       const res = await POST(
-        new Request("http://localhost:3000/api/uploads", {
-          method: "POST",
-          headers: { "content-type": "multipart/form-data; boundary=test" },
-          body: stream,
-        }),
+        new Request(
+          "http://localhost:3000/api/uploads",
+          {
+            method: "POST",
+            headers: { "content-type": "multipart/form-data; boundary=test" },
+            body: stream,
+            duplex: "half",
+          } as RequestInit & { duplex: "half" },
+        ),
       );
 
       assertEquals(res.status, 413);

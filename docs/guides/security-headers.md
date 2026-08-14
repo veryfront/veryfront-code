@@ -1,6 +1,6 @@
 ---
 title: "Security headers and CSP"
-description: "Veryfront applies a Content-Security-Policy by default. Use this guide to allow Google Fonts, analytics, and other third-party origins."
+description: "Veryfront applies a Content-Security-Policy by default. Use this guide to allow analytics, embeds, and other third-party origins your site needs."
 order: 11
 ---
 
@@ -13,10 +13,10 @@ In production, Veryfront serves this policy:
 ```http
 default-src 'self';
 script-src 'self' 'nonce-<generated>' https://esm.sh;
-style-src 'self' 'unsafe-inline';
+style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
 style-src-attr 'unsafe-inline';
 img-src 'self' https://images.veryfront.com https://cdn.veryfront.com data:;
-font-src 'self' data:;
+font-src 'self' data: https://fonts.gstatic.com;
 connect-src 'self' https://esm.sh;
 media-src 'self' blob:;
 worker-src 'self' blob:;
@@ -24,17 +24,47 @@ object-src 'none';
 frame-src 'self';
 frame-ancestors 'none';
 base-uri 'self';
-form-action 'self'
+form-action 'self';
+report-to veryfront-csp;
+report-uri /_vf/csp-report
 ```
 
-Alongside it: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Strict-Transport-Security`, and `Cross-Origin-Opener-Policy` / `Cross-Origin-Resource-Policy` set to `same-origin`.
+Alongside it: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Strict-Transport-Security`, `Cross-Origin-Opener-Policy` / `Cross-Origin-Resource-Policy` set to `same-origin`, and `Reporting-Endpoints: veryfront-csp="/_vf/csp-report"`, which defines the group the two reporting directives name.
 
 Development serves no CSP at all, so HMR and dev tooling are never blocked and a local allowance can never widen your production policy.
 
-Two directives are worth understanding:
+Three directives are worth understanding:
 
 - **`script-src` includes `https://esm.sh`** because the renderer writes React imports from that CDN into every document. A fresh nonce is generated per response for the framework's own inline bootstrap.
+- **`style-src` and `font-src` include the Google Fonts origins** because `veryfront/fonts` writes those tags into the document itself. Google Fonts therefore works with no configuration. If your project never uses it, see [Tightening the policy](#tightening-the-policy).
 - **`frame-ancestors`** is `'none'` on your own domain. On `*.veryfront.com` addresses it instead allows the Studio origins, so the Studio preview iframe works.
+
+## What is enforced
+
+The policy above is served as `Content-Security-Policy-Report-Only`: browsers report what it would have blocked, and block nothing.
+
+Two directives are served enforced by default, in a second `Content-Security-Policy` header:
+
+- `object-src 'none'` blocks `<object>`, `<embed>` and `<applet>`.
+- `base-uri 'self'` blocks a `<base>` element pointing at another origin.
+
+Both close injection routes, and neither can be widened: they are required directives, so `security.csp` cannot add sources to them or drop them.
+
+The exception is `VERYFRONT_CSP`. Setting that environment variable replaces the policy wholesale and serves it enforced on its own, so neither the reported floor nor this pair is added alongside it. Writing a whole policy by hand is an explicit act, and Veryfront does not second-guess it.
+
+**Every directive you give a value in `security.csp` is enforced too**, including `form-action` and `frame-ancestors`. Listing your image origins means you have thought about images, so `img-src` binds with your sources in it. Directives you never mentioned keep reporting, and so does one written as `undefined`, which counts as unconfigured rather than as a declaration. Adding one origin does not bind the rest of your policy, because deciding to allow a CDN and deciding to bind script execution across your site are different decisions.
+
+One consequence worth knowing: CSP resolves a missing directive by falling back to a broader one, so enforcing `script-src` would otherwise also constrain workers and frames. Veryfront emits those alongside it, with the same sources the reported policy gives them, so declaring one directive never tightens another behind your back.
+
+To bind a directive, configure it. To see what binding it would cost first, read the reports.
+
+## Violation reports
+
+The policy asks browsers to report what it blocks, to `/_vf/csp-report` on your own origin. Both spellings are sent because `report-to` is the current one and `report-uri` is still the only one several shipping browsers honour.
+
+You do not configure this and cannot switch it off. Reports are recorded with the violating document, the directive, the blocked URL and the status. Query strings are removed, so identifiers in a URL do not reach a log. They are rate-limited, and the endpoint always answers `204`.
+
+The endpoint is exempt from `security.auth` and `security.csrf`. A browser reports a violation without credentials and without a CSRF token, because a report is not a user action, so a protected project would otherwise report nothing at all. Exempting it discloses nothing: it reads no credentials, changes no state, and its response never varies.
 
 ## Adding an origin
 
@@ -44,16 +74,29 @@ Set `security.csp` in `veryfront.config.ts`. Values are **added to** the default
 export default {
   security: {
     csp: {
-      styleSrc: ["https://fonts.googleapis.com"],
-      fontSrc: ["https://fonts.gstatic.com"],
+      // An analytics endpoint your client code posts to
+      connectSrc: ["https://analytics.example.com"],
     },
   },
 };
 ```
 
-That is the complete Google Fonts setup: `fonts.googleapis.com` serves the stylesheet, `fonts.gstatic.com` serves the font files, and both directives keep everything they already had.
+`connect-src` keeps everything it already had and gains your origin.
 
 Directive names may be camelCase (`fontSrc`) or the CSP spelling (`font-src`). Both work; camelCase matches the rest of your config. You do not need to repeat `'self'`; it is already there.
+
+A font service other than Google's needs both halves, the stylesheet origin and the font-file origin:
+
+```ts
+export default {
+  security: {
+    csp: {
+      styleSrc: ["https://use.typekit.net"],
+      fontSrc: ["https://use.typekit.net"],
+    },
+  },
+};
+```
 
 A few more examples:
 
@@ -61,8 +104,6 @@ A few more examples:
 export default {
   security: {
     csp: {
-      // An analytics endpoint your client code posts to
-      connectSrc: ["https://analytics.example.com"],
       // Embedding YouTube
       frameSrc: ["https://www.youtube.com"],
       // Images from your own CDN
@@ -88,7 +129,7 @@ To remove the platform's optional sources for one directive, set it to `null`:
 export default {
   security: {
     csp: {
-      // Serve no inline styles. Keeps 'self', drops 'unsafe-inline'.
+      // Keeps 'self'. Drops 'unsafe-inline' and the Google Fonts origin.
       styleSrc: null,
     },
   },
@@ -97,7 +138,7 @@ export default {
 
 `null` removes the optional half of a directive and keeps the required half. It cannot lock you out of your own site.
 
-Before doing this, check what your components actually need. `'unsafe-inline'` is in the default `style-src` because many React component libraries, including Veryfront's own, create styles at runtime. Removing it is safe only if you are certain yours do not.
+Before doing this, check what your components actually need. `'unsafe-inline'` is in the default `style-src` because many React component libraries, including Veryfront's own, create styles at runtime. Removing it is safe only if you are certain yours do not. The same setting drops the Google Fonts stylesheet origin, so only reach for it if your project does not use `veryfront/fonts`.
 
 ## Replacing the policy entirely
 

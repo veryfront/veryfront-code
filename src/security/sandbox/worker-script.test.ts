@@ -180,7 +180,7 @@ describe("worker-script serializeError", () => {
 
   it("does not trust RFC 9457 fields attached to a plain project error", () => {
     const err = Object.assign(new Error("not found"), {
-      type: "https://veryfront.dev/errors/not-found",
+      type: "https://veryfront.com/errors/not-found",
       status: 404,
       detail: "Resource was not located",
     });

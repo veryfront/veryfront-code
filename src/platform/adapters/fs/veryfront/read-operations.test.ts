@@ -250,6 +250,30 @@ describe("ReadOperations", () => {
         ["pages/home.tsx", true],
       ]);
     });
+
+    it("does not substitute another extension for a published config candidate", async () => {
+      const exactCalls: string[] = [];
+      const readOps = createReadyReadOps(
+        createMockClient({
+          getPublishedFileContentBytesWithinLimit: (path: string) => {
+            exactCalls.push(path);
+            if (path === "veryfront.config.ts") {
+              return Promise.resolve(new Uint8Array([7]));
+            }
+            return Promise.reject(API_CLIENT_ERROR.create({ detail: "not found", status: 404 }));
+          },
+        }),
+        false,
+        createReleaseContext("release-config"),
+      );
+
+      await assertRejects(
+        () => readOps.readFileBytesWithinLimit("veryfront.config.js", 1),
+        Error,
+        "404 Not Found: veryfront.config.js",
+      );
+      assertEquals(exactCalls, ["veryfront.config.js"]);
+    });
   });
 
   describe("readTextFile", () => {
@@ -727,6 +751,41 @@ describe("ReadOperations", () => {
       assertEquals(resolveBasePath, "pages/landing");
       assertEquals(resolveExtensions, [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"]);
       assertEquals(publishedFetchPaths, ["pages/landing.tsx"]);
+    });
+
+    it("does not substitute another extension for a published config candidate", async () => {
+      const publishedFetchPaths: string[] = [];
+      let resolveCallCount = 0;
+      const client = createMockClient({
+        getPublishedFileContent: (path: string) => {
+          publishedFetchPaths.push(path);
+          if (path === "veryfront.config.ts") return Promise.resolve("typescript config");
+          return Promise.reject(
+            API_CLIENT_ERROR.create({ detail: "not found", status: 404 }),
+          );
+        },
+        resolveFileWithExtension: () => {
+          resolveCallCount++;
+          return Promise.resolve({
+            path: "veryfront.config.ts",
+            content: "typescript config",
+          });
+        },
+      });
+
+      const readOps = createReadyReadOps(
+        client,
+        false,
+        createReleaseContext("release-config"),
+      );
+
+      const error = await assertRejects(
+        () => readOps.readTextFile("veryfront.config.js"),
+        Error,
+      );
+      assertEquals((error as Error & { code?: string }).code, "ENOENT");
+      assertEquals(publishedFetchPaths, ["veryfront.config.js"]);
+      assertEquals(resolveCallCount, 0);
     });
 
     it("should fall back in parallel when pattern search fails for published 404", async () => {

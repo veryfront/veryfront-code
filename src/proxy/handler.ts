@@ -1,5 +1,10 @@
 import { TokenManager, type TokenScope } from "./token-manager.ts";
-import { type ParsedDomain, parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
+import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
+import {
+  isHostedVeryfrontDomain,
+  type ParsedDomain,
+  parseProjectDomain,
+} from "#veryfront/server/utils/domain-parser.ts";
 import type { TokenCache } from "./cache/types.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
@@ -193,7 +198,7 @@ function getScope(environment: string | null): TokenScope {
 }
 
 function requestAbortReason(signal: AbortSignal): Error {
-  return signal.reason instanceof Error
+  return isErrorAcrossRealms(signal.reason)
     ? signal.reason
     : new DOMException("Proxy request was aborted", "AbortError");
 }
@@ -815,6 +820,23 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       }, logger);
 
     if (!projectSlug && parsedDomain.isVeryfrontDomain) {
+      // A hosted environment root (staging.veryfront.com) names no project and
+      // nothing downstream can supply one, so forwarding only sends
+      // x-project-slug: "" and earns 502 "Missing project context" — a
+      // configuration gap reported as an upstream failure. A custom domain in
+      // that state already answers 404.
+      //
+      // Locally the same shape means something else: on localhost a
+      // project-less host is how the project chooser is reached, so those keep
+      // forwarding. See ProjectsHandler, enabled for exactly this state.
+      if (isHostedVeryfrontDomain(host)) {
+        logger?.info("No project for hosted veryfront domain", { host });
+        return createProxyErrorContext(base, {
+          status: 404,
+          message: `No project configured for domain: ${host}`,
+        });
+      }
+
       return {
         token: undefined,
         projectSlug: undefined,

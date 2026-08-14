@@ -3,6 +3,7 @@ import { createNodeServerWithStartupOwner } from "../../adapters/runtime/node/ht
 import type { Handler, HttpServer, ServeOptions } from "./types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry/general.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import { isErrorAcrossRealms } from "../error-introspection.ts";
 
 interface PendingNodeServer {
   readonly controller: AbortController;
@@ -24,7 +25,7 @@ interface ActiveNodeServer {
 }
 
 function abortError(signal: AbortSignal): Error {
-  return signal.reason instanceof Error
+  return isErrorAcrossRealms(signal.reason)
     ? signal.reason
     : new DOMException("Node HTTP server startup was aborted", "AbortError");
 }

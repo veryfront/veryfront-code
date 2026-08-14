@@ -63,6 +63,28 @@ const MANIFEST_KEYS = new Set([
   "dependencyMode",
   "dependencies",
 ]);
+/**
+ * Key set of the v1 body still held in storage for every release published
+ * before the v2 move. v1 carried `fallback` and had no `dependencyMode`.
+ */
+const LEGACY_V1_MANIFEST_KEYS = new Set([
+  "schemaVersion",
+  "projectId",
+  "releaseId",
+  "releaseVersion",
+  "manifestVersion",
+  "builderVersion",
+  "sourceContentHash",
+  "createdAt",
+  "assetBasePath",
+  "modules",
+  "css",
+  "routes",
+  "dependencies",
+  "fallback",
+]);
+const LEGACY_V1_SCHEMA_VERSION = 1;
+
 const ASSET_ENTRY_KEYS = new Set(["contentHash", "size", "contentType"]);
 const CSS_ENTRY_KEYS = new Set([
   "contentHash",
@@ -314,14 +336,39 @@ export interface ReadyReleaseAssetManifestResponse {
 // ---------------------------------------------------------------------------
 
 /**
+ * Options shared by the dependency-free consumption parsers. `acceptLegacyV1`
+ * defaults to `false`, so a v1 manifest body is rejected as a schema skew; set
+ * it to `true` only on read paths that must still adapt a readable v1 manifest.
+ */
+export interface ReleaseAssetManifestParseOptions {
+  /**
+   * Accept the v1 body still held for releases published before the v2 move.
+   *
+   * Off by default, and deliberately opt-in per call site.
+   *
+   * Runtime reads must set it, or every release published before the v2 move
+   * loses its browser modules. Producer-side callers must not: for the build
+   * executor verifying what it just emitted, the CLI waiting on a deploy, or a
+   * locally built bundle, a v1 body means the builder and this framework are
+   * skewed, and accepting it would hide that skew instead of naming it.
+   *
+   * @default false
+   */
+  readonly acceptLegacyV1?: boolean;
+}
+
+/**
  * Parse an untrusted manifest without requiring a registered schema extension.
  *
  * The parser is non-throwing, applies explicit work and memory bounds, validates
  * route references, and returns a detached deeply frozen snapshot.
  */
-export function parseReleaseAssetManifest(value: unknown): ReleaseAssetManifest | null {
+export function parseReleaseAssetManifest(
+  value: unknown,
+  options: ReleaseAssetManifestParseOptions = {},
+): ReleaseAssetManifest | null {
   try {
-    return parseReleaseAssetManifestImpl(value);
+    return parseReleaseAssetManifestImpl(value, options.acceptLegacyV1 === true);
   } catch {
     return null;
   }
@@ -337,6 +384,7 @@ export function parseReleaseAssetManifest(value: unknown): ReleaseAssetManifest 
 export function parseReadyReleaseAssetManifestResponse(
   value: unknown,
   expectedReleaseId: string,
+  options: ReleaseAssetManifestParseOptions = {},
 ): ReadyReleaseAssetManifestResponse | null {
   try {
     if (!isSafeBoundedText(expectedReleaseId, MAX_IDENTIFIER_LENGTH)) return null;
@@ -344,7 +392,7 @@ export function parseReadyReleaseAssetManifestResponse(
 
     const state = readOwnDataProperty(value, "state");
     const manifestVersion = readOwnDataProperty(value, "manifest_version");
-    const manifest = parseReleaseAssetManifest(readOwnDataProperty(value, "manifest"));
+    const manifest = parseReleaseAssetManifest(readOwnDataProperty(value, "manifest"), options);
     if (
       state !== "ready" ||
       !isSafeIntegerInRange(manifestVersion, Number.MAX_SAFE_INTEGER) ||
@@ -381,6 +429,7 @@ export function parseReadyReleaseAssetManifestResponse(
 export function describeReadyReleaseAssetManifestRejection(
   value: unknown,
   expectedReleaseId: string,
+  options: ReleaseAssetManifestParseOptions = {},
 ): string {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return "the response envelope was not an object";
@@ -392,22 +441,32 @@ export function describeReadyReleaseAssetManifestRejection(
   }
 
   const body = readUntrustedOwnDataProperty(value, "manifest");
-  const manifest = parseReleaseAssetManifest(body);
+  const manifest = parseReleaseAssetManifest(body, options);
   if (!manifest) {
     const schemaVersion = readUntrustedOwnDataProperty(body, "schemaVersion");
+    // Which versions count as skew depends on what this caller reads. A
+    // producer-side caller reads v2 only, so a v1 body there is a genuine
+    // framework skew. A runtime read also accepts v1, so a v1 body that still
+    // fails is corrupt -- calling that a skew would send operators to upgrade
+    // the builder for something an upgrade cannot fix.
+    const acceptsLegacyV1 = options.acceptLegacyV1 === true;
     if (
       isSafeIntegerInRange(schemaVersion, Number.MAX_SAFE_INTEGER) &&
-      schemaVersion !== RELEASE_ASSET_MANIFEST_SCHEMA_VERSION
+      schemaVersion !== RELEASE_ASSET_MANIFEST_SCHEMA_VERSION &&
+      !(acceptsLegacyV1 && schemaVersion === LEGACY_V1_SCHEMA_VERSION)
     ) {
+      const readable = acceptsLegacyV1
+        ? `versions ${LEGACY_V1_SCHEMA_VERSION} and ${RELEASE_ASSET_MANIFEST_SCHEMA_VERSION}`
+        : `version ${RELEASE_ASSET_MANIFEST_SCHEMA_VERSION}`;
       return `the release assets declare manifest schema version ${schemaVersion}, but this ` +
-        `build reads version ${RELEASE_ASSET_MANIFEST_SCHEMA_VERSION}. The assets were built ` +
-        `by a different framework version than the one running this deploy`;
+        `framework reads ${readable}. The assets were built ` +
+        `by a different framework version than the one reading them`;
     }
     return "the manifest body did not match the expected schema";
   }
 
   if (manifest.releaseId !== expectedReleaseId) {
-    return "the manifest identifies a different release than the one being deployed";
+    return "the manifest identifies a different release than the one requested";
   }
   if (manifest.manifestVersion !== manifestVersion) {
     return "the envelope and manifest body disagree on the manifest version";
@@ -431,7 +490,85 @@ export function readUntrustedOwnDataProperty(value: unknown, key: PropertyKey): 
   }
 }
 
-function parseReleaseAssetManifestImpl(value: unknown): ReleaseAssetManifest | null {
+/**
+ * Parse an untrusted body, tolerating the v1 shape still held in storage.
+ *
+ * Consumption must read what was published, not only what the current builder
+ * emits: every release predating the v2 move stored a v1 body, and refusing
+ * those takes the whole release's browser modules offline. Production stays
+ * strict — `getReleaseAssetManifestSchema` is v2-only, so no new v1 can be
+ * written — while reads adapt the old shape and then apply the full v2
+ * validator to it. The adapter only reshapes; it never validates.
+ */
+function parseReleaseAssetManifestImpl(
+  value: unknown,
+  acceptLegacyV1: boolean,
+): ReleaseAssetManifest | null {
+  const current = parseCurrentManifestBody(value);
+  if (current || !acceptLegacyV1) return current;
+
+  const adapted = adaptLegacyV1ManifestBody(value);
+  return adapted ? parseCurrentManifestBody(adapted) : null;
+}
+
+/**
+ * Reshape a v1 body into the v2 shape, or null when it is not a v1 body.
+ *
+ * `fallback` is dropped (nothing reads it) and `dependencyMode` is reported as
+ * `source`, which is what v1's always-empty `dependencies` means. CSS is
+ * dropped entirely: a v1 entry carries no `cssPipelineIdentity` and a
+ * short-token `styleProfileHash`, and both are cache-correctness keys that
+ * cannot be recovered from the stored artifact. Reporting no manifest CSS
+ * routes styling back through the renderer's own pipeline, which is the
+ * documented per-entry fallback; fabricating the identities would risk serving
+ * the wrong stylesheet. Route CSS references are cleared with it so the
+ * reference check still resolves.
+ */
+function adaptLegacyV1ManifestBody(value: unknown): Record<string, unknown> | null {
+  const candidate = snapshotExactDataRecord(value, LEGACY_V1_MANIFEST_KEYS);
+  if (!candidate) return null;
+  if (candidate.schemaVersion !== LEGACY_V1_SCHEMA_VERSION) return null;
+
+  const routes = adaptLegacyV1Routes(candidate.routes);
+  if (!routes) return null;
+
+  return {
+    schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
+    projectId: candidate.projectId,
+    releaseId: candidate.releaseId,
+    releaseVersion: candidate.releaseVersion,
+    manifestVersion: candidate.manifestVersion,
+    builderVersion: candidate.builderVersion,
+    sourceContentHash: candidate.sourceContentHash,
+    createdAt: candidate.createdAt,
+    assetBasePath: candidate.assetBasePath,
+    modules: candidate.modules,
+    css: [],
+    routes,
+    dependencyMode: "source",
+    dependencies: candidate.dependencies,
+  };
+}
+
+/** Copy v1 route entries with their CSS closure cleared. */
+function adaptLegacyV1Routes(value: unknown): Record<string, unknown> | null {
+  if (!isPlainRecord(value)) return null;
+  const keys = Object.keys(value);
+  if (keys.length > MAX_ROUTE_ENTRIES) return null;
+
+  // Null-prototype: route keys are untrusted, and assigning a key of
+  // `__proto__` onto a plain object hits the prototype setter instead of
+  // creating an own property. `snapshotRoutes` uses the same guard.
+  const routes: Record<string, unknown> = Object.create(null);
+  for (const key of keys) {
+    const entry = readUntrustedOwnDataProperty(value, key);
+    if (!isPlainRecord(entry)) return null;
+    routes[key] = { modules: readUntrustedOwnDataProperty(entry, "modules"), css: [] };
+  }
+  return routes;
+}
+
+function parseCurrentManifestBody(value: unknown): ReleaseAssetManifest | null {
   const candidate = snapshotExactDataRecord(value, MANIFEST_KEYS);
   if (!candidate) return null;
   if (candidate.schemaVersion !== RELEASE_ASSET_MANIFEST_SCHEMA_VERSION) return null;

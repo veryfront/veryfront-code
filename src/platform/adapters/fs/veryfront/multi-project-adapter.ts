@@ -316,10 +316,12 @@ export class MultiProjectFSAdapter implements FSAdapter {
     }
   }
 
-  async getAllSourceFiles(): Promise<Array<{ path: string; content?: string }>> {
+  async getAllSourceFiles(
+    options: { waitForWarmup?: boolean } = {},
+  ): Promise<Array<{ path: string; content?: string }>> {
     try {
       const adapter = await this.getAdapter();
-      const files = (await adapter.getAllSourceFiles?.()) ?? [];
+      const files = (await adapter.getAllSourceFiles?.(options)) ?? [];
 
       if (files.length === 0) {
         logger.debug("getAllSourceFiles returned empty", {

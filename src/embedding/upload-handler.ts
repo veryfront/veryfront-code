@@ -5,6 +5,7 @@ import { serverLogger } from "#veryfront/utils";
 import type { RagDocumentMeta, RagStore } from "./types.ts";
 import { loadUpload } from "./upload-loader.ts";
 import * as nodeBuffer from "node:buffer";
+import { resolveValidatedRequest } from "#veryfront/security/input-validation/handler.ts";
 
 const FileCtor = globalThis.File ??
   (nodeBuffer as typeof nodeBuffer & { File: typeof File }).File;
@@ -53,8 +54,12 @@ const EXT_TO_TYPE: Record<string, string> = {
   ppt: "ppt",
 };
 
+function normalizeMediaType(value: string): string {
+  return value.split(";", 1)[0]?.trim() ?? "";
+}
+
 function inferType(file: File): string | null {
-  const fromMime = MIME_TO_TYPE[file.type];
+  const fromMime = MIME_TO_TYPE[normalizeMediaType(file.type)];
   if (fromMime) return fromMime;
   const ext = file.name.split(".").pop()?.toLowerCase();
   return EXT_TO_TYPE[ext ?? ""] ?? null;
@@ -203,8 +208,41 @@ function toUploadRegistryItem(upload: RagDocumentMeta): UploadRegistryItem {
   };
 }
 
-function resolveDeleteId(request: Request, context: { params: Record<string, string> }): string {
-  const fromParams = context.params.id;
+/**
+ * Recover route params from a pages-router context.
+ *
+ * The app router passes them as a second argument; the pages executor puts them
+ * on the context it passes as the only argument, as `Record<string, string |
+ * string[]>` for catch-all segments. Without this a handler mounted at
+ * `pages/api/uploads/[id].ts` loses its id and falls back to the `?id=` query
+ * that a dynamic route does not use.
+ */
+function paramsFromContext(
+  candidate: unknown,
+): { params: Record<string, string> } | undefined {
+  if (typeof candidate !== "object" || candidate === null) return undefined;
+  let raw: unknown;
+  try {
+    raw = (candidate as Record<string, unknown>).params;
+  } catch {
+    return undefined;
+  }
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const params: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === "string") params[key] = value;
+    else if (Array.isArray(value)) params[key] = value.join("/");
+  }
+  return { params };
+}
+
+function resolveDeleteId(
+  request: Request,
+  context?: { params?: Record<string, string> },
+): string {
+  // The pages executor passes no second argument, so a route mounted there has
+  // no `params`. The `?id=` query fallback below is the documented form anyway.
+  const fromParams = context?.params?.id;
   if (fromParams) return fromParams;
 
   const fromQuery = new URL(request.url).searchParams.get("id");
@@ -293,6 +331,7 @@ export function createUploadHandler(
       // Sanitize file name: strip path components, HTML characters, and
       // control characters to prevent stored XSS via filenames rendered in UI.
       const safeName = sanitizeFileName(file.name);
+      const mediaType = normalizeMediaType(file.type) || typeToMime(fileType);
 
       const id = await store.ingest(safeName, text, {
         source: `upload:${safeName}`,
@@ -304,7 +343,7 @@ export function createUploadHandler(
         try {
           await sourceBlobStorage.put(file, {
             id,
-            mimeType: file.type || typeToMime(fileType),
+            mimeType: mediaType,
             metadata: {
               originalName: safeName,
               source: `upload:${safeName}`,
@@ -328,7 +367,7 @@ export function createUploadHandler(
       return Response.json({
         id,
         name: safeName,
-        mediaType: file.type || typeToMime(fileType),
+        mediaType,
         size: file.size,
       });
     } catch (error) {
@@ -352,7 +391,7 @@ export function createUploadHandler(
 
   async function DELETE(
     request: Request,
-    context: { params: Record<string, string> },
+    context?: { params?: Record<string, string> },
   ): Promise<Response> {
     try {
       const unauthorized = await authorizeUploadRequest(request, authorize);
@@ -381,5 +420,12 @@ export function createUploadHandler(
     }
   }
 
-  return { POST, GET, DELETE };
+  // Resolve at the boundary: these handlers read `formData`, `url` and headers,
+  // so unwrapping at one use would leave the others reading the context.
+  return {
+    POST: (request: Request) => POST(resolveValidatedRequest(request)),
+    GET: (request?: Request) => GET(request ? resolveValidatedRequest(request) : undefined),
+    DELETE: (request: Request, context?: { params?: Record<string, string> }) =>
+      DELETE(resolveValidatedRequest(request), context ?? paramsFromContext(request)),
+  };
 }

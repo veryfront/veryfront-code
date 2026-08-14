@@ -149,7 +149,7 @@ function requireRetryCount(value: number): number {
  * Ordinary non-idempotent requests are not replayed. A bounded control-plane
  * run stream invocation may retry to the shared runtime when the dedicated
  * runtime refuses the connection. Missing, chunked, invalid, and oversized
- * bodies remain single-shot so cloning cannot buffer unbounded input.
+ * bodies remain single-shot so teeing cannot buffer unbounded input.
  */
 export function getUpstreamRetryCount(
   request: Request,
@@ -185,8 +185,8 @@ export function shouldRetryUpstreamRequest(
 /**
  * Build one independently consumable body stream for every upstream attempt.
  * Request bodies are one-shot streams, so reusing the first stream would make
- * a retry fail before it reaches the fallback runtime. Cloning before the
- * first fetch preserves the exact signed bytes for each attempt.
+ * a retry fail before it reaches the fallback runtime. Tee branches created
+ * before the first fetch preserve the exact signed bytes for each attempt.
  */
 export function getReplayableRequestBodies(
   request: Request,
@@ -200,9 +200,12 @@ export function getReplayableRequestBodies(
   if (bodyKind === "unsupported" || attemptCount === 1) return [request.body];
 
   const bodies: Array<ReadableStream<Uint8Array> | null> = [];
+  let remainingBody = request.body!;
   for (let attempt = 1; attempt < attemptCount; attempt++) {
-    bodies.push(request.clone().body);
+    const [attemptBody, nextRemainingBody] = remainingBody.tee();
+    bodies.push(attemptBody);
+    remainingBody = nextRemainingBody;
   }
-  bodies.push(request.body);
+  bodies.push(remainingBody);
   return bodies;
 }

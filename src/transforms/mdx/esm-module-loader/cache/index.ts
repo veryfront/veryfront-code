@@ -9,6 +9,7 @@
 import { fromFileUrl, join } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
 import {
+  ensureCacheDirIgnored,
   getCacheBaseDir,
   getHttpBundleCacheDir,
   getMdxEsmCacheDir,
@@ -615,6 +616,9 @@ export async function clearHttpBundleCache(): Promise<void> {
 export async function clearAllLocalCaches(): Promise<void> {
   clearModulePathCache();
   await Promise.all([clearESMDiskCache(), clearHttpBundleCache()]);
+  // The cache root lives inside the user's project outside production, so keep
+  // the generated bundles out of their version control before writing more.
+  await ensureCacheDirIgnored();
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared all local caches`);
 }
 

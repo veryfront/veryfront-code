@@ -1,6 +1,7 @@
+import { CSP_REPORT_PATH } from "#veryfront/security/http/csp-report-endpoint.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   applySecurityHeaders,
@@ -10,8 +11,11 @@ import {
   SECURITY_POLICY_RESPONSE_HEADER_NAMES,
 } from "./security-handler.ts";
 import type { SecurityConfig } from "./types.ts";
+import { deriveSecurityContext } from "../config.ts";
 import {
   PLATFORM_ASSET_ORIGINS,
+  PLATFORM_FONT_FILE_ORIGINS,
+  PLATFORM_FONT_STYLE_ORIGINS,
   PLATFORM_IMAGE_ORIGINS,
   PLATFORM_SCRIPT_ORIGINS,
 } from "#veryfront/security/http/platform-asset-origins.ts";
@@ -169,6 +173,38 @@ describe("security/http/response/security-handler", () => {
       assert(!result.includes("style-src-elem"), "no shadowing directive is emitted");
     });
 
+    it("admits the fonts veryfront/fonts emits for a project with no config", () => {
+      // GoogleFonts (src/react/fonts/index.ts) writes the googleapis stylesheet
+      // and gstatic preconnect into the document itself, so a policy omitting
+      // them forbids the same response's own assets. A config-free project used
+      // to render in a fallback font with only a console error to show for it.
+      const result = buildCSP(false, "n", null);
+
+      assertAllows(
+        parseDirectiveRemoteHosts(result, "style-src"),
+        "fonts.googleapis.com",
+        "the stylesheet the framework links is loadable",
+      );
+      assertAllows(
+        parseDirectiveRemoteHosts(result, "font-src"),
+        "fonts.gstatic.com",
+        "the font files that stylesheet references are loadable",
+      );
+    });
+
+    it("lets a project that never calls veryfront/fonts drop the font origins", () => {
+      // Baseline, not floor: dropping it can only affect the project's own
+      // content, so hardening past the default stays available.
+      const result = buildCSP(false, "n", {
+        csp: { styleSrc: null, fontSrc: null },
+      });
+
+      assertEquals(parseDirectiveRemoteHosts(result, "style-src"), []);
+      assertEquals(parseDirectiveRemoteHosts(result, "font-src"), []);
+      assert(parseDirectiveSources(result, "style-src").includes("'self'"), "floor survives");
+      assert(result.includes("'nonce-n'"), "script-src floor survives");
+    });
+
     it("should handle camelCase and kebab-case directive keys alike", () => {
       const camel = buildCSP(false, "n2", { csp: { fontSrc: ["https://a.example"] } });
       const kebab = buildCSP(false, "n2", { csp: { "font-src": ["https://a.example"] } });
@@ -184,9 +220,11 @@ describe("security/http/response/security-handler", () => {
           "font-src": ["https://b.example"],
         },
       });
+      // Sorted by the helper; fonts.gstatic.com rides along from the baseline.
       assertEquals(parseDirectiveRemoteHosts(result, "font-src"), [
         "a.example",
         "b.example",
+        "fonts.gstatic.com",
       ]);
     });
 
@@ -367,12 +405,19 @@ describe("security/http/response/security-handler", () => {
       const permitted = new Set<string>(
         PLATFORM_ASSET_ORIGINS.map((origin) => new URL(origin).hostname),
       );
-      // Only these two carry a platform asset. Every other directive must be
+      // Only these carry a platform asset. Every other directive must be
       // exactly host-free, checked by exclusion so a directive added to the
       // policy later is covered here without anyone remembering to list it.
       // connect-src carries the script origins so the browser may fetch the
-      // source maps those modules reference.
-      const mayCarryPlatformHosts = new Set(["script-src", "img-src", "connect-src"]);
+      // source maps those modules reference. style-src and font-src carry the
+      // Google Fonts origins because `veryfront/fonts` emits those tags.
+      const mayCarryPlatformHosts = new Set([
+        "script-src",
+        "img-src",
+        "connect-src",
+        "style-src",
+        "font-src",
+      ]);
 
       for (
         const directive of [
@@ -407,7 +452,11 @@ describe("security/http/response/security-handler", () => {
         parseDirectiveSources(csp, "connect-src"),
         ["'self'", ...PLATFORM_SCRIPT_ORIGINS],
       );
-      assertEquals(parseDirectiveSources(csp, "font-src"), ["'self'", "data:"]);
+      assertEquals(parseDirectiveSources(csp, "font-src"), [
+        "'self'",
+        "data:",
+        ...PLATFORM_FONT_FILE_ORIGINS,
+      ]);
     });
 
     it("default CSP admits the platform assets the renderer emits", () => {
@@ -472,7 +521,11 @@ describe("security/http/response/security-handler", () => {
         !styleElemSources.some((source) => source.startsWith("'nonce-")),
         "style-src should not mix a nonce with unsafe-inline because browsers ignore unsafe-inline when nonce/hash sources are present",
       );
-      assertEquals(styleElemSources, ["'self'", "'unsafe-inline'"]);
+      assertEquals(styleElemSources, [
+        "'self'",
+        "'unsafe-inline'",
+        ...PLATFORM_FONT_STYLE_ORIGINS,
+      ]);
       assert(
         mediaSources.includes("blob:"),
         "media-src should allow blob media URLs generated by browser media pipelines",
@@ -553,15 +606,63 @@ describe("security/http/response/security-handler", () => {
   });
 
   describe("applySecurityHeaders", () => {
+    /**
+     * Read the policy whichever header carries it. The floor is served
+     * report-only until a project opts in, so tests asserting policy *content*
+     * must not also assert the enforcement mode -- that is covered separately.
+     */
+    const getCsp = (headers: Headers): string | null =>
+      // Reported first: the enforced header carries only the directives that
+      // bind, so the full policy is the reported one whenever both are served.
+      headers.get("Content-Security-Policy-Report-Only") ??
+        headers.get("Content-Security-Policy");
+
     it("keeps the canonical policy-owned header list aligned with production output", () => {
       const headers = applyHeaders({
         adapter: createMockAdapter({ VERYFRONT_COEP: "require-corp" }),
       });
 
+      // Exactly one of the two CSP header names is emitted per response, so
+      // production output is a subset of the owned list rather than equal to it.
+      const emitted = [...headers.keys()].sort();
+      const owned = [...SECURITY_POLICY_RESPONSE_HEADER_NAMES];
+      for (const name of emitted) {
+        assert(owned.includes(name as typeof owned[number]), `${name} must be policy-owned`);
+      }
+      // Two now, deliberately: the reported floor and the subset that binds
+      // beside it. They are complementary rather than alternatives.
       assertEquals(
-        [...headers.keys()].sort(),
-        [...SECURITY_POLICY_RESPONSE_HEADER_NAMES].sort(),
+        emitted.filter((n) => n.startsWith("content-security-policy")).sort(),
+        ["content-security-policy", "content-security-policy-report-only"],
       );
+      assertEquals(
+        owned.filter((n) => !n.startsWith("content-security-policy")).sort(),
+        emitted.filter((n) => !n.startsWith("content-security-policy")),
+        "every other owned header is emitted",
+      );
+    });
+
+    it("points the policy at a reporting group the response actually defines", () => {
+      // The failure mode this guards is silent: a `report-to` naming a group
+      // that `Reporting-Endpoints` does not define makes the browser send
+      // nothing at all, and the policy still looks correct in devtools.
+      const headers = applyHeaders();
+      const policy = getCsp(headers) ?? "";
+
+      const group = /report-to ([^;]+)/.exec(policy)?.[1]?.trim();
+      assert(group, "policy must carry a report-to directive");
+
+      const endpoints = headers.get("Reporting-Endpoints") ?? "";
+      assert(
+        endpoints.includes(`${group}=`),
+        `Reporting-Endpoints (${endpoints}) must define the group named by report-to (${group})`,
+      );
+
+      // The deprecated spelling is still the only one some browsers honour, and
+      // it takes a path rather than a group name.
+      const reportUri = /report-uri ([^;]+)/.exec(policy)?.[1]?.trim();
+      assertEquals(reportUri, CSP_REPORT_PATH);
+      assert(endpoints.includes(`"${CSP_REPORT_PATH}"`), "both spellings must aim at one path");
     });
 
     it("should set X-Content-Type-Options", () => {
@@ -595,7 +696,7 @@ describe("security/http/response/security-handler", () => {
 
     it("should set CSP frame-ancestors with veryfront origins when isVeryfrontDomain is true (SEC-007)", () => {
       const headers = applyHeaders({ isVeryfrontDomain: true });
-      const csp = headers.get("Content-Security-Policy");
+      const csp = getCsp(headers);
       assert(csp !== null, "CSP header should be present");
       const frameAncestors = parseDirectiveSources(csp, "frame-ancestors");
       assertEquals(
@@ -611,7 +712,7 @@ describe("security/http/response/security-handler", () => {
 
     it("should set CSP frame-ancestors 'none' for non-veryfront domains (SEC-007)", () => {
       const headers = applyHeaders({ isVeryfrontDomain: false });
-      const csp = headers.get("Content-Security-Policy");
+      const csp = getCsp(headers);
       assert(csp !== null, "CSP header should be present");
       assert(
         csp.includes("frame-ancestors 'none'"),
@@ -656,12 +757,222 @@ describe("security/http/response/security-handler", () => {
 
     it("should set default CSP in production when no CSP config", () => {
       const headers = applyHeaders();
-      assertEquals(headers.get("Content-Security-Policy"), buildCSP(false, "nonce", null));
+      // Report-only: a project that configured nothing has not opted in.
+      assertEquals(
+        headers.get("Content-Security-Policy-Report-Only"),
+        buildCSP(false, "nonce", null),
+      );
+      assertEquals(
+        headers.get("Content-Security-Policy"),
+        "object-src 'none'; base-uri 'self'",
+        "the directives safe to bind for everyone bind for everyone",
+      );
     });
 
     it("should not set CSP in dev mode when no CSP config", () => {
       const headers = applyHeaders({ isDev: true });
       assertEquals(headers.has("Content-Security-Policy"), false);
+      assertEquals(headers.has("Content-Security-Policy-Report-Only"), false);
+    });
+
+    it("enforces a directive the project declared, and only that one", () => {
+      // Declaring a directive is taken as meaning it. Inferring from one image
+      // origin that the project also wants `script-src` bound across its site
+      // is a different claim, and not one it made.
+      const headers = applyHeaders({ config: { csp: { imgSrc: ["https://cdn.example.com"] } } });
+
+      const enforced = headers.get("Content-Security-Policy") ?? "";
+      assertStringIncludes(enforced, "img-src");
+      assertStringIncludes(enforced, "https://cdn.example.com");
+      assert(!enforced.includes("script-src"), "an undeclared directive keeps reporting");
+
+      // The full policy still reports, so violations stay visible.
+      assertStringIncludes(headers.get("Content-Security-Policy-Report-Only") ?? "", "script-src");
+    });
+
+    it("does not tighten a directive that would fall back to an enforced one", () => {
+      // CSP resolves a missing directive through a fallback chain, so a policy
+      // with `script-src` and no `worker-src` constrains workers *by*
+      // `script-src`. Omitting the descendants would block the `blob:` workers
+      // the reported `worker-src` explicitly allows.
+      const headers = applyHeaders({ config: { csp: { scriptSrc: ["https://cdn.example.com"] } } });
+      const enforced = headers.get("Content-Security-Policy") ?? "";
+      const reported = headers.get("Content-Security-Policy-Report-Only") ?? "";
+
+      const directive = (policy: string, name: string) =>
+        policy.split("; ").find((part) => part.startsWith(`${name} `)) ?? "";
+
+      for (const name of ["worker-src", "frame-src"]) {
+        assertEquals(
+          directive(enforced, name),
+          directive(reported, name),
+          `${name} must bind as it was reported, not as script-src`,
+        );
+      }
+      assertStringIncludes(directive(enforced, "worker-src"), "blob:");
+    });
+
+    it("treats an undefined directive value as unconfigured", () => {
+      // The merge skips `undefined`; the enforced set must agree, or a project
+      // writing `scriptSrc: undefined` binds a script-src it never configured.
+      const enforced = applyHeaders({ config: { csp: { scriptSrc: undefined } } }).get(
+        "Content-Security-Policy",
+      ) ?? "";
+      assertEquals(enforced, "object-src 'none'; base-uri 'self'");
+    });
+
+    it("binds only the always-enforced pair for an empty csp object", () => {
+      // Touching the key says nothing about which directives the project means.
+      const enforced = applyHeaders({ config: { csp: {} } }).get("Content-Security-Policy") ?? "";
+      assertEquals(enforced, "object-src 'none'; base-uri 'self'");
+    });
+
+    it("keeps the always-enforced pair even when a project tries to drop it", () => {
+      // `null` drops a directive's baseline sources, never the required ones,
+      // which is what stops a project from breaking its own site through
+      // config. Both of these are required, so both still bind.
+      const enforced = applyHeaders({ config: { csp: { objectSrc: null } } }).get(
+        "Content-Security-Policy",
+      ) ?? "";
+      assertEquals(enforced, "object-src 'none'; base-uri 'self'");
+    });
+
+    it("reports rather than enforces for a project that configures other security keys", () => {
+      // `security.cors` is not a CSP opt-in. This is the shape that made the
+      // audit ambiguous: a `security` block exists, but no policy was tuned.
+      const headers = applyHeaders({ config: { cors: true } });
+      assertEquals(headers.get("Content-Security-Policy"), "object-src 'none'; base-uri 'self'");
+      assert(headers.get("Content-Security-Policy-Report-Only") !== null);
+    });
+
+    it("enforces an ops-level VERYFRONT_CSP override even without project opt-in", () => {
+      // Writing a whole policy by hand is already an explicit act; serving it
+      // report-only would make the override do nothing.
+      const adapter = createMockAdapter({ VERYFRONT_CSP: "default-src 'self'" });
+      const headers = applyHeaders({ adapter });
+      assertEquals(headers.get("Content-Security-Policy"), "default-src 'self'");
+      assertEquals(headers.has("Content-Security-Policy-Report-Only"), false);
+    });
+
+    it("ignores a project-supplied Content-Security-Policy in security.headers", () => {
+      // `security.headers` has no override path for CSP the way Referrer-Policy
+      // and X-Frame-Options do, so a value here would silently replace the
+      // merged platform floor rather than extend it.
+      const headers = applyHeaders({
+        config: {
+          csp: { imgSrc: ["https://cdn.example.com"] },
+          headers: { "Content-Security-Policy": "default-src *" },
+        },
+      });
+      assertEquals(
+        getCsp(headers),
+        buildCSP(false, "nonce", { csp: { imgSrc: ["https://cdn.example.com"] } }),
+      );
+    });
+
+    it("ignores a project-supplied report-only header, matching case-insensitively", () => {
+      // Header names are case-insensitive, and the report-only name is a live
+      // delivery mode now -- a project value here could flip which mode is
+      // served, not just what it contains.
+      const headers = applyHeaders({
+        config: { headers: { "Content-Security-Policy-Report-Only": "default-src *" } },
+      });
+      assertEquals(
+        headers.get("Content-Security-Policy-Report-Only"),
+        buildCSP(false, "nonce", { headers: {} } as SecurityConfig),
+      );
+      // The enforced companion is platform-owned too, and is unaffected by
+      // whatever the project tried to set.
+      assertEquals(headers.get("Content-Security-Policy"), "object-src 'none'; base-uri 'self'");
+    });
+
+    it("still honors the override paths that are meant to exist", () => {
+      // Guard against over-correcting: skipping CSP must not disturb the
+      // headers `security.headers` is legitimately allowed to set.
+      const headers = applyHeaders({
+        config: {
+          headers: {
+            "Content-Security-Policy": "default-src *",
+            "Referrer-Policy": "no-referrer",
+            "X-Custom": "kept",
+          },
+        },
+      });
+      assertEquals(headers.get("Referrer-Policy"), "no-referrer");
+      assertEquals(headers.get("X-Custom"), "kept");
+    });
+
+    it("merges derived origins between the floor and project config", () => {
+      const result = buildCSP(false, "n", {
+        derivedCsp: { "img-src": ["https://cdn.derived.example"] },
+        csp: { imgSrc: ["https://cdn.configured.example"] },
+      } as SecurityConfig);
+      const sources = parseDirectiveSources(result, "img-src");
+      assertAllows(sources, "https://cdn.derived.example", "derived origin is admitted");
+      assertAllows(sources, "https://cdn.configured.example", "configured origin still applies");
+      assert(sources.includes("'self'"), "the floor survives");
+    });
+
+    it("admits derived origins with no project csp at all", () => {
+      // The whole point: a project that configures nothing still loads the
+      // assets its own source references.
+      const result = buildCSP(false, "n", {
+        derivedCsp: { "img-src": ["https://cdn.derived.example"] },
+      } as SecurityConfig);
+      assertAllows(
+        parseDirectiveSources(result, "img-src"),
+        "https://cdn.derived.example",
+        "derivation alone is enough",
+      );
+    });
+
+    it("lets an explicit null still drop a directive to the floor", () => {
+      // A project that says it wants nothing extra means it. Static analysis
+      // must not put back what was just explicitly removed.
+      const result = buildCSP(false, "n", {
+        derivedCsp: { "font-src": ["https://fonts.derived.example"] },
+        csp: { fontSrc: null },
+      } as SecurityConfig);
+      assertEquals(parseDirectiveRemoteHosts(result, "font-src"), []);
+      assert(parseDirectiveSources(result, "font-src").includes("'self'"), "floor survives");
+    });
+
+    it("never lets a project author its own derived layer", () => {
+      // SecurityConfig has an index signature, so `security.derivedCsp` in a
+      // project config would otherwise be copied through and become a second,
+      // unaudited way to widen the policy.
+      const ctx = deriveSecurityContext(
+        { security: { derivedCsp: { "script-src": ["https://evil.example"] } } } as never,
+        { productionDefaults: true },
+      );
+      assertEquals(ctx.securityConfig.derivedCsp, undefined);
+      const result = buildCSP(false, "n", ctx.securityConfig);
+      assert(
+        !new Set(parseDirectiveSources(result, "script-src")).has("https://evil.example"),
+        "a project-declared derived layer must not reach the policy",
+      );
+    });
+
+    it("replaces rather than merges a project-declared derived layer", () => {
+      const ctx = deriveSecurityContext(
+        { security: { derivedCsp: { "img-src": ["https://evil.example"] } } } as never,
+        { productionDefaults: true, derivedCsp: { "img-src": ["https://cdn.real.example"] } },
+      );
+      assertEquals(ctx.securityConfig.derivedCsp, { "img-src": ["https://cdn.real.example"] });
+    });
+
+    it("serves the same policy whether or not a directive binds", () => {
+      // The bound subset is a slice of the reported policy, not a different
+      // policy. A project that declares `img-src` must see the same sources in
+      // both places, or the enforced header would be stricter than the one it
+      // was shown.
+      const headers = applyHeaders({ config: { csp: { imgSrc: ["https://cdn.example.com"] } } });
+      const reported = headers.get("Content-Security-Policy-Report-Only") ?? "";
+      const enforced = headers.get("Content-Security-Policy") ?? "";
+
+      const imgFrom = (policy: string) =>
+        policy.split("; ").find((part) => part.startsWith("img-src ")) ?? "";
+      assertEquals(imgFrom(enforced), imgFrom(reported));
     });
 
     it("should apply extra headers from config", () => {
@@ -734,7 +1045,7 @@ describe("security/http/response/security-handler", () => {
       };
       const headers = applyHeaders({ config });
       assertEquals(
-        headers.get("Content-Security-Policy"),
+        getCsp(headers),
         buildCSP(false, "nonce", config),
       );
     });
@@ -756,10 +1067,10 @@ describe("security/http/response/security-handler", () => {
       };
       const headers = applyHeaders({ config });
       assertEquals(
-        headers.get("Content-Security-Policy"),
+        getCsp(headers),
         buildCSP(false, "nonce", config),
       );
-      const csp = headers.get("Content-Security-Policy") ?? "";
+      const csp = getCsp(headers) ?? "";
       assert(
         parseDirectiveSources(csp, "frame-src").includes("'self'"),
         "the floor's own frame-src survives the addition",
@@ -770,7 +1081,7 @@ describe("security/http/response/security-handler", () => {
       const config: SecurityConfig = { csp: {} };
       const headers = applyHeaders({ config });
       assertEquals(
-        headers.get("Content-Security-Policy"),
+        getCsp(headers),
         buildCSP(false, "nonce", config),
       );
     });

@@ -209,6 +209,48 @@ describe("agent/hosted-stream-finalization", () => {
     ]);
   });
 
+  it("completes hosted responses after a trailing provider failure", async () => {
+    const calls: string[] = [];
+
+    await finalizeHostedResponse({
+      isAborted: false,
+      streamError: new Error("Provider request failed with status 502"),
+      getFinalStep: async () => ({ step: 1, finishReason: "tool-calls" }),
+      buildState: async () => ({
+        persistedMessage: { id: "msg-1" },
+        finalizedMessage: { id: "msg-1", parts: ["text"] },
+        fallbackChunks: ["chunk-1"],
+        hasIncompleteToolParts: false,
+        metadata: { modelId: "anthropic/claude-haiku-4-5" },
+      }),
+      shouldFailEmptyMessage: () => false,
+      resolveEmptyTerminalError: ({ streamError }) => ({
+        code: "STREAM_ERROR",
+        message: streamError instanceof Error ? streamError.message : String(streamError),
+      }),
+      appendFallbackChunk: async (chunk) => {
+        calls.push(`append:${chunk}`);
+      },
+      flushMirror: async () => {
+        calls.push("flush");
+      },
+      dispatchTerminalState: async (state) => {
+        calls.push(`dispatch:${state.status}:${state.metadata?.modelId}`);
+      },
+      resolveTerminalState: () => ({ status: "completed" }),
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+    });
+
+    assertEquals(calls, [
+      "append:chunk-1",
+      "flush",
+      "dispatch:completed:anthropic/claude-haiku-4-5",
+      "cleanup",
+    ]);
+  });
+
   it("fails hosted responses with content when a body read fails without a final step finish reason", async () => {
     const calls: string[] = [];
 

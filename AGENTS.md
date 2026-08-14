@@ -29,10 +29,11 @@ veryfront mcp
 # Run the full test suite
 VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 \
   NODE_ENV=production LOG_FORMAT=text \
-  deno test --no-check --allow-all --unstable-worker-options --unstable-net
+  deno test --preload=src/testing/preload.ts --no-check --allow-all \
+  --unstable-worker-options --unstable-net
 
 # Unit tests only, parallel, excluding integration suites
-deno test --no-check --allow-all --parallel \
+deno test --preload=src/testing/preload.ts --no-check --allow-all --parallel \
   '--ignore=tests,src/workflow/__tests__,cli/commands/*.integration.test.ts'
 ```
 

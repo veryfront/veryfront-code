@@ -20,6 +20,7 @@
 const SCAN_ROOTS = [
   "src",
   "cli",
+  "templates",
   "tests",
   "react",
   "extensions",

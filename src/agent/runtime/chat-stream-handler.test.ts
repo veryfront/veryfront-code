@@ -25,6 +25,14 @@ import {
   ManualMonotonicClock,
   StreamLifecycleFailure,
 } from "#veryfront/agent/streaming/lifecycle/index.ts";
+import { shouldContinueAfterStreamStep } from "./tool-result-continuation.ts";
+import { createChatUiMessageStreamFromDataStream } from "#veryfront/agent/streaming/chat-ui-message-stream.ts";
+import {
+  hasIncompleteToolParts,
+  isToolUiPart,
+  toConversationPartsFromUiMessage,
+} from "#veryfront/chat/conversation.ts";
+import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 
 afterEach(() => {
   _resetShimForTests();
@@ -396,7 +404,7 @@ describe("chat-stream-handler", () => {
           output: { submitted: false },
           providerExecuted: true,
         },
-        { type: "text-delta", text: " After tool." },
+        { type: "text-delta", text: "I've opened the panel." },
         { type: "finish", finishReason: "stop", totalUsage: null },
       ]);
 
@@ -420,9 +428,9 @@ describe("chat-stream-handler", () => {
           output: { submitted: false },
           providerExecuted: true,
         },
-        { type: "text-start", id: "text-1" },
-        { type: "text-delta", id: "text-1", delta: " After tool." },
-        { type: "text-end", id: "text-1" },
+        { type: "text-start", id: "text-1:1" },
+        { type: "text-delta", id: "text-1:1", delta: "I've opened the panel." },
+        { type: "text-end", id: "text-1:1" },
       ]);
     });
 
@@ -1306,6 +1314,12 @@ describe("chat-stream-handler", () => {
         toolName: "web_search",
         input: { query: "Veryfront" },
         providerExecuted: true,
+      }, {
+        type: "tool-output-error",
+        toolCallId: "tc-provider",
+        errorText:
+          'Provider-executed tool "web_search" returned no result before the model turn ended.',
+        providerExecuted: true,
       }]);
     });
 
@@ -1338,6 +1352,12 @@ describe("chat-stream-handler", () => {
         toolCallId: "tc-provider-inferred",
         toolName: "web_search",
         input: { query: "Veryfront" },
+        providerExecuted: true,
+      }, {
+        type: "tool-output-error",
+        toolCallId: "tc-provider-inferred",
+        errorText:
+          'Provider-executed tool "web_search" returned no result before the model turn ended.',
         providerExecuted: true,
       }]);
     });
@@ -2005,6 +2025,41 @@ describe("processStream active mode", () => {
     ]);
   });
 
+  it("matches legacy SSE and preserves resumed text after a tool interruption", async () => {
+    const { active } = await assertModeParity([
+      { type: "text-delta", text: "Before tool." },
+      { type: "tool-input-start", id: "native-1", toolName: "web_search" },
+      {
+        type: "tool-input-available",
+        toolCallId: "native-1",
+        toolName: "web_search",
+        input: { query: "x" },
+      },
+      {
+        type: "tool-result",
+        toolCallId: "native-1",
+        toolName: "web_search",
+        result: { answer: 42 },
+      },
+      { type: "text-delta", text: "I've opened the panel." },
+      { type: "finish", finishReason: "stop", totalUsage: null },
+    ]);
+
+    assertEquals(
+      active.events.filter((event) =>
+        typeof event.type === "string" && event.type.startsWith("text-")
+      ),
+      [
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "Before tool." },
+        { type: "text-end", id: "text-1" },
+        { type: "text-start", id: "text-1:1" },
+        { type: "text-delta", id: "text-1:1", delta: "I've opened the panel." },
+        { type: "text-end", id: "text-1:1" },
+      ],
+    );
+  });
+
   it("matches legacy SSE and state for a committed local tool call", async () => {
     const { active } = await assertModeParity([
       { type: "tool-input-start", id: "local-1", toolName: "create_file" },
@@ -2332,5 +2387,682 @@ describe("active mode delivery failure precedence", () => {
     if (state.streamOutcome?.status === "cancelled") {
       assertEquals(state.streamOutcome.source, "consumer_stopped");
     }
+  });
+});
+
+describe("chat-stream-handler provider-executed tool finalization", () => {
+  /**
+   * Stream source whose parts can be separated by real delays.
+   * `cleanup()` clears any timer left pending when the stream is truncated.
+   */
+  function createDelayedResult(
+    steps: Array<{ chunk: Record<string, unknown>; delayMs?: number }>,
+  ) {
+    const pendingTimers = new Set<number>();
+    const fullStream = {
+      async *[Symbol.asyncIterator]() {
+        for (const step of steps) {
+          if (step.delayMs) {
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(() => {
+                pendingTimers.delete(timer);
+                resolve();
+              }, step.delayMs);
+              pendingTimers.add(timer);
+            });
+          }
+          yield step.chunk;
+        }
+      },
+    };
+    const textStream = { async *[Symbol.asyncIterator]() {} };
+    const cleanup = () => {
+      for (const timer of pendingTimers) clearTimeout(timer);
+      pendingTimers.clear();
+    };
+    return { fullStream, textStream, cleanup };
+  }
+
+  /** Stream result driven by an arbitrary generator, for abort and throw paths. */
+  function createGeneratorResult(
+    body: () => AsyncGenerator<Record<string, unknown>>,
+  ) {
+    return {
+      fullStream: { [Symbol.asyncIterator]: body },
+      textStream: { async *[Symbol.asyncIterator]() {} },
+    };
+  }
+
+  /** Replay collected SSE events back as the data stream the UI assembler reads. */
+  function createSseStream(events: Array<Record<string, unknown>>): ReadableStream<Uint8Array> {
+    const sseEncoder = new TextEncoder();
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const event of events) {
+          controller.enqueue(sseEncoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        }
+        controller.close();
+      },
+    });
+  }
+
+  it("leaves a local web_fetch input-available tool unresolved (regression guard for #3043)", async () => {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+
+    const result = createMockResult([
+      { type: "tool-input-start", id: "local-fetch", toolName: "web_fetch" },
+      { type: "tool-input-delta", id: "local-fetch", delta: '{"url":"https://a.test"}' },
+      { type: "tool-input-end", id: "local-fetch" },
+      { type: "finish", finishReason: "tool-calls", totalUsage: null },
+    ]);
+
+    await processStream(result, state, controller, encoder, "t", {
+      providerExecutedToolNames: [],
+    });
+
+    assertEquals(state.toolResults, []);
+    assertEquals(state.toolCalls.get("local-fetch")?.providerExecuted, undefined);
+    assertEquals(
+      events.filter((event) =>
+        event.type === "tool-output-available" || event.type === "tool-output-error"
+      ),
+      [],
+    );
+  });
+
+  it("emits exactly one terminal event when a provider tool result arrives", async () => {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+
+    const result = createMockResult([
+      {
+        type: "tool-input-start",
+        id: "srvtoolu_01",
+        toolName: "web_fetch",
+        providerExecuted: true,
+      },
+      { type: "tool-input-delta", id: "srvtoolu_01", delta: '{"url":"https://a.test"}' },
+      { type: "tool-input-end", id: "srvtoolu_01" },
+      {
+        type: "tool-result",
+        toolCallId: "srvtoolu_01",
+        toolName: "web_fetch",
+        result: { type: "web_fetch_result", url: "https://a.test" },
+        providerExecuted: true,
+      },
+      { type: "finish", finishReason: "stop", totalUsage: null },
+    ]);
+
+    await processStream(result, state, controller, encoder, "t", {
+      providerExecutedToolNames: ["web_fetch"],
+    });
+
+    const terminalEvents = events.filter((event) =>
+      event.type === "tool-output-available" || event.type === "tool-output-error"
+    );
+    assertEquals(terminalEvents, [{
+      type: "tool-output-available",
+      toolCallId: "srvtoolu_01",
+      output: { type: "web_fetch_result", url: "https://a.test" },
+      providerExecuted: true,
+    }]);
+    assertEquals(state.toolResults.length, 1);
+  });
+
+  it("finalizes a provider tool call that never produced a result", async () => {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+
+    const result = createMockResult([
+      {
+        type: "tool-input-start",
+        id: "srvtoolu_02",
+        toolName: "web_fetch",
+        providerExecuted: true,
+      },
+      { type: "tool-input-delta", id: "srvtoolu_02", delta: '{"url":"https://a.test"}' },
+      { type: "tool-input-end", id: "srvtoolu_02" },
+      { type: "finish", finishReason: "stop", totalUsage: null },
+    ]);
+
+    await processStream(result, state, controller, encoder, "t", {
+      providerExecutedToolNames: ["web_fetch"],
+    });
+
+    const terminalEvents = events.filter((event) =>
+      event.type === "tool-output-available" || event.type === "tool-output-error"
+    );
+    assertEquals(terminalEvents.length, 1);
+    assertEquals(terminalEvents[0]?.type, "tool-output-error");
+    assertEquals(terminalEvents[0]?.toolCallId, "srvtoolu_02");
+    assertEquals(terminalEvents[0]?.providerExecuted, true);
+  });
+
+  it("finalizes a provider tool call that only produced a preliminary result", async () => {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+
+    // A preliminary result lands in `state.toolResults` like any other, so the
+    // finalizer must not read it as proof the provider answered. Otherwise a
+    // stream that ends after only a preliminary result emits no terminal part
+    // and the card is stranded exactly as it was before this fix.
+    const result = createMockResult([
+      {
+        type: "tool-input-start",
+        id: "srvtoolu_prelim_only",
+        toolName: "web_fetch",
+        providerExecuted: true,
+      },
+      { type: "tool-input-delta", id: "srvtoolu_prelim_only", delta: '{"url":"https://a.test"}' },
+      { type: "tool-input-end", id: "srvtoolu_prelim_only" },
+      {
+        type: "tool-result",
+        toolCallId: "srvtoolu_prelim_only",
+        toolName: "web_fetch",
+        result: { type: "web_fetch_result", url: "https://a.test", partial: true },
+        providerExecuted: true,
+        preliminary: true,
+      },
+      { type: "finish", finishReason: "stop", totalUsage: null },
+    ]);
+
+    await processStream(result, state, controller, encoder, "t", {
+      providerExecutedToolNames: ["web_fetch"],
+    });
+
+    const errorEvents = events.filter((event) => event.type === "tool-output-error");
+    assertEquals(errorEvents.length, 1);
+    assertEquals(errorEvents[0]?.toolCallId, "srvtoolu_prelim_only");
+    assertEquals(errorEvents[0]?.providerExecuted, true);
+  });
+
+  it("keeps the synthesized terminal event out of the runtime continuation decision", async () => {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+
+    const result = createMockResult([
+      {
+        type: "tool-input-start",
+        id: "srvtoolu_06",
+        toolName: "web_fetch",
+        providerExecuted: true,
+      },
+      { type: "tool-input-delta", id: "srvtoolu_06", delta: '{"url":"https://a.test"}' },
+      { type: "tool-input-end", id: "srvtoolu_06" },
+      { type: "finish", finishReason: "stop", totalUsage: null },
+    ]);
+
+    await processStream(result, state, controller, encoder, "t", {
+      providerExecutedToolNames: ["web_fetch"],
+    });
+
+    assertEquals(
+      events.filter((event) => event.type === "tool-output-error").length,
+      1,
+    );
+    // The provider genuinely produced nothing. Recording a result here would
+    // make the runtime re-call the model once per unresolved call until
+    // maxSteps, and persist a tool result the provider never returned.
+    assertEquals(state.toolResults, []);
+    assertEquals(shouldContinueAfterStreamStep(state), false);
+  });
+
+  it("settles the unresolved provider tool part at output-error so persistence keeps it", async () => {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+
+    const result = createMockResult([
+      {
+        type: "tool-input-start",
+        id: "srvtoolu_05",
+        toolName: "web_fetch",
+        providerExecuted: true,
+      },
+      { type: "tool-input-delta", id: "srvtoolu_05", delta: '{"url":"https://a.test"}' },
+      { type: "tool-input-end", id: "srvtoolu_05" },
+      { type: "finish", finishReason: "stop", totalUsage: null },
+    ]);
+
+    await processStream(result, state, controller, encoder, "t", {
+      providerExecutedToolNames: ["web_fetch"],
+    });
+
+    let responseMessage: ChatUiMessage | undefined;
+    const uiStream = createChatUiMessageStreamFromDataStream(
+      { stream: createSseStream(events) },
+      {
+        generateMessageId: () => "assistant-message",
+        onFinish: (finish) => {
+          responseMessage = finish.responseMessage;
+        },
+      },
+    );
+    for await (const _chunk of uiStream) {
+      // Drain: the assembled message is delivered through onFinish.
+    }
+
+    const toolParts = responseMessage?.parts.filter(isToolUiPart) ?? [];
+    assertEquals(toolParts.length, 1);
+    // `input-available` is what the Studio card renders as an endless spinner
+    // and what persistence judges incomplete.
+    assertEquals(toolParts[0]?.state, "output-error");
+    assertEquals(hasIncompleteToolParts(responseMessage!), false);
+
+    assertEquals(
+      toConversationPartsFromUiMessage(responseMessage!).filter((part) =>
+        part.type === "tool_result"
+      ),
+      [{
+        type: "tool_result",
+        tool_call_id: "srvtoolu_05",
+        output:
+          'Provider-executed tool "web_fetch" returned no result before the model turn ended.',
+        is_error: true,
+      }],
+    );
+  });
+
+  it("does not truncate a pending provider tool call after a local tool commits", async () => {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+
+    const result = createDelayedResult([
+      {
+        chunk: {
+          type: "tool-input-start",
+          id: "srvtoolu_03",
+          toolName: "web_fetch",
+          providerExecuted: true,
+        },
+      },
+      { chunk: { type: "tool-input-delta", id: "srvtoolu_03", delta: '{"url":"https://a.test"}' } },
+      { chunk: { type: "tool-input-end", id: "srvtoolu_03" } },
+      { chunk: { type: "tool-input-start", id: "local-1", toolName: "list_skills" } },
+      { chunk: { type: "tool-input-delta", id: "local-1", delta: "{}" } },
+      { chunk: { type: "tool-input-end", id: "local-1" } },
+      {
+        chunk: {
+          type: "tool-result",
+          toolCallId: "srvtoolu_03",
+          toolName: "web_fetch",
+          result: { type: "web_fetch_result", url: "https://a.test" },
+          providerExecuted: true,
+        },
+        delayMs: 200,
+      },
+      { chunk: { type: "finish", finishReason: "tool-calls", totalUsage: null } },
+    ]);
+
+    await processStream(result, state, controller, encoder, "t", {
+      providerExecutedToolNames: ["web_fetch"],
+      localToolCommitGraceMs: 40,
+    });
+    result.cleanup();
+
+    assertEquals(events.filter((event) => event.type === "tool-output-available"), [{
+      type: "tool-output-available",
+      toolCallId: "srvtoolu_03",
+      output: { type: "web_fetch_result", url: "https://a.test" },
+      providerExecuted: true,
+    }]);
+  });
+
+  it("keeps a provider tool call pending across a preliminary result", async () => {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+
+    // A preliminary result is not terminal. Releasing the call on it re-arms the
+    // local commit grace, which truncates the stream before the final provider
+    // result arrives: the same failure this tracking exists to prevent.
+    const result = createDelayedResult([
+      {
+        chunk: {
+          type: "tool-input-start",
+          id: "srvtoolu_prelim",
+          toolName: "web_fetch",
+          providerExecuted: true,
+        },
+      },
+      {
+        chunk: {
+          type: "tool-input-delta",
+          id: "srvtoolu_prelim",
+          delta: '{"url":"https://a.test"}',
+        },
+      },
+      { chunk: { type: "tool-input-end", id: "srvtoolu_prelim" } },
+      { chunk: { type: "tool-input-start", id: "local-prelim", toolName: "list_skills" } },
+      { chunk: { type: "tool-input-delta", id: "local-prelim", delta: "{}" } },
+      { chunk: { type: "tool-input-end", id: "local-prelim" } },
+      {
+        chunk: {
+          type: "tool-result",
+          toolCallId: "srvtoolu_prelim",
+          toolName: "web_fetch",
+          result: { type: "web_fetch_result", url: "https://a.test", partial: true },
+          providerExecuted: true,
+          preliminary: true,
+        },
+      },
+      {
+        chunk: {
+          type: "tool-result",
+          toolCallId: "srvtoolu_prelim",
+          toolName: "web_fetch",
+          result: { type: "web_fetch_result", url: "https://a.test" },
+          providerExecuted: true,
+        },
+        delayMs: 200,
+      },
+      { chunk: { type: "finish", finishReason: "tool-calls", totalUsage: null } },
+    ]);
+
+    await processStream(result, state, controller, encoder, "t", {
+      providerExecutedToolNames: ["web_fetch"],
+      localToolCommitGraceMs: 40,
+    });
+    result.cleanup();
+
+    const outputs = events.filter((event) => event.type === "tool-output-available");
+    assertEquals(outputs.length, 2);
+    assertEquals(outputs[1]?.output, { type: "web_fetch_result", url: "https://a.test" });
+  });
+
+  it("still truncates after a committed local tool call when no provider call is pending", async () => {
+    const { controller, encoder } = createSSECollector();
+    const state = createStreamState();
+
+    const result = createDelayedResult([
+      { chunk: { type: "tool-input-start", id: "local-2", toolName: "list_skills" } },
+      { chunk: { type: "tool-input-delta", id: "local-2", delta: "{}" } },
+      { chunk: { type: "tool-input-end", id: "local-2" } },
+      { chunk: { type: "finish", finishReason: "stop", totalUsage: null }, delayMs: 200 },
+    ]);
+
+    await processStream(result, state, controller, encoder, "t", {
+      providerExecutedToolNames: ["web_fetch"],
+      localToolCommitGraceMs: 40,
+    });
+    result.cleanup();
+
+    assertEquals(state.finishReason, "tool-calls");
+  });
+
+  it("still truncates when a provider tool call never completed its input", async () => {
+    const { controller, encoder } = createSSECollector();
+    const state = createStreamState();
+
+    // The provider call never reaches `tool-input-end`, so nothing can ever
+    // resolve it. It must not hold the local commit grace open for the step.
+    const result = createDelayedResult([
+      {
+        chunk: {
+          type: "tool-input-start",
+          id: "srvtoolu_04",
+          toolName: "web_fetch",
+          providerExecuted: true,
+        },
+      },
+      { chunk: { type: "tool-input-delta", id: "srvtoolu_04", delta: '{"url":"https://a.te' } },
+      { chunk: { type: "tool-input-start", id: "local-3", toolName: "list_skills" } },
+      { chunk: { type: "tool-input-delta", id: "local-3", delta: "{}" } },
+      { chunk: { type: "tool-input-end", id: "local-3" } },
+      { chunk: { type: "finish", finishReason: "stop", totalUsage: null }, delayMs: 200 },
+    ]);
+
+    await processStream(result, state, controller, encoder, "t", {
+      providerExecutedToolNames: ["web_fetch"],
+      localToolCommitGraceMs: 40,
+    });
+    result.cleanup();
+
+    assertEquals(state.finishReason, "tool-calls");
+  });
+
+  it("still classifies a held-open timeout as tool-calls so committed local tools run", async () => {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+
+    // The reported shape: a provider web_fetch that never resolves plus a
+    // committed local tool. Holding the stream open must not turn the eventual
+    // timeout into "stop", which strands the local tool unexecuted.
+    const result = createDelayedResult([
+      {
+        chunk: {
+          type: "tool-input-start",
+          id: "srvtoolu_07",
+          toolName: "web_fetch",
+          providerExecuted: true,
+        },
+      },
+      { chunk: { type: "tool-input-delta", id: "srvtoolu_07", delta: '{"url":"https://a.test"}' } },
+      { chunk: { type: "tool-input-end", id: "srvtoolu_07" } },
+      { chunk: { type: "tool-input-start", id: "local-4", toolName: "list_skills" } },
+      { chunk: { type: "tool-input-delta", id: "local-4", delta: "{}" } },
+      { chunk: { type: "tool-input-end", id: "local-4" } },
+      { chunk: { type: "finish", finishReason: "stop", totalUsage: null }, delayMs: 5_000 },
+    ]);
+
+    await processStream(result, state, controller, encoder, "t", {
+      providerExecutedToolNames: ["web_fetch"],
+      localToolCommitGraceMs: 40,
+      streamIdleTimeoutMs: 300,
+    });
+    result.cleanup();
+
+    assertEquals(state.finishReason, "tool-calls");
+    assertEquals(shouldContinueAfterStreamStep(state), true);
+    assertEquals(
+      events.filter((event) => event.type === "tool-output-error").map((event) => event.toolCallId),
+      ["srvtoolu_07"],
+    );
+  });
+
+  it("reports no shadow divergence for an unresolved provider tool call", async () => {
+    const { controller, encoder } = createSSECollector();
+    const state = createStreamState();
+    let report: StreamLifecycleShadowReport | undefined;
+
+    await processStream(
+      createMockResult([
+        {
+          type: "tool-input-start",
+          id: "srvtoolu_08",
+          toolName: "web_fetch",
+          providerExecuted: true,
+        },
+        { type: "tool-input-delta", id: "srvtoolu_08", delta: '{"url":"https://a.test"}' },
+        { type: "tool-input-end", id: "srvtoolu_08" },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ]),
+      state,
+      controller,
+      encoder,
+      "t",
+      {
+        providerExecutedToolNames: ["web_fetch"],
+        streamLifecycleMode: "shadow",
+        onLifecycleShadowReport: (next) => report = next,
+      },
+      undefined,
+    );
+
+    assertEquals(report, { count: 0, categories: [] });
+  });
+
+  it("does not treat a suppressed tool call id as a pending provider call", async () => {
+    const { controller, encoder } = createSSECollector();
+    const state = createStreamState();
+
+    // The same id is announced first under an unavailable name (suppressed) and
+    // then under an available provider-executed one. Nothing will ever resolve
+    // the suppressed call, so it must not disable the local commit grace.
+    const result = createDelayedResult([
+      { chunk: { type: "tool-input-start", id: "shared-id", toolName: "banned_tool" } },
+      {
+        chunk: {
+          type: "tool-call",
+          toolCallId: "shared-id",
+          toolName: "web_fetch",
+          input: { url: "https://a.test" },
+        },
+      },
+      { chunk: { type: "tool-input-start", id: "local-5", toolName: "list_skills" } },
+      { chunk: { type: "tool-input-delta", id: "local-5", delta: "{}" } },
+      { chunk: { type: "tool-input-end", id: "local-5" } },
+      { chunk: { type: "finish", finishReason: "stop", totalUsage: null }, delayMs: 200 },
+    ]);
+
+    await processStream(result, state, controller, encoder, "t", {
+      providerExecutedToolNames: ["web_fetch"],
+      localToolCommitGraceMs: 40,
+      availableToolNames: ["web_fetch", "list_skills"],
+      streamIdleTimeoutMs: 1_000,
+    });
+    result.cleanup();
+
+    assertEquals(state.finishReason, "tool-calls");
+  });
+
+  it("stops holding the grace open when a tracked provider call restarts its input", async () => {
+    const { controller, encoder } = createSSECollector();
+    const state = createStreamState();
+
+    const result = createDelayedResult([
+      {
+        chunk: {
+          type: "tool-input-start",
+          id: "srvtoolu_09",
+          toolName: "web_fetch",
+          providerExecuted: true,
+        },
+      },
+      { chunk: { type: "tool-input-delta", id: "srvtoolu_09", delta: '{"url":"https://a.test"}' } },
+      { chunk: { type: "tool-input-end", id: "srvtoolu_09" } },
+      // Restart: the call drops back to an unfinished input nothing can resolve.
+      {
+        chunk: {
+          type: "tool-input-start",
+          id: "srvtoolu_09",
+          toolName: "web_fetch",
+          providerExecuted: true,
+        },
+      },
+      { chunk: { type: "tool-input-delta", id: "srvtoolu_09", delta: '{"url":"https://b.te' } },
+      { chunk: { type: "tool-input-start", id: "local-6", toolName: "list_skills" } },
+      { chunk: { type: "tool-input-delta", id: "local-6", delta: "{}" } },
+      { chunk: { type: "tool-input-end", id: "local-6" } },
+      { chunk: { type: "finish", finishReason: "stop", totalUsage: null }, delayMs: 200 },
+    ]);
+
+    await processStream(result, state, controller, encoder, "t", {
+      providerExecutedToolNames: ["web_fetch"],
+      localToolCommitGraceMs: 40,
+      streamIdleTimeoutMs: 1_000,
+    });
+    result.cleanup();
+
+    assertEquals(state.finishReason, "tool-calls");
+  });
+
+  it("finalizes an unresolved provider tool call when the stream aborts", async () => {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+    const abortController = new AbortController();
+
+    const result = createGeneratorResult(async function* () {
+      yield {
+        type: "tool-input-start",
+        id: "srvtoolu_10",
+        toolName: "web_fetch",
+        providerExecuted: true,
+      };
+      yield { type: "tool-input-delta", id: "srvtoolu_10", delta: '{"url":"https://a.test"}' };
+      yield { type: "tool-input-end", id: "srvtoolu_10" };
+      abortController.abort();
+      yield { type: "text-delta", text: "late" };
+    });
+
+    await assertRejects(() =>
+      processStream(result, state, controller, encoder, "t", {
+        providerExecutedToolNames: ["web_fetch"],
+      }, abortController.signal)
+    );
+
+    assertEquals(
+      events.filter((event) => event.type === "tool-output-error").map((event) => event.toolCallId),
+      ["srvtoolu_10"],
+    );
+  });
+
+  it("documents that active mode does not yet finalize unresolved provider calls", async () => {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+
+    // Tripwire, not an endorsement. Both strands live below the
+    // `processActiveStream()` early return, so `active` still reproduces the
+    // reported incident. See the "Provider-executed tool finalization" row in
+    // docs/internal/stream-lifecycle-rollout.md. It blocks advancing past
+    // `shadow`. When the reducer port lands, this expectation flips.
+    const parts = [
+      {
+        type: "tool-input-start",
+        id: "srvtoolu_active",
+        toolName: "web_fetch",
+        providerExecuted: true,
+      },
+      { type: "tool-input-delta", id: "srvtoolu_active", delta: '{"url":"https://a.test"}' },
+      { type: "tool-input-end", id: "srvtoolu_active" },
+      { type: "finish", finishReason: "stop", totalUsage: null },
+    ];
+
+    await processStream(
+      createRuntimeStreamSource(() => createMockResult(parts)),
+      state,
+      controller,
+      encoder,
+      "t",
+      {
+        streamLifecycleMode: "active",
+        providerExecutedToolNames: ["web_fetch"],
+      },
+      undefined,
+    );
+
+    assertEquals(events.filter((event) => event.type === "tool-output-error"), []);
+    assertEquals(state.toolCalls.get("srvtoolu_active")?.inputAvailable, true);
+    assertEquals(state.toolResults, []);
+  });
+
+  it("finalizes an unresolved provider tool call when the stream throws", async () => {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+
+    const result = createGeneratorResult(async function* () {
+      yield {
+        type: "tool-input-start",
+        id: "srvtoolu_11",
+        toolName: "web_fetch",
+        providerExecuted: true,
+      };
+      yield { type: "tool-input-delta", id: "srvtoolu_11", delta: '{"url":"https://a.test"}' };
+      yield { type: "tool-input-end", id: "srvtoolu_11" };
+      throw new Error("provider stream failed");
+    });
+
+    await assertRejects(
+      () =>
+        processStream(result, state, controller, encoder, "t", {
+          providerExecutedToolNames: ["web_fetch"],
+        }),
+      Error,
+      "provider stream failed",
+    );
+
+    assertEquals(
+      events.filter((event) => event.type === "tool-output-error").map((event) => event.toolCallId),
+      ["srvtoolu_11"],
+    );
   });
 });

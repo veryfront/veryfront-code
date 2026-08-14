@@ -15,6 +15,12 @@
  *
  * Scope: chat component source only (`src/react/components/chat`), excluding
  * tests and stories.
+ *
+ * Where the rules come from: these are RFC 29's hard rules, mechanised.
+ * See `docs/rfcs/29-chat-api-shape.md` — rule 1 ("No `xxxClassName` /
+ * `xxxProps` bags. Ever."), rule 7 ("Style state via `data-*`, not props"),
+ * the resolved decision banning `icon` slot props, and "React 19: ref as a
+ * prop". Change a baseline here only alongside that RFC.
  */
 
 const SCAN_ROOT = "src/react/components/chat";
@@ -109,6 +115,17 @@ const FILE_SIZE_CEILINGS: Record<string, number> = {
   "src/react/components/chat/chat-actions.tsx": 203,
   "src/react/components/chat/chat/controlled-chat.tsx": 242,
   "src/react/components/chat/chat/app-mode-chat.tsx": 177,
+  // Chat core: message construction and provider-conversion, split along its
+  // real seams (part-field-access, message-part-parsing, tool-replay
+  // reconciliation). Not React components, so this map does not subject them
+  // to the antipattern ratchets above — it only pins their size.
+  "src/chat/conversation.ts": 557,
+  "src/chat/message-prep.ts": 2016,
+  "src/chat/tool-replay-reconciliation.ts": 291,
+  "src/chat/message-part-parsing.ts": 264,
+  "src/chat/part-field-access.ts": 65,
+  "src/chat/provider-input-types.ts": 34,
+  "src/chat/provider-message-conversion.ts": 447,
 };
 
 function checkFileSizes(): boolean {

@@ -29,7 +29,13 @@ async function writeModule(tempDir: string, relativePath: string, source: string
   const compiledPath = relativePath.replace(/\.(?:tsx|ts|jsx|mdx|md)$/, ".js");
   const filePath = `${tempDir}/${compiledPath}`;
   await mkdir(filePath.slice(0, filePath.lastIndexOf("/")), { recursive: true });
-  await writeTextFile(filePath, source);
+  const fixtureSource = source
+    .replaceAll('"react"', JSON.stringify(import.meta.resolve("react")))
+    .replaceAll(
+      '"veryfront/router"',
+      JSON.stringify(import.meta.resolve("veryfront/router")),
+    );
+  await writeTextFile(filePath, fixtureSource);
 }
 
 function installDom(url: string): () => void {

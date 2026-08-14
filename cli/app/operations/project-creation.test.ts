@@ -3,6 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { withCwd } from "#veryfront/testing/cwd.ts";
 import { join } from "veryfront/platform/path";
 import { createProject } from "./project-creation.ts";
 import { createInitialState } from "../state.ts";
@@ -21,7 +22,6 @@ function restoreEnv(name: string, value: string | undefined): void {
 describe("TUI project creation", () => {
   it("links the created project when the reservation omits the id", async () => {
     const originalFetch = globalThis.fetch;
-    const originalCwd = Deno.cwd();
     const envKeys = ["VERYFRONT_API_URL", "VERYFRONT_API_BASE_URL", "XDG_CONFIG_HOME"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
     const workDir = await Deno.makeTempDir();
@@ -35,7 +35,6 @@ describe("TUI project creation", () => {
       Deno.env.delete("VERYFRONT_API_BASE_URL");
       Deno.env.set("XDG_CONFIG_HOME", configHome);
       _resetEnvironmentConfig();
-      Deno.chdir(workDir);
 
       globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
         const request = input instanceof Request ? input : new Request(input, init);
@@ -57,11 +56,14 @@ describe("TUI project creation", () => {
         throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
       }) as typeof fetch;
 
-      const state = await createProject(
-        { state: createInitialState(), render: () => {} },
-        "My App",
-        "minimal",
-      );
+      // Only the call itself needs the directory: it resolves the new project
+      // relative to the process cwd. Everything around it uses absolute paths.
+      const state = await withCwd(workDir, () =>
+        createProject(
+          { state: createInitialState(), render: () => {} },
+          "My App",
+          "minimal",
+        ));
 
       const link = JSON.parse(
         await Deno.readTextFile(
@@ -81,7 +83,6 @@ describe("TUI project creation", () => {
       );
     } finally {
       globalThis.fetch = originalFetch;
-      Deno.chdir(originalCwd);
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
       _resetEnvironmentConfig();
       await Deno.remove(workDir, { recursive: true });

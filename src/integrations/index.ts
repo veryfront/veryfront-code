@@ -7,6 +7,7 @@
  * import {
  *   getConnector,
  *   getIcon,
+ *   getRemoteIntegrationToolDiscovery,
  *   getRemoteIntegrationToolDefinitions,
  *   listConnectors,
  * } from "veryfront/integrations";
@@ -14,6 +15,7 @@
  * const connectors = listConnectors();
  * const slack = getConnector("slack");
  * const slackIcon = getIcon("slack"); // raw SVG string
+ * const discovery = await getRemoteIntegrationToolDiscovery();
  * const runtimeTools = await getRemoteIntegrationToolDefinitions();
  * ```
  */
@@ -40,20 +42,20 @@ export {
 } from "./schema.ts";
 
 import { connectors, icons } from "./_data.ts";
-import { filterVisibleIntegrations, isVisibleIntegration } from "./feature-flags.ts";
+import { filterCatalogVisibleIntegrations, isCatalogVisibleIntegration } from "./feature-flags.ts";
 import type { IntegrationConfig, IntegrationName } from "./schema.ts";
 
 const iconMap = new Map(Object.entries(icons));
 
 /** Return connector. */
 export function getConnector(name: IntegrationName | string): IntegrationConfig | undefined {
-  if (!isVisibleIntegration(name)) return undefined;
+  if (!isCatalogVisibleIntegration(name)) return undefined;
   return connectors.find((connector) => connector.name === name);
 }
 
 /** List connectors. */
 export function listConnectors(): readonly IntegrationConfig[] {
-  return filterVisibleIntegrations(connectors);
+  return filterCatalogVisibleIntegrations(connectors);
 }
 
 /** Return connector names. */
@@ -63,7 +65,7 @@ export function getConnectorNames(): readonly string[] {
 
 /** Return icon. */
 export function getIcon(name: IntegrationName | string): string | undefined {
-  if (!isVisibleIntegration(name)) return undefined;
+  if (!isCatalogVisibleIntegration(name)) return undefined;
   return iconMap.get(name);
 }
 
@@ -71,6 +73,8 @@ export function getIcon(name: IntegrationName | string): string | undefined {
 export {
   executeRemoteIntegrationTool,
   getRemoteIntegrationToolDefinitions,
+  getRemoteIntegrationToolDiscovery,
   isRemoteIntegrationTool,
 } from "./remote-tools.ts";
+export type { RemoteIntegrationToolDiscoveryResult } from "./remote-tools.ts";
 export type { IntegrationConnector, IntegrationTool } from "./types.ts";

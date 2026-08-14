@@ -1,9 +1,12 @@
 /**
  * Portable BDD testing utilities (describe, it, beforeEach, afterEach).
  *
- * In Deno: Direct re-export from @std/testing/bdd (no wrapper)
+ * In Deno: @std/testing/bdd with file, suite, and test environment overlays
  * In Node.js: Uses node:test
  * In Bun: Uses bun:test
+ *
+ * Deno test runs whose dependencies mutate environment variables before they
+ * import this module must use `--preload=veryfront/testing/bdd`.
  *
  * @module
  */
@@ -47,6 +50,7 @@ type EnvOverlayStorageShim = {
 
 type EnvOverlayValue = string | null;
 type EnvOverlayStore = Map<string, EnvOverlayValue>;
+const DENO_ROOT_ENV_OVERLAY_KEY = "__vfTestDenoRootEnvOverlay";
 
 type DenoEnvFacade = {
   get: (key: string) => string | undefined;
@@ -60,6 +64,11 @@ function getActiveEnvOverlay(): EnvOverlayStore | null {
   const storage = getEnvOverlayStorage();
   const store = storage?.getStore();
   return store instanceof Map ? store as EnvOverlayStore : null;
+}
+
+function getDenoRootEnvOverlay(): EnvOverlayStore | null {
+  const value = (globalThis as Record<string, unknown>)[DENO_ROOT_ENV_OVERLAY_KEY];
+  return value instanceof Map ? value as EnvOverlayStore : null;
 }
 
 function applyEnvOverlay(
@@ -174,19 +183,27 @@ async function installDenoEnvOverlayStorage(): Promise<void> {
   if (!isDeno) return;
 
   const globalAny = globalThis as Record<string, unknown>;
+  // Deno test files have separate globals but share one process. Use this
+  // isolate-local map whenever execution is outside a suite or test context.
+  if (!getDenoRootEnvOverlay()) {
+    globalAny[DENO_ROOT_ENV_OVERLAY_KEY] = new Map<string, EnvOverlayValue>();
+  }
+  const rootOverlay = getDenoRootEnvOverlay();
   if (!globalAny["__vfTestDenoEnvOverlay"]) {
     const { AsyncLocalStorage } = await import("node:async_hooks");
     const storage = new AsyncLocalStorage<EnvOverlayStore>();
 
     globalAny["__vfTestDenoEnvOverlay"] = {
       storage: {
-        getStore: () => storage.getStore(),
+        getStore: () => storage.getStore() ?? rootOverlay,
         run: <T>(store: unknown, fn: () => T) => storage.run(store as EnvOverlayStore, fn),
         enterWith: (store: unknown) => storage.enterWith(store as EnvOverlayStore),
       },
     } satisfies EnvOverlayStorageShim;
   }
 
+  const storage = getEnvOverlayStorage();
+  storage?.enterWith?.(rootOverlay);
   installDenoEnvOverlayFacade();
 }
 
@@ -195,13 +212,15 @@ function withEnvOverlay<T extends TestFn | (() => void)>(fn: T): T {
   if (!overlay) return fn;
 
   return ((...args: unknown[]) => {
-    if (getActiveEnvOverlay()) {
+    const activeOverlay = getActiveEnvOverlay();
+    const rootOverlay = getDenoRootEnvOverlay();
+    if (activeOverlay && activeOverlay !== rootOverlay) {
       return Promise.resolve().then(() => fn(...(args as [])));
     }
 
     if (overlay.run) {
       return overlay.run(
-        new Map<string, string | null>(),
+        new Map(activeOverlay ?? rootOverlay ?? []),
         () => Promise.resolve().then(() => fn(...(args as []))),
       );
     }
@@ -214,17 +233,8 @@ function withEnvOverlay<T extends TestFn | (() => void)>(fn: T): T {
   }) as T;
 }
 
-function withoutEnvOverlay<T extends TestFn | (() => void)>(fn: T): T {
-  const overlay = getEnvOverlayStorage();
-  if (!overlay?.run) return fn;
-
-  return ((...args: unknown[]) => {
-    return overlay.run!(null, () => Promise.resolve().then(() => fn(...(args as []))));
-  }) as T;
-}
-
-// For Deno, we directly use @std/testing/bdd - no wrapper needed
-// This avoids creating a "global" test suite from top-level await
+// Loading the Deno implementation here avoids creating a global test suite
+// from top-level await.
 let denoBdd: typeof import("#std/testing/bdd") | null = null;
 
 if (isDeno) {
@@ -462,22 +472,126 @@ function requireImpl(): BddImpl {
   );
 }
 
-let denoDescribeDepth = 0;
+type DenoSuiteEnvOverlay = {
+  parent: DenoSuiteEnvOverlay | null;
+  /** Environment changes relative to the parent suite. */
+  values: EnvOverlayStore;
+};
 
-function withDenoSuiteEnvOverlay(testFn: () => void): () => void {
-  return () => {
-    const isTopLevelSuite = denoDescribeDepth === 0;
-    if (isTopLevelSuite) {
-      denoBdd!.beforeEach(() => {
-        getEnvOverlayStorage()?.enterWith?.(new Map<string, string | null>());
-      });
+let currentDenoSuiteEnvOverlay: DenoSuiteEnvOverlay | null = null;
+
+function applyEnvOverlayValues(target: EnvOverlayStore, values: EnvOverlayStore): void {
+  for (const [key, value] of values) {
+    target.set(key, value);
+  }
+}
+
+function materializeDenoSuiteEnvOverlay(suite: DenoSuiteEnvOverlay | null): EnvOverlayStore {
+  const materialized = new Map(getDenoRootEnvOverlay() ?? []);
+  const lineage: DenoSuiteEnvOverlay[] = [];
+  for (let current = suite; current; current = current.parent) {
+    lineage.push(current);
+  }
+  for (const current of lineage.reverse()) {
+    applyEnvOverlayValues(materialized, current.values);
+  }
+  return materialized;
+}
+
+function captureDenoSuiteEnvChanges(
+  suite: DenoSuiteEnvOverlay,
+  parentValues: EnvOverlayStore,
+  values: EnvOverlayStore,
+): void {
+  suite.values.clear();
+  for (const [key, value] of values) {
+    if (!parentValues.has(key) || parentValues.get(key) !== value) {
+      suite.values.set(key, value);
+    }
+  }
+}
+
+function captureDenoSuiteCleanupChanges(
+  suite: DenoSuiteEnvOverlay,
+  parentValues: EnvOverlayStore,
+  initialValues: EnvOverlayStore,
+  values: EnvOverlayStore,
+): void {
+  for (const key of new Set([...initialValues.keys(), ...values.keys()])) {
+    if (
+      suite.values.has(key) ||
+      !parentValues.has(key) ||
+      initialValues.get(key) === values.get(key)
+    ) {
+      continue;
     }
 
-    denoDescribeDepth++;
+    const value = values.get(key) ?? null;
+    if (suite.parent) {
+      suite.parent.values.set(key, value);
+    } else {
+      getDenoRootEnvOverlay()?.set(key, value);
+    }
+  }
+}
+
+function runWithDenoSuiteEnvOverlay<T>(
+  suite: DenoSuiteEnvOverlay,
+  fn: () => T,
+  captureMode: "suite" | "cleanup",
+): T {
+  const storage = getEnvOverlayStorage();
+  if (!storage?.run) return fn();
+
+  const parentValues = materializeDenoSuiteEnvOverlay(suite.parent);
+  const values = new Map(parentValues);
+  applyEnvOverlayValues(values, suite.values);
+  const initialValues = new Map(values);
+  const capture = () => {
+    if (captureMode === "suite") {
+      captureDenoSuiteEnvChanges(suite, parentValues, values);
+    } else {
+      captureDenoSuiteCleanupChanges(suite, parentValues, initialValues, values);
+    }
+  };
+
+  return storage.run(values, () => {
     try {
-      testFn();
+      const result = fn();
+      if (result instanceof Promise) {
+        return result.finally(capture) as T;
+      }
+      capture();
+      return result;
+    } catch (error) {
+      capture();
+      throw error;
+    }
+  });
+}
+
+function withDenoSuiteEnvOverlay(testFn: () => void): () => void {
+  const suite: DenoSuiteEnvOverlay = {
+    parent: currentDenoSuiteEnvOverlay,
+    values: new Map(),
+  };
+
+  return () => {
+    denoBdd!.beforeEach(() => {
+      const activeOverlay = getActiveEnvOverlay();
+      const testOverlay = suite.parent && activeOverlay
+        ? new Map(activeOverlay)
+        : materializeDenoSuiteEnvOverlay(suite);
+      if (suite.parent) applyEnvOverlayValues(testOverlay, suite.values);
+      getEnvOverlayStorage()?.enterWith?.(testOverlay);
+    });
+
+    const previousSuite = currentDenoSuiteEnvOverlay;
+    currentDenoSuiteEnvOverlay = suite;
+    try {
+      runWithDenoSuiteEnvOverlay(suite, testFn, "suite");
     } finally {
-      denoDescribeDepth--;
+      currentDenoSuiteEnvOverlay = previousSuite;
     }
   };
 }
@@ -628,22 +742,32 @@ export function afterEach(fn: HookFn): void {
 
 /** Register a hook before all BDD tests in a group. */
 export function beforeAll(fn: HookFn): void {
-  const hostHook = withoutEnvOverlay(fn);
   if (denoBdd) {
-    denoBdd.beforeAll(hostHook);
+    const suite = currentDenoSuiteEnvOverlay;
+    denoBdd.beforeAll(
+      suite
+        ? (...args: Parameters<HookFn>) =>
+          runWithDenoSuiteEnvOverlay(suite, () => fn(...args), "suite")
+        : withEnvOverlay(fn),
+    );
     return;
   }
-  requireImpl().beforeAll(hostHook);
+  requireImpl().beforeAll(fn);
 }
 
 /** Register a hook after all BDD tests in a group. */
 export function afterAll(fn: HookFn): void {
-  const hostHook = withoutEnvOverlay(fn);
   if (denoBdd) {
-    denoBdd.afterAll(hostHook);
+    const suite = currentDenoSuiteEnvOverlay;
+    denoBdd.afterAll(
+      suite
+        ? (...args: Parameters<HookFn>) =>
+          runWithDenoSuiteEnvOverlay(suite, () => fn(...args), "cleanup")
+        : withEnvOverlay(fn),
+    );
     return;
   }
-  requireImpl().afterAll(hostHook);
+  requireImpl().afterAll(fn);
 }
 
 /** Shared test value. */

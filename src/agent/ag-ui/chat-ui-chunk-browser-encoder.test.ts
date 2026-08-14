@@ -140,6 +140,7 @@ describe("agent/ag-ui-chat-ui-chunk-browser-encoder", () => {
 
   it("creates a browser encoder for chat UI chunks", () => {
     const encoder = createAgUiChatUiChunkBrowserEncoder({
+      timing: { nowMs: null, epochMs: null },
       modelId: "custom/model",
       resolveProvider: (modelId) => modelId === "custom/model" ? "custom-provider" : undefined,
     });
@@ -211,7 +212,7 @@ describe("agent/ag-ui-chat-ui-chunk-browser-encoder", () => {
   });
 
   it("encodes source documents as renderable custom events", () => {
-    const encoder = createAgUiChatUiChunkBrowserEncoder();
+    const encoder = createAgUiChatUiChunkBrowserEncoder({ timing: { nowMs: null, epochMs: null } });
     const sourceDocument: ChatUiMessageChunk = {
       type: "source-document",
       sourceId: "knowledge/knowledge-ingest-20260723131451088-source.md",
@@ -230,7 +231,7 @@ describe("agent/ag-ui-chat-ui-chunk-browser-encoder", () => {
   });
 
   it("encodes source URLs as renderable custom events", () => {
-    const encoder = createAgUiChatUiChunkBrowserEncoder();
+    const encoder = createAgUiChatUiChunkBrowserEncoder({ timing: { nowMs: null, epochMs: null } });
     const sourceUrl: ChatUiMessageChunk = {
       type: "source-url",
       sourceId: "web-1",
@@ -248,7 +249,7 @@ describe("agent/ag-ui-chat-ui-chunk-browser-encoder", () => {
   });
 
   it("encodes files as renderable custom events", () => {
-    const encoder = createAgUiChatUiChunkBrowserEncoder();
+    const encoder = createAgUiChatUiChunkBrowserEncoder({ timing: { nowMs: null, epochMs: null } });
     const file: ChatUiMessageChunk = {
       type: "file",
       url: "https://cdn.example.com/report.pdf",

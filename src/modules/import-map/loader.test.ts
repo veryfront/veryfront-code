@@ -6,6 +6,41 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { loadImportMap } from "./loader.ts";
 
+interface RuntimeWorker {
+  subscribe(
+    onMessage: (value: unknown) => void,
+    onError: (error: unknown) => void,
+  ): void;
+  terminate(): void;
+}
+
+async function createRuntimeWorker(url: URL): Promise<RuntimeWorker> {
+  if (typeof globalThis.Worker === "function") {
+    const worker = new globalThis.Worker(url, { type: "module" });
+    return {
+      subscribe(onMessage, onError) {
+        worker.onmessage = (event) => onMessage(event.data);
+        worker.onerror = (event) => onError(event.error ?? new Error(event.message));
+      },
+      terminate() {
+        worker.terminate();
+      },
+    };
+  }
+
+  const { Worker: NodeWorker } = await import("node:worker_threads");
+  const worker = new NodeWorker(url);
+  return {
+    subscribe(onMessage, onError) {
+      worker.once("message", onMessage);
+      worker.once("error", onError);
+    },
+    terminate() {
+      void worker.terminate();
+    },
+  };
+}
+
 describe("modules/import-map/loader", () => {
   describe("loadImportMap", () => {
     it("should return an import map with imports", async () => {
@@ -304,9 +339,8 @@ describe("modules/import-map/loader", () => {
     });
 
     it("keeps dependency resolution deterministic after primordial poisoning", async () => {
-      const worker = new Worker(
+      const worker = await createRuntimeWorker(
         new URL("./loader-primordial-poisoning.worker.ts", import.meta.url),
-        { type: "module" },
       );
       try {
         const result = await new Promise<{
@@ -314,14 +348,13 @@ describe("modules/import-map/loader", () => {
           package: string | undefined;
           react: string | undefined;
         }>((resolve, reject) => {
-          worker.onmessage = (event) => {
-            const message = event.data as
+          worker.subscribe((value) => {
+            const message = value as
               | { ok: true; result: Parameters<typeof resolve>[0] }
               | { ok: false; error: string };
             if (message.ok) resolve(message.result);
             else reject(new Error(message.error));
-          };
-          worker.onerror = (event) => reject(event.error ?? new Error(event.message));
+          }, reject);
         });
 
         assertEquals(result.denoOnly, "https://example.com/deno.ts");

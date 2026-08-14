@@ -7,8 +7,11 @@
  * @module
  */
 
-import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
-import type { PreparedDeclarativeConfigWorkerPayload } from "./declarative-evaluator.ts";
+import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
+import {
+  DeclarativeConfigEvaluationError,
+  type PreparedDeclarativeConfigWorkerPayload,
+} from "./declarative-evaluator.ts";
 import type { ConfigSnapshotRecord } from "./snapshot.ts";
 import {
   createDeclarativeConfigWorkerInfrastructureError,
@@ -492,7 +495,9 @@ async function createNodeWorkerEndpoint(): Promise<
   const worker = new NodeWorker(workerEntryUrl(), {
     argv: [],
     env: {},
-    execArgv: [],
+    // Source workers need the parent's registered TypeScript and import-map
+    // loader. Built JavaScript workers still start without host execution hooks.
+    ...(import.meta.url.endsWith(".ts") ? {} : { execArgv: [] }),
     resourceLimits: NODE_WORKER_RESOURCE_LIMITS,
   });
 
@@ -527,6 +532,11 @@ async function createRuntimeWorkerEndpoint(): Promise<
   DeclarativeConfigWorkerEndpoint
 > {
   if (isDeno) return createDenoWorkerEndpoint();
+  if (isBun) {
+    throw createDeclarativeConfigWorkerInfrastructureError(
+      "worker-memory-limit-unavailable",
+    );
+  }
   if (isNode) return await createNodeWorkerEndpoint();
   throw createDeclarativeConfigWorkerInfrastructureError("worker-unavailable");
 }
@@ -661,9 +671,16 @@ function beginEvaluationWithEndpointFactory(
       let createdEndpoint: DeclarativeConfigWorkerEndpoint;
       try {
         createdEndpoint = await endpointFactory();
-      } catch {
+      } catch (error) {
         drainStartupLifecycle();
-        rejectInfrastructure("worker-unavailable");
+        if (
+          error instanceof DeclarativeConfigEvaluationError &&
+          error.phase === "worker"
+        ) {
+          settle({ kind: "reject", error });
+        } else {
+          rejectInfrastructure("worker-unavailable");
+        }
         drainLifecycleIfComplete();
         return;
       }

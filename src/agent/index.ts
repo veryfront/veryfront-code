@@ -958,6 +958,7 @@ export {
   type ExecuteHostedDurableChildForkInput,
   executeHostedLocalChildInvoke,
   type ExecuteHostedLocalChildInvokeInput,
+  getHostedDurableChildInvokeResultSchema,
   type HostedDurableChildBootstrapCallbacks,
   type HostedDurableChildBootstrapContext,
   type HostedDurableChildExecutionOptions,
@@ -1012,6 +1013,7 @@ export {
 export {
   type ConversationRunEvent,
   ConversationRunEventEncoder,
+  type ConversationRunEventEncoderOptions,
   ConversationRunEventSchema,
   conversationRunEventTypes,
   encodeConversationRunEvents,
@@ -1259,8 +1261,6 @@ export {
   LOAD_SKILL_DELEGATION_THRESHOLD,
   LOAD_SKILL_OVERRIDE_FORWARDING,
   LOAD_SKILL_ROOT_OWNERSHIP,
-  LOAD_SKILL_TOOL_INTERSECTION,
-  LOAD_SKILL_USE_ALLOWED_TOOLS,
   NO_DELEGATION_NARRATION_UNLESS_ASKED,
   ROOT_OWNED_CHILD_RESULT_INSTRUCTION,
   type RootOwnedChildResultHint,
@@ -1352,7 +1352,6 @@ export {
   parseRuntimeSkillDocument,
   parseRuntimeSkillMetadata,
   type RuntimeLoadedSkillResponse,
-  type RuntimeLoadedSkillResponseMessages,
   type RuntimeSkillDefinition,
   type RuntimeSkillFrontmatter,
   RuntimeSkillFrontmatterSchema,
@@ -1360,14 +1359,12 @@ export {
 } from "./runtime/skill-metadata.ts";
 export {
   createRuntimeLoadSkillTool,
-  RUNTIME_LOAD_SKILL_CONTINUATION_NOTE,
   RUNTIME_LOAD_SKILL_DESCRIPTION,
   type RuntimeLoadSkillBuiltinStore,
   type RuntimeLoadSkillErrorOutput,
   type RuntimeLoadSkillReferenceFileOutput,
   type RuntimeLoadSkillToolContext,
   type RuntimeLoadSkillToolInput,
-  type RuntimeLoadSkillToolMessages,
   type RuntimeLoadSkillToolOptions,
   type RuntimeLoadSkillToolOutput,
 } from "./runtime/load-skill-tool.ts";

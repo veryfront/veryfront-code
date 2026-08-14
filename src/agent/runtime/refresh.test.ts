@@ -1,11 +1,11 @@
-import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
+import { FakeTime } from "#std/testing/time";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { type ModelRuntime } from "#veryfront/provider";
 import { type RemoteToolSource, tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import { registerSkill } from "#veryfront/skill/registry.ts";
 import { agent } from "../index.ts";
 import type {
   AgentConfig,
@@ -146,43 +146,31 @@ function submittedFormWithActiveSkillMessages(): Message[] {
 }
 
 describe("agent runtime refresh hooks", () => {
-  it("requires universal load_skill to establish policy before parallel tool calls", async () => {
-    const rootPath = await Deno.makeTempDir();
-    let writeExecutions = 0;
+  it("keeps one authoritative UTC snapshot across refreshed scheduled-run steps", async () => {
+    using time = new FakeTime(new Date("2026-07-19T07:30:00.000Z"));
+    const observedSystems: string[] = [];
     let callCount = 0;
     const model: ModelRuntime = {
       provider: "hosted",
-      modelId: "hosted/universal-skill-policy",
-      async doGenerate() {
+      modelId: "hosted/runtime-context-snapshot",
+      async doGenerate(options: unknown) {
+        observedSystems.push(extractSystemPrompt(options));
         callCount++;
         if (callCount === 1) {
+          time.tick(24 * 60 * 60 * 1_000);
           return {
-            content: [
-              {
-                type: "tool-call",
-                toolCallId: "write-before-skill",
-                toolName: "write_report",
-                input: '{"path":"report.md"}',
-              },
-              {
-                type: "tool-call",
-                toolCallId: "load-policy",
-                toolName: "load_skill",
-                input: '{"skillId":"read-only-review"}',
-              },
-              {
-                type: "tool-call",
-                toolCallId: "write-after-skill",
-                toolName: "write_report",
-                input: '{"path":"second-report.md"}',
-              },
-            ],
+            content: [{
+              type: "tool-call",
+              toolCallId: "continue-1",
+              toolName: "continue_run",
+              input: "{}",
+            }],
             finishReason: "tool-calls",
             usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
           };
         }
         return {
-          content: [{ type: "text", text: "done" }],
+          content: [{ type: "text", text: "2026-07-19" }],
           finishReason: "stop",
           usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         };
@@ -191,52 +179,42 @@ describe("agent runtime refresh hooks", () => {
         return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
       },
     };
-    const writeReport = tool({
-      id: "write_report",
-      description: "Write a report",
-      inputSchema: defineSchema((v) => v.object({ path: v.string() }))(),
-      execute: () => {
-        writeExecutions++;
-        return { ok: true };
-      },
+    const continueRun = tool({
+      id: "continue_run",
+      description: "Continue the run",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => ({ ok: true }),
+    });
+    const assistant = eagerAgent({
+      model: "hosted/runtime-context-snapshot",
+      system: "Create today's report.",
+      tools: { continue_run: continueRun },
+      maxSteps: 2,
+      resolveModelTransport: async () => ({ model }),
+      resolveRuntimeState: ({ step }) =>
+        step === 0 ? undefined : {
+          system:
+            "Refreshed project instructions.\n\n<runtime_context>\ncurrent_date_utc: 2025-07-14\n</runtime_context>",
+        },
     });
 
-    try {
-      await Deno.writeTextFile(
-        `${rootPath}/SKILL.md`,
-        "---\nname: review\ndescription: Review one report\nallowed-tools: [write_report]\n---\nRead the input before deciding whether to write the report.\n",
-      );
-      registerSkill("read-only-review", {
-        id: "read-only-review",
-        metadata: {
-          name: "review",
-          description: "Review one report",
-          allowedTools: ["write_report"],
-        },
-        rootPath,
-      });
-      const assistant = eagerAgent({
-        id: "universal-skill-policy-agent",
-        model: "hosted/universal-skill-policy",
-        system: "Use the matching skill.",
-        tools: { write_report: writeReport },
-        maxSteps: 2,
-        resolveModelTransport: async () => ({ model }),
-      });
+    const response = await assistant.generate({
+      input: "Create the scheduled report.",
+      context: { scheduleId: "schedule-1" },
+    });
 
-      const response = await assistant.generate({ input: "Review this report" });
-
-      assertEquals(writeExecutions, 0);
-      assertEquals(
-        response.toolCalls.filter((call) => call.name === "write_report").map((call) =>
-          call.status
-        ),
-        ["error", "error"],
-      );
-    } finally {
-      skillRegistryInternal.clearAll();
-      await Deno.remove(rootPath, { recursive: true });
+    assertEquals(observedSystems.length, 2);
+    for (const system of observedSystems) {
+      assertEquals(system.match(/<runtime_context>/g)?.length, 1);
+      assertEquals(system.includes("2025-07-14"), false);
+      assertEquals(system.includes("2026-07-20"), false);
+      assertEquals(system.includes("run_started_at_utc: 2026-07-19T07:30:00.000Z"), true);
     }
+    assertEquals(response.metadata?.runtimeContext, {
+      currentTimeUtc: "2026-07-19T07:30:00.000Z",
+      currentDateUtc: "2026-07-19",
+      runStartedAtUtc: "2026-07-19T07:30:00.000Z",
+    });
   });
 
   it("continues suppressed unavailable tool calls with a user recovery turn after assistant text", async () => {
@@ -1586,9 +1564,10 @@ describe("agent runtime refresh hooks", () => {
       context: { projectId: "project-stream" },
     })).toDataStreamResponse();
 
-    await response.text();
+    const body = await response.text();
 
     assertEquals(toolResults.length, 1);
+    assertEquals(/"type":"text-start","id":"[^"]+:step:1"/.test(body), true);
     assertEquals(toolResults[0]?.toolName, "write_report");
     assertEquals(toolResults[0]?.toolCallId, "write-stream-1");
     assertEquals(toolResults[0]?.input, { path: "research/stream-report.md" });
@@ -2235,7 +2214,7 @@ describe("agent runtime refresh hooks", () => {
 
     assertEquals(result.text, "done");
     assertEquals(runtimeRequests.map((request) => request.step), [0, 1, 2]);
-    assertEquals(observedSystems, [
+    assertEquals(observedSystems.map((system) => system.split("\n\n<runtime_context>")[0]), [
       "Base system prompt",
       "Refreshed system prompt",
       "Refreshed system prompt",
@@ -2262,6 +2241,7 @@ describe("agent runtime refresh hooks", () => {
   });
 
   it("refreshes the streaming system prompt between hosted run steps", async () => {
+    using time = new FakeTime(new Date("2026-07-19T07:30:00.000Z"));
     const runtimeRequests: RuntimeStateRequest[] = [];
     const observedSystems: string[] = [];
     let callCount = 0;
@@ -2315,7 +2295,10 @@ describe("agent runtime refresh hooks", () => {
       id: "switch_project",
       description: "Switch the active project context",
       inputSchema: defineSchema((v) => v.object({ projectId: v.string() }))(),
-      execute: async ({ projectId }) => ({ projectId }),
+      execute: async ({ projectId }) => {
+        time.tick(24 * 60 * 60 * 1_000);
+        return { projectId };
+      },
     });
 
     const assistant = eagerAgent({
@@ -2345,10 +2328,18 @@ describe("agent runtime refresh hooks", () => {
     const body = await response.text();
 
     assertEquals(runtimeRequests.map((request) => request.step), [0, 1]);
-    assertEquals(observedSystems, [
+    assertEquals(observedSystems.map((system) => system.split("\n\n<runtime_context>")[0]), [
       "Base streaming system prompt",
       "Refreshed streaming system prompt",
     ]);
+    for (const system of observedSystems) {
+      assertEquals(system.match(/<runtime_context>/g)?.length, 1);
+      assertEquals(
+        system.includes("run_started_at_utc: 2026-07-19T07:30:00.000Z"),
+        true,
+      );
+      assertEquals(system.includes("2026-07-20"), false);
+    }
     assertEquals(body.includes("stream done"), true);
   });
 
@@ -2462,8 +2453,15 @@ describe("agent runtime refresh hooks", () => {
     });
     assertEquals(streamed.includes("stream done"), true);
     assertEquals(streamed.includes("Guide"), true);
-    assertEquals(generateToolNames, [["load_skill"], ["load_skill"]]);
-    assertEquals(streamToolNames, [["load_skill"], ["load_skill"]]);
+    // `read_secret` is no longer withheld: a skill's `allowed-tools` is spec
+    // pre-approval metadata, not an authorization boundary. `load_skill_reference`
+    // stays gated on the skill actually advertising a reference file.
+    const expectedToolNames = [
+      ["load_skill", "load_skill_reference", "read_secret"],
+      ["load_skill", "load_skill_reference", "read_secret"],
+    ];
+    assertEquals(generateToolNames, expectedToolNames);
+    assertEquals(streamToolNames, expectedToolNames);
   });
 
   it("generate and stream load advertised provider-safe root-owned project skills", async () => {
@@ -2559,9 +2557,32 @@ describe("agent runtime refresh hooks", () => {
       }),
     });
 
-    const generated = await assistant.generate({ input: "Load foo_bar" });
-    const streamed = await (await assistant.stream({ input: "Load ReleaseNotes" }))
-      .toDataStreamResponse().text();
+    // Runtime tool discovery fires whenever the run context carries a token, and
+    // `apiBaseUrl` falls back to the production API when VERYFRONT_API_BASE_URL is
+    // unset. Unmocked, generate() and stream() each POST /integrations/tools/list
+    // to api.veryfront.com and the test is at the mercy of a 30s fetch timeout.
+    // This test is about project skills, so answer discovery with no tools.
+    const { generated, streamed } = await withMockFetch(
+      (input) => {
+        const url = input instanceof Request ? input.url : String(input);
+        // Match the whole pathname, not a substring: a loose test also accepts
+        // a neighbouring route like `/integrations/tools/listing`, so a call to
+        // the wrong endpoint would be answered with an empty catalogue and the
+        // test would still pass. Anchored at the end rather than compared whole
+        // because VERYFRONT_API_BASE_URL may carry a path prefix, and the client
+        // concatenates base and path (`${baseUrl}${path}`).
+        if (!new URL(url).pathname.endsWith("/integrations/tools/list")) {
+          throw new Error(`Unexpected network call from a unit test: ${url}`);
+        }
+        return Promise.resolve(Response.json({ tools: [] }));
+      },
+      async () => {
+        const generated = await assistant.generate({ input: "Load foo_bar" });
+        const streamed = await (await assistant.stream({ input: "Load ReleaseNotes" }))
+          .toDataStreamResponse().text();
+        return { generated, streamed };
+      },
+    );
 
     assertEquals(catalog.map((skill) => skill.id), ["foo_bar", "ReleaseNotes"]);
     assertEquals(generated.toolCalls[0]?.status, "completed");

@@ -338,10 +338,7 @@ function startDevServer(
   stdout: string[];
   stderr: string[];
 } {
-  const command = runtime === "node" ? "npm" : runtime;
-  const args = runtime === "deno"
-    ? ["task", "dev", "--", "--port", String(port)]
-    : ["run", "dev", "--", "--port", String(port)];
+  const { command, args } = getDevServerCommand(runtime, port);
   const stdout: string[] = [];
   const stderr: string[] = [];
   const child = new Deno.Command(command, {
@@ -362,6 +359,18 @@ function startDevServer(
   void collectStream(child.stderr, stderr);
 
   return { child, status: child.status, stdout, stderr };
+}
+
+export function getDevServerCommand(
+  runtime: RuntimeName,
+  port: number,
+): { command: string; args: string[] } {
+  return {
+    command: runtime === "node" ? "npm" : runtime,
+    args: runtime === "deno"
+      ? ["task", "dev", "--port", String(port)]
+      : ["run", "dev", "--", "--port", String(port)],
+  };
 }
 
 async function stopDevServer(server: {

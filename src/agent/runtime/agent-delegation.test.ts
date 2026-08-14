@@ -1,8 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   AGENT_DELEGATE_TOOL_PREFIX,
   buildAgentDelegateTools,
+  createInvokeAgentTool,
   isProviderSafeDelegateId,
 } from "./agent-delegation.ts";
 import type { Agent } from "../types.ts";
@@ -14,7 +16,7 @@ import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/sou
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { getAvailableTools } from "./tool-helpers.ts";
 
-Deno.test("buildAgentDelegateTools exposes one tool per delegate, excluding self and dupes", () => {
+it("buildAgentDelegateTools exposes one tool per delegate, excluding self and dupes", () => {
   const tools = buildAgentDelegateTools({
     delegates: ["writer", "researcher", "writer", "lead", "  "],
     selfId: "lead",
@@ -31,11 +33,11 @@ Deno.test("buildAgentDelegateTools exposes one tool per delegate, excluding self
   );
 });
 
-Deno.test("buildAgentDelegateTools returns no tools when there are no delegates", () => {
+it("buildAgentDelegateTools returns no tools when there are no delegates", () => {
   assertEquals(buildAgentDelegateTools({ delegates: [], resolveAgent: () => undefined }), {});
 });
 
-Deno.test("buildAgentDelegateTools skips ids that produce provider-unsafe tool names", () => {
+it("buildAgentDelegateTools skips ids that produce provider-unsafe tool names", () => {
   const tools = buildAgentDelegateTools({
     delegates: ["data.fetcher", "writer", "über-agent"],
     resolveAgent: () => undefined,
@@ -44,14 +46,14 @@ Deno.test("buildAgentDelegateTools skips ids that produce provider-unsafe tool n
   assertEquals(Object.keys(tools), [`${AGENT_DELEGATE_TOOL_PREFIX}writer`]);
 });
 
-Deno.test("isProviderSafeDelegateId accepts safe ids and rejects unsafe ones", () => {
+it("isProviderSafeDelegateId accepts safe ids and rejects unsafe ones", () => {
   assertEquals(isProviderSafeDelegateId("writer"), true);
   assertEquals(isProviderSafeDelegateId("writer-2_b"), true);
   assertEquals(isProviderSafeDelegateId("data.fetcher"), false);
   assertEquals(isProviderSafeDelegateId("a".repeat(64)), false);
 });
 
-Deno.test("delegate tool runs the resolved specialist agent and returns its result", async () => {
+it("delegate tool runs the resolved specialist agent and returns its result", async () => {
   const writer = {
     id: "writer",
     config: {},
@@ -73,7 +75,7 @@ Deno.test("delegate tool runs the resolved specialist agent and returns its resu
   assertEquals(result, { text: "drafted copy", toolCalls: 0, status: "completed" });
 });
 
-Deno.test("delegate tool keeps host execution fixed to its declared target", async () => {
+it("delegate tool keeps host execution fixed to its declared target", async () => {
   const writer = {
     id: "writer",
     config: {},
@@ -101,7 +103,7 @@ Deno.test("delegate tool keeps host execution fixed to its declared target", asy
   }]);
 });
 
-Deno.test("delegate tool reports an error when the target agent is unavailable", async () => {
+it("delegate tool reports an error when the target agent is unavailable", async () => {
   const tools = buildAgentDelegateTools({
     delegates: ["writer"],
     resolveAgent: () => undefined,
@@ -118,7 +120,107 @@ Deno.test("delegate tool reports an error when the target agent is unavailable",
   });
 });
 
-Deno.test("delegate agent execution inherits the exact project source restriction", async () => {
+describe("invoke_agent", () => {
+  it("resolves and runs a registered project agent", async () => {
+    let streamedInput: string | undefined;
+    const writer = {
+      id: "writer",
+      config: {},
+      stream: (input: { input?: string; onFinish?: (response: unknown) => void }) => {
+        streamedInput = input.input;
+        input.onFinish?.({ text: "drafted copy", toolCalls: [], status: "completed" });
+        return Promise.resolve({ toDataStreamResponse: () => new Response("") });
+      },
+    } as unknown as Agent;
+    const invokeAgent = createInvokeAgentTool({
+      selfId: "orchestrator",
+      resolveAgent: (id) => id === "writer" ? writer : undefined,
+    });
+
+    const result = await invokeAgent.execute({
+      agent_id: "writer",
+      description: "Draft support reply",
+      prompt: "Draft a concise reply.",
+      context: { case_id: "500-test" },
+    });
+
+    assertEquals(
+      streamedInput,
+      'Draft a concise reply.\n\n<structured_context>\n{"case_id":"500-test"}\n</structured_context>',
+    );
+    assertEquals(result, { text: "drafted copy", toolCalls: 0, status: "completed" });
+  });
+
+  it("rejects self-invocation", async () => {
+    const invokeAgent = createInvokeAgentTool({
+      selfId: "orchestrator",
+      resolveAgent: () => ({ id: "orchestrator" } as unknown as Agent),
+    });
+
+    const result = await invokeAgent.execute({
+      agent_id: "orchestrator",
+      description: "Loop forever",
+      prompt: "Invoke yourself.",
+      context: {},
+    });
+
+    assertEquals(result, {
+      text: 'Agent "orchestrator" cannot invoke itself.',
+      toolCalls: 0,
+      status: "error",
+    });
+  });
+
+  it("accepts omitted optional context", async () => {
+    let streamedInput: string | undefined;
+    const writer = {
+      id: "writer",
+      config: {},
+      stream: (input: { input?: string; onFinish?: (response: unknown) => void }) => {
+        streamedInput = input.input;
+        input.onFinish?.({ text: "done", toolCalls: [], status: "completed" });
+        return Promise.resolve({ toDataStreamResponse: () => new Response("") });
+      },
+    } as unknown as Agent;
+    const invokeAgent = createInvokeAgentTool({ resolveAgent: () => writer });
+
+    await invokeAgent.execute({
+      agent_id: "writer",
+      description: "Draft reply",
+      prompt: "Draft it.",
+    });
+
+    assertEquals(streamedInput, "Draft it.");
+  });
+
+  it("forwards the parent abort signal to the invoked agent", async () => {
+    let streamedAbortSignal: AbortSignal | undefined;
+    const writer = {
+      id: "writer",
+      config: {},
+      stream: (input: {
+        abortSignal?: AbortSignal;
+        onFinish?: (response: unknown) => void;
+      }) => {
+        streamedAbortSignal = input.abortSignal;
+        input.onFinish?.({ text: "done", toolCalls: [], status: "completed" });
+        return Promise.resolve({ toDataStreamResponse: () => new Response("") });
+      },
+    } as unknown as Agent;
+    const invokeAgent = createInvokeAgentTool({ resolveAgent: () => writer });
+    const abortController = new AbortController();
+
+    await invokeAgent.execute({
+      agent_id: "writer",
+      description: "Draft reply",
+      prompt: "Draft it.",
+    }, { abortSignal: abortController.signal });
+
+    assertEquals(streamedAbortSignal, abortController.signal);
+  });
+});
+
+it("delegate agent execution inherits the exact project source restriction", async () => {
   let observedPolicy: ReturnType<typeof getRuntimeSourceIntegrationPolicy>;
   let observedToolNames: string[] | undefined;
   const writer = {
@@ -157,7 +259,7 @@ Deno.test("delegate agent execution inherits the exact project source restrictio
   assertEquals(observedToolNames, []);
 });
 
-Deno.test("delegate agent execution preserves an explicit process-boundary restriction", async () => {
+it("delegate agent execution preserves an explicit process-boundary restriction", async () => {
   let observedPolicy: ReturnType<typeof getRuntimeSourceIntegrationPolicy>;
   let observedDuringStreamConsumption: ReturnType<typeof getRuntimeSourceIntegrationPolicy>;
   const writer = {

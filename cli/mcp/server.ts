@@ -34,11 +34,12 @@ import {
   ToolsCallParamsSchema,
 } from "./jsonrpc.ts";
 
+// Exact loopback origins only. `localhost` is the hostname the CLI prints.
+// Project subdomains were never admitted here and still are not.
 const ALLOWED_HTTP_ORIGIN_HOSTS = new Set([
   "localhost",
   "127.0.0.1",
   "[::1]",
-  "veryfront.me",
 ]);
 
 function isAllowedHttpOrigin(origin: string): boolean {

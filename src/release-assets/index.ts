@@ -60,6 +60,7 @@ export {
   type ReleaseAssetDependencyMode,
   type ReleaseAssetEntry,
   type ReleaseAssetManifest,
+  type ReleaseAssetManifestParseOptions,
   type ReleaseAssetManifestResponse,
   type ReleaseAssetManifestState,
   type ReleaseAssetRouteEntry,

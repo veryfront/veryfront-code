@@ -41,6 +41,48 @@ function createRuntimeEventStream(
   });
 }
 
+function observeUnhandledRejections(): {
+  readonly unhandledRejections: unknown[];
+  readonly dispose: () => void;
+} {
+  const unhandledRejections: unknown[] = [];
+  const globalEventTarget = globalThis as typeof globalThis & {
+    addEventListener?: typeof globalThis.addEventListener;
+    removeEventListener?: typeof globalThis.removeEventListener;
+  };
+
+  if (
+    typeof globalEventTarget.addEventListener === "function" &&
+    typeof globalEventTarget.removeEventListener === "function"
+  ) {
+    const handler = (event: PromiseRejectionEvent) => {
+      unhandledRejections.push(event.reason);
+      event.preventDefault();
+    };
+    globalEventTarget.addEventListener("unhandledrejection", handler);
+    return {
+      unhandledRejections,
+      dispose: () => globalEventTarget.removeEventListener?.("unhandledrejection", handler),
+    };
+  }
+
+  const nodeProcess = (globalThis as { process?: typeof import("node:process") }).process;
+  if (
+    nodeProcess && typeof nodeProcess.on === "function" && typeof nodeProcess.off === "function"
+  ) {
+    const handler = (reason: unknown) => {
+      unhandledRejections.push(reason);
+    };
+    nodeProcess.on("unhandledRejection", handler);
+    return {
+      unhandledRejections,
+      dispose: () => nodeProcess.off("unhandledRejection", handler),
+    };
+  }
+
+  throw new Error("No unhandled rejection observer is available");
+}
+
 describe("agent/fork-runtime-stream", () => {
   it("maps AG-UI runtime tool input and output events into fork parts", () => {
     const state = createForkRuntimeStreamMappingState();
@@ -358,13 +400,8 @@ describe("agent/fork-runtime-stream", () => {
   });
 
   it("does not leak unhandled rejections from side promises when the fork stream fails", async () => {
-    const unhandledRejections: unknown[] = [];
-    const handler = (event: PromiseRejectionEvent) => {
-      unhandledRejections.push(event.reason);
-      event.preventDefault();
-    };
+    const unhandledRejectionObserver = observeUnhandledRejections();
 
-    globalThis.addEventListener("unhandledrejection", handler);
     try {
       const streamError = new Error("provider failed");
       const streamResult = startAgentRuntimeFork({
@@ -399,11 +436,11 @@ describe("agent/fork-runtime-stream", () => {
       assertEquals(thrown, streamError);
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      assertEquals(unhandledRejections, []);
+      assertEquals(unhandledRejectionObserver.unhandledRejections, []);
       await assertRejects(() => Promise.resolve(streamResult.steps), Error, "provider failed");
       await assertRejects(() => Promise.resolve(streamResult.totalUsage), Error, "provider failed");
     } finally {
-      globalThis.removeEventListener("unhandledrejection", handler);
+      unhandledRejectionObserver.dispose();
     }
   });
 

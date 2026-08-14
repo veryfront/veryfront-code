@@ -9,7 +9,11 @@ import {
   resetReactCache,
 } from "./server-loader.ts";
 import { renderToStaticMarkupAdapter, renderToStringAdapter } from "./string-renderer.ts";
-import { resetSSRAdapterTimeoutForTests, setSSRAdapterTimeoutForTests } from "./timeout.ts";
+import {
+  resetSSRAdapterTimeoutForTests,
+  setSSRAdapterDeadlineRuntimeForTests,
+  setSSRAdapterTimeoutForTests,
+} from "./timeout.ts";
 import { getServerRenderContext } from "../../server-render-context.ts";
 
 type ReadableOptions = NonNullable<
@@ -24,6 +28,42 @@ function createReadableSSRStream(html: string): ReadableStream<Uint8Array> {
       controller.close();
     },
   });
+}
+
+function createManualDeadlineRuntime() {
+  let now = 0;
+  let nextHandle = 1;
+  const pending = new Map<number, () => void>();
+  return {
+    runtime: {
+      now: () => now,
+      setTimer: (callback: () => void, _delayMs: number) => {
+        const handle = nextHandle++;
+        pending.set(handle, callback);
+        return handle as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimer: (handle: ReturnType<typeof setTimeout>) => {
+        pending.delete(handle as unknown as number);
+      },
+    },
+    advance(milliseconds: number) {
+      now += milliseconds;
+      const callbacks = [...pending.values()];
+      pending.clear();
+      for (const callback of callbacks) callback();
+    },
+    pendingCount: () => pending.size,
+  };
+}
+
+async function waitForDeadline(
+  runtime: ReturnType<typeof createManualDeadlineRuntime>,
+): Promise<void> {
+  for (let turn = 0; turn < 200; turn++) {
+    if (runtime.pendingCount() > 0) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error("SSR render did not arm its deadline within 200 event-loop turns");
 }
 
 describe("react/compat/ssr-adapter/string-renderer", () => {
@@ -194,7 +234,9 @@ describe("react/compat/ssr-adapter/string-renderer", () => {
   it("cancels a buffered stream that stops making progress", async () => {
     let cancelled = false;
     let stringRenderCalls = 0;
+    const deadline = createManualDeadlineRuntime();
     setSSRAdapterTimeoutForTests(5);
+    setSSRAdapterDeadlineRuntimeForTests(deadline.runtime);
     __injectReactDOMServerForTests({
       renderToString: () => {
         stringRenderCalls += 1;
@@ -211,11 +253,14 @@ describe("react/compat/ssr-adapter/string-renderer", () => {
         >,
     });
 
-    await assertRejects(
+    const assertion = assertRejects(
       () => renderToStringAdapter(React.createElement("div")),
       Error,
       "SSR timeout",
     );
+    await waitForDeadline(deadline);
+    deadline.advance(5);
+    await assertion;
     assertEquals(stringRenderCalls, 0);
     assertEquals(cancelled, true);
   });
@@ -223,7 +268,9 @@ describe("react/compat/ssr-adapter/string-renderer", () => {
   it("bounds stream setup even when the renderer ignores its abort signal", async () => {
     let signal: AbortSignal | undefined;
     let stringRenderCalls = 0;
+    const deadline = createManualDeadlineRuntime();
     setSSRAdapterTimeoutForTests(5);
+    setSSRAdapterDeadlineRuntimeForTests(deadline.runtime);
     __injectReactDOMServerForTests({
       renderToString: () => {
         stringRenderCalls += 1;
@@ -236,20 +283,29 @@ describe("react/compat/ssr-adapter/string-renderer", () => {
       },
     });
 
-    await assertRejects(
+    const assertion = assertRejects(
       () => renderToStringAdapter(React.createElement("div")),
       Error,
       "SSR timeout",
     );
+    await waitForDeadline(deadline);
+    deadline.advance(5);
+    await assertion;
     assertEquals(stringRenderCalls, 0);
     assertEquals(signal?.aborted, true);
   });
 
   it("enforces the absolute deadline while an always-ready stream starves timers", async () => {
-    let cancelReason: unknown;
+    const cancelled = Promise.withResolvers<unknown>();
     let observed: Error | undefined;
     let thrown: unknown;
     setSSRAdapterTimeoutForTests(1);
+    let clockReads = 0;
+    setSSRAdapterDeadlineRuntimeForTests({
+      now: () => clockReads++ < 3 ? 0 : 1,
+      setTimer: () => 1 as unknown as ReturnType<typeof setTimeout>,
+      clearTimer: () => {},
+    });
     __injectReactDOMServerForTests({
       renderToString: () => "<div>must not render</div>",
       renderToStaticMarkup: () => "<div>unused</div>",
@@ -259,7 +315,7 @@ describe("react/compat/ssr-adapter/string-renderer", () => {
             controller.enqueue(new Uint8Array(1024));
           },
           cancel(reason) {
-            cancelReason = reason;
+            cancelled.resolve(reason);
           },
         }) as Awaited<
           ReturnType<NonNullable<ReactDOMServer["renderToReadableStream"]>>
@@ -284,7 +340,7 @@ describe("react/compat/ssr-adapter/string-renderer", () => {
       "SSR timeout",
     );
     assertStrictEquals(observed, thrown as Error);
-    assertStrictEquals(cancelReason, thrown);
+    assertStrictEquals(await cancelled.promise, thrown);
   });
 
   it("cancels and reports the owned failure when buffered output exceeds its limit", async () => {

@@ -80,14 +80,11 @@ export {
 // Executor
 export { getSkillScriptExecutor } from "./executor.ts";
 
-// Allowed-Tools
+// Skill tool availability
 export {
   filterToolNamesForSkill,
   filterToolsForSkill,
-  isToolAllowedBySkill,
-  snapshotAllowedToolPatterns,
-  validateAllowedToolPatterns,
-  validateStrictAllowedToolPatterns,
+  isSkillToolAvailable,
 } from "./allowed-tools.ts";
 
 export type { ParsedSkillContent } from "./document-parser.ts";

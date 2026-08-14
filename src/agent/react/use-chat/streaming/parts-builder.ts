@@ -18,11 +18,24 @@ export function buildCurrentParts(
   toolCalls: Map<string, OrderedToolCall>,
   steps?: Map<number, OrderedStep>,
   extraParts?: OrderedMessagePart[],
+  /**
+   * Reasoning spans that closed and were then superseded by a later span
+   * reusing the same wire id. They are no longer addressable by id but still
+   * belong in the transcript at the position they streamed in.
+   */
+  closedReasoningBlocks?: readonly OrderedReasoning[],
+  /**
+   * Text blocks that closed and were then superseded by a later block reusing
+   * the same content id. No longer addressable, still part of the answer.
+   */
+  closedTextBlocks?: readonly TextBlock[],
 ): ChatMessagePart[] {
   const orderedParts: OrderedPart[] = [];
 
-  addTextParts(orderedParts, textBlocks);
-  addReasoningParts(orderedParts, reasoningBlocks);
+  addTextParts(orderedParts, textBlocks.values());
+  if (closedTextBlocks) addTextParts(orderedParts, closedTextBlocks);
+  addReasoningParts(orderedParts, reasoningBlocks.values());
+  if (closedReasoningBlocks) addReasoningParts(orderedParts, closedReasoningBlocks);
   addToolParts(orderedParts, toolCalls);
   if (steps) addStepParts(orderedParts, steps);
   if (extraParts) addExtraParts(orderedParts, extraParts);
@@ -42,9 +55,9 @@ function addExtraParts(
 
 function addTextParts(
   orderedParts: OrderedPart[],
-  textBlocks: Map<string, TextBlock>,
+  textBlocks: Iterable<TextBlock>,
 ): void {
-  for (const { text, order, state } of textBlocks.values()) {
+  for (const { text, order, state } of textBlocks) {
     if (!text || order === null) continue;
 
     orderedParts.push({
@@ -56,9 +69,9 @@ function addTextParts(
 
 function addReasoningParts(
   orderedParts: OrderedPart[],
-  reasoningBlocks: Map<string, OrderedReasoning>,
+  reasoningBlocks: Iterable<OrderedReasoning>,
 ): void {
-  for (const { order, text, signature, redactedData, isComplete } of reasoningBlocks.values()) {
+  for (const { order, text, signature, redactedData, isComplete } of reasoningBlocks) {
     orderedParts.push({
       order,
       part: {

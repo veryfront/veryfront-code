@@ -8,9 +8,18 @@ import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
+  __subscribeLogRecordEmitter,
+  type LogEntry,
+  LogLevel,
+  refreshLoggerConfig,
+  setLogLevel,
+} from "#veryfront/utils/logger/index.ts";
+import {
   executeRemoteIntegrationTool,
   getRemoteIntegrationToolDefinitions,
+  getRemoteIntegrationToolDiscovery,
   isRemoteIntegrationTool,
+  runWithRemoteIntegrationToolDiscoveryScope,
 } from "./remote-tools.ts";
 
 const ENV_KEYS = [
@@ -47,6 +56,30 @@ function setRemoteToolEnv(overrides: Record<string, string>): void {
   refreshEnvironmentConfig();
 }
 
+/**
+ * Collect the integration tool discovery log records emitted while `run`
+ * executes. Debug records only reach subscribers when the debug level is
+ * active, so the level is forced for the duration of the call.
+ */
+async function captureIntegrationDiscoveryLogs(
+  run: () => Promise<unknown>,
+): Promise<LogEntry[]> {
+  const records: LogEntry[] = [];
+  const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+    if (entry.message.includes("integration tool")) records.push(entry);
+  });
+  setLogLevel(LogLevel.DEBUG);
+
+  try {
+    await run();
+  } finally {
+    unsubscribe();
+    refreshLoggerConfig();
+  }
+
+  return records;
+}
+
 afterEach(() => {
   restoreRemoteToolEnv();
 });
@@ -74,6 +107,59 @@ describe("integrations/remote-tools", () => {
     }, async () => await getRemoteIntegrationToolDefinitions());
 
     assertEquals(definitions, []);
+  });
+
+  it("memoizes a typed empty integration catalog for the current run", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    let fetchCalls = 0;
+    const results = await withMockFetch(async () => {
+      fetchCalls++;
+      return Response.json({ tools: [] });
+    }, () =>
+      runWithRemoteIntegrationToolDiscoveryScope(async () => [
+        await getRemoteIntegrationToolDiscovery(),
+        await getRemoteIntegrationToolDiscovery(),
+      ]));
+
+    assertEquals(fetchCalls, 1);
+    assertEquals(results, [
+      { status: "ok", tools: [] },
+      { status: "ok", tools: [] },
+    ]);
+  });
+
+  it("caches a transient failure for the current run and retries the next run", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    let fetchCalls = 0;
+    const outcome = await withMockFetch(async () => {
+      fetchCalls++;
+      return fetchCalls === 1
+        ? new Response(undefined, { status: 503, statusText: "Service Unavailable" })
+        : Response.json({ tools: [] });
+    }, async () => ({
+      currentRun: await runWithRemoteIntegrationToolDiscoveryScope(async () => [
+        await getRemoteIntegrationToolDiscovery(),
+        await getRemoteIntegrationToolDiscovery(),
+      ]),
+      nextRun: await runWithRemoteIntegrationToolDiscoveryScope(() =>
+        getRemoteIntegrationToolDiscovery()
+      ),
+    }));
+
+    assertEquals(fetchCalls, 2);
+    assertEquals(outcome.currentRun, [
+      { status: "unavailable", reason: "request_failed" },
+      { status: "unavailable", reason: "request_failed" },
+    ]);
+    assertEquals(outcome.nextRun, { status: "ok", tools: [] });
   });
 
   it("prefers the request-scoped token and normalizes empty input schemas", async () => {
@@ -675,6 +761,67 @@ describe("integrations/remote-tools", () => {
     });
   });
 
+  it("suppresses run_id only on strict false, not on other falsy markers", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "environment-token",
+      VERYFRONT_PROJECT_SLUG: "environment-project",
+    });
+
+    for (const marker of [true, undefined, 0, "false"]) {
+      let requestBody: Record<string, unknown> | undefined;
+      await withMockFetch(
+        async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          requestBody = await request.json();
+          return Response.json({ structuredContent: { ok: true } });
+        },
+        async () =>
+          await executeRemoteIntegrationTool("gmail__list_emails", {}, {
+            runId: "run-platform-123",
+            runIdBindsToolAuthorization: marker as boolean | undefined,
+          }),
+      );
+
+      assertEquals(
+        (requestBody as { run_id?: string } | undefined)?.run_id,
+        "run-platform-123",
+      );
+    }
+  });
+
+  it("omits a non-binding run ID while retaining other call metadata", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "environment-token",
+    });
+
+    let requestBody: Record<string, unknown> | undefined;
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requestBody = await request.json();
+        return Response.json({ structuredContent: { ok: true } });
+      },
+      async () =>
+        await executeRemoteIntegrationTool(
+          "gmail__list_emails",
+          { maxResults: 10 },
+          {
+            runId: "run-local-123",
+            runIdBindsToolAuthorization: false,
+            agentId: "agent-123",
+          },
+        ),
+    );
+
+    assertEquals(requestBody, {
+      name: "gmail__list_emails",
+      arguments: { maxResults: 10 },
+      agent_id: "agent-123",
+    });
+  });
+
   it("prefers structuredContent for MCP error results without text content", async () => {
     setRemoteToolEnv({
       VERYFRONT_API_BASE_URL: "https://api.test",
@@ -755,5 +902,55 @@ describe("integrations/remote-tools", () => {
       }), async () => await executeRemoteIntegrationTool("github__list_repos", {}));
 
     assertEquals(result, "plain result");
+  });
+
+  it("reports a projectless integration tools rejection below error level", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    const records = await captureIntegrationDiscoveryLogs(() =>
+      withMockFetch(
+        async () => new Response(undefined, { status: 400, statusText: "Bad Request" }),
+        () => getRemoteIntegrationToolDiscovery(),
+      )
+    );
+
+    assertEquals(records.filter((entry) => entry.level === "error"), []);
+    assertEquals(records.map((entry) => entry.level), ["debug"]);
+  });
+
+  it("still reports integration tool discovery failures for a project-scoped runtime", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+      VERYFRONT_PROJECT_SLUG: "environment-project",
+    });
+
+    const records = await captureIntegrationDiscoveryLogs(() =>
+      withMockFetch(
+        async () => new Response(undefined, { status: 400, statusText: "Bad Request" }),
+        () => getRemoteIntegrationToolDiscovery(),
+      )
+    );
+
+    assertEquals(records.map((entry) => entry.level), ["error"]);
+  });
+
+  it("still reports integration tool discovery server failures at error level", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    const records = await captureIntegrationDiscoveryLogs(() =>
+      withMockFetch(
+        async () => new Response(undefined, { status: 500, statusText: "Internal Server Error" }),
+        () => getRemoteIntegrationToolDiscovery(),
+      )
+    );
+
+    assertEquals(records.map((entry) => entry.level), ["error"]);
   });
 });

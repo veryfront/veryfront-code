@@ -60,7 +60,7 @@
     "npm:ajv-formats@3.0.1": "3.0.1_ajv@8.18.0",
     "npm:ajv@8.18.0": "8.18.0",
     "npm:bash-tool@1.3.18": "1.3.18_ai@7.0.41__zod@3.25.76_just-bash@3.0.1",
-    "npm:better-sqlite3@9.6.0": "9.6.0",
+    "npm:better-sqlite3@13.0.3": "13.0.3",
     "npm:brace-expansion@5.0.9": "5.0.9",
     "npm:browserslist@4.28.7": "4.28.7",
     "npm:daisyui@5.5.14": "5.5.14",
@@ -102,6 +102,7 @@
     "npm:unist-util-visit@5.1.0": "5.1.0",
     "npm:vfile@6.0.3": "6.0.3",
     "npm:ws@8.21.1": "8.21.1",
+    "npm:yaml@2.9.0": "2.9.0",
     "npm:zod@4.3.6": "4.3.6"
   },
   "jsr": {
@@ -389,7 +390,8 @@
         "@smithy/types",
         "bowser",
         "tslib@2.8.1"
-      ]
+      ],
+      "deprecated": true
     },
     "@aws-sdk/credential-provider-env@3.972.64": {
       "integrity": "sha512-14kkR5aj1c7D+cYCrEcG2W3xw87wMYAEUeB/tMiQ2j0RVKzzdewd4mJw1+Q0JVLr4IFU1JHGDCyj0WqLrtIixg==",
@@ -2923,13 +2925,11 @@
         "just-bash"
       ]
     },
-    "better-sqlite3@9.6.0": {
-      "integrity": "sha512-yR5HATnqeYNVnkaUTf4bOP2dJSnyhP4puJN/QPRyx4YkBEEUxib422n2XzPqDEHjQQqazoYoADdAm5vE15+dAQ==",
+    "better-sqlite3@13.0.3": {
+      "integrity": "sha512-RbOBxmLBG8uvFUc15X9+9SFemKcQ0WBuISBVkpuiaUB2qblC8UWlHEjdWVoZ8AdhSwmoEgsiXKfopX0CQxaACQ==",
       "dependencies": [
-        "bindings",
-        "prebuild-install"
-      ],
-      "scripts": true
+        "node-addon-api"
+      ]
     },
     "bidi-js@1.0.3": {
       "integrity": "sha512-RKshQI1R3YQ+n9YJz2QQ147P66ELpa1FQEg20Dk8oW9t2KgLbpDLLp9aGZ7y8WHSshDknG0bknqGw5/tyCs5tw==",
@@ -2939,12 +2939,6 @@
     },
     "bignumber.js@9.3.1": {
       "integrity": "sha512-Ko0uX15oIUS7wJ3Rb30Fs6SkVbLmPBAKdlm7q9+ak9bbIeFf0MwuBsQV6z7+X768/cHsfg+WlysDWJcmthjsjQ=="
-    },
-    "bindings@1.5.0": {
-      "integrity": "sha512-p2q/t/mhvuOj/UeLlV6566GD/guowlr0hHxClI0W9m7MWYkL1F0hLo+0Aexs9HSPCtR1SXQ0TD3MMKrXZajbiQ==",
-      "dependencies": [
-        "file-uri-to-path"
-      ]
     },
     "bl@4.1.0": {
       "integrity": "sha512-1W07cM9gS6DcLperZfFSj+bWLtaPGSOHWhPiGzXmvVJbRLdG82sH/Kn8EtW1VqWVA54AKf2h5k5BbnIbwF3h6w==",
@@ -3317,8 +3311,8 @@
         "micromatch"
       ]
     },
-    "fast-uri@3.1.4": {
-      "integrity": "sha512-8JnbkQ4juDyvYs4mgFGQqg4yCYtFDtUtmp2QIQq11ZZe5CFQ5wcqm1rqDgAh/QdMySuBnPzMUiJUNZG5N/AiQw=="
+    "fast-uri@3.1.5": {
+      "integrity": "sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw=="
     },
     "fast-xml-builder@1.3.0": {
       "integrity": "sha512-F74cZEdCvuw9P41GAC3rod4X04jjWGM1JPEv/GWSqFTWLsdyMSBMBMlm9Hk3GLBgLBbdBNY8yee0pQh2RBVESQ==",
@@ -3366,9 +3360,6 @@
         "token-types",
         "uint8array-extras"
       ]
-    },
-    "file-uri-to-path@1.0.0": {
-      "integrity": "sha512-0Zt+s3L7Vf1biwWZ29aARiVYLx7iMGnEUl9x33fbB/j3jR81u/O2LbqK+Bm1CDSNDKVtJ/YjwY7TUd5SkeLQLw=="
     },
     "fill-range@7.1.1": {
       "integrity": "sha512-YsGpe3WHLK8ZYi4tWDg2Jy3ebRz2rXowDxnld4bkQB00cc/1Zw9AWnC0i9ztDJitivtQvaI9KaLyKrc+hBW0yg==",
@@ -4491,8 +4482,8 @@
     "ms@2.1.3": {
       "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA=="
     },
-    "nanoid@3.3.16": {
-      "integrity": "sha512-bzlKTyNJ7+LdGIIwy8ijFpIqEQIvafahV7eYykJ8Cvh42EdJeODoJ6gUJXpQJvej1BddH8OqTXZNE/KfbWAu8Q==",
+    "nanoid@3.3.18": {
+      "integrity": "sha512-DTg4MJbGMWkfi6VZFdNt2/caMbQy4Ou+Op/hJQvGEWcnVfoA1QA+xzRKAzw9jD6+GVOOeYr/mIcuDSdug6F6+w==",
       "bin": true
     },
     "napi-build-utils@2.0.0": {
@@ -5729,6 +5720,8 @@
     "https://esm.sh/yaml@2": "https://esm.sh/yaml@2.9.0"
   },
   "remote": {
+    "http://127.0.0.1:49595/allowed.js": "f604d628d9f3ec91366a869741a48bc612290794f52990aba9c15641d64c4c6f",
+    "http://127.0.0.1:57487/allowed.js": "f604d628d9f3ec91366a869741a48bc612290794f52990aba9c15641d64c4c6f",
     "https://deno.land/std@0.208.0/assert/_constants.ts": "8a9da298c26750b28b326b297316cdde860bc237533b07e1337c021379e6b2a9",
     "https://deno.land/std@0.208.0/assert/_diff.ts": "58e1461cc61d8eb1eacbf2a010932bf6a05b79344b02ca38095f9b805795dc48",
     "https://deno.land/std@0.208.0/assert/_format.ts": "a69126e8a469009adf4cf2a50af889aca364c349797e63174884a52ff75cf4c7",
@@ -6331,8 +6324,7 @@
       "jsr:@std/fmt@1.0.9",
       "jsr:@std/fs@1.0.23",
       "jsr:@std/path@1.1.4",
-      "jsr:@std/testing@1.0.17",
-      "jsr:@std/yaml@1.1.0"
+      "jsr:@std/testing@1.0.17"
     ],
     "members": {
       "extensions/ext-auth-jwt": {
@@ -6425,7 +6417,7 @@
       "extensions/ext-db-sqlite": {
         "dependencies": [
           "npm:@types/better-sqlite3@7.6.13",
-          "npm:better-sqlite3@9.6.0"
+          "npm:better-sqlite3@13.0.3"
         ]
       },
       "extensions/ext-dev-ui-react": {
@@ -6564,7 +6556,7 @@
         "dependencies": [
           "jsr:@std/assert@1.0.19",
           "jsr:@std/testing@1.0.17",
-          "jsr:@std/yaml@1.1.0"
+          "npm:yaml@2.9.0"
         ]
       }
     }

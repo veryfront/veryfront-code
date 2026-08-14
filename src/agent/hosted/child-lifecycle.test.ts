@@ -3,6 +3,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChildRunExecutionResult } from "../child-run/execution-snapshot.ts";
 import {
+  HOSTED_CHILD_FINALIZATION_FAILED_CODE,
   type HostedChildLifecycleAdapter,
   runHostedChildExecutionLifecycle,
   runHostedChildLifecycle,
@@ -138,6 +139,170 @@ describe("agent/hosted-child-lifecycle", () => {
     }
   });
 
+  it("keeps the bare cancelled message for a genuine abort", async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+    const abortError = new Error("The operation was aborted");
+    abortError.name = "AbortError";
+
+    const result = await runHostedChildExecutionLifecycle({
+      adapter: {},
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      abortSignal: abortController.signal,
+      execute: () => {
+        throw abortError;
+      },
+      getExecutionSnapshot: () => null,
+    });
+
+    assertEquals(result.status, "cancelled", "an abort is still a cancellation");
+    assertEquals(
+      result.terminalState.terminalErrorMessage,
+      "Child run cancelled",
+      "a real abort carries no extra cause",
+    );
+  });
+
+  it("preserves the real cause when an error merely coincides with an abort", async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+
+    const result = await runHostedChildExecutionLifecycle({
+      adapter: {},
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      abortSignal: abortController.signal,
+      execute: () => {
+        throw new Error("upstream connection reset");
+      },
+      getExecutionSnapshot: () => null,
+    });
+
+    assertEquals(
+      result.status,
+      "cancelled",
+      "a torn-down run still reports cancelled, not failed",
+    );
+    assertEquals(
+      result.terminalState.terminalErrorCode,
+      "CANCELLED",
+      "the contractual code is unchanged",
+    );
+    assertEquals(
+      result.terminalState.terminalErrorMessage,
+      "Child run cancelled: upstream connection reset",
+      "the underlying cause survives instead of being overwritten",
+    );
+  });
+
+  it("strips credentials from a coincident cause before persisting it", async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+
+    const result = await runHostedChildExecutionLifecycle({
+      adapter: {},
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      abortSignal: abortController.signal,
+      execute: () => {
+        throw new Error("fetch failed for https://user:hunter2@api.example.com/v1/run");
+      },
+      getExecutionSnapshot: () => null,
+    });
+
+    const message = result.terminalState.terminalErrorMessage ?? "";
+    assertEquals(
+      message.includes("hunter2"),
+      false,
+      "url credentials must not reach the durable run record",
+    );
+    assertEquals(
+      message.startsWith("Child run cancelled: "),
+      true,
+      "the sanitized cause is still carried",
+    );
+  });
+
+  it("bounds a bulk coincident cause to an excerpt", async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+
+    const result = await runHostedChildExecutionLifecycle({
+      adapter: {},
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      abortSignal: abortController.signal,
+      execute: () => {
+        throw new Error("x".repeat(5_000));
+      },
+      getExecutionSnapshot: () => null,
+    });
+
+    const message = result.terminalState.terminalErrorMessage ?? "";
+    assertEquals(
+      message.length < 250,
+      true,
+      "a provider response body must not be persisted whole",
+    );
+    assertEquals(message.endsWith("..."), true, "truncation is visible in the message");
+  });
+
+  it("strips credentials from a failed run's message", async () => {
+    const result = await runHostedChildExecutionLifecycle({
+      adapter: {},
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      execute: () => {
+        throw new Error("post to https://svc:hunter2@api.example.com/v1/chat failed");
+      },
+      getExecutionSnapshot: () => null,
+    });
+
+    assertEquals(result.status, "failed", "the run still reports failed");
+    // Exact rather than substring checks: this pins that only the password is
+    // masked and the rest of the message survives verbatim.
+    assertEquals(
+      result.terminalState.terminalErrorMessage,
+      "post to https://svc:[REDACTED]@api.example.com/v1/chat failed",
+      "the password is masked while the actionable message survives",
+    );
+  });
+
+  it("keeps a realistic provider error intact", async () => {
+    const providerError = "Invalid request: messages[3].content must be a string, got object. " +
+      "See https://docs.example.com/errors#invalid-request for details.";
+
+    const result = await runHostedChildExecutionLifecycle({
+      adapter: {},
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      execute: () => {
+        throw new Error(providerError);
+      },
+      getExecutionSnapshot: () => null,
+    });
+
+    assertEquals(
+      result.terminalState.terminalErrorMessage,
+      providerError,
+      "a normal provider error is not truncated — this is what a user reads to debug",
+    );
+  });
+
+  it("cuts a bulk payload out of a failed run's message", async () => {
+    const result = await runHostedChildExecutionLifecycle({
+      adapter: {},
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      execute: () => {
+        throw new Error("z".repeat(60_000));
+      },
+      getExecutionSnapshot: () => null,
+    });
+
+    const message = result.terminalState.terminalErrorMessage ?? "";
+    assertEquals(
+      message.length <= 4_000,
+      true,
+      "a response body must not be persisted whole",
+    );
+    assertEquals(message.endsWith("..."), true, "truncation is visible in the message");
+  });
+
   it("reports terminal hook errors through onLifecycleError for failure states", async () => {
     const lifecycleErrors: unknown[] = [];
     const adapter: HostedChildLifecycleAdapter = {
@@ -189,6 +354,150 @@ describe("agent/hosted-child-lifecycle", () => {
         }),
       Error,
       "persist failed",
+    );
+  });
+
+  it("reports terminal hook errors through onLifecycleError for completed states", async () => {
+    const calls: string[] = [];
+    const lifecycleErrors: unknown[] = [];
+    const adapter: HostedChildLifecycleAdapter = {
+      completed: () => {
+        calls.push("completed");
+        throw new Error("Required durable run event was not flushed");
+      },
+      failed: () => {
+        calls.push("failed");
+      },
+    };
+
+    const result = await runHostedChildLifecycle({
+      adapter,
+      execute: async () => "ok",
+      resolveErrorState: () => ({
+        status: "failed",
+        terminalErrorCode: "STREAM_ERROR",
+        terminalErrorMessage: "boom",
+      }),
+      onLifecycleError: (error) => {
+        lifecycleErrors.push(error);
+      },
+    });
+
+    assertEquals(lifecycleErrors.length, 1);
+    // The adapter already rejected this terminal state; dispatching again would
+    // write a second terminal state for the same run.
+    assertEquals(calls, ["completed"]);
+    assertEquals(result.status, "failed");
+    assertEquals(
+      result.terminalState.terminalErrorCode,
+      HOSTED_CHILD_FINALIZATION_FAILED_CODE,
+    );
+  });
+
+  it("keeps the finalization outcome when onLifecycleError itself throws", async () => {
+    const calls: string[] = [];
+    let lifecycleErrorCalls = 0;
+    const adapter: HostedChildLifecycleAdapter = {
+      completed: () => {
+        calls.push("completed");
+        throw new Error("persist failed");
+      },
+      failed: () => {
+        calls.push("failed");
+      },
+    };
+
+    const result = await runHostedChildLifecycle({
+      adapter,
+      execute: async () => "ok",
+      resolveErrorState: () => ({
+        status: "failed",
+        terminalErrorCode: "STREAM_ERROR",
+        terminalErrorMessage: "boom",
+      }),
+      onLifecycleError: () => {
+        lifecycleErrorCalls += 1;
+        throw new Error("reporting failed");
+      },
+    });
+
+    // A failing observability callback must not relabel the outcome, trigger a
+    // second terminal dispatch, or be reported more than once.
+    assertEquals(calls, ["completed"]);
+    assertEquals(lifecycleErrorCalls, 1);
+    assertEquals(result.status, "failed");
+    assertEquals(
+      result.terminalState.terminalErrorCode,
+      HOSTED_CHILD_FINALIZATION_FAILED_CODE,
+    );
+    assertEquals(result.terminalState.terminalErrorMessage, "persist failed");
+  });
+
+  it("keeps completion usage on a finalization failure", async () => {
+    const adapter: HostedChildLifecycleAdapter = {
+      completed: () => {
+        throw new Error("persist failed");
+      },
+    };
+
+    const result = await runHostedChildLifecycle({
+      adapter,
+      execute: async () => "ok",
+      resolveCompletedState: () => ({
+        status: "completed",
+        usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+      }),
+      resolveErrorState: () => ({
+        status: "failed",
+        terminalErrorCode: "STREAM_ERROR",
+        terminalErrorMessage: "boom",
+      }),
+      onLifecycleError: () => {},
+    });
+
+    assertEquals(result.status, "failed");
+    assertEquals(result.terminalState.usage, {
+      inputTokens: 1,
+      outputTokens: 2,
+      totalTokens: 3,
+    });
+  });
+
+  it("does not relabel a completion persistence failure as an execution failure", async () => {
+    const calls: string[] = [];
+    const adapter: HostedChildLifecycleAdapter = {
+      completed: () => {
+        calls.push("completed");
+        throw new Error("Required durable run event was not flushed");
+      },
+      failed: () => {
+        calls.push("failed");
+      },
+    };
+    const localResult: ChildRunExecutionResult = {
+      success: true,
+      description: "Search docs",
+      summary: { text: "Found docs" },
+      steps: 1,
+      toolCalls: [],
+      toolResults: [],
+      usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+      durationMs: 4,
+    };
+
+    const result = await runHostedChildExecutionLifecycle({
+      adapter,
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      execute: () => localResult,
+      getExecutionSnapshot: () => null,
+      onLifecycleError: () => {},
+    });
+
+    assertEquals(calls, ["completed"]);
+    assertEquals(result.status, "failed");
+    assertEquals(
+      result.terminalState.terminalErrorCode,
+      HOSTED_CHILD_FINALIZATION_FAILED_CODE,
     );
   });
 

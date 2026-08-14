@@ -2,7 +2,12 @@
 
 A pending-upload chip for the composer - one per attachment, with thumbnail, label, retry, and remove.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `AttachmentPill`, `AttachmentPill.Icon`, `AttachmentPill.Label`, `AttachmentPill.Remove`, `AttachmentPill.Retry`, `AttachmentPill.Root`, `AttachmentPill.Thumbnail`, `ChatInput`
+> - **Not exported today:** none
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 

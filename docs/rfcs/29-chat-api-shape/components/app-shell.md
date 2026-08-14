@@ -2,11 +2,16 @@
 
 Application shell layout - dockable sidebars, main pane, header - from `veryfront/ui`. Chat consumes it; it does not own it.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `AppShell`, `AppShell.Content`, `AppShell.Header`, `AppShell.Main`, `AppShell.Sidebar`, `AppShell.SidebarContent`, `AppShell.SidebarFooter`, `AppShell.SidebarHeader`, `AppShell.Trigger`
+> - **Not exported today:** none
+>
+> An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Reference only
 
-`AppShell` lives in **`veryfront/ui`**, not `veryfront/chat` - it is already shipped and already close to the convention this RFC applies to chat (single nodes, native spread, `ref` props, compound parts). This page documents its _real, current_ surface so chat compositions can be judged against it; changes to `AppShell` itself (e.g. `asChild`, the icon-slot ban on `.Trigger`) are out of scope for this chat RFC.
+`AppShell`'s home is **`veryfront/ui`**, which is what the import below shows; `veryfront/chat` re-exports it (`src/chat/index.ts:311`) so a chat app can compose its shell from one import, which is why it also resolves in the status block above. It is already shipped and already close to the convention this RFC applies to chat (single nodes, native spread, `ref` props, compound parts). This page documents its _real, current_ surface so chat compositions can be judged against it; changes to `AppShell` itself (e.g. `asChild`, the icon-slot ban on `.Trigger`) are out of scope for this chat RFC.
 
 ## Import
 

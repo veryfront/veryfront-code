@@ -249,7 +249,7 @@ describe("server/handlers/request/module/module.handler", () => {
         assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
         assertEquals(
           (await result.response?.json() as { type?: string }).type,
-          "https://veryfront.com/docs/errors/project-execution-unavailable",
+          "https://veryfront.com/docs/code/guides/errors#project-execution-unavailable",
         );
       }
 
@@ -292,7 +292,7 @@ describe("server/handlers/request/module/module.handler", () => {
           )
           : undefined;
         assertEquals(
-          type === "https://veryfront.com/docs/errors/project-execution-unavailable",
+          type === "https://veryfront.com/docs/code/guides/errors#project-execution-unavailable",
           false,
           `${pathname} denied execution to a granted host`,
         );

@@ -83,17 +83,34 @@ function isCanonicalDnsHostname(hostname: string): boolean {
     hostname.split(".").every((label) => DNS_LABEL_PATTERN.test(label));
 }
 
+/**
+ * The single trusted local-control root.
+ *
+ * `localhost` is a single label and therefore has no registrable domain in the
+ * eTLD+1 sense, so the shape check cannot be expressed as "keep the last two
+ * labels". The root is matched as a whole suffix instead and the labels in
+ * front of it are what the shape rules below constrain.
+ */
+const TRUSTED_LOCAL_CONTROL_ROOT = "localhost";
+
+/** Labels in front of the trusted root, or null when the host is not on it. */
+function localControlSubLabels(hostname: string): string[] | null {
+  if (hostname === TRUSTED_LOCAL_CONTROL_ROOT) return [];
+  const suffix = `.${TRUSTED_LOCAL_CONTROL_ROOT}`;
+  if (hostname.endsWith(suffix)) {
+    return hostname.slice(0, -suffix.length).split(".");
+  }
+  return null;
+}
+
 function hasTrustedNamedLocalControlShape(hostname: string): boolean {
-  const labels = hostname.split(".");
-  const registrableDomain = labels.slice(-2).join(".");
-  if (registrableDomain !== "lvh.me" && registrableDomain !== "veryfront.me") {
-    return false;
+  const subLabels = localControlSubLabels(hostname);
+  if (subLabels === null) return false;
+  if (subLabels.length === 0) return true;
+  if (subLabels.length === 1) {
+    return subLabels[0] !== "production" && subLabels[0] !== "staging";
   }
-  if (labels.length === 2) return true;
-  if (labels.length === 3) {
-    return labels[0] !== "production" && labels[0] !== "staging";
-  }
-  return labels.length === 4 && labels[1] === "preview";
+  return subLabels.length === 2 && subLabels[1] === "preview";
 }
 
 function hasTrustedFetchSite(request: Request): boolean {
@@ -109,15 +126,19 @@ function hasTrustedFetchSite(request: Request): boolean {
 /**
  * Dedicated authority allowlist for privileged local controls.
  *
- * `veryfront.me` is product-controlled and is the hostname printed by the
- * local CLI. Veryfront admits `lvh.me` because the documented
- * local-development workflow reaches projects through it; the hostname alone never grants
- * access because `isTrustedLocalControlRequest` still requires an
- * authenticated loopback transport peer and no proxy hop. Other third-party
- * wildcard DNS and development test domains are not control authorities even
- * when normal application routing accepts them. Named domains admit only the
- * bare host, one project label, or one project below `preview`; production,
- * staging, custom-domain simulation, and unknown namespaces stay denied.
+ * `localhost` is reserved by RFC 6761, never leaves the machine, and is the
+ * hostname printed by the local CLI. It is the only named root; the hostname
+ * alone never grants access because `isTrustedLocalControlRequest` still
+ * requires an authenticated loopback transport peer and no proxy hop.
+ * Third-party wildcard DNS and public development domains that resolve to
+ * 127.0.0.1 are not control authorities even when normal application routing
+ * accepts them. The named root admits only the bare host,
+ * one project label, or one project below `preview`; production, staging,
+ * custom-domain simulation, and unknown namespaces stay denied.
+ *
+ * `*.localhost` gets that same shape check rather than a blanket allow. Trust
+ * must not widen just because the printed dev hostname is a single-label root:
+ * `project.production.localhost` and `a.b.c.localhost` are denied.
  */
 export function isTrustedLocalControlHostname(hostname: string): boolean {
   const address = hostname.startsWith("[") && hostname.endsWith("]")
@@ -125,7 +146,6 @@ export function isTrustedLocalControlHostname(hostname: string): boolean {
     : hostname;
   if (hostname === "localhost" || isLoopbackAddress(address)) return true;
   if (!isCanonicalDnsHostname(hostname)) return false;
-  if (hostname.endsWith(".localhost")) return true;
   return hasTrustedNamedLocalControlShape(hostname);
 }
 

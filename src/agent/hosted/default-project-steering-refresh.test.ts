@@ -51,7 +51,7 @@ function createRefreshInput(
       sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
       runtimeTools: {},
       remoteToolSources: [],
-      localToolNames: ["load_skill", "sleep"],
+      localToolNames: ["form_input", "load_skill", "sleep"],
       remoteToolNames: [],
       providerToolNames: [],
       availableToolNames: [],

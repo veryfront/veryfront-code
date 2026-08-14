@@ -1,6 +1,47 @@
 # `veryfront/chat` - proposed API shape
 
-Reference pages for the proposed `veryfront/chat` surface, accompanying the RFC one level up: [`29-chat-api-shape.md`](../29-chat-api-shape.md). Everything here documents the _proposed_ shape - none of it is implemented yet. Each page carries the same status banner; the RFC holds the full rationale, cross-cutting contracts, and resolved decisions.
+Reference pages for the proposed `veryfront/chat` surface, accompanying the RFC one level up: [`29-chat-api-shape.md`](../29-chat-api-shape.md). The RFC holds the full rationale, cross-cutting contracts, and resolved decisions; these pages hold the per-piece detail.
+
+> **Status: RFC 29 - partly landed.** Per-symbol truth for this index, verified against `src/` by `deno task lint:rfc-status`:
+>
+> - **Exported from `veryfront/chat` today:** `mergeProps`, `useChatInput`, `useChatInputContext`, `useChatScroll`, `useMessageBranches`
+> - **Not exported today:** `formatSize`, `getAgentPromptSuggestionItems`
+>
+> Those five symbols resolve on the public surface today. That is **not** the same as a landed delta - see [reading the status block](#reading-the-status-block). For the deltas that have actually landed, see [what has landed](#what-has-landed---shipped-srcreactcomponentschatchathooksuse-chat-inputts85).
+
+## Reading the status block
+
+RFC 29 proposes a reset of a library that **already shipped**, and it is landing piecemeal. Every page here therefore carries a status block instead of a page-wide "not implemented" banner, because a page-wide banner is a claim no machine can check - and it went stale the moment [#3277](https://github.com/veryfront/veryfront-code/pull/3277) shipped the prop-getter surface and made `mergeProps` public.
+
+Read a status block like this:
+
+- **Exported from `veryfront/chat` today** - these symbols resolve on the real public surface (barrel exports plus compound sub-parts). **This does not mean the page's delta for them has landed.** `ChatInput.Submit` ships; the RFC's reshape of it does not.
+- **Not exported today** - these symbols genuinely do not exist. `deno task lint:rfc-status` fails if any of them starts shipping without this list being updated.
+- **Not in `src/` today** - the same guarantee for props and hook members, which are not exports (`submitMode`, `getDropTargetProps`).
+
+The **Import** block on each page shows the shape this RFC _proposes_, not today's barrel - so where the two differ, the status block wins. The most common difference: "every sub-part is also a flat named export" is a proposal on every page except [`ChatInput`](./components/chat-input.md#chatinput-flat-sub-part-exports---new---shipped-srcchatindexts250), where it has actually landed (`src/chat/index.ts:250`).
+
+What actually landed is marked **per delta**, on the delta's own heading:
+
+- `` `shipped` (src/path/to/file.ts:42) `` - the delta landed as specified, with the source it landed in.
+- `` `partly shipped` (src/path/to/file.ts:42) `` - part of it landed; the section says which part, and what is still proposed.
+- no status badge - still proposed. The `kept` / `changed` / `new` / `removed` badge describes the proposal, not the runtime.
+
+Every anchor is checked: the file must exist and the line must be in it. So must both symbol lists. The check runs in the lint chain, which is what stops this corpus drifting again.
+
+### What has landed - `shipped` (src/react/components/chat/chat/hooks/use-chat-input.ts:85)
+
+The complete set, as of `main`, and checked one delta at a time: every row links the delta's own heading, and `deno task lint:rfc-status` pairs each row with that badge. It fails if a badge has no row, if a row's anchor names no badge, if a row links a page without naming a delta, or if two rows claim the same delta. Pairing by page instead of by delta would let one badge cover a page's whole column - which is how the `ChatInput` flat sub-part exports row sat here unbadged.
+
+| Delta                                                                                                                                                                            | Status           | Landed in                                                                                                                                            |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`mergeProps` made public](./helpers.md#mergeprops---new---shipped-srcreactcomponentschatchathooksuse-chat-inputts85)                                                            | `shipped`        | `src/react/components/chat/chat/hooks/use-chat-input.ts:85`                                                                                          |
+| [`useMessageBranches`](./hooks/use-message-branches.md#usemessagebranches---new---shipped-srcreactcomponentschatchatcontextsmessage-contexttsx87)                                | `shipped`        | `src/react/components/chat/chat/contexts/message-context.tsx:87`                                                                                     |
+| [`useChatInputContext` naming](./hooks/use-chat-input-context.md#usechatinputcontext---new---shipped-srcreactcomponentschatchatcontextscomposer-contexttsx83)                    | `shipped`        | `src/react/components/chat/chat/contexts/composer-context.tsx:83`                                                                                    |
+| [`useChatInput` + prop getters](./hooks/use-chat-input.md#usechatinput---new---partly-shipped-srcreactcomponentschatchathooksuse-chat-inputts155)                                | `partly shipped` | `src/react/components/chat/chat/hooks/use-chat-input.ts:155`                                                                                         |
+| [`useChatScroll`](./hooks/use-chat-scroll.md#usechatscroll---new---partly-shipped-srcreactcomponentschatchathooksuse-stick-to-bottomts177)                                       | `partly shipped` | `src/react/components/chat/chat/hooks/use-stick-to-bottom.ts:177`                                                                                    |
+| [`ChatInput.Field` IME guard + native surface](./components/chat-input.md#chatinputfield---changed---partly-shipped-srcreactcomponentschatchatcompositionchat-composertypests18) | `partly shipped` | `src/react/primitives/input-box.tsx:37` (guard); the native surface landed in `src/react/components/chat/chat/composition/chat-composer.types.ts:18` |
+| [`ChatInput` flat sub-part exports](./components/chat-input.md#chatinput-flat-sub-part-exports---new---shipped-srcchatindexts250)                                                | `shipped`        | `src/chat/index.ts:250`                                                                                                                              |
 
 ## The three layers
 

@@ -69,15 +69,15 @@ it("tool exposure plans eager and deferred visibility deterministically", () => 
   });
   assertEquals(
     deferred.visible.map((tool) => tool.name),
-    ["form_input", "load_skill", TOOL_SEARCH_TOOL_NAME],
+    ["load_skill", TOOL_SEARCH_TOOL_NAME],
   );
   assertEquals(
     deferred.deferred.map((tool) => tool.name),
-    ["archive_release", "create_release", "get_release"],
+    ["archive_release", "create_release", "form_input", "get_release"],
   );
 });
 
-it("deferred exposure omits tool_search when only bootstrap tools are authorized", () => {
+it("deferred exposure keeps form_input searchable and omits search for load_skill alone", () => {
   const deferred = createToolExposurePlan({
     authorized: [
       definition("form_input", "Ask the user for structured input"),
@@ -89,9 +89,17 @@ it("deferred exposure omits tool_search when only bootstrap tools are authorized
 
   assertEquals(
     deferred.visible.map((tool) => tool.name),
-    ["form_input", "load_skill"],
+    ["load_skill", TOOL_SEARCH_TOOL_NAME],
   );
-  assertEquals(deferred.deferred, []);
+  assertEquals(deferred.deferred.map((tool) => tool.name), ["form_input"]);
+
+  const loadSkillOnly = createToolExposurePlan({
+    authorized: [definition("load_skill", "Load a configured skill")],
+    mode: "deferred",
+    state: createToolExposureState(),
+  });
+  assertEquals(loadSkillOnly.visible.map((tool) => tool.name), ["load_skill"]);
+  assertEquals(loadSkillOnly.deferred, []);
 });
 
 it("deferred exposure keeps injected tool_search in visible ASCII order", () => {
@@ -478,8 +486,41 @@ it("authorized search matches load for the next step", () => {
   const next = createToolExposurePlan({ authorized: catalog, mode: "deferred", state });
   assertEquals(
     next.visible.map((tool) => tool.name),
-    ["form_input", "get_release", "load_skill", TOOL_SEARCH_TOOL_NAME],
+    ["get_release", "load_skill", TOOL_SEARCH_TOOL_NAME],
   );
+});
+
+it("form_input activation survives a private checkpoint and current-authorization restore", () => {
+  const authorized = [
+    definition("form_input", "Ask the user for structured input"),
+    definition("load_skill", "Load a configured skill"),
+  ];
+  const state = createToolExposureState();
+  const initial = createToolExposurePlan({
+    authorized,
+    mode: "deferred",
+    state,
+  });
+  assertEquals(initial.visible.map((tool) => tool.name), ["load_skill", TOOL_SEARCH_TOOL_NAME]);
+
+  const search = searchToolExposure({
+    query: "form_input",
+    authorized: initial.deferred,
+    state,
+  });
+  assertEquals(search.matches.map((match) => match.name), ["form_input"]);
+
+  const restored = restoreToolExposureState(
+    createToolExposureCheckpoint(authorized, state),
+    authorized,
+  );
+  const resumed = createToolExposurePlan({
+    authorized,
+    mode: "deferred",
+    state: restored,
+  });
+  assertEquals(resumed.visible.map((tool) => tool.name), ["form_input", "load_skill"]);
+  assertEquals(resumed.deferred, []);
 });
 
 it("deferred exposure reserves bootstrap and search inside the provider tool budget", () => {
@@ -504,11 +545,11 @@ it("deferred exposure reserves bootstrap and search inside the provider tool bud
   });
 
   assertEquals(plan.visible.length, 128);
-  assertEquals(plan.visible.some((tool) => tool.name === "form_input"), true);
+  assertEquals(plan.visible.some((tool) => tool.name === "form_input"), false);
   assertEquals(plan.visible.some((tool) => tool.name === "load_skill"), true);
   assertEquals(plan.visible.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME), true);
-  assertEquals(plan.maxLoadedTools, 125);
-  assertEquals(state.loadedToolNames.size, 125);
+  assertEquals(plan.maxLoadedTools, 126);
+  assertEquals(state.loadedToolNames.size, 126);
   assertEquals(state.loadedToolNames.has("catalog_tool_000"), false);
   assertEquals(state.loadedToolNames.has("catalog_tool_129"), true);
 });
@@ -523,7 +564,10 @@ it("deferred exposure uses the full provider budget once the exact-fit catalog i
     definition("load_skill", "Load a configured skill"),
     ...remoteCatalog,
   ];
-  const state = createToolExposureState(remoteCatalog.map((tool) => tool.name));
+  const state = createToolExposureState([
+    "form_input",
+    ...remoteCatalog.map((tool) => tool.name),
+  ]);
 
   const plan = createToolExposurePlan({
     authorized,
@@ -535,8 +579,8 @@ it("deferred exposure uses the full provider budget once the exact-fit catalog i
   assertEquals(plan.visible.length, 128);
   assertEquals(plan.visible.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME), false);
   assertEquals(plan.deferred, []);
-  assertEquals(plan.maxLoadedTools, 126);
-  assertEquals(state.loadedToolNames.size, 126);
+  assertEquals(plan.maxLoadedTools, 127);
+  assertEquals(state.loadedToolNames.size, 127);
 });
 
 it("exact-fit deferred exposure loads the final schema without exceeding the provider budget", () => {
@@ -549,7 +593,10 @@ it("exact-fit deferred exposure loads the final schema without exceeding the pro
     definition("load_skill", "Load a configured skill"),
     ...remoteCatalog,
   ];
-  const state = createToolExposureState(remoteCatalog.slice(0, 125).map((tool) => tool.name));
+  const state = createToolExposureState([
+    "form_input",
+    ...remoteCatalog.slice(0, 125).map((tool) => tool.name),
+  ]);
 
   const searchStep = createToolExposurePlan({
     authorized,
@@ -559,7 +606,7 @@ it("exact-fit deferred exposure loads the final schema without exceeding the pro
   });
   assertEquals(searchStep.visible.length, 128);
   assertEquals(searchStep.deferred.map((tool) => tool.name), ["catalog_tool_125"]);
-  assertEquals(searchStep.maxLoadedTools, 126);
+  assertEquals(searchStep.maxLoadedTools, 127);
 
   const search = searchToolExposure({
     query: "catalog_tool_125",
@@ -568,7 +615,7 @@ it("exact-fit deferred exposure loads the final schema without exceeding the pro
     maxLoadedTools: searchStep.maxLoadedTools,
   });
   assertEquals(search.loadedCount, 1);
-  assertEquals(state.loadedToolNames.size, 126);
+  assertEquals(state.loadedToolNames.size, 127);
 
   const loadedStep = createToolExposurePlan({
     authorized,
@@ -593,6 +640,7 @@ it("deferred exposure prunes revoked and bootstrap names before budget eviction"
     retained.name,
     "revoked_tool",
     "form_input",
+    "load_skill",
   ]);
 
   const plan = createToolExposurePlan({
@@ -602,7 +650,7 @@ it("deferred exposure prunes revoked and bootstrap names before budget eviction"
     maxVisibleTools: 4,
   });
 
-  assertEquals([...state.loadedToolNames], [retained.name]);
+  assertEquals([...state.loadedToolNames], [retained.name, "form_input"]);
   assertEquals(
     plan.visible.map((tool) => tool.name),
     ["form_input", "load_skill", retained.name, TOOL_SEARCH_TOOL_NAME],

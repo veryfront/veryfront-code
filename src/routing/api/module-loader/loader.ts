@@ -682,13 +682,13 @@ async function loadModuleFromCode(
   // Write runtime shims: a root shim for `from "veryfront"` and per-subpath shims
   // for `from "veryfront/xxx"` (e.g., middleware, workflow, tool).
   if (isDeno && isCompiledBinary()) {
-    // Ensure agent factory globalThis bridge is registered before loading user code.
-    await import("#veryfront/agent/factory.ts");
-
-    // Write root shim for `from "veryfront"` → "./_vf_runtime.mjs"
+    // Register the real public root module, then generate its shim from the
+    // namespace exports. This keeps compiled-binary routes aligned with the
+    // source barrel as exports are added or removed.
+    await registerVfModules(new Set([""]));
     await fs.writeTextFile(
       pathHelper.join(tempDir, "_vf_runtime.mjs"),
-      VERYFRONT_RUNTIME_SHIM,
+      generateSubpathShim(""),
     );
 
     // Discover which veryfront/* subpaths the user code imports, register the
@@ -778,22 +778,23 @@ async function registerVfModules(subpaths: Set<string>): Promise<void> {
     | undefined;
 
   for (const subpath of subpaths) {
-    if (modules[subpath]) continue;
+    const moduleKey = subpath || "veryfront";
+    if (modules[moduleKey]) continue;
 
-    const specifier = `veryfront/${subpath}`;
+    const specifier = subpath ? `veryfront/${subpath}` : "veryfront";
 
     const fromDiscovery = discoveryModules?.[specifier];
     if (fromDiscovery) {
-      modules[subpath] = fromDiscovery;
+      modules[moduleKey] = fromDiscovery;
       logger.debug(`[API] Registered module ${specifier} from discovery globals`);
       continue;
     }
 
     try {
-      modules[subpath] = await import(specifier) as Record<string, unknown>;
+      modules[moduleKey] = await import(specifier) as Record<string, unknown>;
       logger.debug(`[API] Registered module ${specifier} on globalThis`);
     } catch (e) {
-      logger.warn(`[API] Failed to register veryfront/${subpath}: ${e}`);
+      logger.warn(`[API] Failed to register ${specifier}: ${e}`);
     }
   }
 
@@ -808,16 +809,18 @@ function generateSubpathShim(subpath: string): string {
   const modules = (globalThis as Record<string, unknown>).__vfModules as
     | Record<string, Record<string, unknown>>
     | undefined;
-  const mod = modules?.[subpath];
+  const moduleKey = subpath || "veryfront";
+  const specifier = subpath ? `veryfront/${subpath}` : "veryfront";
+  const mod = modules?.[moduleKey];
 
   if (!mod) {
-    return `throw new Error("veryfront/${subpath} runtime not registered in compiled binary context");`;
+    return `throw new Error("${specifier} runtime not registered in compiled binary context");`;
   }
 
   const exportNames = Object.keys(mod).filter((k) => k !== "default" && k !== "__esModule");
   const lines: string[] = [
-    `// Auto-generated shim for veryfront/${subpath}`,
-    `const _mod = globalThis.__vfModules["${subpath}"];`,
+    `// Auto-generated shim for ${specifier}`,
+    `const _mod = globalThis.__vfModules["${moduleKey}"];`,
   ];
 
   for (const name of exportNames) {
@@ -831,75 +834,3 @@ function generateSubpathShim(subpath: string): string {
 
   return lines.join("\n");
 }
-
-/**
- * Runtime shim for the "veryfront" package when running in a compiled Deno binary.
- *
- * In compiled binaries, source files are embedded and can't be imported from
- * external temp files. This shim provides the public API by delegating to
- * globalThis bridges registered by the server's project-env/storage.ts module.
- */
-const VERYFRONT_RUNTIME_SHIM = `
-// Auto-generated veryfront runtime shim for compiled binary.
-// Delegates to real framework functions registered on globalThis by
-// the server process (composition.ts, factory.ts, storage.ts).
-
-// --- Environment ---
-function getEnv(key) {
-  const getter = globalThis.__vfProjectEnvGetter;
-  if (getter) {
-    const val = getter(key);
-    if (val !== undefined) return val;
-  }
-  const isActive = globalThis.__vfProjectEnvActiveChecker;
-  if (isActive && isActive()) return undefined;
-  if (typeof Deno !== "undefined") return Deno.env.get(key);
-  if (typeof process !== "undefined" && process.env) return process.env[key];
-  return undefined;
-}
-
-// --- Config ---
-function defineConfig(config) { return config; }
-
-// --- HTTP helpers ---
-function json(data, init) { return Response.json(data, init); }
-function notFound(msg) { return new Response(msg || "Not Found", { status: 404 }); }
-function badRequest(msg) { return new Response(msg || "Bad Request", { status: 400 }); }
-function unauthorized(msg) { return new Response(msg || "Unauthorized", { status: 401 }); }
-function forbidden(msg) { return new Response(msg || "Forbidden", { status: 403 }); }
-function serverError(msg) { return new Response(msg || "Internal Server Error", { status: 500 }); }
-function redirect(url, permanent) {
-  return Response.redirect(url, permanent ? 301 : 302);
-}
-function apiNotFound(msg) { return notFound(msg); }
-function apiRedirect(url, permanent) { return redirect(url, permanent); }
-
-// --- Agent module (veryfront/agent) ---
-// Delegates to real implementations registered on globalThis by the server.
-function agent(config) {
-  const factory = globalThis.__vfAgentFactory;
-  if (!factory) throw new Error("Agent runtime not available in this context");
-  return factory(config);
-}
-function getAgent(id) { return globalThis.__vfGetAgent?.(id) ?? undefined; }
-function registerAgent(id, agentInstance) { return globalThis.__vfRegisterAgent?.(id, agentInstance); }
-function getAllAgentIds() { return globalThis.__vfGetAllAgentIds?.() ?? []; }
-
-export {
-  getEnv,
-  defineConfig,
-  json,
-  notFound,
-  badRequest,
-  unauthorized,
-  forbidden,
-  serverError,
-  redirect,
-  apiNotFound,
-  apiRedirect,
-  agent,
-  getAgent,
-  registerAgent,
-  getAllAgentIds,
-};
-`;

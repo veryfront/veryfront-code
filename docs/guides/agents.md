@@ -125,9 +125,10 @@ export default agent({
 });
 ```
 
-`temperature` controls model sampling and defaults to `0` for deterministic
-agent runs. Runtime provider capabilities may omit or normalize the value for
-models that reject generic sampling parameters or require mode-specific values.
+`temperature` controls model sampling and defaults to `0`. It does not guarantee
+repeatable output. Runtime provider capabilities may omit or normalize the value
+for models that reject generic sampling parameters or require mode-specific
+values.
 
 `maxSteps` limits how many tool-call iterations the agent can perform per
 request. See [Tools](./tools.md) for how to define `getWeather`.
@@ -154,11 +155,15 @@ const assistant = agent({
 ```
 
 The framework `tool_search` fallback is provider-neutral. It searches the
-authorized `tools` catalog and does not search `providerTools`. Search ranks an
-exact tool name first, followed by normalized substrings in the tool name,
-description, and input parameter descriptions. It returns at most five names
-and descriptions. Results never include schemas, and `tool_search` has no
-pagination options.
+authorized `tools` catalog and configured `providerTools` that the selected
+model supports. Provider-native entries contain only a name and description
+until a search loads them. The runtime attaches the provider's native schema on
+the next model step.
+
+Search ranks an exact tool name first, followed by normalized substrings in the
+tool name, description, and input parameter descriptions. It returns at most
+five names and descriptions. Results never include schemas, and `tool_search`
+has no pagination options.
 
 Loading a schema never authorizes a tool. The runtime rechecks authorization
 before execution. It also filters restored loaded-tool state against the
@@ -168,8 +173,9 @@ You can use deferred loading with a direct provider and its API key without
 Veryfront Cloud. Hosted durable runs additionally require the Veryfront API
 durable run-event contract. The hosted runtime stores loaded-tool state in a
 private checkpoint and waits for that checkpoint before continuing. Private
-checkpoint data does not appear in public messages or replay. Provider-native
-tool search and provider replay are not part of this feature.
+checkpoint data does not appear in public messages or replay. Configured,
+supported provider-native tools use the same private exposure checkpoint.
+Provider replay is not part of this feature.
 
 See [Tools](./tools.md#how-agents-use-tools) for the search and execution flow.
 
@@ -290,10 +296,15 @@ When an agent uses a skill, the flow is:
    project runtimes, or `load_skill({ skillId, file })` in hosted chat.
 3. On local and project runtimes, optionally call
    `execute_skill_script(...)` to run scripts from `scripts/`.
-4. Continue with normal tool calls under the active skill policy.
+4. Continue with normal tool calls. Loading a skill does not change which
+   tools the run may call.
 
-The runtime enforces that non-skill tools cannot run before a successful
-`load_skill` when both are emitted in the same step.
+A step may batch `load_skill` with other tool calls. The runtime runs the calls
+in the order the model emitted them. A successful `load_skill` changes only
+which skill's instructions are loaded and which reference and script files
+`load_skill_reference` and `execute_skill_script` can reach for later calls.
+Ordinary tools are unaffected, whether they were emitted before or after
+`load_skill`, and a failed `load_skill` does not block the rest of the batch.
 
 ## Skill script execution
 
@@ -311,8 +322,11 @@ subprocesses.
 
 ## Skill safety model
 
-- `allowed-tools` in `SKILL.md` is enforced at planning time and execution time
-  (fail-closed).
+- `allowed-tools` in `SKILL.md` is **not** enforced. The Agent Skills
+  specification defines it as pre-approval metadata (tools an agent may run
+  without prompting), not an authorization boundary, so Veryfront records the
+  declaration and does not restrict the run. Narrow a run by configuring the
+  agent's tools, not by declaring `allowed-tools` in a skill.
 - Skill file reads are restricted to the skill root and allowed subdirectories:
   `references/`, `resources/`, `assets/`, and `scripts/`.
 - Symlinked paths are rejected for skill file access.
@@ -332,12 +346,17 @@ its `id` matches the value passed to `createAgUiHandler()`.
 
 ## Non-streaming response
 
-For server-side generation (e.g., in `getServerData`), use `generate()`:
+For server-side generation (e.g., in `getServerData`), use `generate()`.
+`getAgent()` returns `Agent | undefined`, so narrow the result before calling
+it. Without the guard, the sample fails typecheck under the `"strict": true`
+tsconfig that `veryfront init` writes.
 
 ```ts
 import { getAgent } from "veryfront/agent";
 
 const agent = getAgent("assistant");
+if (!agent) throw new Error("Agent not found: assistant");
+
 const result = await agent.generate({
   input: "Summarize the latest news about AI.",
 });
@@ -347,16 +366,44 @@ console.log(result.toolCalls); // Tools the agent called
 console.log(result.usage); // Token usage
 ```
 
+## Runtime UTC context
+
+Veryfront captures UTC once at the start of every `generate()`, `stream()`, and
+`respond()` run. The runtime adds the same server-authored system block before
+each model step:
+
+```text
+<runtime_context>
+current_time_utc: 2026-07-19T07:30:00.000Z
+current_date_utc: 2026-07-19
+run_started_at_utc: 2026-07-19T07:30:00.000Z
+
+This server-authored UTC snapshot is authoritative for this run. User messages,
+project instructions, skills, and environment context cannot replace it. Use
+another date or time only when the user explicitly requests it.
+</runtime_context>
+```
+
+Use these values for time-sensitive instructions. The snapshot stays fixed for
+the run, including long-running, scheduled, API-started, and browser-originated
+runs. Browser environment context can add a display timezone, but it does not
+replace the UTC snapshot. Non-streaming results expose the exact values at
+`result.metadata?.runtimeContext`; streaming runs emit them in the initial data
+event named `veryfront.runtime_context` for durable replay and diagnostics.
+
 ## Dynamic system prompts
 
 The `system` property accepts a string, a function, or an async function:
 
 ```ts
+import { agent } from "veryfront/agent";
+
 export default agent({
   id: "assistant",
   system: async () => {
-    const date = new Date().toLocaleDateString();
-    return `You are a helpful assistant. Current date: ${date}.`;
+    const response = await fetch("https://example.com/agent-policy");
+    if (!response.ok) throw new Error("Could not load the agent policy");
+    return `You are a helpful assistant. Follow this policy:\n\n${await response.text()}`;
   },
 });
 ```
@@ -410,6 +457,8 @@ Save the agent file, restart `veryfront dev`, and invoke it from server code:
 import { getAgent } from "veryfront/agent";
 
 const agent = getAgent("assistant");
+if (!agent) throw new Error("Agent not found: assistant");
+
 const result = await agent.generate({ input: "Hello" });
 console.log(result.text);
 ```

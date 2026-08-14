@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
 import { buildChildRunResultSummary } from "../child-run/result-summary.ts";
 import { UNCONFIRMED_AGENT_PROJECT_IDENTITY_MESSAGE } from "../project/context.ts";
@@ -66,7 +67,7 @@ function createTestOptions(input?: {
   };
 }
 
-Deno.test("defaultHostedInvokeAgentInputSchema accepts child-agent selection", () => {
+it("defaultHostedInvokeAgentInputSchema accepts child-agent selection", () => {
   assertEquals(
     defaultHostedInvokeAgentInputSchema.parse({
       description: "inspect auth",
@@ -85,7 +86,7 @@ Deno.test("defaultHostedInvokeAgentInputSchema accepts child-agent selection", (
   );
 });
 
-Deno.test("defaultHostedInvokeAgentInputSchema requires explicit child-agent selection", async () => {
+it("defaultHostedInvokeAgentInputSchema requires explicit child-agent selection", async () => {
   await assertRejects(
     async () =>
       defaultHostedInvokeAgentInputSchema.parse({
@@ -98,7 +99,7 @@ Deno.test("defaultHostedInvokeAgentInputSchema requires explicit child-agent sel
   );
 });
 
-Deno.test("defaultHostedInvokeAgentInputSchema rejects blank child-agent selection", async () => {
+it("defaultHostedInvokeAgentInputSchema rejects blank child-agent selection", async () => {
   await assertRejects(
     async () =>
       defaultHostedInvokeAgentInputSchema.parse({
@@ -112,7 +113,7 @@ Deno.test("defaultHostedInvokeAgentInputSchema rejects blank child-agent selecti
   );
 });
 
-Deno.test("defaultHostedInvokeAgentInputSchema rejects invalid result mode", async () => {
+it("defaultHostedInvokeAgentInputSchema rejects invalid result mode", async () => {
   await assertRejects(
     async () =>
       defaultHostedInvokeAgentInputSchema.parse({
@@ -127,7 +128,7 @@ Deno.test("defaultHostedInvokeAgentInputSchema rejects invalid result mode", asy
   );
 });
 
-Deno.test("fixed hosted delegates inherit project-agent settings without overriding explicit input", () => {
+it("fixed hosted delegates inherit project-agent settings without overriding explicit input", () => {
   const configured = defaultHostedInvokeAgentToolInternals.applyChildAgentExecutionConfig(
     {
       description: "extract application",
@@ -160,7 +161,7 @@ Deno.test("fixed hosted delegates inherit project-agent settings without overrid
   });
 });
 
-Deno.test("default hosted invoke resolves and runs configured child against the target project", async () => {
+it("default hosted invoke resolves and runs configured child against the target project", async () => {
   const captured: {
     model?: string;
     temperature?: number;
@@ -266,7 +267,90 @@ Deno.test("default hosted invoke resolves and runs configured child against the 
   assertEquals(captured.prompt?.includes("Extract the application."), true);
 });
 
-Deno.test("default hosted invoke rejects unconfirmed project identities before child setup", async () => {
+describe("default hosted invoke agent", () => {
+  it("runs a generic local child with inherited assembled tools", async () => {
+    const context: DefaultHostedInvokeAgentContext = {
+      authToken: "token-123",
+      projectId: "project-123",
+      branchId: null,
+      model: "sonnet",
+    };
+    let capturedForkToolNames: readonly string[] | undefined;
+
+    const result = await executeDefaultHostedInvokeAgentTool(
+      createTestOptions({
+        context,
+        enableDurableInvokeAgent: false,
+        config: { mcpServers: [] },
+        options: {
+          resolveChildAgentExecutionConfig: (childAgentId, projectId) => {
+            assertEquals(childAgentId, "generic-agent");
+            assertEquals(projectId, "project-123");
+            return Promise.resolve(undefined);
+          },
+          buildGlobalTools: (toolContext, childAgentId, childConfig) => {
+            assertEquals(toolContext.projectId, "project-123");
+            assertEquals(toolContext.veryfrontInvocationContext, {
+              tool_call_id: "tool-call-generic-child",
+              delegation_depth: 1,
+            });
+            assertEquals(childAgentId, "generic-agent");
+            assertEquals(childConfig, undefined);
+            return {
+              lookup_job: {
+                description: "Lookup a job posting",
+                inputSchema: {},
+                execute: () => ({ ok: true }),
+              },
+            };
+          },
+          createAgentServiceSandboxTools: () =>
+            Promise.resolve({
+              tools: {},
+              sandbox: {} as never,
+              closeSandbox: () => Promise.resolve(),
+            }),
+          startRuntime: (input) => {
+            capturedForkToolNames = input.forkToolNames;
+            return {
+              forkStreamAbortController: new AbortController(),
+              childRunMonitorAbortController: null,
+              childRunMonitorPromise: Promise.resolve(),
+              forkToolNames: [...(input.forkToolNames ?? [])],
+              streamResult: {
+                fullStream: (async function* () {
+                  yield { type: "text-delta", text: "Generic child ran." } as const;
+                })(),
+                steps: Promise.resolve([
+                  {
+                    text: "Generic child ran.",
+                    finishReason: "stop",
+                    messages: [],
+                    toolCalls: [],
+                    toolResults: [],
+                  },
+                ]),
+                totalUsage: Promise.resolve(undefined),
+              },
+            };
+          },
+        },
+      }),
+      {
+        description: "inspect application",
+        prompt: "Inspect the application.",
+        agent_id: "generic-agent",
+      },
+      "generic-agent",
+      { toolCallId: "tool-call-generic-child" },
+    );
+
+    assertEquals("success" in result && result.success, true);
+    assertEquals(capturedForkToolNames, ["lookup_job", "sleep"]);
+  });
+});
+
+it("default hosted invoke rejects unconfirmed project identities before child setup", async () => {
   const context: DefaultHostedInvokeAgentContext = {
     authToken: "token-123",
     projectId: "project-123",
@@ -323,7 +407,7 @@ Deno.test("default hosted invoke rejects unconfirmed project identities before c
   });
 });
 
-Deno.test("executeDefaultHostedInvokeAgentTool returns durable context failure before local execution", async () => {
+it("executeDefaultHostedInvokeAgentTool returns durable context failure before local execution", async () => {
   const traceAttributes: DefaultHostedInvokeAgentTraceAttributes[] = [];
   const result = await executeDefaultHostedInvokeAgentTool(
     createTestOptions({ traceAttributes }),
@@ -351,7 +435,7 @@ Deno.test("executeDefaultHostedInvokeAgentTool returns durable context failure b
   assertEquals(traceAttributes.at(-1)?.["tool.call.id"], "tool-call-1");
 });
 
-Deno.test("fixed delegates require durable execution even when legacy durable delegation is disabled", async () => {
+it("fixed delegates require durable execution even when legacy durable delegation is disabled", async () => {
   const result = await executeDefaultHostedInvokeAgentTool(
     createTestOptions({
       enableDurableInvokeAgent: false,
@@ -378,7 +462,7 @@ Deno.test("fixed delegates require durable execution even when legacy durable de
   });
 });
 
-Deno.test("createDefaultHostedInvokeAgentTool adds child selection guidance and resolves agent_id", async () => {
+it("createDefaultHostedInvokeAgentTool adds child selection guidance and resolves agent_id", async () => {
   const traceAttributes: DefaultHostedInvokeAgentTraceAttributes[] = [];
   const invokeTool = createDefaultHostedInvokeAgentTool(
     createTestOptions({ traceAttributes }),
@@ -410,7 +494,7 @@ Deno.test("createDefaultHostedInvokeAgentTool adds child selection guidance and 
   assertEquals(traceAttributes.at(-1)?.["child.agent.id"], "custom-child");
 });
 
-Deno.test("createDefaultHostedInvokeAgentTool treats omitted context as empty structured context", async () => {
+it("createDefaultHostedInvokeAgentTool treats omitted context as empty structured context", async () => {
   const traceAttributes: DefaultHostedInvokeAgentTraceAttributes[] = [];
   const invokeTool = createDefaultHostedInvokeAgentTool(
     createTestOptions({ traceAttributes }),
@@ -439,7 +523,7 @@ Deno.test("createDefaultHostedInvokeAgentTool treats omitted context as empty st
   assertEquals(traceAttributes.at(-1)?.["tool.call.id"], "tool-call-missing-context");
 });
 
-Deno.test("created invoke tools preserve distinct writer capabilities across concurrent execution", async () => {
+it("created invoke tools preserve distinct writer capabilities across concurrent execution", async () => {
   const originalFetch = globalThis.fetch;
   const tokenRequests: Array<{ authorization: string | null; url: string }> = [];
   const mirrorRequests: Array<{ authorization: string | null; url: string }> = [];

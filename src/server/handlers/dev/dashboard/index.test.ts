@@ -81,16 +81,20 @@ describe("DevDashboardHandler admission", () => {
     let cancelled = false;
     const cancellationNeverSettles = new Promise<void>(() => {});
     const request = requestFromPeer(
-      new Request("http://localhost/_dev/api/hmr-trigger", {
-        method: "POST",
-        headers: { host: "localhost" },
-        body: new ReadableStream<Uint8Array>({
-          cancel() {
-            cancelled = true;
-            return cancellationNeverSettles;
-          },
-        }),
-      }),
+      new Request(
+        "http://localhost/_dev/api/hmr-trigger",
+        {
+          method: "POST",
+          headers: { host: "localhost" },
+          body: new ReadableStream<Uint8Array>({
+            cancel() {
+              cancelled = true;
+              return cancellationNeverSettles;
+            },
+          }),
+          duplex: "half",
+        } as RequestInit & { duplex: "half" },
+      ),
       "203.0.113.8",
     );
 
@@ -108,16 +112,20 @@ describe("DevDashboardHandler admission", () => {
     let cancelled = false;
     const cancellationNeverSettles = new Promise<void>(() => {});
     const request = requestFromPeer(
-      new Request("http://localhost/_dev", {
-        method: "POST",
-        headers: { host: "localhost" },
-        body: new ReadableStream<Uint8Array>({
-          cancel() {
-            cancelled = true;
-            return cancellationNeverSettles;
-          },
-        }),
-      }),
+      new Request(
+        "http://localhost/_dev",
+        {
+          method: "POST",
+          headers: { host: "localhost" },
+          body: new ReadableStream<Uint8Array>({
+            cancel() {
+              cancelled = true;
+              return cancellationNeverSettles;
+            },
+          }),
+          duplex: "half",
+        } as RequestInit & { duplex: "half" },
+      ),
     );
 
     const response = (await new DevDashboardHandler(DEV_UI_PROVIDER).handle(
@@ -173,7 +181,7 @@ describe("DevDashboardHandler admission", () => {
   it("issues a headless session without requiring optional Dev UI assets", async () => {
     const handler = new DevDashboardHandler();
     const response = (await handler.handle(
-      dashboardRequest(`http://veryfront.me:3002${DASHBOARD_SESSION_PATH}`),
+      dashboardRequest(`http://localhost:3002${DASHBOARD_SESSION_PATH}`),
       localContext(),
     )).response!;
 
@@ -189,16 +197,20 @@ describe("DevDashboardHandler admission", () => {
     const cancellationNeverSettles = new Promise<void>(() => {});
     const rejectedMethod = (await handler.handle(
       requestFromPeer(
-        new Request(`http://veryfront.me:3002${DASHBOARD_SESSION_PATH}`, {
-          method: "POST",
-          headers: { host: "veryfront.me:3002" },
-          body: new ReadableStream<Uint8Array>({
-            cancel() {
-              cancelled = true;
-              return cancellationNeverSettles;
-            },
-          }),
-        }),
+        new Request(
+          `http://localhost:3002${DASHBOARD_SESSION_PATH}`,
+          {
+            method: "POST",
+            headers: { host: "localhost:3002" },
+            body: new ReadableStream<Uint8Array>({
+              cancel() {
+                cancelled = true;
+                return cancellationNeverSettles;
+              },
+            }),
+            duplex: "half",
+          } as RequestInit & { duplex: "half" },
+        ),
       ),
       localContext(),
     )).response!;
@@ -326,16 +338,20 @@ describe("DevDashboardHandler admission", () => {
     const cancellationNeverSettles = new Promise<void>(() => {});
     const methodResponse = (await handler.handle(
       requestFromPeer(
-        new Request("http://localhost/_dev/ui/index.js", {
-          method: "POST",
-          headers: { host: "localhost" },
-          body: new ReadableStream<Uint8Array>({
-            cancel() {
-              cancelled = true;
-              return cancellationNeverSettles;
-            },
-          }),
-        }),
+        new Request(
+          "http://localhost/_dev/ui/index.js",
+          {
+            method: "POST",
+            headers: { host: "localhost" },
+            body: new ReadableStream<Uint8Array>({
+              cancel() {
+                cancelled = true;
+                return cancellationNeverSettles;
+              },
+            }),
+            duplex: "half",
+          } as RequestInit & { duplex: "half" },
+        ),
       ),
       localContext(),
     )).response!;

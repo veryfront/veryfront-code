@@ -139,7 +139,7 @@ for (const subdomain of PROJECTS) {
         "branch preview coverage only applies to preview hosts",
       );
 
-      const branchPreviewUrl = `http://${subdomain}--feature.preview.lvh.me:8080`;
+      const branchPreviewUrl = `http://${subdomain}--feature.preview.localhost:8080`;
       const response = await visit(page, `${branchPreviewUrl}/`);
 
       expect(response?.ok()).toBeTruthy();

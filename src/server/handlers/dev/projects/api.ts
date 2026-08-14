@@ -13,9 +13,9 @@ export function handleProjectsAPI(req: Request, ctx: HandlerContext): Response |
 
 function handleGetConfig(req: Request, ctx: HandlerContext): Response {
   const url = new URL(req.url);
-  const host = getEffectiveRequestHost(req, url) || "lvh.me";
+  const host = getEffectiveRequestHost(req, url) || "localhost";
 
-  const hostWithoutPort = host.replace(/:\d+$/, "") || "lvh.me";
+  const hostWithoutPort = host.replace(/:\d+$/, "") || "localhost";
   const port = host.includes(":") ? host.split(":")[1] ?? "" : "";
 
   return jsonResponse({

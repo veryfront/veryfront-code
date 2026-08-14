@@ -1,8 +1,185 @@
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { basename } from "#veryfront/compat/path";
+import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  getCacheBaseDir,
+  getHttpBundleCacheDir,
+  getMdxEsmCacheDir,
+} from "#veryfront/utils/cache-dir.ts";
 import { MINIMUM_DENO_VERSION, MINIMUM_NODE_VERSION } from "../../scripts/build/runtime-support.ts";
 
+const repoRoot = new URL("../../", import.meta.url);
+
 describe("guide content contracts", () => {
+  it("states installation sizes and local inference boundaries", async () => {
+    const readme = await Deno.readTextFile(new URL("README.md", repoRoot));
+    const installation = await Deno.readTextFile(
+      new URL("docs/getting-started/installation.md", repoRoot),
+    );
+    const providers = await Deno.readTextFile(
+      new URL("docs/guides/providers.md", repoRoot),
+    );
+
+    assertStringIncludes(readme, "npm install -g veryfront@latest");
+    assert(
+      readme.indexOf("npm install -g veryfront@latest") <
+        readme.indexOf("https://veryfront.com/install.sh"),
+      "the recommended npm installation must appear before the standalone binary",
+    );
+    assertStringIncludes(installation, "0.9 to 1.2 GB");
+    assertStringIncludes(installation, "Model weights are not included");
+    assertStringIncludes(providers, "Embedded ONNX inference");
+    assertStringIncludes(providers, "npm install @huggingface/transformers");
+    assertStringIncludes(providers, "not available from compiled standalone binaries");
+    assertStringIncludes(
+      providers,
+      "For local chat development, use Ollama or LM Studio",
+    );
+    assertEquals(
+      providers.includes("src/provider/local/_smoke-test.ts"),
+      false,
+    );
+  });
+
+  it("presents open source, self-hosted, and managed paths as first-class options", async () => {
+    const overview = await Deno.readTextFile(
+      new URL("docs/getting-started/index.md", repoRoot),
+    );
+    const selfHostingGuide = await Deno.readTextFile(
+      new URL("docs/guides/self-hosting.md", repoRoot),
+    );
+
+    assertStringIncludes(overview, "Apache-2.0 open-source framework");
+    assertStringIncludes(overview, "does not require a Veryfront account");
+    assertStringIncludes(overview, "Build and evaluate locally");
+    assertStringIncludes(overview, "Self-host");
+    assertStringIncludes(overview, "Veryfront Cloud");
+    assertStringIncludes(overview, "[Local quickstart](./quickstart.md)");
+    assertStringIncludes(overview, "[Cloud quickstart](./cloud-quickstart.md)");
+    assertStringIncludes(overview, "[Self-host](../guides/self-hosting.md)");
+    assertStringIncludes(selfHostingGuide, "does not require a Veryfront account");
+    assertEquals(selfHostingGuide.includes("veryfront login"), false);
+  });
+
+  it("keeps the quickstart local and account-free", async () => {
+    const quickstart = await Deno.readTextFile(
+      new URL("docs/getting-started/quickstart.md", repoRoot),
+    );
+
+    assertStringIncludes(
+      quickstart,
+      "does not require a Veryfront account or Veryfront Cloud",
+    );
+    assertStringIncludes(quickstart, "An OpenAI API key for model inference");
+    assertStringIncludes(quickstart, 'export OPENAI_API_KEY="<API_KEY>"');
+    assertStringIncludes(quickstart, "npm run eval -- assistant");
+    assertStringIncludes(
+      quickstart,
+      "[Self-host the app](../guides/self-hosting.md)",
+    );
+    assertStringIncludes(
+      quickstart,
+      "[Use another inference provider](../guides/providers.md)",
+    );
+    assertEquals(quickstart.includes("veryfront login"), false);
+    assertEquals(quickstart.includes("veryfront push"), false);
+    assertEquals(quickstart.includes("veryfront deploy"), false);
+    assertEquals(quickstart.includes("PORT=3001"), false);
+    assertEquals(quickstart.includes("development MCP server"), false);
+    assertEquals(quickstart.includes("interactive setup wizard"), false);
+
+    const providerGuide = await Deno.readTextFile(
+      new URL("docs/guides/providers.md", repoRoot),
+    );
+    assertStringIncludes(providerGuide, "### Ollama");
+    assertStringIncludes(providerGuide, "### LM Studio");
+    assertStringIncludes(providerGuide, "VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS");
+    assertStringIncludes(providerGuide, "Other internal destinations");
+    assertEquals(providerGuide.includes("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS=1"), false);
+    assertStringIncludes(providerGuide, 'OPENAI_BASE_URL="http://localhost:11434/v1"');
+    assertStringIncludes(
+      providerGuide,
+      'VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS="http://localhost:11434"',
+    );
+    assertStringIncludes(providerGuide, 'agent({ model: "openai/qwen3:1.7b" })');
+    assertStringIncludes(providerGuide, 'OPENAI_BASE_URL="http://localhost:1234/v1"');
+    assertStringIncludes(
+      providerGuide,
+      'VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS="http://localhost:1234"',
+    );
+    assertStringIncludes(
+      providerGuide,
+      'agent({ model: "openai/qwen2.5-7b-instruct" })',
+    );
+  });
+
+  it("keeps the Cloud quickstart on one gateway-to-deployment path", async () => {
+    const quickstart = await Deno.readTextFile(
+      new URL("docs/getting-started/cloud-quickstart.md", repoRoot),
+    );
+
+    for (
+      const step of [
+        "npm create veryfront@latest support-agent -- --template ai-agent",
+        "npx veryfront@latest login",
+        "npx veryfront@latest push",
+        "npm run dev",
+        "npm run eval -- assistant",
+        "npx veryfront@latest deploy --env production",
+      ]
+    ) {
+      assertStringIncludes(quickstart, step);
+    }
+    assertStringIncludes(quickstart, "Veryfront Cloud AI Gateway");
+    assertStringIncludes(quickstart, "protected by default");
+    assertStringIncludes(quickstart, "## Verify it worked");
+
+    for (
+      const referenceDetail of [
+        "`authToken` cookie",
+        "redirect_url",
+        "Project reference precedence",
+        "--prune",
+        "last verified Push receipt",
+      ]
+    ) {
+      assertEquals(
+        quickstart.includes(referenceDetail),
+        false,
+        `Cloud tutorial must link to reference material instead of including ${referenceDetail}`,
+      );
+    }
+  });
+
+  it("keeps the first Cloud deployment guide focused on the task", async () => {
+    const guide = await Deno.readTextFile(
+      new URL("docs/getting-started/deploy-project.md", repoRoot),
+    );
+
+    assertStringIncludes(guide, "npx veryfront@latest push");
+    assertStringIncludes(guide, "npx veryfront@latest deploy --env production");
+    assertStringIncludes(guide, "protected by default");
+    assertStringIncludes(guide, "../guides/deploying.md");
+    assertEquals(guide.includes("`authToken` cookie"), false);
+    assertEquals(guide.includes("Project reference precedence"), false);
+    assertEquals(guide.includes("skips the browser readiness probe"), false);
+  });
+
+  it("keeps self-hosting independent from Veryfront Cloud", async () => {
+    const guide = await Deno.readTextFile(
+      new URL("docs/guides/self-hosting.md", repoRoot),
+    );
+
+    assertStringIncludes(guide, "does not require a Veryfront account");
+    assertStringIncludes(guide, "veryfront build");
+    assertStringIncludes(guide, "veryfront serve");
+    assertStringIncludes(guide, "ship the whole project directory, not just `dist/`");
+    assertStringIncludes(guide, "## Verify it worked");
+    assertEquals(guide.includes("veryfront login"), false);
+    assertEquals(guide.includes("veryfront deploy"), false);
+  });
+
   it("documents the current knowledge ingest JSON result shape", async () => {
     const guide = await Deno.readTextFile(
       "docs/guides/cli-knowledge-ingestion.md",
@@ -78,6 +255,22 @@ describe("guide content contracts", () => {
     );
   });
 
+  it("documents deferred form and provider-native tool discovery", async () => {
+    const agentsGuide = await Deno.readTextFile("docs/guides/agents.md");
+    const toolsGuide = await Deno.readTextFile("docs/guides/tools.md");
+    const architecture = await Deno.readTextFile(
+      "docs/architecture/28-model-driven-tool-discovery.md",
+    );
+    const docs = [agentsGuide, toolsGuide, architecture].join("\n");
+
+    assertStringIncludes(toolsGuide, "`form_input` is authorized but deferred");
+    assertStringIncludes(docs, "configured `providerTools`");
+    assertStringIncludes(docs, "provider's native schema on the next model step");
+    assertEquals(docs.includes("does not search or load provider-native `providerTools`"), false);
+    assertEquals(docs.includes("does not search `providerTools`"), false);
+    assertEquals(docs.includes("bootstrap tools (`form_input`"), false);
+  });
+
   it("documents the exact-run writer capability migration", async () => {
     const guide = await Deno.readTextFile(
       "docs/guides/agent-service-runtime.md",
@@ -143,13 +336,207 @@ describe("guide content contracts", () => {
     const guide = await Deno.readTextFile("docs/guides/deploying.md");
 
     assertStringIncludes(guide, "prints the environment URL");
-    assertStringIncludes(guide, "veryfront open");
+    assertStringIncludes(guide, "npx veryfront@latest open");
+  });
+
+  it("documents a CLI teardown path for cloud projects", async () => {
+    // `veryfront push` creates a billable cloud project, so the docs must show
+    // how to remove one without driving the Studio UI.
+    const guide = await Deno.readTextFile(
+      new URL("../../docs/guides/deploying.md", import.meta.url),
+    );
+
+    assertStringIncludes(guide, "veryfront project delete");
+    assertStringIncludes(guide, "Tear a project down");
+  });
+
+  it("points post-deploy verification at the environment URL, not at open", async () => {
+    // `veryfront open` builds Cloud dashboard URLs
+    // (https://veryfront.com/projects/<slug>[/environments/<env>]). It never
+    // resolves the deployed site, so the deploy docs must not send readers to
+    // it to confirm the deployment responds.
+    const docs = [
+      "docs/getting-started/deploy-project.md",
+      "docs/guides/deploying.md",
+    ];
+
+    for (const path of docs) {
+      const text = await Deno.readTextFile(path);
+
+      assertStringIncludes(text, "open` opens the project in the Cloud dashboard");
+      assertEquals(text.includes("open` opens the deployed"), false);
+    }
+
+    const gettingStarted = await Deno.readTextFile(
+      "docs/getting-started/deploy-project.md",
+    );
+    assertStringIncludes(gettingStarted, "Deploy prints the environment URL");
+    assertEquals(
+      gettingStarted.includes("The deployed page and API routes respond."),
+      false,
+    );
+  });
+
+  it("tells the reader a Cloud environment is protected before asking for a request", async () => {
+    // Veryfront Cloud environments are protected by default: an anonymous
+    // request to the environment URL gets a 302 to a Veryfront sign-in page on
+    // every path, API routes included, and an API key in VERYFRONT_API_TOKEN
+    // does not change that (the browser-is-the-only-client half of this is
+    // wrong and is owned by the authToken case below). A signed-in non-member
+    // gets a 403 instead, per
+    // checkProtectedProxyAccess in src/proxy/proxy-access-control.ts. Which
+    // apex serves that sign-in page varies by deployment host — see the
+    // sign-in-apex case below, which owns that half. Verified against a live
+    // protected environment on published 0.1.1229:
+    //   curl -s -o /dev/null -w '%{http_code} %{redirect_url}' \
+    //     https://<project>.production.veryfront.com/api/health
+    //   -> 302 https://veryfront.com/sign-in?from=...
+    // A verification step written as a bare `curl -sSf <environment-url>`
+    // therefore exits 0 with an empty body whether or not the deployment
+    // works, so the page has to name the redirect and print the status code.
+    // Resolved from the module, not the process cwd: test files share one
+    // process under --parallel and src/testing/cwd.ts chdirs it.
+    const doc = await Deno.readTextFile(
+      new URL("../../docs/guides/cloud-environment-access.md", import.meta.url),
+    );
+    const prose = doc.replace(/\s+/g, " ");
+
+    assertStringIncludes(prose, "protected by default");
+    assertStringIncludes(prose, "https://veryfront.com/sign-in");
+    assertStringIncludes(prose, "Public Environment");
+    assertStringIncludes(prose, "not a member of the project gets a `403`");
+    assertStringIncludes(doc, "-w '%{http_code} %{redirect_url}\\n'");
+    assertEquals(doc.includes("```bash\ncurl -sSf <environment-url>\n```"), false);
+  });
+
+  it("does not present a browser as the only client a protected environment serves", async () => {
+    // The gate reads the session out of an `authToken` cookie
+    // (extractUserToken, src/proxy/proxy-token-resolution.ts:52) and never
+    // inspects the client, so any HTTP client sending that cookie is served.
+    // `veryfront deploy` depends on exactly that: its readiness probe sets
+    // `Cookie: authToken=<token>` when the stored credential is a session token
+    // (cli/shared/deployment/deploy-project.ts:969, asserted at
+    // cli/shared/deployment/deploy-project.test.ts:653) and withholds an opaque
+    // API key instead, because extractUserIdFromToken resolves no userId from
+    // one (src/proxy/proxy-access-control.ts:104) and the gate then answers the
+    // same 302 an anonymous request gets. The API-key-versus-session
+    // distinction is the real axis, not browser versus non-browser: prose that
+    // says every non-browser request sees the redirect sends a reader to make
+    // an environment public when an authenticated probe would have worked.
+    const doc = await Deno.readTextFile(
+      new URL("../../docs/guides/cloud-environment-access.md", import.meta.url),
+    );
+    const prose = doc.replace(/\s+/g, " ");
+
+    assertStringIncludes(prose, "A non-browser client can still authenticate");
+    assertStringIncludes(prose, "`authToken` cookie");
+    assertEquals(prose.includes("sees the sign-in redirect either way"), false);
+
+    assertEquals(
+      prose.includes("serves requests only to a browser signed in"),
+      false,
+    );
+  });
+
+  it("does not promise one sign-in apex for every protected environment", async () => {
+    // buildProxyAuthRedirectUrl picks the sign-in apex from the host the
+    // request arrived on (src/proxy/proxy-access-control.ts:202, via
+    // resolveSignInApex at :187). A preview host on *.preview.veryfront.org is
+    // sent to https://veryfront.org/sign-in, not .com — asserted at
+    // src/proxy/proxy-access-control.test.ts:102. Stating a single apex sends a
+    // reader to sign in on a domain whose cookie the deployment host never
+    // receives, so the redirect loop never closes.
+    //
+    // Structural, not a keyword check: it collects every sign-in URL the page
+    // prints and requires both apexes to appear. Prose that names only
+    // veryfront.com cannot satisfy it, which is exactly the defect. A plain
+    // `assertStringIncludes(prose, "https://veryfront.com/sign-in")` passes on
+    // the broken page and so cannot stand in for this.
+    const doc = await Deno.readTextFile(
+      new URL("../../docs/guides/cloud-environment-access.md", import.meta.url),
+    );
+    const prose = doc.replace(/\s+/g, " ");
+
+    const signInApexes = new Set(
+      [...doc.matchAll(/https:\/\/(veryfront\.(?:com|org))\/sign-in/g)].map((match) => match[1]),
+    );
+    assertEquals(signInApexes.has("veryfront.com"), true);
+    assertEquals(signInApexes.has("veryfront.org"), true);
+
+    // The page has to say the apex varies and name the host class that varies,
+    // so the reader knows to read the redirect rather than memorize one URL.
+    assertStringIncludes(prose, "depends on the host serving the environment");
+    assertStringIncludes(prose, "`*.preview.veryfront.org`");
+
+    // The two sentences that previously asserted a universal .com apex.
+    assertEquals(
+      prose.includes("request gets a `302` to `https://veryfront.com/sign-in`"),
+      false,
+    );
+    assertEquals(
+      prose.includes("answers `302` to `https://veryfront.com/sign-in`"),
+      false,
+    );
+  });
+
+  it("does not require a 200 from the environment root to call a deploy verified", async () => {
+    // Deployment selects a readiness route only from static page routes and
+    // leaves it null when the project has none
+    // (cli/shared/deployment/deploy-project.ts:1293), and
+    // buildEnvironmentReadinessProbes returns zero probes for a null route
+    // (:875) — so an API-only deployment is verified without any page ever
+    // answering 200, as asserted at
+    // cli/shared/deployment/deploy-project.test.ts:635. A page that presents
+    // 200 at <environment-url> as the universal success signal tells the owner
+    // of such a project their working deployment failed.
+    const accessGuide = await Deno.readTextFile(
+      new URL("../../docs/guides/cloud-environment-access.md", import.meta.url),
+    );
+    const accessProse = accessGuide.replace(/\s+/g, " ");
+    const deploymentGuide = await Deno.readTextFile(
+      new URL("../../docs/guides/deploying.md", import.meta.url),
+    );
+    const deploymentProse = deploymentGuide.replace(/\s+/g, " ");
+
+    // Structural: the verification command must carry a route placeholder. A
+    // command ending at the bare environment URL is the defect itself, so
+    // pinning the command shape is what makes this test able to fail.
+    assertStringIncludes(
+      accessGuide,
+      "-w '%{http_code} %{redirect_url}\\n' \\\n  <environment-url>/<route>",
+    );
+    assertEquals(
+      accessGuide.includes("-w '%{http_code} %{redirect_url}\\n' <environment-url>\n"),
+      false,
+    );
+
+    // And the prose must tell the reader to validate that route's own status
+    // rather than a blanket 200.
+    assertStringIncludes(accessProse, "probe a route the project serves");
+    assertStringIncludes(accessProse, "Validate the status that route normally returns");
+    assertStringIncludes(deploymentProse, "skips the browser readiness probe");
+    assertEquals(accessProse.includes("A public environment answers `200`."), false);
+  });
+
+  it("offers open --site as the way back to the deployed environment URL", async () => {
+    // The deploy docs tell readers to use the URL Deploy printed. A reader who
+    // did not record it needs a command that reproduces it, so both deploy
+    // pages must name `open --site` alongside the dashboard-only `open`.
+    for (
+      const path of [
+        "docs/getting-started/deploy-project.md",
+        "docs/guides/deploying.md",
+      ]
+    ) {
+      const text = await Deno.readTextFile(path);
+      assertStringIncludes(text, "open --site");
+    }
   });
 
   it("uses serve for local production builds", async () => {
     const docs = [
-      "docs/getting-started/deploy-project.md",
       "docs/guides/deploying.md",
+      "docs/guides/self-hosting.md",
     ];
 
     for (const path of docs) {
@@ -160,22 +547,67 @@ describe("guide content contracts", () => {
     }
   });
 
+  it("does not present dist/ as a self-contained self-hosted deployment", async () => {
+    const doc = await Deno.readTextFile(
+      new URL("docs/guides/self-hosting.md", repoRoot),
+    );
+    const prose = doc.replace(/\s+/g, " ");
+
+    // `veryfront build` emits browser assets only. API routes, agents,
+    // workflows, and tasks are served from the project source by
+    // `veryfront serve`, so a host that receives `dist/` alone answers pages
+    // and 404s every API route.
+    assertEquals(prose.includes("ship the `dist/` output"), false);
+    assertStringIncludes(prose, "browser assets to `dist/`");
+    assertStringIncludes(
+      prose,
+      "ship the whole project directory, not just `dist/`",
+    );
+    assertStringIncludes(
+      prose,
+      "veryfront serve",
+    );
+  });
+
+  it("does not offer the build output as a self-hosting target", async () => {
+    // The sibling guide is what the Getting Started page links to for a
+    // non-Cloud target, so it has to carry the same model: the host runs
+    // `veryfront serve` over the project, it does not serve `dist/` alone.
+    const guide = await Deno.readTextFile(
+      new URL("docs/guides/self-hosting.md", repoRoot),
+    );
+    const prose = guide.replace(/\s+/g, " ");
+
+    assertEquals(prose.includes("can serve the build output"), false);
+    assertEquals(prose.includes("use the build output or a container"), false);
+    assertStringIncludes(
+      prose,
+      "ship the whole project directory, not just `dist/`",
+    );
+    assertStringIncludes(
+      prose,
+      "veryfront serve",
+    );
+  });
+
   it("documents single-command Deploy for interactive Veryfront Cloud paths", async () => {
     const docs = [
       "docs/getting-started/deploy-project.md",
       "docs/guides/deploying.md",
     ];
-    const deploy = "npx veryfront deploy";
+    const deploy = "npx veryfront@latest deploy";
 
     for (const path of docs) {
       const text = await Deno.readTextFile(path);
 
       assertStringIncludes(text, deploy);
-      assertStringIncludes(text, "It does not write");
-      assertStringIncludes(text, "`veryfront.json`");
-      assertStringIncludes(text, "last verified Push receipt");
+      assertEquals(text.includes("npx veryfront deploy"), false);
       assertStringIncludes(text, "prints the environment URL");
     }
+
+    const behaviorGuide = await Deno.readTextFile("docs/guides/deploying.md");
+    assertStringIncludes(behaviorGuide, "It does not write `veryfront.json`");
+    assertStringIncludes(behaviorGuide, "last verified Push receipt");
   });
 
   it("keeps the CI deploy workflow on explicit Push before Deploy", async () => {
@@ -304,8 +736,8 @@ describe("guide content contracts", () => {
 
   it("recommends the current Node.js LTS in onboarding docs", async () => {
     const docs = [
-      "docs/guides/deploying.md",
-      "cli/templates/features/mdx/files/app/docs/getting-started/page.mdx",
+      "docs/guides/self-hosting.md",
+      "templates/features/mdx/files/app/docs/getting-started/page.mdx",
     ];
 
     for (const path of docs) {
@@ -322,6 +754,7 @@ describe("guide content contracts", () => {
       const path of [
         "docs/getting-started/installation.md",
         "docs/getting-started/quickstart.md",
+        "docs/getting-started/cloud-quickstart.md",
       ]
     ) {
       const text = await Deno.readTextFile(path);
@@ -341,4 +774,270 @@ describe("guide content contracts", () => {
     );
     assertEquals(installation.includes("Deno 1.45"), false);
   });
+
+  it("wires a Markdown renderer into every chat page the docs tell you to write", async () => {
+    // `veryfront/markdown` presents plain escaped source until a renderer is
+    // installed, so a `<Chat>` built without one shows the assistant's raw
+    // Markdown. Every starter scaffolds `app/markdown-renderer.tsx` and the
+    // provider around `<Chat>`; a copy-paste sample that drops them is a
+    // silent downgrade from the scaffold the reader already has.
+    for (
+      const path of [
+        "docs/getting-started/create-frontend.md",
+        "docs/guides/chat-ui.md",
+      ]
+    ) {
+      const guide = await Deno.readTextFile(path);
+      const pageSample = firstFencedBlockContaining(guide, "// app/page.tsx");
+
+      assert(
+        pageSample !== undefined,
+        `${path}: expected an app/page.tsx sample`,
+      );
+      assertStringIncludes(pageSample, "MarkdownRendererProvider");
+      assertStringIncludes(pageSample, 'from "veryfront/markdown"');
+      assertStringIncludes(pageSample, "./markdown-renderer.tsx");
+
+      // The reader must be able to create the file the sample imports.
+      assertStringIncludes(guide, "app/markdown-renderer.tsx");
+      assertStringIncludes(guide, "MarkdownRendererProps");
+
+      // "Verify it worked" must fail when the chat renders raw source,
+      // otherwise the checklist passes on a visibly broken chat.
+      assertStringIncludes(
+        verifyItWorkedSection(guide),
+        "not raw Markdown source",
+      );
+    }
+  });
+
+  it("gives Deno an install path on every surface the installation guide offers", async () => {
+    const installation = await Deno.readTextFile(
+      "docs/getting-started/installation.md",
+    );
+
+    // The page lists Deno as a supported runtime floor, so each install
+    // surface it documents for npm needs a Deno counterpart that works.
+    assertStringIncludes(installation, "### deno");
+    assertStringIncludes(installation, "deno install -gArf npm:veryfront");
+    assertStringIncludes(installation, "deno init --npm veryfront");
+
+    // The CLI is published to npm only. `jsr:@veryfront/veryfront` has never
+    // existed and resolves to a JSR 404, so it must not be advertised.
+    assertEquals(installation.includes("jsr:@veryfront/veryfront"), false);
+  });
+
+  it("narrows the possibly-undefined getAgent() result in agents guide samples", async () => {
+    const guide = await Deno.readTextFile("docs/guides/agents.md");
+
+    // `getAgent()` returns `Agent | undefined`, and `veryfront init` writes a
+    // tsconfig with `"strict": true`, so any sample that touches the result
+    // without narrowing it fails typecheck (TS18048) when pasted verbatim.
+    const unnarrowed: string[] = [];
+    for (const fence of guide.matchAll(/```(?:ts|tsx)\n([\s\S]*?)```/g)) {
+      const code = fence[1];
+      if (code === undefined) continue;
+      for (const binding of code.matchAll(/const (\w+) = getAgent\(/g)) {
+        const name = binding[1];
+        if (name === undefined) continue;
+        const body = code.slice((binding.index ?? 0) + binding[0].length);
+        const firstUse = body.search(new RegExp(`\\b${name}\\s*[.?]`));
+        if (firstUse === -1) continue;
+        const guardAt = body.search(new RegExp(`if\\s*\\(\\s*!${name}\\b`));
+        if (guardAt === -1 || guardAt > firstUse) unnarrowed.push(name);
+      }
+    }
+
+    assertEquals(
+      unnarrowed,
+      [],
+      "agents guide samples must guard the getAgent() result before using it",
+    );
+  });
+
+  it("keeps port fallback details available without interrupting the quickstarts", async () => {
+    // Port 3000 is the most contended port on a developer machine. `veryfront
+    // dev` no longer hard-fails on it: it falls forward to the next free port
+    // and announces the switch. Both halves are invisible to a doc-only
+    // reader, who then opens the 3000 the page prints and reaches whatever
+    // process took it. `--port` exists but lives only in `veryfront dev
+    // --help`, so the getting-started pages that start the dev server have to
+    // name it and describe the fallback.
+    const repoRoot = new URL("../../", import.meta.url);
+    const help = await Deno.readTextFile(
+      new URL("cli/commands/dev/command-help.ts", repoRoot),
+    );
+    const portFlag = help.match(/flag: "(--port [^"]*)"/)?.[1];
+    assert(
+      portFlag !== undefined,
+      "veryfront dev must declare a --port flag in its command help",
+    );
+
+    const createProject = await Deno.readTextFile(
+      new URL("docs/getting-started/create-project.md", repoRoot),
+    );
+    assertStringIncludes(createProject, "veryfront dev --port");
+    // The exact notice `veryfront dev` prints, so a reader who lands on a
+    // different port than the page's examples recognizes what happened.
+    assertStringIncludes(createProject, "is in use, using");
+
+    for (
+      const path of [
+        "docs/getting-started/quickstart.md",
+        "docs/getting-started/cloud-quickstart.md",
+      ]
+    ) {
+      const tutorial = await Deno.readTextFile(new URL(path, repoRoot));
+      assertStringIncludes(tutorial, "Open the local URL printed by the CLI");
+    }
+  });
+
+  it("documents the cache root in both development and production", async () => {
+    // Resolved from import.meta.url, not the process cwd: test files share one
+    // process under --parallel and a sibling isolate can hold a chdir.
+    const repoRoot = new URL("../../", import.meta.url);
+    const guide = await Deno.readTextFile(
+      new URL("docs/guides/project-structure.md", repoRoot),
+    );
+
+    // `veryfront dev` and `veryfront build` both create a cache root. Before
+    // this section existed the only explanation a developer got was the
+    // comment inside the generated `.gitignore` marker.
+    assertStringIncludes(guide, "## Generated directories");
+    assertStringIncludes(guide, "`.cache/`");
+    assertStringIncludes(guide, "`.cache/.gitignore`");
+    assertStringIncludes(guide, "VERYFRONT_CACHE_DIR");
+
+    // The location is not one place. `getDefaultCacheBaseDir()` sends the
+    // cache to `$HOME/.cache/veryfront` under a production runtime and to
+    // `<project>/.cache` otherwise, so a guide that describes only the project
+    // root is wrong for every deployed run. Both branches are resolved here by
+    // calling the real function under each mode rather than by forcing a cache
+    // context, which would answer with the forced path in both modes and pass
+    // no matter what the guide says.
+    const home = "/tmp/veryfront-guide-content-home";
+    const noOverride = { VERYFRONT_CACHE_DIR: undefined, VF_CACHE_DIR: undefined };
+    const resolveRoots = (mode: string | undefined) =>
+      withHostEnv(
+        { ...noOverride, HOME: home, NODE_ENV: mode, VERYFRONT_MODE: mode },
+        () => ({
+          base: getCacheBaseDir(),
+          mdxEsm: basename(getMdxEsmCacheDir()),
+          httpBundle: basename(getHttpBundleCacheDir()),
+        }),
+      );
+
+    const development = resolveRoots("development");
+    const production = resolveRoots("production");
+
+    // Guard the guard: if these ever resolve to the same place, the two
+    // assertions below stop distinguishing anything and this test would keep
+    // passing while the guide describes a mode that no longer exists.
+    assert(
+      development.base !== production.base,
+      "development and production must resolve to different cache roots",
+    );
+    assertEquals(basename(development.base), ".cache");
+    assertStringIncludes(production.base, home);
+
+    // `.cache/veryfront` — the production root with the home prefix removed, so
+    // the guide has to name the real deployed location and not just `.cache/`.
+    const productionUnderHome = production.base
+      .slice(home.length + 1)
+      .replaceAll("\\", "/");
+    assertStringIncludes(guide, productionUnderHome);
+
+    // Every variable the production branch reads has to appear in the guide, so
+    // renaming a trigger fails here instead of leaving readers checking a
+    // variable the code stopped consulting.
+    for (
+      const key of productionCacheTriggerEnvKeys(
+        await Deno.readTextFile(
+          new URL("src/utils/cache-dir.ts", repoRoot),
+        ),
+      )
+    ) {
+      assertStringIncludes(guide, key);
+    }
+
+    // Pinned to the real layout in both modes, so renaming a cache
+    // subdirectory fails here instead of leaving the guide describing a tree
+    // that no longer exists.
+    for (const { mdxEsm, httpBundle } of [development, production]) {
+      assertStringIncludes(guide, mdxEsm);
+      assertStringIncludes(guide, httpBundle);
+    }
+  });
 });
+
+/**
+ * Run `fn` with host environment variables set, restoring the previous values
+ * afterwards. `undefined` unsets a variable for the duration of the call.
+ */
+function withHostEnv<T>(
+  vars: Readonly<Record<string, string | undefined>>,
+  fn: () => T,
+): T {
+  const previous = Object.keys(vars).map(
+    (key) => [key, getHostEnv(key)] as const,
+  );
+  const apply = (entries: readonly (readonly [string, string | undefined])[]) => {
+    for (const [key, value] of entries) {
+      if (value === undefined) deleteEnv(key);
+      else setEnv(key, value);
+    }
+  };
+
+  apply(Object.entries(vars));
+  try {
+    return fn();
+  } finally {
+    apply(previous);
+  }
+}
+
+/**
+ * Environment variables `getDefaultCacheBaseDir()` reads to choose between the
+ * project cache root and the home cache root, read out of the source so the
+ * guide's list of triggers cannot drift away from the code's.
+ */
+function productionCacheTriggerEnvKeys(source: string): string[] {
+  const start = source.indexOf("function getDefaultCacheBaseDir(");
+  assert(start !== -1, "cache-dir.ts must define getDefaultCacheBaseDir()");
+  const open = source.indexOf("{", start);
+  let depth = 0;
+  let end = open;
+  for (; end < source.length; end++) {
+    if (source[end] === "{") depth++;
+    else if (source[end] === "}" && --depth === 0) break;
+  }
+
+  const body = source.slice(open, end);
+  const keys = [...body.matchAll(/getHostEnv\("([A-Z_]+)"\)/g)].map((m) => m[1]!);
+  assert(keys.length > 0, "getDefaultCacheBaseDir() must read the host env");
+  return [...new Set(keys)];
+}
+
+/**
+ * Body of the guide's "Verify it worked" section, up to the next heading, with
+ * whitespace collapsed so assertions do not depend on prose line wrapping.
+ */
+function verifyItWorkedSection(guide: string): string {
+  const start = guide.indexOf("## Verify it worked");
+  if (start === -1) return "";
+  const rest = guide.slice(start + "## Verify it worked".length);
+  const end = rest.indexOf("\n## ");
+  return (end === -1 ? rest : rest.slice(0, end)).replace(/\s+/g, " ");
+}
+
+/** First fenced code block whose body contains `needle`. */
+function firstFencedBlockContaining(
+  guide: string,
+  needle: string,
+): string | undefined {
+  for (const match of guide.matchAll(/^(`{3,})[^\n]*\n([\s\S]*?)^\1\s*$/gm)) {
+    const body = match[2] ?? "";
+    if (body.includes(needle)) return body;
+  }
+  return undefined;
+}
