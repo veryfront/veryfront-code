@@ -243,6 +243,23 @@ describe("chat/chat-ui-message-helpers", () => {
     ]);
   });
 
+  it("dedupes replayed text chunks that diverge after a shared prefix", async () => {
+    const result = await collect(dedupeChatUiMessageChunks(toStream([
+      { type: "text-start", id: "msg-1" },
+      { type: "text-delta", id: "msg-1", delta: "Created the assistant." },
+      { type: "text-start", id: "msg-1" },
+      { type: "text-delta", id: "msg-1", delta: "Created the workflow." },
+      { type: "text-end", id: "msg-1" },
+    ])));
+
+    assertEquals(result, [
+      { type: "text-start", id: "msg-1" },
+      { type: "text-delta", id: "msg-1", delta: "Created the assistant." },
+      { type: "text-delta", id: "msg-1", delta: "workflow." },
+      { type: "text-end", id: "msg-1" },
+    ]);
+  });
+
   it("normalizes a hosted UI stream with metadata and replay dedupe", async () => {
     const result = await collect(normalizeChatUiMessageStream(toStream([
       { type: "start", messageId: "msg-1", messageMetadata: { agentId: "agent-1" } },

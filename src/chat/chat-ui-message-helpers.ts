@@ -229,7 +229,16 @@ function splitReplayDelta(
     return { emit: "", nextReplayOffset: replayOffset + delta.length };
   }
 
-  return { emit: delta, nextReplayOffset: null };
+  let sharedPrefixLength = 0;
+  const maxSharedPrefixLength = Math.min(remaining.length, delta.length);
+  while (
+    sharedPrefixLength < maxSharedPrefixLength &&
+    remaining.charCodeAt(sharedPrefixLength) === delta.charCodeAt(sharedPrefixLength)
+  ) {
+    sharedPrefixLength++;
+  }
+
+  return { emit: delta.slice(sharedPrefixLength), nextReplayOffset: null };
 }
 
 function getReplayState(stateMap: Map<string, ReplayState>, id: string): ReplayState {
