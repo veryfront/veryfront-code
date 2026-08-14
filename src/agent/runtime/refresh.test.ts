@@ -1580,6 +1580,7 @@ describe("agent runtime refresh hooks", () => {
 
   it("retries a wholly uncommitted local tool batch without partially executing it", async () => {
     const executedMutations: string[] = [];
+    let finishedResponse: AgentResponse | undefined;
     let callCount = 0;
     const model: ModelRuntime = {
       provider: "hosted",
@@ -1684,6 +1685,9 @@ describe("agent runtime refresh hooks", () => {
 
     const response = (await assistant.stream({
       input: "Update the taxonomy and both agents",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
     })).toDataStreamResponse();
     const body = await response.text();
 
@@ -1691,6 +1695,15 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(executedMutations, ["retry-file", "retry-agent-1", "retry-agent-2"]);
     assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 0);
     assertEquals(body.includes("Recovered after interrupted tool batch."), true);
+    assertExists(finishedResponse);
+    assertEquals(
+      finishedResponse.toolCalls.map((toolCall) => [toolCall.id, toolCall.status]),
+      [
+        ["retry-file", "completed"],
+        ["retry-agent-1", "completed"],
+        ["retry-agent-2", "completed"],
+      ],
+    );
   });
 
   it("fails closed after a local sibling was exposed, with or without a final result", async () => {
@@ -1973,6 +1986,12 @@ describe("agent runtime refresh hooks", () => {
       error:
         'Stream terminated before tool-call event fired for "studio_suggestions". Received 2 chars of partial tool-input deltas.',
     });
+    assertEquals(
+      completedResponse.toolCalls.some((toolCall) =>
+        toolCall.id === "toolu_placeholder_after_text"
+      ),
+      false,
+    );
     const repeatedPlaceholderError = completedResponse.messages
       .flatMap((message) => message.parts)
       .find((part) =>
