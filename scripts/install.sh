@@ -120,6 +120,64 @@ get_latest_version() {
 
 # Download file silently
 # Download file silently
+# Hash a file with whichever SHA-256 tool the platform ships.
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    return 1
+  fi
+}
+
+# Verify a staged download against the release's published SHA256SUMS.
+#
+# Fails closed: an unverified binary is not installed. Releases published before
+# the manifest existed have no SHA256SUMS asset, so pinning to one of those needs
+# the escape hatch, which has to be set deliberately.
+verify_checksum() {
+  FILE="$1"
+  NAME="$2"
+  VER="$3"
+  WORK="$4"
+
+  if [ "${VERYFRONT_INSTALL_SKIP_CHECKSUM:-}" = "1" ]; then
+    printf "\r${ORANGE}Skipping checksum verification (VERYFRONT_INSTALL_SKIP_CHECKSUM=1)${NC}\n"
+    return 0
+  fi
+
+  SUMS_URL="https://github.com/${REPO}/releases/download/v${VER}/SHA256SUMS"
+  SUMS_FILE="${WORK}/SHA256SUMS"
+
+  if ! download "$SUMS_URL" "$SUMS_FILE" 2>/dev/null; then
+    printf "\r%s\n" "Install failed: no SHA256SUMS published for v${VER}." >&2
+    echo "  The binary was downloaded but not installed, because it could not be verified." >&2
+    echo "  Releases published before checksums existed have no manifest." >&2
+    echo "  To install anyway, re-run with VERYFRONT_INSTALL_SKIP_CHECKSUM=1." >&2
+    exit 1
+  fi
+
+  EXPECTED=$(awk -v want="$NAME" '$2 == want || $2 == "*" want { print $1; exit }' "$SUMS_FILE")
+  if [ -z "$EXPECTED" ]; then
+    printf "\r%s\n" "Install failed: ${NAME} is not listed in SHA256SUMS for v${VER}." >&2
+    exit 1
+  fi
+
+  ACTUAL=$(sha256_of "$FILE") || {
+    printf "\r%s\n" "Install failed: no sha256sum or shasum available to verify the download." >&2
+    exit 1
+  }
+
+  if [ "$ACTUAL" != "$EXPECTED" ]; then
+    printf "\r%s\n" "Install failed: checksum mismatch for ${NAME}." >&2
+    echo "  expected ${EXPECTED}" >&2
+    echo "  actual   ${ACTUAL}" >&2
+    echo "  The download was discarded and nothing was installed." >&2
+    exit 1
+  fi
+}
+
 download() {
   URL="$1"
   DEST="$2"
@@ -158,12 +216,21 @@ main() {
   # Create install directory
   mkdir -p "$INSTALL_DIR"
 
-  # Download binary
   BINARY_PATH="${INSTALL_DIR}/veryfront"
+
+  # Download to a staging file first: a binary is only moved into place after its
+  # checksum matches, so a truncated or tampered download never becomes the
+  # installed executable.
+  STAGING_DIR=$(mktemp -d "${TMPDIR:-/tmp}/veryfront-install.XXXXXX") || {
+    echo "Error: could not create a temporary directory" >&2
+    exit 1
+  }
+  trap 'rm -rf "$STAGING_DIR"' EXIT INT TERM
+  STAGED_BINARY="${STAGING_DIR}/${BINARY_NAME}"
 
   # Download with spinner
   printf "${ORANGE}Installing Veryfront v%s...${NC}" "$VERSION"
-  download "$DOWNLOAD_URL" "$BINARY_PATH" &
+  download "$DOWNLOAD_URL" "$STAGED_BINARY" &
   PID=$!
   SPINNER='|/-\'
   i=0
@@ -179,7 +246,10 @@ main() {
     exit 1
   fi
 
-  chmod +x "$BINARY_PATH"
+  verify_checksum "$STAGED_BINARY" "$BINARY_NAME" "$VERSION" "$STAGING_DIR"
+
+  chmod +x "$STAGED_BINARY"
+  mv -f "$STAGED_BINARY" "$BINARY_PATH"
 
   # Add to PATH if not already there
   NEEDS_SOURCE=""
