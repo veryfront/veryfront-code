@@ -179,6 +179,7 @@ export async function formatDuplicatedBinaryHint(
     : args._.slice(1).map(String);
   const formatted: string[] = [];
   const opaquePayloadOptions = new Set(["--config", "--input"]);
+  const opaqueIssueOptions = new Set(["--body", "-b", "--title", "-t"]);
   const rootRelativeRouteOptions = new Set(["--exclude", "--include"]);
   const correctedCommand = args._[1];
   const commandOptions = typeof correctedCommand === "string"
@@ -196,9 +197,8 @@ export async function formatDuplicatedBinaryHint(
       option,
     );
     const fileOption = optionDefinition?.flag.includes("<file>") === true;
-    const issueBodyOption = correctedCommand === "issues" &&
-      (option === "--body" || option === "-b");
-    const redactOptionValue = sensitiveOption || issueBodyOption ||
+    const opaqueIssueOption = correctedCommand === "issues" && opaqueIssueOptions.has(option);
+    const redactOptionValue = sensitiveOption || opaqueIssueOption ||
       (opaquePayloadOptions.has(option) && !fileOption);
     const allowRootRelativeRoute = rootRelativeRouteOptions.has(option);
     const parsedOptionValue = args[option.replace(/^-+/u, "")];

@@ -641,7 +641,7 @@ describe("cli/router helpers", () => {
       }
     });
 
-    it("redacts issue body content in the correction", async () => {
+    it("redacts issue title and body content in the correction", async () => {
       stubExit();
       stubLogger();
       try {
@@ -649,6 +649,9 @@ describe("cli/router helpers", () => {
           "veryfront",
           "issues",
           "create",
+          "--title",
+          "private customer incident",
+          "-t=another private title",
           "--body",
           "private customer details",
           "-b=more private details",
@@ -656,7 +659,7 @@ describe("cli/router helpers", () => {
         assertEquals(code, 2);
         assertEquals(infoMessages, [
           '  You already included "veryfront". Use:',
-          "    veryfront issues create --body '<REDACTED>' -b='<REDACTED>'",
+          "    veryfront issues create --title '<REDACTED>' -t='<REDACTED>' --body '<REDACTED>' -b='<REDACTED>'",
         ]);
       } finally {
         restoreAll();
