@@ -123,7 +123,7 @@ children):
    │  case-ingest │  payload  │ case-classify│  JSON    │ case-dispose │
    │  READ-only   │──────────▶│ NO SF access │─────────▶│   WRITE      │
    └──────┬───────┘           └──────┬───────┘          └──────┬───────┘
-   get_case                   search_knowledge          update_case (Reason)
+   get_case                   search_knowledge          update_case_reason
    list_case_activity         get_file (taxonomy)       add_case_comment
    list_cases (open-constrained)     │                         │
           │                          ▼                         │
@@ -323,18 +323,27 @@ policy is prompt-driven and denies nothing structurally. Before this is a public
 template, define it explicitly, and **fail closed**:
 
 - **Which fields** are passed downstream - an *allowlist* of non-PII operational
-  fields (Id, CaseNumber, Status, Priority, Reason, Origin, CreatedDate…), plus
-  explicit sanitized classification text fields such as `redactedSubject`,
-  `redactedDescription`, and `redactedCaseComments`. Those text fields must be
-  produced only by the redactor, must retain enough case context for
-  `case-classify`, and must be validated so raw `Subject`, `Description`, or
-  `CommentBody` values cannot pass through unchanged. Custom `__c` fields and
-  any newly-appearing activity fields must default to *excluded*, not forwarded
-  raw.
+  fields (`Id`, `CaseNumber`, `Status`, `Priority`, `Reason`, `Origin`,
+  `CreatedDate`) plus the explicit sanitized classification fields below, not a
+  denylist of PII patterns. Custom `__c` fields and any newly appearing activity
+  fields must default to *excluded*, not forwarded raw.
 - **Failure mode** - if redaction is uncertain or errors, stop rather than forward
   raw case data.
 - **Blast radius** - the same policy must cover child-run payloads, tool-error
   messages, and telemetry/logs, or raw PII leaks around the redaction step.
+
+`case-ingest` must construct a new downstream object rather than spread or rename
+the Salesforce response. The only free-text fields accepted by `case-classify`
+are `sanitizedSubject` (string, at most 512 characters), `sanitizedDescription`
+(string, at most 16,384 characters), and `sanitizedComments` (at most 20 strings,
+each at most 4,096 characters). Each value is Unicode-normalized, has every
+detected PII span replaced with `<REDACTED>`, and is validated against those exact
+types and bounds after redaction. Raw `Subject`, `Description`, `CommentBody`,
+tool responses, and unknown keys are rejected at the child-run boundary. If the
+redactor cannot classify a span, the validator rejects a value, or truncation
+would split a redaction marker, `case-ingest` stops without invoking
+`case-classify`. This preserves the text needed to classify a case without making
+raw customer text part of the downstream contract.
 
 ## 5. Static vs dynamic tools - the design decision
 
@@ -349,14 +358,31 @@ dynamic-*enough* behaviour from three levers that need no new platform machinery
    unless the server can parse every referenced object, relationship target, and
    subquery in a supplied `q`, authorize each object against the matrix, and deny
    unknown or unparseable queries fail-closed. Disabling agent-facing `q` overrides
-   is not enough by itself: every retained query tool must define its immutable
-   query server-side, either as an encoded fixed endpoint query or as hosted
-   immutable-parameter behavior that composes the query from constrained inputs and
-   never accepts a raw query string from the agent. Apply this to `find_customer`,
-   `list_cases`, `get_case`, `list_case_activity`, `search_accounts`,
-   `search_contacts`, and `list_opportunities` before they count as retained v1
-   tools. The same referenced-object rule
-   applies to static query defaults: a fixed `Contact` query that selects
+   is not enough by itself: every retained `/query` tool uses one hosted
+   curated-query adapter with a server-owned map from tool ID to fixed SOQL and
+   optional typed filters. The adapter injects `q` after validating the filters;
+   `q` is absent from the published tool schema, and a caller-supplied `q` or
+   unknown filter is rejected.
+
+   | Tool | Immutable query contract |
+   | --- | --- |
+   | `find_customer` | `Contact` fields from §A.3 only; optional escaped email, name, phone, or validated `AccountId` filters; limit at most 25 |
+   | `search_accounts` | `Account` fields from §A.3 only; optional escaped name or validated owner filter; limit at most 50 |
+   | `search_contacts` | `Contact` fields from §A.3 only; optional escaped name/email or validated `AccountId` filter; limit at most 50 |
+   | `list_cases` | `Case` fields from §A.3 with mandatory `IsClosed = false`; optional validated Contact, Account, Owner, Priority, or CreatedDate filters; limit at most 50 |
+   | `list_case_activity` | `CaseComment` fields from §A.3 with required validated `ParentId = caseId`; limit at most 50 |
+   | `search_knowledge_articles` | the exact hosted Knowledge adapter and fixed query contract in §8 |
+   | `list_opportunities` | `Opportunity` fields from §A.3 only; optional validated `AccountId`, owner, or closed-state filters; limit at most 50 |
+
+   Salesforce IDs use a dedicated exact 15-or-18-character validator. Text
+   filters are bound through one SOQL-literal escaper and cannot contribute field,
+   object, operator, ordering, or limit syntax. Direct sObject-by-ID tools such as
+   `get_case`, `get_contact`, and `get_account` keep their validated path parameter
+   and do not use this adapter. If the hosted adapter is unavailable, the affected
+   query tool stays hidden; the connector must not fall back to its current broad
+   `endpoint.params.q.default` or expose `q` to restore functionality. The same
+   referenced-object rule applies to static query defaults: a fixed `Contact`
+   query that selects
    `Account.Name`, `Account.Type`, or `Account.Industry` also needs `Account` Read.
    Until that check exists for static defaults, remove relationship fields from the
    v1 `find_customer` and `search_contacts` defaults instead of relying on Contact
@@ -504,7 +530,7 @@ arbitrary SOQL surfaces.
 | | Tools | Count |
 | --- | --- | --- |
 | **Existing curated v1 baseline** | the 16 in `connector.json` today, minus existing `run_soql_query` while it is gated; `list_cases` counts only after the fixed open-case query/filter is in place | 15 |
-| **Add - helpers (v1)** | `update_case_reason` (`Reason`-only `case-dispose` write), `get_picklist_values_for_record_type` | +2 |
+| **Add - helpers (v1)** | `update_case_reason` (`Reason`-only Case update for `case-dispose`; its existing `add_case_comment` grant remains separate), `get_picklist_values_for_record_type` | +2 |
 | **Read escape hatches (deferred)** | existing `run_soql_query`, curated arbitrary `q` overrides, `search` (SOSL), pending fail-closed query parsing and authorization | - |
 | **Add - generic CRUD (deferred)** | `get_record`, `create_record`, `update_record`, `upsert_record`, `delete_record` (pending fail-closed per-CRUD enforcement) | +5 |
 | **v1 total** | after the fixed write authorization and static-query relationship-field gates above | **17** |
@@ -515,9 +541,14 @@ input-schema test, because the schema *is* the authorization boundary:
 `update_case_reason`'s schema must reject any body key other than `caseId`/`Reason`
 (so `case-dispose` cannot write `Status`/`OwnerId`/etc. even when prompted to), and
 the server must deny `update_case_reason` unless fixed `Case` Update authorization
-is present. Retained curated writes need the same fixed object/operation denial
-tests. Static Contact query defaults must also prove they either omit Account
-relationship fields or deny the query when Account Read is absent. Each generic
+is present. `case-dispose` must retain `add_case_comment` only with an independent
+`CaseComment` Create grant and denial test. Retained curated writes need the same
+fixed object/operation denial tests. Every immutable-query adapter entry must prove
+that `q` is absent from the published schema, a supplied `q` and unknown filters
+are rejected, and the exact fixed object, field list, predicates, ordering, and
+limit reach Salesforce. Static Contact query defaults must also prove they either
+omit Account relationship fields or deny the query when Account Read is absent.
+Each generic
 CRUD tool must be denied for an un-granted `sobjectType` (§16). `list_cases`
 needs a closed-case exclusion test: seed at least one recently modified closed
 Case and assert the v1 open-case listing cannot return it, and assert any missing
@@ -528,6 +559,13 @@ lookup excludes the queue for the other object, and reject a queue `OwnerId`
 unless the selected `Group.Id` has a matching `QueueSobject` row for the target
 object. The fixed lookup requires Read authorization for both `Group` and
 `QueueSobject` and fails closed when either grant is absent.
+
+The PII gate needs fixture coverage too: raw `Subject`, `Description`, and
+`CommentBody` values containing email, phone, and customer identifiers must not
+appear in the child-run payload, errors, logs, or telemetry; the corresponding
+bounded `sanitizedSubject`, `sanitizedDescription`, and `sanitizedComments`
+values must remain available to `case-classify`. Unknown fields, over-limit text,
+and redactor or post-redaction validation failures must prevent the child run.
 
 Coverage of the standard objects a "get-going" support/CRM demo needs:
 Account, Contact, Lead, Case, CaseComment, Opportunity - plus User for every
