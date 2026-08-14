@@ -5,7 +5,12 @@
  * @module extensions/ext-bundler-esbuild/esbuild-bundler.test
  */
 
-import { assertEquals, assertExists, assertRejects, assertStringIncludes } from "@std/assert";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createRequire } from "node:module";
 import type { BuildContext } from "veryfront/extensions/bundler";
