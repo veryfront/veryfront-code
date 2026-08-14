@@ -160,23 +160,16 @@ export function shouldContinueAfterStreamStep(
     toolCall.providerExecuted === true
   );
   const finalToolResults = collectFinalStreamToolResults(state);
-  const hasUnresolvedProviderToolCall = streamedToolCalls.some(
-    (toolCall) => toolCall.providerExecuted === true && !finalToolResults.has(toolCall.id),
-  );
   const hasInterruptedClientToolCall = streamedToolCalls.some(isInterruptedClientToolCall);
-  const hasInterruptedProviderToolCall = streamedToolCalls.some(
-    (toolCall) =>
-      toolCall.providerExecuted === true &&
-      isStreamedToolCallIncomplete(toolCall),
-  );
   // A finalized local call has already emitted tool-input-available. Client
   // callbacks may have applied its side effect, so reconstructing the batch
   // could repeat that mutation even when no result reached this stream.
+  // Provider-executed calls and results are omitted from model replay, so a
+  // retry after any provider call could also repeat provider work and billing.
   const canRecoverInterruptedClientToolCall = options.recoverInterruptedToolCalls === true &&
     hasInterruptedClientToolCall &&
     !hasFinalizedClientToolCall &&
-    !hasInterruptedProviderToolCall &&
-    !hasUnresolvedProviderToolCall;
+    !hasProviderExecutedToolCall;
 
   if (state.finishReason === "tool-calls") {
     if (hasIncompleteToolCall) {
