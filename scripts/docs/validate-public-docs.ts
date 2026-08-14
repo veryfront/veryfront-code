@@ -30,6 +30,7 @@ const PUBLIC_DOC_ROOTS = [
 
 const MOVED_GETTING_STARTED_PAGES = [
   "quickstart",
+  "cloud-quickstart",
   "installation",
   "create-project",
   "create-agent",
@@ -144,6 +145,16 @@ interface CoveragePage {
  */
 const DEPLOY_ACCESS_COVERAGE: CoveragePage[] = [
   {
+    path: "docs/getting-started/cloud-quickstart.md",
+    requirements: [
+      {
+        label:
+          "state that Veryfront Cloud environments are protected by default",
+        pattern: /protected by default/i,
+      },
+    ],
+  },
+  {
     path: "docs/getting-started/deploy-project.md",
     requirements: [
       {
@@ -181,15 +192,6 @@ const DEPLOY_ACCESS_COVERAGE: CoveragePage[] = [
       },
     ],
   },
-  {
-    path: "docs/getting-started/quickstart.md",
-    requirements: [
-      {
-        label: "state that the deployed environment is protected by default",
-        pattern: /protected by default/i,
-      },
-    ],
-  },
 ];
 
 /**
@@ -200,6 +202,7 @@ const DEPLOY_ACCESS_COVERAGE: CoveragePage[] = [
 const PRINTED_DEV_SERVER_URL = "http://localhost:3000";
 const DEV_SERVER_PAGES = [
   "docs/getting-started/quickstart.md",
+  "docs/getting-started/cloud-quickstart.md",
   "docs/getting-started/create-project.md",
 ];
 

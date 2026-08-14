@@ -1,7 +1,7 @@
 ---
 title: "Deploy from CI"
 description: "Push a reviewed Git commit to Veryfront and deploy it from a serialized CI job."
-order: 44
+order: 46
 ---
 
 Use this guide to make a reviewed Git commit the source of a Veryfront

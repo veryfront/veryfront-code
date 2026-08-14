@@ -1,15 +1,15 @@
 ---
 title: "Create API"
 description: "Expose a Veryfront agent through a streaming AG-UI route."
-order: 5
+order: 6
 ---
 
 ## Prerequisites
 
 - The `assistant` agent from [Create agent](./create-agent.md).
 - An API route directory. For a minimal setup, run `mkdir -p app/api/ag-ui`.
-- Veryfront Cloud auth for inference. Run `veryfront login`, or set
-  `VERYFRONT_API_TOKEN`. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` also work.
+- Access to model inference. Use a direct provider API key, a configured local
+  model, or Veryfront Cloud. See [Providers](../guides/providers.md).
 
 ## Create the route
 
@@ -47,8 +47,7 @@ The `-N` flag tells curl to flush each chunk as it arrives.
 
 The curl response should emit `data:` lines as the answer streams.
 
-If the dev server logs a missing-provider error, run `veryfront login`, then
-restart `veryfront dev`. If you prefer direct provider keys or local models,
-see [Providers](../guides/providers.md).
+If the dev server logs a missing-provider error, configure one inference option
+from [Providers](../guides/providers.md), then restart `veryfront dev`.
 
 For non-agent endpoints, see [API routes](../guides/api-routes.md).

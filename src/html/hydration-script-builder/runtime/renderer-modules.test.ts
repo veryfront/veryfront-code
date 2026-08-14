@@ -135,6 +135,57 @@ describe("hydration-script-builder/runtime/renderer", () => {
       assertEquals(requested, ["http://modules/pages/vector-a.js"]);
     });
 
+    it('retries at /index.js when Safari reports only "Load failed"', async () => {
+      // Safari surfaces a failed dynamic import as a TypeError reading exactly
+      // "Load failed", naming no module. That is the same shape as the
+      // evaluation error pinned above, so the retry cannot be decided on the
+      // error's type — only its wording distinguishes them. Without this the
+      // <route>/index.js fallback never fired in Safari and the page stayed
+      // blank for every <route>/index.tsx route.
+      const requested: string[] = [];
+      const pageModule: ModuleNamespace = { default: "docs-index" };
+
+      const loaded = await loadPageModuleWithIndexFallback(
+        "http://modules/pages/docs",
+        "docs",
+        null,
+        (url) => {
+          requested.push(url);
+          if (url.endsWith("/docs.js")) {
+            return Promise.reject(new TypeError("Load failed"));
+          }
+          return Promise.resolve(pageModule);
+        },
+      );
+
+      assertEquals(loaded, pageModule);
+      assertEquals(requested.length, 2);
+    });
+
+    it("still refuses the retry for an evaluation TypeError that merely mentions loading", async () => {
+      // The Safari match is exact, so an application error that happens to
+      // contain the words does not reopen the noise #3667 removed.
+      const requested: string[] = [];
+      const evaluationError = new TypeError("Image load failed for /hero.png");
+
+      const thrown = await captureRejection(
+        loadPageModuleWithIndexFallback(
+          "http://modules/pages/vector-a",
+          "vector-a",
+          null,
+          (url) => {
+            requested.push(url);
+            return Promise.reject(
+              url.endsWith("/vector-a.js") ? evaluationError : notFound(url),
+            );
+          },
+        ),
+      );
+
+      assertEquals(thrown, evaluationError);
+      assertEquals(requested, ["http://modules/pages/vector-a.js"]);
+    });
+
     it("retries at /index.js for rejections the classifier does not recognize", async () => {
       // A proxy that rewrites a module miss into an HTML shell surfaces as a
       // SyntaxError. Gating the retry on error wording turned that into a blank

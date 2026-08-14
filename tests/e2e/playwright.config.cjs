@@ -5,14 +5,14 @@ const runtimeProjects = [
     name: "production-host",
     use: {
       ...devices["Desktop Chrome"],
-      baseURL: "http://blank.lvh.me:8080",
+      baseURL: "http://blank.localhost:8080",
     },
   },
   {
     name: "preview-host",
     use: {
       ...devices["Desktop Chrome"],
-      baseURL: "http://blank.preview.lvh.me:8080",
+      baseURL: "http://blank.preview.localhost:8080",
     },
   },
 ];

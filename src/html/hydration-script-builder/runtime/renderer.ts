@@ -34,6 +34,12 @@ export function isModuleNotFoundError(error: unknown): boolean {
   if (!error) return false;
   if (error instanceof SyntaxError) return false;
   const message = String((error as Error).message || error);
+  // Safari reports a failed dynamic import as a bare "Load failed", with no
+  // wording that names modules at all. Matched exactly rather than as a
+  // substring: the phrase is short enough that a loose match would swallow an
+  // application error like "Image load failed" and retry a module that had in
+  // fact evaluated. The other engines name the module in the message.
+  if (/^load failed\.?$/i.test(message.trim())) return true;
   return /(?:dynamically imported module|Importing a module script failed|Failed to load module script)/i
     .test(message);
 }

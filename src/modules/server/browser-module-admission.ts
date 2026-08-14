@@ -29,6 +29,13 @@ export interface BrowserModuleSourcePolicy {
 export interface BrowserModuleSourcePolicyOptions {
   config?: VeryfrontConfig;
   rscEnabled?: boolean;
+  /**
+   * A real on-disk project served by `veryfront dev`. Client boundaries are a
+   * hosted-transport concern: the browser hydrates a local project by importing
+   * the whole page module (as the non-RSC path does), so local dev must not
+   * require an RSC `use client` directive to serve an app-router page (#3662).
+   */
+  isLocalProject?: boolean;
 }
 
 /**
@@ -201,7 +208,9 @@ export function classifyBrowserModuleSourcePath(
   return {
     canonicalPath: path,
     protectionReason: null,
-    requiresClientBoundary: options.rscEnabled === true && appRelative !== null,
+    requiresClientBoundary: options.rscEnabled === true &&
+      appRelative !== null &&
+      options.isLocalProject !== true,
   };
 }
 

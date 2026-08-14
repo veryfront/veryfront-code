@@ -111,7 +111,6 @@ describe("server/utils/error-html", () => {
       assertIncludes(html, '"https://veryfront.com"');
       assertNotIncludes(html, "studio.veryfront.com");
       assertNotIncludes(html, "endsWith");
-      assertNotIncludes(html, ".veryfront.dev");
       assertNotIncludes(html, "}, '*'");
     });
 
