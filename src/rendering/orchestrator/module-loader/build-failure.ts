@@ -28,12 +28,16 @@ const TENANT_BUILD_ERROR_SLUGS = new Set([
   "typescript-error",
   "mdx-compile-error",
   "markdown-compile-error",
-  "compilation-error",
 ]);
 
 function isExplicitTenantBuildFailure(error: Error): boolean {
   const snapshot = snapshotVeryfrontError(error);
-  return snapshot?.category === "BUILD" && TENANT_BUILD_ERROR_SLUGS.has(snapshot.slug);
+  if (snapshot?.category !== "BUILD") return false;
+  if (TENANT_BUILD_ERROR_SLUGS.has(snapshot.slug)) return true;
+  if (snapshot.slug !== "compilation-error") return false;
+  const context = snapshot.context;
+  return typeof context === "object" && context !== null &&
+    (context as { tenantSourceError?: unknown }).tenantSourceError === true;
 }
 
 /** Tag `error` as a build failure and return it. */

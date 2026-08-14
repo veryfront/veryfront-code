@@ -8,6 +8,11 @@ import { type TransformContext, type TransformPlugin, TransformStage } from "../
 
 const logger = rendererLogger.component("esm-transform");
 
+function isEsbuildSourceError(error: unknown): boolean {
+  return typeof error === "object" && error !== null &&
+    Array.isArray((error as { errors?: unknown }).errors);
+}
+
 export const compilePlugin: TransformPlugin = {
   name: "esbuild-compile",
   stage: TransformStage.COMPILE,
@@ -70,6 +75,7 @@ export const compilePlugin: TransformPlugin = {
       throw COMPILATION_ERROR.create({
         detail: `ESM transform failed for ${ctx.filePath} (loader: ${loader}): ${errorMsg}`,
         cause: err,
+        context: { tenantSourceError: isEsbuildSourceError(err) },
       });
     }
   },

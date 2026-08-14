@@ -71,6 +71,7 @@ export function compileMDXRuntime(
 
         throw MDX_COMPILE_ERROR.create({
           detail: `MDX compilation error: ${err.message} | file: ${filePath ?? "<memory>"}`,
+          cause: err,
         });
       }
     },

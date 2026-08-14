@@ -8,7 +8,7 @@ import type {
 } from "#veryfront/extensions/content/index.ts";
 import { MARKDOWN_COMPILE_ERROR, VeryfrontError } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { isFrontmatterSyntaxError } from "../../mdx/compiler/frontmatter-extractor.ts";
+import { isFrontmatterSyntaxError } from "#veryfront/transforms/mdx/compiler/frontmatter-extractor.ts";
 
 const logger = rendererLogger.component("md-compiler");
 
@@ -56,6 +56,7 @@ export function compileMarkdownRuntime(
 
         throw MARKDOWN_COMPILE_ERROR.create({
           detail: `Markdown compilation error: ${err.message} | file: ${filePath ?? "<memory>"}`,
+          cause: err,
         });
       }
     },

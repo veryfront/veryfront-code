@@ -706,15 +706,25 @@ describe("RenderPipeline behavior", () => {
       return context?.tenantBuildFailure;
     }
 
-    it("reports a build failure as one", async () => {
+    it("reports a source compilation failure as tenant-owned", async () => {
       const error = await rejectLoad(pipelineWithFailingPageModule(() => {
         throw markBuildFailure(COMPILATION_ERROR.create({
           detail: "Cannot import the static asset",
+          context: { tenantSourceError: true },
         }));
       }));
 
       assertEquals(buildFailureFlag(error), true);
       assertEquals(tenantBuildFailureFlag(error), true);
+    });
+
+    it("does not infer tenant source from operational compilation failures", () => {
+      const infrastructureError = markBuildFailure(COMPILATION_ERROR.create({
+        detail: "ESM transform service unavailable",
+        cause: Object.assign(new Error("esbuild child exited"), { code: "EPIPE" }),
+      }));
+
+      assertEquals(isTenantBuildFailure(infrastructureError), false);
     });
 
     it("keeps framework failures inside the transform phase distinct", async () => {
