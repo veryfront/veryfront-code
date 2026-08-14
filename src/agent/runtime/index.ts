@@ -2025,6 +2025,21 @@ export class AgentRuntime {
         }
         releasedDeferredRecoveryOutput = true;
       };
+      const releaseDeferredRecoveryOutputAfterExactReplay = (
+        isTextEvent: boolean,
+      ): void => {
+        if (
+          isTextEvent || deferredRecoveryOutput === undefined || releasedDeferredRecoveryOutput ||
+          deferredRecoverySseText !== previousRecoveryText ||
+          (callbacks?.onChunk !== undefined &&
+            deferredRecoveryCallbackText !== previousRecoveryText)
+        ) {
+          return;
+        }
+
+        flushDeferredRecoveryOutput(previousRecoveryText.length, false, false);
+        releasedDeferredRecoveryOutput = true;
+      };
       const stepController = deferredRecoveryOutput === undefined ? controller : {
         enqueue(chunk: Uint8Array) {
           if (releasedDeferredRecoveryOutput) {
@@ -2036,12 +2051,14 @@ export class AgentRuntime {
             return;
           }
           deferredRecoverySseText += textDeltaFromSseChunk(chunk) ?? "";
+          const isTextEvent = isTextSseChunk(chunk);
           deferredRecoveryOutput.push({
             kind: "sse",
             chunk,
-            isTextEvent: isTextSseChunk(chunk),
+            isTextEvent,
           });
           releaseDeferredRecoveryOutputAfterDivergence();
+          releaseDeferredRecoveryOutputAfterExactReplay(isTextEvent);
         },
       } as ReadableStreamDefaultController;
       await processStream(streamSource, state, stepController, encoder, stepTextPartId, {
