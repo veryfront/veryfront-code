@@ -4,7 +4,8 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { RenderPipeline, type RenderPipelineConfig } from "./pipeline.ts";
 import type { RenderOptions } from "./types.ts";
-import { markBuildFailure } from "./module-loader/build-failure.ts";
+import { isTenantBuildFailure, markBuildFailure } from "./module-loader/build-failure.ts";
+import { COMPILATION_ERROR, createError, toError } from "#veryfront/errors";
 import { cachePageCss, getPageCssCacheKey } from "./css-cache.ts";
 import { cacheCSSAsync, hashCSS } from "#veryfront/html/styles-builder/index.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
@@ -700,12 +701,35 @@ describe("RenderPipeline behavior", () => {
       return context?.buildFailure;
     }
 
+    function tenantBuildFailureFlag(error: unknown): unknown {
+      const context = (error as { context?: { tenantBuildFailure?: unknown } }).context;
+      return context?.tenantBuildFailure;
+    }
+
     it("reports a build failure as one", async () => {
       const error = await rejectLoad(pipelineWithFailingPageModule(() => {
-        throw markBuildFailure(new Error("Cannot import the static asset"));
+        throw markBuildFailure(COMPILATION_ERROR.create({
+          detail: "Cannot import the static asset",
+        }));
       }));
 
       assertEquals(buildFailureFlag(error), true);
+      assertEquals(tenantBuildFailureFlag(error), true);
+    });
+
+    it("keeps framework failures inside the transform phase distinct", async () => {
+      const frameworkError = markBuildFailure(toError(createError({
+        type: "build",
+        message: "cache write failed",
+      })));
+      assertEquals(isTenantBuildFailure(frameworkError), false);
+
+      const error = await rejectLoad(pipelineWithFailingPageModule(() => {
+        throw frameworkError;
+      }));
+
+      assertEquals(buildFailureFlag(error), true);
+      assertEquals(tenantBuildFailureFlag(error), false);
     });
 
     it("does not report a module-scope runtime throw as a build failure", async () => {
@@ -714,6 +738,7 @@ describe("RenderPipeline behavior", () => {
       }));
 
       assertEquals(buildFailureFlag(error), false);
+      assertEquals(tenantBuildFailureFlag(error), false);
     });
   });
 

@@ -24,6 +24,7 @@ import {
   RENDER_ERROR,
   SOURCEMAP_ERROR,
   toError,
+  TYPESCRIPT_ERROR,
 } from "#veryfront/errors";
 
 it("application error reporter is optional", async () => {
@@ -152,12 +153,19 @@ it("application error reporter downgrades tenant build errors to tagged warnings
     flush: () => Promise.resolve(true),
   });
 
-  const compileError = toError(
-    createError({ type: "build", message: "MDX compilation failed" }),
+  const compileError = TYPESCRIPT_ERROR.create({
+    detail: "TypeScript compilation failed in /pages/index.tsx",
+  });
+  const legacyBuildError = toError(
+    createError({ type: "build", message: "Module transform cache write failed" }),
   );
   const pipelineError = RENDER_ERROR.create({
     detail: "Critical page module(s) failed to load:\n/pages/index.mdx: bad syntax",
-    context: { buildFailure: true },
+    context: { buildFailure: true, tenantBuildFailure: true },
+  });
+  const frameworkPipelineError = RENDER_ERROR.create({
+    detail: "Critical page module(s) failed to load while persisting its cache entry",
+    context: { buildFailure: true, tenantBuildFailure: false },
   });
   const mdxRegistryError = MDX_COMPILE_ERROR.create({
     detail: "MDX compilation failed in /pages/index.mdx",
@@ -210,8 +218,16 @@ it("application error reporter downgrades tenant build errors to tagged warnings
     captureApplicationError(frameworkBundleError, { boundary: "ssr.render" }),
     "event-id",
   );
+  assertEquals(
+    captureApplicationError(frameworkPipelineError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+  assertEquals(
+    captureApplicationError(legacyBuildError, { boundary: "ssr.render" }),
+    "event-id",
+  );
 
-  assertEquals(captures.length, 8);
+  assertEquals(captures.length, 10);
   // Tenant build/content failures stay visible for escalation analysis, but
   // are tagged and downgraded so they stop surfacing as error-level issues.
   assertEquals(captures[0]?.context.errorClass, "tenant-build");
@@ -231,6 +247,10 @@ it("application error reporter downgrades tenant build errors to tagged warnings
   assertEquals(captures[6]?.context.level, undefined);
   assertEquals(captures[7]?.context.errorClass, undefined);
   assertEquals(captures[7]?.context.level, undefined);
+  assertEquals(captures[8]?.context.errorClass, undefined);
+  assertEquals(captures[8]?.context.level, undefined);
+  assertEquals(captures[9]?.context.errorClass, undefined);
+  assertEquals(captures[9]?.context.level, undefined);
 });
 
 it("application error capture failures never replace application control flow", () => {

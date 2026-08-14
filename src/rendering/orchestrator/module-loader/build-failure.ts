@@ -14,17 +14,44 @@
  * error at the point of failure instead of leaving later layers to infer it.
  */
 
-const BUILD_FAILURE = Symbol.for("veryfront.module-loader.build-failure");
+import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 
-type TaggedError = Error & { [BUILD_FAILURE]?: true };
+const BUILD_FAILURE = Symbol.for("veryfront.module-loader.build-failure");
+const TENANT_BUILD_FAILURE = Symbol.for("veryfront.module-loader.tenant-build-failure");
+
+type TaggedError = Error & {
+  [BUILD_FAILURE]?: true;
+  [TENANT_BUILD_FAILURE]?: true;
+};
+
+const TENANT_BUILD_ERROR_SLUGS = new Set([
+  "typescript-error",
+  "mdx-compile-error",
+  "ssg-generation-error",
+  "compilation-error",
+]);
+
+function isExplicitTenantBuildFailure(error: Error): boolean {
+  const snapshot = snapshotVeryfrontError(error);
+  return snapshot?.category === "BUILD" && TENANT_BUILD_ERROR_SLUGS.has(snapshot.slug);
+}
 
 /** Tag `error` as a build failure and return it. */
 export function markBuildFailure(error: unknown): unknown {
-  if (error instanceof Error) (error as TaggedError)[BUILD_FAILURE] = true;
+  if (error instanceof Error) {
+    const tagged = error as TaggedError;
+    tagged[BUILD_FAILURE] = true;
+    if (isExplicitTenantBuildFailure(error)) tagged[TENANT_BUILD_FAILURE] = true;
+  }
   return error;
 }
 
 /** True when `error` was raised while compiling or resolving project source. */
 export function isBuildFailure(error: unknown): boolean {
   return error instanceof Error && (error as TaggedError)[BUILD_FAILURE] === true;
+}
+
+/** True only for a build failure explicitly classified as tenant source. */
+export function isTenantBuildFailure(error: unknown): boolean {
+  return error instanceof Error && (error as TaggedError)[TENANT_BUILD_FAILURE] === true;
 }

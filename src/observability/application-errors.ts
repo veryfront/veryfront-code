@@ -224,12 +224,13 @@ export function initializeApplicationErrorReporter(options: {
 const TENANT_BUILD_ERROR_CLASS = "tenant-build";
 
 /**
- * Tag applied by the module loader at the point of a compilation failure.
+ * Tag applied by the module loader only after an explicit tenant-source
+ * classification.
  *
  * The tag is read through the shared symbol registry instead of importing the
  * rendering layer; see src/rendering/orchestrator/module-loader/build-failure.ts.
  */
-const BUILD_FAILURE_TAG = Symbol.for("veryfront.module-loader.build-failure");
+const TENANT_BUILD_FAILURE_TAG = Symbol.for("veryfront.module-loader.tenant-build-failure");
 const TENANT_BUILD_ERROR_SLUGS = new Set([
   "typescript-error",
   "mdx-compile-error",
@@ -242,23 +243,16 @@ const TENANT_BUILD_ERROR_SLUGS = new Set([
  * that does not build, MDX that does not parse) rather than a framework fault.
  *
  * Recognizes the existing discriminators at their capture seam:
- * - the module loader's build-failure tag,
- * - `toError(createError({ type: "build" }))` structured error data,
- * - the render pipeline's `buildFailure` error context, and
+ * - the module loader's tenant-build-failure tag,
+ * - the render pipeline's `tenantBuildFailure` error context, and
  * - tenant-facing BUILD registry slugs that do not also describe framework
  *   cache or bundle infrastructure failures.
  */
 function isTenantBuildError(error: unknown): boolean {
   try {
     if (error instanceof Error) {
-      if ((error as { [BUILD_FAILURE_TAG]?: unknown })[BUILD_FAILURE_TAG] === true) {
-        return true;
-      }
-      const descriptor = Object.getOwnPropertyDescriptor(error, "context");
-      const data = descriptor && "value" in descriptor ? descriptor.value : undefined;
       if (
-        typeof data === "object" && data !== null &&
-        (data as { type?: unknown }).type === "build"
+        (error as { [TENANT_BUILD_FAILURE_TAG]?: unknown })[TENANT_BUILD_FAILURE_TAG] === true
       ) {
         return true;
       }
@@ -268,7 +262,7 @@ function isTenantBuildError(error: unknown): boolean {
     const errorContext = snapshot.context;
     if (
       typeof errorContext === "object" && errorContext !== null &&
-      (errorContext as { buildFailure?: unknown }).buildFailure === true
+      (errorContext as { tenantBuildFailure?: unknown }).tenantBuildFailure === true
     ) {
       return true;
     }
