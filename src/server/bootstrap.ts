@@ -63,6 +63,7 @@ import {
   createServerStyleInvalidationCallbacks,
 } from "./style-callbacks.ts";
 import { clearDomainCache } from "./utils/domain-lookup.ts";
+import { getMissingProjectEnvInternalCredentialDetail } from "./project-env/internal-authorization.ts";
 
 const bootstrapLog = logger.component("bootstrap");
 const bootstrapDevLog = logger.component("bootstrap-dev");
@@ -610,6 +611,14 @@ function validateProductionEnvironment(): void {
         detail:
           "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY must be set when running in proxy mode (PROXY_MODE=1)",
       });
+    }
+
+    const missingInternalCredentials = getMissingProjectEnvInternalCredentialDetail();
+    if (missingInternalCredentials) {
+      logger.error(
+        `[Bootstrap:Prod] CRITICAL: ${missingInternalCredentials}.`,
+      );
+      throw INVALID_ARGUMENT.create({ detail: missingInternalCredentials });
     }
 
     if (!isProxyTopologyTrusted()) {

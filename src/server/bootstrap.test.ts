@@ -42,6 +42,8 @@ const validationEnvKeys = [
   "DENO_ENV",
   "PROXY_MODE",
   "VERYFRONT_CLI_LOCAL_PROXY_MODE",
+  "VERYFRONT_API_INTERNAL_USER",
+  "VERYFRONT_API_INTERNAL_PASS",
   "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY",
   "VERYFRONT_TRUST_FORWARDED_HEADERS",
 ] as const;
@@ -58,6 +60,11 @@ function restoreValidationEnv(): void {
       Deno.env.set(key, value);
     }
   }
+}
+
+function setHostedInternalCredentials(): void {
+  Deno.env.set("VERYFRONT_API_INTERNAL_USER", "test-internal-user");
+  Deno.env.set("VERYFRONT_API_INTERNAL_PASS", "test-internal-pass");
 }
 
 const noopLogger = {
@@ -294,6 +301,23 @@ describe("validateProductionEnvironmentForTests()", () => {
     );
   });
 
+  it("rejects hosted proxy mode when internal environment credentials are missing", () => {
+    Deno.env.set("PROXY_MODE", "1");
+    Deno.env.delete("VERYFRONT_CLI_LOCAL_PROXY_MODE");
+    Deno.env.set("NODE_ENV", "production");
+    Deno.env.delete("DENO_ENV");
+    Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", "test-public-key");
+    Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+    Deno.env.delete("VERYFRONT_API_INTERNAL_USER");
+    Deno.env.delete("VERYFRONT_API_INTERNAL_PASS");
+
+    assertThrows(
+      () => validateProductionEnvironmentForTests(),
+      Error,
+      "VERYFRONT_API_INTERNAL_USER and VERYFRONT_API_INTERNAL_PASS must be set",
+    );
+  });
+
   it("warns with the actual NODE_ENV value for hosted proxy mode when a signing key exists", () => {
     Deno.env.set("PROXY_MODE", "1");
     Deno.env.delete("VERYFRONT_CLI_LOCAL_PROXY_MODE");
@@ -301,6 +325,7 @@ describe("validateProductionEnvironmentForTests()", () => {
     Deno.env.delete("DENO_ENV");
     Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", "test-public-key");
     Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+    setHostedInternalCredentials();
 
     const warnings = captureWarns(() => validateProductionEnvironmentForTests());
 
@@ -318,6 +343,7 @@ describe("validateProductionEnvironmentForTests()", () => {
     Deno.env.delete("DENO_ENV");
     Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", "test-public-key");
     Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+    setHostedInternalCredentials();
 
     assertThrows(
       () => validateProductionEnvironmentForTests(),

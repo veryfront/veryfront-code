@@ -129,6 +129,62 @@ describe("project-env/fetcher", () => {
     }
   });
 
+  it("names missing internal credentials in hosted proxy mode", async () => {
+    const previousProxyMode = Deno.env.get("PROXY_MODE");
+    const previousLocalProxyMode = Deno.env.get("VERYFRONT_CLI_LOCAL_PROXY_MODE");
+    const paths: string[] = [];
+    const { server, port } = createMockServer((req: Request) => {
+      paths.push(new URL(req.url).pathname);
+      return Response.json({ data: [{ key: "API_KEY", value: "********" }] });
+    });
+
+    try {
+      Deno.env.set("PROXY_MODE", "1");
+      Deno.env.delete("VERYFRONT_CLI_LOCAL_PROXY_MODE");
+      const error = await assertRejects(() => fetchFromMockApi(port));
+
+      assertEquals((error as { slug?: string }).slug, "config-invalid");
+      assertEquals(
+        error.message,
+        "VERYFRONT_API_INTERNAL_USER and VERYFRONT_API_INTERNAL_PASS must be set in hosted proxy mode",
+      );
+      assertEquals(paths, ["/projects/my-project/environment-variables"]);
+    } finally {
+      if (previousProxyMode === undefined) Deno.env.delete("PROXY_MODE");
+      else Deno.env.set("PROXY_MODE", previousProxyMode);
+      if (previousLocalProxyMode === undefined) {
+        Deno.env.delete("VERYFRONT_CLI_LOCAL_PROXY_MODE");
+      } else {
+        Deno.env.set("VERYFRONT_CLI_LOCAL_PROXY_MODE", previousLocalProxyMode);
+      }
+      await server.shutdown();
+    }
+  });
+
+  it("keeps local CLI proxy mode on the project-authorized response path", async () => {
+    const previousProxyMode = Deno.env.get("PROXY_MODE");
+    const previousLocalProxyMode = Deno.env.get("VERYFRONT_CLI_LOCAL_PROXY_MODE");
+    const { server, port } = createMockServer(() =>
+      Response.json({ data: [{ key: "API_KEY", value: "local-value" }] })
+    );
+
+    try {
+      Deno.env.set("PROXY_MODE", "1");
+      Deno.env.set("VERYFRONT_CLI_LOCAL_PROXY_MODE", "1");
+
+      assertEquals(await fetchFromMockApi(port), { API_KEY: "local-value" });
+    } finally {
+      if (previousProxyMode === undefined) Deno.env.delete("PROXY_MODE");
+      else Deno.env.set("PROXY_MODE", previousProxyMode);
+      if (previousLocalProxyMode === undefined) {
+        Deno.env.delete("VERYFRONT_CLI_LOCAL_PROXY_MODE");
+      } else {
+        Deno.env.set("VERYFRONT_CLI_LOCAL_PROXY_MODE", previousLocalProxyMode);
+      }
+      await server.shutdown();
+    }
+  });
+
   it("rejects a missing data field instead of substituting an empty environment", async () => {
     const { server, port } = createMockServer(() => {
       return Response.json({});
