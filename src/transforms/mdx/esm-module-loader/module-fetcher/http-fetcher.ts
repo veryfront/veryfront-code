@@ -59,6 +59,62 @@ function requireProjectSlug(value: string | undefined): string {
   return `${value}.localhost`;
 }
 
+function isLocalhostSubdomain(hostname: string): boolean {
+  return hostname !== "localhost" && hostname.endsWith(".localhost");
+}
+
+/**
+ * True for errors that mean "the hostname could not be resolved".
+ *
+ * Deliberately excludes aborts (timeout/cancellation), which must not be retried.
+ */
+function isNameResolutionError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "AbortError") return false;
+  if (!(error instanceof Error)) return false;
+  const text = `${error.message} ${(error.cause as Error | undefined)?.message ?? ""}`
+    .toLowerCase();
+  return text.includes("dns error") ||
+    text.includes("failed to lookup address") ||
+    text.includes("enotfound") ||
+    text.includes("eai_again") ||
+    text.includes("name or service not known");
+}
+
+/**
+ * Fetch the module, falling back to bare `localhost` when a project subdomain
+ * cannot be resolved.
+ *
+ * RFC 6761 only *recommends* that resolvers map the `.localhost` tree to
+ * loopback. macOS, systemd-resolved and CI honour it for arbitrary subdomains,
+ * but a plain glibc NSS setup can resolve only the bare name and fail
+ * `<slug>.localhost` with EAI_AGAIN/ENOTFOUND — which would make this fallback
+ * unable to reach the dev server at all.
+ *
+ * Pinning the connection to 127.0.0.1 while keeping subdomain routing is not an
+ * option: Deno's fetch silently drops a `Host` header override (verified), so
+ * the request would arrive with `Host: 127.0.0.1` and lose the project. Bare
+ * `localhost` instead lets the dev server resolve the project from its
+ * configured slug, which is the correct project in single-project local dev.
+ */
+async function fetchModuleWithLoopbackFallback(
+  fetchFn: typeof fetch,
+  url: URL,
+  init: RequestInit,
+  log: Logger,
+): Promise<Response> {
+  try {
+    return await fetchFn(url.toString(), init);
+  } catch (error) {
+    if (!isLocalhostSubdomain(url.hostname) || !isNameResolutionError(error)) throw error;
+    const fallbackUrl = new URL(url);
+    fallbackUrl.hostname = "localhost";
+    log.debug(
+      `${LOG_PREFIX_MDX_LOADER} ${url.hostname} did not resolve; retrying via ${fallbackUrl.host}`,
+    );
+    return await fetchFn(fallbackUrl.toString(), init);
+  }
+}
+
 function requireFetchTimeout(value: number): number {
   if (
     !Number.isSafeInteger(value) ||
@@ -135,7 +191,11 @@ export async function fetchModuleViaHTTP(
   try {
     response = await withSpan(
       SpanNames.HTTP_CLIENT_FETCH,
-      () => fetchFn(moduleUrlString, { signal: controller.signal, redirect: "error" }),
+      () =>
+        fetchModuleWithLoopbackFallback(fetchFn, moduleUrl, {
+          signal: controller.signal,
+          redirect: "error",
+        }, log),
       {
         "http.method": "GET",
         "http.url": moduleUrlString,

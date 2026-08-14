@@ -291,10 +291,16 @@ export function isLocalDevHost(host: string): boolean {
   // Explicit staging is for testing staging behaviour — not a dev host
   if (parsed.environment === "staging") return false;
 
-  // Explicit production ({slug}.production.{local}) is for testing production behaviour.
-  // Slug-only domains ({slug}.{local}) also parse as "production" but ARE dev hosts,
-  // so only exclude when ".production." appears in the domain.
-  if (parsed.environment === "production" && /\.production\./i.test(domain)) return false;
+  // Explicit production (`production.{local}` or `{slug}.production.{local}`) is for
+  // testing production behaviour. Slug-only domains ({slug}.{local}) also parse as
+  // "production" but ARE dev hosts, so exclude only the explicit forms: the bare
+  // production root, and any domain carrying a ".production." label.
+  if (
+    parsed.environment === "production" &&
+    (/^production\./i.test(domain) || /\.production\./i.test(domain))
+  ) {
+    return false;
+  }
 
   return true;
 }

@@ -287,6 +287,15 @@ describe("domain-parser", () => {
       assertEquals(isLocalDevHost("myproject.localhost:3001"), true);
     });
 
+    it("rejects the bare production root", () => {
+      // `production.localhost` parses as the production environment, so it is a
+      // production simulation rather than a dev host. A `.production.` substring
+      // test alone misses it, because the label is leading rather than infixed.
+      assertEquals(isLocalDevHost("production.localhost"), false);
+      assertEquals(isLocalDevHost("production.localhost:3000"), false);
+      assertEquals(isLocalDevHost("staging.localhost"), false);
+    });
+
     it("recognizes preview local dev domains", () => {
       assertEquals(isLocalDevHost("myproject.preview.localhost"), true);
       assertEquals(isLocalDevHost("myproject.preview.localhost:3001"), true);
