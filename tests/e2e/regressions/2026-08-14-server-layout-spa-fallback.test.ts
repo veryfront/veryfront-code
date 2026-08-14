@@ -162,9 +162,10 @@ describe(
 
         return new Response("Not found", { status: 404 });
       });
-      const browser = await launchChromium();
+      let browser: Awaited<ReturnType<typeof launchChromium>> = null;
 
       try {
+        browser = await launchChromium();
         if (!browser) return;
 
         const page = await browser.newPage();
@@ -219,8 +220,11 @@ describe(
         ]);
         await page.waitForSelector("#other-link", { timeout: 10_000 });
       } finally {
-        await closeChromium(browser);
-        await server.shutdown();
+        try {
+          await closeChromium(browser);
+        } finally {
+          await server.shutdown();
+        }
       }
     });
   },
