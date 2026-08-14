@@ -2091,6 +2091,7 @@ export class AgentRuntime {
 
       const recordIncompleteLocalToolError = async (
         toolCall: StreamingToolCall,
+        options: { includeInResponse?: boolean } = {},
       ): Promise<boolean> => {
         if (
           toolCall.providerExecuted === true ||
@@ -2114,7 +2115,10 @@ export class AgentRuntime {
           encoder,
           currentMessages,
           toolCalls,
-          { emitSse: toolCall.inputAnnounced === true },
+          {
+            emitSse: toolCall.inputAnnounced === true,
+            includeInResponse: options.includeInResponse,
+          },
         );
         return true;
       };
@@ -2144,7 +2148,7 @@ export class AgentRuntime {
       for (const tc of streamedToolCalls) {
         throwIfAborted(abortSignal);
         if (shouldRecoverInterruptedLocalToolBatch && tc.providerExecuted !== true) {
-          if (await recordIncompleteLocalToolError(tc)) {
+          if (await recordIncompleteLocalToolError(tc, { includeInResponse: false })) {
             continue;
           }
           const capturedInput = captureStreamedToolCallInput(tc);
@@ -2519,11 +2523,13 @@ export class AgentRuntime {
     encoder: TextEncoder,
     currentMessages: Message[],
     toolCalls: ToolCall[],
-    options: { emitSse?: boolean } = {},
+    options: { emitSse?: boolean; includeInResponse?: boolean } = {},
   ): Promise<void> {
     toolCall.status = "error";
     toolCall.error = errorStr;
-    toolCalls.push(toolCall);
+    if (options.includeInResponse !== false) {
+      toolCalls.push(toolCall);
+    }
 
     if (options.emitSse !== false) {
       const dynamic = isDynamicTool(toolCall.name);

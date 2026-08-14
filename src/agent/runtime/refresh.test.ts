@@ -2071,6 +2071,28 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(body.match(/Preparing the Studio suggestions\./g)?.length ?? 0, 1);
     assertExists(finishedResponse);
     assertEquals(finishedResponse.text, "Preparing the Studio suggestions.");
+    assertEquals(
+      finishedResponse.toolCalls.map((toolCall) => ({
+        id: toolCall.id,
+        status: toolCall.status,
+      })),
+      [{ id: "toolu_reconstructed_suggestions", status: "completed" }],
+    );
+    const interruptedPlaceholderPart = finishedResponse.messages
+      .flatMap((message) => message.parts)
+      .find((part) => "toolCallId" in part && part.toolCallId === "toolu_tool_only_placeholder");
+    assertExists(interruptedPlaceholderPart);
+    const interruptedPlaceholderError = finishedResponse.messages
+      .flatMap((message) => message.parts)
+      .find((part) =>
+        part.type === "tool-result" &&
+        part.toolCallId === "toolu_tool_only_placeholder"
+      );
+    assertExists(interruptedPlaceholderError);
+    assertEquals((interruptedPlaceholderError as { result: unknown }).result, {
+      error:
+        'Stream terminated before tool-call event fired for "studio_suggestions". Received 2 chars of partial tool-input deltas.',
+    });
     const recoveredToolCall = finishedResponse.toolCalls.find((toolCall) =>
       toolCall.id === "toolu_reconstructed_suggestions"
     );
