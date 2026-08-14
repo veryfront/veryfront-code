@@ -157,7 +157,7 @@ export class SSRDependencyValidator {
 
     for (let i = 0; i < imports.length; i += TRANSFORM_BATCH_SIZE) {
       const batch = imports.slice(i, i + TRANSFORM_BATCH_SIZE);
-      await Promise.all(
+      const results = await Promise.allSettled(
         batch.map(async (imp) => {
           try {
             const depSource = await this.readLocalImportSource(imp.absolutePath, localFs);
@@ -183,6 +183,8 @@ export class SSRDependencyValidator {
           }
         }),
       );
+      const terminalFailure = results.find((result) => result.status === "rejected");
+      if (terminalFailure?.status === "rejected") throw terminalFailure.reason;
     }
 
     return importPathMap;

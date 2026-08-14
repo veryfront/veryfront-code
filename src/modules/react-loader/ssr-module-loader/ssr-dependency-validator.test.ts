@@ -46,4 +46,61 @@ describe("SSRDependencyValidator", () => {
       await remove(projectDir, { recursive: true });
     }
   });
+
+  it("waits for sibling transforms before propagating a terminal HTTP fetch failure", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-dependency-validator-" });
+    const terminalPath = join(projectDir, "terminal.ts");
+    const siblingPath = join(projectDir, "sibling.ts");
+    const siblingStarted = Promise.withResolvers<void>();
+    const releaseSibling = Promise.withResolvers<void>();
+    const fetchError = BUILD_FAILED.create({
+      detail: "Failed to fetch https://esm.sh/marked: AbortError",
+      context: { phase: "http-module-fetch" },
+    });
+    const validator = new SSRDependencyValidator(
+      async (filePath) => {
+        if (filePath === terminalPath) {
+          await siblingStarted.promise;
+          throw fetchError;
+        }
+        siblingStarted.resolve();
+        await releaseSibling.promise;
+        throw new Error("Sibling transform failed");
+      },
+      () => Promise.resolve(""),
+      denoAdapter,
+      projectDir,
+    );
+
+    try {
+      await writeTextFile(terminalPath, "export const terminal = true;");
+      await writeTextFile(siblingPath, "export const sibling = true;");
+
+      let loadSettled = false;
+      const load = validator.processLocalImports(
+        [
+          { absolutePath: terminalPath, specifier: "./terminal.ts" },
+          { absolutePath: siblingPath, specifier: "./sibling.ts" },
+        ],
+        join(projectDir, "page.tsx"),
+        0,
+        createFileSystem(),
+        createDependencyHashCache(),
+      );
+      void load.catch(() => {
+        loadSettled = true;
+      });
+
+      await siblingStarted.promise;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(loadSettled, false);
+
+      releaseSibling.resolve();
+      const error = await assertRejects(() => load, VeryfrontError);
+      assertEquals(error, fetchError);
+    } finally {
+      releaseSibling.resolve();
+      await remove(projectDir, { recursive: true });
+    }
+  });
 });
