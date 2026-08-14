@@ -1,7 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { compilePlugin } from "./compile.ts";
 import { TransformStage } from "../types.ts";
 import type { TransformContext } from "../types.ts";
@@ -127,6 +134,22 @@ describe("transforms/pipeline/stages/compile", () => {
       );
 
       assertStringIncludes(result, 'await Promise.resolve("production")');
+    });
+  });
+
+  describe("error classification", () => {
+    it("marks esbuild source diagnostics as tenant build failures", async () => {
+      const error = await assertRejects(
+        async () => await compilePlugin.transform(createContext("export const value = ;")),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "compilation-error");
+      assertEquals(
+        (error.context as { tenantBuildFailure?: unknown } | undefined)?.tenantBuildFailure,
+        true,
+      );
     });
   });
 });

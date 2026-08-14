@@ -17,6 +17,7 @@ import {
   ASSET_OPTIMIZATION_ERROR,
   BUILD_FAILED,
   BUNDLE_ERROR,
+  COMPILATION_ERROR,
   CONFIG_PARSE_ERROR,
   createError,
   INITIALIZATION_ERROR,
@@ -175,6 +176,10 @@ it("application error reporter downgrades tenant build errors to tagged warnings
   const markdownRegistryError = MARKDOWN_COMPILE_ERROR.create({
     detail: "Markdown frontmatter failed in /pages/index.md",
   });
+  const sourceCompilationError = COMPILATION_ERROR.create({
+    detail: "TypeScript syntax failed in /pages/index.tsx",
+    context: { tenantBuildFailure: true },
+  });
   const frameworkError = INITIALIZATION_ERROR.create({
     detail: "renderer failed to initialize",
   });
@@ -213,6 +218,10 @@ it("application error reporter downgrades tenant build errors to tagged warnings
     "event-id",
   );
   assertEquals(
+    captureApplicationError(sourceCompilationError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+  assertEquals(
     captureApplicationError(frameworkError, { boundary: "ssr.render" }),
     "event-id",
   );
@@ -245,7 +254,15 @@ it("application error reporter downgrades tenant build errors to tagged warnings
     "event-id",
   );
 
-  assertEquals(captures.length, 12);
+  const genericCompilationError = COMPILATION_ERROR.create({
+    detail: "esbuild service exited unexpectedly",
+  });
+  assertEquals(
+    captureApplicationError(genericCompilationError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+
+  assertEquals(captures.length, 14);
   // Tenant build/content failures stay visible for escalation analysis, but
   // are tagged and downgraded so they stop surfacing as error-level issues.
   assertEquals(captures[0]?.context.errorClass, "tenant-build");
@@ -256,9 +273,9 @@ it("application error reporter downgrades tenant build errors to tagged warnings
   assertEquals(captures[2]?.context.level, "warning");
   assertEquals(captures[3]?.context.errorClass, "tenant-build");
   assertEquals(captures[3]?.context.level, "warning");
+  assertEquals(captures[4]?.context.errorClass, "tenant-build");
+  assertEquals(captures[4]?.context.level, "warning");
   // Genuine framework failures keep their default error-level capture.
-  assertEquals(captures[4]?.context.errorClass, undefined);
-  assertEquals(captures[4]?.context.level, undefined);
   assertEquals(captures[5]?.context.errorClass, undefined);
   assertEquals(captures[5]?.context.level, undefined);
   assertEquals(captures[6]?.context.errorClass, undefined);
@@ -273,6 +290,10 @@ it("application error reporter downgrades tenant build errors to tagged warnings
   assertEquals(captures[10]?.context.level, undefined);
   assertEquals(captures[11]?.context.errorClass, undefined);
   assertEquals(captures[11]?.context.level, undefined);
+  assertEquals(captures[12]?.context.errorClass, undefined);
+  assertEquals(captures[12]?.context.level, undefined);
+  assertEquals(captures[13]?.context.errorClass, undefined);
+  assertEquals(captures[13]?.context.level, undefined);
 });
 it("application error capture failures never replace application control flow", () => {
   const hostile = new Proxy({}, {

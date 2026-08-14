@@ -8,9 +8,13 @@ import { type TransformContext, type TransformPlugin, TransformStage } from "../
 
 const logger = rendererLogger.component("esm-transform");
 
-function isEsbuildSourceError(error: unknown): boolean {
-  return typeof error === "object" && error !== null &&
-    Array.isArray((error as { errors?: unknown }).errors);
+function isEsbuildSourceDiagnostic(error: unknown): boolean {
+  const diagnostics = (error as { errors?: unknown })?.errors;
+  if (!Array.isArray(diagnostics)) return false;
+  return diagnostics.some((diagnostic) => {
+    const location = (diagnostic as { location?: unknown })?.location;
+    return typeof location === "object" && location !== null;
+  });
 }
 
 export const compilePlugin: TransformPlugin = {
@@ -75,7 +79,7 @@ export const compilePlugin: TransformPlugin = {
       throw COMPILATION_ERROR.create({
         detail: `ESM transform failed for ${ctx.filePath} (loader: ${loader}): ${errorMsg}`,
         cause: err,
-        context: { tenantSourceError: isEsbuildSourceError(err) },
+        context: { tenantBuildFailure: isEsbuildSourceDiagnostic(err) },
       });
     }
   },

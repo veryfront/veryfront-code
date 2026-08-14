@@ -32,12 +32,14 @@ const TENANT_BUILD_ERROR_SLUGS = new Set([
 
 function isExplicitTenantBuildFailure(error: Error): boolean {
   const snapshot = snapshotVeryfrontError(error);
-  if (snapshot?.category !== "BUILD") return false;
-  if (TENANT_BUILD_ERROR_SLUGS.has(snapshot.slug)) return true;
-  if (snapshot.slug !== "compilation-error") return false;
-  const context = snapshot.context;
-  return typeof context === "object" && context !== null &&
-    (context as { tenantSourceError?: unknown }).tenantSourceError === true;
+  const errorContext = snapshot?.context;
+  if (
+    typeof errorContext === "object" && errorContext !== null &&
+    (errorContext as { tenantBuildFailure?: unknown }).tenantBuildFailure === true
+  ) {
+    return true;
+  }
+  return snapshot?.category === "BUILD" && TENANT_BUILD_ERROR_SLUGS.has(snapshot.slug);
 }
 
 /** Tag `error` as a build failure and return it. */
