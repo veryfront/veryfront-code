@@ -82,6 +82,7 @@ describe("cli/commands/dev", () => {
         ready: Promise.resolve(),
         done: Promise.resolve(),
         port: 3000,
+        bindAddress: "127.0.0.1",
         stop: async () => {},
       };
 
@@ -96,6 +97,7 @@ describe("cli/commands/dev", () => {
         ready: Promise.resolve(),
         done: new Promise(() => {}), // never resolves
         port: 3000,
+        bindAddress: "127.0.0.1",
         stop: async () => {},
       };
 
@@ -109,6 +111,7 @@ describe("cli/commands/dev", () => {
         ready: Promise.resolve(),
         done: Promise.resolve(),
         port: 3000,
+        bindAddress: "127.0.0.1",
         stop: () => {
           stopped = true;
           return Promise.resolve();
@@ -197,6 +200,7 @@ describe("cli/commands/dev", () => {
           ready: Promise.resolve(),
           done: Promise.resolve(),
           port: started.port,
+          bindAddress: "127.0.0.1",
           stop: () => Promise.resolve(),
         };
 

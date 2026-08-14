@@ -26,6 +26,7 @@ import { createStagedPushOptions, pushCommand, type PushOptions } from "../push/
 import { createProjectSelector } from "./project-selector.ts";
 import { createDevLogController } from "./log-controller.ts";
 import { findAvailablePort, isPortAvailable, isPortInUseError } from "./port-fallback.ts";
+import { serverDisplayUrl } from "./server-url.ts";
 import { listInferenceOptions } from "./inference-status.ts";
 
 export interface DevOptions {
@@ -63,6 +64,12 @@ export interface DevCommandResult {
    * the collision.
    */
   port: number;
+  /**
+   * The address the server bound. Embedded callers must build URLs from this
+   * rather than from the name `localhost`, which resolves to `::1` first on a
+   * dual-stack host and so can name an address the server is not listening on.
+   */
+  bindAddress: string;
   /** Stop the dev server programmatically (for demo mode) */
   stop: () => Promise<void>;
 }
@@ -335,11 +342,12 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
           ready: devServer.ready,
           done,
           port: boundPort,
+          bindAddress: devServer.bindAddress,
           stop: shutdown,
         };
       }
 
-      const serverUrl = `http://localhost:${boundPort}`;
+      const serverUrl = serverDisplayUrl(devServer.bindAddress, boundPort);
       const elapsed = Date.now() - startTime;
 
       console.log();
@@ -446,6 +454,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         ready: devServer.ready,
         done,
         port: boundPort,
+        bindAddress: devServer.bindAddress,
         stop: shutdown,
       };
     },

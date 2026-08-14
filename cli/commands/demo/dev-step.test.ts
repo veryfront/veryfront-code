@@ -5,7 +5,10 @@ import type { DevCommandResult } from "../dev/index.ts";
 import { runDemoDevStep } from "./dev-step.ts";
 
 /** A dev server that fell forward off the requested 3000 onto `port`. */
-function devServerOn(port: number): { result: DevCommandResult; stopped: () => boolean } {
+function devServerOn(
+  port: number,
+  bindAddress = "127.0.0.1",
+): { result: DevCommandResult; stopped: () => boolean } {
   let stopped = false;
   return {
     stopped: () => stopped,
@@ -13,6 +16,7 @@ function devServerOn(port: number): { result: DevCommandResult; stopped: () => b
       ready: Promise.resolve(),
       done: Promise.resolve(),
       port,
+      bindAddress,
       stop: () => {
         stopped = true;
         return Promise.resolve();
@@ -37,11 +41,11 @@ describe("cli/commands/demo/dev-step", () => {
       log: (line) => lines.push(line),
     });
 
-    assertEquals(opened, ["http://localhost:3007"]);
+    assertEquals(opened, ["http://127.0.0.1:3007"]);
 
-    const shown = lines.find((line) => line.includes("http://localhost:"));
+    const shown = lines.find((line) => line.includes("http://127.0.0.1:"));
     assert(shown !== undefined, "the demo must print the dev server address");
-    assertStringIncludes(shown, "http://localhost:3007/");
+    assertStringIncludes(shown, "http://127.0.0.1:3007/");
 
     // The requested port belongs to whatever caused the collision.
     assertEquals(lines.some((line) => line.includes(":3000")), false);
@@ -61,7 +65,26 @@ describe("cli/commands/demo/dev-step", () => {
       log: () => {},
     });
 
-    assertEquals(opened, ["http://localhost:3000"]);
+    assertEquals(opened, ["http://127.0.0.1:3000"]);
+  });
+
+  it("shows the address the server bound, not the name `localhost`", async () => {
+    // `localhost` resolves to ::1 first on a dual-stack host, so the name can
+    // point at a process other than the demo's own dev server.
+    const server = devServerOn(3000, "::1");
+    const opened: string[] = [];
+
+    await runDemoDevStep({
+      start: () => Promise.resolve(server.result),
+      open: (url) => {
+        opened.push(url);
+        return Promise.resolve();
+      },
+      waitForStop: () => Promise.resolve(true),
+      log: () => {},
+    });
+
+    assertEquals(opened, ["http://[::1]:3000"]);
   });
 
   it("stops the server once the viewer asks to move on", async () => {

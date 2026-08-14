@@ -34,7 +34,8 @@ import {
   ToolsCallParamsSchema,
 } from "./jsonrpc.ts";
 
-// Exact loopback origins only. `localhost` is the hostname the CLI prints.
+// Exact loopback origins only. All three forms are reachable: the CLI prints the
+// address the dev server bound, and a browser may send either name or literal.
 // Project subdomains were never admitted here and still are not.
 const ALLOWED_HTTP_ORIGIN_HOSTS = new Set([
   "localhost",

@@ -155,7 +155,7 @@ export class DevServer {
 
     logger.debug("Starting dev server", {
       port: this.options.port,
-      bindAddress: this.options.bindAddress ?? LOCALHOST.IPV4,
+      bindAddress: this.bindAddress,
       projectDir: this.options.projectDir,
       hmr: this.options.enableHMR,
       fastRefresh: this.options.enableFastRefresh,
@@ -291,7 +291,7 @@ export class DevServer {
 
     this.server = await this.adapter.serve(handler, {
       port: this.options.port,
-      hostname: this.options.bindAddress ?? LOCALHOST.IPV4,
+      hostname: this.bindAddress,
       signal: this.options.signal,
       nodeWebSocketServerProvider: this._nodeWebSocketServerProvider,
       onListen: ({ port }: { hostname: string; port: number }) => {
@@ -310,6 +310,11 @@ export class DevServer {
         }
       },
     });
+  }
+
+  /** The address this server listens on. Callers must not re-derive it. */
+  get bindAddress(): string {
+    return this.options.bindAddress ?? LOCALHOST.IPV4;
   }
 
   /** Return the request handler for use with external HTTP servers. */

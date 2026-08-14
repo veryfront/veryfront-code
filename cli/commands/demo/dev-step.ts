@@ -9,6 +9,7 @@
 
 import { brand, dim, success } from "#cli/ui";
 import type { DevCommandResult } from "../dev/index.ts";
+import { serverDisplayUrl } from "../dev/server-url.ts";
 
 export interface DemoDevStepDeps {
   /** Starts the dev server. */
@@ -24,16 +25,17 @@ export interface DemoDevStepDeps {
 /**
  * Shows the running dev server, opens it, then stops it on request.
  *
- * Both the printed URL and the opened URL come from `result.port` - the port
- * the server actually bound. `veryfront dev` asks for 3000 but falls forward
- * when that is taken, so keying off the requested port would send the viewer to
- * whatever process caused the collision instead of to the demo.
+ * Both the printed URL and the opened URL come from the address and port the
+ * server actually bound. `veryfront dev` asks for 3000 but falls forward when
+ * that is taken, and it binds a literal address rather than the name
+ * `localhost` - so keying off either the requested port or the name would send
+ * the viewer to whatever process caused the collision instead of to the demo.
  */
 export async function runDemoDevStep(deps: DemoDevStepDeps): Promise<void> {
   const result = await deps.start();
   await result.ready;
 
-  const serverUrl = `http://localhost:${result.port}`;
+  const serverUrl = serverDisplayUrl(result.bindAddress, result.port);
 
   deps.log(`  ${success("●")} ${brand(`${serverUrl}/`)}`);
   deps.log("");
