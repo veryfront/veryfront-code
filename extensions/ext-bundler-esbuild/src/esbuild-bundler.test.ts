@@ -9,7 +9,7 @@ import { assertEquals, assertExists, assertRejects, assertStringIncludes } from 
 import { describe, it } from "@std/testing/bdd";
 import { createRequire } from "node:module";
 
-import { EsbuildBundler } from "./esbuild-bundler.ts";
+import { EsbuildBundler, isLiveEsbuildServiceProcess } from "./esbuild-bundler.ts";
 import { rebuildContextWithSignal } from "./context-build-lifecycle.ts";
 
 const childProcess = createRequire(import.meta.url)("node:child_process") as {
@@ -87,6 +87,19 @@ describe("EsbuildBundler.transform", () => {
     } finally {
       await bundler.stop();
     }
+  });
+});
+
+describe("esbuild service lifecycle", () => {
+  it("treats a Node-compatible child with unset exit fields as live", () => {
+    assertEquals(
+      isLiveEsbuildServiceProcess({
+        killed: false,
+        exitCode: undefined,
+        signalCode: undefined,
+      } as Pick<ReturnType<typeof childProcess.spawn>, "killed" | "exitCode" | "signalCode">),
+      true,
+    );
   });
 });
 
