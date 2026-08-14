@@ -5,12 +5,25 @@ import { generateIntegration } from "./integration-generator.ts";
 import { isScaffoldType, scaffoldProjectFile } from "../../scaffold/engine.ts";
 import { exists, readTextFile } from "#veryfront/compat/fs.ts";
 import { join } from "#veryfront/compat/path";
+import { parseExtensionManifest } from "#veryfront/extensions/manifest-reader.ts";
 
 const PROJECT_MARKERS = [
   "veryfront.config.ts",
   "veryfront.config.js",
   "veryfront.config.mjs",
-  "veryfront.config.json",
+  // Legacy, but still read and merged by the CLI config loader, so a project
+  // identified only by this file is a real project. `veryfront.config.json` is
+  // deliberately absent — the loader does not recognise that name.
+  "veryfront.json",
+] as const;
+
+// Deno accepts JSONC grammar for `deno.json` as well as `deno.jsonc`, matching
+// `src/extensions/discovery.ts`. Parsing those with strict JSON makes a
+// commented manifest look like no evidence at all and fires a false warning.
+const PROJECT_MANIFESTS = [
+  { name: "package.json", syntax: "json" },
+  { name: "deno.json", syntax: "jsonc" },
+  { name: "deno.jsonc", syntax: "jsonc" },
 ] as const;
 
 /**
@@ -24,15 +37,15 @@ async function looksLikeVeryfrontProject(projectDir: string): Promise<boolean> {
     if (await exists(join(projectDir, marker))) return true;
   }
 
-  for (const manifest of ["package.json", "deno.json", "deno.jsonc"]) {
-    const path = join(projectDir, manifest);
+  for (const manifest of PROJECT_MANIFESTS) {
+    const path = join(projectDir, manifest.name);
     if (!(await exists(path))) continue;
     try {
-      const parsed = JSON.parse(await readTextFile(path)) as {
+      const parsed = parseExtensionManifest<{
         dependencies?: Record<string, unknown>;
         devDependencies?: Record<string, unknown>;
         imports?: Record<string, unknown>;
-      };
+      }>(await readTextFile(path), manifest.syntax, manifest.name);
       const specifiers = [
         ...Object.keys(parsed.dependencies ?? {}),
         ...Object.keys(parsed.devDependencies ?? {}),
@@ -53,8 +66,11 @@ async function looksLikeVeryfrontProject(projectDir: string): Promise<boolean> {
 
 async function warnIfOutsideProject(projectDir: string): Promise<void> {
   if (await looksLikeVeryfrontProject(projectDir)) return;
+  // Deliberately no path: `projectDir` is an absolute machine path, which
+  // AGENTS.md forbids in user-facing output. The directory is where the user
+  // already is, so naming it adds nothing they cannot see.
   cliLogger.warn(
-    `${projectDir} does not look like a Veryfront project; scaffolding here anyway. ` +
+    `The current directory does not look like a Veryfront project; scaffolding here anyway. ` +
       `Run this from your project root, or create one with "npm create veryfront".`,
   );
 }

@@ -138,6 +138,69 @@ describe("CLI generate command", () => {
       }
     });
 
+    it("does not leak an absolute machine path into the warning", async () => {
+      // AGENTS.md forbids local absolute paths in user-facing output.
+      const bare = await makeTempDir({ prefix: "generate-no-path-leak-" });
+      const entries = captureLogs();
+      try {
+        await generateCommand(bare, "page", "about");
+
+        const warning = entries.find((entry) =>
+          entry.level === "warn" && entry.message.includes("does not look like a Veryfront project")
+        );
+        assert(warning !== undefined, "expected the outside-project warning");
+        assert(
+          !warning.message.includes(bare),
+          `warning must not contain the absolute path: ${warning?.message}`,
+        );
+      } finally {
+        __resetLogRecordEmitterForTests();
+        __resetLoggerConfigForTests();
+        await remove(bare, { recursive: true });
+      }
+    });
+
+    it("treats a commented deno.jsonc with a veryfront import as a project", async () => {
+      // Deno permits comments and trailing commas here; strict JSON parsing
+      // made such a project look like no project at all.
+      const dir = await makeTempDir({ prefix: "generate-denojsonc-" });
+      const entries = captureLogs();
+      try {
+        await writeTextFile(
+          join(dir, "deno.jsonc"),
+          '{\n  // the framework\n  "imports": {\n    "veryfront": "npm:veryfront@^0.1.0",\n  },\n}\n',
+        );
+        await generateCommand(dir, "page", "about");
+
+        const warning = entries.find((entry) =>
+          entry.level === "warn" && entry.message.includes("does not look like a Veryfront project")
+        );
+        assert(warning === undefined, "a commented deno.jsonc must count as project evidence");
+      } finally {
+        __resetLogRecordEmitterForTests();
+        __resetLoggerConfigForTests();
+        await remove(dir, { recursive: true });
+      }
+    });
+
+    it("treats a legacy veryfront.json as a project marker", async () => {
+      const dir = await makeTempDir({ prefix: "generate-legacy-config-" });
+      const entries = captureLogs();
+      try {
+        await writeTextFile(join(dir, "veryfront.json"), '{ "projectSlug": "legacy-app" }\n');
+        await generateCommand(dir, "page", "about");
+
+        const warning = entries.find((entry) =>
+          entry.level === "warn" && entry.message.includes("does not look like a Veryfront project")
+        );
+        assert(warning === undefined, "veryfront.json is still read by the config loader");
+      } finally {
+        __resetLogRecordEmitterForTests();
+        __resetLoggerConfigForTests();
+        await remove(dir, { recursive: true });
+      }
+    });
+
     it("stays quiet inside a real project", async () => {
       await withTestContext("generate-in-project-quiet", async (context: TestContext) => {
         const entries = captureLogs();
