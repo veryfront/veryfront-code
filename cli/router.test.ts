@@ -728,6 +728,78 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("redacts pull target identifiers in the correction", async () => {
+      stubExit();
+      stubLogger();
+      const targetOptions = [
+        "--project",
+        "-p",
+        "--projects",
+        "--env",
+        "--branch",
+        "-b",
+        "--release",
+      ];
+      try {
+        for (const option of targetOptions) {
+          infoMessages.length = 0;
+          const code = await runAndCaptureExit(parseCliArgs([
+            "veryfront",
+            "pull",
+            option,
+            "private-pull-target",
+          ]));
+          assertEquals(code, 2);
+          assertEquals(infoMessages, [
+            '  You already included "veryfront". Use:',
+            `    veryfront pull ${option} '<REDACTED>'`,
+          ]);
+        }
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("redacts a positional pull project identifier in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "pull",
+          "private-project-slug",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront pull '<REDACTED>'",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("redacts values attached to unknown options in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "login",
+          "--note",
+          "private customer details",
+          "--context=another private customer detail",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront login --note '<REDACTED>' --context='<REDACTED>'",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("redacts opaque payload option values in the correction", async () => {
       stubExit();
       stubLogger();
@@ -787,7 +859,7 @@ describe("cli/router helpers", () => {
         assertEquals(code, 2);
         assertEquals(infoMessages, [
           '  You already included "veryfront". Use:',
-          "    veryfront login --provider openai --base-url '<REDACTED>'",
+          "    veryfront login --provider '<REDACTED>' --base-url '<REDACTED>'",
         ]);
       } finally {
         restoreAll();
@@ -1028,7 +1100,7 @@ describe("cli/router helpers", () => {
         assertEquals(code, 2);
         assertEquals(infoMessages, [
           '  You already included "veryfront". Use:',
-          "    veryfront deploy '--label;echo injected'=x",
+          "    veryfront deploy '--label;echo injected'='<REDACTED>'",
         ]);
       } finally {
         restoreAll();

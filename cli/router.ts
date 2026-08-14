@@ -220,6 +220,18 @@ export async function formatDuplicatedBinaryHint(
     : positionalIssueTitle
     ? 2
     : undefined;
+  const positionalPullProject = correctedCommand === "pull" &&
+    typeof args._[2] === "string" && !args._[2].startsWith("-");
+  const positionalPullProjectRawIndex = positionalPullProject
+    ? args.__rawPositionals?.[2]
+    : undefined;
+  const positionalPullProjectHintIndex = positionalPullProjectRawIndex !== undefined &&
+      duplicatedBinaryIndex !== undefined
+    ? positionalPullProjectRawIndex -
+      (duplicatedBinaryIndex < positionalPullProjectRawIndex ? 1 : 0)
+    : positionalPullProject
+    ? 1
+    : undefined;
   const formatted: string[] = [];
   const opaquePayloadOptions = new Set(["--config", "--input"]);
   const opaqueIssueOptions = new Set([
@@ -231,26 +243,48 @@ export async function formatDuplicatedBinaryHint(
     "--title",
     "-t",
   ]);
-  const opaqueDeployTargetOptions = new Set([
+  const opaqueRemoteTargetOptions = new Set([
     "--project",
     "-p",
+    "--projects",
     "--environment",
     "--env",
     "-e",
     "--branch",
     "-b",
+    "--release",
     "--release-name",
   ]);
   const opaqueWorkerConnectionOptions = new Set(["--redis", "--redis-url"]);
   const opaqueServeHostOptions = new Set(["--host", "--hostname"]);
   const rootRelativeRouteOptions = new Set(["--exclude", "--include"]);
+  const globalBooleanOptions = new Set([
+    "--color",
+    "-h",
+    "--help",
+    "-j",
+    "--json",
+    "--no-animation",
+    "--no-color",
+    "--no-input",
+    "-q",
+    "--quiet",
+    "-v",
+    "--verbose",
+    "--version",
+    "-y",
+    "--yes",
+  ]);
+  const globalValueOptions = new Set(["-o", "--output"]);
   const commandOptions = typeof correctedCommand === "string"
     ? COMMANDS[correctedCommand]?.options ?? []
     : [];
 
   for (let index = 0; index < hintArguments.length; index++) {
     const argument = hintArguments[index]!;
-    if (index === positionalIssueTitleHintIndex) {
+    if (
+      index === positionalIssueTitleHintIndex || index === positionalPullProjectHintIndex
+    ) {
       formatted.push("'<REDACTED>'");
       continue;
     }
@@ -264,19 +298,24 @@ export async function formatDuplicatedBinaryHint(
     );
     const fileOption = optionDefinition?.flag.includes("<file>") === true;
     const opaqueIssueOption = correctedCommand === "issues" && opaqueIssueOptions.has(option);
-    const opaqueDeployTargetOption = correctedCommand === "deploy" &&
-      opaqueDeployTargetOptions.has(option);
+    const opaqueRemoteTargetOption =
+      (correctedCommand === "deploy" || correctedCommand === "pull") &&
+      opaqueRemoteTargetOptions.has(option);
     const opaqueConnectionOption = (correctedCommand === "worker" &&
       opaqueWorkerConnectionOptions.has(option)) ||
       (correctedCommand === "login" && option === "--base-url") ||
       ((correctedCommand === "serve" || correctedCommand === "preview") &&
         opaqueServeHostOptions.has(option));
-    const redactOptionValue = sensitiveOption || opaqueIssueOption || opaqueDeployTargetOption ||
+    const knownGlobalOption = globalBooleanOptions.has(option) || globalValueOptions.has(option);
+    const unknownOption = option.startsWith("-") && optionDefinition === undefined &&
+      !knownGlobalOption;
+    const redactOptionValue = sensitiveOption || opaqueIssueOption || opaqueRemoteTargetOption ||
       opaqueConnectionOption ||
-      (opaquePayloadOptions.has(option) && !fileOption);
+      (opaquePayloadOptions.has(option) && !fileOption) || unknownOption;
     const allowRootRelativeRoute = correctedCommand === "build" &&
       rootRelativeRouteOptions.has(option);
-    const booleanOption = optionDefinition !== undefined && !optionDefinition.flag.includes("<");
+    const booleanOption = globalBooleanOptions.has(option) ||
+      (optionDefinition !== undefined && !optionDefinition.flag.includes("<"));
     const nextArgument = hintArguments[index + 1];
     const hasSeparateRawValue = isCliOptionValue(nextArgument);
 
