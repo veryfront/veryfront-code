@@ -180,23 +180,29 @@ export async function formatDuplicatedBinaryHint(
   const formatted: string[] = [];
   const opaquePayloadOptions = new Set(["--config", "--input"]);
   const rootRelativeRouteOptions = new Set(["--exclude", "--include"]);
+  const correctedCommand = args._[1];
+  const commandOptions = typeof correctedCommand === "string"
+    ? COMMANDS[correctedCommand]?.options ?? []
+    : [];
 
   for (let index = 0; index < hintArguments.length; index++) {
     const argument = hintArguments[index]!;
     const equalsIndex = argument.startsWith("-") ? argument.indexOf("=") : -1;
     const option = equalsIndex > 0 ? argument.slice(0, equalsIndex) : argument;
+    const optionDefinition = commandOptions.find((definition) =>
+      (definition.flag.match(/--?[a-z0-9-]+/giu) ?? []).some((name) => name === option)
+    );
     const sensitiveOption = /^--?(?:.*-)?(?:auth|credential|key|password|secret|token)$/iu.test(
       option,
     );
-    const redactOptionValue = sensitiveOption || opaquePayloadOptions.has(option);
+    const fileOption = optionDefinition?.flag.includes("<file>") === true;
+    const issueBodyOption = correctedCommand === "issues" &&
+      (option === "--body" || option === "-b");
+    const redactOptionValue = sensitiveOption || issueBodyOption ||
+      (opaquePayloadOptions.has(option) && !fileOption);
     const allowRootRelativeRoute = rootRelativeRouteOptions.has(option);
     const parsedOptionValue = args[option.replace(/^-+/u, "")];
-    const correctedCommand = args._[1];
-    const booleanOption = typeof correctedCommand === "string" &&
-      COMMANDS[correctedCommand]?.options?.some((definition) =>
-          !definition.flag.includes("<") &&
-          (definition.flag.match(/--?[a-z0-9-]+/giu) ?? []).some((name) => name === option)
-        ) === true;
+    const booleanOption = optionDefinition !== undefined && !optionDefinition.flag.includes("<");
 
     if (equalsIndex > 0) {
       const formattedOption = formatCommandHintArgument(option, sanitizeUrlCredentials);

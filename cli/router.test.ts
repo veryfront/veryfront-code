@@ -618,6 +618,51 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("preserves schedule input file paths in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "schedule",
+          "run",
+          "daily-triage",
+          "--input",
+          "fixtures/priority-queue.json",
+          "--input=fixtures/secondary.json",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront schedule run daily-triage --input fixtures/priority-queue.json --input=fixtures/secondary.json",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("redacts issue body content in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "issues",
+          "create",
+          "--body",
+          "private customer details",
+          "-b=more private details",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront issues create --body '<REDACTED>' -b='<REDACTED>'",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("explains the duplicated binary name before routing global help", async () => {
       stubExit();
       stubLogger();
