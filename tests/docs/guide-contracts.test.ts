@@ -738,6 +738,24 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
     snippets: ["provider/model", "OPENAI_API_KEY", "registerModelProvider"],
   },
+  "getting-started/add-to-existing-project.md": {
+    references: [
+      "./create-project.md",
+      "./installation.md",
+      "./create-agent.md",
+      "./create-api.md",
+      "./create-frontend.md",
+      "../guides/providers.md",
+    ],
+    snippets: [
+      "npm install veryfront",
+      '"jsx": "react-jsx"',
+      '"skipLibCheck": true',
+      "@types/mdx",
+      "// app/page.tsx",
+      "npx veryfront dev",
+    ],
+  },
   "getting-started/create-project.md": {
     references: ["./installation.md", "./create-agent.md"],
     snippets: [

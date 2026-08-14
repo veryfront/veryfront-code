@@ -103,6 +103,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "installation.md",
   "create-frontend.md",
   "create-project.md",
+  "add-to-existing-project.md",
   "create-api.md",
   "deploy-project.md",
   "integrations.md",
@@ -1002,6 +1003,39 @@ describe("Guide: create-project.md", () => {
     for (const templateId of templateIds) {
       assertStringIncludes(guide, `\`${templateId}\``);
       assertExists(await getTemplate(templateId));
+    }
+  });
+});
+
+describe("Guide: add-to-existing-project.md", () => {
+  it("documents the compiler options the scaffold actually sets", async () => {
+    const guide = await readGuide("add-to-existing-project.md");
+
+    // The page tells an existing-project reader to add by hand what the
+    // scaffolded template already carries. If the template ever drops one of
+    // these, the guidance is wrong and this fails.
+    const template = await getTemplate("ai-agent");
+    assertExists(template);
+    const tsconfig = template.find((file) => file.path === "tsconfig.json");
+    assertExists(tsconfig, "expected the ai-agent template to ship a tsconfig.json");
+
+    for (const option of ['"jsx": "react-jsx"', '"skipLibCheck": true']) {
+      assertStringIncludes(guide, option);
+      assertStringIncludes(tsconfig.content, option);
+    }
+  });
+
+  it("documents the install command and the entry route the server needs", async () => {
+    const guide = await readGuide("add-to-existing-project.md");
+
+    for (
+      const snippet of [
+        "npm install veryfront",
+        "// app/page.tsx",
+        "npx veryfront dev",
+      ]
+    ) {
+      assertStringIncludes(guide, snippet);
     }
   });
 });

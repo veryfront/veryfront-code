@@ -1,7 +1,7 @@
 ---
 title: "Create agent"
 description: "Define an AI agent."
-order: 5
+order: 6
 ---
 
 ## Prerequisites

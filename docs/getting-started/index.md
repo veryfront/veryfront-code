@@ -23,12 +23,13 @@ you develop or deploy the app.
 
 Use these pages when you want to work on one part of an existing project:
 
-| Goal                                            | Page                                        |
-| ----------------------------------------------- | ------------------------------------------- |
-| Install the CLI or framework                    | [Installation](./installation.md)           |
-| Scaffold a project                              | [Create project](./create-project.md)       |
-| Define an agent                                 | [Create agent](./create-agent.md)           |
-| Expose an agent route                           | [Create API](./create-api.md)               |
-| Add a chat UI                                   | [Create frontend](./create-frontend.md)     |
-| Deploy an existing project with Veryfront Cloud | [Deploy project](./deploy-project.md)       |
-| Connect a coding agent to the dev server        | [Coding agents](../guides/coding-agents.md) |
+| Goal                                            | Page                                                       |
+| ----------------------------------------------- | ---------------------------------------------------------- |
+| Install the CLI or framework                    | [Installation](./installation.md)                          |
+| Scaffold a project                              | [Create project](./create-project.md)                      |
+| Add Veryfront to a project you already have     | [Add to an existing project](./add-to-existing-project.md) |
+| Define an agent                                 | [Create agent](./create-agent.md)                          |
+| Expose an agent route                           | [Create API](./create-api.md)                              |
+| Add a chat UI                                   | [Create frontend](./create-frontend.md)                    |
+| Deploy an existing project with Veryfront Cloud | [Deploy project](./deploy-project.md)                      |
+| Connect a coding agent to the dev server        | [Coding agents](../guides/coding-agents.md)                |
