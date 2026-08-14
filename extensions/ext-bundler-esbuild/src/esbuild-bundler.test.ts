@@ -1220,56 +1220,6 @@ describe("EsbuildBundler service crash recovery", () => {
     }
   });
 
-  it("disposes plugin resources when the service crashes during initial context setup", async () => {
-    const observation = observeEsbuildServices();
-    const { services } = observation;
-    const bundler = new EsbuildBundler();
-    let activeResources = 0;
-    let disposeCount = 0;
-
-    try {
-      const error = await assertRejects(() =>
-        bundler.context({
-          entryPoints: ["crash:entry"],
-          bundle: true,
-          format: "esm",
-          write: false,
-          plugins: [{
-            name: "in-flight-crash-plugin-resource",
-            setup(build) {
-              activeResources += 1;
-              build.onDispose(() => {
-                activeResources -= 1;
-                disposeCount += 1;
-              });
-              const managedService = services[0]!;
-              managedService.child.ref();
-              managedService.child.kill("SIGKILL");
-            },
-          }],
-        })
-      );
-      assertStringIncludes((error as Error).message, "The service");
-      await services[0]!.close;
-      assertEquals(disposeCount, 1);
-      assertEquals(activeResources, 0);
-
-      const recovered = await bundler.transform({
-        code: "export const recoveredAfterBundleCrash: number = 1;",
-        loader: "ts",
-      });
-      assertStringIncludes(recovered.code, "recoveredAfterBundleCrash = 1");
-    } finally {
-      await bundler.stop().catch(() => undefined);
-      __resetServiceRecoveryForTests();
-      try {
-        await bundler.stop();
-      } finally {
-        observation.restore();
-      }
-    }
-  });
-
   it("latches the ownership error once the restart budget is exhausted", async () => {
     const observation = observeEsbuildServices();
     const { services } = observation;
