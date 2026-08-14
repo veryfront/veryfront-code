@@ -66,9 +66,29 @@ const operationScopes = new AsyncLocalStorage<OperationScope>();
 const OWNERSHIP_ERROR_MESSAGE =
   "[ext-bundler-esbuild] Cannot own an esbuild service started outside the module-wide adapter; restart the process and use only the Bundler contract";
 
+const MAX_CAUSE_DETAIL_LENGTH = 200;
+/** Absolute POSIX and Windows paths, reduced to a basename below. */
+const ABSOLUTE_PATH_PATTERN = /(?:[A-Za-z]:)?(?:\/|\\\\)[^\s"']*/g;
+
+/**
+ * Reduce a cause to a single redacted line.
+ *
+ * The message is logged, so it must not carry a machine's filesystem layout:
+ * a compiled runtime resolves esbuild under a temp directory, and spawn errors
+ * quote that path verbatim. Keeping only the basename preserves what the reader
+ * needs -- which binary or module failed -- without the surrounding layout. The
+ * first line only, so a stack never reaches the message, and bounded so a large
+ * esbuild diagnostic cannot dominate the log line.
+ */
 function describeCause(cause: unknown): string {
   if (cause === undefined) return "";
-  const detail = cause instanceof Error ? cause.message : String(cause);
+  const raw = cause instanceof Error ? cause.message : String(cause);
+  const firstLine = raw.split("\n", 1)[0] ?? "";
+  const withoutPaths = firstLine.replace(ABSOLUTE_PATH_PATTERN, (match) => {
+    const parts = match.split(/[\/\\]/).filter(Boolean);
+    return parts.length > 0 ? parts[parts.length - 1]! : match;
+  });
+  const detail = withoutPaths.trim().slice(0, MAX_CAUSE_DETAIL_LENGTH);
   return detail ? ` (underlying failure: ${detail})` : "";
 }
 
@@ -309,9 +329,12 @@ function invokeEsbuild<T extends Promise<unknown>>(operation: () => T): T {
 
   const ownedService = capturedService ?? esbuildService;
   if (!ownedService || !isLiveService(ownedService)) {
-    // Latch only once the operation settles. Recording up front would fix a
-    // causeless error in place and the rejection below could no longer attach
-    // what actually failed.
+    // Latch synchronously so a concurrent operation cannot pass the admission
+    // check in runBundlerOperation and drive esbuild while ownership is already
+    // known to be invalid. The rejection handler still supplies the cause: the
+    // latch is created without one here, and recordOwnershipError adopts the
+    // first cause offered afterwards.
+    recordOwnershipError();
     return result.then(
       () => {
         throw recordOwnershipError();

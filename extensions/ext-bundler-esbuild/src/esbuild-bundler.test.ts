@@ -6,7 +6,7 @@
  */
 
 import { assertEquals, assertExists, assertRejects, assertStringIncludes } from "@std/assert";
-import { afterEach, describe, it } from "@std/testing/bdd";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createRequire } from "node:module";
 
 import {
@@ -849,6 +849,30 @@ describe("ownership error cause", () => {
 
     assertEquals((error.cause as Error).message, "first failure");
     assertStringIncludes(error.message, "first failure");
+  });
+
+  it("keeps the filesystem layout out of the reported cause", () => {
+    // A compiled runtime resolves esbuild under a temp directory, and spawn
+    // errors quote that path. The message is logged, so it must carry the
+    // failure without the machine's layout.
+    __resetOwnershipErrorForTests();
+    const error = __recordOwnershipErrorForTests(
+      new Error("spawn /tmp/veryfront-esbuild-0.28.1-c3fd/esbuild ENOENT"),
+    );
+
+    assertStringIncludes(error.message, "spawn esbuild ENOENT");
+    assertEquals(error.message.includes("/tmp/"), false);
+  });
+
+  it("keeps a stack out of the reported cause", () => {
+    __resetOwnershipErrorForTests();
+    const error = __recordOwnershipErrorForTests(
+      new Error("boom\n    at Object.create (file:///tmp/deno-compile/src/errors/types.ts:111:14)"),
+    );
+
+    assertStringIncludes(error.message, "boom");
+    assertEquals(error.message.includes("types.ts"), false);
+    assertEquals(error.message.includes("    at "), false);
   });
 
   it("stays usable when there is no underlying failure", () => {
