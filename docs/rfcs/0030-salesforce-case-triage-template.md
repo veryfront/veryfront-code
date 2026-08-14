@@ -54,7 +54,8 @@ Two artefacts that must stay 1:1:
   least-privilege by design:
   - `case-triage` - orchestrator, tool: `invoke_agent`.
   - `case-ingest` - read-only. Tools: `salesforce__get_case`,
-    `salesforce__list_case_activity`, `salesforce__list_cases`. Fetches + PII-redacts.
+    `salesforce__list_case_activity`, `salesforce__list_cases` with the v1
+    open-case constraint. Fetches + PII-redacts.
   - `case-classify` - **no Salesforce access**. Tools: `search_knowledge`,
     `get_file`. Classifies against the checked-in `knowledge/case-triage-taxonomy.md`.
   - `case-dispose` - write. Tools: `salesforce__add_case_comment`,
@@ -122,7 +123,7 @@ children):
    └──────┬───────┘           └──────┬───────┘          └──────┬───────┘
    get_case                   search_knowledge          update_case (Reason)
    list_case_activity         get_file (taxonomy)       add_case_comment
-   list_cases                        │                         │
+   list_cases (open-constrained)     │                         │
           │                          ▼                         │
           ▼                  project taxonomy .md              ▼
       Salesforce            (NOT Salesforce Knowledge)     Salesforce
@@ -343,7 +344,10 @@ dynamic-*enough* behaviour from three levers that need no new platform machinery
    `Account.Name`, `Account.Type`, or `Account.Industry` also needs `Account` Read.
    Until that check exists for static defaults, remove relationship fields from the
    v1 `find_customer` and `search_contacts` defaults instead of relying on Contact
-   Read alone.
+   Read alone. Likewise, the v1 `list_cases` default for the "latest open cases"
+   flow must not be an unconstrained recent Case query: it needs a fixed
+   `WHERE IsClosed = false` query or a required open-case filter the server cannot
+   omit.
 2. **Passthrough writes - on the *generic* tools, not the least-privilege curated
    ones.** The schema already supports `bodyMode: "passthrough"` - and
    `src/integrations/schema.ts` cites *"Salesforce sObject … writes"* as its
@@ -412,6 +416,19 @@ concrete operation (`CaseComment` Create, `Case` Create/Update, `Lead` Create).
 Do not infer those writes from `dataAccess.objects` or from a Read grant while the
 per-CRUD arrays are not enforced.
 
+**Caveat - `list_cases` must be open-case constrained once `q` overrides are
+disabled.** The current default is `SELECT ... FROM Case ORDER BY LastModifiedDate
+DESC LIMIT 50`, with no `WHERE IsClosed = false`. That contradicts the public
+"Triage latest open cases" promise because closed cases can appear in the default
+result and flow into triage/dispose. Retain a v1 case-listing tool only if it is a
+static open-case tool: either replace it with `list_open_cases` or make
+`list_cases` require an open-case input such as `openOnly = true`, then compose a
+fixed query that includes `WHERE IsClosed = false` plus optional safe filters such
+as Contact, Account, Owner, Priority, CreatedDate, and limit. If the server cannot
+force that open predicate, gate the general `list_cases` tool until the SOQL
+parser/enforcer can prove the supplied query is open-case constrained
+fail-closed.
+
 **Caveat - `list_case_activity` must be case-scoped once `q` overrides are
 disabled.** The current tool is a broad CaseComment SOQL query with an optional
 instruction to add `WHERE ParentId = '<caseId>'`. When arbitrary `q` is disabled,
@@ -462,11 +479,14 @@ has 16 tools today, but v1 removes or hides existing `run_soql_query` until the
 SOQL authorization gate is live. The other curated tools stay in v1 with
 arbitrary `q` overrides disabled, relationship fields removed from fixed Contact
 query defaults unless referenced-object authorization exists, and fixed
-object/operation authorization enforced before every curated write.
+object/operation authorization enforced before every curated write. `list_cases`
+also requires the fixed open-case query/filter above before it counts as retained
+in v1; otherwise it moves to the deferred read escape-hatch bucket with the other
+arbitrary SOQL surfaces.
 
 | | Tools | Count |
 | --- | --- | --- |
-| **Existing curated v1 baseline** | the 16 in `connector.json` today, minus existing `run_soql_query` while it is gated | 15 |
+| **Existing curated v1 baseline** | the 16 in `connector.json` today, minus existing `run_soql_query` while it is gated; `list_cases` counts only after the fixed open-case query/filter is in place | 15 |
 | **Add - helpers (v1)** | `update_case_reason` (`Reason`-only `case-dispose` write), `get_picklist_values_for_record_type` | +2 |
 | **Read escape hatches (deferred)** | existing `run_soql_query`, curated arbitrary `q` overrides, `search` (SOSL), pending fail-closed query parsing and authorization | - |
 | **Add - generic CRUD (deferred)** | `get_record`, `create_record`, `update_record`, `upsert_record`, `delete_record` (pending fail-closed per-CRUD enforcement) | +5 |
@@ -481,7 +501,11 @@ the server must deny `update_case_reason` unless fixed `Case` Update authorizati
 is present. Retained curated writes need the same fixed object/operation denial
 tests. Static Contact query defaults must also prove they either omit Account
 relationship fields or deny the query when Account Read is absent. Each generic
-CRUD tool must be denied for an un-granted `sobjectType` (§16).
+CRUD tool must be denied for an un-granted `sobjectType` (§16). `list_cases`
+needs a closed-case exclusion test: seed at least one recently modified closed
+Case and assert the v1 open-case listing cannot return it, and assert any missing
+or false open-case constraint fails closed rather than falling back to the
+unfiltered connector default.
 
 Coverage of the standard objects a "get-going" support/CRM demo needs:
 Account, Contact, Lead, Case, CaseComment, Opportunity - plus User for every
@@ -526,6 +550,7 @@ is promptable in the agents.
 | Write result | empty string (mis-read as failure in §3) | status-based: POST → `{ id, success, errors }`; PATCH/DELETE `204` → `{ success: true }`. Empty body ≠ failure |
 | API disabled for edition | raw 403 | "This Salesforce edition has no API access. Use a free Developer Edition org: <link>." |
 | Restricted picklist bad value | raw `INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST` | catch → describe → retry only after the user confirms a taxonomy-to-org mapping; otherwise report the allowed set and fail closed |
+| Case listing not open-constrained | default `list_cases` can return recently modified closed cases | "The latest-open-cases tool is not open-case constrained. Add a fixed `IsClosed = false` query/filter before triage." |
 | Knowledge not enabled | raw `INVALID_TYPE` | `search_knowledge_articles` returns `[]` + a one-line hint |
 | FLS Edit missing on Reason | silent drop / raw error | name the exact profile toggle |
 
@@ -539,7 +564,8 @@ is promptable in the agents.
    package in the target org and verifies that the packaged app is enabled.
 4. The Integrations panel shows **Salesforce → Connect**. The user authorizes
    against the same org where the package is installed.
-5. Run **"Triage latest open cases."**
+5. Run **"Triage latest open cases"** through the v1 open-case constrained listing
+   tool, not a general recent-cases default.
 6. Pipeline runs green against seeded data; a `Reason` + triage comment land on
    the case.
 
@@ -791,7 +817,11 @@ max-rows cap, and customer mapping.
    curated reads. Static curated query defaults have the same referenced-object
    obligation: if a default Contact query selects Account relationship fields, the
    server must authorize Account Read or the default must remove those fields.
-   V1 uses the removal path for fixed defaults.
+   V1 uses the removal path for fixed defaults. Static defaults also need
+   flow-specific predicates: `list_cases` is retained for "latest open cases" only
+   if the server forces `WHERE IsClosed = false` through a fixed query or required
+   open-case filter. A missing open predicate must deny the call, not fall back to
+   the current broad recent-Case default.
 3. **Curated writes need their own fixed authorization before per-CRUD arrays are
    enforced.** A fixed-path curated write is safer than generic CRUD because its
    object and operation are known, but it is still a write. Do not infer
