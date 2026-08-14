@@ -1240,7 +1240,7 @@ export class AgentRuntime {
           synchronizeRuntimeToolInventory(
             currentSystemPrompt,
             runtimeTools,
-            effectiveToolExposurePlan.deferred,
+            agentWriteFinalResponseToolGuardEnabled ? effectiveToolExposurePlan.deferred : [],
           ),
           preparedStep.integrationToolDiscovery,
         );
@@ -1858,7 +1858,7 @@ export class AgentRuntime {
         synchronizeRuntimeToolInventory(
           currentSystemPrompt,
           runtimeTools,
-          effectiveToolExposurePlan.deferred,
+          agentWriteFinalResponseToolGuardEnabled ? effectiveToolExposurePlan.deferred : [],
         ),
         preparedStep.integrationToolDiscovery,
       );
