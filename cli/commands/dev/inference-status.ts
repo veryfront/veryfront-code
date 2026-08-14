@@ -8,8 +8,19 @@ export interface InferenceEnvironment {
   mistralApiKey?: string;
 }
 
+const CLOUD_GATEWAY_LABEL = "Veryfront Cloud AI Gateway";
+
 function isSet(value: string | undefined): boolean {
   return Boolean(value?.trim());
+}
+
+/**
+ * Whether a rendered option list claims the Cloud gateway. Callers use this to
+ * decide if a stored session still needs validating — the gateway is the only
+ * option whose credential the CLI can check itself.
+ */
+export function advertisesCloudGateway(options: readonly string[]): boolean {
+  return options.includes(CLOUD_GATEWAY_LABEL);
 }
 
 /** Return the inference paths the current dev process can use without exposing credentials. */
@@ -20,7 +31,7 @@ export function listInferenceOptions(environment: InferenceEnvironment): string[
   // has no linked slug yet and its chat route still answers, so gating this on
   // `projectSlug` hid the one inference path `veryfront login` sets up.
   if (isSet(environment.apiToken)) {
-    options.push("Veryfront Cloud AI Gateway");
+    options.push(CLOUD_GATEWAY_LABEL);
   }
   if (isSet(environment.openaiApiKey)) {
     options.push(

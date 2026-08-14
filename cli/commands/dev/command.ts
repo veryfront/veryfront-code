@@ -26,7 +26,7 @@ import { createStagedPushOptions, pushCommand, type PushOptions } from "../push/
 import { createProjectSelector } from "./project-selector.ts";
 import { createDevLogController } from "./log-controller.ts";
 import { findAvailablePort, isPortAvailable, isPortInUseError } from "./port-fallback.ts";
-import { listInferenceOptions } from "./inference-status.ts";
+import { advertisesCloudGateway, listInferenceOptions } from "./inference-status.ts";
 
 export interface DevOptions {
   port: number;
@@ -356,6 +356,22 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       });
       if (inferenceOptions.length > 0) {
         console.log(`  ${dim("Inference")} ${brand(inferenceOptions.join(", "))}`);
+      }
+      // The banner reports configured paths, and it must not block Ready on a
+      // network round-trip (see `void authReady` above). But an expired stored
+      // session still has a nonempty token, so the gateway would be advertised
+      // and then fail on first request. The validation is already in flight —
+      // let it correct the record rather than delay the banner.
+      if (advertisesCloudGateway(inferenceOptions)) {
+        void authReady.then(() => {
+          if (identity) return;
+          console.log(
+            `  ${
+              warning("!")
+            } Veryfront Cloud session is not valid; gateway inference will fail. ` +
+              `Run ${brand("veryfront login")} to renew it.`,
+          );
+        });
       }
       if (mcpServer && isVerbose()) {
         console.log(`  ${dim("MCP")} ${brand(`http://localhost:${mcpPort}/mcp`)}`);

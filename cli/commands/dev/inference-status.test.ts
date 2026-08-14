@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { listInferenceOptions } from "./inference-status.ts";
+import { advertisesCloudGateway, listInferenceOptions } from "./inference-status.ts";
 
 describe("commands/dev/inference-status", () => {
   it("reports the Veryfront Cloud AI Gateway whenever a token can reach it", () => {
@@ -28,6 +28,17 @@ describe("commands/dev/inference-status", () => {
   it("reports nothing when no credential can reach any provider", () => {
     assertEquals(listInferenceOptions({}), []);
     assertEquals(listInferenceOptions({ projectSlug: "support-agent" }), []);
+  });
+
+  it("flags option lists that claim the gateway, so callers can validate the session", () => {
+    // The banner cannot block Ready on a network round-trip, so dev uses this
+    // to decide whether the already-running session check is worth reporting.
+    assertEquals(advertisesCloudGateway(listInferenceOptions({ apiToken: "<TOKEN>" })), true);
+    assertEquals(
+      advertisesCloudGateway(listInferenceOptions({ openaiApiKey: "<API_KEY>" })),
+      false,
+    );
+    assertEquals(advertisesCloudGateway(listInferenceOptions({})), false);
   });
 
   it("reports direct provider credentials without exposing their values", () => {
