@@ -2040,6 +2040,18 @@ export class AgentRuntime {
         flushDeferredRecoveryOutput(previousRecoveryText.length, false, false);
         releasedDeferredRecoveryOutput = true;
       };
+      const releaseDeferredRecoveryNonTextOutputBeforeReplay = (
+        isTextEvent: boolean,
+      ): void => {
+        if (
+          isTextEvent || deferredRecoveryOutput === undefined || releasedDeferredRecoveryOutput ||
+          deferredRecoverySseText.length > 0 || deferredRecoveryCallbackText.length > 0
+        ) {
+          return;
+        }
+
+        flushDeferredRecoveryOutput(0, false, false);
+      };
       const stepController = deferredRecoveryOutput === undefined ? controller : {
         enqueue(chunk: Uint8Array) {
           if (releasedDeferredRecoveryOutput) {
@@ -2059,6 +2071,7 @@ export class AgentRuntime {
           });
           releaseDeferredRecoveryOutputAfterDivergence();
           releaseDeferredRecoveryOutputAfterExactReplay(isTextEvent);
+          releaseDeferredRecoveryNonTextOutputBeforeReplay(isTextEvent);
         },
       } as ReadableStreamDefaultController;
       await processStream(streamSource, state, stepController, encoder, stepTextPartId, {

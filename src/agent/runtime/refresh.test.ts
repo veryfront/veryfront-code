@@ -2803,6 +2803,110 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(finishedResponse.text, "Checking the requested update.");
   });
 
+  it("streams provider events before recovery replay text begins", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    let providerEventObserved = false;
+    let observedProviderEventBeforeReplay = false;
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Checking the requested update." },
+              {
+                type: "tool-input-start",
+                id: "toolu_interrupted_provider_first",
+                toolName: "studio_suggestions",
+              },
+              {
+                type: "tool-input-delta",
+                id: "toolu_interrupted_provider_first",
+                delta: "{}",
+              },
+              { type: "finish", finishReason: "tool-calls" },
+            ]),
+          };
+        }
+
+        let recoveryPart = 0;
+        return {
+          stream: new ReadableStream<unknown>({
+            async pull(controller) {
+              recoveryPart++;
+              if (recoveryPart === 1) {
+                controller.enqueue({
+                  type: "tool-call",
+                  toolCallId: "provider-search-before-replay",
+                  toolName: "web_search",
+                  input: '{"query":"status"}',
+                  providerExecuted: true,
+                });
+                return;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 0));
+              observedProviderEventBeforeReplay = providerEventObserved;
+              controller.enqueue({ type: "text-delta", text: "Checking the requested update." });
+              controller.enqueue({
+                type: "tool-result",
+                toolCallId: "provider-search-before-replay",
+                toolName: "web_search",
+                output: { results: [] },
+                providerExecuted: true,
+              });
+              controller.enqueue({ type: "finish", finishReason: "stop" });
+              controller.close();
+            },
+          }),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Recover an interrupted local placeholder once.",
+      tools: { studio_suggestions: studioSuggestions },
+      providerTools: ["web_search"],
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = (await assistant.stream({
+      input: "Check the update",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse();
+    const body = await readResponseBody(response, (text) => {
+      if (text.includes("provider-search-before-replay")) {
+        providerEventObserved = true;
+      }
+    });
+
+    assertEquals(callCount, 2);
+    assertEquals(observedProviderEventBeforeReplay, true);
+    assertEquals(body.match(/Checking the requested update\./g)?.length ?? 0, 1);
+    assertEquals(body.includes("provider-search-before-replay"), true);
+    assertExists(finishedResponse);
+    assertEquals(finishedResponse.text, "Checking the requested update.");
+  });
+
   it("applies loaded skill maxSteps overrides to generate() invoke_agent calls", async () => {
     const toolResults: ToolExecutionResultRequest[] = [];
     let callCount = 0;
