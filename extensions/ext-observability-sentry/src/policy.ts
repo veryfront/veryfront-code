@@ -15,7 +15,8 @@ const FAILED_QUERY_PREFIX = "Failed query: ";
 const FAILED_QUERY_PARAMS_DELIMITER = "\nparams:";
 const FAILED_QUERY_HEAD_MAX_LENGTH = 200;
 const SQL_DOLLAR_QUOTE_START_PATTERN = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/;
-const SQL_NUMERIC_LITERAL_PATTERN = /^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/;
+const SQL_NUMERIC_LITERAL_PATTERN =
+  /^(?:0[xX][0-9A-Fa-f](?:_?[0-9A-Fa-f])*|0[oO][0-7](?:_?[0-7])*|0[bB][01](?:_?[01])*|(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)/;
 const SQL_IDENTIFIER_CHAR_PATTERN = /[A-Za-z0-9_$]/;
 
 const SENTRY_TOKEN_PATTERN = /\bsntrys_[A-Za-z0-9_+/=-]+\b/g;
@@ -157,7 +158,15 @@ function detectDbConnectionErrorCode(event: SentryPolicyEvent): string | undefin
   for (const exceptionValue of event.exception?.values ?? []) {
     const message = exceptionValue.value ?? "";
     if (exceptionValue.type === "PostgresError") {
-      const code = DB_CONNECTION_ERROR_CODES.find((candidate) => message.includes(candidate));
+      const trimmedMessage = message.trimEnd();
+      const code = DB_CONNECTION_ERROR_CODES.find((candidate) => {
+        const writeMarker = `write ${candidate}`;
+        const afterWriteMarker = message.charAt(writeMarker.length);
+        return (
+          message.startsWith(writeMarker) &&
+          (afterWriteMarker === "" || /\s/.test(afterWriteMarker))
+        ) || trimmedMessage.endsWith(`(${candidate})`);
+      });
       if (code) return code;
     }
     if (

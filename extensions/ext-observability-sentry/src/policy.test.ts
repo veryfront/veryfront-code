@@ -210,6 +210,26 @@ it("policy groups each pgbouncer connection code into its own db-error issue", (
   }
 });
 
+it("policy does not treat connection code names in ordinary messages as outage markers", () => {
+  for (
+    const value of [
+      'column "query_wait_timeout" does not exist',
+      "column (query_wait_timeout) does not exist",
+    ]
+  ) {
+    const event = prepareSentryEvent(
+      {
+        exception: {
+          values: [{ type: "PostgresError", value }],
+        },
+      },
+      "veryfront-api",
+    );
+
+    assertEquals(event.fingerprint, ["veryfront-api", "{{ default }}"]);
+  }
+});
+
 it("policy groups client-side postgres.js connection closures reported as plain Errors", () => {
   const event = prepareSentryEvent(
     {
@@ -350,6 +370,26 @@ it("policy redacts dollar-quoted and numeric SQL literals without hiding query s
   assertEquals(
     event.exception?.values?.[0]?.value,
     'Failed query: select "template2", "2024", ?, ?, ?, ?, ? from "orders2" where "id" = $1',
+  );
+});
+
+it("policy redacts PostgreSQL radix integer literals", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value:
+            'Failed query: \n  select 0xDEADBEEF, 0o731, 0b101101 from "orders0x2" where "id" = $1',
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  assertEquals(
+    event.exception?.values?.[0]?.value,
+    'Failed query: select ?, ?, ? from "orders0x2" where "id" = $1',
   );
 });
 
