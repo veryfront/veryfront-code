@@ -38,6 +38,31 @@ interface FailureEntry {
   environmentId: string;
 }
 
+const replayedProjectEnvironmentFailures = new WeakMap<object, unknown>();
+
+class ReplayedProjectEnvironmentFailure extends Error {
+  constructor(error: unknown) {
+    super("Project environment request reused a cached failure");
+    this.name = "ReplayedProjectEnvironmentFailure";
+    replayedProjectEnvironmentFailures.set(this, error);
+  }
+}
+
+export function unwrapReplayedProjectEnvironmentFailure(
+  error: unknown,
+): { error: unknown; replayed: boolean } {
+  if (
+    typeof error === "object" && error !== null &&
+    replayedProjectEnvironmentFailures.has(error)
+  ) {
+    return {
+      error: replayedProjectEnvironmentFailures.get(error),
+      replayed: true,
+    };
+  }
+  return { error, replayed: false };
+}
+
 type Fetcher = (
   scope: ProjectEnvironmentScope,
   signal: AbortSignal,
@@ -56,6 +81,8 @@ export interface EnvironmentVariableCacheOptions {
    * without ever serving stale or empty data. Zero disables negative caching.
    */
   failureTtlMs?: number;
+  /** Mark replayed failures so an error boundary can suppress duplicate reporting. */
+  markFailureReplays?: boolean;
 }
 
 /** Max number of scoped environments to cache. Evicts oldest entry when exceeded. */
@@ -170,6 +197,7 @@ export class EnvironmentVariableCache {
   private maxInflight: number;
   private maxInflightPerProject: number;
   private failureTtlMs: number;
+  private markFailureReplays: boolean;
   private globalEpoch = 0;
   private environmentEpochs = new Map<string, number>();
 
@@ -198,6 +226,7 @@ export class EnvironmentVariableCache {
       options.failureTtlMs ?? DEFAULT_FAILURE_TTL_MS,
       "failureTtlMs",
     );
+    this.markFailureReplays = options.markFailureReplays === true;
   }
 
   async get(scope: ProjectEnvironmentScope): Promise<Record<string, string>> {
@@ -228,7 +257,12 @@ export class EnvironmentVariableCache {
     // one per request. Still fails closed: no stale or empty data is served.
     const failure = this.failures.get(key);
     if (failure) {
-      if (now - failure.failedAt < this.failureTtlMs) throw failure.error;
+      if (now - failure.failedAt < this.failureTtlMs) {
+        if (this.markFailureReplays) {
+          throw new ReplayedProjectEnvironmentFailure(failure.error);
+        }
+        throw failure.error;
+      }
       this.failures.delete(key);
     }
 

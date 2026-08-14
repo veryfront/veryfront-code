@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { INVALID_ARGUMENT, SERVICE_OVERLOADED } from "#veryfront/errors";
+import { INVALID_ARGUMENT, NETWORK_ERROR, SERVICE_OVERLOADED } from "#veryfront/errors";
 import {
   __registerLogRecordEmitter,
   __resetLogRecordEmitterForTests,
@@ -44,6 +44,7 @@ import {
   getCurrentRequestContext,
   runWithRequestContext,
 } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { EnvironmentVariableCache } from "../../project-env/cache.ts";
 
 // Literal public addresses exercise guarded egress deterministically without
 // depending on external DNS answers for production or reserved test hosts.
@@ -3546,6 +3547,100 @@ describe("agent stream handler application-error reporting", () => {
     assertEquals(attributes["http.status"], 503);
     assertEquals(attributes["project.id"], "proj-1");
     assertEquals(attributes["project.slug"], "demo-project");
+  });
+
+  it("reports and logs a negative-cached environment failure only on its first response", async () => {
+    const entries: LogEntry[] = [];
+    const previousLogLevel = Deno.env.get("LOG_LEVEL");
+    const failure = NETWORK_ERROR.create({
+      detail: "Internal project environment request failed",
+    });
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(
+      () => {
+        fetchCount += 1;
+        return Promise.reject(failure);
+      },
+      60_000,
+      100,
+      { markFailureReplays: true },
+    );
+    const { captures, restore } = stubApplicationErrorReporter();
+
+    try {
+      Deno.env.set("LOG_LEVEL", "DEBUG");
+      refreshLoggerConfig();
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+
+      const handler = createTestAgentStreamHandler({
+        loadAgentSourceEnvironment: () =>
+          cache.get({
+            projectSlug: "test-project",
+            projectId: "10000000-1000-4000-8000-100000000005",
+            environmentId: "10000000-1000-4000-8000-100000000098",
+            token: "test-token",
+          }),
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+        getAgent: () => undefined,
+        getAllAgentIds: () => [],
+        sessionManager: new AgentRunSessionManager(),
+      });
+      const body = createAgentStreamRequestBody({
+        project: {
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000098",
+        },
+        agentSource: {
+          type: "environment",
+          environmentName: "staging",
+          releaseId: "10000000-1000-4000-8000-100000000099",
+        },
+        credentials: { authToken: "request-scoped-user-token" },
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: "run_1",
+      });
+
+      const responses: Response[] = [];
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const result = await handler.handle(
+          new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-veryfront-control-plane-jws": jws,
+            },
+            body,
+          }),
+          createCtx(publicKeyPem),
+        );
+        assertExists(result.response);
+        responses.push(result.response);
+      }
+
+      assertEquals(fetchCount, 1);
+      const firstResponse = responses[0];
+      const replayedResponse = responses[1];
+      assertExists(firstResponse);
+      assertExists(replayedResponse);
+      assertEquals([firstResponse.status, replayedResponse.status], [502, 502]);
+      assertEquals(
+        await firstResponse.clone().json(),
+        await replayedResponse.clone().json(),
+      );
+      assertEquals(captures.length, 1);
+      assertEquals(
+        entries.filter((entry) => entry.message === "Internal agent stream request failed").length,
+        1,
+      );
+      await Promise.all(responses.map((response) => response.body?.cancel()));
+    } finally {
+      restore();
+      __resetLogRecordEmitterForTests();
+      if (previousLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+      else Deno.env.set("LOG_LEVEL", previousLogLevel);
+      refreshLoggerConfig();
+    }
   });
 
   // A malformed percent escape makes the run-id decode throw. Reporting runs

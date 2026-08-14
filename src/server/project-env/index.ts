@@ -14,6 +14,7 @@ export {
   EnvironmentVariableCache,
   type EnvironmentVariableCacheOptions,
   type ProjectEnvironmentScope,
+  unwrapReplayedProjectEnvironmentFailure,
 } from "./cache.ts";
 export { filterRuntimeProjectEnv, filterSharedRuntimeProjectEnv } from "./reserved-env.ts";
 export { fetchProjectEnvVars } from "./fetcher.ts";

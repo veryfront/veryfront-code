@@ -78,6 +78,7 @@ import {
   filterRuntimeProjectEnv,
   ProjectEnvironmentIdentityResolver,
   runWithProjectEnv,
+  unwrapReplayedProjectEnvironmentFailure,
 } from "../../project-env/index.ts";
 import { getHostedConfig, type VeryfrontConfig } from "#veryfront/config/loader.ts";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
@@ -143,6 +144,9 @@ const _agentEnvVarCache = new EnvironmentVariableCache(
       signal,
     );
   },
+  60_000,
+  100,
+  { markFailureReplays: true },
 );
 
 const _environmentIdentityResolver = new ProjectEnvironmentIdentityResolver();
@@ -935,7 +939,10 @@ export class AgentStreamHandler extends BaseHandler {
         verifiedClaims,
         runWithAgentSourceContext,
       );
-    } catch (error) {
+    } catch (caught) {
+      // The first negative-cache failure owns diagnostics. Replays retain the
+      // original error for response construction but must not repeat reports.
+      const { error, replayed } = unwrapReplayedProjectEnvironmentFailure(caught);
       if (error instanceof InternalAgentRequestBodyTooLargeError) {
         return this.respond(builder.json({ error: error.message }, error.status));
       }
@@ -964,7 +971,7 @@ export class AgentStreamHandler extends BaseHandler {
         const response = errorToResponse(error, new URL(req.url).pathname);
         // errorToResponse strips `detail` from 5xx bodies, so the log and the
         // reported event are the only places it survives.
-        if (response.status >= 500) {
+        if (response.status >= 500 && !replayed) {
           const cause = describeErrorCause(error.cause);
           logger.error("Internal agent stream request failed", {
             projectId: ctx.projectId,
@@ -992,26 +999,28 @@ export class AgentStreamHandler extends BaseHandler {
         return this.respond(applyBuilderHeaders(response, builder.headers));
       }
 
-      this.logWarn("Internal agent stream request failed", {
-        error: error instanceof Error ? error.message : String(error),
-        projectId: ctx.projectId,
-        projectSlug: ctx.projectSlug,
-      });
-      logger.error("Internal agent stream handler failed", {
-        projectId: ctx.projectId,
-        projectSlug: ctx.projectSlug,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      // Unexpected failures have no slug or detail, so the captured stack is
-      // the only real diagnostic.
-      reportHandlerFailure(error, {
-        boundary: "agent.stream.handler",
-        method: req.method,
-        status: HTTP_INTERNAL_SERVER_ERROR,
-        runId: safeRunId(req),
-        projectId: ctx.projectId,
-        projectSlug: ctx.projectSlug,
-      });
+      if (!replayed) {
+        this.logWarn("Internal agent stream request failed", {
+          error: error instanceof Error ? error.message : String(error),
+          projectId: ctx.projectId,
+          projectSlug: ctx.projectSlug,
+        });
+        logger.error("Internal agent stream handler failed", {
+          projectId: ctx.projectId,
+          projectSlug: ctx.projectSlug,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        // Unexpected failures have no slug or detail, so the captured stack is
+        // the only real diagnostic.
+        reportHandlerFailure(error, {
+          boundary: "agent.stream.handler",
+          method: req.method,
+          status: HTTP_INTERNAL_SERVER_ERROR,
+          runId: safeRunId(req),
+          projectId: ctx.projectId,
+          projectSlug: ctx.projectSlug,
+        });
+      }
       return this.respond(builder.json({ error: "Internal agent stream failed" }, 500));
     }
   }

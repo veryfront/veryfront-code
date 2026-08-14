@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import { EnvironmentVariableCache, type ProjectEnvironmentScope } from "./cache.ts";
+import {
+  EnvironmentVariableCache,
+  type ProjectEnvironmentScope,
+  unwrapReplayedProjectEnvironmentFailure,
+} from "./cache.ts";
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -169,6 +173,29 @@ describe("project-env/cache", () => {
     );
     assertEquals(fetchCount, 1);
     assertEquals(second, first);
+  });
+
+  it("marks an opted-in failure replay without replacing the original failure", async () => {
+    const failure = new Error("upstream refused the environment request");
+    const cache = new EnvironmentVariableCache(
+      () => Promise.reject(failure),
+      60_000,
+      100,
+      { markFailureReplays: true },
+    );
+
+    const first = await assertRejects(() => cache.get(scope()));
+    const second = await assertRejects(() => cache.get(scope()));
+
+    assertEquals(first, failure);
+    assertEquals(unwrapReplayedProjectEnvironmentFailure(first), {
+      error: failure,
+      replayed: false,
+    });
+    assertEquals(unwrapReplayedProjectEnvironmentFailure(second), {
+      error: failure,
+      replayed: true,
+    });
   });
 
   it("retries the upstream once the failure TTL has elapsed", async () => {
