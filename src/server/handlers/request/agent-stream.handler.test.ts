@@ -3549,7 +3549,7 @@ describe("agent stream handler application-error reporting", () => {
     assertEquals(attributes["project.slug"], "demo-project");
   });
 
-  it("reports and logs a negative-cached environment failure only on its first response", async () => {
+  it("reports and logs a shared environment failure only once across joiners and replays", async () => {
     const entries: LogEntry[] = [];
     const previousLogLevel = Deno.env.get("LOG_LEVEL");
     const failure = NETWORK_ERROR.create({
@@ -3557,9 +3557,10 @@ describe("agent stream handler application-error reporting", () => {
     });
     let fetchCount = 0;
     const cache = new EnvironmentVariableCache(
-      () => {
+      async () => {
         fetchCount += 1;
-        return Promise.reject(failure);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        throw failure;
       },
       60_000,
       100,
@@ -3601,8 +3602,7 @@ describe("agent stream handler application-error reporting", () => {
         requestId: "run_1",
       });
 
-      const responses: Response[] = [];
-      for (let attempt = 0; attempt < 2; attempt += 1) {
+      const handleRequest = async (): Promise<Response> => {
         const result = await handler.handle(
           new Request("https://example.com/api/control-plane/runs/run_1/stream", {
             method: "POST",
@@ -3615,18 +3615,32 @@ describe("agent stream handler application-error reporting", () => {
           createCtx(publicKeyPem),
         );
         assertExists(result.response);
-        responses.push(result.response);
-      }
+        return result.response;
+      };
+
+      const responses = [
+        ...await Promise.all([handleRequest(), handleRequest()]),
+        await handleRequest(),
+      ];
 
       assertEquals(fetchCount, 1);
       const firstResponse = responses[0];
-      const replayedResponse = responses[1];
+      const joinedResponse = responses[1];
+      const cachedResponse = responses[2];
       assertExists(firstResponse);
-      assertExists(replayedResponse);
-      assertEquals([firstResponse.status, replayedResponse.status], [502, 502]);
+      assertExists(joinedResponse);
+      assertExists(cachedResponse);
+      assertEquals(
+        [firstResponse.status, joinedResponse.status, cachedResponse.status],
+        [502, 502, 502],
+      );
       assertEquals(
         await firstResponse.clone().json(),
-        await replayedResponse.clone().json(),
+        await joinedResponse.clone().json(),
+      );
+      assertEquals(
+        await firstResponse.clone().json(),
+        await cachedResponse.clone().json(),
       );
       assertEquals(captures.length, 1);
       assertEquals(

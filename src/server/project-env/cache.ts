@@ -250,7 +250,12 @@ export class EnvironmentVariableCache {
     // Deduplicate only requests with exactly the same canonical identity and
     // credential principal. A shared environment ID is never sufficient.
     const existing = this.inflight.get(key);
-    if (existing) return existing.promise;
+    if (existing) {
+      if (!this.markFailureReplays) return existing.promise;
+      return existing.promise.catch((error) => {
+        throw new ReplayedProjectEnvironmentFailure(error);
+      });
+    }
 
     // Rethrow a recent upstream failure instead of starting another fetch so a
     // persistent refusal produces one upstream fetch per TTL window instead of

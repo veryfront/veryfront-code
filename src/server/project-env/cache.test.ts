@@ -198,6 +198,35 @@ describe("project-env/cache", () => {
     });
   });
 
+  it("marks opted-in in-flight failure joiners as replays", async () => {
+    const failure = new Error("shared upstream failure");
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(
+      async () => {
+        fetchCount += 1;
+        await delay(20);
+        throw failure;
+      },
+      60_000,
+      100,
+      { markFailureReplays: true },
+    );
+
+    const failures = await Promise.all([
+      assertRejects(() => cache.get(scope())),
+      assertRejects(() => cache.get(scope())),
+    ]);
+    const unwrapped = failures
+      .map(unwrapReplayedProjectEnvironmentFailure)
+      .sort((left, right) => Number(left.replayed) - Number(right.replayed));
+
+    assertEquals(fetchCount, 1);
+    assertEquals(unwrapped, [
+      { error: failure, replayed: false },
+      { error: failure, replayed: true },
+    ]);
+  });
+
   it("retries the upstream once the failure TTL has elapsed", async () => {
     let fetchCount = 0;
     const cache = new EnvironmentVariableCache(
