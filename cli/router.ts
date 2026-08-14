@@ -222,7 +222,14 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     const { COMMANDS } = await import("./help/command-definitions.ts");
     // Use canonical command names from help registry (excludes aliases like "g", "preview")
     const canonicalNames = Object.keys(COMMANDS);
-    const suggestions = suggestCommand(command, canonicalNames);
+    const secondCommand = args._[1];
+    const duplicatedBinaryTarget = command === "veryfront" &&
+        typeof secondCommand === "string" && Object.hasOwn(commands, secondCommand)
+      ? secondCommand
+      : undefined;
+    const suggestions = duplicatedBinaryTarget
+      ? [duplicatedBinaryTarget]
+      : suggestCommand(command, canonicalNames);
     if (isJsonMode()) {
       await outputCliJsonError(command, {
         code: "USAGE_ERROR",
@@ -234,7 +241,10 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
       return;
     }
     cliLogger.error(`Unknown command: ${command}\n`);
-    if (suggestions.length > 0) {
+    if (duplicatedBinaryTarget) {
+      cliLogger.info('  You already included "veryfront". Use:');
+      cliLogger.info(`    veryfront ${duplicatedBinaryTarget}`);
+    } else if (suggestions.length > 0) {
       cliLogger.info(`  Did you mean?`);
       for (const s of suggestions) {
         const desc = COMMANDS[s]?.description ?? "";
@@ -243,7 +253,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     } else {
       showHelp();
     }
-    exitProcess(1);
+    exitProcess(2);
     return;
   }
 

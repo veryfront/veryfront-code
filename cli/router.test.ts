@@ -489,6 +489,23 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("explains how to remove a duplicated binary name", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit({
+          _: ["veryfront", "login"],
+        } as ParsedArgs);
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront login",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("command validation failure with --json outputs a JSON error envelope", async () => {
       stubExit();
       stubConsole();
