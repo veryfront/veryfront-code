@@ -60,14 +60,40 @@ function collectOptionLabels(
   React.Children.forEach(children, (child) => {
     if (!React.isValidElement(child)) return;
     if (child.type === ComboboxItem) {
-      const { value, textValue } = child.props as ComboboxItemProps;
-      labels.push({ value, text: textValue ?? value });
+      const { value, textValue, children: itemChildren } = child.props as ComboboxItemProps;
+      labels.push({ value, text: resolveOptionText(value, textValue, itemChildren) });
       return;
     }
     const nestedChildren = (child.props as { children?: React.ReactNode }).children;
     if (nestedChildren !== undefined) collectOptionLabels(nestedChildren, labels);
   });
   return labels;
+}
+
+function resolveOptionText(
+  value: string,
+  textValue: string | undefined,
+  children: React.ReactNode,
+): string {
+  return textValue ?? collectPlainText(children) ?? value;
+}
+
+function collectPlainText(children: React.ReactNode): string | undefined {
+  let text = "";
+  let hasText = false;
+  React.Children.forEach(children, (child) => {
+    if (typeof child === "string" || typeof child === "number") {
+      text += String(child);
+      hasText = true;
+      return;
+    }
+    if (!React.isValidElement(child)) return;
+    const nested = collectPlainText((child.props as { children?: React.ReactNode }).children);
+    if (nested === undefined) return;
+    text += nested;
+    hasText = true;
+  });
+  return hasText ? text : undefined;
 }
 
 /** Props accepted by `<ComboboxInput>`. */
@@ -122,7 +148,7 @@ export function ComboboxContent(
 export interface ComboboxItemProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "onSelect"> {
   /** The value this option commits when chosen. */
   value: string;
-  /** Text used for filtering + the input after selection. @default value */
+  /** Text used for filtering and the input after selection. Defaults to plain child text, then value. */
   textValue?: string;
   /** Disable selection and dim the option. */
   disabled?: boolean;
@@ -144,7 +170,7 @@ export function ComboboxItem({
   const { combobox } = useAdapter();
   const ctx = combobox.useCombobox();
   const id = React.useId();
-  const text = textValue ?? value;
+  const text = resolveOptionText(value, textValue, children);
 
   React.useEffect(() => {
     ctx.registerOption(id, value, text, disabled);

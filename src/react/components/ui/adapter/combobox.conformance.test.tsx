@@ -119,10 +119,14 @@ export function runComboboxConformance(
             />
             <Capture />
             <ComboboxContent>
-              <ComboboxItem value="next">Next.js</ComboboxItem>
+              <ComboboxItem value="next">
+                <svg aria-label="Next.js" />
+              </ComboboxItem>
               {includeDisabled && <ComboboxItem value="disabled" disabled>Disabled</ComboboxItem>}
-              <ComboboxItem value="remix" textValue="Remix">Remix</ComboboxItem>
-              <ComboboxItem value="astro" textValue="Astro">Astro</ComboboxItem>
+              <ComboboxItem value="remix">
+                <span>Remix</span>
+              </ComboboxItem>
+              <ComboboxItem value="astro">Astro</ComboboxItem>
             </ComboboxContent>
           </Combobox>
         </Wrap>,
@@ -188,6 +192,24 @@ export function runComboboxConformance(
         await new Promise((resolve) => setTimeout(resolve, 0));
         flushSync(() => {});
         assertEquals(h.input().value, "Remix");
+      } finally {
+        h.cleanup();
+      }
+    });
+
+    it("uses nested plain text as the selected option label", () => {
+      const h = mount(undefined, false, { defaultValue: "remix" });
+      try {
+        assertEquals(h.input().value, "Remix");
+      } finally {
+        h.cleanup();
+      }
+    });
+
+    it("falls back to the value when option children have no plain text", () => {
+      const h = mount(undefined, false, { defaultValue: "next" });
+      try {
+        assertEquals(h.input().value, "next");
       } finally {
         h.cleanup();
       }
