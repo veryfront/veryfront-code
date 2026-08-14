@@ -291,8 +291,8 @@ describe("AlertDialog", () => {
         alert.closest("[data-vf-ui]") === doc.querySelector('[data-testid="scope"]'),
         "the nested alert portal retains the outer token scope",
       );
-      await Promise.resolve();
-      await Promise.resolve();
+      flushSync(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 0));
       assert(
         alert.contains(doc.activeElement),
         "the alert dialog becomes the active modal before Escape",
