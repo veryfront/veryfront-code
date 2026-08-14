@@ -1883,7 +1883,8 @@ export class AgentRuntime {
         id: `msg_${Date.now()}_${step}`,
         timestamp: Date.now(),
       }, {
-        preserveRecoverablePlaceholderToolCalls: shouldRecoverInterruptedLocalToolBatch,
+        preserveRecoverablePlaceholderToolCalls: shouldRecoverInterruptedLocalToolBatch ||
+          !shouldContinue,
       });
 
       for (const tc of state.toolCalls.values()) {
@@ -1891,10 +1892,10 @@ export class AgentRuntime {
 
         if (materialized.kind === "incomplete" && isRecoverablePlaceholderToolCall(tc)) {
           // Provisional empty-object placeholder that never finalized. The
-          // model never committed arguments. The assistant message builder
-          // omits it when final text exists; otherwise it remains transparent
-          // history while the loop recovers by re-calling the model. Surface no
-          // termination warning or error.
+          // model never committed arguments. Preserve it when recovery or
+          // terminalization records a matching tool result; otherwise the
+          // assistant message builder can omit it beside final text. Surface no
+          // input warning or error for the provisional fragment.
           continue;
         }
 

@@ -1818,6 +1818,7 @@ describe("agent runtime refresh hooks", () => {
         if (callCount === 2) {
           return {
             stream: createRuntimeStream([
+              { type: "text-delta", text: "Created the Outlook assistant." },
               {
                 type: "tool-input-start",
                 id: "toolu_repeated_placeholder",
@@ -1913,6 +1914,13 @@ describe("agent runtime refresh hooks", () => {
       error:
         'Stream terminated before tool-call event fired for "studio_suggestions". Received 2 chars of partial tool-input deltas.',
     });
+    const repeatedPlaceholderPart = completedResponse.messages
+      .flatMap((message) => message.parts)
+      .find((part) =>
+        part.type === "tool-studio_suggestions" &&
+        part.toolCallId === "toolu_repeated_placeholder"
+      );
+    assertExists(repeatedPlaceholderPart);
     const repeatedToolCall = completedResponse.toolCalls.find((toolCall) =>
       toolCall.id === "toolu_repeated_placeholder"
     );
