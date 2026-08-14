@@ -158,16 +158,17 @@ One tool call, end to end (interpolation/transform/gating all server-side, §2.1
                                                └──────────────────────┘
 ```
 
-Fork → run (the blog's happy path; the main *auth* seam is the Connected App,
-Open Question A - the org-config gates in §4 are handled by the baseline + describe):
+Fork → run (the blog's happy path; per-user OAuth requires the packaged
+Veryfront External Client App to be installed in the target org first, while
+the org-config gates in §4 are handled by the baseline + describe):
 
 ```
-  fork template          sign in            connect Salesforce         run "Triage
-  ─ or clone ──────────▶ Veryfront ───────▶  (OAuth)          ───────▶ latest cases" ──▶ ✅ green
-  agentic-case-          set API token           ▲                     writes Reason +
-  processing             npx veryfront push      │                     triage comment
-                                          Connected App:
-                                       shared, or BYO id/secret?
+  fork template          sign in       install packaged app      connect Salesforce
+  ─ or clone ──────────▶ Veryfront ──▶ in the target org ──────▶ (per-user OAuth)
+  agentic-case-          set API token          │                         │
+  processing             npx veryfront push     ▼                         ▼
+                                         verify app enabled      run "Triage latest cases"
+                                                                 writes Reason + comment
 ```
 
 ## 3. The `Type` incident (a worked illustration, not a triage failure)
@@ -282,15 +283,20 @@ field with only *Visible* (not *Edit*) FLS fails - exactly what the model
 speculated about in §3. The connected user needs **Edit** FLS on `Case.Reason` and
 read on every queried field.
 
-### 4.6 Connected App / OAuth friction - the "auth with Salesforce" step
+### 4.6 Packaged External Client App / OAuth setup
 
-The most failure-prone step in the blog's happy path. To get
-`SALESFORCE_CLIENT_ID` / `SALESFORCE_CLIENT_SECRET` the user creates a Connected
-App (or the newer External Client App), which carries: a 2-10 minute activation
-delay, mandatory **My Domain**, `login.salesforce.com` vs `test.salesforce.com`
-for sandboxes, an exact callback-URL match, and IP/OAuth relaxation policies. See
-**Open Question A** - whether Veryfront ships a *shared* Connected App decides
-whether "just works" is literally true or a ten-minute detour.
+Per-user OAuth uses the **Veryfront Salesforce Integration** package documented
+in `docs/guides/integrations/salesforce.md`. A Salesforce administrator must
+install that package in every target org because External Client Apps are
+org-scoped, then confirm that the packaged Veryfront app is enabled before a
+user connects. The fork-to-run flow must present package installation as a
+prerequisite, not ask the forker to create or supply a client ID and secret.
+
+Service-account automation is a separate path. It uses a customer-managed
+Connected App with client credentials, a dedicated Run As integration user,
+and the environment variables documented in the Salesforce setup guide. Do not
+present that service-account setup as the per-user connection path. See **Open
+Question A** for the package's production distribution and upgrade contract.
 
 ### 4.7 Housekeeping: API version drift
 
@@ -404,10 +410,12 @@ input-schema test, because the schema *is* the authorization boundary:
 each generic CRUD tool must be denied for an un-granted `sobjectType` (§16).
 
 Coverage of the standard objects a "get-going" support/CRM demo needs:
-Account, Contact, Lead, Case, CaseComment, Opportunity - plus User/Group (owner &
-queue lookup) reachable via SOQL, and Task/Event (activities) reachable via the
-generic tier. `salesforce__search_knowledge_articles` stays but is documented as
-"requires Knowledge enabled" and degrades gracefully (§8).
+Account, Contact, Lead, Case, CaseComment, Opportunity - plus User for every
+owner lookup and Group only for queue-supported objects such as Case and Lead,
+reachable via SOQL. Opportunity ownership accepts User IDs, not queue Group IDs.
+Task/Event (activities) remain reachable via the generic tier.
+`salesforce__search_knowledge_articles` stays but is documented as "requires
+Knowledge enabled" and degrades gracefully (§8).
 
 ## 7. Reference org & seed data - "just works" needs *data*
 
@@ -452,14 +460,17 @@ is promptable in the agents.
    (`cp .env.example .env.local`, set `VERYFRONT_API_TOKEN`, `npx veryfront push`,
    `npm run dev`).
 2. Sign in to Veryfront.
-3. Integrations panel shows **Salesforce → Connect** (per the screenshot). OAuth.
-   → **Front-load the Connected App caveats, or ship a shared app (Open Question A).**
-4. Run **"Triage latest open cases."**
-5. Pipeline runs green against seeded data; a `Reason` + triage comment land on
+3. A Salesforce administrator installs the **Veryfront Salesforce Integration**
+   package in the target org and verifies that the packaged app is enabled.
+4. The Integrations panel shows **Salesforce → Connect**. The user authorizes
+   against the same org where the package is installed.
+5. Run **"Triage latest open cases."**
+6. Pipeline runs green against seeded data; a `Reason` + triage comment land on
    the case.
 
-The single biggest seam is step 3: BYO Connected App turns a one-click promise
-into a ten-minute Salesforce-admin detour.
+The single biggest seam is step 3: package installation is an org-level admin
+prerequisite, so "fork and run" is not one-click in a Salesforce org that has
+not installed the integration.
 
 ## 10. Non-goals
 
@@ -482,17 +493,19 @@ into a ten-minute Salesforce-admin detour.
 
 - Passthrough writes reduce inline schema guidance → the model may send bad
   fields. Mitigated by describe preflight + a strong tool description.
-- A shared Connected App concentrates OAuth-client trust in Veryfront and pulls in
-  Salesforce app-review and org-wide rate limits.
+- Package installation and upgrades require Salesforce administrator action in
+  every connected org. Production distribution must define a supported upgrade
+  path beyond the current beta package.
 - "Just works" is inherently org-dependent (edition, picklists, FLS, validation
   rules). The Developer-Edition golden path is the only fully controllable target;
   the blog should say so plainly rather than over-promise on arbitrary orgs.
 
 ## 13. Open questions
 
-- **A. Shared vs BYO Connected App.** Does Veryfront ship a shared Salesforce
-  Connected App (making step 3 one-click), or must the forker supply
-  `CLIENT_ID`/`SECRET`? This decides whether the blog promise is literally true.
+- **A. Package distribution.** What production distribution and upgrade path
+  replaces the current beta **Veryfront Salesforce Integration** package? The
+  per-user OAuth contract remains an org-scoped packaged External Client App;
+  service-account client credentials remain a separate customer-managed path.
 - **B. Seed mechanism.** SFDX scratch org, unmanaged package, or a first-run agent
   step - and who owns keeping the taxonomy and the `Reason` picklist in lockstep?
 - **C. Knowledge dependency.** Keep `case-classify` on the project-local taxonomy
@@ -584,11 +597,12 @@ tool's `q`/`fields` argument, never bake in a `__c`):
 
 ### A.4 Object → owner/queue lookups
 
-Owner assignment (`OwnerId` on Case/Lead/Opportunity) needs a real `User.Id` or
-`Group.Id`, not a name. The baseline should ship the two lookup queries
-(`SELECT Id, Name FROM User WHERE IsActive = true` and
-`SELECT Id, Name FROM Group WHERE Type = 'Queue'`) so any assignment example
-works without the model guessing Ids.
+Every owner assignment needs a real ID, not a name. Case and Lead can use an
+active `User.Id` or a supported queue `Group.Id`; Opportunity must use an active
+`User.Id` and must reject Group IDs. The baseline should ship the user lookup
+(`SELECT Id, Name FROM User WHERE IsActive = true`) for all three objects and the
+queue lookup (`SELECT Id, Name FROM Group WHERE Type = 'Queue'`) only for
+queue-supported Case/Lead assignment examples.
 
 ### A.5 What "standard" deliberately excludes (v1)
 
