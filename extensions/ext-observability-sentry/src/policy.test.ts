@@ -360,7 +360,7 @@ it("policy redacts dollar-quoted and numeric SQL literals without hiding query s
         values: [{
           type: "DrizzleQueryError",
           value:
-            'Failed query: \n  select "template2", "2024", $$customer@example.test$$, $order$ORDER-731$order$, $é$customer@example.test$é$, 731, 18.75, 6.02e23 from "orders2" where "id" = $1',
+            'Failed query: \n  select "template2", "2024", $$customer@example.test$$, $order$ORDER-731$order$, $é$customer@example.test$é$, $𐐀$ORDER-742$𐐀$, 731, 18.75, 6.02e23 from "orders2" where "id" = $1',
         }],
       },
     },
@@ -369,7 +369,7 @@ it("policy redacts dollar-quoted and numeric SQL literals without hiding query s
 
   assertEquals(
     event.exception?.values?.[0]?.value,
-    'Failed query: select "template2", "2024", ?, ?, ?, ?, ?, ? from "orders2" where "id" = $1',
+    'Failed query: select "template2", "2024", ?, ?, ?, ?, ?, ?, ? from "orders2" where "id" = $1',
   );
 });
 

@@ -14,8 +14,7 @@ const POSTGRES_JS_CONNECTION_CLOSED_PATTERN = /^write CONNECTION_CLOSED(?:\s|$)/
 const FAILED_QUERY_PREFIX = "Failed query: ";
 const FAILED_QUERY_PARAMS_DELIMITER = "\nparams:";
 const FAILED_QUERY_HEAD_MAX_LENGTH = 200;
-const SQL_DOLLAR_QUOTE_START_PATTERN =
-  /^\$(?:[A-Za-z_\u0080-\uFFFF][A-Za-z0-9_\u0080-\uFFFF]*)?\$/u;
+const SQL_DOLLAR_QUOTE_START_PATTERN = /^\$(?:[_\p{ID_Start}][_\p{ID_Continue}]*)?\$/u;
 const SQL_NUMERIC_LITERAL_PATTERN =
   /^(?:0[xX][0-9A-Fa-f](?:_?[0-9A-Fa-f])*|0[oO][0-7](?:_?[0-7])*|0[bB][01](?:_?[01])*|(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)(?:[eE][+-]?\d(?:_?\d)*)?)/;
 const SQL_IDENTIFIER_CHAR_PATTERN = /[A-Za-z0-9_$]/;
