@@ -6,6 +6,11 @@ import {
   renderArtifactSizeReport,
 } from "./report-artifact-sizes.ts";
 
+const workflowPath = new URL(
+  "../../.github/workflows/cicd.yml",
+  import.meta.url,
+);
+
 describe("artifact size reporting", () => {
   it("formats release sizes with decimal units", () => {
     assertEquals(formatArtifactSize(999), "999 B");
@@ -72,7 +77,7 @@ describe("artifact size reporting", () => {
   });
 
   it("reports npm and binary sizes in CI without size thresholds", async () => {
-    const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
+    const workflow = await Deno.readTextFile(workflowPath);
     const npmReport =
       "deno run --allow-read --allow-run=npm scripts/build/report-artifact-sizes.ts --npm-package npm";
     const binaryReport =
