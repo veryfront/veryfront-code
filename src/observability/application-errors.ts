@@ -230,6 +230,14 @@ const TENANT_BUILD_ERROR_CLASS = "tenant-build";
  * rendering layer; see src/rendering/orchestrator/module-loader/build-failure.ts.
  */
 const BUILD_FAILURE_TAG = Symbol.for("veryfront.module-loader.build-failure");
+const TENANT_BUILD_ERROR_SLUGS = new Set([
+  "build-failed",
+  "bundle-error",
+  "typescript-error",
+  "mdx-compile-error",
+  "ssg-generation-error",
+  "compilation-error",
+]);
 
 /**
  * Whether `error` describes tenant build/content failing to compile (a page
@@ -238,8 +246,8 @@ const BUILD_FAILURE_TAG = Symbol.for("veryfront.module-loader.build-failure");
  * Recognizes the existing discriminators at their capture seam:
  * - the module loader's build-failure tag,
  * - `toError(createError({ type: "build" }))` structured error data,
- * - `VeryfrontError` instances in the BUILD category, and
- * - the render pipeline's `buildFailure` error context.
+ * - the render pipeline's `buildFailure` error context, and
+ * - tenant-facing BUILD registry slugs.
  */
 function isTenantBuildError(error: unknown): boolean {
   try {
@@ -258,10 +266,14 @@ function isTenantBuildError(error: unknown): boolean {
     }
     const snapshot = snapshotVeryfrontError(error);
     if (!snapshot) return false;
-    if (snapshot.category === "BUILD") return true;
     const errorContext = snapshot.context;
-    return typeof errorContext === "object" && errorContext !== null &&
-      (errorContext as { buildFailure?: unknown }).buildFailure === true;
+    if (
+      typeof errorContext === "object" && errorContext !== null &&
+      (errorContext as { buildFailure?: unknown }).buildFailure === true
+    ) {
+      return true;
+    }
+    return snapshot.category === "BUILD" && TENANT_BUILD_ERROR_SLUGS.has(snapshot.slug);
   } catch {
     return false;
   }

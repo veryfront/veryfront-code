@@ -14,10 +14,13 @@ import {
 } from "./application-errors.ts";
 import type { ApplicationErrorContext as SharedApplicationErrorContext } from "./application-error-contract.ts";
 import {
+  ASSET_OPTIMIZATION_ERROR,
   CONFIG_PARSE_ERROR,
   createError,
   INITIALIZATION_ERROR,
+  MDX_COMPILE_ERROR,
   RENDER_ERROR,
+  SOURCEMAP_ERROR,
   toError,
 } from "#veryfront/errors";
 
@@ -154,8 +157,17 @@ it("application error reporter downgrades tenant build errors to tagged warnings
     detail: "Critical page module(s) failed to load:\n/pages/index.mdx: bad syntax",
     context: { buildFailure: true },
   });
+  const mdxRegistryError = MDX_COMPILE_ERROR.create({
+    detail: "MDX compilation failed in /pages/index.mdx",
+  });
   const frameworkError = INITIALIZATION_ERROR.create({
     detail: "renderer failed to initialize",
+  });
+  const assetOptimizationError = ASSET_OPTIMIZATION_ERROR.create({
+    detail: "framework image optimization failed",
+  });
+  const sourcemapError = SOURCEMAP_ERROR.create({
+    detail: "framework source map generation failed",
   });
 
   assertEquals(
@@ -167,20 +179,38 @@ it("application error reporter downgrades tenant build errors to tagged warnings
     "event-id",
   );
   assertEquals(
+    captureApplicationError(mdxRegistryError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+  assertEquals(
     captureApplicationError(frameworkError, { boundary: "ssr.render" }),
     "event-id",
   );
+  assertEquals(
+    captureApplicationError(assetOptimizationError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+  assertEquals(
+    captureApplicationError(sourcemapError, { boundary: "ssr.render" }),
+    "event-id",
+  );
 
-  assertEquals(captures.length, 3);
+  assertEquals(captures.length, 6);
   // Tenant build/content failures stay visible for escalation analysis, but
   // are tagged and downgraded so they stop surfacing as error-level issues.
   assertEquals(captures[0]?.context.errorClass, "tenant-build");
   assertEquals(captures[0]?.context.level, "warning");
   assertEquals(captures[1]?.context.errorClass, "tenant-build");
   assertEquals(captures[1]?.context.level, "warning");
+  assertEquals(captures[2]?.context.errorClass, "tenant-build");
+  assertEquals(captures[2]?.context.level, "warning");
   // Genuine framework failures keep their default error-level capture.
-  assertEquals(captures[2]?.context.errorClass, undefined);
-  assertEquals(captures[2]?.context.level, undefined);
+  assertEquals(captures[3]?.context.errorClass, undefined);
+  assertEquals(captures[3]?.context.level, undefined);
+  assertEquals(captures[4]?.context.errorClass, undefined);
+  assertEquals(captures[4]?.context.level, undefined);
+  assertEquals(captures[5]?.context.errorClass, undefined);
+  assertEquals(captures[5]?.context.level, undefined);
 });
 
 it("application error capture failures never replace application control flow", () => {
