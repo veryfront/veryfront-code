@@ -273,6 +273,53 @@ export function runComboboxConformance(
       }
     });
 
+    it("reflects default and controlled selected values in the input", async () => {
+      const dom = new JSDOM(
+        `<!doctype html><html><body><div id="root"></div></body></html>`,
+        { url: "https://example.com/", pretendToBeVisual: true },
+      );
+      const restore = installDomGlobals(dom);
+      const scope = document.getElementById("root")!;
+      scope.setAttribute("data-vf-ui", "");
+      const root = createRoot(scope);
+
+      function Example({ value }: { value?: string }): React.ReactElement {
+        return (
+          <Wrap>
+            <Combobox value={value} defaultValue={value === undefined ? "astro" : undefined}>
+              <ComboboxInput placeholder="Search" />
+              <ComboboxContent>
+                <ComboboxItem value="next">Next.js</ComboboxItem>
+                <ComboboxItem value="remix">Remix</ComboboxItem>
+                <ComboboxItem value="astro">Astro</ComboboxItem>
+              </ComboboxContent>
+            </Combobox>
+          </Wrap>
+        );
+      }
+
+      try {
+        flushSync(() => root.render(<Example />));
+        await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+        assertEquals(
+          scope.querySelector<HTMLInputElement>('[role="combobox"]')?.value,
+          "Astro",
+          "defaultValue resolves to the matching option label",
+        );
+
+        flushSync(() => root.render(<Example value="next" />));
+        await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+        assertEquals(
+          scope.querySelector<HTMLInputElement>('[role="combobox"]')?.value,
+          "Next.js",
+          "controlled value updates resolve to the matching option label",
+        );
+      } finally {
+        root.unmount();
+        restore();
+      }
+    });
+
     it("Enter on the active option selects it", () => {
       let selected: string | undefined;
       const h = mount((v) => selected = v);

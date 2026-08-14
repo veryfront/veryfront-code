@@ -144,7 +144,7 @@ export function ComboboxItem({
   const { combobox } = useAdapter();
   const ctx = combobox.useCombobox();
   const id = React.useId();
-  const text = textValue ?? value;
+  const text = textValue ?? (typeof children === "string" ? children : value);
 
   React.useEffect(() => {
     ctx.registerOption(id, value, text, disabled);

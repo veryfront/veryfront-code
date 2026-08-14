@@ -64,6 +64,7 @@ function ComboboxRoot({
   const [internalValue, setInternalValue] = React.useState(defaultValue);
   const [internalOpen, setInternalOpen] = React.useState(defaultOpen ?? false);
   const [activeId, setActiveId] = React.useState<string | undefined>(undefined);
+  const [optionsVersion, setOptionsVersion] = React.useState(0);
 
   const isValueControlled = value !== undefined;
   const isOpenControlled = open !== undefined;
@@ -125,10 +126,18 @@ function ComboboxRoot({
     } else {
       optionsRef.current.push({ id, value, text, disabled });
     }
+    setOptionsVersion((version) => version + 1);
   }, []);
   const unregisterOption = React.useCallback((id: string) => {
     optionsRef.current = optionsRef.current.filter((o) => o.id !== id);
+    setOptionsVersion((version) => version + 1);
   }, []);
+
+  React.useEffect(() => {
+    if (defaultInputValue !== undefined || currentValue === undefined) return;
+    const selected = optionsRef.current.find((option) => option.value === currentValue);
+    if (selected && selected.text !== query) setQueryState(selected.text);
+  }, [currentValue, defaultInputValue, optionsVersion]);
 
   const onInputKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
     const visible = optionsRef.current.filter((o) => !o.disabled && matches(o.text));
@@ -264,20 +273,27 @@ function ComboboxContentPart({
   | null {
   const ctx = useCombobox();
   return (
-    <Floating
-      anchorRef={ctx.anchorRef}
-      open={ctx.open}
-      align="start"
-      matchTriggerWidth
-      onDismiss={() => ctx.setOpen(false)}
-      role="listbox"
-      id={ctx.listboxId}
-      className={className}
-      contentRef={ref}
-      {...props}
-    >
-      <div className="p-1.5">{children}</div>
-    </Floating>
+    <>
+      <Floating
+        anchorRef={ctx.anchorRef}
+        open={ctx.open}
+        align="start"
+        matchTriggerWidth
+        onDismiss={() => ctx.setOpen(false)}
+        role="listbox"
+        id={ctx.listboxId}
+        className={className}
+        contentRef={ref}
+        {...props}
+      >
+        <div className="p-1.5">{children}</div>
+      </Floating>
+      {!ctx.open && (
+        <div hidden aria-hidden="true">
+          {children}
+        </div>
+      )}
+    </>
   );
 }
 
