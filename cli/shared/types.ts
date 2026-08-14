@@ -9,6 +9,8 @@ export interface ParsedArgs {
   _: (string | number)[];
   /** Original argv tokens, retained for faithful user-facing corrections. */
   __raw?: string[];
+  /** Raw argv indexes that produced positional arguments. */
+  __rawPositionals?: number[];
   port?: number | string;
   p?: number | string;
   __explicit?: Record<string, true>;

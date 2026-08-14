@@ -5,7 +5,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withCwd } from "#veryfront/testing/cwd.ts";
 import { COMMANDS } from "./help/command-definitions.ts";
 import { parseLoginMethod } from "./auth/utils.ts";
-import { routeCommand } from "./router.ts";
+import { formatDuplicatedBinaryHint, routeCommand } from "./router.ts";
 import { cliLogger, VERSION } from "./utils/index.ts";
 import { setJsonMode } from "./shared/json-output.ts";
 import { isInteractive, resetInteractiveMode } from "./shared/interactive.ts";
@@ -609,6 +609,34 @@ describe("cli/router helpers", () => {
       } finally {
         restoreAll();
       }
+    });
+
+    it("preserves global flags before the duplicated binary name", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "--no-input",
+          "veryfront",
+          "login",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront --no-input login",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("does not advertise a POSIX command hint on Windows", async () => {
+      const hint = await formatDuplicatedBinaryHint(
+        parseCliArgs(["veryfront", "task", "sync data"]),
+        "windows",
+      );
+
+      assertEquals(hint, undefined);
     });
 
     it("command validation failure with --json outputs a JSON error envelope", async () => {

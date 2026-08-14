@@ -72,7 +72,8 @@ function validateKnownOptions<T>(
     .flatMap((spec) => spec?.keys ?? []);
   const allowedKeys = new Set([...commandKeys, ...ROUTER_ARG_KEYS]);
   const unknownKey = Object.keys(args).find((key) =>
-    key !== "_" && key !== "__explicit" && key !== "__raw" && !allowedKeys.has(key)
+    key !== "_" && key !== "__explicit" && key !== "__raw" &&
+    key !== "__rawPositionals" && !allowedKeys.has(key)
   );
   if (!unknownKey) return { success: true, data: undefined };
 
@@ -359,6 +360,7 @@ function parse(
   const result: Record<string, unknown> = { _: [] as string[], ...options.default };
   const aliasMap = new Map(Object.entries(options.alias ?? {}));
   const explicit: Record<string, true> = {};
+  const rawPositionals: number[] = [];
 
   function setValue(key: string, value: unknown): void {
     explicit[key] = true;
@@ -381,6 +383,7 @@ function parse(
 
     if (arg === "--") {
       (result._ as string[]).push(...args.slice(i + 1));
+      rawPositionals.push(...args.slice(i + 1).map((_, offset) => i + 1 + offset));
       break;
     }
 
@@ -425,9 +428,11 @@ function parse(
     }
 
     (result._ as string[]).push(arg);
+    rawPositionals.push(i);
   }
 
   result.__explicit = explicit;
+  result.__rawPositionals = rawPositionals;
   return result;
 }
 

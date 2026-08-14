@@ -162,10 +162,17 @@ function formatCommandHintArgument(
   return `'${sanitized.replaceAll("'", "'\\''")}'`;
 }
 
-async function formatDuplicatedBinaryHint(args: ParsedArgs): Promise<string> {
+export async function formatDuplicatedBinaryHint(
+  args: ParsedArgs,
+  os = Deno.build.os,
+): Promise<string | undefined> {
+  if (os === "windows") {
+    return undefined;
+  }
   const { sanitizeUrlCredentials } = await import("veryfront/utils");
-  const hintArguments = args.__raw?.[0] === "veryfront"
-    ? args.__raw.slice(1)
+  const duplicatedBinaryIndex = args.__rawPositionals?.[0];
+  const hintArguments = args.__raw !== undefined && duplicatedBinaryIndex !== undefined
+    ? args.__raw.filter((_, index) => index !== duplicatedBinaryIndex)
     : args._.slice(1).map(String);
   const formatted: string[] = [];
 
@@ -309,8 +316,15 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     }
     cliLogger.error(`Unknown command: ${command}\n`);
     if (duplicatedBinaryTarget) {
-      cliLogger.info('  You already included "veryfront". Use:');
-      cliLogger.info(`    ${await formatDuplicatedBinaryHint(args)}`);
+      const correctedCommand = await formatDuplicatedBinaryHint(args);
+      if (correctedCommand === undefined) {
+        cliLogger.info(
+          '  You already included "veryfront". Remove the extra "veryfront" argument and run the command again.',
+        );
+      } else {
+        cliLogger.info('  You already included "veryfront". Use:');
+        cliLogger.info(`    ${correctedCommand}`);
+      }
     } else if (suggestions.length > 0) {
       cliLogger.info(`  Did you mean?`);
       for (const s of suggestions) {
