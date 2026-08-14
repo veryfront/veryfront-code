@@ -16,7 +16,10 @@ function isSet(value: string | undefined): boolean {
 export function listInferenceOptions(environment: InferenceEnvironment): string[] {
   const options: string[] = [];
 
-  if (isSet(environment.apiToken) && isSet(environment.projectSlug)) {
+  // The gateway authenticates on the token alone. A freshly scaffolded project
+  // has no linked slug yet and its chat route still answers, so gating this on
+  // `projectSlug` hid the one inference path `veryfront login` sets up.
+  if (isSet(environment.apiToken)) {
     options.push("Veryfront Cloud AI Gateway");
   }
   if (isSet(environment.openaiApiKey)) {
