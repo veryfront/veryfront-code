@@ -200,7 +200,7 @@ it("policy groups each pgbouncer connection code into its own db-error issue", (
     const event = prepareSentryEvent(
       {
         exception: {
-          values: [{ type: "PostgresError", value: `write ${code} db.internal:6432` }],
+          values: [{ type: "PostgresError", value: `write ${code} db.example.test:6432` }],
         },
       },
       "veryfront-api",
@@ -272,6 +272,24 @@ it("policy caps collapsed Failed query values and leaves other values untouched"
   assertEquals(collapsed.startsWith("Failed query: select c, c,"), true);
   assertEquals(collapsed.length <= "Failed query: ".length + 201, true);
   assertEquals(event.exception?.values?.[1]?.value, "  leading spaces stay untouched");
+});
+
+it("policy redacts full Failed query values before truncating the Sentry title", () => {
+  const jwt = `${"a".repeat(16)}.${"b".repeat(16)}.${"c".repeat(180)}`;
+  const queryHead = `\n  select '${"x".repeat(175)}${jwt}' from tokens`;
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{ type: "DrizzleQueryError", value: `Failed query: ${queryHead}` }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  const collapsed = event.exception?.values?.[0]?.value ?? "";
+  assertStringIncludes(collapsed, "[REDACTED]");
+  assertEquals(collapsed.includes("a".repeat(12)), false);
+  assertEquals(collapsed.includes("c".repeat(20)), false);
 });
 
 it("policy redacts credentials from custom-host DSNs", () => {

@@ -137,7 +137,7 @@ export function prepareSentryEvent<TEvent extends SentryPolicyEvent>(
   }
   for (const value of event.exception?.values ?? []) {
     if (value.value) {
-      value.value = redactSensitiveText(normalizeFailedQueryValue(value.value));
+      value.value = normalizeFailedQueryValue(redactSensitiveText(value.value));
     }
     for (const frame of value.stacktrace?.frames ?? []) {
       if (frame.filename) frame.filename = sanitizeStackFramePath(frame.filename);
