@@ -573,6 +573,51 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("preserves root-relative build route filters in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "build",
+          "--ssg",
+          "--include",
+          "/docs",
+          "--exclude=/api",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront build --ssg --include /docs --exclude=/api",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("redacts opaque payload option values in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "workflow",
+          "run",
+          "content-pipeline",
+          "--input",
+          '{"prompt":"private customer text"}',
+          '--config={"token":"private configuration"}',
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront workflow run content-pipeline --input '<REDACTED>' --config='<REDACTED>'",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("explains the duplicated binary name before routing global help", async () => {
       stubExit();
       stubLogger();

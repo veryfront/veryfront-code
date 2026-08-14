@@ -145,13 +145,15 @@ function containsControlCharacter(value: string): boolean {
 function formatCommandHintArgument(
   value: string | number,
   sanitize: (input: string) => string,
+  options: { allowRootRelativeRoute?: boolean } = {},
 ): string {
   const argument = String(value);
+  const isAbsolutePath = /^(?:\/|[A-Za-z]:[\\/]|\\\\)/u.test(argument);
   if (
     argument.length > 256 ||
     containsControlCharacter(argument) ||
     /^file:/iu.test(argument) ||
-    /^(?:\/|[A-Za-z]:[\\/]|\\\\)/u.test(argument)
+    (isAbsolutePath && !(options.allowRootRelativeRoute && argument.startsWith("/")))
   ) {
     return "'<REDACTED>'";
   }
@@ -175,6 +177,8 @@ export async function formatDuplicatedBinaryHint(
     ? args.__raw.filter((_, index) => index !== duplicatedBinaryIndex)
     : args._.slice(1).map(String);
   const formatted: string[] = [];
+  const opaquePayloadOptions = new Set(["--config", "--input"]);
+  const rootRelativeRouteOptions = new Set(["--exclude", "--include"]);
 
   for (let index = 0; index < hintArguments.length; index++) {
     const argument = hintArguments[index]!;
@@ -183,12 +187,16 @@ export async function formatDuplicatedBinaryHint(
     const sensitiveOption = /^--?(?:.*-)?(?:auth|credential|key|password|secret|token)$/iu.test(
       option,
     );
+    const redactOptionValue = sensitiveOption || opaquePayloadOptions.has(option);
+    const allowRootRelativeRoute = rootRelativeRouteOptions.has(option);
 
     if (equalsIndex > 0) {
       const formattedOption = formatCommandHintArgument(option, sanitizeUrlCredentials);
-      const value = sensitiveOption
+      const value = redactOptionValue
         ? "'<REDACTED>'"
-        : formatCommandHintArgument(argument.slice(equalsIndex + 1), sanitizeUrlCredentials);
+        : formatCommandHintArgument(argument.slice(equalsIndex + 1), sanitizeUrlCredentials, {
+          allowRootRelativeRoute,
+        });
       formatted.push(`${formattedOption}=${value}`);
       continue;
     }
@@ -196,11 +204,22 @@ export async function formatDuplicatedBinaryHint(
     formatted.push(formatCommandHintArgument(argument, sanitizeUrlCredentials));
     const parsedOptionValue = args[option.replace(/^-+/u, "")];
     if (
-      sensitiveOption &&
+      redactOptionValue &&
       parsedOptionValue !== true &&
       hintArguments[index + 1] !== undefined
     ) {
       formatted.push("'<REDACTED>'");
+      index++;
+    } else if (
+      allowRootRelativeRoute &&
+      parsedOptionValue !== true &&
+      hintArguments[index + 1] !== undefined
+    ) {
+      formatted.push(formatCommandHintArgument(
+        hintArguments[index + 1]!,
+        sanitizeUrlCredentials,
+        { allowRootRelativeRoute: true },
+      ));
       index++;
     }
   }
