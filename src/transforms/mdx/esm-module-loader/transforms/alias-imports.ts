@@ -21,7 +21,20 @@ type ImportType = "project-alias" | "vf-modules";
 interface AliasImport {
   specifier: string;
   relativePath: string;
+  suffix: string;
   type: ImportType;
+}
+
+function splitSpecifierSuffix(specifier: string): { path: string; suffix: string } {
+  const queryStart = specifier.indexOf("?");
+  const hashStart = specifier.indexOf("#");
+  const suffixStart =
+    [queryStart, hashStart].filter((index) => index >= 0).sort((a, b) => a - b)[0];
+  if (suffixStart === undefined) return { path: specifier, suffix: "" };
+  return {
+    path: specifier.slice(0, suffixStart),
+    suffix: specifier.slice(suffixStart),
+  };
 }
 
 async function findAliasImports(code: string): Promise<AliasImport[]> {
@@ -33,9 +46,11 @@ async function findAliasImports(code: string): Promise<AliasImport[]> {
     if (!specifier) continue;
 
     if (specifier.startsWith("@/")) {
+      const { path, suffix } = splitSpecifierSuffix(specifier.slice(2));
       imports.push({
         specifier,
-        relativePath: specifier.slice(2),
+        relativePath: path,
+        suffix,
         type: "project-alias",
       });
       continue;
@@ -45,11 +60,11 @@ async function findAliasImports(code: string): Promise<AliasImport[]> {
     if (!normalized.startsWith("_vf_modules/")) continue;
 
     const modulePath = normalized.slice("_vf_modules/".length);
-    const queryStart = modulePath.indexOf("?");
-    const relativePath = queryStart === -1 ? modulePath : modulePath.slice(0, queryStart);
+    const { path, suffix } = splitSpecifierSuffix(modulePath);
     imports.push({
       specifier,
-      relativePath: relativePath.replace(/\.js$/, ""),
+      relativePath: path.replace(/\.js$/, ""),
+      suffix,
       type: "vf-modules",
     });
   }
@@ -134,7 +149,7 @@ async function transformImport(
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Transformed ${getPathDesc(imp)} -> ${transformedPath}`);
 
-    return { specifier: imp.specifier, replacement: `file://${transformedPath}` };
+    return { specifier: imp.specifier, replacement: `file://${transformedPath}${imp.suffix}` };
   } catch (error) {
     logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to transform ${getPathDesc(imp)}`, error);
     return null;

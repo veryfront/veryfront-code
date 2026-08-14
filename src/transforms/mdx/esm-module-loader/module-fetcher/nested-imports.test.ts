@@ -220,6 +220,36 @@ import { bar } from "./local.js";
       );
     });
 
+    it("preserves suffixes when materializing nested imports", async () => {
+      const calls: Array<{ path: string; parent?: string }> = [];
+      const result = await resolveNestedModuleImports({
+        moduleCode: [
+          `import styles from "./theme.css?inline#critical";`,
+          `export const load = () => import("/_vf_modules/components/Lazy.js#client");`,
+        ].join("\n"),
+        esmCacheDir: "/tmp/veryfront-unused",
+        normalizedPath: "_vf_modules/pages/index.js",
+        projectSlug: "docs",
+        strictMissingModules: true,
+        fetchAndCacheModule: (path, parent) => {
+          calls.push({ path, parent });
+          return Promise.resolve(`/cache/${path.replaceAll("/", "__")}.mjs`);
+        },
+      });
+
+      assertEquals(calls, [
+        { path: "_vf_modules/components/Lazy.js", parent: "_vf_modules/pages/index.js" },
+        { path: "./theme.css", parent: "_vf_modules/pages/index.js" },
+      ]);
+      assertEquals(
+        result,
+        [
+          `import styles from "file:///cache/.__theme.css.mjs?inline#critical";`,
+          `export const load = () => import("file:///cache/_vf_modules__components__Lazy.js.mjs#client");`,
+        ].join("\n"),
+      );
+    });
+
     it("materializes dynamic _vf_modules imports inside template substitutions", async () => {
       const calls: Array<{ path: string; parent?: string }> = [];
       const result = await resolveNestedModuleImports({

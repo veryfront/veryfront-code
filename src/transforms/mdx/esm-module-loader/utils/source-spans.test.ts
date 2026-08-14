@@ -290,6 +290,21 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("finds imports after regex literals following control statement conditions", () => {
+      assertEquals(
+        specifiers('if (ok) /"/.test(x); import("./after-if-quote.js");'),
+        ["./after-if-quote.js"],
+      );
+      assertEquals(
+        specifiers("while (ok) /`/.test(x); import('./after-while-backtick.js');"),
+        ["./after-while-backtick.js"],
+      );
+      assertEquals(
+        specifiers('for (; ok;) /\'/.test(x); import("./after-for-single.js");'),
+        ["./after-for-single.js"],
+      );
+    });
+
     it("ignores a static import and a property called import", () => {
       assertEquals(specifiers(`import x from "./foo.js";`), []);
       assertEquals(specifiers(`obj.import("./foo.js");`), []);

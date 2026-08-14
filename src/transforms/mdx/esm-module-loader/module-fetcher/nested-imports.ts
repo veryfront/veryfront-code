@@ -25,7 +25,19 @@ import {
 } from "./limits.ts";
 
 function matchUnresolvedVfModuleSpecifier(specifier: string): string | null {
-  return specifier.match(/^((?:file:\/\/)?\/?\/?_vf_modules\/[^?]+)(?:\?.*)?$/)?.[1] ?? null;
+  return specifier.match(/^((?:file:\/\/)?\/?\/?_vf_modules\/.+)$/)?.[1] ?? null;
+}
+
+function splitSpecifierSuffix(specifier: string): { path: string; suffix: string } {
+  const queryStart = specifier.indexOf("?");
+  const hashStart = specifier.indexOf("#");
+  const suffixStart =
+    [queryStart, hashStart].filter((index) => index >= 0).sort((a, b) => a - b)[0];
+  if (suffixStart === undefined) return { path: specifier, suffix: "" };
+  return {
+    path: specifier.slice(0, suffixStart),
+    suffix: specifier.slice(suffixStart),
+  };
 }
 
 type NestedImportSpan = {
@@ -33,6 +45,7 @@ type NestedImportSpan = {
   path: string;
   start: number;
   end: number;
+  suffix?: string;
   isDynamic?: boolean;
   isSideEffect?: boolean;
 };
@@ -57,10 +70,12 @@ export function findNestedImports(
       MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
     )
   ) {
+    const { path, suffix } = splitSpecifierSuffix(rawPath.replace(/^(?:file:\/\/)?\/+/, ""));
     // Strip file:// prefix and leading slashes to get clean _vf_modules/... path
     vfModules.push({
       original,
-      path: rawPath.replace(/^(?:file:\/\/)?\/+/, ""),
+      path,
+      suffix,
       start,
       end,
     });
@@ -73,10 +88,12 @@ export function findNestedImports(
       MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
     )
   ) {
+    const { path, suffix } = splitSpecifierSuffix(rawPath.replace(/^(?:file:\/\/)?\/+/, ""));
     // Strip file:// prefix and leading slashes to get clean _vf_modules/... path
     vfModules.push({
       original,
-      path: rawPath.replace(/^(?:file:\/\/)?\/+/, ""),
+      path,
+      suffix,
       start,
       end,
       isDynamic: true,
@@ -90,10 +107,12 @@ export function findNestedImports(
       MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
     )
   ) {
+    const { path, suffix } = splitSpecifierSuffix(rawPath.replace(/^(?:file:\/\/)?\/+/, ""));
     // Strip file:// prefix and leading slashes to get clean _vf_modules/... path
     vfModules.push({
       original,
-      path: rawPath.replace(/^(?:file:\/\/)?\/+/, ""),
+      path,
+      suffix,
       start,
       end,
       isSideEffect: true,
@@ -101,30 +120,34 @@ export function findNestedImports(
   }
 
   for (
-    const { original, path, start, end } of findStaticImportFromSpans(
+    const { original, path: rawPath, start, end } of findStaticImportFromSpans(
       moduleCode,
-      (specifier) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1],
+      (specifier) => specifier.match(/^(\.\.?\/.+)$/)?.[1],
       MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
     )
   ) {
+    const { path, suffix } = splitSpecifierSuffix(rawPath);
     relative.push({
       original,
       path,
+      suffix,
       start,
       end,
     });
   }
 
   for (
-    const { original, path, start, end } of findDynamicImportSpans(
+    const { original, path: rawPath, start, end } of findDynamicImportSpans(
       moduleCode,
-      (specifier) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1],
+      (specifier) => specifier.match(/^(\.\.?\/.+)$/)?.[1],
       MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
     )
   ) {
+    const { path, suffix } = splitSpecifierSuffix(rawPath);
     relative.push({
       original,
       path,
+      suffix,
       start,
       end,
       isDynamic: true,
@@ -132,15 +155,17 @@ export function findNestedImports(
   }
 
   for (
-    const { original, path, start, end } of findStaticSideEffectImportSpans(
+    const { original, path: rawPath, start, end } of findStaticSideEffectImportSpans(
       moduleCode,
-      (specifier) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1],
+      (specifier) => specifier.match(/^(\.\.?\/.+)$/)?.[1],
       MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
     )
   ) {
+    const { path, suffix } = splitSpecifierSuffix(rawPath);
     relative.push({
       original,
       path,
+      suffix,
       start,
       end,
       isSideEffect: true,
@@ -195,6 +220,7 @@ export async function processNestedImports(
       original,
       start,
       end,
+      suffix,
       isDynamic,
       isSideEffect,
       nestedFilePath,
@@ -208,10 +234,10 @@ export async function processNestedImports(
         end,
         expected: original,
         replacement: isDynamic
-          ? `"file://${nestedFilePath}"`
+          ? `"file://${nestedFilePath}${suffix ?? ""}"`
           : isSideEffect
-          ? `import "file://${nestedFilePath}"`
-          : `from "file://${nestedFilePath}"`,
+          ? `import "file://${nestedFilePath}${suffix ?? ""}"`
+          : `from "file://${nestedFilePath}${suffix ?? ""}"`,
       });
       continue;
     }
@@ -234,10 +260,10 @@ export async function processNestedImports(
         end,
         expected: original,
         replacement: isDynamic
-          ? `"file://${stubPath}"`
+          ? `"file://${stubPath}${suffix ?? ""}"`
           : isSideEffect
-          ? `import "file://${stubPath}"`
-          : `from "file://${stubPath}"`,
+          ? `import "file://${stubPath}${suffix ?? ""}"`
+          : `from "file://${stubPath}${suffix ?? ""}"`,
       });
     }
   }
@@ -335,10 +361,11 @@ export async function resolveNestedModuleImports(
 
   const nestedResults: NestedImportResult[] = await parallelMap(
     allImports,
-    async ({ original, path, start, end, isDynamic, isSideEffect, key }) => ({
+    async ({ original, path, suffix, start, end, isDynamic, isSideEffect, key }) => ({
       original,
       start,
       end,
+      suffix,
       isDynamic,
       isSideEffect,
       nestedFilePath: await input.fetchAndCacheModule(

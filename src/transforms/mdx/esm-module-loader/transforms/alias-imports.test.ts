@@ -73,4 +73,29 @@ describe("alias import transforms", () => {
     assertStringIncludes(result, `import Foo from "file:///cache/vfmod-`);
     assertEquals(fs.files.has("components/Commented.js"), false);
   });
+
+  it("preserves query and hash suffixes while resolving alias paths", async () => {
+    const fs = new MemoryFs({
+      "components/Foo.js": `export default function Foo() { return null; }`,
+      "components/Bar.js": `export default function Bar() { return null; }`,
+    });
+
+    const projectAlias = await transformProjectAliasImports(
+      `import Foo from "@/components/Foo.js?raw#hero";`,
+      fs,
+      "/cache",
+    );
+    const moduleAlias = await transformModuleServerImports(
+      `import Bar from "/_vf_modules/components/Bar.js#client";`,
+      fs,
+      "/cache",
+    );
+
+    assertStringIncludes(projectAlias, `import Foo from "file:///cache/alias-`);
+    assertStringIncludes(projectAlias, `?raw#hero";`);
+    assertStringIncludes(moduleAlias, `import Bar from "file:///cache/vfmod-`);
+    assertStringIncludes(moduleAlias, `#client";`);
+    assertEquals(fs.files.has("components/Foo.js"), true);
+    assertEquals(fs.files.has("components/Bar.js"), true);
+  });
 });
