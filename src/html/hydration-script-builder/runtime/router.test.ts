@@ -931,5 +931,70 @@ describe("hydration-script-builder/runtime/router", () => {
 
       assertEquals(harness.window.location.href, "https://veryfront.test/server-only");
     });
+
+    it("treats the fallback as designed behaviour, not a console error", async () => {
+      const errorLogs: unknown[][] = [];
+      const originalConsoleError = console.error;
+      console.error = (...args: unknown[]) => {
+        errorLogs.push(args);
+      };
+
+      try {
+        const harness = createRouterHarness();
+        harness.window.__veryfrontHydrationComplete?.();
+        harness.setNextPageData({ pagePath: "page", requiresFullDocumentNavigation: true });
+
+        await harness.runtime.navigateSPA("/server-only");
+
+        assertEquals(
+          harness.window.location.href,
+          "https://veryfront.test/server-only",
+          "fallback must still hand the route to the document loader",
+        );
+        assertEquals(errorLogs, [], "the designed fallback must not log a console error");
+      } finally {
+        console.error = originalConsoleError;
+      }
+    });
+
+    it("leaves the history entry to the document loader instead of pushing one first", async () => {
+      const harness = createRouterHarness();
+      harness.window.__veryfrontHydrationComplete?.();
+      harness.setNextPageData({ pagePath: "page", requiresFullDocumentNavigation: true });
+
+      await harness.runtime.navigateSPA("/server-only");
+
+      assertEquals(
+        harness.historyCalls,
+        [],
+        "pushState before a document navigation duplicates the history entry",
+      );
+    });
+
+    it("does not refetch a cached server-layout route while leaving the document", async () => {
+      const harness = createRouterHarness();
+      harness.window.__veryfrontHydrationComplete?.();
+      harness.setNextPageData({ pagePath: "page", requiresFullDocumentNavigation: true });
+
+      harness.router.prefetch("/server-only");
+      await flushUntil(() => harness.fetchCalls.length === 1);
+      // The fetch is recorded synchronously, but the cache is only populated
+      // once the stubbed response resolves — drain the microtask queue so the
+      // navigation below really starts from a cached payload.
+      for (let i = 0; i < 20; i++) await flushMicrotasks();
+
+      await harness.runtime.navigateSPA("/server-only");
+
+      assertEquals(
+        harness.window.location.href,
+        "https://veryfront.test/server-only",
+        "cached flag must still hand the route to the document loader",
+      );
+      assertEquals(
+        harness.fetchCalls.length,
+        1,
+        "a background refresh of a route we are leaving the document for is wasted work",
+      );
+    });
   });
 });

@@ -468,7 +468,11 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
     const cached = getCachedPageData(path);
     if (cached) {
       log("Using cached page data:", path);
-      refreshPageDataInBackground(path);
+      // A route that leaves the SPA never renders this payload client-side,
+      // so refreshing it in the background is wasted work.
+      if (!cached.requiresFullDocumentNavigation) {
+        refreshPageDataInBackground(path);
+      }
       emitRouteTiming("page-data", path, startedAt, { source: "cache" });
       return cached;
     }
@@ -560,6 +564,16 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
           window.location.href = redirectUrl;
           return;
         }
+      }
+
+      // A server-owned layout only exists in the document render, so the SPA
+      // cannot rebuild this route client-side. Handing it to the browser's
+      // document loader is the designed path for these routes, not a failure —
+      // and the loader owns the history entry, so nothing is pushed here.
+      if (pageData.requiresFullDocumentNavigation) {
+        log("Server layout requires a full document navigation:", href);
+        navigateDocument(href);
+        return;
       }
 
       if (historyMode === "push") {
