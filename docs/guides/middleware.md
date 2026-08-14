@@ -220,7 +220,7 @@ Production loading is fail-closed. If a declared middleware file cannot be read,
 
 ## Example: site-wide HTTP Basic Auth
 
-A common use of root middleware is password-gating an entire site — a staging
+A common use of root middleware is password-gating an entire site: a staging
 environment, a preview, an internal tool.
 
 ### Prefer the built-in gate
@@ -258,7 +258,7 @@ other, not both.)
 
 ### Custom Basic Auth middleware
 
-Write it yourself when you need logic the built-in gate does not have — say,
+Write it yourself when you need logic the built-in gate does not have, say,
 exempting a public path or accepting several credential pairs:
 
 ```ts
@@ -278,7 +278,7 @@ const basicAuth: MiddlewareHandler = async (c, next) => {
   // Credentials come from the project environment: the shared hosted runtime
   // delivers it through `c.env`, while local development and dedicated
   // servers expose it as `process.env`. Fail closed: if none are configured,
-  // nobody gets in — never ship fallback credentials in code.
+  // nobody gets in. Never ship fallback credentials in code.
   const user = String(c.env.BASIC_AUTH_USER ?? process.env.BASIC_AUTH_USER ?? "");
   const pass = String(c.env.BASIC_AUTH_PASS ?? process.env.BASIC_AUTH_PASS ?? "");
   if (!user || !pass) return unauthorized();
@@ -319,7 +319,7 @@ curl -i -u demo-user:demo-pass http://localhost:3000/
 
 Two things the hand-rolled version gives up relative to the built-in gate:
 the `===` comparisons are not constant-time, and the exemptions described
-above still apply — signed platform dispatches bypass root middleware, so
+above still apply: signed platform dispatches bypass root middleware, so
 this gates your visitors, not the platform's own traffic.
 
 ## Verify it worked
