@@ -51,6 +51,7 @@ interface EsbuildService {
   child: ChildProcess;
   closed: Promise<void>;
   expectedClose: boolean;
+  lossRecorded?: boolean;
 }
 
 interface OperationScope {
@@ -416,17 +417,8 @@ function trackServiceChild(child: ChildProcess): EsbuildService {
     resolveClosed = resolve;
   });
   const service = { child, closed, expectedClose: false };
-  let lossRecorded = false;
-  const recordUnexpectedLoss = (exitCode: unknown, signalCode: unknown): void => {
-    // An unexpected close of a child the adapter owns is a crash, not a
-    // lifecycle violation; mark it recoverable instead of latching the
-    // permanent ownership error.
-    if (service.expectedClose || lossRecorded) return;
-    lossRecorded = true;
-    esbuildServiceLost = true;
-    esbuildServiceLostDetail = `exit code ${exitCode}, signal ${signalCode}`;
-    installServiceLossSpawnGuard();
-  };
+  const recordUnexpectedLoss = (exitCode: unknown, signalCode: unknown): void =>
+    recordUnexpectedManagedServiceLoss(service, exitCode, signalCode);
   child.once("exit", recordUnexpectedLoss);
   child.once("close", (exitCode, signalCode) => {
     recordUnexpectedLoss(exitCode, signalCode);
@@ -434,6 +426,21 @@ function trackServiceChild(child: ChildProcess): EsbuildService {
     if (esbuildService === service) esbuildService = null;
   });
   return service;
+}
+
+function recordUnexpectedManagedServiceLoss(
+  service: EsbuildService,
+  exitCode: unknown,
+  signalCode: unknown,
+): void {
+  // An unexpected close of a child the adapter owns is a crash, not a
+  // lifecycle violation; mark it recoverable instead of latching the
+  // permanent ownership error.
+  if (service.expectedClose || service.lossRecorded) return;
+  service.lossRecorded = true;
+  esbuildServiceLost = true;
+  esbuildServiceLostDetail = `exit code ${exitCode}, signal ${signalCode}`;
+  installServiceLossSpawnGuard();
 }
 
 function observeForeignServiceChild(child: ChildProcess): EsbuildService {
@@ -545,6 +552,14 @@ function invokeEsbuild<T extends Promise<unknown>>(operation: () => T): T {
     // ownership; the operation surfaces esbuild's own error for the dead
     // child instead of latching the permanent one.
     if (esbuildServiceLost) return result;
+    if (ownedService && ownedService === esbuildService) {
+      recordUnexpectedManagedServiceLoss(
+        ownedService,
+        ownedService.child.exitCode,
+        ownedService.child.signalCode,
+      );
+      return result;
+    }
     // Latch synchronously so a concurrent operation cannot pass the admission
     // check in runBundlerOperation and drive esbuild while ownership is already
     // known to be invalid. The rejection handler still supplies the cause: the
@@ -627,6 +642,18 @@ function mapOptions(options: BundleOptions, scope: OperationScope): MappedBundle
   };
 }
 
+async function finalizePluginDisposals(mapped: MappedBundleOptions): Promise<void> {
+  const service = esbuildService;
+  if (
+    esbuildServiceLost ||
+    (service && !service.expectedClose && !isLiveService(service))
+  ) {
+    await mapped.disposePluginGeneration();
+    return;
+  }
+  mapped.activatePluginDisposals();
+}
+
 /**
  * esbuild-backed {@link Bundler} implementation.
  *
@@ -667,7 +694,7 @@ export class EsbuildBundler implements Bundler {
           metafile: result.metafile as Metafile | undefined,
         };
       } finally {
-        mapped.activatePluginDisposals();
+        await finalizePluginDisposals(mapped);
       }
     });
   }
@@ -690,8 +717,8 @@ export class EsbuildBundler implements Bundler {
       const esbuild = await getEsbuild();
       const mapped = mapOptions(options, contextScope);
       let ctx = await invokeEsbuild(() => esbuild.context(mapped.options)).catch(
-        (error: unknown) => {
-          mapped.activatePluginDisposals();
+        async (error: unknown) => {
+          await finalizePluginDisposals(mapped);
           throw error;
         },
       );
@@ -704,8 +731,8 @@ export class EsbuildBundler implements Bundler {
           await mapped.disposePluginGeneration();
           const currentEsbuild = await getEsbuild();
           ctx = await invokeEsbuild(() => currentEsbuild.context(mapped.options)).catch(
-            (error: unknown) => {
-              mapped.activatePluginDisposals();
+            async (error: unknown) => {
+              await finalizePluginDisposals(mapped);
               throw error;
             },
           );
@@ -736,7 +763,11 @@ export class EsbuildBundler implements Bundler {
             try {
               if (contextGeneration === esbuildServiceGeneration) await ctx.dispose();
             } finally {
-              mapped.activatePluginDisposals();
+              if (contextGeneration === esbuildServiceGeneration) {
+                mapped.activatePluginDisposals();
+              } else {
+                await mapped.disposePluginGeneration();
+              }
             }
           }, contextScope),
       };
@@ -780,7 +811,10 @@ export class EsbuildBundler implements Bundler {
         uninstallServiceLossSpawnGuard();
         throw error;
       }
-      if (esbuildServiceLost) uninstallServiceLossSpawnGuard();
+      if (esbuildServiceLost) {
+        remainingServiceRestarts -= 1;
+        uninstallServiceLossSpawnGuard();
+      }
 
       const m = esbuildModule;
       const trackedService = esbuildService;
