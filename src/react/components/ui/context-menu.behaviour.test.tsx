@@ -233,6 +233,40 @@ describe("ContextMenu behaviour (builtin)", () => {
     }
   });
 
+  it("honors a consumer-cancelled click before selecting or closing", () => {
+    let clicks = 0;
+    let selections = 0;
+    const { scope, rightClickTrigger, cleanup } = mountInScope(
+      <ContextMenu>
+        <ContextMenuTrigger data-testid="trigger">Right-click here</ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem
+            data-testid="cancelled"
+            onClick={(event) => {
+              clicks++;
+              event.preventDefault();
+            }}
+            onSelect={() => selections++}
+          >
+            Cancelled
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>,
+    );
+    try {
+      rightClickTrigger();
+      const item = scope.querySelector<HTMLElement>('[data-testid="cancelled"]')!;
+      const event = new globalThis.MouseEvent("click", { bubbles: true, cancelable: true });
+      flushSync(() => item.dispatchEvent(event));
+      assert(event.defaultPrevented, "consumer cancels the click");
+      assertEquals(clicks, 1, "consumer onClick fires once");
+      assertEquals(selections, 0, "onSelect does not run after cancellation");
+      assert(scope.querySelector('[role="menu"]'), "cancelled click keeps the menu open");
+    } finally {
+      cleanup();
+    }
+  });
+
   it("closes on Escape (native document keydown listener)", () => {
     const { scope, rightClickTrigger, cleanup } = mountInScope(<Menu />);
     try {

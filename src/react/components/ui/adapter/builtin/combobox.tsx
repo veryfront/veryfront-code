@@ -40,6 +40,7 @@ function ComboboxRoot({
   defaultOpen,
   onOpenChange,
   defaultInputValue,
+  optionLabels = [],
   onInputValueChange,
 }: {
   children: React.ReactNode;
@@ -50,13 +51,16 @@ function ComboboxRoot({
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
   defaultInputValue?: string;
+  optionLabels?: ReadonlyArray<{ value: string; text: string }>;
   onInputValueChange?: (value: string) => void;
 }): React.ReactElement {
   const listboxId = React.useId();
   const anchorRef = React.useRef<HTMLInputElement | null>(null);
   const optionsRef = React.useRef<Option[]>([]);
 
-  const [query, setQueryState] = React.useState(defaultInputValue ?? "");
+  const selectedValue = value ?? defaultValue;
+  const selectedLabel = optionLabels.find((option) => option.value === selectedValue)?.text;
+  const [query, setQueryState] = React.useState(defaultInputValue ?? selectedLabel ?? "");
   const [internalValue, setInternalValue] = React.useState(defaultValue);
   const [internalOpen, setInternalOpen] = React.useState(defaultOpen ?? false);
   const [activeId, setActiveId] = React.useState<string | undefined>(undefined);
@@ -65,6 +69,17 @@ function ComboboxRoot({
   const isOpenControlled = open !== undefined;
   const currentValue = isValueControlled ? value : internalValue;
   const isOpen = isOpenControlled ? open : internalOpen;
+  const synchronizedValueRef = React.useRef<string | undefined>(
+    defaultInputValue !== undefined || selectedLabel !== undefined ? currentValue : undefined,
+  );
+
+  React.useEffect(() => {
+    if (currentValue === undefined || synchronizedValueRef.current === currentValue) return;
+    const label = optionLabels.find((option) => option.value === currentValue)?.text;
+    if (label === undefined) return;
+    synchronizedValueRef.current = currentValue;
+    setQueryState(label);
+  }, [currentValue, optionLabels]);
 
   const matches = React.useCallback(
     (text: string) => !query || text.toLowerCase().includes(query.toLowerCase()),
@@ -87,6 +102,7 @@ function ComboboxRoot({
 
   const select = React.useCallback((nextValue: string, text: string) => {
     if (!isValueControlled) setInternalValue(nextValue);
+    synchronizedValueRef.current = nextValue;
     onValueChange?.(nextValue);
     setQueryState(text);
     onInputValueChange?.(text);

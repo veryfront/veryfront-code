@@ -100,6 +100,7 @@ export function PopoverContent({
     <popover.Content
       role="dialog"
       align={align}
+      initialFocus
       className={cn("min-w-[220px]", className)}
       {...props}
     >

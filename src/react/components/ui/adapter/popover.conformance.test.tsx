@@ -22,7 +22,7 @@ import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { Popover, PopoverContent, PopoverTrigger } from "../popover.tsx";
-import { Slot } from "../slot.tsx";
+import { composeRefs, Slot } from "../slot.tsx";
 import { UIAdapterProvider } from "./context.tsx";
 import { builtinPopover } from "./builtin/popover.tsx";
 import { useTokenScope } from "./token-scope.tsx";
@@ -140,6 +140,30 @@ export function runPopoverConformance(
           "portalled content must stay within the token scope, not document.body",
         );
         assert(content!.textContent?.includes("Body"), "content renders children");
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("moves initial focus into the opened dialog", () => {
+      const { scope, clickTrigger, cleanup } = mountInScope(
+        <Wrap>
+          <Popover>
+            <PopoverTrigger>Open</PopoverTrigger>
+            <PopoverContent>
+              <button type="button">Inside</button>
+            </PopoverContent>
+          </Popover>
+        </Wrap>,
+      );
+      try {
+        clickTrigger();
+        const content = scope.querySelector<HTMLElement>('[role="dialog"]');
+        assert(content, "content renders after opening");
+        assert(
+          content === document.activeElement || content.contains(document.activeElement),
+          "focus moves into the popover surface",
+        );
       } finally {
         cleanup();
       }
@@ -401,14 +425,28 @@ function AltTrigger(
 }
 
 function AltContent(
-  { children, align: _align, ref, ...props }:
+  { children, align: _align, initialFocus, ref, ...props }:
     & React.HTMLAttributes<HTMLDivElement>
-    & { align?: "start" | "end"; ref?: React.Ref<HTMLDivElement> },
+    & {
+      align?: "start" | "end";
+      initialFocus?: true | string;
+      ref?: React.Ref<HTMLDivElement>;
+    },
 ): React.ReactElement | null {
   const ctx = React.useContext(AltContext);
+  const contentRef = React.useRef<HTMLDivElement>(null);
+  const mergedRef = React.useMemo(() => composeRefs(contentRef, ref), [ref]);
+  React.useLayoutEffect(() => {
+    const content = contentRef.current;
+    if (!ctx?.open || !initialFocus || !content) return;
+    const target = initialFocus === true
+      ? content.querySelector<HTMLElement>("button, [href], input, select, textarea, [tabindex]")
+      : content.querySelector<HTMLElement>(initialFocus);
+    (target ?? content).focus();
+  }, [ctx?.open, initialFocus]);
   if (!ctx || !ctx.open) return null;
   return createPortal(
-    <div ref={ref} {...props}>{children}</div>,
+    <div ref={mergedRef} tabIndex={-1} {...props}>{children}</div>,
     ctx.getContainer(),
   );
 }

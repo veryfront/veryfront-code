@@ -335,7 +335,11 @@ export interface PopoverParts {
   /** The floating surface, portalled into the token scope while open. */
   Content: React.FC<
     & React.HTMLAttributes<HTMLDivElement>
-    & { align?: "start" | "end"; ref?: React.Ref<HTMLDivElement> }
+    & {
+      align?: "start" | "end";
+      initialFocus?: true | string;
+      ref?: React.Ref<HTMLDivElement>;
+    }
   >;
 }
 
@@ -388,6 +392,7 @@ export interface ComboboxParts {
     defaultOpen?: boolean;
     onOpenChange?: (open: boolean) => void;
     defaultInputValue?: string;
+    optionLabels?: ReadonlyArray<{ value: string; text: string }>;
     /** Fires whenever the input text changes - typing OR filling from a selection.
      * Autocomplete reads this to treat the free-typed text as the value. */
     onInputValueChange?: (value: string) => void;

@@ -221,6 +221,7 @@ export function ContextMenuItem({
       onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
         if (disabled) return;
         onClick?.(e);
+        if (e.defaultPrevented) return;
         onSelect?.();
         ctx?.setOpen(false);
       }}

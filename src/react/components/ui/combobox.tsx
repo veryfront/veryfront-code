@@ -49,7 +49,25 @@ export interface ComboboxProps {
 /** Combobox root - renders no node of its own (state + context only). */
 export function Combobox(props: ComboboxProps): React.ReactElement {
   const { combobox } = useAdapter();
-  return <combobox.Root {...props} />;
+  const optionLabels = React.useMemo(() => collectOptionLabels(props.children), [props.children]);
+  return <combobox.Root {...props} optionLabels={optionLabels} />;
+}
+
+function collectOptionLabels(
+  children: React.ReactNode,
+  labels: Array<{ value: string; text: string }> = [],
+): ReadonlyArray<{ value: string; text: string }> {
+  React.Children.forEach(children, (child) => {
+    if (!React.isValidElement(child)) return;
+    if (child.type === ComboboxItem) {
+      const { value, textValue } = child.props as ComboboxItemProps;
+      labels.push({ value, text: textValue ?? value });
+      return;
+    }
+    const nestedChildren = (child.props as { children?: React.ReactNode }).children;
+    if (nestedChildren !== undefined) collectOptionLabels(nestedChildren, labels);
+  });
+  return labels;
 }
 
 /** Props accepted by `<ComboboxInput>`. */

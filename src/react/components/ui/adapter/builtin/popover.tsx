@@ -26,7 +26,6 @@ export const builtinPopover: PopoverParts = {
   // here), so the builtin trigger supplies it and the skin stays engine-neutral.
   Trigger: (props) => <parts.AnchoredTrigger haspopup="dialog" {...props} />,
   // Already portals via `Floating` into the nearest `[data-vf-ui]`/`[data-vf-chat]`
-  // token scope. `initialFocus` preserves the pre-adapter Popover behaviour
-  // (focus moves into the surface on open); the skin no longer passes it.
-  Content: (props) => <parts.AnchoredContent initialFocus {...props} />,
+  // token scope. The skin passes the contract-level initial-focus default.
+  Content: (props) => <parts.AnchoredContent {...props} />,
 };

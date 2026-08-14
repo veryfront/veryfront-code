@@ -83,7 +83,16 @@ export function runComboboxConformance(
     return null;
   }
 
-  function mount(onValueChange?: (v: string) => void, includeDisabled = false) {
+  function mount(
+    onValueChange?: (v: string) => void,
+    includeDisabled = false,
+    selection: {
+      value?: string;
+      defaultValue?: string;
+      defaultInputValue?: string;
+      inputValue?: string;
+    } = {},
+  ) {
     const dom = new JSDOM(
       `<!doctype html><html><body><div id="root"></div></body></html>`,
       { url: "https://example.com/", pretendToBeVisual: true },
@@ -92,22 +101,33 @@ export function runComboboxConformance(
     const scope = document.getElementById("root")!;
     scope.setAttribute("data-vf-ui", "");
     const root = createRoot(scope);
-    flushSync(() =>
+    let controlledValue = selection.value;
+    const render = () =>
       root.render(
         <Wrap>
-          <Combobox onValueChange={onValueChange}>
-            <ComboboxInput placeholder="Search" />
+          <Combobox
+            value={controlledValue}
+            defaultValue={selection.defaultValue}
+            defaultInputValue={selection.defaultInputValue}
+            onValueChange={onValueChange}
+          >
+            <ComboboxInput
+              placeholder="Search"
+              {...(selection.inputValue === undefined
+                ? {}
+                : { value: selection.inputValue, readOnly: true })}
+            />
             <Capture />
             <ComboboxContent>
               <ComboboxItem value="next">Next.js</ComboboxItem>
               {includeDisabled && <ComboboxItem value="disabled" disabled>Disabled</ComboboxItem>}
-              <ComboboxItem value="remix">Remix</ComboboxItem>
-              <ComboboxItem value="astro">Astro</ComboboxItem>
+              <ComboboxItem value="remix" textValue="Remix">Remix</ComboboxItem>
+              <ComboboxItem value="astro" textValue="Astro">Astro</ComboboxItem>
             </ComboboxContent>
           </Combobox>
         </Wrap>,
-      )
-    );
+      );
+    flushSync(render);
     const input = () => scope.querySelector<HTMLInputElement>('[role="combobox"]')!;
     return {
       scope,
@@ -118,6 +138,10 @@ export function runComboboxConformance(
       // deno+jsdom+React harness, so drive the real query path directly - same as
       // keyboard nav goes through the real `onInputKeyDown`.
       type: (text: string) => flushSync(() => ctx!.setQuery(text)),
+      setValue: (nextValue: string) => {
+        controlledValue = nextValue;
+        flushSync(render);
+      },
       press: (key: string) => flushSync(() => ctx!.onInputKeyDown(keyEvent(key))),
       clickOption: (label: string) =>
         flushSync(() => {
@@ -142,6 +166,52 @@ export function runComboboxConformance(
         assert(input.getAttribute("aria-controls"), "aria-controls points at the listbox id");
       } finally {
         h.cleanup();
+      }
+    });
+
+    it("shows the selected option label for an initial default value", async () => {
+      const h = mount(undefined, false, { defaultValue: "astro" });
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        flushSync(() => {});
+        assertEquals(h.input().value, "Astro");
+      } finally {
+        h.cleanup();
+      }
+    });
+
+    it("updates the selected option label after a controlled value change", async () => {
+      const h = mount(undefined, false, { value: "astro" });
+      try {
+        assertEquals(h.input().value, "Astro");
+        h.setValue("remix");
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        flushSync(() => {});
+        assertEquals(h.input().value, "Remix");
+      } finally {
+        h.cleanup();
+      }
+    });
+
+    it("preserves explicit default and controlled input text", () => {
+      const defaultText = mount(undefined, false, {
+        defaultValue: "astro",
+        defaultInputValue: "Find a framework",
+      });
+      try {
+        assertEquals(defaultText.input().value, "Find a framework");
+      } finally {
+        defaultText.cleanup();
+      }
+
+      const controlledText = mount(undefined, false, {
+        value: "astro",
+        inputValue: "Pinned query",
+      });
+      try {
+        assertEquals(controlledText.input().value, "Pinned query");
+      } finally {
+        controlledText.cleanup();
       }
     });
 
@@ -196,7 +266,7 @@ export function runComboboxConformance(
         h.press("ArrowDown");
         h.clickOption("Remix");
         assertEquals(selected, "remix", "onValueChange fired with the option value");
-        assertEquals(h.input().value, "remix", "input shows the selected text");
+        assertEquals(h.input().value, "Remix", "input shows the selected text");
         assertEquals(h.scope.querySelector('[role="listbox"]'), null, "listbox closes on select");
       } finally {
         h.cleanup();
