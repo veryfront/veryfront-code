@@ -81,11 +81,28 @@ describe("createUploadHandler", () => {
     const ctxGet = await GET({ request: getReq, req: getReq } as unknown as Request);
     assertEquals(ctxGet.status, realGet.status, "GET must match the Request form");
 
-    // DELETE resolves its id from `?id=` when no params object is supplied,
-    // which is the only shape a pages mount can produce.
-    const delReq = new Request("http://test/uploads?id=doc-123", { method: "DELETE" });
-    const ctxDelete = await DELETE({ request: delReq, req: delReq } as unknown as Request);
-    assertEquals(ctxDelete.status < 500, true, "no params object must not throw");
+    // DELETE must actually resolve the id, not merely avoid throwing: a status
+    // check alone still passes if `?id=` stops being read.
+    const removed: string[] = [];
+    const deleteStore = createStubStore({
+      removeDocument: (id: string) => {
+        removed.push(id);
+        return Promise.resolve();
+      },
+    });
+    const { DELETE: DELETE2 } = createUploadHandler(deleteStore, EXPLICIT_UNAUTHENTICATED);
+
+    const queryReq = new Request("http://test/uploads?id=doc-123", { method: "DELETE" });
+    await DELETE2({ request: queryReq, req: queryReq } as unknown as Request);
+    assertEquals(removed, ["doc-123"], "the ?id= query must still resolve the id");
+
+    // A dynamic pages route carries its id on the context's params, not on a
+    // second argument, so dropping them would silently delete nothing.
+    const paramReq = new Request("http://test/uploads/doc-456", { method: "DELETE" });
+    await DELETE2(
+      { request: paramReq, req: paramReq, params: { id: "doc-456" } } as unknown as Request,
+    );
+    assertEquals(removed, ["doc-123", "doc-456"], "pages params must reach the handler");
   });
 
   it("requires an explicit authentication policy", () => {

@@ -208,6 +208,34 @@ function toUploadRegistryItem(upload: RagDocumentMeta): UploadRegistryItem {
   };
 }
 
+/**
+ * Recover route params from a pages-router context.
+ *
+ * The app router passes them as a second argument; the pages executor puts them
+ * on the context it passes as the only argument, as `Record<string, string |
+ * string[]>` for catch-all segments. Without this a handler mounted at
+ * `pages/api/uploads/[id].ts` loses its id and falls back to the `?id=` query
+ * that a dynamic route does not use.
+ */
+function paramsFromContext(
+  candidate: unknown,
+): { params: Record<string, string> } | undefined {
+  if (typeof candidate !== "object" || candidate === null) return undefined;
+  let raw: unknown;
+  try {
+    raw = (candidate as Record<string, unknown>).params;
+  } catch {
+    return undefined;
+  }
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const params: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === "string") params[key] = value;
+    else if (Array.isArray(value)) params[key] = value.join("/");
+  }
+  return { params };
+}
+
 function resolveDeleteId(
   request: Request,
   context?: { params?: Record<string, string> },
@@ -398,6 +426,6 @@ export function createUploadHandler(
     POST: (request: Request) => POST(resolveValidatedRequest(request)),
     GET: (request?: Request) => GET(request ? resolveValidatedRequest(request) : undefined),
     DELETE: (request: Request, context?: { params?: Record<string, string> }) =>
-      DELETE(resolveValidatedRequest(request), context),
+      DELETE(resolveValidatedRequest(request), context ?? paramsFromContext(request)),
   };
 }
