@@ -218,6 +218,110 @@ A signed channel dispatch bypasses root middleware on the same terms. This is th
 
 Production loading is fail-closed. If a declared middleware file cannot be read, compiled, or validated as a middleware export, a dedicated server does not start and a shared server returns an error only for the affected project request. Failed shared loads are not cached, so a corrected deployment can recover without restarting unrelated projects. Development loading remains nonfatal and reports the loading error in the server log.
 
+## Example: site-wide HTTP Basic Auth
+
+A common use of root middleware is password-gating an entire site — a staging
+environment, a preview, an internal tool.
+
+### Prefer the built-in gate
+
+Before writing middleware, know that the runtime ships this as configuration.
+Set the operator environment variables in the deployment environment:
+
+```bash
+VERYFRONT_BASIC_USER=demo-user
+VERYFRONT_BASIC_PASS=demo-pass
+```
+
+or configure it per project:
+
+```ts
+// veryfront.config.ts
+export default {
+  security: {
+    auth: {
+      basic: {
+        username: "demo-user",
+        password: process.env.BASIC_AUTH_PASS!,
+        realm: "Staging",
+      },
+    },
+  },
+};
+```
+
+The built-in gate compares credentials in constant time and keeps the
+platform's health probes and signed control-plane traffic working, so prefer
+it whenever "one username and password for the whole site" is all you need.
+(`security.auth.bearer` is the token-header equivalent; configure one or the
+other, not both.)
+
+### Custom Basic Auth middleware
+
+Write it yourself when you need logic the built-in gate does not have — say,
+exempting a public path or accepting several credential pairs:
+
+```ts
+// middleware.ts
+import type { MiddlewareHandler } from "veryfront/middleware";
+
+function unauthorized(): Response {
+  return new Response("Authentication required", {
+    status: 401,
+    headers: {
+      "WWW-Authenticate": 'Basic realm="Demo", charset="UTF-8"',
+    },
+  });
+}
+
+const basicAuth: MiddlewareHandler = async (c, next) => {
+  // Credentials come from the project environment: the shared hosted runtime
+  // delivers it through `c.env`, while local development and dedicated
+  // servers expose it as `process.env`. Fail closed: if none are configured,
+  // nobody gets in — never ship fallback credentials in code.
+  const user = String(c.env.BASIC_AUTH_USER ?? process.env.BASIC_AUTH_USER ?? "");
+  const pass = String(c.env.BASIC_AUTH_PASS ?? process.env.BASIC_AUTH_PASS ?? "");
+  if (!user || !pass) return unauthorized();
+
+  const header = c.request.headers.get("authorization") ?? "";
+  if (!header.startsWith("Basic ")) return unauthorized();
+
+  let decoded: string;
+  try {
+    decoded = atob(header.slice(6));
+  } catch {
+    return unauthorized(); // malformed base64
+  }
+
+  const sep = decoded.indexOf(":");
+  if (sep === -1) return unauthorized();
+
+  if (decoded.slice(0, sep) === user && decoded.slice(sep + 1) === pass) {
+    return next();
+  }
+  return unauthorized();
+};
+
+export default basicAuth;
+```
+
+Set `BASIC_AUTH_USER` and `BASIC_AUTH_PASS` in the project environment
+(`.env` locally, the environment settings of your deployment in production)
+and try it:
+
+```bash
+# Expect 401 with a WWW-Authenticate challenge
+curl -i http://localhost:3000/
+
+# Expect the page with the demo credentials
+curl -i -u demo-user:demo-pass http://localhost:3000/
+```
+
+Two things the hand-rolled version gives up relative to the built-in gate:
+the `===` comparisons are not constant-time, and the exemptions described
+above still apply — signed platform dispatches bypass root middleware, so
+this gates your visitors, not the platform's own traffic.
+
 ## Verify it worked
 
 Hit a route with and without the headers the middleware expects:
