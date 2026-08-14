@@ -6,14 +6,16 @@
  */
 
 import { assertEquals, assertExists, assertRejects, assertStringIncludes } from "@std/assert";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createRequire } from "node:module";
 
 import {
   __recordOwnershipErrorForTests,
   __resetOwnershipErrorForTests,
+  __resetServiceRecoveryForTests,
   EsbuildBundler,
   isLiveEsbuildServiceProcess,
+  MAX_SERVICE_RESTARTS,
 } from "./esbuild-bundler.ts";
 import { rebuildContextWithSignal } from "./context-build-lifecycle.ts";
 
@@ -884,37 +886,160 @@ describe("ownership error cause", () => {
   });
 });
 
+describe("EsbuildBundler service crash recovery", () => {
+  beforeEach(() => {
+    __resetServiceRecoveryForTests();
+  });
+
+  it("recovers with a fresh service after the managed service is killed externally", async () => {
+    const observation = observeEsbuildServices();
+    const { services } = observation;
+    const bundler = new EsbuildBundler();
+
+    try {
+      const first = await bundler.transform({
+        code: "export const before: number = 1;",
+        loader: "ts",
+      });
+      assertStringIncludes(first.code, "before = 1");
+      assertEquals(services.length, 1);
+
+      // The container runtime kills the service child (OOM/SIGKILL); the
+      // adapter never receives an error from esbuild first. The child is
+      // unref'd, so ref it to keep the loop alive for the close event.
+      services[0]!.child.ref();
+      services[0]!.child.kill("SIGKILL");
+      await services[0]!.close;
+
+      const second = await bundler.transform({
+        code: "export const after: number = 2;",
+        loader: "ts",
+      });
+      assertStringIncludes(second.code, "after = 2");
+      assertEquals(services.length, 2);
+    } finally {
+      await bundler.stop().catch(() => undefined);
+      __resetServiceRecoveryForTests();
+      try {
+        await bundler.stop();
+      } finally {
+        observation.restore();
+      }
+    }
+  });
+
+  it("latches the ownership error once the restart budget is exhausted", async () => {
+    const observation = observeEsbuildServices();
+    const { services } = observation;
+    const bundler = new EsbuildBundler();
+
+    try {
+      await bundler.transform({ code: "export const seed: number = 0;", loader: "ts" });
+
+      for (let restart = 1; restart <= MAX_SERVICE_RESTARTS; restart++) {
+        const current = services[services.length - 1]!;
+        current.child.ref();
+        current.child.kill("SIGKILL");
+        await current.close;
+
+        const result = await bundler.transform({
+          code: `export const retry${restart}: number = ${restart};`,
+          loader: "ts",
+        });
+        assertStringIncludes(result.code, `retry${restart} = ${restart}`);
+      }
+      assertEquals(services.length, MAX_SERVICE_RESTARTS + 1);
+
+      const last = services[services.length - 1]!;
+      last.child.ref();
+      last.child.kill("SIGKILL");
+      await last.close;
+
+      const error = await assertRejects(() =>
+        bundler.transform({ code: "export const exhausted = true;", loader: "ts" })
+      );
+      assertStringIncludes((error as Error).message, "module-wide adapter");
+      assertStringIncludes((error as Error).message, "exited unexpectedly");
+
+      // The latch is sticky: later operations keep rejecting without respawns.
+      await assertRejects(() =>
+        bundler.transform({ code: "export const still = true;", loader: "ts" })
+      );
+      assertEquals(services.length, MAX_SERVICE_RESTARTS + 1);
+    } finally {
+      await bundler.stop().catch(() => undefined);
+      __resetServiceRecoveryForTests();
+      try {
+        await bundler.stop();
+      } finally {
+        observation.restore();
+      }
+    }
+  });
+});
+
 describe("EsbuildBundler unsupported lifecycle ownership", () => {
-  it("rejects shutdown after a raw service generation replaces the managed one", async () => {
+  beforeEach(() => {
+    __resetServiceRecoveryForTests();
+  });
+
+  it("recovers after a raw service generation replaces the managed one", async () => {
     const observation = observeEsbuildServices();
     const { services } = observation;
     const rawEsbuild = await import("esbuild");
     const bundler = new EsbuildBundler();
-    let ownershipError: unknown;
-    let stopError: unknown;
 
     try {
       await bundler.transform({ code: "export const managed = true;", loader: "ts" });
       await rawEsbuild.stop();
       await rawEsbuild.transform("export const external = true;");
 
+      // The raw stop() killed the managed child, which is the recoverable
+      // crash case: shutdown stays clean instead of rejecting...
+      await bundler.stop();
+
+      // ...and the next operation regains ownership with a fresh service.
+      const result = await bundler.transform({
+        code: "export const recovered: number = 1;",
+        loader: "ts",
+      });
+      assertStringIncludes(result.code, "recovered = 1");
+      assertEquals(services.length >= 3, true);
+    } finally {
+      await bundler.stop().catch(() => undefined);
+      for (const service of services) service.child.ref();
       try {
-        await bundler.stop();
-      } catch (error) {
-        stopError = error;
+        await rawEsbuild.stop();
+        await Promise.all(services.map((service) => service.close));
+      } finally {
+        for (const service of services) service.child.unref();
+        observation.restore();
       }
-      assertEquals(stopError instanceof Error, true);
-      assertStringIncludes((stopError as Error).message, "Cannot verify closure");
+    }
+  });
+
+  it("still rejects operations that reuse a service started before the adapter", async () => {
+    const observation = observeEsbuildServices();
+    const { services } = observation;
+    const rawEsbuild = await import("esbuild");
+    const bundler = new EsbuildBundler();
+    let ownershipError: unknown;
+
+    try {
+      // A foreign service the adapter never captured: it was started while
+      // the spawn interceptor was not installed, so it can never be owned.
+      await rawEsbuild.transform("export const external = true;");
 
       try {
-        await bundler.transform({ code: "export const rejected = true;", loader: "ts" });
+        await bundler.transform({ code: "export const mine = true;", loader: "ts" });
       } catch (error) {
         ownershipError = error;
       }
       assertEquals(ownershipError instanceof Error, true);
       assertStringIncludes((ownershipError as Error).message, "module-wide adapter");
-      assertEquals(services.length >= 2, true);
     } finally {
+      __resetServiceRecoveryForTests();
+      await bundler.stop().catch(() => undefined);
       for (const service of services) service.child.ref();
       try {
         await rawEsbuild.stop();

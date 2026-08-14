@@ -33,6 +33,16 @@ import { toEsbuildPlugin } from "./plugin-adapter.ts";
 type EsbuildModule = any;
 
 const ESBUILD_STOP_TIMEOUT_MS = 5_000;
+/**
+ * Unexpected service-child deaths tolerated before the adapter gives up.
+ *
+ * The child can be killed by something outside the process (OOM-kill, a
+ * container runtime signal). That is recoverable — esbuild respawns the
+ * service once its module state is reset — so it must not poison the process
+ * the way foreign ownership does. The budget keeps a crash-looping binary
+ * from respawning forever.
+ */
+export const MAX_SERVICE_RESTARTS = 3;
 const childProcess = createRequire(import.meta.url)("node:child_process") as {
   spawn: typeof import("node:child_process").spawn;
 };
@@ -58,6 +68,10 @@ let esbuildOwnershipError: Error | null = null;
 let esbuildShutdownError: Error | null = null;
 let pluginDisposalError: Error | null = null;
 let esbuildStopPromise: Promise<void> | null = null;
+let esbuildServiceLost = false;
+let esbuildServiceLostDetail = "";
+let remainingServiceRestarts = MAX_SERVICE_RESTARTS;
+let esbuildServiceRecovery: Promise<void> | null = null;
 let activeOperationCount = 0;
 let activeOperationsIdle: Promise<void> = Promise.resolve();
 let resolveActiveOperationsIdle: (() => void) | null = null;
@@ -229,6 +243,50 @@ function createPluginDisposalBarrier(scope: OperationScope): {
   };
 }
 
+/**
+ * Recover after the managed service child died unexpectedly (crash, OOM-kill).
+ *
+ * esbuild 0.28 keeps a dead service cached in its module state and rejects
+ * every later call, so the reset must go through its `stop()`, which clears
+ * that state and lets the next API call spawn a fresh child. This path only
+ * runs for a child the adapter itself captured; a service started outside the
+ * adapter is still latched permanently by {@link invokeEsbuild}. Recovery is
+ * single-flight and waits for in-flight operations to drain: they fail with
+ * esbuild's own error for the dead child and must not race the reset.
+ */
+function recoverLostService(): Promise<void> {
+  esbuildServiceRecovery ??= (async () => {
+    await activeOperationsIdle;
+    if (!esbuildServiceLost) return;
+    if (remainingServiceRestarts <= 0) {
+      throw recordOwnershipError(
+        new Error(
+          `esbuild service exited unexpectedly ${
+            MAX_SERVICE_RESTARTS + 1
+          } times (last: ${esbuildServiceLostDetail})`,
+        ),
+      );
+    }
+    remainingServiceRestarts -= 1;
+    const detail = esbuildServiceLostDetail;
+    const m = esbuildModule;
+    esbuildModule = null;
+    esbuildService = null;
+    esbuildServiceLost = false;
+    try {
+      await m?.stop();
+    } catch {
+      // Best effort: the child is already gone; stop() only resets state.
+    }
+    console.warn(
+      `[ext-bundler-esbuild] esbuild service exited unexpectedly (${detail}); restarting it (${remainingServiceRestarts} restart(s) left)`,
+    );
+  })().finally(() => {
+    esbuildServiceRecovery = null;
+  });
+  return esbuildServiceRecovery;
+}
+
 async function runBundlerOperation<T>(
   operation: (scope: OperationScope) => Promise<T>,
   preferredScope?: OperationScope,
@@ -240,6 +298,9 @@ async function runBundlerOperation<T>(
   const isReentrant = inheritedScope !== undefined && inheritedScope.activeCount > 0;
   if (!isReentrant) {
     while (esbuildStopPromise) await esbuildStopPromise;
+    // A lost service is recovered before admission, so one child death costs
+    // one restart instead of poisoning every later operation.
+    while (esbuildServiceLost) await recoverLostService();
   }
 
   // Admission is synchronous after the stop barrier check. This makes a stop
@@ -272,6 +333,14 @@ function isEsbuildServiceSpawn(spawnArgs: unknown[]): boolean {
 /** The ownership latch is module-wide; tests must clear it between cases. */
 export function __resetOwnershipErrorForTests(): void {
   esbuildOwnershipError = null;
+}
+
+/** Crash-recovery state is module-wide; tests must reset it between cases. */
+export function __resetServiceRecoveryForTests(): void {
+  esbuildOwnershipError = null;
+  esbuildServiceLost = false;
+  esbuildServiceLostDetail = "";
+  remainingServiceRestarts = MAX_SERVICE_RESTARTS;
 }
 
 /** Exercise the latch without starting a real esbuild service. */
@@ -308,8 +377,14 @@ function invokeEsbuild<T extends Promise<unknown>>(operation: () => T): T {
         resolveClosed = resolve;
       });
       const service = { child, closed, expectedClose: false };
-      child.once("close", () => {
-        if (!service.expectedClose) recordOwnershipError();
+      child.once("close", (exitCode, signalCode) => {
+        // An unexpected close of a child the adapter owns is a crash, not a
+        // lifecycle violation; mark it recoverable instead of latching the
+        // permanent ownership error.
+        if (!service.expectedClose) {
+          esbuildServiceLost = true;
+          esbuildServiceLostDetail = `exit code ${exitCode}, signal ${signalCode}`;
+        }
         resolveClosed();
         if (esbuildService === service) esbuildService = null;
       });
@@ -329,6 +404,11 @@ function invokeEsbuild<T extends Promise<unknown>>(operation: () => T): T {
 
   const ownedService = capturedService ?? esbuildService;
   if (!ownedService || !isLiveService(ownedService)) {
+    // A managed child that died out from under this operation is the
+    // recoverable crash case handled by runBundlerOperation, not foreign
+    // ownership; the operation surfaces esbuild's own error for the dead
+    // child instead of latching the permanent one.
+    if (esbuildServiceLost) return result;
     // Latch synchronously so a concurrent operation cannot pass the admission
     // check in runBundlerOperation and drive esbuild while ownership is already
     // known to be invalid. The rejection handler still supplies the cause: the
@@ -522,7 +602,12 @@ export class EsbuildBundler implements Bundler {
 
       const m = esbuildModule;
       const trackedService = esbuildService;
-      if (trackedService && !trackedService.expectedClose && !isLiveService(trackedService)) {
+      if (
+        trackedService && !trackedService.expectedClose && !isLiveService(trackedService) &&
+        remainingServiceRestarts <= 0
+      ) {
+        // A dead managed child within the restart budget is a crash, which a
+        // stop resets anyway; only an exhausted budget still means giving up.
         recordOwnershipError();
       }
       const ownershipError = esbuildOwnershipError;
@@ -572,6 +657,9 @@ export class EsbuildBundler implements Bundler {
       if (esbuildModule === m) esbuildModule = null;
       if (esbuildService === service) esbuildService = null;
       esbuildShutdownError = null;
+      // A clean stop resets esbuild's module state, so a pending crash needs
+      // no recovery pass anymore.
+      esbuildServiceLost = false;
 
       if (disposalError) {
         if (pluginDisposalError === disposalError) pluginDisposalError = null;
