@@ -1479,6 +1479,68 @@ describe("EsbuildBundler service crash recovery", () => {
     }
   });
 
+  it("allows the final budgeted stop loss before the child close event clears tracking", async () => {
+    const observation = observeEsbuildServices();
+    const { services } = observation;
+    const bundler = new EsbuildBundler();
+    let finalStop: Promise<void> | undefined;
+    const finalStopStarted = Promise.withResolvers<void>();
+
+    try {
+      await bundler.transform({ code: "export const seed: number = 0;", loader: "ts" });
+
+      for (let restart = 1; restart < MAX_SERVICE_RESTARTS; restart++) {
+        const current = services[services.length - 1]!;
+        current.child.ref();
+        current.child.kill("SIGKILL");
+        await current.close;
+
+        await bundler.stop();
+        const recovered = await bundler.transform({
+          code: `export const stopReset${restart}: number = ${restart};`,
+          loader: "ts",
+        });
+        assertStringIncludes(recovered.code, `stopReset${restart} = ${restart}`);
+      }
+
+      const finalBudgeted = services[services.length - 1]!;
+      finalBudgeted.child.once("exit", () => {
+        finalStop = bundler.stop();
+        finalStopStarted.resolve();
+      });
+      finalBudgeted.child.ref();
+      finalBudgeted.child.kill("SIGKILL");
+
+      await finalStopStarted.promise;
+      await finalStop;
+      await finalBudgeted.close;
+
+      const recovered = await bundler.transform({
+        code: "export const afterFinalStopLoss: number = 3;",
+        loader: "ts",
+      });
+      assertStringIncludes(recovered.code, "afterFinalStopLoss = 3");
+
+      const exhausted = services[services.length - 1]!;
+      exhausted.child.ref();
+      exhausted.child.kill("SIGKILL");
+      await exhausted.close;
+
+      const stopError = await assertRejects(() => bundler.stop());
+      assertStringIncludes((stopError as Error).message, "module-wide adapter");
+      assertStringIncludes((stopError as Error).message, "exited unexpectedly");
+    } finally {
+      await finalStop?.catch(() => undefined);
+      await bundler.stop().catch(() => undefined);
+      __resetServiceRecoveryForTests();
+      try {
+        await bundler.stop();
+      } finally {
+        observation.restore();
+      }
+    }
+  });
+
   it("latches exhaustion when stop observes a closed lost service", async () => {
     const observation = observeEsbuildServices();
     const { services } = observation;
