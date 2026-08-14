@@ -87,7 +87,7 @@ function isNameResolutionError(error: unknown): boolean {
  * RFC 6761 only *recommends* that resolvers map the `.localhost` tree to
  * loopback. macOS, systemd-resolved and CI honour it for arbitrary subdomains,
  * but a plain glibc NSS setup can resolve only the bare name and fail
- * `<slug>.localhost` with EAI_AGAIN/ENOTFOUND — which would make this fallback
+ * `<slug>.localhost` with EAI_AGAIN/ENOTFOUND, which would make this fallback
  * unable to reach the dev server at all.
  *
  * Pinning the connection to 127.0.0.1 while keeping subdomain routing is not an
@@ -96,8 +96,8 @@ function isNameResolutionError(error: unknown): boolean {
  *
  * The retry therefore carries the project in `x-project-slug`, which the dev
  * server reads inbound (see server/context/request-context.ts and
- * server/runtime-handler/project-resolution.ts) and which fetch — unlike `Host`
- * — is allowed to set. Without it a multi-project workspace would lose tenant
+ * server/runtime-handler/project-resolution.ts) and which fetch, unlike `Host`,
+ * is allowed to set. Without it a multi-project workspace would lose tenant
  * identity, because resolveDefaultProjectSlug() returns undefined there.
  */
 async function fetchModuleWithLoopbackFallback(
@@ -237,18 +237,20 @@ export async function fetchModuleViaHTTP(
 
     const { vfModules, relative } = findNestedImports(moduleCode);
     const allImports = [
-      ...vfModules.map(({ original, path, start, end }) => ({
+      ...vfModules.map(({ original, path, start, end, isDynamic }) => ({
         original,
         path,
         start,
         end,
+        isDynamic,
         key: "nestedPath" as const,
       })),
-      ...relative.map(({ original, path, start, end }) => ({
+      ...relative.map(({ original, path, start, end, isDynamic }) => ({
         original,
         path,
         start,
         end,
+        isDynamic,
         key: "relativePath" as const,
       })),
     ];
@@ -256,9 +258,9 @@ export async function fetchModuleViaHTTP(
 
     const results = await parallelMap(
       allImports,
-      async ({ original, path, start, end, key }) => {
+      async ({ original, path, start, end, isDynamic, key }) => {
         const nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
-        return { original, start, end, nestedFilePath, [key]: path };
+        return { original, start, end, isDynamic, nestedFilePath, [key]: path };
       },
       {
         semaphore: new Semaphore(MAX_MDX_MODULE_TRANSFORM_CONCURRENCY),
@@ -266,13 +268,13 @@ export async function fetchModuleViaHTTP(
     );
 
     const replacements: SourceSpanReplacement[] = [];
-    for (const { original, start, end, nestedFilePath } of results) {
+    for (const { original, start, end, isDynamic, nestedFilePath } of results) {
       if (nestedFilePath) {
         replacements.push({
           start,
           end,
           expected: original,
-          replacement: `from "file://${nestedFilePath}"`,
+          replacement: isDynamic ? `"file://${nestedFilePath}"` : `from "file://${nestedFilePath}"`,
         });
       }
     }

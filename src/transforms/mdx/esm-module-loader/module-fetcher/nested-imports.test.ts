@@ -75,6 +75,13 @@ import { bar } from "./local.js";
       assertEquals(result.count > 0, true);
     });
 
+    it("detects unresolved dynamic _vf_modules imports", () => {
+      const code = `export const load = () => import("/_vf_modules/components/Lazy.js");`;
+      const result = hasUnresolvedImports(code);
+      assertEquals(result.count, 1);
+      assertEquals(result.paths, ["/_vf_modules/components/Lazy.js"]);
+    });
+
     it("returns empty for normal resolved file:// imports", () => {
       const code =
         `import { foo } from "file:///home/user/.cache/veryfront-mdx-esm/proj/vfmod.mjs";`;
@@ -160,6 +167,35 @@ import { bar } from "./local.js";
           `// Previous example: from "./local.js"`,
           `import local from "file:///cache/.__local.js.mjs";`,
           `export { local };`,
+        ].join("\n"),
+      );
+    });
+
+    it("materializes dynamic _vf_modules imports before caching the module", async () => {
+      const calls: Array<{ path: string; parent?: string }> = [];
+      const result = await resolveNestedModuleImports({
+        moduleCode: [
+          `export const load = () => import("/_vf_modules/components/Lazy.js");`,
+          `export const unchanged = () => import(path);`,
+        ].join("\n"),
+        esmCacheDir: "/tmp/veryfront-unused",
+        normalizedPath: "_vf_modules/pages/index.js",
+        projectSlug: "docs",
+        strictMissingModules: true,
+        fetchAndCacheModule: (path, parent) => {
+          calls.push({ path, parent });
+          return Promise.resolve(`/cache/${path.replaceAll("/", "__")}.mjs`);
+        },
+      });
+
+      assertEquals(calls, [
+        { path: "_vf_modules/components/Lazy.js", parent: "_vf_modules/pages/index.js" },
+      ]);
+      assertEquals(
+        result,
+        [
+          `export const load = () => import("file:///cache/_vf_modules__components__Lazy.js.mjs");`,
+          `export const unchanged = () => import(path);`,
         ].join("\n"),
       );
     });
