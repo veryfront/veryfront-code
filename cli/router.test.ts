@@ -618,6 +618,27 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("redacts Redis URLs in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "worker",
+          "--redis-url",
+          "redis://cache.internal.example:6379/customer",
+          "--redis=redis://cache.internal.example:6379/secondary",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront worker --redis-url '<REDACTED>' --redis='<REDACTED>'",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("preserves schedule input file paths in the correction", async () => {
       stubExit();
       stubLogger();
@@ -660,6 +681,29 @@ describe("cli/router helpers", () => {
         assertEquals(infoMessages, [
           '  You already included "veryfront". Use:',
           "    veryfront issues create --title '<REDACTED>' -t='<REDACTED>' --body '<REDACTED>' -b='<REDACTED>'",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("redacts each repeated opaque option value independently", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "issues",
+          "create",
+          "--body",
+          "private customer details",
+          "--body",
+          "--help",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront issues create --body '<REDACTED>' --body --help",
         ]);
       } finally {
         restoreAll();
