@@ -380,8 +380,10 @@ create), and add a restricted-picklist fixture proving create succeeds without
 assumed values.
 
 **Tier 2 — Universal escape hatches (keep):** `describe_object`,
-`run_soql_query`. Add **`get_picklist_values`** (describe filtered to picklist
-fields) so `case-dispose` can validate `Reason` before writing.
+`run_soql_query`, and `salesforce__search_knowledge_articles` (requires Knowledge
+enabled and degrades gracefully, §8). Add **`get_picklist_values`** (describe
+filtered to picklist fields) so `case-dispose` can validate `Reason` before
+writing.
 
 **Tier 3 — Generic sObject CRUD (add, gated on §16 enforcement):**
 `get_record`, `create_record`, `update_record`, `upsert_record` (Appendix B has
@@ -763,6 +765,10 @@ response. Two additional non-CRUD tools complete the surface:
   - **Inputs:** `sobjectType` (required); `recordTypeId` (optional — defaults to the
     connected profile's default record type for that object); `field` (optional —
     filter to one picklist field, e.g. `Reason`).
+  - **Path safety:** validate `sobjectType` and `fieldApiName` as Salesforce API
+    names and `recordTypeId` as a Salesforce ID; authorize the canonical
+    `sobjectType`; reject traversal plus query/fragment delimiters; and encode each
+    path segment exactly once before composing either UI API endpoint form.
   - **Endpoint:** `GET /services/data/v61.0/ui-api/object-info/{sobjectType}/picklist-values/{recordTypeId}/{fieldApiName}`
     (per field), or the `object-info` form for all fields; fall back to
     `describe_object` `fields[].picklistValues` **only** when the org has no record
