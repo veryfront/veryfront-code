@@ -1921,9 +1921,8 @@ export class AgentRuntime {
       );
 
       const state = createStreamState();
-      // A recovery can either replay already-delivered text or replace it with
-      // a final answer. Preserve output order until the full text is known, so
-      // only an exact replay loses its text events and chunk callbacks.
+      // Hold a possible replay only while it remains a prefix of the text the
+      // client already received. Once it diverges, resume live delivery.
       const deferInterruptedRecoveryOutput = step === interruptedLocalToolBatchRecoveryStep &&
         interruptedLocalToolBatchRecoveryText !== undefined;
       const deferredRecoveryOutput: DeferredRecoveryOutput[] | undefined =
