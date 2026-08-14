@@ -237,18 +237,20 @@ export async function fetchModuleViaHTTP(
 
     const { vfModules, relative } = findNestedImports(moduleCode);
     const allImports = [
-      ...vfModules.map(({ original, path, start, end, isDynamic, isSideEffect }) => ({
+      ...vfModules.map(({ original, path, suffix, start, end, isDynamic, isSideEffect }) => ({
         original,
         path,
+        suffix,
         start,
         end,
         isDynamic,
         isSideEffect,
         key: "nestedPath" as const,
       })),
-      ...relative.map(({ original, path, start, end, isDynamic, isSideEffect }) => ({
+      ...relative.map(({ original, path, suffix, start, end, isDynamic, isSideEffect }) => ({
         original,
         path,
+        suffix,
         start,
         end,
         isDynamic,
@@ -260,9 +262,18 @@ export async function fetchModuleViaHTTP(
 
     const results = await parallelMap(
       allImports,
-      async ({ original, path, start, end, isDynamic, isSideEffect, key }) => {
+      async ({ original, path, suffix, start, end, isDynamic, isSideEffect, key }) => {
         const nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
-        return { original, start, end, isDynamic, isSideEffect, nestedFilePath, [key]: path };
+        return {
+          original,
+          start,
+          end,
+          suffix,
+          isDynamic,
+          isSideEffect,
+          nestedFilePath,
+          [key]: path,
+        };
       },
       {
         semaphore: new Semaphore(MAX_MDX_MODULE_TRANSFORM_CONCURRENCY),
@@ -270,17 +281,19 @@ export async function fetchModuleViaHTTP(
     );
 
     const replacements: SourceSpanReplacement[] = [];
-    for (const { original, start, end, isDynamic, isSideEffect, nestedFilePath } of results) {
+    for (
+      const { original, start, end, suffix, isDynamic, isSideEffect, nestedFilePath } of results
+    ) {
       if (nestedFilePath) {
         replacements.push({
           start,
           end,
           expected: original,
           replacement: isDynamic
-            ? `"file://${nestedFilePath}"`
+            ? `"file://${nestedFilePath}${suffix ?? ""}"`
             : isSideEffect
-            ? `import "file://${nestedFilePath}"`
-            : `from "file://${nestedFilePath}"`,
+            ? `import "file://${nestedFilePath}${suffix ?? ""}"`
+            : `from "file://${nestedFilePath}${suffix ?? ""}"`,
         });
       }
     }

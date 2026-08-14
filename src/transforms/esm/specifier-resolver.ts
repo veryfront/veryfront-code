@@ -30,8 +30,13 @@ import {
 } from "./http-cache-helpers.ts";
 
 const ReflectApply = Reflect.apply;
+const StringIndexOf = String.prototype.indexOf;
 const StringSlice = String.prototype.slice;
 const StringStartsWith = String.prototype.startsWith;
+
+function stringIndexOf(value: string, search: string): number {
+  return ReflectApply(StringIndexOf, value, [search]) as number;
+}
 
 function stringSlice(value: string, start: number, end?: number): string {
   return ReflectApply(StringSlice, value, end === undefined ? [start] : [start, end]) as string;
@@ -83,6 +88,22 @@ function isLocalMappedSpecifier(specifier: string): boolean {
     stringStartsWith(specifier, "file://");
 }
 
+function splitSpecifierSuffix(specifier: string): { path: string; suffix: string } {
+  const queryStart = stringIndexOf(specifier, "?");
+  const hashStart = stringIndexOf(specifier, "#");
+  const suffixStart = queryStart === -1
+    ? hashStart
+    : hashStart === -1
+    ? queryStart
+    : Math.min(queryStart, hashStart);
+
+  if (suffixStart === -1) return { path: specifier, suffix: "" };
+  return {
+    path: stringSlice(specifier, 0, suffixStart),
+    suffix: stringSlice(specifier, suffixStart),
+  };
+}
+
 /**
  * Resolve a single import specifier to a local cached path.
  *
@@ -110,10 +131,7 @@ async function resolveSpecifier(
   // against the page's public origin, which answers with HTML
   // (VERYFRONT-SERVER-G).
   if (stringStartsWith(specifier, "@/")) {
-    const aliasPath = stringSlice(specifier, 2);
-    const suffixIndex = aliasPath.search(/[?#]/);
-    const pathOnly = suffixIndex === -1 ? aliasPath : stringSlice(aliasPath, 0, suffixIndex);
-    const suffix = suffixIndex === -1 ? "" : stringSlice(aliasPath, suffixIndex);
+    const { path: pathOnly, suffix } = splitSpecifierSuffix(stringSlice(specifier, 2));
     const normalizedPath = normalizeExtension(pathOnly);
     const jsPath = /\.(js|mjs|cjs|css)$/.test(normalizedPath)
       ? normalizedPath

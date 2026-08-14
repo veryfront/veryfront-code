@@ -115,6 +115,42 @@ describe("transforms/esm/specifier-resolver", () => {
       }
     });
 
+    it("rewrites escaped project aliases without mutable search hooks", async () => {
+      const stringPrototypeDescriptors = Object.getOwnPropertyDescriptors(String.prototype);
+      const regexpSearch = Object.getOwnPropertyDescriptor(RegExp.prototype, Symbol.search)!;
+
+      try {
+        Object.defineProperty(String.prototype, "search", {
+          configurable: true,
+          value() {
+            throw new Error("poisoned String.prototype.search");
+          },
+          writable: true,
+        });
+        Object.defineProperty(RegExp.prototype, Symbol.search, {
+          configurable: true,
+          value() {
+            throw new Error("poisoned RegExp @@search");
+          },
+        });
+
+        const result = await buildReplacements(
+          `import Foo from "@/components/Foo.tsx?raw#hero";`,
+          undefined,
+          defaultOptions,
+          noopCache,
+        );
+
+        assertEquals(
+          result.replacements.get("@/components/Foo.tsx?raw#hero"),
+          "/_vf_modules/components/Foo.js?raw#hero",
+        );
+      } finally {
+        Object.defineProperties(String.prototype, stringPrototypeDescriptors);
+        Object.defineProperty(RegExp.prototype, Symbol.search, regexpSearch);
+      }
+    });
+
     it("rewrites http URL when cache returns a path", async () => {
       const code = `import lodash from "https://esm.sh/lodash@4";`;
       const mockCache: CacheHttpModuleFn = async () => "/tmp/cache/http-99999.mjs";

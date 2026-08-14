@@ -147,6 +147,46 @@ describe("module-fetcher/http-fetcher", () => {
     );
   });
 
+  it("preserves suffixes while mapping nested HTTP fallback imports", async () => {
+    const fetchedPaths: string[] = [];
+    const result = await fetchModuleViaHTTP(
+      "_vf_modules/pages/index.js",
+      { env: { get: () => undefined } } as unknown as RuntimeAdapter,
+      (path) => {
+        fetchedPaths.push(path);
+        return Promise.resolve(`/cache/${path.replaceAll("/", "__")}.mjs`);
+      },
+      { debug: () => {}, warn: () => {} } as unknown as Logger,
+      "docs",
+      true,
+      undefined,
+      {
+        fetchFn: (() =>
+          Promise.resolve(
+            new Response([
+              `import data from "/_vf_modules/data.json?raw#payload";`,
+              `import "/_vf_modules/setup.js#bootstrap";`,
+              `export const lazy = () => import("./Lazy.js?client");`,
+            ].join("\n")),
+          )) as typeof fetch,
+      },
+    );
+
+    assertEquals(fetchedPaths, [
+      "_vf_modules/data.json",
+      "_vf_modules/setup.js",
+      "./Lazy.js",
+    ]);
+    assertEquals(
+      result,
+      [
+        `import data from "file:///cache/_vf_modules__data.json.mjs?raw#payload";`,
+        `import "file:///cache/_vf_modules__setup.js.mjs#bootstrap";`,
+        `export const lazy = () => import("file:///cache/.__Lazy.js.mjs?client");`,
+      ].join("\n"),
+    );
+  });
+
   it("uses the request origin for pinned local module fetches", async () => {
     const logger = { debug: () => {}, warn: () => {} } as unknown as Logger;
     const adapter = {

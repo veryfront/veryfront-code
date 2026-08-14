@@ -224,6 +224,15 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("finds executable imports after await regex literals inside template substitutions", () => {
+      assertEquals(
+        specifiers(
+          'const html = `${await /}/.test(x) ? import("./after-await-regex.js") : null}`;',
+        ),
+        ["./after-await-regex.js"],
+      );
+    });
+
     it("finds executable imports after regex braces following control conditions", () => {
       assertEquals(
         specifiers(
