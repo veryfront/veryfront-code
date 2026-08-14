@@ -72,6 +72,7 @@ let esbuildServiceLost = false;
 let esbuildServiceLostDetail = "";
 let remainingServiceRestarts = MAX_SERVICE_RESTARTS;
 let esbuildServiceRecovery: Promise<void> | null = null;
+let esbuildServiceGeneration = 0;
 let serviceLossSpawnGuard: {
   guard: typeof childProcess.spawn;
   previous: typeof childProcess.spawn;
@@ -81,6 +82,9 @@ let esbuildServiceForeignReplacement: EsbuildService | null = null;
 let activeOperationCount = 0;
 let activeOperationsIdle: Promise<void> = Promise.resolve();
 let resolveActiveOperationsIdle: (() => void) | null = null;
+let stopBarrierCount = 0;
+let stopBarrierIdle: Promise<void> = Promise.resolve();
+let resolveStopBarrierIdle: (() => void) | null = null;
 const operationScopes = new AsyncLocalStorage<OperationScope>();
 
 const OWNERSHIP_ERROR_MESSAGE =
@@ -162,6 +166,25 @@ function endOperation(): void {
   const resolve = resolveActiveOperationsIdle;
   resolveActiveOperationsIdle = null;
   activeOperationsIdle = Promise.resolve();
+  resolve?.();
+}
+
+function enterStopBarrier(): void {
+  if (stopBarrierCount === 0) {
+    stopBarrierIdle = new Promise<void>((resolve) => {
+      resolveStopBarrierIdle = resolve;
+    });
+  }
+  stopBarrierCount += 1;
+}
+
+function leaveStopBarrier(): void {
+  stopBarrierCount -= 1;
+  if (stopBarrierCount !== 0) return;
+
+  const resolve = resolveStopBarrierIdle;
+  resolveStopBarrierIdle = null;
+  stopBarrierIdle = Promise.resolve();
   resolve?.();
 }
 
@@ -294,6 +317,7 @@ function recoverLostService(): Promise<void> {
     } catch {
       // Best effort: the child is already gone; stop() only resets state.
     }
+    esbuildServiceGeneration += 1;
     console.warn(
       `[ext-bundler-esbuild] esbuild service exited unexpectedly (${detail}); restarting it (${remainingServiceRestarts} restart(s) left)`,
     );
@@ -312,24 +336,36 @@ async function runBundlerOperation<T>(
 
   const inheritedScope = operationScopes.getStore();
   const isReentrant = inheritedScope !== undefined && inheritedScope.activeCount > 0;
+  let stopBarrierEntered = false;
   if (!isReentrant) {
     while (esbuildStopPromise) await esbuildStopPromise;
-    // A lost service is recovered before admission, so one child death costs
-    // one restart instead of poisoning every later operation.
-    while (esbuildServiceLost) await recoverLostService();
+    enterStopBarrier();
+    stopBarrierEntered = true;
   }
 
-  // Admission is synchronous after the stop barrier check. This makes a stop
-  // exclusive without serializing independent operations. Work re-entered by
-  // an active plugin shares its live scope so shutdown cannot deadlock on it.
-  const scope = preferredScope ?? (isReentrant ? inheritedScope : { activeCount: 0 });
-  beginOperation();
-  scope.activeCount += 1;
   try {
-    return await operationScopes.run(scope, () => operation(scope));
+    if (!isReentrant) {
+      // A lost service is recovered before admission, so one child death costs
+      // one restart instead of poisoning every later operation. The operation
+      // already holds the stop barrier, so shutdown cannot complete in this
+      // recovery gap and then leave the operation to spawn a new service.
+      while (esbuildServiceLost) await recoverLostService();
+    }
+
+    // Admission is synchronous after the stop barrier check. This makes a stop
+    // exclusive without serializing independent operations. Work re-entered by
+    // an active plugin shares its live scope so shutdown cannot deadlock on it.
+    const scope = preferredScope ?? (isReentrant ? inheritedScope : { activeCount: 0 });
+    beginOperation();
+    scope.activeCount += 1;
+    try {
+      return await operationScopes.run(scope, () => operation(scope));
+    } finally {
+      scope.activeCount -= 1;
+      endOperation();
+    }
   } finally {
-    scope.activeCount -= 1;
-    endOperation();
+    if (stopBarrierEntered) leaveStopBarrier();
   }
 }
 
@@ -414,6 +450,7 @@ export function __resetServiceRecoveryForTests(): void {
   esbuildServiceLost = false;
   esbuildServiceLostDetail = "";
   esbuildServiceForeignReplacement = null;
+  esbuildServiceGeneration = 0;
   remainingServiceRestarts = MAX_SERVICE_RESTARTS;
   uninstallServiceLossSpawnGuard();
 }
@@ -612,16 +649,36 @@ export class EsbuildBundler implements Bundler {
     return runBundlerOperation(async (contextScope) => {
       const esbuild = await getEsbuild();
       const mapped = mapOptions(options, contextScope);
-      const ctx = await invokeEsbuild(() => esbuild.context(mapped.options)).catch(
+      let ctx = await invokeEsbuild(() => esbuild.context(mapped.options)).catch(
         (error: unknown) => {
           mapped.activatePluginDisposals();
           throw error;
         },
       );
+      let contextGeneration = esbuildServiceGeneration;
+      let contextRefresh: Promise<void> | null = null;
+      const currentContext = async () => {
+        if (contextGeneration === esbuildServiceGeneration) return ctx;
+        contextRefresh ??= (async () => {
+          if (contextGeneration === esbuildServiceGeneration) return;
+          const currentEsbuild = await getEsbuild();
+          ctx = await invokeEsbuild(() => currentEsbuild.context(mapped.options)).catch(
+            (error: unknown) => {
+              mapped.activatePluginDisposals();
+              throw error;
+            },
+          );
+          contextGeneration = esbuildServiceGeneration;
+        })().finally(() => {
+          contextRefresh = null;
+        });
+        await contextRefresh;
+        return ctx;
+      };
       return {
         rebuild: () =>
           runBundlerOperation(async () => {
-            const result = await ctx.rebuild();
+            const result = await (await currentContext()).rebuild();
             return {
               outputFiles: (result.outputFiles ?? []).map(toOutput),
               warnings: toMessages(result.warnings),
@@ -631,12 +688,12 @@ export class EsbuildBundler implements Bundler {
           }, contextScope),
         cancel: () =>
           runBundlerOperation(async () => {
-            await ctx.cancel();
+            await (await currentContext()).cancel();
           }, contextScope),
         dispose: () =>
           runBundlerOperation(async () => {
             try {
-              await ctx.dispose();
+              if (contextGeneration === esbuildServiceGeneration) await ctx.dispose();
             } finally {
               mapped.activatePluginDisposals();
             }
@@ -658,6 +715,7 @@ export class EsbuildBundler implements Bundler {
     }
 
     const stopping = (async () => {
+      await stopBarrierIdle;
       await activeOperationsIdle;
 
       if (

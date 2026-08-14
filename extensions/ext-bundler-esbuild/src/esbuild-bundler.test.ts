@@ -8,6 +8,7 @@
 import { assertEquals, assertExists, assertRejects, assertStringIncludes } from "@std/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createRequire } from "node:module";
+import type { BuildContext } from "veryfront/extensions/bundler";
 
 import {
   __recordOwnershipErrorForTests,
@@ -921,6 +922,138 @@ describe("EsbuildBundler service crash recovery", () => {
       assertStringIncludes(second.code, "after = 2");
       assertEquals(services.length, 2);
     } finally {
+      await bundler.stop().catch(() => undefined);
+      __resetServiceRecoveryForTests();
+      try {
+        await bundler.stop();
+      } finally {
+        observation.restore();
+      }
+    }
+  });
+
+  it("does not let stop complete before an operation waiting for recovery", async () => {
+    const observation = observeEsbuildServices();
+    const { services } = observation;
+    const loadStarted = Promise.withResolvers<void>();
+    const releaseLoad = Promise.withResolvers<void>();
+    const bundler = new EsbuildBundler();
+    let bundling: Promise<Awaited<ReturnType<EsbuildBundler["bundle"]>>> | undefined;
+    let recovering: Promise<Awaited<ReturnType<EsbuildBundler["transform"]>>> | undefined;
+    let stopping: Promise<void> | undefined;
+    const keepAlive = setInterval(() => {}, 1_000);
+
+    try {
+      await bundler.transform({ code: "export const managed = true;", loader: "ts" });
+      assertEquals(services.length, 1);
+
+      bundling = bundler.bundle({
+        entryPoints: ["hold:entry"],
+        bundle: true,
+        format: "esm",
+        write: false,
+        plugins: [{
+          name: "hold-recovery",
+          setup(build) {
+            build.onResolve({ filter: /^hold:/ }, () => ({
+              path: "entry",
+              namespace: "hold",
+            }));
+            build.onLoad({ filter: /.*/, namespace: "hold" }, async () => {
+              loadStarted.resolve();
+              await releaseLoad.promise;
+              return { contents: "export const held = true;", loader: "ts" };
+            });
+          },
+        }],
+      });
+      void bundling.catch(() => undefined);
+      await loadStarted.promise;
+
+      const managedService = services[0]!;
+      managedService.child.ref();
+      managedService.child.kill("SIGKILL");
+      await managedService.close;
+
+      recovering = bundler.transform({
+        code: "export const recovered: number = 1;",
+        loader: "ts",
+      });
+
+      let stopSettled = false;
+      stopping = bundler.stop();
+      void stopping.then(
+        () => {
+          stopSettled = true;
+        },
+        () => {
+          stopSettled = true;
+        },
+      );
+      await Promise.resolve();
+      assertEquals(stopSettled, false);
+
+      releaseLoad.resolve();
+      await bundling.catch(() => undefined);
+      const result = await recovering;
+      assertStringIncludes(result.code, "recovered = 1");
+      await stopping;
+
+      assertEquals(services.length, 2);
+      assertEquals(services[1]!.closed, true);
+    } finally {
+      clearInterval(keepAlive);
+      releaseLoad.resolve();
+      await bundling?.catch(() => undefined);
+      await recovering?.catch(() => undefined);
+      await stopping?.catch(() => undefined);
+      await bundler.stop().catch(() => undefined);
+      __resetServiceRecoveryForTests();
+      try {
+        await bundler.stop();
+      } finally {
+        observation.restore();
+      }
+    }
+  });
+
+  it("recreates a captured build context after managed service crash recovery", async () => {
+    const observation = observeEsbuildServices();
+    const { services } = observation;
+    const bundler = new EsbuildBundler();
+    let ctx: BuildContext | undefined;
+
+    try {
+      ctx = await bundler.context({
+        stdin: {
+          contents: "export const fromContext: number = 1;",
+          sourcefile: "entry.ts",
+          loader: "ts",
+        },
+        bundle: false,
+        format: "esm",
+        write: false,
+      });
+      const first = await ctx.rebuild();
+      assertStringIncludes(first.outputFiles[0]!.text, "fromContext = 1");
+      assertEquals(services.length, 1);
+
+      const managedService = services[0]!;
+      managedService.child.ref();
+      managedService.child.kill("SIGKILL");
+      await managedService.close;
+
+      const recovered = await bundler.transform({
+        code: "export const recovered: number = 2;",
+        loader: "ts",
+      });
+      assertStringIncludes(recovered.code, "recovered = 2");
+
+      const rebuilt = await ctx.rebuild();
+      assertStringIncludes(rebuilt.outputFiles[0]!.text, "fromContext = 1");
+      assertEquals(services.length, 2);
+    } finally {
+      await ctx?.dispose().catch(() => undefined);
       await bundler.stop().catch(() => undefined);
       __resetServiceRecoveryForTests();
       try {
