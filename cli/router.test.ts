@@ -7,7 +7,7 @@ import { COMMANDS } from "./help/command-definitions.ts";
 import { parseLoginMethod } from "./auth/utils.ts";
 import { formatDuplicatedBinaryHint, routeCommand } from "./router.ts";
 import { cliLogger, VERSION } from "./utils/index.ts";
-import { setJsonMode } from "./shared/json-output.ts";
+import { setJsonMode, setOutputPath } from "./shared/json-output.ts";
 import { isInteractive, resetInteractiveMode } from "./shared/interactive.ts";
 import { parseCliArgs } from "./shared/args.ts";
 import type { ParsedArgs } from "./shared/types.ts";
@@ -358,6 +358,7 @@ describe("cli/router helpers", () => {
       console.log = originalConsoleLog;
       console.error = originalConsoleError;
       setJsonMode(false);
+      setOutputPath(null);
       resetInteractiveMode();
     }
 
@@ -684,11 +685,13 @@ describe("cli/router helpers", () => {
           "preview",
           "--host",
           "preview.internal.example",
+          "--port",
+          "3001",
         ]));
         assertEquals(code, 2);
         assertEquals(infoMessages, [
           '  You already included "veryfront". Use:',
-          "    veryfront preview --host '<REDACTED>'",
+          "    veryfront preview --host '<REDACTED>' --port 3001",
         ]);
       } finally {
         restoreAll();
@@ -947,7 +950,31 @@ describe("cli/router helpers", () => {
         assertEquals(code, 2);
         assertEquals(infoMessages, [
           '  You already included "veryfront". Use:',
-          "    veryfront login --provider '<REDACTED>' --base-url '<REDACTED>'",
+          "    veryfront login --provider openai --base-url '<REDACTED>'",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("redacts unknown option values without hiding known global values", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "login",
+          "--note",
+          "private customer details",
+          "--label=private customer label",
+          "--output",
+          "summary.json",
+          "--verbose",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront login --note '<REDACTED>' --label='<REDACTED>' --output summary.json --verbose",
         ]);
       } finally {
         restoreAll();
