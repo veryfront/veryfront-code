@@ -102,3 +102,7 @@ explicit capability metadata for sensitive extension boundaries.
 | `install.sh` / `install.ps1` | n/a         | Binary installer (curl/PowerShell)             |
 | `postinstall.js`             | n/a         | npm postinstall hook (copied into npm package) |
 | `update-homebrew-formula.sh` | n/a         | Updates Homebrew formula after release         |
+
+Release jobs run `build/report-artifact-sizes.ts` after npm package and binary
+builds. The command writes a Markdown size table to the job summary and does not
+enforce a size limit.

@@ -47,7 +47,14 @@ npx veryfront@latest init <PROJECT_NAME> --template <TEMPLATE>
 
 Available starters: `ai-agent`, `minimal`, `agentic-workflow`.
 
-Install the `veryfront` binary for local development commands and the TUI:
+Install the CLI through npm for local development commands and the TUI:
+
+```bash
+npm install -g veryfront@latest
+```
+
+The self-contained standalone binary is also available through the installer or
+Homebrew. It is a 0.9 to 1.2 GB download, depending on the platform:
 
 ```bash
 curl -fsSL https://veryfront.com/install.sh | sh
