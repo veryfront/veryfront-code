@@ -51,9 +51,9 @@ describe("request-context", () => {
       assertEquals(ctx.branch, "feature");
     });
 
-    it("extracts slug from local dev domain (lvh.me)", () => {
+    it("extracts slug from local dev domain (localhost)", () => {
       const ctx = createRequestContext(
-        new Request("http://myapp.lvh.me:8080/page"),
+        new Request("http://myapp.localhost:8080/page"),
       );
 
       assertEquals(ctx.slug, "myapp");
@@ -63,7 +63,7 @@ describe("request-context", () => {
 
     it("extracts slug and sets preview mode from local preview domain", () => {
       const ctx = createRequestContext(
-        new Request("http://myapp.preview.lvh.me:8080/page"),
+        new Request("http://myapp.preview.localhost:8080/page"),
       );
 
       assertEquals(ctx.slug, "myapp");

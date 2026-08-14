@@ -200,7 +200,7 @@ async function main(): Promise<void> {
     console.error("Error: URL is required");
     console.error("Usage: deno run --allow-all tests/load-test-isolation.ts <url>");
     console.error(
-      "Example: deno run --allow-all tests/load-test-isolation.ts http://myproject.lvh.me:8080",
+      "Example: deno run --allow-all tests/load-test-isolation.ts http://myproject.localhost:8080",
     );
     Deno.exit(1);
   }
