@@ -6,7 +6,7 @@
 | Author     | Matt Boon                                                                                               |
 | Created    | 2026-08-12                                                                                              |
 | Branch     | `mattboon/phoenix`                                                                                      |
-| Affects    | `templates/integrations/salesforce/connector.json`, `src/integrations/schema.ts`, the hosted tools API, the `salesforce-test` studio project, and the public `veryfront/agentic-case-processing` example repo |
+| Affects    | `templates/integrations/salesforce/connector.json`, `src/integrations/schema.ts`, the hosted tools API, the reference Studio project, and the companion example repository |
 | Related    | RFC 0001 (adapters); PR #3638 (merged) — expands curated `create_case`/`update_case` fields incl. `Type`; studio PR #6364 — Salesforce Configure permission matrix |
 
 ## 1. Summary
@@ -17,8 +17,8 @@ reads a Salesforce support case, PII-redacts it, classifies it against a
 checked-in taxonomy, then writes a `Reason` and a triage comment back to the
 case. The promise in the blog post is a straight line:
 
-> fork the template (or clone `veryfront/agentic-case-processing` — **once it is
-> published**; it is private today, Open Question E) → sign in to Veryfront → connect
+> fork the template (or clone the companion example repository **once it is
+> published**, Open Question E) → sign in to Veryfront → connect
 > **your own** Salesforce org over OAuth → run "Triage latest open cases" → it
 > runs green.
 
@@ -50,8 +50,8 @@ teaching error messages**.
 
 Two artefacts that must stay 1:1:
 
-- **Studio project** `salesforce-test-d4d57dcb` ("Salesforce Case Triage"). Four
-  agents, least-privilege by design:
+- **Studio project** `<PROJECT_ID>` ("Salesforce Case Triage"). Four agents,
+  least-privilege by design:
   - `case-triage` — orchestrator, tool: `invoke_agent`.
   - `case-ingest` — read-only. Tools: `salesforce__get_case`,
     `salesforce__list_case_activity`, `salesforce__list_cases`. Fetches + PII-redacts.
@@ -63,8 +63,8 @@ Two artefacts that must stay 1:1:
     every writable Case field, so the boundary is instructed, not enforced. §5.2/§6
     replace the grant with a field-scoped `update_case_reason` tool that makes it
     structural.
-- **GitHub repo** `veryfront/agentic-case-processing` (currently private). Mirrors
-  the four agents as `agents/*.ts`, ships the taxonomy in `knowledge/`, ships
+- **Companion example repository** (currently private). Mirrors the four agents
+  as `agents/*.ts`, ships the taxonomy in `knowledge/`, ships
   **evals** (`evals/*.eval.ts` + `evals/mock-tools.ts`), and runs locally via
   `npx veryfront push` + `npm run dev` on `http://veryfront.me:3000`, with
   `invoke_agent` child runs executing on the hosted control plane.
@@ -173,13 +173,9 @@ Open Question A — the org-config gates in §4 are handled by the baseline + de
 ## 3. The `Type` incident (a worked illustration, not a triage failure)
 
 Triage itself completes without this field. The incident surfaced while probing
-`update_case` beyond the pipeline. From that conversation, the model's own words:
-
-> "The `update_case` returned an empty string as data … a successful Salesforce
-> API update normally returns the record ID or a success boolean. An empty string
-> suggests the tool processed `Reason` but didn't even attempt `Type` because
-> `Type` isn't in its parameter schema. … more likely, this is a Veryfront
-> integration tool limitation."
+`update_case` beyond the pipeline. The model incorrectly treated the empty
+response as evidence that the tool had dropped `Type` because the field was not
+present in its parameter schema.
 
 Root cause: `update_case`'s `body` statically enumerated
 `Status`/`Priority`/`OwnerId`/`Reason`/`SuppliedEmail`/`Description`. `Type` was
@@ -452,7 +448,7 @@ is promptable in the agents.
 
 ## 9. The fork → run flow the blog narrates
 
-1. Fork the template in Veryfront **or** clone `veryfront/agentic-case-processing`
+1. Fork the template in Veryfront **or** clone the companion example repository
    (`cp .env.example .env.local`, set `VERYFRONT_API_TOKEN`, `npx veryfront push`,
    `npm run dev`).
 2. Sign in to Veryfront.
@@ -503,8 +499,8 @@ into a ten-minute Salesforce-admin detour.
   (current, robust), or offer an optional Salesforce-Knowledge variant behind a
   "Knowledge enabled" check?
 - **D. API version.** Reconcile `v61.0` (connector) vs `v59.0` (legacy client).
-- **E. Repo parity.** Make `veryfront/agentic-case-processing` public and enforce
-  1:1 parity with the studio project (a drift check in CI?). Until it is public,
+- **E. Repo parity.** Publish the companion example repository and enforce 1:1
+  parity with the Studio project (a drift check in CI?). Until it is public,
   the clone-and-run path is documented as *future* (§1, §9).
 - **F. Per-CRUD enforcement.** The generic tier — especially `delete_record` — is
   blocked until the #6364 `permissions` arrays are *enforced* fail-closed
