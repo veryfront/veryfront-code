@@ -689,6 +689,30 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("redacts local paths embedded in positional arguments", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "task",
+          "sync",
+          "source=/local/project",
+          "cache=file:///local/cache",
+          "drive=C:\\project\\source",
+          "share=\\\\server\\share",
+          "prefix:/local/output",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront task sync '<REDACTED>' '<REDACTED>' '<REDACTED>' '<REDACTED>' '<REDACTED>'",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("explains the duplicated binary name before routing global help", async () => {
       stubExit();
       stubLogger();

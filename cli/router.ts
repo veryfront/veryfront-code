@@ -142,18 +142,47 @@ function containsControlCharacter(value: string): boolean {
   return false;
 }
 
+const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*$/u;
+
+function startsWithLocalPath(value: string): boolean {
+  return /^file:/iu.test(value) ||
+    /^(?:\/|[A-Za-z]:[\\/]|\\\\)/u.test(value);
+}
+
+function containsLocalPath(value: string): boolean {
+  if (startsWithLocalPath(value)) return true;
+
+  for (let index = 0; index < value.length; index++) {
+    const separator = value[index];
+    if (separator !== "=" && separator !== ":" && separator !== ",") continue;
+
+    const suffix = value.slice(index + 1);
+    if (!startsWithLocalPath(suffix)) continue;
+    if (separator !== ":" || !suffix.startsWith("//")) return true;
+
+    const previousSeparator = Math.max(
+      value.lastIndexOf("=", index - 1),
+      value.lastIndexOf(":", index - 1),
+      value.lastIndexOf(",", index - 1),
+    );
+    if (!URL_SCHEME.test(value.slice(previousSeparator + 1, index))) return true;
+  }
+
+  return false;
+}
+
 function formatCommandHintArgument(
   value: string | number,
   sanitize: (input: string) => string,
   options: { allowRootRelativeRoute?: boolean } = {},
 ): string {
   const argument = String(value);
-  const isAbsolutePath = /^(?:\/|[A-Za-z]:[\\/]|\\\\)/u.test(argument);
+  const isAllowedRootRelativeRoute = options.allowRootRelativeRoute &&
+    argument.startsWith("/");
   if (
     argument.length > 256 ||
     containsControlCharacter(argument) ||
-    /^file:/iu.test(argument) ||
-    (isAbsolutePath && !(options.allowRootRelativeRoute && argument.startsWith("/")))
+    (containsLocalPath(argument) && !isAllowedRootRelativeRoute)
   ) {
     return "'<REDACTED>'";
   }
