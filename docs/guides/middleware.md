@@ -237,18 +237,26 @@ or configure it per project:
 
 ```ts
 // veryfront.config.ts
+import { getEnv } from "veryfront";
+
 export default {
   security: {
     auth: {
       basic: {
         username: "demo-user",
-        password: process.env.BASIC_AUTH_PASS!,
+        // An unset password fails config validation, which is the safe failure.
+        password: getEnv("BASIC_AUTH_PASS") ?? "",
         realm: "Staging",
       },
     },
   },
 };
 ```
+
+Read config secrets through `getEnv` from `veryfront`, not `process.env`: the
+hosted declarative config evaluator rejects `process.env` access as a
+forbidden capability, while `getEnv` works in local, dedicated, and shared
+runtimes.
 
 The built-in gate compares credentials in constant time and keeps the
 platform's health probes and signed control-plane traffic working, so prefer
@@ -259,7 +267,12 @@ other, not both.)
 ### Custom Basic Auth middleware
 
 Write it yourself when you need logic the built-in gate does not have, say,
-exempting a public path or accepting several credential pairs:
+exempting a public path or accepting several credential pairs. This is the
+root `middleware.ts` file described above, which every runtime, including the
+shared hosted runtime, compiles and runs. Do not confuse it with the
+`middleware.custom` config option: config-declared middleware functions are
+rejected by hosted runtimes and work only when you run or self-host the
+project yourself.
 
 ```ts
 // middleware.ts
@@ -284,13 +297,19 @@ const basicAuth: MiddlewareHandler = async (c, next) => {
   if (!user || !pass) return unauthorized();
 
   const header = c.request.headers.get("authorization") ?? "";
-  if (!header.startsWith("Basic ")) return unauthorized();
+  // The scheme name is case-insensitive: "basic" is as valid as "Basic".
+  if (header.slice(0, 6).toLowerCase() !== "basic ") return unauthorized();
 
   let decoded: string;
   try {
-    decoded = atob(header.slice(6));
+    // atob() yields one byte per character; decode those bytes as UTF-8 so
+    // non-ASCII credentials compare correctly.
+    const binary = atob(header.slice(6));
+    decoded = new TextDecoder("utf-8", { fatal: true }).decode(
+      Uint8Array.from(binary, (character) => character.charCodeAt(0)),
+    );
   } catch {
-    return unauthorized(); // malformed base64
+    return unauthorized(); // malformed base64 or invalid UTF-8
   }
 
   const sep = decoded.indexOf(":");
