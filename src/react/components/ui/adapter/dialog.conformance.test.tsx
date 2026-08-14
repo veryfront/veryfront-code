@@ -216,7 +216,6 @@ function runDialogConformance(
         <Wrap>
           <Dialog>
             <DialogTrigger>Open</DialogTrigger>
-            {/* @ts-ignore ref-as-prop flows through the skin's {...props} */}
             <DialogContent ref={panelRef}>Body</DialogContent>
           </Dialog>
         </Wrap>,

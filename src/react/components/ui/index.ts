@@ -177,6 +177,7 @@ export {
   DialogCancel,
   DialogClose,
   DialogContent,
+  type DialogContentProps,
   DialogDescription,
   DialogFooter,
   DialogForm,

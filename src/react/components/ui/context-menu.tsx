@@ -35,8 +35,9 @@
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
-import { Slot } from "./slot.tsx";
+import { composeRefs, Slot } from "./slot.tsx";
 import { Floating } from "./floating.tsx";
+import { useMenuContentKeyboard } from "./menu-keyboard.ts";
 import { type DisclosureOptions, useDisclosure } from "./disclosure.ts";
 
 /** Context shared between a ContextMenu root and its parts. */
@@ -47,6 +48,8 @@ interface ContextMenuState {
   setOpen: (open: boolean) => void;
   /** The zero-size virtual anchor `Floating` positions the surface against. */
   anchorRef: React.RefObject<HTMLElement | null>;
+  /** The trigger that opened the menu from the keyboard, used for focus return. */
+  triggerRef: React.RefObject<HTMLElement | null>;
   /** Move the virtual anchor to `(x, y)` (viewport coords) and open. */
   openAt: (x: number, y: number) => void;
 }
@@ -70,13 +73,14 @@ export function ContextMenu(
 ): React.ReactElement {
   const { open: isOpen, setOpen } = useDisclosure({ open, defaultOpen, onOpenChange });
   const anchorRef = React.useRef<HTMLElement | null>(null);
+  const triggerRef = React.useRef<HTMLElement | null>(null);
   const [pos, setPos] = React.useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const openAt = React.useCallback((x: number, y: number) => {
     setPos({ x, y });
     setOpen(true);
   }, [setOpen]);
   const ctx = React.useMemo<ContextMenuState>(
-    () => ({ open: isOpen, setOpen, anchorRef, openAt }),
+    () => ({ open: isOpen, setOpen, anchorRef, triggerRef, openAt }),
     [isOpen, setOpen, openAt],
   );
   return (
@@ -113,19 +117,34 @@ export interface ContextMenuTriggerProps extends React.HTMLAttributes<HTMLDivEle
  * the child element, which must forward `ref` to its DOM node.
  */
 export function ContextMenuTrigger(
-  { asChild, onContextMenu, children, ref, ...props }: ContextMenuTriggerProps,
+  { asChild, onContextMenu, onKeyDown, children, ref, ...props }: ContextMenuTriggerProps,
 ): React.ReactElement {
   const ctx = React.useContext(ContextMenuContext);
   const Comp = asChild ? Slot : "div";
+  const setTriggerRef = React.useCallback((element: HTMLElement | null) => {
+    if (ctx) ctx.triggerRef.current = element;
+  }, [ctx]);
+  const composedRef = React.useMemo(
+    () => composeRefs<HTMLElement>(setTriggerRef, ref as React.Ref<HTMLElement> | undefined),
+    [ref, setTriggerRef],
+  );
   return (
     <Comp
-      ref={ref}
+      ref={composedRef}
       data-state={ctx?.open ? "open" : "closed"}
       onContextMenu={(e: React.MouseEvent<HTMLDivElement>) => {
         onContextMenu?.(e);
         if (e.defaultPrevented) return;
         e.preventDefault();
         ctx?.openAt(e.clientX, e.clientY);
+      }}
+      onKeyDown={(e: React.KeyboardEvent<HTMLDivElement>) => {
+        onKeyDown?.(e);
+        if (e.defaultPrevented || !ctx) return;
+        if (e.key !== "ContextMenu" && !(e.key === "F10" && e.shiftKey)) return;
+        e.preventDefault();
+        const rect = e.currentTarget.getBoundingClientRect();
+        ctx.openAt(rect.left, rect.bottom);
       }}
       {...props}
     >
@@ -147,19 +166,29 @@ export function ContextMenuContent({
   children,
   className,
   align = "start",
+  onKeyDown,
   ref,
   ...props
 }: ContextMenuContentProps): React.ReactElement | null {
   const ctx = React.useContext(ContextMenuContext);
   if (!ctx) return null;
+  const handleKeyDown = useMenuContentKeyboard({
+    onKeyDown,
+    setOpen: ctx.setOpen,
+    triggerRef: ctx.triggerRef,
+  });
   return (
     <Floating
       anchorRef={ctx.anchorRef}
       open={ctx.open}
       align={align}
       onDismiss={() => ctx.setOpen(false)}
+      initialFocus="[role='menuitem']:not([aria-disabled='true'])"
+      returnFocusRef={ctx.triggerRef}
       contentRef={ref}
       role="menu"
+      aria-orientation="vertical"
+      onKeyDown={handleKeyDown}
       className={cn(
         "z-50 min-w-[260px] overflow-hidden rounded-lg bg-[var(--popover)] p-2.5 text-[var(--foreground)] shadow-sm outline-none",
         className,

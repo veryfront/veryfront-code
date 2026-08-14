@@ -62,13 +62,19 @@ export function DialogTrigger(
   return <dialog.Trigger {...props} />;
 }
 
+/** Props accepted by `<DialogContent>`. */
+export interface DialogContentProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** React 19: ref is a regular prop, forwarded to the dialog panel. */
+  ref?: React.Ref<HTMLDivElement>;
+}
+
 /** Modal surface - overlay + centered panel, rendered while open. */
 export function DialogContent({
   className,
   children,
   "aria-describedby": describedBy,
   ...props
-}: React.HTMLAttributes<HTMLDivElement>): React.ReactElement | null {
+}: DialogContentProps): React.ReactElement | null {
   const { dialog } = useAdapter();
   const modal = dialog.useDialog();
   return (

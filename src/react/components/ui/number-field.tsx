@@ -1,7 +1,7 @@
 /**
  * NumberField - a numeric text input with clamping and keyboard stepping.
  *
- * A single `<input inputmode="numeric">` that keeps its value within
+ * A single `<input>` that keeps its value within
  * `[min, max]`, rounds to `step`, and steps with ArrowUp/ArrowDown. Controlled
  * via `value`/`onValueChange` or uncontrolled via `defaultValue`. Skinned with
  * the veryfront theme tokens; no adapter or engine required.
@@ -78,6 +78,7 @@ export function NumberField({
   step = 1,
   className,
   disabled,
+  inputMode,
   onKeyDown,
   onBlur,
   ref,
@@ -88,6 +89,7 @@ export function NumberField({
   const [draft, setDraft] = React.useState<string | null>(null);
   const current = isControlled ? value : internal;
   const controlledValueRef = React.useRef(value);
+  const resolvedInputMode = inputMode ?? (Number.isInteger(step) ? "numeric" : "decimal");
 
   React.useEffect(() => {
     if (isControlled && !Object.is(controlledValueRef.current, value)) setDraft(null);
@@ -151,7 +153,7 @@ export function NumberField({
   return (
     <input
       ref={ref}
-      inputMode="numeric"
+      inputMode={resolvedInputMode}
       role="spinbutton"
       aria-valuenow={current ?? undefined}
       aria-valuemin={min}

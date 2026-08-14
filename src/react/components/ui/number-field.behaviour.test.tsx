@@ -78,6 +78,29 @@ function mount(props: React.ComponentProps<typeof NumberField>) {
 }
 
 describe("NumberField behaviour", () => {
+  it("uses a decimal input mode for fractional steps and allows overrides", () => {
+    const fractional = mount({ step: 0.1 });
+    try {
+      assertEquals(fractional.input.getAttribute("inputmode"), "decimal");
+    } finally {
+      fractional.cleanup();
+    }
+
+    const whole = mount({ step: 1 });
+    try {
+      assertEquals(whole.input.getAttribute("inputmode"), "numeric");
+    } finally {
+      whole.cleanup();
+    }
+
+    const override = mount({ step: 0.1, inputMode: "text" });
+    try {
+      assertEquals(override.input.getAttribute("inputmode"), "text");
+    } finally {
+      override.cleanup();
+    }
+  });
+
   it("quantizes typed values to step relative to the minimum", () => {
     let committed: number | null | undefined;
     const h = mount({ min: 2, max: 20, step: 5, onValueChange: (value) => committed = value });
