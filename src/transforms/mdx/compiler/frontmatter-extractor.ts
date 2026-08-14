@@ -6,10 +6,30 @@ export interface FrontmatterExtractionResult {
   frontmatter: Record<string, unknown>;
 }
 
+const FRONTMATTER_SYNTAX_ERROR = Symbol.for("veryfront.transforms.mdx.frontmatter-syntax-error");
+
+/** Return true when an error came from MDX or Markdown YAML frontmatter parsing. */
+export function isFrontmatterSyntaxError(error: unknown): error is SyntaxError {
+  return error instanceof SyntaxError &&
+    (error as { [FRONTMATTER_SYNTAX_ERROR]?: unknown })[FRONTMATTER_SYNTAX_ERROR] === true;
+}
+
+function createFrontmatterSyntaxError(cause: SyntaxError): SyntaxError {
+  const error = new SyntaxError(`Invalid YAML frontmatter: ${cause.message}`, { cause });
+  Object.defineProperty(error, FRONTMATTER_SYNTAX_ERROR, { value: true });
+  return error;
+}
+
 function extractYamlFrontmatter(content: string): FrontmatterExtractionResult {
   if (!content.trim().startsWith("---")) return { body: content, frontmatter: {} };
 
-  const extracted = extract(content);
+  let extracted;
+  try {
+    extracted = extract(content);
+  } catch (error) {
+    if (error instanceof SyntaxError) throw createFrontmatterSyntaxError(error);
+    throw error;
+  }
 
   return {
     body: extracted.body,

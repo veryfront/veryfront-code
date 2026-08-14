@@ -6,8 +6,13 @@ import { VeryfrontError } from "#veryfront/errors";
 import {
   register as registerContract,
   tryResolve as tryResolveContract,
+  unregister as unregisterContract,
 } from "#veryfront/extensions/contracts.ts";
 import type { ContentProcessor } from "#veryfront/extensions/content/index.ts";
+import {
+  type YamlParserProvider,
+  YamlParserProviderName,
+} from "#veryfront/extensions/parser/yaml-parser.ts";
 import { compileMDXRuntime } from "./mdx-compiler.ts";
 
 describe("transforms/mdx/compiler/mdx-compiler", () => {
@@ -116,6 +121,43 @@ describe("transforms/mdx/compiler/mdx-compiler", () => {
       assertInstanceOf(error, VeryfrontError);
       assertEquals(error.slug, "mdx-compile-error");
       assertEquals(error.category, "BUILD");
+    });
+
+    it("classifies frontmatter SyntaxErrors from compliant YAML providers", async () => {
+      const previous = tryResolveContract<YamlParserProvider>(YamlParserProviderName);
+      registerContract(
+        YamlParserProviderName,
+        {
+          parseYaml() {
+            throw new SyntaxError("invalid YAML");
+          },
+        } satisfies YamlParserProvider,
+      );
+
+      try {
+        const error = await assertRejects(
+          () =>
+            compileMDXRuntime(
+              "production",
+              "/project",
+              "---\ntitle: broken\n---\n# Content",
+              undefined,
+              "broken-frontmatter.mdx",
+              "server",
+            ),
+          VeryfrontError,
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(error.slug, "mdx-compile-error");
+        assertEquals(error.category, "BUILD");
+      } finally {
+        if (previous) {
+          registerContract(YamlParserProviderName, previous);
+        } else {
+          unregisterContract(YamlParserProviderName);
+        }
+      }
     });
 
     it("preserves non-source processor failures", async () => {

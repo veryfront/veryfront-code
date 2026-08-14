@@ -8,6 +8,7 @@ import type {
 } from "#veryfront/extensions/content/index.ts";
 import { MDX_COMPILE_ERROR, VeryfrontError } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { isFrontmatterSyntaxError } from "./frontmatter-extractor.ts";
 
 const logger = rendererLogger.component("mdx-compiler");
 
@@ -28,7 +29,7 @@ function isMdxSourceCompileError(error: Error): boolean {
     (error.stack?.includes("/src/platform/compat/std/front-matter-yaml.ts") === true ||
       error.stack?.includes("/src/platform/compat/std/yaml.ts") === true ||
       error.stack?.includes("/extensions/ext-yaml/src/adapter.ts") === true);
-  return isMdxParserError || isYamlFrontmatterError;
+  return isMdxParserError || isYamlFrontmatterError || isFrontmatterSyntaxError(error);
 }
 
 export function compileMDXRuntime(
