@@ -33,6 +33,16 @@ import { toEsbuildPlugin } from "./plugin-adapter.ts";
 type EsbuildModule = any;
 
 const ESBUILD_STOP_TIMEOUT_MS = 5_000;
+/**
+ * Unexpected service-child deaths tolerated before the adapter gives up.
+ *
+ * The child can be killed by something outside the process (OOM-kill, a
+ * container runtime signal). That is recoverable: esbuild respawns the
+ * service once its module state is reset, so it must not poison the process
+ * the way foreign ownership does. The budget keeps a crash-looping binary
+ * from respawning forever.
+ */
+export const MAX_SERVICE_RESTARTS = 3;
 const childProcess = createRequire(import.meta.url)("node:child_process") as {
   spawn: typeof import("node:child_process").spawn;
 };
@@ -41,6 +51,7 @@ interface EsbuildService {
   child: ChildProcess;
   closed: Promise<void>;
   expectedClose: boolean;
+  lossRecorded?: boolean;
 }
 
 interface OperationScope {
@@ -50,6 +61,7 @@ interface OperationScope {
 interface MappedBundleOptions {
   options: Record<string, unknown>;
   activatePluginDisposals: () => void;
+  disposePluginGeneration: () => Promise<void>;
 }
 
 let esbuildModule: EsbuildModule | null = null;
@@ -58,9 +70,23 @@ let esbuildOwnershipError: Error | null = null;
 let esbuildShutdownError: Error | null = null;
 let pluginDisposalError: Error | null = null;
 let esbuildStopPromise: Promise<void> | null = null;
+let esbuildServiceLost = false;
+let esbuildServiceLostDetail = "";
+let remainingServiceRestarts = MAX_SERVICE_RESTARTS;
+let esbuildServiceRecovery: Promise<void> | null = null;
+let esbuildServiceGeneration = 0;
+let serviceLossSpawnGuard: {
+  guard: typeof childProcess.spawn;
+  previous: typeof childProcess.spawn;
+  foreignService: EsbuildService | null;
+} | null = null;
+let esbuildServiceForeignReplacement: EsbuildService | null = null;
 let activeOperationCount = 0;
 let activeOperationsIdle: Promise<void> = Promise.resolve();
 let resolveActiveOperationsIdle: (() => void) | null = null;
+let stopBarrierCount = 0;
+let stopBarrierIdle: Promise<void> = Promise.resolve();
+let resolveStopBarrierIdle: (() => void) | null = null;
 const operationScopes = new AsyncLocalStorage<OperationScope>();
 
 const OWNERSHIP_ERROR_MESSAGE =
@@ -145,13 +171,40 @@ function endOperation(): void {
   resolve?.();
 }
 
+function enterStopBarrier(): void {
+  if (stopBarrierCount === 0) {
+    stopBarrierIdle = new Promise<void>((resolve) => {
+      resolveStopBarrierIdle = resolve;
+    });
+  }
+  stopBarrierCount += 1;
+}
+
+function leaveStopBarrier(): void {
+  stopBarrierCount -= 1;
+  if (stopBarrierCount !== 0) return;
+
+  const resolve = resolveStopBarrierIdle;
+  resolveStopBarrierIdle = null;
+  stopBarrierIdle = Promise.resolve();
+  resolve?.();
+}
+
 function createPluginDisposalBarrier(scope: OperationScope): {
   wrap: (callback: () => unknown) => () => void;
   activate: () => void;
+  dispose: () => Promise<void>;
 } {
-  const callbacks: Array<{ started: boolean; settled: boolean }> = [];
+  const callbacks: Array<{
+    callback: () => unknown;
+    started: boolean;
+    settled: boolean;
+    settledPromise: Promise<void>;
+    resolveSettled: () => void;
+  }> = [];
   let activated = false;
   let holdingOperation = false;
+  let disposalError: Error | null = null;
 
   const releaseIfSettled = (): void => {
     if (!holdingOperation || callbacks.some((callback) => !callback.settled)) return;
@@ -160,50 +213,71 @@ function createPluginDisposalBarrier(scope: OperationScope): {
     endOperation();
   };
 
-  const settle = (callback: { started: boolean; settled: boolean }): void => {
+  const settle = (callback: { settled: boolean; resolveSettled: () => void }): void => {
     if (callback.settled) return;
     callback.settled = true;
+    callback.resolveSettled();
     releaseIfSettled();
   };
 
   const fail = (
-    callback: { started: boolean; settled: boolean },
+    callback: { settled: boolean; resolveSettled: () => void },
     error: unknown,
   ): void => {
-    if (!pluginDisposalError) {
-      pluginDisposalError = new Error(
+    if (!disposalError) {
+      disposalError = new Error(
         "[ext-bundler-esbuild] Plugin disposal failed",
         { cause: error },
       );
     }
+    if (!pluginDisposalError) pluginDisposalError = disposalError;
     settle(callback);
+  };
+
+  const start = (state: {
+    callback: () => unknown;
+    started: boolean;
+    settled: boolean;
+    resolveSettled: () => void;
+  }): void => {
+    if (state.started || state.settled) return;
+    state.started = true;
+    try {
+      const result = state.callback();
+      if (
+        result !== null &&
+        (typeof result === "object" || typeof result === "function") &&
+        typeof (result as PromiseLike<unknown>).then === "function"
+      ) {
+        void Promise.resolve(result).then(
+          () => settle(state),
+          (error) => fail(state, error),
+        );
+      } else {
+        settle(state);
+      }
+    } catch (error) {
+      fail(state, error);
+    }
   };
 
   return {
     wrap(callback) {
-      const state = { started: false, settled: false };
+      let resolveSettled: () => void = () => {};
+      const settledPromise = new Promise<void>((resolve) => {
+        resolveSettled = resolve;
+      });
+      const state = {
+        callback,
+        started: false,
+        settled: false,
+        settledPromise,
+        resolveSettled,
+      };
       callbacks.push(state);
 
       return () => {
-        if (state.settled) return;
-        state.started = true;
-        try {
-          const result = callback();
-          if (
-            result !== null &&
-            (typeof result === "object" || typeof result === "function") &&
-            typeof (result as PromiseLike<unknown>).then === "function"
-          ) {
-            void Promise.resolve(result).then(
-              () => settle(state),
-              (error) => fail(state, error),
-            );
-          } else {
-            settle(state);
-          }
-        } catch (error) {
-          fail(state, error);
-        }
+        start(state);
       };
     },
     activate() {
@@ -226,7 +300,68 @@ function createPluginDisposalBarrier(scope: OperationScope): {
         releaseIfSettled();
       }, 0);
     },
+    async dispose() {
+      const pending = callbacks.filter((callback) => !callback.settled);
+      for (const callback of pending) start(callback);
+      await Promise.all(pending.map((callback) => callback.settledPromise));
+      if (disposalError) throw disposalError;
+    },
   };
+}
+
+/**
+ * Recover after the managed service child died unexpectedly (crash, OOM-kill).
+ *
+ * esbuild 0.28 keeps a dead service cached in its module state and rejects
+ * every later call, so the reset must go through its `stop()`, which clears
+ * that state and lets the next API call spawn a fresh child. This path only
+ * runs for a child the adapter itself captured; a service started outside the
+ * adapter is still latched permanently by {@link invokeEsbuild}. Recovery is
+ * single-flight and waits for in-flight operations to drain: they fail with
+ * esbuild's own error for the dead child and must not race the reset.
+ */
+function recoverLostService(): Promise<void> {
+  esbuildServiceRecovery ??= (async () => {
+    await activeOperationsIdle;
+    if (!esbuildServiceLost) return;
+    const foreignService = esbuildServiceForeignReplacement ??
+      serviceLossSpawnGuard?.foreignService;
+    if (foreignService) {
+      const error = recordOwnershipError(
+        new Error("esbuild service was replaced outside the module-wide adapter"),
+      );
+      uninstallServiceLossSpawnGuard();
+      throw error;
+    }
+    uninstallServiceLossSpawnGuard();
+    if (remainingServiceRestarts <= 0) {
+      throw recordOwnershipError(
+        new Error(
+          `esbuild service exited unexpectedly ${
+            MAX_SERVICE_RESTARTS + 1
+          } times (last: ${esbuildServiceLostDetail})`,
+        ),
+      );
+    }
+    remainingServiceRestarts -= 1;
+    const detail = esbuildServiceLostDetail;
+    const m = esbuildModule;
+    esbuildModule = null;
+    esbuildService = null;
+    esbuildServiceLost = false;
+    try {
+      await m?.stop();
+    } catch {
+      // Best effort: the child is already gone; stop() only resets state.
+    }
+    esbuildServiceGeneration += 1;
+    console.warn(
+      `[ext-bundler-esbuild] esbuild service exited unexpectedly (${detail}); restarting it (${remainingServiceRestarts} restart(s) left)`,
+    );
+  })().finally(() => {
+    esbuildServiceRecovery = null;
+  });
+  return esbuildServiceRecovery;
 }
 
 async function runBundlerOperation<T>(
@@ -238,21 +373,36 @@ async function runBundlerOperation<T>(
 
   const inheritedScope = operationScopes.getStore();
   const isReentrant = inheritedScope !== undefined && inheritedScope.activeCount > 0;
+  let stopBarrierEntered = false;
   if (!isReentrant) {
     while (esbuildStopPromise) await esbuildStopPromise;
+    enterStopBarrier();
+    stopBarrierEntered = true;
   }
 
-  // Admission is synchronous after the stop barrier check. This makes a stop
-  // exclusive without serializing independent operations. Work re-entered by
-  // an active plugin shares its live scope so shutdown cannot deadlock on it.
-  const scope = preferredScope ?? (isReentrant ? inheritedScope : { activeCount: 0 });
-  beginOperation();
-  scope.activeCount += 1;
   try {
-    return await operationScopes.run(scope, () => operation(scope));
+    if (!isReentrant) {
+      // A lost service is recovered before admission, so one child death costs
+      // one restart instead of poisoning every later operation. The operation
+      // already holds the stop barrier, so shutdown cannot complete in this
+      // recovery gap and then leave the operation to spawn a new service.
+      while (esbuildServiceLost) await recoverLostService();
+    }
+
+    // Admission is synchronous after the stop barrier check. This makes a stop
+    // exclusive without serializing independent operations. Work re-entered by
+    // an active plugin shares its live scope so shutdown cannot deadlock on it.
+    const scope = preferredScope ?? (isReentrant ? inheritedScope : { activeCount: 0 });
+    beginOperation();
+    scope.activeCount += 1;
+    try {
+      return await operationScopes.run(scope, () => operation(scope));
+    } finally {
+      scope.activeCount -= 1;
+      endOperation();
+    }
   } finally {
-    scope.activeCount -= 1;
-    endOperation();
+    if (stopBarrierEntered) leaveStopBarrier();
   }
 }
 
@@ -261,6 +411,74 @@ function isEsbuildServiceSpawn(spawnArgs: unknown[]): boolean {
   return Array.isArray(args) &&
     args.some((arg) => typeof arg === "string" && arg.startsWith("--service=")) &&
     args.includes("--ping");
+}
+
+function trackServiceChild(child: ChildProcess): EsbuildService {
+  let resolveClosed: () => void = () => {};
+  const closed = new Promise<void>((resolve) => {
+    resolveClosed = resolve;
+  });
+  const service = { child, closed, expectedClose: false };
+  const recordUnexpectedLoss = (exitCode: unknown, signalCode: unknown): void =>
+    recordUnexpectedManagedServiceLoss(service, exitCode, signalCode);
+  child.once("exit", recordUnexpectedLoss);
+  child.once("close", (exitCode, signalCode) => {
+    recordUnexpectedLoss(exitCode, signalCode);
+    resolveClosed();
+    if (esbuildService === service) esbuildService = null;
+  });
+  return service;
+}
+
+function recordUnexpectedManagedServiceLoss(
+  service: EsbuildService,
+  exitCode: unknown,
+  signalCode: unknown,
+): void {
+  // An unexpected close of a child the adapter owns is a crash, not a
+  // lifecycle violation; mark it recoverable instead of latching the
+  // permanent ownership error.
+  if (service.expectedClose || service.lossRecorded) return;
+  service.lossRecorded = true;
+  esbuildServiceLost = true;
+  esbuildServiceLostDetail = `exit code ${exitCode}, signal ${signalCode}`;
+  installServiceLossSpawnGuard();
+}
+
+function observeForeignServiceChild(child: ChildProcess): EsbuildService {
+  let resolveClosed: () => void = () => {};
+  const closed = new Promise<void>((resolve) => {
+    resolveClosed = resolve;
+  });
+  const service = { child, closed, expectedClose: false };
+  child.once("close", () => {
+    resolveClosed();
+  });
+  return service;
+}
+
+function installServiceLossSpawnGuard(): void {
+  if (serviceLossSpawnGuard) return;
+
+  const previous = childProcess.spawn;
+  const guard = ((...spawnArgs: unknown[]) => {
+    const child = Reflect.apply(previous, childProcess, spawnArgs) as ChildProcess;
+    if (isEsbuildServiceSpawn(spawnArgs)) {
+      const foreignService = observeForeignServiceChild(child);
+      esbuildServiceForeignReplacement = foreignService;
+      serviceLossSpawnGuard!.foreignService = foreignService;
+    }
+    return child;
+  }) as typeof childProcess.spawn;
+
+  serviceLossSpawnGuard = { guard, previous, foreignService: null };
+  childProcess.spawn = guard;
+}
+
+function uninstallServiceLossSpawnGuard(): void {
+  const guard = serviceLossSpawnGuard;
+  serviceLossSpawnGuard = null;
+  if (guard && childProcess.spawn === guard.guard) childProcess.spawn = guard.previous;
 }
 
 /**
@@ -272,6 +490,17 @@ function isEsbuildServiceSpawn(spawnArgs: unknown[]): boolean {
 /** The ownership latch is module-wide; tests must clear it between cases. */
 export function __resetOwnershipErrorForTests(): void {
   esbuildOwnershipError = null;
+}
+
+/** Crash-recovery state is module-wide; tests must reset it between cases. */
+export function __resetServiceRecoveryForTests(): void {
+  esbuildOwnershipError = null;
+  esbuildServiceLost = false;
+  esbuildServiceLostDetail = "";
+  esbuildServiceForeignReplacement = null;
+  esbuildServiceGeneration = 0;
+  remainingServiceRestarts = MAX_SERVICE_RESTARTS;
+  uninstallServiceLossSpawnGuard();
 }
 
 /** Exercise the latch without starting a real esbuild service. */
@@ -303,16 +532,7 @@ function invokeEsbuild<T extends Promise<unknown>>(operation: () => T): T {
   const trackedSpawn = ((...spawnArgs: unknown[]) => {
     const child = Reflect.apply(originalSpawn, childProcess, spawnArgs) as ChildProcess;
     if (isEsbuildServiceSpawn(spawnArgs)) {
-      let resolveClosed: () => void = () => {};
-      const closed = new Promise<void>((resolve) => {
-        resolveClosed = resolve;
-      });
-      const service = { child, closed, expectedClose: false };
-      child.once("close", () => {
-        if (!service.expectedClose) recordOwnershipError();
-        resolveClosed();
-        if (esbuildService === service) esbuildService = null;
-      });
+      const service = trackServiceChild(child);
       capturedService = service;
       esbuildService = service;
       if (childProcess.spawn === trackedSpawn) childProcess.spawn = originalSpawn;
@@ -329,6 +549,19 @@ function invokeEsbuild<T extends Promise<unknown>>(operation: () => T): T {
 
   const ownedService = capturedService ?? esbuildService;
   if (!ownedService || !isLiveService(ownedService)) {
+    // A managed child that died out from under this operation is the
+    // recoverable crash case handled by runBundlerOperation, not foreign
+    // ownership; the operation surfaces esbuild's own error for the dead
+    // child instead of latching the permanent one.
+    if (esbuildServiceLost) return result;
+    if (ownedService && ownedService === esbuildService) {
+      recordUnexpectedManagedServiceLoss(
+        ownedService,
+        ownedService.child.exitCode,
+        ownedService.child.signalCode,
+      );
+      return result;
+    }
     // Latch synchronously so a concurrent operation cannot pass the admission
     // check in runBundlerOperation and drive esbuild while ownership is already
     // known to be invalid. The rejection handler still supplies the cause: the
@@ -407,7 +640,20 @@ function mapOptions(options: BundleOptions, scope: OperationScope): MappedBundle
   return {
     options: mapped,
     activatePluginDisposals: pluginDisposals.activate,
+    disposePluginGeneration: pluginDisposals.dispose,
   };
+}
+
+async function finalizePluginDisposals(mapped: MappedBundleOptions): Promise<void> {
+  const service = esbuildService;
+  if (
+    esbuildServiceLost ||
+    (service && !service.expectedClose && !isLiveService(service))
+  ) {
+    await mapped.disposePluginGeneration();
+    return;
+  }
+  mapped.activatePluginDisposals();
 }
 
 /**
@@ -450,7 +696,7 @@ export class EsbuildBundler implements Bundler {
           metafile: result.metafile as Metafile | undefined,
         };
       } finally {
-        mapped.activatePluginDisposals();
+        await finalizePluginDisposals(mapped);
       }
     });
   }
@@ -471,17 +717,41 @@ export class EsbuildBundler implements Bundler {
   async context(options: BundleOptions): Promise<BuildContext> {
     return runBundlerOperation(async (contextScope) => {
       const esbuild = await getEsbuild();
-      const mapped = mapOptions(options, contextScope);
-      const ctx = await invokeEsbuild(() => esbuild.context(mapped.options)).catch(
-        (error: unknown) => {
-          mapped.activatePluginDisposals();
+      let mapped = mapOptions(options, contextScope);
+      let ctx = await invokeEsbuild(() => esbuild.context(mapped.options)).catch(
+        async (error: unknown) => {
+          await finalizePluginDisposals(mapped);
           throw error;
         },
       );
+      let contextGeneration = esbuildServiceGeneration;
+      let contextRefresh: Promise<void> | null = null;
+      const currentContext = async () => {
+        if (contextGeneration === esbuildServiceGeneration) return ctx;
+        contextRefresh ??= (async () => {
+          if (contextGeneration === esbuildServiceGeneration) return;
+          await mapped.disposePluginGeneration();
+          const nextMapped = mapOptions(options, contextScope);
+          const currentEsbuild = await getEsbuild();
+          ctx = await invokeEsbuild(() => currentEsbuild.context(nextMapped.options)).catch(
+            async (error: unknown) => {
+              await finalizePluginDisposals(nextMapped);
+              mapped = mapOptions(options, contextScope);
+              throw error;
+            },
+          );
+          mapped = nextMapped;
+          contextGeneration = esbuildServiceGeneration;
+        })().finally(() => {
+          contextRefresh = null;
+        });
+        await contextRefresh;
+        return ctx;
+      };
       return {
         rebuild: () =>
           runBundlerOperation(async () => {
-            const result = await ctx.rebuild();
+            const result = await (await currentContext()).rebuild();
             return {
               outputFiles: (result.outputFiles ?? []).map(toOutput),
               warnings: toMessages(result.warnings),
@@ -491,14 +761,18 @@ export class EsbuildBundler implements Bundler {
           }, contextScope),
         cancel: () =>
           runBundlerOperation(async () => {
-            await ctx.cancel();
+            await (await currentContext()).cancel();
           }, contextScope),
         dispose: () =>
           runBundlerOperation(async () => {
             try {
-              await ctx.dispose();
+              if (contextGeneration === esbuildServiceGeneration) await ctx.dispose();
             } finally {
-              mapped.activatePluginDisposals();
+              if (contextGeneration === esbuildServiceGeneration) {
+                mapped.activatePluginDisposals();
+              } else {
+                await mapped.disposePluginGeneration();
+              }
             }
           }, contextScope),
       };
@@ -518,11 +792,43 @@ export class EsbuildBundler implements Bundler {
     }
 
     const stopping = (async () => {
+      await stopBarrierIdle;
       await activeOperationsIdle;
+
+      if (
+        esbuildServiceLost &&
+        (esbuildServiceForeignReplacement ?? serviceLossSpawnGuard?.foreignService)
+      ) {
+        const error = recordOwnershipError(
+          new Error("esbuild service was replaced outside the module-wide adapter"),
+        );
+        uninstallServiceLossSpawnGuard();
+        throw error;
+      }
+      if (esbuildServiceLost && remainingServiceRestarts <= 0) {
+        const error = recordOwnershipError(
+          new Error(
+            `esbuild service exited unexpectedly ${
+              MAX_SERVICE_RESTARTS + 1
+            } times (last: ${esbuildServiceLostDetail})`,
+          ),
+        );
+        uninstallServiceLossSpawnGuard();
+        throw error;
+      }
+      if (esbuildServiceLost) {
+        remainingServiceRestarts -= 1;
+        uninstallServiceLossSpawnGuard();
+      }
 
       const m = esbuildModule;
       const trackedService = esbuildService;
-      if (trackedService && !trackedService.expectedClose && !isLiveService(trackedService)) {
+      if (
+        trackedService && !trackedService.expectedClose && !isLiveService(trackedService) &&
+        remainingServiceRestarts <= 0
+      ) {
+        // A dead managed child within the restart budget is a crash, which a
+        // stop resets anyway; only an exhausted budget still means giving up.
         recordOwnershipError();
       }
       const ownershipError = esbuildOwnershipError;
@@ -572,6 +878,9 @@ export class EsbuildBundler implements Bundler {
       if (esbuildModule === m) esbuildModule = null;
       if (esbuildService === service) esbuildService = null;
       esbuildShutdownError = null;
+      // A clean stop resets esbuild's module state, so a pending crash needs
+      // no recovery pass anymore.
+      esbuildServiceLost = false;
 
       if (disposalError) {
         if (pluginDisposalError === disposalError) pluginDisposalError = null;

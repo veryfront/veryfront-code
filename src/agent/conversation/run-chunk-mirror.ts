@@ -257,23 +257,34 @@ async function runHostedChunkMirrorTrace<T>(
   return await operation();
 }
 
+// Retries are self-healing and back off to only a few seconds, so logging
+// every attempt at error level turns one degraded append window into a Sentry
+// error every few seconds per active run (VERYFRONT-AGENT-3). Escalate only
+// once the failure streak suggests the outage is persistent; terminal
+// stop/disable paths report at error level separately.
+const HOSTED_CHUNK_MIRROR_RETRY_ERROR_THRESHOLD = 5;
+
 function recordHostedChunkMirrorRetryScheduled(input: {
   instrumentation: HostedConversationRunChunkMirrorInstrumentation | undefined;
   conversationId: string;
   runId: string;
   flushAttempt: ConversationRunMirrorRetryScheduledState;
 }): void {
-  input.instrumentation?.error?.(
-    "Durable run mirror flush failed; queued for retry",
-    createHostedChunkMirrorRetryMetadata({
-      conversationId: input.conversationId,
-      runId: input.runId,
-      errorMessage: input.flushAttempt.errorMessage ?? "Conversation run append failed",
-      retryDelayMs: input.flushAttempt.retryDelayMs,
-      pendingEventCount: input.flushAttempt.pendingEventCount,
-      consecutiveFailures: input.flushAttempt.consecutiveFailures,
-    }),
-  );
+  const metadata = createHostedChunkMirrorRetryMetadata({
+    conversationId: input.conversationId,
+    runId: input.runId,
+    errorMessage: input.flushAttempt.errorMessage ?? "Conversation run append failed",
+    retryDelayMs: input.flushAttempt.retryDelayMs,
+    pendingEventCount: input.flushAttempt.pendingEventCount,
+    consecutiveFailures: input.flushAttempt.consecutiveFailures,
+  });
+  const message = "Durable run mirror flush failed; queued for retry";
+  if (input.flushAttempt.consecutiveFailures >= HOSTED_CHUNK_MIRROR_RETRY_ERROR_THRESHOLD) {
+    input.instrumentation?.error?.(message, metadata);
+    return;
+  }
+
+  input.instrumentation?.warn?.(message, metadata);
 }
 
 function recordHostedChunkMirrorHighBacklog(input: {

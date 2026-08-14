@@ -567,6 +567,26 @@ const configCacheByProject = new LRUCache<string, ConfigCacheEntry>({
   maxEntries: DEFAULT_CONFIG_CACHE_MAX_ENTRIES,
 });
 
+interface HostedConfigFailureCacheEntry {
+  readonly revision: number;
+  readonly error: DeclarativeConfigEvaluationError;
+}
+
+/**
+ * Negative cache for deterministic hosted config rejections.
+ *
+ * The hosted cache key already folds in the exact source digest, policy
+ * version and environment fingerprint, so a rejected source stays rejected
+ * until the tenant ships different content; re-sending it to the evaluator
+ * worker on every request only repeats the same failure.
+ */
+const hostedConfigFailureCacheByProject = new LRUCache<
+  string,
+  HostedConfigFailureCacheEntry
+>({
+  maxEntries: DEFAULT_CONFIG_CACHE_MAX_ENTRIES,
+});
+
 type HostedConfigEvaluator = typeof evaluatePreparedDeclarativeConfigInWorker;
 
 interface HostedConfigSourceSelection {
@@ -632,8 +652,9 @@ const trustedConfigFlights = new IntrinsicMap<string, TrustedConfigFlight>();
 const trustedVirtualFilesystemIds = new IntrinsicWeakMap<object, number>();
 let nextTrustedVirtualFilesystemId = 1;
 
-// Register cache for monitoring
+// Register caches for monitoring
 registerLRUCache("config-cache", configCacheByProject);
+registerLRUCache("config-failure-cache", hostedConfigFailureCacheByProject);
 
 let cacheRevision = 0;
 
@@ -1069,6 +1090,19 @@ function buildHostedConfigFlightKey(hostedCacheKey: string, revision: number): s
   return `${revision}:${hostedCacheKey}`;
 }
 
+/**
+ * Whether a hosted evaluation failure is guaranteed to repeat for the same
+ * cache key. Worker-phase and retryable failures are infrastructure
+ * conditions that can succeed on retry, so they must never be cached.
+ */
+function isDeterministicHostedConfigRejection(
+  error: unknown,
+): error is DeclarativeConfigEvaluationError {
+  return error instanceof DeclarativeConfigEvaluationError &&
+    !error.retryable &&
+    error.phase !== "worker";
+}
+
 function createHostedConfigFlight(
   flightKey: string,
   hostedCacheKey: string,
@@ -1117,6 +1151,15 @@ function createHostedConfigFlight(
     },
     (error: unknown) => {
       finish();
+      if (
+        usePersistentCache && cacheRevision === revisionAtStart &&
+        isDeterministicHostedConfigRejection(error)
+      ) {
+        hostedConfigFailureCacheByProject.set(hostedCacheKey, {
+          revision: revisionAtStart,
+          error,
+        });
+      }
       result.reject(error);
     },
   );
@@ -1737,6 +1780,13 @@ function loadHostedConfigFromSource(
       const cached = usePersistentCache ? configCacheByProject.get(hostedCacheKey) : undefined;
       if (cached?.revision === revisionAtStart) {
         return cached.config;
+      }
+
+      const cachedFailure = usePersistentCache
+        ? hostedConfigFailureCacheByProject.get(hostedCacheKey)
+        : undefined;
+      if (cachedFailure?.revision === revisionAtStart) {
+        throw cachedFailure.error;
       }
 
       const flight = getOrCreateHostedConfigFlight(
@@ -2492,6 +2542,7 @@ export function __getTrustedConfigFlightStateForTests(): Readonly<{
 
 export function clearConfigCache(): void {
   configCacheByProject.clear();
+  hostedConfigFailureCacheByProject.clear();
   cacheRevision++;
 }
 

@@ -2209,6 +2209,185 @@ export default config as const;
       assertEquals(reads, 4);
     });
 
+    describe("hosted config negative caching", () => {
+      const productionSourceContext = {
+        productionMode: true,
+        releaseId: "release-negative-cache",
+        environmentName: "Production",
+      } as const;
+      type PreparedContext = Awaited<
+        ReturnType<typeof prepareDeclarativeConfigContext>
+      >;
+      type TestAdapter = ReturnType<typeof setup>;
+
+      function createHostedAdapter(
+        readSource: () => string = () => 'export default { title: "source" };',
+      ): TestAdapter {
+        const adapter = setup();
+        Object.assign(adapter.fs, {
+          getUnderlyingAdapter: () => adapter.fs,
+          isMultiProjectMode: () => true,
+          isVeryfrontAdapter: () => true,
+          exists: async (path: string) => path === "/veryfront.config.ts",
+          readFile: async (path: string) => {
+            if (path !== "/veryfront.config.ts") throw configCandidateNotFound(path);
+            return readSource();
+          },
+        });
+        return adapter;
+      }
+
+      function loadProductionHostedConfig(
+        adapter: TestAdapter,
+        preparedContext: PreparedContext,
+      ) {
+        const projectId = "project-negative-cache";
+        return runWithRequestContext(
+          {
+            projectSlug: projectId,
+            projectId,
+            token: "token",
+            productionMode: true,
+            releaseId: productionSourceContext.releaseId,
+            environmentName: productionSourceContext.environmentName,
+          },
+          () =>
+            getHostedConfig(`/hosted/${projectId}`, adapter, {
+              cacheKey: projectId,
+              sourceContext: productionSourceContext,
+              preparedContext,
+            }),
+        );
+      }
+
+      function prepareProductionContext(): Promise<PreparedContext> {
+        return prepareDeclarativeConfigContext({
+          environmentName: "Production",
+          environment: { TENANT: "tenant" },
+        });
+      }
+
+      it("does not re-evaluate a deterministically rejected hosted config on later requests", async () => {
+        const adapter = createHostedAdapter();
+        const preparedContext = await prepareProductionContext();
+        let evaluations = 0;
+        __setHostedConfigEvaluatorForTests(async () => {
+          evaluations += 1;
+          throw new DeclarativeConfigEvaluationError({
+            code: "forbidden-capability",
+            phase: "validate",
+            reason: "unsupported-call",
+          });
+        });
+
+        const first = await assertRejects(
+          () => loadProductionHostedConfig(adapter, preparedContext),
+          VeryfrontError,
+        ) as VeryfrontError;
+        const second = await assertRejects(
+          () => loadProductionHostedConfig(adapter, preparedContext),
+          VeryfrontError,
+        ) as VeryfrontError;
+
+        assertEquals(first.slug, "config-parse-error");
+        assertEquals(second.slug, "config-parse-error");
+        assertStringIncludes(
+          first.detail ?? "",
+          "Hosted configuration rejected (forbidden-capability: unsupported-call)",
+        );
+        assertStringIncludes(
+          second.detail ?? "",
+          "Hosted configuration rejected (forbidden-capability: unsupported-call)",
+        );
+        assertEquals(
+          evaluations,
+          1,
+          "a deterministic rejection must be negatively cached, not re-evaluated per request",
+        );
+      });
+
+      it("re-evaluates a rejected hosted config after the source changes", async () => {
+        let source = "const forbidden = process.env;\nexport default { title: 'source' };";
+        const adapter = createHostedAdapter(() => source);
+        const preparedContext = await prepareProductionContext();
+        let evaluations = 0;
+        __setHostedConfigEvaluatorForTests(async () => {
+          evaluations += 1;
+          if (evaluations === 1) {
+            throw new DeclarativeConfigEvaluationError({
+              code: "forbidden-capability",
+              phase: "validate",
+              reason: "unsupported-call",
+            });
+          }
+          return { title: "corrected" };
+        });
+
+        await assertRejects(
+          () => loadProductionHostedConfig(adapter, preparedContext),
+          VeryfrontError,
+        );
+        source = 'export default { title: "corrected" };';
+        const corrected = await loadProductionHostedConfig(adapter, preparedContext);
+
+        assertEquals(corrected.title, "corrected");
+        assertEquals(evaluations, 2);
+      });
+
+      it("re-evaluates a rejected hosted config after clearConfigCache", async () => {
+        const adapter = createHostedAdapter();
+        const preparedContext = await prepareProductionContext();
+        let evaluations = 0;
+        __setHostedConfigEvaluatorForTests(async () => {
+          evaluations += 1;
+          throw new DeclarativeConfigEvaluationError({
+            code: "forbidden-capability",
+            phase: "validate",
+            reason: "unsupported-call",
+          });
+        });
+
+        await assertRejects(
+          () => loadProductionHostedConfig(adapter, preparedContext),
+          VeryfrontError,
+        );
+        clearConfigCache();
+        await assertRejects(
+          () => loadProductionHostedConfig(adapter, preparedContext),
+          VeryfrontError,
+        );
+
+        assertEquals(evaluations, 2);
+      });
+
+      it("never negatively caches retryable infrastructure failures", async () => {
+        const adapter = createHostedAdapter();
+        const preparedContext = await prepareProductionContext();
+        let evaluations = 0;
+        __setHostedConfigEvaluatorForTests(async () => {
+          evaluations += 1;
+          if (evaluations === 1) {
+            throw new DeclarativeConfigEvaluationError({
+              code: "evaluator-unavailable",
+              phase: "worker",
+              reason: "worker-timeout",
+              retryable: true,
+            });
+          }
+          return { title: "recovered" };
+        });
+
+        await assertRejects(
+          () => loadProductionHostedConfig(adapter, preparedContext),
+          VeryfrontError,
+        );
+        const recovered = await loadProductionHostedConfig(adapter, preparedContext);
+
+        assertEquals(recovered.title, "recovered");
+        assertEquals(evaluations, 2);
+      });
+    });
+
     describe("hosted config single-flight", () => {
       const productionSourceContext = {
         productionMode: true,

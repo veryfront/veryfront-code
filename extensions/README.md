@@ -116,9 +116,12 @@ the same contract.
 These packages are known to `createBuiltinExtensions()`, but that does not make
 every contract an unconditional global default. Direct built-ins are provided
 by their owning source or service distribution. Deferred candidates load only
-when the matching feature selects their contract and the executing distribution
-contains the package. The standard `veryfront` npm/CLI package installs the
-baseline subset used by ordinary apps and local development.
+when the matching feature selects their contract. Deferred describes activation
+timing, not implementation availability. Most deferred implementations are
+package-backed and skip when the executing distribution does not contain their
+package. The MLflow exporter is root-bundled but remains deferred until selected.
+The standard `veryfront` npm/CLI package installs the baseline package-backed
+subset used by ordinary apps and local development.
 
 | Package                                      | Contract                      | Selection and availability                |
 | -------------------------------------------- | ----------------------------- | ----------------------------------------- |
@@ -137,7 +140,7 @@ baseline subset used by ordinary apps and local development.
 | `@veryfront/ext-observability-opentelemetry` | `TracingExporter`             | Deferred; install when OTLP is configured |
 | `@veryfront/ext-observability-opentelemetry` | `NodeTelemetryProvider`       | Built into the owning agent service       |
 | `@veryfront/ext-eval-report-http`            | Generic HTTP eval exporter    | Deferred; source/service distribution     |
-| `@veryfront/ext-eval-report-mlflow`          | MLflow eval exporter          | Deferred; source/service distribution     |
+| `@veryfront/ext-eval-report-mlflow`          | MLflow eval exporter          | Deferred; root-bundled                    |
 | `@veryfront/ext-llm-openai`                  | `LLMProvider:openai`          | Direct service/source built-in            |
 | `@veryfront/ext-llm-anthropic`               | `LLMProvider:anthropic`       | Direct service/source built-in            |
 | `@veryfront/ext-llm-google`                  | `LLMProvider:google`          | Direct service/source built-in            |

@@ -118,6 +118,6 @@ export function getTemplateConfig(name: TemplateName): TemplateConfig | null {
   return templateConfigs[resolveTemplateAlias(name)] ?? null;
 }
 
-export function getAiRuleTemplate(templateName: string): string | null {
+export function getAiRuleTemplate(templateName: string): Promise<string | null> {
   return loadAiRuleTemplate(templateName);
 }

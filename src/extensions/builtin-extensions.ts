@@ -29,13 +29,19 @@ type BuiltinLLMProviderDefinition = {
   provider: () => LLMProvider;
 };
 
-export type OptionalBuiltinExtensionDefinition = {
+type DeferredBuiltinExtensionBase = {
   readonly name: string;
   readonly origin: string;
   readonly sourceDirectory: string;
   readonly evalExporterSelection?: FirstPartyEvalExporterSelection;
-  readonly factory?: ExtensionFactory;
 };
+
+export type DeferredBuiltinExtensionDefinition =
+  & DeferredBuiltinExtensionBase
+  & (
+    | { readonly availability: "package"; readonly factory?: never }
+    | { readonly availability: "root-bundled"; readonly factory: ExtensionFactory }
+  );
 
 const BUILTIN_LLM_PROVIDERS: BuiltinLLMProviderDefinition[] = [
   {
@@ -55,23 +61,30 @@ const BUILTIN_LLM_PROVIDERS: BuiltinLLMProviderDefinition[] = [
   },
 ];
 
-export const OPTIONAL_BUILTIN_EXTENSIONS = Object.freeze(
-  FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES.map((policy) =>
-    Object.freeze({
-      name: policy.name,
-      origin: `veryfront/${policy.sourceDirectory}`,
-      sourceDirectory: policy.sourceDirectory,
-      ...(policy.evalExporterSelection
-        ? { evalExporterSelection: policy.evalExporterSelection }
-        : {}),
-      ...(policy.name === "ext-eval-report-mlflow"
-        ? {
+export const DEFERRED_BUILTIN_EXTENSIONS = Object.freeze(
+  FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES.map(
+    (policy): DeferredBuiltinExtensionDefinition => {
+      const definition = {
+        name: policy.name,
+        origin: `veryfront/${policy.sourceDirectory}`,
+        sourceDirectory: policy.sourceDirectory,
+        ...(policy.evalExporterSelection
+          ? { evalExporterSelection: policy.evalExporterSelection }
+          : {}),
+      } satisfies DeferredBuiltinExtensionBase;
+
+      if (policy.name === "ext-eval-report-mlflow") {
+        return Object.freeze({
+          ...definition,
           // MLflow is deliberately shipped inside the root npm package rather
           // than published as a standalone extension package.
+          availability: "root-bundled",
           factory: extEvalReportMlflow,
-        }
-        : {}),
-    }) satisfies OptionalBuiltinExtensionDefinition
+        });
+      }
+
+      return Object.freeze({ ...definition, availability: "package" });
+    },
   ),
 );
 
@@ -156,33 +169,34 @@ function createBuiltinLLMProviderExtension(
   };
 }
 
-export function createOptionalBuiltinExtension(
-  definition: OptionalBuiltinExtensionDefinition,
+export function createDeferredBuiltinExtension(
+  definition: DeferredBuiltinExtensionDefinition,
 ): ResolvedExtension {
   const capturedDefinition = Object.freeze({ ...definition });
   return createDeferredResolvedExtension({
     name: capturedDefinition.name,
     source: "builtin",
     origin: capturedDefinition.origin,
-    load: (logger) => loadOptionalBuiltinExtension(capturedDefinition, logger),
+    load: (logger) => loadDeferredBuiltinExtension(capturedDefinition, logger),
   });
 }
 
-async function loadOptionalBuiltinExtension(
-  definition: OptionalBuiltinExtensionDefinition,
+async function loadDeferredBuiltinExtension(
+  definition: DeferredBuiltinExtensionDefinition,
   logger: ExtensionLogger,
 ): Promise<Extension | undefined> {
-  const configuredFactory = definition.factory;
   try {
-    const factory = configuredFactory ?? await importOptionalBuiltinFactory(
-      definition.sourceDirectory,
-      getFirstPartyExtensionPackageName(definition),
-    );
+    const factory = definition.availability === "root-bundled"
+      ? definition.factory
+      : await importDeferredBuiltinFactory(
+        definition.sourceDirectory,
+        getFirstPartyExtensionPackageName(definition),
+      );
     const factoryResult = (factory as () => unknown)();
     const issues = validateExtension(factoryResult);
     if (issues.length > 0) {
       throw EXTENSION_VALIDATION_ERROR.create({
-        detail: `Optional builtin factory for "${definition.name}" returned an invalid extension: ${
+        detail: `Deferred builtin factory for "${definition.name}" returned an invalid extension: ${
           issues.join("; ")
         }`,
       });
@@ -191,14 +205,14 @@ async function loadOptionalBuiltinExtension(
     if (extension.name !== definition.name) {
       throw EXTENSION_VALIDATION_ERROR.create({
         detail:
-          `Optional builtin factory for "${definition.name}" returned extension "${extension.name}"`,
+          `Deferred builtin factory for "${definition.name}" returned extension "${extension.name}"`,
       });
     }
     return extension;
   } catch (error) {
     if (
-      configuredFactory !== undefined ||
-      !isMissingOptionalBuiltinImplementation(error, definition)
+      definition.availability === "root-bundled" ||
+      !isMissingDeferredBuiltinImplementation(error, definition)
     ) {
       throw error;
     }
@@ -211,7 +225,7 @@ async function loadOptionalBuiltinExtension(
   }
 }
 
-async function importOptionalBuiltinFactory(
+async function importDeferredBuiltinFactory(
   sourceDirectory: string,
   packageName: string,
 ): Promise<ExtensionFactory> {
@@ -226,9 +240,9 @@ async function importOptionalBuiltinFactory(
   return mod.default as ExtensionFactory;
 }
 
-function isMissingOptionalBuiltinImplementation(
+function isMissingDeferredBuiltinImplementation(
   error: unknown,
-  definition: OptionalBuiltinExtensionDefinition,
+  definition: DeferredBuiltinExtensionDefinition,
 ): boolean {
   return isMissingFirstPartyExtensionModule(error, [
     `extensions/${definition.sourceDirectory}/src/index`,
@@ -237,7 +251,7 @@ function isMissingOptionalBuiltinImplementation(
 }
 
 function getFirstPartyExtensionPackageName(
-  definition: OptionalBuiltinExtensionDefinition,
+  definition: DeferredBuiltinExtensionDefinition,
 ): string {
   return definition.origin.replace("veryfront/", "@veryfront/");
 }
@@ -252,7 +266,7 @@ export function createBuiltinExtensions(): ResolvedExtension[] {
       origin: "veryfront/ext-schema-zod",
       extension: extZod(),
     },
-    ...OPTIONAL_BUILTIN_EXTENSIONS.map(createOptionalBuiltinExtension),
+    ...DEFERRED_BUILTIN_EXTENSIONS.map(createDeferredBuiltinExtension),
     ...BUILTIN_LLM_PROVIDERS.map(createBuiltinLLMProviderExtension),
   ];
 }
@@ -261,7 +275,7 @@ export function createEvalCliBuiltinExtensions(
   selectedExporterIds: string[] = [],
 ): ResolvedExtension[] {
   const selected = new Set(selectedExporterIds);
-  const exporterExtensions = OPTIONAL_BUILTIN_EXTENSIONS.filter((definition) => {
+  const exporterExtensions = DEFERRED_BUILTIN_EXTENSIONS.filter((definition) => {
     const selection = definition.evalExporterSelection;
     if (!selection) return false;
     return selection.kind === "any-selected" ? selected.size > 0 : selected.has(selection.id);
@@ -273,7 +287,7 @@ export function createEvalCliBuiltinExtensions(
       origin: "veryfront/ext-schema-zod",
       extension: extZod(),
     },
-    ...exporterExtensions.map(createOptionalBuiltinExtension),
+    ...exporterExtensions.map(createDeferredBuiltinExtension),
     ...BUILTIN_LLM_PROVIDERS.map(createBuiltinLLMProviderExtension),
   ];
 }

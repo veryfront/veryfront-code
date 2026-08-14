@@ -3,11 +3,27 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
+import {
   getCandidateManifestCacheStats,
   getProjectCandidates,
   getRouteCandidates,
   invalidateProjectCandidateManifests,
 } from "./css-candidate-manifest.ts";
+
+function captureLogs(): { entries: LogEntry[]; restore: () => void } {
+  const entries: LogEntry[] = [];
+  __registerLogRecordEmitter((entry) => entries.push(entry));
+  return {
+    entries,
+    restore: () => {
+      __resetLogRecordEmitterForTests();
+    },
+  };
+}
 
 describe("rendering/orchestrator/css-candidate-manifest", () => {
   describe("invalidateProjectCandidateManifests", () => {
@@ -220,6 +236,109 @@ describe("rendering/orchestrator/css-candidate-manifest", () => {
           {
             path: "/project/knowledge/reference.tsx",
             content: '<div className="text-blue-500">Reference</div>',
+          },
+        ],
+        developmentMode: false,
+      });
+
+      assertEquals(result.has("text-red-500"), true);
+      assertEquals(result.has("text-blue-500"), false);
+    });
+
+    it("degrades a file that exceeds the candidate-count admission cap instead of throwing", () => {
+      invalidateProjectCandidateManifests();
+      // >MAX_CSS_SELECTOR_TOKENS (100_000) distinct candidates in one file —
+      // the shape of a large minified vendor bundle in project sources.
+      const poisonContent = Array.from({ length: 100_001 }, (_, i) => `tok-${i}`).join(" ");
+      const options = {
+        projectScope: "project-poison-count",
+        projectVersion: "v1",
+        projectDir: "/project",
+        files: [
+          { path: "/project/vendor/minified.js", content: poisonContent },
+          {
+            path: "/project/pages/index.tsx",
+            content: '<div className="text-red-500">Home</div>',
+          },
+        ],
+        developmentMode: false,
+      };
+
+      const result = getProjectCandidates(options);
+
+      assertEquals(result.has("text-red-500"), true);
+      assertEquals(result.has("tok-0"), false);
+
+      // The completed manifest must be cached so the pathological file is not
+      // re-scanned (and cannot re-fail) on every request.
+      const statsAfterFirst = getCandidateManifestCacheStats();
+      assertEquals(statsAfterFirst.manifests.entries, 1);
+      const second = getProjectCandidates(options);
+      assertEquals(second.has("text-red-500"), true);
+    });
+
+    it("logs rejected source files without exposing absolute project paths", () => {
+      invalidateProjectCandidateManifests();
+      const captured = captureLogs();
+      try {
+        const projectDir = "/Users/someone/private/path/my-project";
+        const absoluteSourcePath = `${projectDir}/vendor/minified.js`;
+        const outsideSourcePath = "/Users/someone/other-parent/minified.js";
+        const poisonContent = Array.from({ length: 100_001 }, (_, i) => `tok-${i}`).join(" ");
+
+        getProjectCandidates({
+          projectScope: "project-poison-log-redaction",
+          projectVersion: "v1",
+          projectDir,
+          files: [
+            { path: absoluteSourcePath, content: poisonContent },
+            { path: outsideSourcePath, content: poisonContent },
+          ],
+          developmentMode: false,
+        });
+
+        const projectWarning = captured.entries.find((entry) =>
+          entry.message === "Skipping file rejected by candidate extraction" &&
+          entry.context?.path === "vendor/minified.js"
+        );
+        assertEquals(projectWarning !== undefined, true, "the in-project warning must be emitted");
+        assertEquals(JSON.stringify(projectWarning!.context).includes(projectDir), false);
+        assertEquals(JSON.stringify(projectWarning!.context).includes(absoluteSourcePath), false);
+
+        const outsideWarning = captured.entries.find((entry) =>
+          entry.message === "Skipping file rejected by candidate extraction" &&
+          entry.context?.path === "[outside-project]/minified.js"
+        );
+        assertEquals(
+          outsideWarning !== undefined,
+          true,
+          "the outside-project warning must be emitted",
+        );
+        assertEquals(outsideWarning!.context?.path, "[outside-project]/minified.js");
+        const outsideContext = JSON.stringify(outsideWarning!.context);
+        assertEquals(outsideContext.includes(outsideSourcePath), false);
+        assertEquals(outsideContext.includes("/Users/someone"), false);
+        assertEquals(outsideContext.includes("other-parent"), false);
+      } finally {
+        captured.restore();
+      }
+    });
+
+    it("degrades a file that exceeds the byte-size admission cap instead of throwing", () => {
+      invalidateProjectCandidateManifests();
+      // >MAX_CSS_FILE_BYTES (16MB) — e.g. a giant generated asset in sources.
+      const oversized = "text-blue-500 ".repeat(
+        Math.ceil((16 * 1024 * 1024 + 1) / "text-blue-500 ".length),
+      );
+      const result = getProjectCandidates({
+        projectScope: "project-poison-bytes",
+        projectVersion: "v1",
+        projectDir: "/project",
+        files: [
+          { path: "/project/generated/blob.js", content: oversized },
+          {
+            path: "/project/pages/index.tsx",
+            content: '<div className="text-red-500">Home</div>',
           },
         ],
         developmentMode: false,

@@ -11,7 +11,7 @@ import type { CrossProjectImport, MissingImport } from "#veryfront/transforms/es
 import { parseLocalImports } from "#veryfront/transforms/esm/import-parser.ts";
 import { registerCSSImport } from "../css-import-collector.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { createError, toError } from "#veryfront/errors";
+import { BUILD_FAILED, createError, toError, VeryfrontError } from "#veryfront/errors";
 import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { MAX_TRANSFORM_DEPTH, TRANSFORM_BATCH_SIZE } from "./constants.ts";
@@ -22,6 +22,13 @@ import {
 } from "#veryfront/cache/dependency-graph.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
+
+function isTerminalHttpModuleFetchFailure(error: unknown): error is VeryfrontError {
+  if (!(error instanceof VeryfrontError) || error.slug !== BUILD_FAILED.slug) return false;
+  const context = error.context;
+  return typeof context === "object" && context !== null &&
+    (context as { phase?: unknown }).phase === "http-module-fetch";
+}
 
 /**
  * Manages dependency validation for SSR module loading:
@@ -150,7 +157,7 @@ export class SSRDependencyValidator {
 
     for (let i = 0; i < imports.length; i += TRANSFORM_BATCH_SIZE) {
       const batch = imports.slice(i, i + TRANSFORM_BATCH_SIZE);
-      await Promise.all(
+      const results = await Promise.allSettled(
         batch.map(async (imp) => {
           try {
             const depSource = await this.readLocalImportSource(imp.absolutePath, localFs);
@@ -165,6 +172,7 @@ export class SSRDependencyValidator {
             importPathMap.set(imp.specifier, depEntry.tempPath);
             importPathMap.set(imp.absolutePath, depEntry.tempPath);
           } catch (error) {
+            if (isTerminalHttpModuleFetchFailure(error)) throw error;
             this.missingDependencies.push({
               specifier: imp.specifier,
               fromFile: fromFilePath,
@@ -175,6 +183,8 @@ export class SSRDependencyValidator {
           }
         }),
       );
+      const terminalFailure = results.find((result) => result.status === "rejected");
+      if (terminalFailure?.status === "rejected") throw terminalFailure.reason;
     }
 
     return importPathMap;
