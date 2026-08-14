@@ -656,6 +656,25 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("preserves explicit false for a sensitive boolean option", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "login",
+          "--token=false",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront login --token=false",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("shell-quotes equals-style option names in the correction", async () => {
       stubExit();
       stubLogger();

@@ -172,6 +172,7 @@ export async function formatDuplicatedBinaryHint(
     return undefined;
   }
   const { sanitizeUrlCredentials } = await import("veryfront/utils");
+  const { COMMANDS } = await import("./help/command-definitions.ts");
   const duplicatedBinaryIndex = args.__rawPositionals?.[0];
   const hintArguments = args.__raw !== undefined && duplicatedBinaryIndex !== undefined
     ? args.__raw.filter((_, index) => index !== duplicatedBinaryIndex)
@@ -189,12 +190,24 @@ export async function formatDuplicatedBinaryHint(
     );
     const redactOptionValue = sensitiveOption || opaquePayloadOptions.has(option);
     const allowRootRelativeRoute = rootRelativeRouteOptions.has(option);
+    const parsedOptionValue = args[option.replace(/^-+/u, "")];
+    const correctedCommand = args._[1];
+    const booleanOption = typeof correctedCommand === "string" &&
+      COMMANDS[correctedCommand]?.options?.some((definition) =>
+          !definition.flag.includes("<") &&
+          (definition.flag.match(/--?[a-z0-9-]+/giu) ?? []).some((name) => name === option)
+        ) === true;
 
     if (equalsIndex > 0) {
       const formattedOption = formatCommandHintArgument(option, sanitizeUrlCredentials);
-      const value = redactOptionValue
+      const rawValue = argument.slice(equalsIndex + 1);
+      const explicitBooleanValue = booleanOption &&
+        /^(?:false|no|off|0|true|yes|on|1)$/iu.test(rawValue.trim());
+      const value = explicitBooleanValue
+        ? formatCommandHintArgument(rawValue, sanitizeUrlCredentials)
+        : redactOptionValue
         ? "'<REDACTED>'"
-        : formatCommandHintArgument(argument.slice(equalsIndex + 1), sanitizeUrlCredentials, {
+        : formatCommandHintArgument(rawValue, sanitizeUrlCredentials, {
           allowRootRelativeRoute,
         });
       formatted.push(`${formattedOption}=${value}`);
@@ -202,7 +215,6 @@ export async function formatDuplicatedBinaryHint(
     }
 
     formatted.push(formatCommandHintArgument(argument, sanitizeUrlCredentials));
-    const parsedOptionValue = args[option.replace(/^-+/u, "")];
     if (
       redactOptionValue &&
       parsedOptionValue !== true &&
