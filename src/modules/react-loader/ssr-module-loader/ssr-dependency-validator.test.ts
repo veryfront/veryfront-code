@@ -11,8 +11,9 @@ import { SSRDependencyValidator } from "./ssr-dependency-validator.ts";
 
 describe("SSRDependencyValidator", () => {
   it("preserves terminal HTTP fetch failures from local dependencies", async () => {
-    const projectDir = await makeTempDir({ prefix: "vf-ssr-dependency-validator-" });
-    const dependencyPath = join(projectDir, "markdown-renderer.tsx");
+    const tempDir = await makeTempDir({ prefix: "vf-ssr-dependency-validator-" });
+    const projectDir = join(tempDir, "project");
+    const dependencyPath = join(tempDir, "markdown-renderer.tsx");
     const fetchError = BUILD_FAILED.create({
       detail: "Failed to fetch https://esm.sh/marked: AbortError",
       context: { phase: "http-module-fetch" },
@@ -43,14 +44,15 @@ describe("SSRDependencyValidator", () => {
       assertEquals(error, fetchError);
       assertEquals(validator.missingDependencies, []);
     } finally {
-      await remove(projectDir, { recursive: true });
+      await remove(tempDir, { recursive: true });
     }
   });
 
   it("waits for sibling transforms before propagating a terminal HTTP fetch failure", async () => {
-    const projectDir = await makeTempDir({ prefix: "vf-ssr-dependency-validator-" });
-    const terminalPath = join(projectDir, "terminal.ts");
-    const siblingPath = join(projectDir, "sibling.ts");
+    const tempDir = await makeTempDir({ prefix: "vf-ssr-dependency-validator-" });
+    const projectDir = join(tempDir, "project");
+    const terminalPath = join(tempDir, "terminal.ts");
+    const siblingPath = join(tempDir, "sibling.ts");
     const siblingStarted = Promise.withResolvers<void>();
     const releaseSibling = Promise.withResolvers<void>();
     const fetchError = BUILD_FAILED.create({
@@ -100,7 +102,7 @@ describe("SSRDependencyValidator", () => {
       assertEquals(error, fetchError);
     } finally {
       releaseSibling.resolve();
-      await remove(projectDir, { recursive: true });
+      await remove(tempDir, { recursive: true });
     }
   });
 });
