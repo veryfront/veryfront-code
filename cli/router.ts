@@ -162,11 +162,11 @@ function containsLocalPath(value: string): boolean {
     if (!startsWithLocalPath(suffix)) continue;
     if (separator !== ":" || !suffix.startsWith("//")) return true;
 
-    const previousSeparator = Math.max(
-      value.lastIndexOf("=", index - 1),
-      value.lastIndexOf(":", index - 1),
-      value.lastIndexOf(",", index - 1),
-    );
+    let previousSeparator = index - 1;
+    while (
+      previousSeparator >= 0 &&
+      !LOCAL_PATH_BOUNDARIES.has(value[previousSeparator]!)
+    ) previousSeparator--;
     if (!URL_SCHEME.test(value.slice(previousSeparator + 1, index))) return true;
   }
 

@@ -615,6 +615,25 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("preserves public URLs embedded after whitespace", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "task",
+          "see https://docs.example.test/guide",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront task 'see https://docs.example.test/guide'",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("redacts root-relative paths outside build route filters", async () => {
       stubExit();
       stubLogger();
