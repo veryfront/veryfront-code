@@ -14,6 +14,9 @@ const POSTGRES_JS_CONNECTION_CLOSED_PATTERN = /^write CONNECTION_CLOSED(?:\s|$)/
 const FAILED_QUERY_PREFIX = "Failed query: ";
 const FAILED_QUERY_PARAMS_DELIMITER = "\nparams:";
 const FAILED_QUERY_HEAD_MAX_LENGTH = 200;
+const SQL_DOLLAR_QUOTE_START_PATTERN = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/;
+const SQL_NUMERIC_LITERAL_PATTERN = /^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/;
+const SQL_IDENTIFIER_CHAR_PATTERN = /[A-Za-z0-9_$]/;
 
 const SENTRY_TOKEN_PATTERN = /\bsntrys_[A-Za-z0-9_+/=-]+\b/g;
 const BEARER_TOKEN_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi;
@@ -173,12 +176,84 @@ export function normalizeFailedQueryValue(value: string): string {
   if (!/^\s*\n/.test(remainder)) return value;
   const paramsDelimiterIndex = remainder.indexOf(FAILED_QUERY_PARAMS_DELIMITER);
   const query = paramsDelimiterIndex === -1 ? remainder : remainder.slice(0, paramsDelimiterIndex);
-  const head = query
+  const titleQuery = redactSqlLiteralsForTitle(query);
+  const head = titleQuery
     .slice(0, FAILED_QUERY_HEAD_MAX_LENGTH)
     .replace(/\s+/g, " ")
     .trim();
-  const truncated = query.trimEnd().length > FAILED_QUERY_HEAD_MAX_LENGTH;
+  const truncated = titleQuery.trimEnd().length > FAILED_QUERY_HEAD_MAX_LENGTH;
   return `${FAILED_QUERY_PREFIX}${head}${truncated ? "…" : ""}`;
+}
+
+function redactSqlLiteralsForTitle(query: string): string {
+  let redacted = "";
+  let index = 0;
+
+  while (index < query.length) {
+    const character = query.charAt(index);
+
+    if (character === '"') {
+      const end = findQuotedSqlTokenEnd(query, index, '"');
+      redacted += query.slice(index, end);
+      index = end;
+      continue;
+    }
+
+    if (character === "'") {
+      index = findQuotedSqlTokenEnd(query, index, "'");
+      redacted += "?";
+      continue;
+    }
+
+    if (character === "$") {
+      const delimiter = query.slice(index).match(SQL_DOLLAR_QUOTE_START_PATTERN)?.[0];
+      if (delimiter) {
+        const contentStart = index + delimiter.length;
+        const closingDelimiter = query.indexOf(delimiter, contentStart);
+        index = closingDelimiter === -1 ? query.length : closingDelimiter + delimiter.length;
+        redacted += "?";
+        continue;
+      }
+    }
+
+    const canStartNumber = /[0-9]/.test(character) ||
+      (character === "." && /[0-9]/.test(query[index + 1] ?? ""));
+    const previousCharacter = query[index - 1] ?? "";
+    if (canStartNumber && !SQL_IDENTIFIER_CHAR_PATTERN.test(previousCharacter)) {
+      const literal = query.slice(index).match(SQL_NUMERIC_LITERAL_PATTERN)?.[0];
+      const nextCharacter = literal ? query[index + literal.length] ?? "" : "";
+      if (literal && !SQL_IDENTIFIER_CHAR_PATTERN.test(nextCharacter)) {
+        redacted += "?";
+        index += literal.length;
+        continue;
+      }
+    }
+
+    redacted += character;
+    index += 1;
+  }
+
+  return redacted;
+}
+
+function findQuotedSqlTokenEnd(query: string, start: number, quote: string): number {
+  let index = start + 1;
+  while (index < query.length) {
+    if (quote === "'" && query[index] === "\\" && index + 1 < query.length) {
+      index += 2;
+      continue;
+    }
+    if (query[index] !== quote) {
+      index += 1;
+      continue;
+    }
+    if (query[index + 1] === quote) {
+      index += 2;
+      continue;
+    }
+    return index + 1;
+  }
+  return query.length;
 }
 
 export function redactSensitiveText(value: string): string {
