@@ -40,7 +40,7 @@ single field was patched by hand, but the class of problem it represents -
 schema** - is the thing this RFC is really about.
 
 This RFC (a) catalogues every reason a *standard* org would not "just work",
-(b) resolves the "should the 16 tools be dynamic?" question against how the
+(b) resolves the "must the 16 tools be dynamic?" question against how the
 platform actually loads tools, and (c) proposes a concrete design: a
 **comprehensive-but-safe static tool surface + passthrough writes +
 describe-driven preflight + a documented reference-org baseline + graceful,
@@ -275,8 +275,13 @@ have the tool degrade gracefully (§8).
 
 `create_case` / `create_lead` fail on orgs with required custom fields or
 validation rules (`FIELD_CUSTOM_VALIDATION_EXCEPTION`, `REQUIRED_FIELD_MISSING`).
-A vanilla Developer org is clean; any real customer org may not be. This mostly
-affects the "create a case" prompt, less the triage path.
+Infer required create fields from `describe()` metadata where
+`createable = true`, `nillable = false`, and `defaultedOnCreate = false`, then
+exclude fields the platform or object-specific docs prove are system-supplied or
+conditionally required. Validation rules and many managed-package requirements are
+not discoverable through `describe()`, so a vanilla Developer org can still differ
+from a customer org. This mostly affects the "create a case" prompt, less the
+triage path.
 
 ### 4.5 Field-Level Security & profile ceiling
 
@@ -407,6 +412,14 @@ concrete operation (`CaseComment` Create, `Case` Create/Update, `Lead` Create).
 Do not infer those writes from `dataAccess.objects` or from a Read grant while the
 per-CRUD arrays are not enforced.
 
+**Caveat - `list_case_activity` must be case-scoped once `q` overrides are
+disabled.** The current tool is a broad CaseComment SOQL query with an optional
+instruction to add `WHERE ParentId = '<caseId>'`. When arbitrary `q` is disabled,
+v1 must not keep a broad recent-comments default for a single-case triage flow.
+Replace it with a static tool that requires a `caseId` path or query parameter and
+uses a fixed `WHERE ParentId = '{caseId}'` query, or gate the tool until the SOQL
+parser/enforcer can authorize and constrain the supplied query fail-closed.
+
 **Caveat - fixed Contact queries with Account relationship fields.** The current
 `find_customer` default selects `Account.Name`, `Account.Type`, and
 `Account.Industry` through Contact, and `search_contacts` selects `Account.Name`.
@@ -504,7 +517,7 @@ record-type behaviour.
 
 ## 8. Graceful degradation - make errors teach, not stall
 
-Every known failure should return an actionable message instead of a raw
+Every known failure must return an actionable message instead of a raw
 4xx/empty string. Some of this is the hosted API's job (it owns execution); some
 is promptable in the agents.
 
@@ -560,7 +573,7 @@ not installed the integration.
   path beyond the current beta package.
 - "Just works" is inherently org-dependent (edition, picklists, FLS, validation
   rules). The Developer-Edition golden path is the only fully controllable target;
-  the blog should say so plainly rather than over-promise on arbitrary orgs.
+  the blog must say so plainly rather than over-promise on arbitrary orgs.
 
 ## 13. Open questions
 
@@ -597,9 +610,12 @@ on every org - while treating picklist *values* and FLS as run-time unknowns.
 > `Type` do **not** by default. But orgs routinely enable "restrict to defined
 > values," and off-list values are bad data regardless - so treat every picklist
 > as describe-first. The authoritative per-field `createable`/`updateable`/
-> `required`/restricted flags should come from `describe()` at run time (the #6364
+> `required`/restricted flags must come from `describe()` at run time (the #6364
 > matrix already surfaces `queryable`/`createable`/`updateable`/`deletable`), not
-> from a hard-coded list.
+> from a hard-coded list. Treat a create field as metadata-required when
+> `createable = true`, `nillable = false`, and `defaultedOnCreate = false`, then
+> apply object-specific documented exceptions for fields that Salesforce supplies or
+> requires conditionally. Validation rules are not discoverable through `describe()`.
 
 ### A.1 The three baseline rules
 
@@ -645,7 +661,7 @@ API flag - so supply a valid pair rather than assuming one field is required.
 
 ### A.3 Standard read-field sets (safe default `SELECT`s)
 
-Curated tools should default to these standard-only field lists. Extend them via
+Curated tools must default to these standard-only field lists. Extend them via
 the tool's `q`/`fields` argument only after the SOQL authorization gate exists;
 never bake in a `__c`:
 
@@ -667,7 +683,7 @@ when the Account grant is present.
 
 Every owner assignment needs a real ID, not a name. Case and Lead can use an
 active `User.Id` or a supported queue `Group.Id`; Opportunity must use an active
-`User.Id` and must reject Group IDs. The baseline should ship the user lookup
+`User.Id` and must reject Group IDs. The baseline must ship the user lookup
 (`SELECT Id, Name FROM User WHERE IsActive = true`) for all three objects and the
 queue lookup (`SELECT Id, Name FROM Group WHERE Type = 'Queue'`) only for
 queue-supported Case/Lead assignment examples.
@@ -677,7 +693,7 @@ queue-supported Case/Lead assignment examples.
 Person Accounts (Contact fields move onto Account), record-type-scoped picklists,
 multi-currency (`CurrencyIsoCode`), localised picklist labels, and Knowledge
 (`KnowledgeArticleVersion`). Examples that need these are out of the baseline and
-should be labelled as requiring org setup.
+must be labelled as requiring org setup.
 
 ## 15. Customization path - the baseline is a floor, not a ceiling
 
@@ -884,15 +900,21 @@ is satisfied. Additional non-CRUD tools complete the future surface:
     names and `recordTypeId` as a Salesforce ID; authorize the canonical
     `sobjectType`; reject traversal plus query/fragment delimiters; and encode each
     path segment exactly once before composing the UI API endpoint.
-  - **Response:** `{ sobjectType, fieldApiName, recordTypeId, values: [{ label, value, active, validFor }] }`
-    - `value` (the API name) is what a write must send.
+  - **Response:** a plain static endpoint returns the raw Salesforce UI API
+    picklist-values response. If the public tool contract must return a normalized
+    shape such as `{ sobjectType, fieldApiName, recordTypeId, values: [...] }`, add
+    hosted response-adapter behavior behind the dedicated static endpoint; do not
+    claim `connector.json` response metadata can reshape the UI API object. In both
+    shapes, `value` (the API name) is what a write must send.
   - **Test:** a record type whose allowed `Reason`/`Status` set is a strict subset of
     the object-wide set, asserting the tool returns the record-type set, not the
     superset (§4.1, §5.3, §A.5).
 - **`search`** (SOSL, deferred) - `GET /search/?q=FIND {...} IN ALL FIELDS ...` for
   cross-object keyword lookup, distinct from the SOQL that `find_customer` uses.
   Ship only after the same fail-closed referenced-object authorization gate covers
-  SOSL.
+  SOSL. Require an explicit parsed `RETURNING Object(Field, ...)` clause and
+  authorize every returned object for Read before execution. Deny SOSL without
+  `RETURNING` fail-closed instead of trying to infer all searchable objects.
 
 Curated per-object write wrappers (`create_contact`, `update_account`,
 `create_opportunity`/`update_opportunity`, `create_task`) and `convert_lead`
