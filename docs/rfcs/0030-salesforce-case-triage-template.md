@@ -11,7 +11,7 @@
 
 ## 1. Summary
 
-We want to open-source **Salesforce Case Triage** as the flagship "fork it and it
+This RFC proposes open-sourcing **Salesforce Case Triage** as the flagship "fork it and it
 just works" template: a four-agent pipeline (Ingest → Classify → Dispose) that
 reads a Salesforce support case, PII-redacts it, classifies it against a
 checked-in taxonomy, then writes a `Reason` and a triage comment back to the
@@ -28,7 +28,7 @@ posts the triage comment successfully. This RFC is **not** a bug report; it is a
 hardening + generalisation plan so the *same green run* survives (a) a different
 person's org and (b) examples beyond triage.
 
-The seams that would break "just works" for *those* cases are not in our code -
+The seams that would break "just works" for *those* cases are not in Veryfront's code -
 they are in the **shape of the connecting org**. The canonical illustration is the
 `Type` incident (§3), which surfaced while exercising `update_case` *outside* the
 triage happy path (dispose only ever writes `Reason`): the agent tried to set a
@@ -46,7 +46,7 @@ platform actually loads tools, and (c) proposes a concrete design: a
 describe-driven preflight + a documented reference-org baseline + graceful,
 teaching error messages**.
 
-## 2. What we are actually shipping
+## 2. What the proposal ships
 
 Two artefacts that must stay 1:1:
 
@@ -97,7 +97,7 @@ This matters for every recommendation below, so state it precisely (verified in
 
 **Takeaway:** the *set* of tools a project sees is already dynamic, but each tool
 is a static `connector.json` entry. "Make the tools dynamic" is therefore not a
-knob we have - the lever we do have is **what those static entries declare**, plus
+available knob - the available lever is **what those static entries declare**, plus
 the escape-hatch tools (`describe_object`, `run_soql_query`) and the agent prompts.
 
 ### 2.2 At a glance
@@ -189,7 +189,7 @@ result was *not* a signal that `Type` was dropped. PR #3638 (merged) added `Type
 The lesson is the general one:
 
 1. **Static per-field enumeration always lags the org.** Custom `__c` fields,
-   record types, and standard fields we didn't list are all unreachable until
+   record types, and standard fields the implementation didn't list are all unreachable until
    someone edits `connector.json`.
 2. **Even a listed field can fail on its value.** `Type`, `Status`, `Priority`,
    `Origin`, and `Reason` are **picklists with org-defined values**. Per the
@@ -239,7 +239,7 @@ Salesforce's *default* Case Reason values (Installation, Equipment Complexity,
 Performance, Breakdown, Equipment Design, Feedback, Other) are themselves an
 oddity most orgs have already customised.
 
-This is the sharpest edge and it is entirely ours to design around (§5, §6, §7).
+This is the sharpest edge, and the design must address it (§5, §6, §7).
 
 ### 4.2 Edition & API access - the hard gate
 
@@ -320,7 +320,7 @@ template, define it explicitly, and **fail closed**:
 
 ## 5. Static vs dynamic tools - the design decision
 
-Given §2.1, tools **must** be static `connector.json` entries. We get
+Given §2.1, tools **must** be static `connector.json` entries. The design gets
 dynamic-*enough* behaviour from three levers that need no new platform machinery:
 
 1. **Read is already dynamic.** `find_customer`, `list_cases`, `search_contacts`,
@@ -343,10 +343,11 @@ dynamic-*enough* behaviour from three levers that need no new platform machinery
    looser JSON Schema gives the LLM less guidance - mitigate with a strong tool
    `description` and a describe preflight.
 3. **Describe-driven preflight.** Before a write, the agent learns *this org's*
-   real picklist values / required fields via `describe_object`, then only sends
-   valid values. This turns "guess and fail" into "look, then write." It can be a
-   prompt rule in `case-dispose`, or a curated `get_picklist_values` convenience
-   tool (a filtered describe).
+   real picklist values / required fields via `describe_object`. For a
+   classification field such as `Reason`, the agent writes only through a
+   user-confirmed taxonomy-to-org mapping. If no mapping exists, report the
+   allowed values and fail closed. It can be a prompt rule in `case-dispose`, or a
+   curated `get_picklist_values` convenience tool (a filtered describe).
 
 **Recommendation: hybrid.** Keep a comprehensive, ergonomic **static core** of
 curated tools (they make the demo legible and the agent fast, and stay
@@ -427,7 +428,7 @@ scratch-org definition cannot seed an existing connected org, and automatically
 editing `Case.Reason` in a customer org mutates admin-owned picklists and
 record-type behaviour.
 
-- **Disposable orgs (Developer Edition / scratch org) - the golden path.** Here we
+- **Disposable orgs (Developer Edition / scratch org) - the golden path.** The template
   *may* fully automate: an SFDX scratch-org definition or unmanaged package that
   creates a few Accounts / Contacts / Cases with known subjects **and** installs a
   Case `Reason` picklist aligned to `case-triage-taxonomy.md` v5. Taxonomy and
@@ -450,7 +451,7 @@ is promptable in the agents.
 | --- | --- | --- |
 | Write result | empty string (mis-read as failure in §3) | status-based: POST → `{ id, success, errors }`; PATCH/DELETE `204` → `{ success: true }`. Empty body ≠ failure |
 | API disabled for edition | raw 403 | "This Salesforce edition has no API access. Use a free Developer Edition org: <link>." |
-| Restricted picklist bad value | raw `INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST` | catch → describe → retry with a valid value, or report the allowed set |
+| Restricted picklist bad value | raw `INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST` | catch → describe → retry only after the user confirms a taxonomy-to-org mapping; otherwise report the allowed set and fail closed |
 | Knowledge not enabled | raw `INVALID_TYPE` | `search_knowledge_articles` returns `[]` + a one-line hint |
 | FLS Edit missing on Reason | silent drop / raw error | name the exact profile toggle |
 
@@ -477,7 +478,7 @@ not installed the integration.
 - Managed-package install into arbitrary customer production orgs.
 - Person Accounts and non-English / localised picklist labels (v1).
 - Runtime-registered or self-describing dynamic tools (out of platform scope, §2.1).
-- Replacing the curated tools wholesale with generic CRUD (we keep both).
+- Replacing the curated tools wholesale with generic CRUD (the design keeps both).
 
 ## 11. Alternatives considered
 
@@ -614,7 +615,7 @@ should be labelled as requiring org setup.
 ## 15. Customization path - the baseline is a floor, not a ceiling
 
 The baseline exists so the fork runs green on day one; **customization is how the
-user makes it theirs**. The design must make that a config edit, not a fork of our
+user makes it theirs**. The design must make that a config edit, not a fork of the
 code. Four extension points, in the order a user hits them:
 
 1. **Extend field coverage without touching tool code.** Curated read tools take a
@@ -636,7 +637,7 @@ code. Four extension points, in the order a user hits them:
    a guided setup - and is the mechanism that makes "customize" self-serve.
 4. **Swap objects entirely.** The generic `get/create/update_record` + `run_soql`
    + `describe` tier means a user can retarget the pipeline at a *custom* object
-   (e.g. `Ticket__c`) or a different standard object without waiting on us to add a
+   (e.g. `Ticket__c`) or a different standard object without waiting for Veryfront to add a
    curated tool.
 
 Design implication: keep org-specific values (picklist mappings, field lists,
@@ -718,9 +719,10 @@ and `externalIdField` as Salesforce API names (`^[A-Za-z][A-Za-z0-9_]*$`, `__c`/
 allowed) and `recordId` as a 15- or 18-char Salesforce ID; **authorize the
 canonical `sobjectType` against the matrix first**, then URL-encode each path
 segment exactly once (including `externalIdValue`). Reject query/fragment
-delimiters and path-traversal. The existing generated client already models this
-(`validateSalesforceId`, `validateFieldName` in
-`templates/integrations/salesforce/files/lib/salesforce-client.ts`).
+delimiters and path-traversal. Add dedicated server-side validators that enforce
+this contract exactly. Do not reuse the generated client's `validateSalesforceId`
+(which also accepts 16- and 17-character values) or `validateFieldName` (which
+allows dots).
 
 **`bodyMode: "passthrough"` is production-proven, not speculative.** 16 passthrough
 write tools ship across 9 live integrations today - ServiceNow
