@@ -10,6 +10,7 @@ const DB_CONNECTION_ERROR_CODES = [
   "query_wait_timeout",
   "CONNECTION_CLOSED",
 ] as const;
+const CLIENT_DB_CONNECTION_ERROR_CODES = ["CONNECTION_CLOSED"] as const;
 const FAILED_QUERY_PREFIX = "Failed query: ";
 const FAILED_QUERY_HEAD_MAX_LENGTH = 200;
 
@@ -150,9 +151,13 @@ export function prepareSentryEvent<TEvent extends SentryPolicyEvent>(
 
 function detectDbConnectionErrorCode(event: SentryPolicyEvent): string | undefined {
   for (const exceptionValue of event.exception?.values ?? []) {
-    if (exceptionValue.type !== "PostgresError") continue;
     const message = exceptionValue.value ?? "";
-    const code = DB_CONNECTION_ERROR_CODES.find((candidate) => message.includes(candidate));
+    const candidates = exceptionValue.type === "PostgresError"
+      ? DB_CONNECTION_ERROR_CODES
+      : exceptionValue.type === "Error"
+      ? CLIENT_DB_CONNECTION_ERROR_CODES
+      : [];
+    const code = candidates.find((candidate) => message.includes(candidate));
     if (code) return code;
   }
   return undefined;

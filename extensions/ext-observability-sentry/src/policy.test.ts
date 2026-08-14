@@ -210,6 +210,20 @@ it("policy groups each pgbouncer connection code into its own db-error issue", (
   }
 });
 
+it("policy groups client-side postgres.js connection closures reported as plain Errors", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{ type: "Error", value: "write CONNECTION_CLOSED db.example.test:6432" }],
+      },
+      fingerprint: ["POST /api/graphql"],
+    },
+    "veryfront-api",
+  );
+
+  assertEquals(event.fingerprint, ["veryfront-db-error", "CONNECTION_CLOSED"]);
+});
+
 it("policy keeps the default fingerprint for non-connection PostgresErrors and other errors", () => {
   const postgresEvent = prepareSentryEvent(
     {
@@ -233,6 +247,16 @@ it("policy keeps the default fingerprint for non-connection PostgresErrors and o
     "veryfront-api",
   );
   assertEquals(unrelatedEvent.fingerprint, ["veryfront-api", "{{ default }}"]);
+
+  const pgbouncerCodeOnPlainError = prepareSentryEvent(
+    {
+      exception: {
+        values: [{ type: "Error", value: "server_login_retry is not a client error" }],
+      },
+    },
+    "veryfront-api",
+  );
+  assertEquals(pgbouncerCodeOnPlainError.fingerprint, ["veryfront-api", "{{ default }}"]);
 });
 
 it("policy collapses leading sql whitespace in Failed query titles", () => {
