@@ -4,6 +4,15 @@ import type {
 
 export const DEFAULT_FINGERPRINT = "{{ default }}";
 
+const DB_ERROR_FINGERPRINT = "veryfront-db-error";
+const DB_CONNECTION_ERROR_CODES = [
+  "server_login_retry",
+  "query_wait_timeout",
+  "CONNECTION_CLOSED",
+] as const;
+const FAILED_QUERY_PREFIX = "Failed query: ";
+const FAILED_QUERY_HEAD_MAX_LENGTH = 200;
+
 const SENTRY_TOKEN_PATTERN = /\bsntrys_[A-Za-z0-9_+/=-]+\b/g;
 const BEARER_TOKEN_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi;
 const JWT_PATTERN = /\b[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/g;
@@ -29,6 +38,7 @@ export type SentryPolicyEvent = {
   breadcrumbs?: unknown;
   exception?: {
     values?: Array<{
+      type?: string;
       value?: string;
       stacktrace?: {
         frames?: Array<{
@@ -112,7 +122,10 @@ export function prepareSentryEvent<TEvent extends SentryPolicyEvent>(
     ...event.tags,
     "service.name": serviceName,
   };
-  event.fingerprint = [serviceName, ...(event.fingerprint ?? [DEFAULT_FINGERPRINT])];
+  const dbConnectionErrorCode = detectDbConnectionErrorCode(event);
+  event.fingerprint = dbConnectionErrorCode
+    ? [DB_ERROR_FINGERPRINT, dbConnectionErrorCode]
+    : [serviceName, ...(event.fingerprint ?? [DEFAULT_FINGERPRINT])];
 
   delete event.breadcrumbs;
   delete event.request;
@@ -123,7 +136,9 @@ export function prepareSentryEvent<TEvent extends SentryPolicyEvent>(
     event.logentry.message = redactSensitiveText(event.logentry.message);
   }
   for (const value of event.exception?.values ?? []) {
-    if (value.value) value.value = redactSensitiveText(value.value);
+    if (value.value) {
+      value.value = redactSensitiveText(normalizeFailedQueryValue(value.value));
+    }
     for (const frame of value.stacktrace?.frames ?? []) {
       if (frame.filename) frame.filename = sanitizeStackFramePath(frame.filename);
       if (frame.abs_path) frame.abs_path = sanitizeStackFramePath(frame.abs_path);
@@ -131,6 +146,28 @@ export function prepareSentryEvent<TEvent extends SentryPolicyEvent>(
   }
 
   return event;
+}
+
+function detectDbConnectionErrorCode(event: SentryPolicyEvent): string | undefined {
+  for (const exceptionValue of event.exception?.values ?? []) {
+    if (exceptionValue.type !== "PostgresError") continue;
+    const message = exceptionValue.value ?? "";
+    const code = DB_CONNECTION_ERROR_CODES.find((candidate) => message.includes(candidate));
+    if (code) return code;
+  }
+  return undefined;
+}
+
+export function normalizeFailedQueryValue(value: string): string {
+  if (!value.startsWith(FAILED_QUERY_PREFIX.trimEnd())) return value;
+  const remainder = value.slice(FAILED_QUERY_PREFIX.trimEnd().length);
+  if (!/^\s*\n/.test(remainder)) return value;
+  const head = remainder
+    .slice(0, FAILED_QUERY_HEAD_MAX_LENGTH)
+    .replace(/\s+/g, " ")
+    .trim();
+  const truncated = remainder.trimEnd().length > FAILED_QUERY_HEAD_MAX_LENGTH;
+  return `${FAILED_QUERY_PREFIX}${head}${truncated ? "…" : ""}`;
 }
 
 export function redactSensitiveText(value: string): string {

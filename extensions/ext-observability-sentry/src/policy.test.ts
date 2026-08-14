@@ -176,6 +176,104 @@ it("policy redacts application error attribute keys and credential-shaped values
   );
 });
 
+it("policy groups pgbouncer connection PostgresErrors by stable db-error fingerprint", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "PostgresError",
+          value: "pgbouncer cannot connect to server (server_login_retry)",
+        }],
+      },
+      fingerprint: ["POST /api/graphql"],
+    },
+    "veryfront-api",
+  );
+
+  assertEquals(event.fingerprint, ["veryfront-db-error", "server_login_retry"]);
+});
+
+it("policy groups each pgbouncer connection code into its own db-error issue", () => {
+  for (
+    const code of ["server_login_retry", "query_wait_timeout", "CONNECTION_CLOSED"]
+  ) {
+    const event = prepareSentryEvent(
+      {
+        exception: {
+          values: [{ type: "PostgresError", value: `write ${code} db.internal:6432` }],
+        },
+      },
+      "veryfront-api",
+    );
+
+    assertEquals(event.fingerprint, ["veryfront-db-error", code]);
+  }
+});
+
+it("policy keeps the default fingerprint for non-connection PostgresErrors and other errors", () => {
+  const postgresEvent = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "PostgresError",
+          value: "duplicate key value violates unique constraint",
+        }],
+      },
+    },
+    "veryfront-api",
+  );
+  assertEquals(postgresEvent.fingerprint, ["veryfront-api", "{{ default }}"]);
+
+  const unrelatedEvent = prepareSentryEvent(
+    {
+      exception: {
+        values: [{ type: "TypeError", value: "server_login_retry is not a function" }],
+      },
+    },
+    "veryfront-api",
+  );
+  assertEquals(unrelatedEvent.fingerprint, ["veryfront-api", "{{ default }}"]);
+});
+
+it("policy collapses leading sql whitespace in Failed query titles", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value: 'Failed query: \n  select "id", "email"\n  from "users"',
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  assertEquals(
+    event.exception?.values?.[0]?.value,
+    'Failed query: select "id", "email" from "users"',
+  );
+});
+
+it("policy caps collapsed Failed query values and leaves other values untouched", () => {
+  const longSql = `\n  select ${"c, ".repeat(200)}from t`;
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [
+          { type: "DrizzleQueryError", value: `Failed query: ${longSql}` },
+          { type: "Error", value: "  leading spaces stay untouched" },
+        ],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  const collapsed = event.exception?.values?.[0]?.value ?? "";
+  assertEquals(collapsed.startsWith("Failed query: select c, c,"), true);
+  assertEquals(collapsed.length <= "Failed query: ".length + 201, true);
+  assertEquals(event.exception?.values?.[1]?.value, "  leading spaces stay untouched");
+});
+
 it("policy redacts credentials from custom-host DSNs", () => {
   const event = prepareSentryEvent(
     {
