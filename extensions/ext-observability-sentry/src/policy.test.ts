@@ -393,6 +393,65 @@ it("policy redacts PostgreSQL radix integer literals", () => {
   );
 });
 
+it("policy redacts decimal integer separators without hiding SQL structure", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value:
+            'Failed query: \n  select 12_345_678, 0xDEAD_BEEF from orders_12_345 where "id" = $1',
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  assertEquals(
+    event.exception?.values?.[0]?.value,
+    'Failed query: select ?, ? from orders_12_345 where "id" = $1',
+  );
+});
+
+it("policy redacts fractional digit separators", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value: 'Failed query: \n  select 12_345.67_89, .12_34 from "orders" where "id" = $1',
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  assertEquals(
+    event.exception?.values?.[0]?.value,
+    'Failed query: select ?, ? from "orders" where "id" = $1',
+  );
+});
+
+it("policy redacts exponent digit separators", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value:
+            'Failed query: \n  select 6.02e2_3, 1_2.3_4e+5_6, .5e-1_0 from "orders" where "id" = $1',
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  assertEquals(
+    event.exception?.values?.[0]?.value,
+    'Failed query: select ?, ?, ? from "orders" where "id" = $1',
+  );
+});
+
 it("policy redacts line comments from Failed query titles", () => {
   const event = prepareSentryEvent(
     {
