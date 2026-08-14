@@ -32,6 +32,7 @@ import { isProduction } from "#veryfront/platform/environment.ts";
 import { CONFIG_INVALID } from "#veryfront/errors";
 import { isSafeBlobId } from "#veryfront/workflow/blob/blob-id.ts";
 import { serverLogger } from "#veryfront/utils";
+import { resolveValidatedRequest } from "#veryfront/security/input-validation/handler.ts";
 import * as nodeBuffer from "node:buffer";
 
 /** 25 MB default cap. Attachments are references, not bulk transfer. */
@@ -512,5 +513,13 @@ export function createChatUploadHandler(
     }
   }
 
-  return { POST, GET, DELETE };
+  // Resolve at the boundary rather than at each use. The pages executor calls
+  // method handlers with its APIContext, and these handlers read `signal`,
+  // `headers` and `url` as well as the body, so unwrapping one of them would
+  // still leave the rest reading from the context.
+  return {
+    POST: (request: Request) => POST(resolveValidatedRequest(request)),
+    GET: (request: Request) => GET(resolveValidatedRequest(request)),
+    DELETE: (request: Request) => DELETE(resolveValidatedRequest(request)),
+  };
 }

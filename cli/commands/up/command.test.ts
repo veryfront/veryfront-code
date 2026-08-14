@@ -139,6 +139,7 @@ const VERIFIED_RESULT: DeployResult = {
   environmentId: "environment-1",
   deploymentId: "deployment-1",
   url: "https://verified.example.test/dashboard",
+  urlVerification: "served",
   protected: false,
   routingConvergence: null,
   commitSha: "a".repeat(40),

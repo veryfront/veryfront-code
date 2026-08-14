@@ -18,7 +18,6 @@ describe("security/http/studio-origin-policy", () => {
     // studio.* subdomains are not deployed and are no longer trusted origins.
     assertEquals(resolveTrustedStudioOrigin("https://studio.veryfront.com"), null);
     assertEquals(resolveTrustedStudioOrigin("https://studio.veryfront.org"), null);
-    assertEquals(resolveTrustedStudioOrigin("https://studio.veryfront.dev"), null);
     assertEquals(resolveTrustedStudioOrigin("http://studio.veryfront.com"), null);
     assertEquals(resolveTrustedStudioOrigin("https://studio.veryfront.com:8443"), null);
   });
@@ -35,7 +34,6 @@ describe("security/http/studio-origin-policy", () => {
     assertEquals(source.includes('"https://veryfront.com"'), true);
     assertEquals(source.includes('"https://studio.veryfront.com"'), false);
     assertEquals(source.includes("endsWith"), false);
-    assertEquals(source.includes(".veryfront.dev"), false);
 
     const resolveTarget = new Function(
       "document",

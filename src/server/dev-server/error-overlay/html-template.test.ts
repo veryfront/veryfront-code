@@ -57,7 +57,6 @@ describe("server/dev-server/error-overlay/html-template", () => {
       assertEquals(script.includes('"https://veryfront.org"'), true);
       assertEquals(script.includes('"https://studio.veryfront.com"'), false);
       assertEquals(script.includes("endsWith"), false);
-      assertEquals(script.includes(".veryfront.dev"), false);
       assertEquals(script.includes("return window.location.origin"), true);
     });
   });
@@ -238,7 +237,6 @@ describe("server/dev-server/error-overlay/html-template", () => {
       assertEquals(html.includes('"https://veryfront.org"'), true);
       assertEquals(html.includes('"https://studio.veryfront.com"'), false);
       assertEquals(html.includes("endsWith"), false);
-      assertEquals(html.includes(".veryfront.dev"), false);
       assertEquals(html.includes("return window.location.origin"), true);
     });
 

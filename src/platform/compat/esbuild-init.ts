@@ -81,14 +81,45 @@ async function extractEsbuildBinary(): Promise<string | null> {
   }
 }
 
-if (isDenoCompiled && !Deno.env.get("ESBUILD_BINARY_PATH")) {
+/**
+ * Load esbuild while the host environment is still the one on `process.env`.
+ *
+ * esbuild resolves its binary once, when its module first evaluates:
+ * `var ESBUILD_BINARY_PATH = process.env.ESBUILD_BINARY_PATH || ...`. The
+ * bundler adapter imports esbuild lazily, so in the hosted runtime that
+ * evaluation happens on the first transform -- inside a project environment
+ * scope, which serves the project's variables and not the host's. esbuild then
+ * reads `undefined`, falls back to a binary a compiled build does not ship,
+ * `spawn` returns undefined, and no service ever starts. Every transform in the
+ * process fails from then on.
+ *
+ * Importing here binds the path at startup, outside any project scope, so the
+ * scope keeps hiding the host environment from project code and esbuild still
+ * finds its binary. Only the module is loaded: the service itself starts lazily
+ * on the first transform.
+ */
+async function primeEsbuildModule(): Promise<void> {
   try {
-    const binaryPath = await extractEsbuildBinary();
-    if (binaryPath) {
-      Deno.env.set("ESBUILD_BINARY_PATH", binaryPath);
-      process.env.ESBUILD_BINARY_PATH = binaryPath;
-    }
+    await import("npm:esbuild@0.28.1");
   } catch (error) {
-    serverLogger.error("[esbuild] Binary extraction failed", error);
+    serverLogger.error("[esbuild] Failed to load esbuild during startup", error);
   }
+}
+
+if (isDenoCompiled) {
+  if (!Deno.env.get("ESBUILD_BINARY_PATH")) {
+    try {
+      const binaryPath = await extractEsbuildBinary();
+      if (binaryPath) {
+        Deno.env.set("ESBUILD_BINARY_PATH", binaryPath);
+        process.env.ESBUILD_BINARY_PATH = binaryPath;
+      }
+    } catch (error) {
+      serverLogger.error("[esbuild] Binary extraction failed", error);
+    }
+  }
+
+  // Runs even when the path was already set in the environment: the binding
+  // esbuild makes at module load is what matters, not who set the variable.
+  await primeEsbuildModule();
 }

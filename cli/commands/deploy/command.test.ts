@@ -56,6 +56,7 @@ describe("deploy command adapters", () => {
       environmentId: "environment-sentinel",
       deploymentId: "deployment-sentinel",
       url: "https://sentinel.example.test/dashboard",
+      urlVerification: "gated",
       protected: true,
       routingConvergence: { status: "converged", acknowledged: 3, recipients: 3 },
       commitSha: "f".repeat(40),
@@ -72,6 +73,11 @@ describe("deploy command adapters", () => {
           { kind: "step", step: "resolve-config", phase: "completed" },
           { kind: "step", step: "create-deployment", phase: "started" },
           { kind: "step", step: "create-deployment", phase: "completed" },
+          {
+            kind: "warning",
+            code: "environment-url-unverified",
+            message: "sentinel url warning",
+          },
           {
             kind: "warning",
             code: "routing-convergence-unconfirmed",
@@ -135,6 +141,8 @@ describe("deploy command adapters", () => {
       expectedUrlLine,
     );
     assertEquals(humanOutput.includes("Release 2026.07.30-1"), true);
+    // Both warnings, not just the last: an operator needs the URL one most.
+    assertEquals(humanOutput.includes("sentinel url warning"), true);
     assertEquals(humanOutput.includes("sentinel warning"), true);
 
     const jsonRecords = json.output.map((line) => JSON.parse(line));
@@ -149,6 +157,11 @@ describe("deploy command adapters", () => {
         "deploy:completed",
       ],
     );
+    assertEquals(jsonRecords.at(-3), {
+      type: "warning",
+      code: "environment-url-unverified",
+      message: "sentinel url warning",
+    });
     assertEquals(jsonRecords.at(-2), {
       type: "warning",
       code: "routing-convergence-unconfirmed",

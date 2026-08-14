@@ -16,6 +16,8 @@ import {
 } from "#veryfront/security/sandbox/worker-egress-guard.ts";
 
 export const HOST_INTERNAL_EGRESS_OVERRIDE_ENV = "VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS";
+export const HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV =
+  "VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS";
 
 export class OutboundRequestBlockedError extends Error {
   override name = "OutboundRequestBlockedError";
@@ -72,6 +74,7 @@ async function fetchWithHostTransport(
   init: RequestInit | undefined,
   options: GuardedOutboundFetchOptions,
   transport: OutboundFetchTransport,
+  allowInternalEgress: boolean,
 ): Promise<Response> {
   return await guardedEgressFetch(input, init, {
     fetchImpl: transport.fetch,
@@ -90,11 +93,46 @@ async function fetchWithHostTransport(
       await options.authorizeUrl?.(url);
     },
     options: {
-      allowInternalEgress: isInternalEgressOverrideEnabled(
-        getHostEnv(HOST_INTERNAL_EGRESS_OVERRIDE_ENV),
-      ),
+      allowInternalEgress: allowInternalEgress ||
+        isInternalEgressOverrideEnabled(getHostEnv(HOST_INTERNAL_EGRESS_OVERRIDE_ENV)),
     },
   });
+}
+
+function parseAllowedInternalProviderOrigins(value: string | undefined): ReadonlySet<string> {
+  if (!value?.trim()) return new Set();
+
+  const origins = new Set<string>();
+  for (const entry of value.split(",")) {
+    let url: URL;
+    try {
+      url = new URL(entry.trim());
+    } catch {
+      throw new TypeError(
+        `${HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV} must contain comma-separated HTTP origins`,
+      );
+    }
+    if (
+      (url.protocol !== "http:" && url.protocol !== "https:") ||
+      url.username.length > 0 ||
+      url.password.length > 0 ||
+      url.pathname !== "/" ||
+      url.search.length > 0 ||
+      url.hash.length > 0
+    ) {
+      throw new TypeError(
+        `${HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV} entries must be HTTP origins without paths, credentials, query strings, or fragments`,
+      );
+    }
+    origins.add(url.origin);
+  }
+  return origins;
+}
+
+function isHostAllowedInternalProviderOrigin(base: URL): boolean {
+  return parseAllowedInternalProviderOrigins(
+    getHostEnv(HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV),
+  ).has(base.origin);
 }
 
 function snapshotOutboundFetchTransport(
@@ -117,9 +155,16 @@ async function fetchWithBoundaryErrors(
   init: RequestInit | undefined,
   options: GuardedOutboundFetchOptions,
   transport: OutboundFetchTransport,
+  allowInternalEgress = false,
 ): Promise<Response> {
   try {
-    return await fetchWithHostTransport(input, init, options, transport);
+    return await fetchWithHostTransport(
+      input,
+      init,
+      options,
+      transport,
+      allowInternalEgress,
+    );
   } catch (error) {
     if (error instanceof WorkerEgressBlockedError) {
       throw new OutboundRequestBlockedError(
@@ -142,6 +187,7 @@ function createOriginBoundFetchWithTransport(
   if (base.username || base.password) {
     throw new TypeError("Provider base URL must not include credentials");
   }
+  const allowInternalEgress = isHostAllowedInternalProviderOrigin(base);
 
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const raw = input instanceof Request ? input.url : input instanceof URL ? input.href : input;
@@ -162,6 +208,7 @@ function createOriginBoundFetchWithTransport(
         },
       },
       transport,
+      allowInternalEgress,
     );
   };
 }

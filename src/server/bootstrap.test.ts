@@ -16,6 +16,14 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  deleteEnv,
+  getEnv,
+  makeTempDir,
+  remove,
+  setEnv,
+  writeTextFile,
+} from "#veryfront/testing/deno-compat.ts";
 import { _resetShimForTests } from "#veryfront/observability/tracing/api-shim.ts";
 import { register, reset } from "#veryfront/extensions/contracts.ts";
 import {
@@ -42,22 +50,29 @@ const validationEnvKeys = [
   "DENO_ENV",
   "PROXY_MODE",
   "VERYFRONT_CLI_LOCAL_PROXY_MODE",
+  "VERYFRONT_API_INTERNAL_USER",
+  "VERYFRONT_API_INTERNAL_PASS",
   "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY",
   "VERYFRONT_TRUST_FORWARDED_HEADERS",
 ] as const;
 const originalValidationEnv = new Map(
-  validationEnvKeys.map((key) => [key, Deno.env.get(key)]),
+  validationEnvKeys.map((key) => [key, getEnv(key)]),
 );
 
 function restoreValidationEnv(): void {
   for (const key of validationEnvKeys) {
     const value = originalValidationEnv.get(key);
     if (value === undefined) {
-      Deno.env.delete(key);
+      deleteEnv(key);
     } else {
-      Deno.env.set(key, value);
+      setEnv(key, value);
     }
   }
+}
+
+function setHostedInternalCredentials(): void {
+  setEnv("VERYFRONT_API_INTERNAL_USER", "test-internal-user");
+  setEnv("VERYFRONT_API_INTERNAL_PASS", "test-internal-pass");
 }
 
 const noopLogger = {
@@ -69,22 +84,22 @@ const noopLogger = {
 
 function captureWarns(run: () => void): string[] {
   const originalWarn = console.warn;
-  const originalLogLevel = Deno.env.get("LOG_LEVEL");
+  const originalLogLevel = getEnv("LOG_LEVEL");
   const messages: string[] = [];
   console.warn = (...args: unknown[]) => {
     messages.push(args.map(String).join(" "));
   };
 
   try {
-    Deno.env.set("LOG_LEVEL", "DEBUG");
+    setEnv("LOG_LEVEL", "DEBUG");
     __resetLoggerConfigForTests();
     run();
   } finally {
     console.warn = originalWarn;
     if (originalLogLevel === undefined) {
-      Deno.env.delete("LOG_LEVEL");
+      deleteEnv("LOG_LEVEL");
     } else {
-      Deno.env.set("LOG_LEVEL", originalLogLevel);
+      setEnv("LOG_LEVEL", originalLogLevel);
     }
     __resetLoggerConfigForTests();
   }
@@ -229,11 +244,11 @@ describe("validateProductionEnvironmentForTests()", () => {
   });
 
   it("accepts explicit local CLI proxy mode without NODE_ENV production or a signing key", () => {
-    Deno.env.set("PROXY_MODE", "1");
-    Deno.env.set("VERYFRONT_CLI_LOCAL_PROXY_MODE", "1");
-    Deno.env.set("NODE_ENV", "development");
-    Deno.env.delete("DENO_ENV");
-    Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+    setEnv("PROXY_MODE", "1");
+    setEnv("VERYFRONT_CLI_LOCAL_PROXY_MODE", "1");
+    setEnv("NODE_ENV", "development");
+    deleteEnv("DENO_ENV");
+    deleteEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
 
     const warnings = captureWarns(() => validateProductionEnvironmentForTests());
 
@@ -241,15 +256,15 @@ describe("validateProductionEnvironmentForTests()", () => {
   });
 
   it("does not trust local CLI proxy mode loaded from a project env file", async () => {
-    const tempDir = await Deno.makeTempDir();
+    const tempDir = await makeTempDir();
 
     try {
-      Deno.env.set("PROXY_MODE", "1");
-      Deno.env.delete("VERYFRONT_CLI_LOCAL_PROXY_MODE");
-      Deno.env.set("NODE_ENV", "development");
-      Deno.env.delete("DENO_ENV");
-      Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
-      await Deno.writeTextFile(
+      setEnv("PROXY_MODE", "1");
+      deleteEnv("VERYFRONT_CLI_LOCAL_PROXY_MODE");
+      setEnv("NODE_ENV", "development");
+      deleteEnv("DENO_ENV");
+      deleteEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+      await writeTextFile(
         `${tempDir}/.env`,
         "VERYFRONT_CLI_LOCAL_PROXY_MODE=1\n",
       );
@@ -262,16 +277,16 @@ describe("validateProductionEnvironmentForTests()", () => {
         "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY must be set",
       );
     } finally {
-      await Deno.remove(tempDir, { recursive: true });
+      await remove(tempDir, { recursive: true });
     }
   });
 
   it("rejects hosted proxy mode when NODE_ENV is missing", () => {
-    Deno.env.set("PROXY_MODE", "1");
-    Deno.env.delete("VERYFRONT_CLI_LOCAL_PROXY_MODE");
-    Deno.env.delete("NODE_ENV");
-    Deno.env.delete("DENO_ENV");
-    Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", "test-public-key");
+    setEnv("PROXY_MODE", "1");
+    deleteEnv("VERYFRONT_CLI_LOCAL_PROXY_MODE");
+    deleteEnv("NODE_ENV");
+    deleteEnv("DENO_ENV");
+    setEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", "test-public-key");
 
     assertThrows(
       () => validateProductionEnvironmentForTests(),
@@ -281,11 +296,11 @@ describe("validateProductionEnvironmentForTests()", () => {
   });
 
   it("rejects hosted proxy mode when the signing key is missing even in development", () => {
-    Deno.env.set("PROXY_MODE", "1");
-    Deno.env.delete("VERYFRONT_CLI_LOCAL_PROXY_MODE");
-    Deno.env.set("NODE_ENV", "development");
-    Deno.env.delete("DENO_ENV");
-    Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+    setEnv("PROXY_MODE", "1");
+    deleteEnv("VERYFRONT_CLI_LOCAL_PROXY_MODE");
+    setEnv("NODE_ENV", "development");
+    deleteEnv("DENO_ENV");
+    deleteEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
 
     assertThrows(
       () => validateProductionEnvironmentForTests(),
@@ -294,13 +309,31 @@ describe("validateProductionEnvironmentForTests()", () => {
     );
   });
 
+  it("rejects hosted proxy mode when internal environment credentials are missing", () => {
+    setEnv("PROXY_MODE", "1");
+    deleteEnv("VERYFRONT_CLI_LOCAL_PROXY_MODE");
+    setEnv("NODE_ENV", "production");
+    deleteEnv("DENO_ENV");
+    setEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", "test-public-key");
+    setEnv("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+    deleteEnv("VERYFRONT_API_INTERNAL_USER");
+    deleteEnv("VERYFRONT_API_INTERNAL_PASS");
+
+    assertThrows(
+      () => validateProductionEnvironmentForTests(),
+      Error,
+      "VERYFRONT_API_INTERNAL_USER and VERYFRONT_API_INTERNAL_PASS must be set",
+    );
+  });
+
   it("warns with the actual NODE_ENV value for hosted proxy mode when a signing key exists", () => {
-    Deno.env.set("PROXY_MODE", "1");
-    Deno.env.delete("VERYFRONT_CLI_LOCAL_PROXY_MODE");
-    Deno.env.set("NODE_ENV", "staging");
-    Deno.env.delete("DENO_ENV");
-    Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", "test-public-key");
-    Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+    setEnv("PROXY_MODE", "1");
+    deleteEnv("VERYFRONT_CLI_LOCAL_PROXY_MODE");
+    setEnv("NODE_ENV", "staging");
+    deleteEnv("DENO_ENV");
+    setEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", "test-public-key");
+    setEnv("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+    setHostedInternalCredentials();
 
     const warnings = captureWarns(() => validateProductionEnvironmentForTests());
 
@@ -312,12 +345,13 @@ describe("validateProductionEnvironmentForTests()", () => {
   });
 
   it("rejects hosted proxy mode without an explicit trusted topology", () => {
-    Deno.env.set("PROXY_MODE", "1");
-    Deno.env.delete("VERYFRONT_CLI_LOCAL_PROXY_MODE");
-    Deno.env.set("NODE_ENV", "production");
-    Deno.env.delete("DENO_ENV");
-    Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", "test-public-key");
-    Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+    setEnv("PROXY_MODE", "1");
+    deleteEnv("VERYFRONT_CLI_LOCAL_PROXY_MODE");
+    setEnv("NODE_ENV", "production");
+    deleteEnv("DENO_ENV");
+    setEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", "test-public-key");
+    deleteEnv("VERYFRONT_TRUST_FORWARDED_HEADERS");
+    setHostedInternalCredentials();
 
     assertThrows(
       () => validateProductionEnvironmentForTests(),

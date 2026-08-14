@@ -26,6 +26,64 @@ const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ?? `/tmp/veryfront-vfs-e2e-
 const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
 const VERYFRONT_API_TOKEN = Deno.env.get("VERYFRONT_API_TOKEN");
 
+/**
+ * Issue a GET over a raw loopback TCP connection with an explicit `Host` header.
+ *
+ * Deno's fetch drops a `Host` override, so this is the only way to exercise
+ * host-based project resolution without depending on `*.localhost` resolving.
+ */
+async function requestViaLoopbackWithHost(options: {
+  port: number;
+  host: string;
+  path: string;
+  headers: Record<string, string>;
+}): Promise<{ status: number; body: string }> {
+  const conn = await Deno.connect({ hostname: "127.0.0.1", port: options.port });
+  try {
+    const request = [
+      `GET ${options.path} HTTP/1.1`,
+      `Host: ${options.host}`,
+      ...Object.entries(options.headers).map(([key, value]) => `${key}: ${value}`),
+      "Connection: close",
+      "",
+      "",
+    ].join("\r\n");
+    // `Deno.Conn.write` is a low-level write and may consume fewer bytes than
+    // supplied. Dropping the returned count would leave the server waiting for
+    // the rest of the headers while this helper waits for a response — a hang
+    // rather than a failure. Loop until the whole request is on the wire.
+    const payload = new TextEncoder().encode(request);
+    for (let written = 0; written < payload.length;) {
+      written += await conn.write(payload.subarray(written));
+    }
+
+    const chunks: Uint8Array[] = [];
+    const buffer = new Uint8Array(4096);
+    while (true) {
+      const read = await conn.read(buffer);
+      if (read === null) break;
+      chunks.push(buffer.slice(0, read));
+    }
+    const raw = new TextDecoder().decode(
+      chunks.reduce((acc, chunk) => {
+        const merged = new Uint8Array(acc.length + chunk.length);
+        merged.set(acc);
+        merged.set(chunk, acc.length);
+        return merged;
+      }, new Uint8Array()),
+    );
+    const status = Number(raw.match(/^HTTP\/1\.[01] (\d{3})/)?.[1] ?? 0);
+    const separator = raw.indexOf("\r\n\r\n");
+    return { status, body: separator === -1 ? "" : raw.slice(separator + 4) };
+  } finally {
+    try {
+      conn.close();
+    } catch {
+      // already closed by the server via `Connection: close`
+    }
+  }
+}
+
 async function getAvailablePort(): Promise<number> {
   const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
   const { port } = listener.addr as Deno.NetAddr;
@@ -106,6 +164,8 @@ async function startVFSServer(
     PROXY_MODE: "1",
     VERYFRONT_TRUST_FORWARDED_HEADERS: "1",
     VERYFRONT_API_BASE_URL: "https://api.veryfront.com",
+    VERYFRONT_API_INTERNAL_USER: "test-internal-user",
+    VERYFRONT_API_INTERNAL_PASS: "test-internal-pass",
     LOG_FORMAT: "text",
     VERYFRONT_CACHE_DIR: cacheDir,
     ...extraEnv,
@@ -301,10 +361,19 @@ describe(
             }
           }
 
-          // Use flow-ops.lvh.me (*.lvh.me resolves to 127.0.0.1)
-          // Include proxy headers that a real proxy would set — without x-release-id
-          // the renderer rejects production requests in proxy mode with 502.
-          const response = await fetch(`http://flow-ops.lvh.me:${server.port}/api/flows`, {
+          // Connect straight to loopback and set the Host header by hand, rather
+          // than fetching `flow-ops.localhost`. RFC 6761 only *recommends* that
+          // resolvers map the `.localhost` tree to loopback, so a plain glibc NSS
+          // host can fail `flow-ops.localhost` with EAI_AGAIN before any assertion
+          // runs. Host-based resolution is exactly what this test verifies, so the
+          // authority has to be preserved — and Deno's fetch silently drops a
+          // `Host` override, which is why this is a raw request.
+          const response = await requestViaLoopbackWithHost({
+            port: server.port,
+            host: `flow-ops.localhost:${server.port}`,
+            path: "/api/flows",
+            // Proxy headers a real proxy would set — without x-release-id the
+            // renderer rejects production requests in proxy mode with 502.
             headers: {
               "x-release-id": releaseId,
               "x-environment": "production",
@@ -312,7 +381,6 @@ describe(
               "x-token": "test-token",
             },
           });
-          await response.text();
 
           // Verify the server resolved the slug from the Host header, not the
           // local-* fallback. The logger context in the server logs shows the

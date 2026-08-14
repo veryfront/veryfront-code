@@ -5,7 +5,7 @@
 import { compileAllMDX, watchMDX } from "veryfront/build";
 import { CONFIG_NOT_FOUND, PORT_IN_USE } from "veryfront/errors";
 import { join } from "veryfront/platform/path";
-import { runtime } from "veryfront/platform";
+import { getEnv, runtime } from "veryfront/platform";
 import { getConfig } from "veryfront/config";
 import { getEnvironmentConfig } from "veryfront/config";
 import { startDevServer } from "veryfront/server";
@@ -26,6 +26,7 @@ import { createStagedPushOptions, pushCommand, type PushOptions } from "../push/
 import { createProjectSelector } from "./project-selector.ts";
 import { createDevLogController } from "./log-controller.ts";
 import { findAvailablePort, isPortAvailable, isPortInUseError } from "./port-fallback.ts";
+import { advertisesCloudGateway, listInferenceOptions } from "./inference-status.ts";
 
 export interface DevOptions {
   port: number;
@@ -344,6 +345,34 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       console.log();
       console.log(`  ✓ Ready in ${formatDuration(elapsed)}`);
       console.log(`  ${brand(serverUrl)}`);
+      const inferenceOptions = listInferenceOptions({
+        apiToken: runtimeAuth.apiToken,
+        projectSlug: runtimeAuth.projectSlug,
+        openaiApiKey: getEnv("OPENAI_API_KEY"),
+        openaiBaseUrl: getEnv("OPENAI_BASE_URL"),
+        anthropicApiKey: getEnv("ANTHROPIC_API_KEY"),
+        googleApiKey: getEnv("GOOGLE_API_KEY") ?? getEnv("GOOGLE_GENERATIVE_AI_API_KEY"),
+        mistralApiKey: getEnv("MISTRAL_API_KEY"),
+      });
+      if (inferenceOptions.length > 0) {
+        console.log(`  ${dim("Inference")} ${brand(inferenceOptions.join(", "))}`);
+      }
+      // The banner reports configured paths, and it must not block Ready on a
+      // network round-trip (see `void authReady` above). But an expired stored
+      // session still has a nonempty token, so the gateway would be advertised
+      // and then fail on first request. The validation is already in flight —
+      // let it correct the record rather than delay the banner.
+      if (advertisesCloudGateway(inferenceOptions)) {
+        void authReady.then(() => {
+          if (identity) return;
+          console.log(
+            `  ${
+              warning("!")
+            } Veryfront Cloud session is not valid; gateway inference will fail. ` +
+              `Run ${brand("veryfront login")} to renew it.`,
+          );
+        });
+      }
       if (mcpServer && isVerbose()) {
         console.log(`  ${dim("MCP")} ${brand(`http://localhost:${mcpPort}/mcp`)}`);
       }

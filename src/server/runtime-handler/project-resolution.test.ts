@@ -137,7 +137,7 @@ describe("server/runtime-handler/project-resolution", () => {
       const req = new Request("http://127.0.0.1:3001/", {
         headers: {
           "x-environment": "preview",
-          "x-forwarded-host": "my-project.preview.lvh.me",
+          "x-forwarded-host": "my-project.preview.localhost",
         },
       });
       const headers = extractRequestHeaders(req, new URL(req.url), true);
@@ -195,7 +195,7 @@ describe("server/runtime-handler/project-resolution", () => {
       Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
       try {
         const req = new Request("http://127.0.0.1:3001/", {
-          headers: { "x-forwarded-host": "my-project.preview.lvh.me" },
+          headers: { "x-forwarded-host": "my-project.preview.localhost" },
         });
         const headers = extractRequestHeaders(req, new URL(req.url));
         assertEquals(headers.projectSlug, "my-project");
@@ -209,7 +209,7 @@ describe("server/runtime-handler/project-resolution", () => {
       try {
         const req = new Request("http://127.0.0.1:3001/", {
           headers: {
-            "x-forwarded-host": "my-project.preview.lvh.me",
+            "x-forwarded-host": "my-project.preview.localhost",
             "x-project-slug": "   ",
           },
         });
@@ -225,7 +225,7 @@ describe("server/runtime-handler/project-resolution", () => {
       try {
         const req = new Request("http://127.0.0.1:3001/", {
           headers: {
-            "x-forwarded-host": "my-project.preview.lvh.me",
+            "x-forwarded-host": "my-project.preview.localhost",
             "x-project-slug": "",
           },
         });
@@ -241,7 +241,7 @@ describe("server/runtime-handler/project-resolution", () => {
       try {
         const req = new Request("http://127.0.0.1:3001/", {
           headers: {
-            "x-forwarded-host": "my-project.preview.lvh.me, proxy2.internal",
+            "x-forwarded-host": "my-project.preview.localhost, proxy2.internal",
           },
         });
         const headers = extractRequestHeaders(req, new URL(req.url));
@@ -256,7 +256,7 @@ describe("server/runtime-handler/project-resolution", () => {
       // the project slug via x-forwarded-host; resolution falls back to the Host
       // header (127.0.0.1 here), which does not parse to the spoofed slug.
       const req = new Request("http://127.0.0.1:3001/", {
-        headers: { "x-forwarded-host": "my-project.preview.lvh.me" },
+        headers: { "x-forwarded-host": "my-project.preview.localhost" },
       });
       const headers = extractRequestHeaders(req, new URL(req.url));
       assertEquals(headers.projectSlug !== "my-project", true);
@@ -632,7 +632,7 @@ describe("server/runtime-handler/project-resolution", () => {
         getEnvironmentType: () => undefined,
       });
 
-      const req = new Request("http://my-project.preview.veryfront.dev/");
+      const req = new Request("http://my-project.preview.localhost/");
       const url = new URL(req.url);
       const headers = extractRequestHeaders(req, url);
       const result = await resolveProject(req, url, headers, {

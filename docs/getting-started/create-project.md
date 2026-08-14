@@ -1,7 +1,7 @@
 ---
 title: "Create project"
 description: "Scaffold a new Veryfront project from a template and run it locally."
-order: 3
+order: 4
 ---
 
 ## Prerequisites
@@ -104,8 +104,8 @@ veryfront dev
 The CLI prints the URL it is serving on:
 
 ```
-  ✓ Ready in 1.3s
-  http://localhost:3000
+✓ Ready in 1.3s
+http://localhost:3000
 ```
 
 Open [http://localhost:3000](http://localhost:3000). `localhost` resolves to

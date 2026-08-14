@@ -54,26 +54,31 @@ export function isAddressFamilyUnavailableError(error: unknown): boolean {
     message.includes("address family not supported");
 }
 
+/** The wildcards a listener binds when it names no host. */
+const ANY_ADDRESS = Object.freeze({ IPV4: "0.0.0.0", IPV6: "::" } as const);
+
 /**
- * The loopback addresses a `veryfront dev` listener can land on.
+ * The addresses a port has to be free on before `veryfront dev` can have it.
  *
- * Which family a listener gets is decided by the runtime, not by the CLI: the
- * Deno HTTP adapter defaults to `LOCALHOST.IPV4`, while the Node adapter that
- * the published npm build runs defaults to the *name* `localhost`, which
- * resolves to `::1` first on any dual-stack host. That is why one `veryfront
- * dev` serves the app on `127.0.0.1:3000` but its MCP server - `--port + 2` -
- * on `[::1]:3002`.
+ * Both loopback families are probed because the runtime, not the CLI, picks
+ * which one a listener lands on: the Deno adapter defaults to `LOCALHOST.IPV4`,
+ * the published npm build's Node adapter to the name `localhost`, which
+ * resolves to `::1` first on a dual-stack host.
  *
- * A probe that bound only IPv4 therefore reported IPv6-held ports as free, and
- * a second `veryfront dev` announced "Port 3000 is in use, using 3002 instead"
- * while 3002 was already reserved by the first instance's MCP server. Nothing
- * hard-failed only because the two listeners landed on different families.
+ * Both wildcards are probed because a bare `listen(port)` binds `::` or
+ * `0.0.0.0`, and BSD and macOS let a more specific address bind over a wildcard
+ * holder - so loopback-only probes call such a port free and the dev server
+ * silently lands beside the existing listener instead of falling forward.
  *
- * The literal addresses are probed rather than the name `localhost` because a
- * listen on a name binds just the first address it resolves to, which would
- * leave the other family unchecked exactly as before.
+ * Literal addresses rather than the name `localhost`: a listen on a name binds
+ * only the first address it resolves to, leaving the other family unchecked.
  */
-const PROBE_HOSTNAMES: readonly string[] = [LOCALHOST.IPV4, LOCALHOST.IPV6];
+const PROBE_HOSTNAMES: readonly string[] = [
+  LOCALHOST.IPV4,
+  LOCALHOST.IPV6,
+  ANY_ADDRESS.IPV4,
+  ANY_ADDRESS.IPV6,
+];
 
 /** What one bind-and-release attempt learned about a port on one address. */
 type ProbeOutcome = "free" | "in-use" | "no-such-family";

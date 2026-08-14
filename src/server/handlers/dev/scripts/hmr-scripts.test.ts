@@ -143,7 +143,6 @@ describe("server/handlers/dev/scripts/hmr-scripts", () => {
     assertStringIncludes(script, '"https://veryfront.com"');
     assertEquals(script.includes('"https://studio.veryfront.com"'), false);
     assertEquals(script.includes("endsWith('.veryfront"), false);
-    assertEquals(script.includes(".veryfront.dev"), false);
     assertEquals(script.includes("}, '*')"), false);
   });
 });

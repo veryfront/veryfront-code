@@ -50,10 +50,10 @@ describe("useWorkflowStart", () => {
     let hook: UseWorkflowStartResult<{ topic: string }> | null = null;
 
     document.cookie = "__Host-vf_csrf=production-token; Path=/; Secure";
-    globalThis.fetch = (_input, init) => {
+    globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
       requestHeaders = new Headers(init?.headers);
       return Promise.resolve(Response.json({ runId: "run-1" }));
-    };
+    }) as typeof fetch;
 
     function Capture(): null {
       hook = useWorkflowStart<{ topic: string }>({ workflowId: "content-pipeline" });
@@ -83,7 +83,7 @@ describe("useWorkflowStart", () => {
     let workflowHook: UseWorkflowResult | null = null;
 
     document.cookie = "__Host-vf_csrf=shared-token; Path=/; Secure";
-    globalThis.fetch = (input, init) => {
+    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
       if (method === "POST") mutationHeaders.set(url, new Headers(init?.headers));
@@ -100,7 +100,7 @@ describe("useWorkflowStart", () => {
         currentNodes: [],
         pendingApprovals: [],
       }));
-    };
+    }) as typeof fetch;
 
     function Capture(): null {
       startHook = useWorkflowStart({ workflowId: "content-pipeline" });
@@ -141,10 +141,10 @@ describe("useWorkflowStart", () => {
     let hook: UseWorkflowStartResult<Record<string, never>> | null = null;
 
     document.cookie = "__Host-vf_csrf=host-token; Path=/; Secure";
-    globalThis.fetch = (_input, init) => {
+    globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
       requestHeaders = new Headers(init?.headers);
       return Promise.resolve(Response.json({ runId: "run-1" }));
-    };
+    }) as typeof fetch;
 
     function Capture(): null {
       hook = useWorkflowStart({

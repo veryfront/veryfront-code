@@ -82,7 +82,7 @@ the trusted shell.
 
 When Fetch Metadata is present, only `sec-fetch-site: none` (address bar or
 bookmark navigation) and `same-origin` requests pass. A link from a rendered
-project site such as `project.lvh.me:3000` to `lvh.me:3000/_dev` is same-site
+project site such as `project.localhost:3000` to `localhost:3000/_dev` is same-site
 but cross-origin and is rejected with `403` by design: sibling local origins
 execute untrusted project code and must not be able to drive any privileged
 local control. Open the dashboard directly instead; this is intended behavior,
@@ -107,14 +107,14 @@ environment ID, and a digest of the request credential. Fetch failure, timeout,
 credential rejection, or explicit invalidation never returns stale or empty
 secret data.
 
-If both `VERYFRONT_API_INTERNAL_USER` and `VERYFRONT_API_INTERNAL_PASS` are
-configured, `VERYFRONT_API_BASE_URL` must provide the canonical
-`/internal/project-environment-variables` endpoint. Before using those host
-credentials, the runtime verifies the request bearer token against the
-project-scoped management endpoint. A missing, redirected, or failed internal
-endpoint is an error; there is no compatibility fallback to masked management
-values. Leave both internal credential variables unset when that endpoint is
-not deployed.
+Hosted proxy mode requires both `VERYFRONT_API_INTERNAL_USER` and
+`VERYFRONT_API_INTERNAL_PASS`, and `VERYFRONT_API_BASE_URL` must provide the
+canonical `/internal/project-environment-variables` endpoint. Before using
+those host credentials, the runtime verifies the request bearer token against
+the project-scoped management endpoint. A missing credential, redirected
+endpoint, or failed internal request is an error. There is no compatibility
+fallback to masked management values. Local CLI proxy mode and non-proxy
+runtimes do not require these host credentials.
 
 #### Trust boundary and residual risk
 
@@ -133,28 +133,37 @@ binding comes from the signed control-plane request body.
 #### Rollout ordering for hosted identity changes
 
 The hosted runtime fails closed at boot without
-`VERYFRONT_TRUST_FORWARDED_HEADERS=1`, and hosted agent runs fail closed
-without the branch identity that only the current proxy derives from the
-signed control-plane body. Upgrading an existing deployment is safe in this
-order:
+`VERYFRONT_TRUST_FORWARDED_HEADERS=1`,
+`VERYFRONT_API_INTERNAL_USER`, and `VERYFRONT_API_INTERNAL_PASS`. Hosted agent
+runs also fail closed without the branch identity that only the current proxy
+derives from the signed control-plane body. Upgrading an existing deployment
+is safe in this order:
 
-1. Set `VERYFRONT_TRUST_FORWARDED_HEADERS=1` (and ensure
+1. Deploy and verify the canonical
+   `/internal/project-environment-variables` endpoint on
+   `VERYFRONT_API_BASE_URL`. Provision the credential pair that the endpoint
+   accepts.
+2. Set `VERYFRONT_API_INTERNAL_USER`, `VERYFRONT_API_INTERNAL_PASS`, and
+   `VERYFRONT_TRUST_FORWARDED_HEADERS=1` (and ensure
    `CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY` is set) on the runtime environment
    while it still runs the previous version. Earlier runtimes already accept
-   the variable as an explicit operator trust opt-in, so this step is
-   behaviour-preserving inside the required private topology.
-2. Deploy the proxy tier. Earlier runtimes ignore the added
+   the trust variable and internal credentials. Step 1 ensures that their
+   privileged environment reads succeed before the new boot requirement takes
+   effect.
+3. Deploy the proxy tier. Earlier runtimes ignore the added
    `x-default-branch-name` header, and the `vf-utf8:` branch-name encoding is
    applied only to values an earlier proxy could not forward at all.
-3. Deploy the runtime tier. A new runtime booted without step 1 crash-loops
-   intentionally; a new runtime behind an old proxy rejects hosted
+4. Deploy the runtime tier. A new runtime booted without steps 1 and 2
+   crash-loops intentionally. A new runtime behind an old proxy rejects hosted
    preview-branch and non-default-branch agent runs with `PERMISSION_DENIED`
    because branch identity must come from the verified control-plane binding.
 
-Roll back in the reverse order (runtime first, then proxy). The trust variable
-can remain set during rollback. There is deliberately no warn-only
-compatibility mode for a missing trust declaration or missing branch binding:
-either one would let unbound identity select tenant data.
+Roll back the runtime first, then the proxy. Keep the internal endpoint,
+credentials, and trust variable in place throughout rollback. After the older
+runtime is active, operators can unset the internal credentials before removing
+the internal endpoint. There is deliberately no warn-only compatibility mode
+for a missing trust declaration, missing hosted credential, or missing branch
+binding. Any of these gaps can expose or select incorrect tenant data.
 
 ### Input validation
 
@@ -235,6 +244,14 @@ private, link-local, metadata, and other non-global addresses, and repeats both
 the network and caller-specific allowlist checks before every redirect hop.
 Cross-origin redirects do not retain authorization or cookie headers.
 
+`VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS` is the narrow exception for
+model and embedding providers on internal networks. Its value is a
+comma-separated list of exact HTTP origins, including scheme, host, and port
+without a path. The exception applies only to an origin-bound provider
+transport configured for the same origin. Redirects remain rejected, and all
+other internal destinations remain blocked. Project environment overlays
+cannot add origins to this host-owned list.
+
 `VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS=1` is an operator-owned compatibility
 override. It disables the private-network destination check for these host
 fetches and must remain unset in a shared runtime. Project environment overlays
@@ -270,7 +287,26 @@ The worker pool provides:
 The `WORKER_ISOLATION_ENABLED` and surface-specific
 `WORKER_ISOLATION_API`, `WORKER_ISOLATION_DATA`, and `WORKER_ISOLATION_SSR`
 flags opt trusted local projects into worker execution. They cannot disable the
-shared-runtime boundary. A dedicated single-project runtime may execute
+shared-runtime boundary.
+
+`WORKER_ISOLATION_ENABLED` is a gate, not a surface. All three surface flags
+require it, and on its own it enables none of them.
+
+A configuration can therefore read as enabled and still resolve to no active
+isolation surface, which looks safe to anyone auditing the environment. Flag
+resolution reports itself once to close that gap. It logs the effective
+per-surface state at `info`. It logs a `warn` when the master switch is set with
+no surface in force, and when surface flags are set without the master switch.
+
+`security/sandbox/worker-pool.ts` exposes the same resolution as a typed
+`getIsolationPosture()` snapshot: requested versus effective per surface, plus
+`apiPreparationSupported`. The production server resolves the posture at
+startup, so it lands in the startup log rather than on the first request.
+
+The posture is not published on the unauthenticated `/_health` response, where
+it would tell an anonymous caller which realm tenant code runs in.
+
+A dedicated single-project runtime may execute
 prepared API source in its local worker pool. A shared multi-project/proxy
 runtime never executes tenant API source in the host process or a same-process
 Worker: API ownership returns the typed
