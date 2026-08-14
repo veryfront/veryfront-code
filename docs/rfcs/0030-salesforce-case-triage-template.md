@@ -60,10 +60,12 @@ Two artefacts that must stay 1:1:
     `get_file`. Classifies against the checked-in `knowledge/case-triage-taxonomy.md`.
   - `case-dispose` - write. Tools: `salesforce__add_case_comment`,
     `salesforce__update_case`. Sets **only** `Case.Reason` and posts a comment -
-    but that scoping is **prompt-driven today**: the granted `update_case` can write
-    every writable Case field, so the boundary is instructed, not enforced. §5.2/§6
-    replace the grant with a field-scoped `update_case_reason` tool plus explicit
-    fixed `Case` Update authorization that makes it structural.
+    but that Case-update scoping is **prompt-driven today**: the granted
+    `update_case` can write every writable Case field, so the boundary is
+    instructed, not enforced. §5.2/§6 replace the Case update grant with a
+    field-scoped `update_case_reason` tool plus explicit fixed `Case` Update
+    authorization that makes it structural. The comment write remains a separate
+    `add_case_comment` grant with `CaseComment` Create authorization.
 - **Companion example repository** (currently private). Mirrors the four agents
   as `agents/*.ts`, ships the taxonomy in `knowledge/`, ships
   **evals** (`evals/*.eval.ts` + `evals/mock-tools.ts`), and runs locally via
@@ -321,9 +323,14 @@ policy is prompt-driven and denies nothing structurally. Before this is a public
 template, define it explicitly, and **fail closed**:
 
 - **Which fields** are passed downstream - an *allowlist* of non-PII operational
-  fields (Id, CaseNumber, Status, Priority, Reason, Origin, CreatedDate…), not a
-  denylist of PII patterns. Custom `__c` fields and any newly-appearing activity
-  fields must default to *excluded*, not forwarded raw.
+  fields (Id, CaseNumber, Status, Priority, Reason, Origin, CreatedDate…), plus
+  explicit sanitized classification text fields such as `redactedSubject`,
+  `redactedDescription`, and `redactedCaseComments`. Those text fields must be
+  produced only by the redactor, must retain enough case context for
+  `case-classify`, and must be validated so raw `Subject`, `Description`, or
+  `CommentBody` values cannot pass through unchanged. Custom `__c` fields and
+  any newly-appearing activity fields must default to *excluded*, not forwarded
+  raw.
 - **Failure mode** - if redaction is uncertain or errors, stop rather than forward
   raw case data.
 - **Blast radius** - the same policy must cover child-run payloads, tool-error
@@ -341,7 +348,14 @@ dynamic-*enough* behaviour from three levers that need no new platform machinery
    parsed query text. In v1, ship only fixed-object defaults or constrained filters
    unless the server can parse every referenced object, relationship target, and
    subquery in a supplied `q`, authorize each object against the matrix, and deny
-   unknown or unparseable queries fail-closed. The same referenced-object rule
+   unknown or unparseable queries fail-closed. Disabling agent-facing `q` overrides
+   is not enough by itself: every retained query tool must define its immutable
+   query server-side, either as an encoded fixed endpoint query or as hosted
+   immutable-parameter behavior that composes the query from constrained inputs and
+   never accepts a raw query string from the agent. Apply this to `find_customer`,
+   `list_cases`, `get_case`, `list_case_activity`, `search_accounts`,
+   `search_contacts`, and `list_opportunities` before they count as retained v1
+   tools. The same referenced-object rule
    applies to static query defaults: a fixed `Contact` query that selects
    `Account.Name`, `Account.Type`, or `Account.Industry` also needs `Account` Read.
    Until that check exists for static defaults, remove relationship fields from the
@@ -403,15 +417,16 @@ exists for ergonomics and blog readability.
 `find_customer`, `list_cases`, `get_case`, `list_case_activity`,
 `add_case_comment`, `update_case` (curated standard Case update; incl. `Type` per
 #3638; **not** passthrough, §5.2), `update_case_reason` (future field-scoped tool
-that writes `Case.Reason` only - the sole write tool granted to `case-dispose`),
-plus `search_accounts`, `get_account`, `search_contacts`, `get_contact`,
-`list_opportunities`, `create_case`, `create_lead`.
+that writes `Case.Reason` only - the sole Case-update tool granted to
+`case-dispose`), plus `search_accounts`, `get_account`, `search_contacts`,
+`get_contact`, `list_opportunities`, `create_case`, `create_lead`.
 
 `update_case` is **not** the structural least-privilege boundary today. Its current
 schema can write the standard writable Case fields listed in §3, so the present
 `case-dispose` scoping is a prompt rule. The hardened template must remove
-`update_case` from `case-dispose` and grant only `update_case_reason` once that
-field-scoped tool exists. `update_case_reason` still needs a fixed `Case` Update
+`update_case` from `case-dispose` and grant only `update_case_reason` for the Case
+update once that field-scoped tool exists, while retaining `add_case_comment` as
+the separate comment write. `update_case_reason` still needs a fixed `Case` Update
 authorization check before execution; if that check is not available, the helper
 stays out of v1. Retained curated write tools also need fixed checks for their
 concrete operation (`CaseComment` Create, `Case` Create/Update, `Lead` Create).
