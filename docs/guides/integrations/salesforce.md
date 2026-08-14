@@ -85,12 +85,6 @@ project environment variable through the approved secret-management workflow.
 2. Confirm the tool returns data from the target Salesforce org.
 3. For a service account, confirm the Salesforce audit trail attributes the request to the configured integration user.
 
-## Next
-
-- [Integrations](../integrations.md): Declare Salesforce tools and apply source or project policy.
-- [Set up GitHub](./github.md): Connect a GitHub provider.
-- [Set up Jira](./jira.md): Connect a Jira provider.
-
 ## Related
 
 - [veryfront/integrations](../../api-reference/veryfront/integrations.md): Connector catalog and helper API.

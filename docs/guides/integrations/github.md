@@ -47,12 +47,6 @@ prompts, project files, tickets, or client-side environment variables.
 1. Start a new agent run that uses a read-only GitHub tool.
 2. Confirm the tool returns the connected user's GitHub data.
 
-## Next
-
-- [Integrations](../integrations.md): Declare GitHub tools and apply source or project policy.
-- [Set up Jira](./jira.md): Connect a Jira provider.
-- [Set up Salesforce](./salesforce.md): Connect a Salesforce provider.
-
 ## Related
 
 - [veryfront/integrations](../../api-reference/veryfront/integrations.md): Connector catalog and helper API.

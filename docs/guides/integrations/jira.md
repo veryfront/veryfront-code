@@ -49,12 +49,6 @@ prompts, project files, tickets, or client-side environment variables.
 1. Start a new agent run that uses a read-only Jira tool.
 2. Confirm the tool returns the expected Atlassian site or Jira project data.
 
-## Next
-
-- [Integrations](../integrations.md): Declare Jira tools and apply source or project policy.
-- [Set up GitHub](./github.md): Connect a GitHub provider.
-- [Set up Salesforce](./salesforce.md): Connect a Salesforce provider.
-
 ## Related
 
 - [veryfront/integrations](../../api-reference/veryfront/integrations.md): Connector catalog and helper API.
