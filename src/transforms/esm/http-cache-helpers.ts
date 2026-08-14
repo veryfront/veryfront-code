@@ -533,7 +533,7 @@ export function isCanonicalReactEsmUrl(rawUrl: string): boolean {
  *
  * Only esm.sh gets the "package failed to build" explanation. Any other host
  * answering HTML is almost always an unresolved import that fell through to
- * the site's own origin — and a path starting with "/@/" is the "@/" project
+ * the site's own origin, and a path starting with "/@/" is the "@/" project
  * alias in absolute form, i.e. an alias import that failed to resolve.
  */
 export function describeHtmlModuleResponse(rawUrl: string): string {
@@ -555,7 +555,7 @@ export function describeHtmlModuleResponse(rawUrl: string): string {
   const aliasHint = stringStartsWith(pathname, "/@/")
     ? ' The path looks like an "@/" alias import that failed to resolve to a project module.'
     : "";
-  return `${received} The URL returned an HTML page — likely an unresolved import ` +
+  return `${received} The URL returned an HTML page, likely an unresolved import ` +
     `that fell through to the site origin.${aliasHint}`;
 }
 

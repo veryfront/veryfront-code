@@ -195,7 +195,7 @@ describe("transforms/esm/specifier-resolver", () => {
       // The "@/" project alias is framework-supported (the default import map
       // maps "@/" -> "/_vf_modules/"). If one escapes the MDX loader's alias
       // rewrite and reaches this resolver, it must land on the project-module
-      // transport — never on esm.sh as a bogus scoped package.
+      // transport, never on esm.sh as a bogus scoped package.
       const code = `import ResponsiveImage from "@/components/ResponsiveImage";`;
       const cacheCalls: string[] = [];
       const result = await buildReplacements(code, undefined, defaultOptions, async (url) => {
@@ -207,6 +207,21 @@ describe("transforms/esm/specifier-resolver", () => {
       assertEquals(
         result.replacements.get("@/components/ResponsiveImage"),
         "/_vf_modules/components/ResponsiveImage.js",
+      );
+    });
+
+    it("normalizes explicit source extensions in escaped @/ alias imports", async () => {
+      const code = `import Card from "@/components/Card.tsx";`;
+      const cacheCalls: string[] = [];
+      const result = await buildReplacements(code, undefined, defaultOptions, async (url) => {
+        cacheCalls.push(url);
+        return "/tmp/cache/http-alias.mjs";
+      });
+
+      assertEquals(cacheCalls, []);
+      assertEquals(
+        result.replacements.get("@/components/Card.tsx"),
+        "/_vf_modules/components/Card.js",
       );
     });
 
@@ -366,7 +381,7 @@ describe("transforms/esm/specifier-resolver", () => {
     it("leaves a server-only package external instead of routing it to esm.sh", async () => {
       // `redis` and its explicit npm: form only run server-side. They must be
       // left in place for the runtime to resolve (node_modules / npm:), never
-      // fetched from esm.sh — so the cache function is never called and nothing
+      // fetched from esm.sh, so the cache function is never called and nothing
       // is degraded or aborted.
       for (const specifier of ["redis", "npm:redis", "npm:redis@5.11.0"]) {
         const code = `export const load = () => import(${JSON.stringify(specifier)});`;
