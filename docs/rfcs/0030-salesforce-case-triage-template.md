@@ -590,12 +590,12 @@ fail. Until the hosted adapter and test exist, hide
 2. Sign in to Veryfront.
 3. A Salesforce administrator installs the **Veryfront Salesforce Integration**
    package in the target org and verifies that the packaged app is enabled.
-4. The Integrations panel shows **Salesforce → Connect**. The user authorizes
-   against the same org where the package is installed.
-5. For the disposable golden path, run the checked-in setup script. It deploys
+4. For the disposable-org golden path, run the checked-in setup script. It deploys
    the taxonomy-aligned metadata, imports the committed Account/Contact/Case data
    plan, and verifies that the known open and closed Case records exist. Existing
    customer orgs skip this step and use their own records.
+5. The Integrations panel shows **Salesforce → Connect**. The user authorizes
+   against the same org where the package is installed.
 6. Run **"Triage latest open cases"** through the v1 open-case constrained listing
    tool, not a general recent-cases default.
 7. Pipeline runs green against seeded data; a `Reason` + triage comment land on
