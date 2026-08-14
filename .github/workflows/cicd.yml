@@ -425,6 +425,10 @@ jobs:
         run: npm --prefix storybook ci --ignore-scripts
       - name: Check published package types
         run: deno task typecheck:consumer
+      - name: Report npm package size
+        run: |
+          deno run --allow-read --allow-run=npm scripts/build/report-artifact-sizes.ts --npm-package npm \
+            | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Clean-room install/import smoke
         run: bash scripts/test/npm-install-smoke.sh
 
@@ -562,7 +566,25 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
-      - run: deno task build:prepare
+      # Caches npm packages from the registry. A truncated response
+      # ("error reading a body from connection") fails the whole leg, so retry
+      # before giving up rather than reddening a build on registry weather.
+      - name: Prepare build dependencies
+        shell: bash
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3; do
+            if deno task build:prepare; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              delay=$((attempt * 10))
+              echo "build:prepare failed (attempt ${attempt}/3); retrying in ${delay}s" >&2
+              sleep "$delay"
+            fi
+          done
+          echo "build:prepare failed after 3 attempts" >&2
+          exit 1
       - name: Verify proxy dependency lock is current
         run: |
           deno task build:proxy-lock
@@ -632,7 +654,25 @@ jobs:
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
 
-      - run: deno task build:prepare
+      # Caches npm packages from the registry. A truncated response
+      # ("error reading a body from connection") fails the whole leg, so retry
+      # before giving up rather than reddening a build on registry weather.
+      - name: Prepare build dependencies
+        shell: bash
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3; do
+            if deno task build:prepare; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              delay=$((attempt * 10))
+              echo "build:prepare failed (attempt ${attempt}/3); retrying in ${delay}s" >&2
+              sleep "$delay"
+            fi
+          done
+          echo "build:prepare failed after 3 attempts" >&2
+          exit 1
 
       - name: Verify proxy dependency lock is current
         if: matrix.profile == 'proxy'
@@ -649,6 +689,12 @@ jobs:
             --profile ${{ matrix.profile }} \
             --target ${{ matrix.target }} \
             --output ${{ matrix.name }}
+
+      - name: Report binary size
+        shell: bash
+        run: |
+          deno run --allow-read scripts/build/report-artifact-sizes.ts ./${{ matrix.name }} \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Smoke test proxy binary
         if: matrix.name == 'veryfront-proxy-linux-x64'
@@ -722,6 +768,8 @@ jobs:
         run: |
           deno run -A scripts/ci/prepare-rc-build.ts
           deno task build:npm
+          deno run --allow-read --allow-run=npm scripts/build/report-artifact-sizes.ts --npm-package npm \
+            | tee -a "$GITHUB_STEP_SUMMARY"
           scripts/ci/publish-npm-packages.sh rc-publish
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -888,6 +936,8 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           deno task build:npm
+          deno run --allow-read --allow-run=npm scripts/build/report-artifact-sizes.ts --npm-package npm \
+            | tee -a "$GITHUB_STEP_SUMMARY"
           scripts/ci/publish-npm-packages.sh release-publish
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -929,6 +979,19 @@ jobs:
           echo "Available binaries: $BINARIES"
           echo "Available SBOMs: $SBOMS"
 
+          # Publish a checksum manifest alongside the assets. install.sh verifies a
+          # downloaded binary against this before moving it into place, so the
+          # manifest must name assets exactly as they are uploaded -- basenames,
+          # not the artifact paths they were downloaded to.
+          SUMS_FILE="SHA256SUMS"
+          : > "$SUMS_FILE"
+          for f in $BINARIES scripts/install.sh scripts/install.ps1; do
+            [ -f "$f" ] || continue
+            sha256sum "$f" | sed "s#  .*/#  #" >> "$SUMS_FILE"
+          done
+          echo "Checksum manifest:"
+          cat "$SUMS_FILE"
+
           # Clean up rc pre-releases (created by the prerelease job on main pushes)
           gh release list --repo veryfront/veryfront --json tagName -q ".[].tagName" \
             | grep "^v${VERSION}-rc\." \
@@ -948,6 +1011,7 @@ jobs:
           npm install -g veryfront
           ```' \
             $BINARIES \
+            "$SUMS_FILE" \
             scripts/install.sh \
             scripts/install.ps1 \
             $SBOMS

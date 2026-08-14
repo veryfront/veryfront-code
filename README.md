@@ -6,13 +6,18 @@
 
 **Put your agents to work.**
 
-Veryfront Code is a full-stack framework for building AI-powered applications and agents with TypeScript and React.
-
-It gives you agents, tools, workflows, and a complete React rendering stack in a single framework. Veryfront Code runs on Node.js, Deno, and Bun, and can be deployed anywhere or shipped through the Veryfront platform with built-in preview environments and production hosting.
-
 <p align="center">
   <img src="./assets/banner.svg" alt="Veryfront" width="100%">
 </p>
+
+Veryfront Code is a full-stack framework for building AI-powered applications and agents with TypeScript and React.
+
+It combines agents, tools, workflows, and a complete React rendering stack, and runs on Node.js, Deno, and Bun.
+
+Veryfront Code is open source under Apache-2.0. Develop locally, self-host in
+your own cloud or on-premises environment, or use the Veryfront platform for
+managed preview environments and production hosting. You do not need a
+Veryfront account for local development or self-hosting.
 
 ## Get started
 
@@ -42,7 +47,14 @@ npx veryfront@latest init <PROJECT_NAME> --template <TEMPLATE>
 
 Available starters: `ai-agent`, `minimal`, `agentic-workflow`.
 
-Install the `veryfront` binary for local development commands and the TUI:
+Install the CLI through npm for local development commands and the TUI:
+
+```bash
+npm install -g veryfront@latest
+```
+
+The self-contained standalone binary is also available through the installer or
+Homebrew. It is a 0.9 to 1.2 GB download, depending on the platform:
 
 ```bash
 curl -fsSL https://veryfront.com/install.sh | sh

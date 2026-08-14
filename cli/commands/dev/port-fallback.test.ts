@@ -32,14 +32,14 @@ function probeBusyOn(busy: number[]): {
 const FREE_PORT_ATTEMPTS = 25;
 
 /**
- * Binds an ephemeral loopback port on one family, or returns null when the host
- * has no address in that family at all (CI containers are routinely IPv4-only).
+ * Binds an ephemeral port on one address, or returns null when the host has no
+ * address in that family at all (CI containers are routinely IPv4-only).
  *
  * Only a missing address family is worth skipping for. Every other bind failure
  * - a permission error, a resource limit - is rethrown, so it fails the test
  * that called this rather than quietly turning it into a no-op.
  */
-function listenOnLoopback(hostname: string): Deno.Listener | null {
+function listenOn(hostname: string): Deno.Listener | null {
   try {
     return Deno.listen({ hostname, port: 0 });
   } catch (error) {
@@ -147,7 +147,7 @@ describe("cli/commands/dev/port-fallback", () => {
       // ::1 wherever IPv6 is available - so a second dev server's port scan sees
       // an IPv4-only probe succeed on a port the first instance already holds,
       // and hands out a port that is not actually free.
-      const held = listenOnLoopback("::1");
+      const held = listenOn("::1");
       if (!held) return; // no IPv6 on this host - nothing to collide with
 
       const heldPort = (held.addr as Deno.NetAddr).port;
@@ -155,6 +155,27 @@ describe("cli/commands/dev/port-fallback", () => {
         assertEquals(await isPortAvailable(heldPort), false);
       } finally {
         held.close();
+      }
+    });
+
+    it("skips a port held on a wildcard address", async () => {
+      // BSD and macOS let a more specific address bind over a wildcard holder,
+      // so loopback-only probes call a bare `listen(port)` port free and the
+      // dev server lands beside that listener instead of falling forward.
+      for (const wildcard of ["::", "0.0.0.0"]) {
+        const held = listenOn(wildcard);
+        if (!held) continue; // no address in that family on this host
+
+        const heldPort = (held.addr as Deno.NetAddr).port;
+        try {
+          assertEquals(
+            await isPortAvailable(heldPort),
+            false,
+            `a listener on ${wildcard}:${heldPort} must count as holding that port`,
+          );
+        } finally {
+          held.close();
+        }
       }
     });
 

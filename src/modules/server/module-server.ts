@@ -926,6 +926,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           : classifyBrowserModuleAbsoluteSourcePath(sourceFile, projectDir, {
             config: options.config,
             rscEnabled: isRSCEnabled(options.config),
+            isLocalProject: options.isLocalProject,
           });
         const exactSourceKey = sourcePolicy?.canonicalPath ?? null;
 

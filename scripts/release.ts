@@ -8,6 +8,7 @@
  */
 
 import { createFileSystem } from "../src/platform/compat/fs.ts";
+import { bumpDenoJsonVersion } from "./release-version.ts";
 import { exit, getArgs } from "../src/platform/compat/process.ts";
 import { promptUser } from "../cli/utils/index.ts";
 
@@ -184,6 +185,7 @@ async function updateExampleVersions(newVersion: string) {
 	}
 }
 
+
 async function updateTemplates(newVersion: string) {
 	console.log("\n📝 Updating template versions...");
 	const filesToUpdate = [
@@ -276,11 +278,14 @@ async function runRelease() {
 	// 2. Update deno.json
 	console.log("\n📝 Updating version in deno.json...");
 	if (!DRY_RUN) {
+		// Rewrite the version in place rather than re-serialising the parsed
+		// object. JSON.stringify reflows the whole file -- it expands inline
+		// arrays such as `"dependencies": ["build:npm"]` across several lines --
+		// which buries the one meaningful line under unrelated churn that then
+		// has to be reverted by hand.
+		const source = await fs.readTextFile(denoJsonPath);
+		await fs.writeTextFile(denoJsonPath, bumpDenoJsonVersion(source, newVersion));
 		denoJson.version = newVersion;
-		await fs.writeTextFile(
-			denoJsonPath,
-			JSON.stringify(denoJson, null, 2) + "\n",
-		);
 	}
 
 	// 2.5 Update examples
@@ -294,6 +299,16 @@ async function runRelease() {
 		console.log("\n📦 Verifying distribution artifacts (binary + npm package)...");
 		await runCommand(["deno", "task", "verify:dist"]);
 	}
+
+	// 3.5 Regenerate artifacts that embed the version.
+	//
+	// hydration-runtime.generated.ts is a prebundled artifact carrying its own
+	// `var VERSION = "..."`, so a regex bump cannot reach it. Left stale it
+	// disagrees with version-constant.ts, and `generate:manifests:check` fails
+	// the required typecheck shard -- blocking the publish this task exists to
+	// perform. Every release before this ran `deno task generate` by hand.
+	console.log("\n🔧 Regenerating version-embedding artifacts...");
+	await runCommand(["deno", "task", "generate"]);
 
 	// 4. Git commit, tag, and push (CI will handle npm publish + binary upload)
 	console.log("\n📦 Committing and tagging release...");

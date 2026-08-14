@@ -43,6 +43,32 @@ describe("extensions/setup-hint", () => {
     });
   });
 
+  it("says where the composition it recommends stops working", async () => {
+    // The recommended config imports the extension, and Veryfront Cloud
+    // evaluates a project config as data rather than importing it. A hint that
+    // stays silent here hands the reader a project that deploys and then
+    // answers 500 on every request.
+    await withTempDir(async (directory) => {
+      await writeTextFile(join(directory, "package.json"), `{"name":"scaffold"}`);
+
+      const created = formatExtensionSetupHint("@veryfront/ext-css-lightning", {
+        projectDirectory: directory,
+      });
+      await writeTextFile(join(directory, "veryfront.config.ts"), "export default {};\n");
+      const existing = formatExtensionSetupHint("@veryfront/ext-css-lightning", {
+        projectDirectory: directory,
+      });
+
+      for (const hint of [created, existing]) {
+        assertEquals(
+          hint.includes("cannot be deployed to Veryfront Cloud"),
+          true,
+          `hint must say the composition is not deployable, got: ${hint}`,
+        );
+      }
+    });
+  });
+
   it("never names `veryfront/config`, which is not an exported subpath", async () => {
     // The obvious guess when the hint stays silent. `veryfront`'s package
     // exports map has no `./config` entry, so Node rejects it with

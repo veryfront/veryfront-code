@@ -12,6 +12,9 @@ useful provider surface for generic Salesforce access. The reason to route
 Salesforce through Veryfront is that customer support agents need a governed
 workflow surface, not only a raw CRM protocol surface.
 
+For installation, OAuth, and service-account setup, see
+[Set up Salesforce](../guides/integrations/salesforce.md).
+
 ## The design choice
 
 Salesforce owns CRM data and CRM permissions. Veryfront owns the agent runtime:

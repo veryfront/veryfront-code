@@ -23,6 +23,7 @@ import {
   createHttpDeployControlPlane,
   type DeployControlPlane,
   type DeployReleaseAssetManifestBody,
+  type DeployReleaseFile,
 } from "./control-plane.ts";
 import {
   assertProjectOwnership,
@@ -157,6 +158,80 @@ describe("DeployProject", () => {
         );
         assertEquals(controlPlane.createdReleases, [], "no release before the rejection");
         assertEquals(controlPlane.createdDeployments, [], "no deployment before the rejection");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("refuses a config the hosted runtime can never evaluate", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      await Deno.writeTextFile(
+        `${projectDir}/veryfront.config.ts`,
+        `import { defineConfig } from "veryfront";\n` +
+          `import extCssLightning from "@veryfront/ext-css-lightning";\n\n` +
+          `export default defineConfig({\n  extensions: [extCssLightning()],\n});\n`,
+      );
+      const controlPlane = new InMemoryDeployControlPlane();
+      try {
+        const error = await expectDeployError(() => executeApply(projectDir, controlPlane));
+
+        const message = (error as Error).message;
+        assertStringIncludes(message, "veryfront.config.ts");
+        assertStringIncludes(message, "@veryfront/ext-css-lightning");
+        assertEquals(controlPlane.createdReleases, [], "no release for an undeployable config");
+        assertEquals(
+          controlPlane.createdDeployments,
+          [],
+          "no deployment for an undeployable config",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("refuses a literal config the hosted result policy always rejects", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      // Every construct here is one the hosted evaluator parses happily. It
+      // refuses the record afterwards, on every request, so a deploy that let
+      // this through would report success over an environment answering 500.
+      await Deno.writeTextFile(
+        `${projectDir}/veryfront.config.ts`,
+        `export default { cache: { dir: ".tenant-cache" } };\n`,
+      );
+      const controlPlane = new InMemoryDeployControlPlane();
+      try {
+        const error = await expectDeployError(() => executeApply(projectDir, controlPlane));
+
+        assertStringIncludes((error as Error).message, "cache.dir");
+        assertEquals(controlPlane.createdReleases, [], "no release for an undeployable config");
+        assertEquals(
+          controlPlane.createdDeployments,
+          [],
+          "no deployment for an undeployable config",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("deploys a config that only uses the hosted configuration helpers", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      await Deno.writeTextFile(
+        `${projectDir}/veryfront.config.ts`,
+        `import { defineConfig } from "veryfront";\n\n` +
+          `export default defineConfig({ title: "Demo" });\n`,
+      );
+      const controlPlane = new InMemoryDeployControlPlane();
+      try {
+        const outcome = await executeApply(projectDir, controlPlane);
+
+        assertEquals(outcome.kind, "deployed", "a hosted-compatible config still deploys");
       } finally {
         await Deno.remove(projectDir, { recursive: true });
       }
@@ -483,6 +558,100 @@ describe("DeployProject", () => {
     });
   });
 
+  /**
+   * The readiness probe cannot get past a protected environment's access gate
+   * without a session credential, so a gate challenge is all it ever sees. The
+   * app behind the gate can be answering 503 to every signed-in visitor and
+   * this step still completes, which is correct, because the deployment is
+   * already committed and verified, and wrong to report as a verified URL.
+   * Deploy has to say which of the two it established.
+   */
+  it("warns that the environment URL was never observed serving behind its gate", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      controlPlane.environmentProtected = true;
+      const events: DeployEvent[] = [];
+      try {
+        const outcome = await withFetchStub(
+          // What a signed-out caller gets: the gate, never the dead app.
+          () =>
+            new Response(null, {
+              status: 302,
+              headers: { location: "https://veryfront.com/sign-in" },
+            }),
+          () =>
+            createDeployment(controlPlane).execute({
+              projectDir,
+              environment: "production",
+              mode: "apply",
+              source: { kind: "already-pushed" },
+            }, {
+              onEvent(event) {
+                events.push(event);
+              },
+            }),
+        );
+
+        assertEquals(outcome.kind, "deployed");
+        const warning = events.find((event) =>
+          event.kind === "warning" && event.code === "environment-url-unverified"
+        );
+        assertEquals(
+          warning?.kind === "warning" ? warning.code : "no warning emitted",
+          "environment-url-unverified",
+        );
+        assertStringIncludes(
+          warning?.kind === "warning" ? warning.message : "",
+          "https://my-project.production.veryfront.com/",
+        );
+        // The remedy has to be one the caller can act on. This deploy resolved
+        // VERYFRONT_API_TOKEN from the shell, which outranks the token store,
+        // so "run veryfront login" alone would leave the next deploy gated the
+        // same way.
+        assertStringIncludes(
+          warning?.kind === "warning" ? warning.message : "",
+          "VERYFRONT_API_TOKEN is set in this shell",
+        );
+        assertEquals(
+          outcome.kind === "deployed" ? outcome.result.urlVerification : undefined,
+          "gated",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("records the environment URL as served when the probe sees the app answer", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      const events: DeployEvent[] = [];
+      try {
+        const outcome = await executeApply(projectDir, controlPlane, {
+          onEvent(event) {
+            events.push(event);
+          },
+        });
+
+        assertEquals(outcome.kind, "deployed");
+        assertEquals(
+          events.some((event) =>
+            event.kind === "warning" && event.code === "environment-url-unverified"
+          ),
+          false,
+        );
+        assertEquals(
+          outcome.kind === "deployed" ? outcome.result.urlVerification : undefined,
+          "served",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
   it("awaits async observer events before starting the next deployment step", async () => {
     await withDeployEnv(async () => {
       const { projectDir } = await createPushedProject();
@@ -772,6 +941,48 @@ describe("environment URL readiness", () => {
           apiToken: apiKeyToken,
         }),
     );
+  });
+
+  it("reports a gate challenge as gated, not as the app serving", async () => {
+    const readiness = await withMockFetch(
+      () =>
+        Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://veryfront.com/sign-in" },
+          }),
+        ),
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          protected: true,
+          apiToken: apiKeyToken,
+        }),
+    );
+
+    assertEquals(readiness, {
+      kind: "gated",
+      url: "https://my-project.production.veryfront.com/",
+      status: 302,
+    });
+  });
+
+  it("reports a served response when the probe reaches the app itself", async () => {
+    const readiness = await withMockFetch(
+      () => Promise.resolve(new Response("ready")),
+      () => waitForEnvironmentReady(hostedTarget),
+    );
+
+    assertEquals(readiness, { kind: "served" });
+  });
+
+  it("reports an unprobed environment when there is no page route to check", async () => {
+    const readiness = await withMockFetch(
+      () => Promise.reject(new Error("readiness must not fetch without a route")),
+      () => waitForEnvironmentReady({ ...hostedTarget, route: null }),
+    );
+
+    assertEquals(readiness, { kind: "unprobed" });
   });
 
   it("classifies a rejected session credential as a deployment error", async () => {
@@ -1929,6 +2140,235 @@ describe("deployment routing convergence", () => {
 
         assertEquals(outcome.kind, "deployed");
         assertEquals(warnings, [], "missing convergence data must not warn");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+});
+
+describe("unroutable hosted environment names", () => {
+  /**
+   * Live infrastructure only routes `{slug}.{preview|staging|production}.veryfront.com`.
+   * Any other label either has no wildcard certificate at all (TLS handshake failure)
+   * or resolves to a proxy that answers
+   * `404 {"error":"No project configured for domain: ..."}` — both of which the
+   * readiness poller treats as transient and retries until the timeout expires.
+   */
+  function hostedNotFound() {
+    return new Response(
+      JSON.stringify({ error: "No project configured for domain", status: 404 }),
+      { status: 404, headers: { "content-type": "application/json" } },
+    );
+  }
+
+  /** Matches on the parsed host, so a control-plane URL can never be mistaken for one. */
+  function isHostedEnvironmentRequest(input: string | URL | Request): boolean {
+    const url = input instanceof Request ? input.url : String(input);
+    try {
+      return new URL(url).hostname.endsWith(".veryfront.com");
+    } catch {
+      return false;
+    }
+  }
+
+  it("rejects a user-created environment name before creating a release", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      controlPlane.environmentDomains = [];
+      try {
+        const error = await expectDeployError(() =>
+          withFetchStub(
+            (input) => isHostedEnvironmentRequest(input) ? hostedNotFound() : new Response("ready"),
+            () =>
+              createDeployment(controlPlane).execute({
+                projectDir,
+                environment: "development",
+                mode: "apply",
+                source: { kind: "already-pushed" },
+              }),
+          )
+        );
+
+        const message = (error as Error).message;
+        assertStringIncludes(message, "development");
+        assertStringIncludes(message, "preview");
+        assertStringIncludes(message, "staging");
+        assertStringIncludes(message, "production");
+        assertEquals(
+          controlPlane.createdReleases,
+          [],
+          "an unroutable environment must be rejected before any release is created",
+        );
+        assertEquals(
+          controlPlane.createdDeployments,
+          [],
+          "an unroutable environment must be rejected before any deployment is created",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("does not spend the readiness timeout on a guaranteed failure", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      controlPlane.environmentDomains = [];
+      let probes = 0;
+      try {
+        await expectDeployError(() =>
+          withFetchStub(
+            (input) => {
+              if (isHostedEnvironmentRequest(input)) {
+                probes++;
+                return hostedNotFound();
+              }
+              return new Response("ready");
+            },
+            () =>
+              createDeployment(controlPlane).execute({
+                projectDir,
+                environment: "qa",
+                mode: "apply",
+                source: { kind: "already-pushed" },
+              }),
+          )
+        );
+
+        assertEquals(probes, 0, "no readiness probe may be sent to an unroutable host");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("omits the canonical companion probe for a protected custom-domain environment", async () => {
+    const probed: string[] = [];
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        probed.push(request.url);
+        return Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://veryfront.com/sign-in" },
+          }),
+        );
+      },
+      () =>
+        waitForEnvironmentReady({
+          projectSlug: "my-project",
+          environmentName: "development",
+          url: "https://dev.example.com",
+          protected: true,
+          apiToken: "eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOiJ1XzEifQ.test-signature",
+        }, { pollIntervalMs: 1, timeoutMs: 1_000 }),
+    );
+
+    assertEquals(
+      probed,
+      ["https://dev.example.com/"],
+      "the custom domain answered; no unroutable canonical host may be probed",
+    );
+  });
+
+  /**
+   * An API-only, agent-only or otherwise page-less project. `readinessRoute` is
+   * null for it, so `buildEnvironmentReadinessProbes` yields nothing and the
+   * deploy never asks the platform for a hosted address — which is why the name
+   * check must not apply to it.
+   */
+  const SERVER_ONLY_CONTENT = "export const handler = () => new Response('ok');\n";
+
+  async function createPushedPagelessProject(): Promise<{
+    projectDir: string;
+    files: DeployReleaseFile[];
+  }> {
+    const projectDir = await Deno.makeTempDir();
+    await Deno.mkdir(`${projectDir}/server`, { recursive: true });
+    await Deno.writeTextFile(`${projectDir}/veryfront.json`, projectConfigText());
+    await Deno.writeTextFile(`${projectDir}/server/handler.ts`, SERVER_ONLY_CONTENT);
+    const commitSha = await commitProject(projectDir);
+    const files: DeployReleaseFile[] = [
+      { path: "server/handler.ts", content: SERVER_ONLY_CONTENT },
+      { path: "veryfront.json", content: projectConfigText() },
+    ];
+    await writePushReceipt(projectDir, {
+      controlPlane: CONTROL_PLANE,
+      projectId: PROJECT_ID,
+      projectSlug: PROJECT_SLUG,
+      branch: "main",
+      commitSha,
+      sourceDigest: await computeSourceDigest(files),
+      clean: true,
+    });
+    return { projectDir, files };
+  }
+
+  it("still deploys a page-less project to an environment with no hosted address", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir, files } = await createPushedPagelessProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      controlPlane.environmentDomains = [];
+      controlPlane.releaseFiles = files;
+      controlPlane.manifestResponses = [readyManifest({})];
+      let probes = 0;
+      try {
+        const outcome = await withFetchStub(
+          (input) => {
+            if (isHostedEnvironmentRequest(input)) {
+              probes++;
+              return hostedNotFound();
+            }
+            return new Response("ready");
+          },
+          () =>
+            createDeployment(controlPlane).execute({
+              projectDir,
+              environment: "development",
+              mode: "apply",
+              source: { kind: "already-pushed" },
+            }),
+        );
+
+        assertEquals(
+          outcome.kind,
+          "deployed",
+          "a deploy that never probes a hosted address does not depend on the environment name",
+        );
+        assertEquals(probes, 0, "a page-less deploy sends no readiness probe");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("still deploys an unroutable environment name that has a custom domain", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      controlPlane.environmentDomains = ["https://dev.example.com"];
+      try {
+        const outcome = await withFetchStub(
+          () => new Response("ready"),
+          () =>
+            createDeployment(controlPlane).execute({
+              projectDir,
+              environment: "development",
+              mode: "apply",
+              source: { kind: "already-pushed" },
+            }),
+        );
+
+        assertEquals(
+          outcome.kind,
+          "deployed",
+          "a custom domain makes the environment name irrelevant to routing",
+        );
       } finally {
         await Deno.remove(projectDir, { recursive: true });
       }

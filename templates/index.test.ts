@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import {
+  assert,
   assertEquals,
   assertExists,
   assertRejects,
@@ -981,6 +982,26 @@ describe("templates", () => {
         offenders.join(", ")
       }`,
     );
+  });
+
+  it("presents standalone inference before the optional Cloud gateway", async () => {
+    const aiRulesRoot = new URL("./ai-rules/", import.meta.url);
+
+    for await (const entry of Deno.readDir(aiRulesRoot)) {
+      if (!entry.isFile || !entry.name.endsWith(".md")) continue;
+
+      const content = await Deno.readTextFile(new URL(entry.name, aiRulesRoot));
+      const providerKey = content.indexOf("Use a provider API key");
+      const localServer = content.indexOf("OpenAI-compatible local server");
+      const cloudGateway = content.indexOf("optional Veryfront Cloud gateway");
+
+      assert(providerKey >= 0, `${entry.name} must document direct provider keys`);
+      assert(localServer > providerKey, `${entry.name} must document local inference`);
+      assert(
+        cloudGateway > localServer,
+        `${entry.name} must present the optional Cloud gateway after standalone inference`,
+      );
+    }
   });
 
   it("does not depend on the global JSX namespace in template files", async () => {

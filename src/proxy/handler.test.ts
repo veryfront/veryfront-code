@@ -1662,11 +1662,9 @@ describe("Proxy Handler", () => {
 
         for (
           const host of [
-            "lvh.me",
             "localhost",
-            "veryfront.dev",
-            "preview.lvh.me",
-            "staging.lvh.me",
+            "preview.localhost",
+            "staging.localhost",
           ]
         ) {
           const ctx = await handler.processRequest(
@@ -2085,7 +2083,7 @@ describe("Proxy Handler", () => {
         },
       });
 
-      const req = new Request("http://my-project.preview.lvh.me:3001/page");
+      const req = new Request("http://my-project.preview.localhost:3001/page");
 
       const ctx = await handler.processRequest(req);
 

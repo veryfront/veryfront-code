@@ -91,6 +91,8 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "chat-ui.md",
   "cli-knowledge-ingestion.md",
   "coding-agents.md",
+  "cloud-environment-access.md",
+  "cloud-quickstart.md",
   "create-agent.md",
   "deploy-from-ci.md",
   "deploying.md",
@@ -98,10 +100,10 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "extension-authoring.md",
   "extensions.md",
   "head-and-seo.md",
-  "index.md",
   "installation.md",
   "create-frontend.md",
   "create-project.md",
+  "add-to-existing-project.md",
   "create-api.md",
   "deploy-project.md",
   "integrations.md",
@@ -115,6 +117,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "schedule.md",
   "webhook.md",
   "security-headers.md",
+  "self-hosting.md",
   "skills.md",
   "storybook-ui-workbench.md",
   "tasks.md",
@@ -252,26 +255,6 @@ describe("Guide: agent-service-runtime.md", () => {
 
     const handler = createAgUiHandler("assistant");
     assertEquals(typeof handler, "function");
-  });
-});
-
-describe("Guide: index.md", () => {
-  it("documents the CLI and coding-agent workflow from the overview", async () => {
-    const guide = await readGuide("index.md");
-
-    for (
-      const snippet of [
-        "npm create veryfront",
-        "cd <PROJECT_NAME>",
-        "veryfront dev",
-        "veryfront generate <type> <name>",
-        "veryfront schema --json",
-        "AGENTS.md",
-        "vf_bootstrap",
-      ]
-    ) {
-      assertStringIncludes(guide, snippet);
-    }
   });
 });
 
@@ -1025,6 +1008,69 @@ describe("Guide: create-project.md", () => {
   });
 });
 
+describe("Guide: add-to-existing-project.md", () => {
+  it("documents the compiler options the scaffold actually sets", async () => {
+    const guide = await readGuide("add-to-existing-project.md");
+
+    // The page tells an existing-project reader to set by hand what the
+    // scaffolded template already carries. If the template ever drops one of
+    // these, the guidance is wrong and this fails.
+    const template = await getTemplate("ai-agent");
+    assertExists(template);
+    const tsconfig = template.find((file) => file.path === "tsconfig.json");
+    assertExists(tsconfig, "expected the ai-agent template to ship a tsconfig.json");
+
+    for (const option of ['"jsx": "react-jsx"', '"skipLibCheck": true']) {
+      assertStringIncludes(guide, option);
+      assertStringIncludes(tsconfig.content, option);
+    }
+  });
+
+  it("documents a package-exports-aware moduleResolution", async () => {
+    const guide = await readGuide("add-to-existing-project.md");
+
+    // Veryfront's entry points are subpath exports (`veryfront/agent`), which
+    // the older `node`/`classic` modes cannot resolve. The scaffold sets
+    // `bundler`; an adopting project must pick an equivalent mode or the
+    // linked next steps fail to typecheck.
+    assertStringIncludes(guide, '"moduleResolution": "bundler"');
+
+    const template = await getTemplate("ai-agent");
+    assertExists(template);
+    const tsconfig = template.find((file) => file.path === "tsconfig.json");
+    assertExists(tsconfig);
+    assertStringIncludes(tsconfig.content.toLowerCase(), '"moduleresolution": "bundler"');
+  });
+
+  it("points at the base config the package actually publishes", async () => {
+    const guide = await readGuide("add-to-existing-project.md");
+    assertStringIncludes(guide, '"extends": "veryfront/tsconfig.json"');
+
+    // The page's shortest path is extending the shipped config, so the npm
+    // build must keep publishing it under that exact export key. Resolved from
+    // import.meta.url, not the process cwd: test files share one process under
+    // --parallel and a sibling isolate can hold `withCwd` while this runs.
+    const dnt = await Deno.readTextFile(
+      new URL("../../scripts/build/build-npm-dnt.ts", import.meta.url),
+    );
+    assertStringIncludes(dnt, './tsconfig.json"] = "./tsconfig.json"');
+  });
+
+  it("documents the install command and the entry route the server needs", async () => {
+    const guide = await readGuide("add-to-existing-project.md");
+
+    for (
+      const snippet of [
+        "npm install veryfront",
+        "// app/page.tsx",
+        "npx veryfront dev",
+      ]
+    ) {
+      assertStringIncludes(guide, snippet);
+    }
+  });
+});
+
 describe("Guide: create-api.md", () => {
   it("documents the AG-UI route for the first agent", async () => {
     const guide = await readGuide("create-api.md");
@@ -1062,21 +1108,73 @@ describe("Guide: create-frontend.md", () => {
 });
 
 describe("Guide: deploy-project.md", () => {
-  it("documents the build, serve, deploy, and open sequence", async () => {
+  it("documents the focused Push, Deploy, and open sequence", async () => {
     const guide = await readGuide("deploy-project.md");
 
     for (
       const command of [
-        "veryfront build",
-        "veryfront serve",
+        "veryfront login",
+        "npx veryfront@latest push",
         "npx veryfront@latest deploy",
-        "npx veryfront@latest push --branch feature-x",
-        "veryfront open",
+        "veryfront open --site",
       ]
     ) {
       assertStringIncludes(guide, command);
     }
     assertEquals(guide.includes("veryfront start"), false);
+  });
+});
+
+describe("Guide: cloud-quickstart.md", () => {
+  it("keeps the gateway tutorial on one runnable command sequence", async () => {
+    const guide = await readGuide("cloud-quickstart.md");
+
+    for (
+      const command of [
+        "npm create veryfront@latest support-agent -- --template ai-agent",
+        "npx veryfront@latest login",
+        "npx veryfront@latest push",
+        "npm run dev",
+        "npm run eval -- assistant",
+        "npx veryfront@latest deploy --env production",
+      ]
+    ) {
+      assertStringIncludes(guide, command);
+    }
+  });
+});
+
+describe("Guide: self-hosting.md", () => {
+  it("documents a complete container path without Cloud commands", async () => {
+    const guide = await readGuide("self-hosting.md");
+
+    for (
+      const command of [
+        "veryfront build",
+        "veryfront serve",
+        "FROM node:22-slim",
+        "COPY package.json package-lock.json ./",
+        "RUN npm ci",
+        "RUN npm run build",
+        'CMD ["npm", "start"]',
+        "docker build -t veryfront-app .",
+        "docker run --rm -p 3000:3000 --env-file .env veryfront-app",
+      ]
+    ) {
+      assertStringIncludes(guide, command);
+    }
+    assertEquals(guide.includes("veryfront login"), false);
+    assertEquals(guide.includes("FROM denoland/deno"), false);
+  });
+});
+
+describe("Guide: cloud-environment-access.md", () => {
+  it("probes a concrete route and documents both sign-in apexes", async () => {
+    const guide = await readGuide("cloud-environment-access.md");
+
+    assertStringIncludes(guide, "<environment-url>/<route>");
+    assertStringIncludes(guide, "https://veryfront.com/sign-in");
+    assertStringIncludes(guide, "https://veryfront.org/sign-in");
   });
 });
 

@@ -105,6 +105,133 @@ describe("hydration-script-builder/runtime/renderer", () => {
       ]);
     });
 
+    it("does not probe /index.js when <route>.js reached a module and threw at evaluation", async () => {
+      // Issue #3667: an extension-style route (pages/vector-a.tsx, no folder) was
+      // requesting <route>/index.js and 404ing. That only fires as the retry —
+      // here <route>.js loads and throws a *runtime* error during evaluation
+      // (the class surfaced by the #3661 O_NOFOLLOW adapter crash). The module
+      // exists and is the served file, so the /index.js probe can only 404 and
+      // add noise; the real error must surface untouched.
+      const requested: string[] = [];
+      const evaluationError = new TypeError(
+        "Cannot read properties of undefined (reading 'O_NOFOLLOW')",
+      );
+
+      const thrown = await captureRejection(
+        loadPageModuleWithIndexFallback(
+          "http://modules/pages/vector-a",
+          "vector-a",
+          null,
+          (url) => {
+            requested.push(url);
+            return Promise.reject(
+              url.endsWith("/vector-a.js") ? evaluationError : notFound(url),
+            );
+          },
+        ),
+      );
+
+      assertEquals(thrown, evaluationError);
+      assertEquals(requested, ["http://modules/pages/vector-a.js"]);
+    });
+
+    it('retries at /index.js when Safari reports only "Load failed"', async () => {
+      // Safari surfaces a failed dynamic import as a TypeError reading exactly
+      // "Load failed", naming no module. That is the same shape as the
+      // evaluation error pinned above, so the retry cannot be decided on the
+      // error's type — only its wording distinguishes them. Without this the
+      // <route>/index.js fallback never fired in Safari and the page stayed
+      // blank for every <route>/index.tsx route.
+      const requested: string[] = [];
+      const pageModule: ModuleNamespace = { default: "docs-index" };
+
+      const loaded = await loadPageModuleWithIndexFallback(
+        "http://modules/pages/docs",
+        "docs",
+        null,
+        (url) => {
+          requested.push(url);
+          if (url.endsWith("/docs.js")) {
+            return Promise.reject(new TypeError("Load failed"));
+          }
+          return Promise.resolve(pageModule);
+        },
+      );
+
+      assertEquals(loaded, pageModule);
+      assertEquals(requested.length, 2);
+    });
+
+    it("refuses the retry for a module that throws a non-Error value", async () => {
+      // Only module code produces a non-Error rejection; the loader's own
+      // failures are TypeError or SyntaxError. Probing /index.js here can only
+      // 404 and bury what the module threw.
+      const requested: string[] = [];
+      const thrown = await captureRejection(
+        loadPageModuleWithIndexFallback(
+          "http://modules/pages/vector-a",
+          "vector-a",
+          null,
+          (url) => {
+            requested.push(url);
+            return Promise.reject(url.endsWith("/vector-a.js") ? "boom" : notFound(url));
+          },
+        ),
+      );
+
+      assertEquals(thrown, "boom");
+      assertEquals(requested, ["http://modules/pages/vector-a.js"]);
+    });
+
+    it('refuses the retry for a trailing-period "Load failed."', async () => {
+      // Safari's message has no period. Allowing one widened the match past the
+      // engine wording for no gain, and an application error is free to end in
+      // a full stop.
+      const requested: string[] = [];
+      const evaluationError = new TypeError("Load failed.");
+
+      const thrown = await captureRejection(
+        loadPageModuleWithIndexFallback(
+          "http://modules/pages/vector-a",
+          "vector-a",
+          null,
+          (url) => {
+            requested.push(url);
+            return Promise.reject(
+              url.endsWith("/vector-a.js") ? evaluationError : notFound(url),
+            );
+          },
+        ),
+      );
+
+      assertEquals(thrown, evaluationError);
+      assertEquals(requested, ["http://modules/pages/vector-a.js"]);
+    });
+
+    it("still refuses the retry for an evaluation TypeError that merely mentions loading", async () => {
+      // The Safari match is exact, so an application error that happens to
+      // contain the words does not reopen the noise #3667 removed.
+      const requested: string[] = [];
+      const evaluationError = new TypeError("Image load failed for /hero.png");
+
+      const thrown = await captureRejection(
+        loadPageModuleWithIndexFallback(
+          "http://modules/pages/vector-a",
+          "vector-a",
+          null,
+          (url) => {
+            requested.push(url);
+            return Promise.reject(
+              url.endsWith("/vector-a.js") ? evaluationError : notFound(url),
+            );
+          },
+        ),
+      );
+
+      assertEquals(thrown, evaluationError);
+      assertEquals(requested, ["http://modules/pages/vector-a.js"]);
+    });
+
     it("retries at /index.js for rejections the classifier does not recognize", async () => {
       // A proxy that rewrites a module miss into an HTML shell surfaces as a
       // SyntaxError. Gating the retry on error wording turned that into a blank

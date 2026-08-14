@@ -84,8 +84,8 @@ export function generateNonce(): string {
  * are intentionally excluded because tenant project domains
  * (`{slug}.preview.veryfront.com`, etc.) live under the same suffix and
  * would otherwise be allowed to iframe each other (tenant-vs-tenant
- * clickjacking). Dev hosts (`veryfront.dev`) are omitted because dev mode
- * skips the default CSP entirely.
+ * clickjacking). Local development hosts (`*.localhost`) are omitted because
+ * dev mode skips the default CSP entirely.
  */
 const VERYFRONT_FRAME_ANCESTORS = ["'self'", ...HOSTED_STUDIO_ORIGINS];
 

@@ -7,6 +7,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { createContext } from "#veryfront/routing";
 import { createValidatedHandler } from "./handler.ts";
 
 function jsonRequest(
@@ -37,6 +38,23 @@ function streamingRequest(
     duplex: "half",
   };
   return new Request("http://localhost/api/test", init);
+}
+
+/**
+ * Build the object the pages-router executor actually hands an API handler.
+ *
+ * A validated handler mounted as `export const POST = createValidatedHandler(...)`
+ * is invoked by `routing/api/route-executor.ts` with the `APIContext` it builds,
+ * *not* a raw `Request`. On that context `.body` is a reader **function**, so a
+ * handler that treats it as a `Request` and reads `.body.getReader()` throws
+ * `request.body?.getReader is not a function` (issue #3666).
+ */
+function pagesContext(request: Request) {
+  return createContext(
+    request,
+    { params: {} } as unknown as Parameters<typeof createContext>[1],
+    {} as unknown as Parameters<typeof createContext>[2],
+  );
 }
 
 describe("security/input-validation/handler", () => {
@@ -184,6 +202,68 @@ describe("security/input-validation/handler", () => {
 
       assertEquals(receivedUrl, "http://localhost/api/test");
       assertStrictEquals(receivedRequest, req);
+    });
+
+    describe("invoked with a pages-router API context (issue #3666)", () => {
+      it("reads and validates the body from ctx.request", async () => {
+        const bodySchema = defineSchema((v) =>
+          v.object({ name: v.string().min(1), count: v.number() })
+        )();
+        const handler = createValidatedHandler(
+          { body: bodySchema },
+          (_req, validated) =>
+            new Response(JSON.stringify({ echoed: validated.body }), {
+              headers: { "Content-Type": "application/json" },
+            }),
+        );
+
+        const ctx = pagesContext(
+          jsonRequest("http://localhost/api/validated", { name: "Ada", count: 3 }),
+        );
+        const res = await handler(ctx as unknown as Request);
+
+        assertEquals(res.status, 200);
+        assertEquals(await res.json(), { echoed: { name: "Ada", count: 3 } });
+      });
+
+      it("returns a schema 400 (never a body-reader crash) for an invalid body", async () => {
+        const bodySchema = defineSchema((v) =>
+          v.object({ name: v.string().min(1), count: v.number() })
+        )();
+        const handler = createValidatedHandler(
+          { body: bodySchema },
+          () => new Response("OK"),
+        );
+
+        const ctx = pagesContext(
+          jsonRequest("http://localhost/api/validated", { name: "", count: -1 }),
+        );
+        const res = await handler(ctx as unknown as Request);
+        const data = await res.json();
+
+        assertEquals(res.status, 400);
+        assertEquals(data.error, "Validation failed");
+        // The failure must be schema validation — never the pre-validation
+        // "request.body?.getReader is not a function" crash that meant no POST
+        // body could be read at all.
+        assertEquals(JSON.stringify(data).includes("getReader"), false);
+      });
+
+      it("passes the resolved Request (not the context) to the handler", async () => {
+        let received: unknown;
+        const handler = createValidatedHandler({}, (req) => {
+          received = req;
+          return new Response("OK");
+        });
+        const ctx = pagesContext(
+          jsonRequest("http://localhost/api/validated", { ok: true }),
+        );
+
+        await handler(ctx as unknown as Request);
+
+        assertInstanceOf(received, Request);
+        assertStrictEquals(received, ctx.request);
+      });
     });
 
     it("should propagate non-ValidationError errors", async () => {

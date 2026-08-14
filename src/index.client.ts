@@ -22,7 +22,12 @@
 export { defineConfig, defineConfigWithEnv, mergeConfigs } from "#veryfront/config";
 export type { VeryfrontConfig } from "#veryfront/config";
 
-export { getEnv } from "#veryfront/platform";
+// Source `getEnv` from its browser-safe leaf, not the `#veryfront/platform`
+// barrel: that barrel statically re-exports the eager runtime-adapter singletons
+// (`detect.ts` → Deno/Node/Bun adapters), which drags the server filesystem
+// adapter graph into the client bundle and crashes hydration on a browser-absent
+// `fs.constants.O_NOFOLLOW` (#3661).
+export { getEnv } from "#veryfront/platform/compat/process/env.ts";
 
 // NOTE: the server bootstrap value export (`createHandler`, `startServer`,
 // `toNodeHandler` from the public server entrypoint) is intentionally omitted

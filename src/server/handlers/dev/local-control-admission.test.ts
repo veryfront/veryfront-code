@@ -98,7 +98,7 @@ describe("privileged local-control admission", () => {
         control,
         createControlRequest(control, {
           peer: "192.0.2.10",
-          hostname: "project.lvh.me",
+          hostname: "project.localhost",
         }),
       );
     });

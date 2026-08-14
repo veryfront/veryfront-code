@@ -38,4 +38,4 @@ Prefer Veryfront scaffold tools over hand-written boilerplate. Keep app routes, 
 
 ## Inference
 
-Agent routes need model access. Use `veryfront login` for the Veryfront Cloud gateway, set `VERYFRONT_API_TOKEN`, or set provider keys such as `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.
+Agent routes need model inference. Use a provider API key such as `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, configure an OpenAI-compatible local server, or run `veryfront login` to use the optional Veryfront Cloud gateway.
