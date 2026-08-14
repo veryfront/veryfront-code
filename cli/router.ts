@@ -206,6 +206,11 @@ export async function formatDuplicatedBinaryHint(
   const { COMMANDS } = await import("./help/command-definitions.ts");
   const duplicatedBinaryIndex = args.__rawPositionals?.[0];
   const correctedCommand = args._[1];
+  const canonicalCommand = typeof correctedCommand === "string"
+    ? Object.values(COMMANDS).find((definition) =>
+      definition.name === correctedCommand || definition.aliases?.includes(correctedCommand)
+    )?.name ?? correctedCommand
+    : undefined;
   const hintArguments = args.__raw !== undefined && duplicatedBinaryIndex !== undefined
     ? args.__raw.filter((_, index) => index !== duplicatedBinaryIndex)
     : args._.slice(1).map(String);
@@ -276,9 +281,10 @@ export async function formatDuplicatedBinaryHint(
     "--yes",
   ]);
   const globalValueOptions = new Set(["-o", "--output"]);
-  const commandOptions = typeof correctedCommand === "string"
-    ? COMMANDS[correctedCommand]?.options ?? []
+  const commandOptions = canonicalCommand !== undefined
+    ? COMMANDS[canonicalCommand]?.options ?? []
     : [];
+  let optionsEnded = false;
 
   for (let index = 0; index < hintArguments.length; index++) {
     const argument = hintArguments[index]!;
@@ -286,6 +292,15 @@ export async function formatDuplicatedBinaryHint(
       index === positionalIssueTitleHintIndex || index === positionalPullProjectHintIndex
     ) {
       formatted.push("'<REDACTED>'");
+      continue;
+    }
+    if (argument === "--") {
+      formatted.push(argument);
+      optionsEnded = true;
+      continue;
+    }
+    if (optionsEnded) {
+      formatted.push(formatCommandHintArgument(argument, sanitizeUrlCredentials));
       continue;
     }
     const equalsIndex = argument.startsWith("-") ? argument.indexOf("=") : -1;
@@ -299,12 +314,13 @@ export async function formatDuplicatedBinaryHint(
     const fileOption = optionDefinition?.flag.includes("<file>") === true;
     const opaqueIssueOption = correctedCommand === "issues" && opaqueIssueOptions.has(option);
     const opaqueRemoteTargetOption =
-      (correctedCommand === "deploy" || correctedCommand === "pull") &&
+      (canonicalCommand === "deploy" || canonicalCommand === "pull" ||
+        canonicalCommand === "push") &&
       opaqueRemoteTargetOptions.has(option);
     const opaqueConnectionOption = (correctedCommand === "worker" &&
       opaqueWorkerConnectionOptions.has(option)) ||
       (correctedCommand === "login" && option === "--base-url") ||
-      ((correctedCommand === "serve" || correctedCommand === "preview") &&
+      (canonicalCommand === "serve" &&
         opaqueServeHostOptions.has(option));
     const knownGlobalOption = globalBooleanOptions.has(option) || globalValueOptions.has(option);
     const unknownOption = option.startsWith("-") && optionDefinition === undefined &&
@@ -312,7 +328,7 @@ export async function formatDuplicatedBinaryHint(
     const redactOptionValue = sensitiveOption || opaqueIssueOption || opaqueRemoteTargetOption ||
       opaqueConnectionOption ||
       (opaquePayloadOptions.has(option) && !fileOption) || unknownOption;
-    const allowRootRelativeRoute = correctedCommand === "build" &&
+    const allowRootRelativeRoute = canonicalCommand === "build" &&
       rootRelativeRouteOptions.has(option);
     const booleanOption = globalBooleanOptions.has(option) ||
       (optionDefinition !== undefined && !optionDefinition.flag.includes("<"));

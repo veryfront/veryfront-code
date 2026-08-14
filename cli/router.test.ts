@@ -695,6 +695,26 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("preserves documented preview alias option values in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "preview",
+          "--port",
+          "8080",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront preview --port 8080",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("redacts deploy target identifiers in the correction", async () => {
       stubExit();
       stubLogger();
@@ -760,6 +780,30 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("redacts push target identifiers in the correction", async () => {
+      stubExit();
+      stubLogger();
+      const targetOptions = ["--project", "-p", "--branch", "-b"];
+      try {
+        for (const option of targetOptions) {
+          infoMessages.length = 0;
+          const code = await runAndCaptureExit(parseCliArgs([
+            "veryfront",
+            "push",
+            option,
+            "private-push-target",
+          ]));
+          assertEquals(code, 2);
+          assertEquals(infoMessages, [
+            '  You already included "veryfront". Use:',
+            `    veryfront push ${option} '<REDACTED>'`,
+          ]);
+        }
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("redacts a positional pull project identifier in the correction", async () => {
       stubExit();
       stubLogger();
@@ -794,6 +838,26 @@ describe("cli/router helpers", () => {
         assertEquals(infoMessages, [
           '  You already included "veryfront". Use:',
           "    veryfront login --note '<REDACTED>' --context='<REDACTED>'",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("preserves positional operands after the option separator", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "task",
+          "--",
+          "sync-data",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront task -- sync-data",
         ]);
       } finally {
         restoreAll();
