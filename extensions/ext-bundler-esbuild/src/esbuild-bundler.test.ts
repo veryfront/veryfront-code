@@ -6,10 +6,15 @@
  */
 
 import { assertEquals, assertExists, assertRejects, assertStringIncludes } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { afterEach, describe, it } from "@std/testing/bdd";
 import { createRequire } from "node:module";
 
-import { EsbuildBundler, isLiveEsbuildServiceProcess } from "./esbuild-bundler.ts";
+import {
+  __recordOwnershipErrorForTests,
+  __resetOwnershipErrorForTests,
+  EsbuildBundler,
+  isLiveEsbuildServiceProcess,
+} from "./esbuild-bundler.ts";
 import { rebuildContextWithSignal } from "./context-build-lifecycle.ts";
 
 const childProcess = createRequire(import.meta.url)("node:child_process") as {
@@ -808,6 +813,50 @@ describe("EsbuildBundler.bundle", () => {
       await bundling?.catch(() => undefined);
       await bundler.stop();
     }
+  });
+});
+
+describe("ownership error cause", () => {
+  afterEach(() => {
+    __resetOwnershipErrorForTests();
+  });
+
+  it("adopts the underlying failure when the latch was set before it surfaced", () => {
+    // The latch is created before the operation settles, so it starts without a
+    // cause. Discarding the cause that arrives afterwards is what made every
+    // real esbuild failure surface as a lifecycle problem instead.
+    __resetOwnershipErrorForTests();
+    __recordOwnershipErrorForTests();
+    const error = __recordOwnershipErrorForTests(new Error("spawn ENOENT esbuild"));
+
+    assertStringIncludes(error.message, "module-wide adapter");
+    assertStringIncludes(error.message, "spawn ENOENT esbuild");
+    assertEquals((error.cause as Error).message, "spawn ENOENT esbuild");
+  });
+
+  it("reports a cause supplied on the first record", () => {
+    __resetOwnershipErrorForTests();
+    const error = __recordOwnershipErrorForTests(new Error("binary missing"));
+
+    assertStringIncludes(error.message, "binary missing");
+    assertEquals((error.cause as Error).message, "binary missing");
+  });
+
+  it("keeps the first cause rather than overwriting it", () => {
+    __resetOwnershipErrorForTests();
+    __recordOwnershipErrorForTests(new Error("first failure"));
+    const error = __recordOwnershipErrorForTests(new Error("second failure"));
+
+    assertEquals((error.cause as Error).message, "first failure");
+    assertStringIncludes(error.message, "first failure");
+  });
+
+  it("stays usable when there is no underlying failure", () => {
+    __resetOwnershipErrorForTests();
+    const error = __recordOwnershipErrorForTests();
+
+    assertStringIncludes(error.message, "module-wide adapter");
+    assertEquals(error.cause, undefined);
   });
 });
 
