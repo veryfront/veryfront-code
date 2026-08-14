@@ -231,8 +231,6 @@ const TENANT_BUILD_ERROR_CLASS = "tenant-build";
  */
 const BUILD_FAILURE_TAG = Symbol.for("veryfront.module-loader.build-failure");
 const TENANT_BUILD_ERROR_SLUGS = new Set([
-  "build-failed",
-  "bundle-error",
   "typescript-error",
   "mdx-compile-error",
   "ssg-generation-error",
@@ -247,7 +245,8 @@ const TENANT_BUILD_ERROR_SLUGS = new Set([
  * - the module loader's build-failure tag,
  * - `toError(createError({ type: "build" }))` structured error data,
  * - the render pipeline's `buildFailure` error context, and
- * - tenant-facing BUILD registry slugs.
+ * - tenant-facing BUILD registry slugs that do not also describe framework
+ *   cache or bundle infrastructure failures.
  */
 function isTenantBuildError(error: unknown): boolean {
   try {

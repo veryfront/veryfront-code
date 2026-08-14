@@ -15,6 +15,8 @@ import {
 import type { ApplicationErrorContext as SharedApplicationErrorContext } from "./application-error-contract.ts";
 import {
   ASSET_OPTIMIZATION_ERROR,
+  BUILD_FAILED,
+  BUNDLE_ERROR,
   CONFIG_PARSE_ERROR,
   createError,
   INITIALIZATION_ERROR,
@@ -169,6 +171,12 @@ it("application error reporter downgrades tenant build errors to tagged warnings
   const sourcemapError = SOURCEMAP_ERROR.create({
     detail: "framework source map generation failed",
   });
+  const frameworkCacheWriteError = BUILD_FAILED.create({
+    detail: "Failed to write MDX module cache file: <REDACTED>",
+  });
+  const frameworkBundleError = BUNDLE_ERROR.create({
+    detail: "Failed to regenerate framework bundle cache entry: <REDACTED>",
+  });
 
   assertEquals(
     captureApplicationError(compileError, { boundary: "ssr.render" }),
@@ -194,8 +202,16 @@ it("application error reporter downgrades tenant build errors to tagged warnings
     captureApplicationError(sourcemapError, { boundary: "ssr.render" }),
     "event-id",
   );
+  assertEquals(
+    captureApplicationError(frameworkCacheWriteError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+  assertEquals(
+    captureApplicationError(frameworkBundleError, { boundary: "ssr.render" }),
+    "event-id",
+  );
 
-  assertEquals(captures.length, 6);
+  assertEquals(captures.length, 8);
   // Tenant build/content failures stay visible for escalation analysis, but
   // are tagged and downgraded so they stop surfacing as error-level issues.
   assertEquals(captures[0]?.context.errorClass, "tenant-build");
@@ -211,6 +227,10 @@ it("application error reporter downgrades tenant build errors to tagged warnings
   assertEquals(captures[4]?.context.level, undefined);
   assertEquals(captures[5]?.context.errorClass, undefined);
   assertEquals(captures[5]?.context.level, undefined);
+  assertEquals(captures[6]?.context.errorClass, undefined);
+  assertEquals(captures[6]?.context.level, undefined);
+  assertEquals(captures[7]?.context.errorClass, undefined);
+  assertEquals(captures[7]?.context.level, undefined);
 });
 
 it("application error capture failures never replace application control flow", () => {
