@@ -1997,7 +1997,86 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(repeatedToolCall.status, "error");
   });
 
-  it("stops after suppressed recovery text with a finalized provider result", async () => {
+  it("delivers distinct terminal text from placeholder recovery", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    const chunks: string[] = [];
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/distinct-placeholder-recovery-text",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 2) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Recovered final answer." },
+              { type: "finish", finishReason: "stop" },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "Initial partial answer." },
+            {
+              type: "tool-input-start",
+              id: "toolu_distinct_recovery",
+              toolName: "studio_suggestions",
+            },
+            { type: "tool-input-delta", id: "toolu_distinct_recovery", delta: "{}" },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "hosted/distinct-placeholder-recovery-text",
+      system: "Distinct placeholder recovery text regression test",
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+      tools: { studio_suggestions: studioSuggestions },
+    });
+
+    const response = (await assistant.stream({
+      input: "Create an Outlook assistant",
+      onChunk: (chunk) => chunks.push(chunk),
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse();
+    const body = await response.text();
+
+    assertEquals(callCount, 2);
+    assertEquals(body.match(/Initial partial answer\./g)?.length ?? 0, 1);
+    assertEquals(body.match(/Recovered final answer\./g)?.length ?? 0, 1);
+    assertEquals(chunks, ["Initial partial answer.", "Recovered final answer."]);
+    const completedResponse = finishedResponse as AgentResponse | undefined;
+    assertExists(completedResponse);
+    assertEquals(completedResponse.text, "Recovered final answer.");
+    assertEquals(
+      completedResponse.messages
+        .filter((message) => message.role === "assistant")
+        .flatMap((message) => message.parts)
+        .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : []),
+      ["Initial partial answer.", "Recovered final answer."],
+    );
+  });
+
+  it("stops after distinct recovery text with a finalized provider result", async () => {
     let finishedResponse: AgentResponse | undefined;
     let callCount = 0;
     const studioSuggestions = tool({
@@ -2081,16 +2160,16 @@ describe("agent runtime refresh hooks", () => {
 
     assertEquals(callCount, 2);
     assertEquals(body.includes("Checking the requested update."), true);
-    assertEquals(body.includes("The provider lookup completed."), false);
+    assertEquals(body.includes("The provider lookup completed."), true);
     assertEquals(body.includes("Unexpected continuation."), false);
     assertExists(finishedResponse);
-    assertEquals(finishedResponse.text, "Checking the requested update.");
+    assertEquals(finishedResponse.text, "The provider lookup completed.");
     assertEquals(
       finishedResponse.messages
         .filter((message) => message.role === "assistant")
         .flatMap((message) => message.parts)
         .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : []),
-      ["Checking the requested update."],
+      ["Checking the requested update.", "The provider lookup completed."],
     );
   });
 

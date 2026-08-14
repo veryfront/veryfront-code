@@ -230,6 +230,25 @@ import {
 const logger = serverLogger.component("agent");
 const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = ["load_skill", "load_skill_reference"] as const;
 
+type DeferredRecoveryOutput =
+  | { kind: "sse"; chunk: Uint8Array; isTextEvent: boolean }
+  | { kind: "callback"; chunk: string };
+
+function isTextSseChunk(chunk: Uint8Array): boolean {
+  const payload = new TextDecoder().decode(chunk);
+  if (!payload.startsWith("data: ")) {
+    return false;
+  }
+
+  try {
+    const event = JSON.parse(payload.slice("data: ".length)) as { type?: unknown };
+    return event.type === "text-start" || event.type === "text-delta" ||
+      event.type === "text-end";
+  } catch {
+    return false;
+  }
+}
+
 function buildGeneratedAssistantMessage(
   response: RuntimeGenerateTextResult,
   metadata: { id: string; timestamp: number },
@@ -1748,7 +1767,7 @@ export class AgentRuntime {
     // batch without allowing a repeatedly broken provider stream to loop.
     let recoveredInterruptedLocalToolBatch = false;
     let interruptedLocalToolBatchRecoveryStep: number | undefined;
-    let interruptedLocalToolBatchRecoveryHasDeliveredText = false;
+    let interruptedLocalToolBatchRecoveryText: string | undefined;
 
     for (let step = 0; step < maxSteps; step++) {
       throwIfAborted(abortSignal);
@@ -1849,14 +1868,29 @@ export class AgentRuntime {
       );
 
       const state = createStreamState();
-      const suppressInterruptedRecoveryText = step === interruptedLocalToolBatchRecoveryStep &&
-        interruptedLocalToolBatchRecoveryHasDeliveredText;
+      // A recovery can either replay already-delivered text or replace it with
+      // a final answer. Preserve output order until the full text is known, so
+      // only an exact replay loses its text events and chunk callbacks.
+      const deferInterruptedRecoveryOutput = step === interruptedLocalToolBatchRecoveryStep &&
+        interruptedLocalToolBatchRecoveryText !== undefined;
+      const deferredRecoveryOutput: DeferredRecoveryOutput[] | undefined =
+        deferInterruptedRecoveryOutput ? [] : undefined;
+      const stepController = deferredRecoveryOutput === undefined ? controller : {
+        enqueue(chunk: Uint8Array) {
+          deferredRecoveryOutput.push({
+            kind: "sse",
+            chunk,
+            isTextEvent: isTextSseChunk(chunk),
+          });
+        },
+      } as ReadableStreamDefaultController;
       const stepTextPartId = textPartId === undefined || step === 0
         ? textPartId
         : `${textPartId}:step:${step}`;
-      await processStream(streamSource, state, controller, encoder, stepTextPartId, {
-        onChunk: callbacks?.onChunk,
-        suppressTextOutput: suppressInterruptedRecoveryText,
+      await processStream(streamSource, state, stepController, encoder, stepTextPartId, {
+        onChunk: deferredRecoveryOutput === undefined
+          ? callbacks?.onChunk
+          : (chunk) => deferredRecoveryOutput.push({ kind: "callback", chunk }),
         onUsage: (usage) => accumulateUsage(totalUsage, usage),
         providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
         availableToolNames: runtimeToolNames,
@@ -1872,6 +1906,23 @@ export class AgentRuntime {
         },
       }, abortSignal);
       throwIfAborted(abortSignal);
+      const repeatsInterruptedRecoveryText = deferredRecoveryOutput !== undefined &&
+        state.accumulatedText === interruptedLocalToolBatchRecoveryText;
+      if (deferredRecoveryOutput !== undefined) {
+        for (const output of deferredRecoveryOutput) {
+          if (
+            repeatsInterruptedRecoveryText &&
+            (output.kind === "callback" || output.isTextEvent)
+          ) {
+            continue;
+          }
+          if (output.kind === "callback") {
+            callbacks?.onChunk?.(output.chunk);
+          } else {
+            controller.enqueue(output.chunk);
+          }
+        }
+      }
       finalFinishReason = state.finishReason ?? finalFinishReason;
 
       const streamedToolCalls = Array.from(state.toolCalls.values());
@@ -1886,7 +1937,7 @@ export class AgentRuntime {
         streamedToolCalls.some(isInterruptedClientToolCall);
       const assistantMessage = buildStreamedAssistantMessage({
         ...state,
-        accumulatedText: suppressInterruptedRecoveryText ? "" : state.accumulatedText,
+        accumulatedText: repeatsInterruptedRecoveryText ? "" : state.accumulatedText,
       }, {
         id: `msg_${Date.now()}_${step}`,
         timestamp: Date.now(),
@@ -2015,9 +2066,9 @@ export class AgentRuntime {
         // prefix here could apply only part of the model's intended mutation.
         recoveredInterruptedLocalToolBatch = true;
         interruptedLocalToolBatchRecoveryStep = step + 1;
-        interruptedLocalToolBatchRecoveryHasDeliveredText = hasSubstantiveAssistantText(
-          stepAssistantText,
-        );
+        interruptedLocalToolBatchRecoveryText = hasSubstantiveAssistantText(stepAssistantText)
+          ? stepAssistantText
+          : undefined;
       }
 
       for (const tc of streamedToolCalls) {

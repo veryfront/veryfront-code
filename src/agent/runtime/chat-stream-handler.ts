@@ -130,8 +130,6 @@ export interface ChatStreamState {
 
 export interface ChatStreamCallbacks {
   onChunk?: (chunk: string) => void;
-  /** Consume model text without exposing it through SSE or chunk callbacks. */
-  suppressTextOutput?: boolean;
   onUsage?: (usage: {
     promptTokens?: number;
     completionTokens?: number;
@@ -444,21 +442,12 @@ async function processActiveStream(
   try {
     for await (const frame of run.frames) {
       if (frame.class === "semantic" && frame.event.type === "text_content") {
-        if (callbacks?.suppressTextOutput !== true) {
-          callbacks?.onChunk?.(frame.event.delta);
-        }
+        callbacks?.onChunk?.(frame.event.delta);
       }
       if (frame.class === "semantic" && frame.event.type === "usage") {
         callbacks?.onUsage?.(toLegacyRuntimeUsage(frame.event.usage));
       }
       for (const event of live.encode(frame)) {
-        if (
-          callbacks?.suppressTextOutput === true &&
-          (event.type === "text-start" || event.type === "text-delta" ||
-            event.type === "text-end")
-        ) {
-          continue;
-        }
         sendSSE(controller, encoder, event);
       }
     }
@@ -687,12 +676,10 @@ export function processStreamInternal(
         ? textPartId
         : `${textPartId}:${nextTextSegmentIndex}`;
       nextTextSegmentIndex += 1;
-      if (callbacks?.suppressTextOutput !== true) {
-        sendSSE(controller, encoder, {
-          type: "text-start",
-          id: activeTextPartId,
-        });
-      }
+      sendSSE(controller, encoder, {
+        type: "text-start",
+        id: activeTextPartId,
+      });
     };
 
     const closeTextSegment = () => {
@@ -701,12 +688,10 @@ export function processStreamInternal(
       }
 
       textOpen = false;
-      if (callbacks?.suppressTextOutput !== true) {
-        sendSSE(controller, encoder, {
-          type: "text-end",
-          id: activeTextPartId,
-        });
-      }
+      sendSSE(controller, encoder, {
+        type: "text-end",
+        id: activeTextPartId,
+      });
       activeTextPartId = undefined;
     };
 
@@ -976,14 +961,12 @@ export function processStreamInternal(
             closeReasoningSegment();
             openTextSegment();
             state.accumulatedText += typedPart.text;
-            if (callbacks?.suppressTextOutput !== true) {
-              sendSSE(controller, encoder, {
-                type: "text-delta",
-                id: activeTextPartId,
-                delta: typedPart.text,
-              });
-              callbacks?.onChunk?.(typedPart.text);
-            }
+            sendSSE(controller, encoder, {
+              type: "text-delta",
+              id: activeTextPartId,
+              delta: typedPart.text,
+            });
+            callbacks?.onChunk?.(typedPart.text);
             break;
           }
 
