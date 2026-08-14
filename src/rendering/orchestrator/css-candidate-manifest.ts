@@ -85,6 +85,19 @@ function toRelativeProjectPath(path: string, projectDir: string): string {
   return normalized.replace(/^\/+/, "");
 }
 
+function toDiagnosticProjectPath(path: string, projectDir: string): string {
+  const normalized = normalizePath(path);
+  const normalizedProjectDir = normalizePath(projectDir).replace(/\/+$/, "");
+  if (normalized === normalizedProjectDir) return ".";
+  if (normalized.startsWith(`${normalizedProjectDir}/`)) {
+    return normalized.slice(normalizedProjectDir.length + 1);
+  }
+  if (/^(?:[A-Za-z]:)?\//.test(normalized)) {
+    return `[outside-project]/${normalized.split("/").pop() ?? "unknown"}`;
+  }
+  return normalized.replace(/^\/+/, "");
+}
+
 function buildManifestCacheKey(
   projectScope: string,
   projectVersion: string,
@@ -133,7 +146,7 @@ function buildCandidateManifest(files: SourceFileLike[], projectDir: string): Ca
       extracted = extractCandidates(file.content);
     } catch (error) {
       logger.warn("Skipping file rejected by candidate extraction", {
-        path: file.path,
+        path: toDiagnosticProjectPath(file.path, projectDir),
         error: error instanceof Error ? error.message : String(error),
       });
       continue;

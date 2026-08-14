@@ -3,11 +3,27 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
+import {
   getCandidateManifestCacheStats,
   getProjectCandidates,
   getRouteCandidates,
   invalidateProjectCandidateManifests,
 } from "./css-candidate-manifest.ts";
+
+function captureLogs(): { entries: LogEntry[]; restore: () => void } {
+  const entries: LogEntry[] = [];
+  __registerLogRecordEmitter((entry) => entries.push(entry));
+  return {
+    entries,
+    restore: () => {
+      __resetLogRecordEmitterForTests();
+    },
+  };
+}
 
 describe("rendering/orchestrator/css-candidate-manifest", () => {
   describe("invalidateProjectCandidateManifests", () => {
@@ -259,6 +275,36 @@ describe("rendering/orchestrator/css-candidate-manifest", () => {
       assertEquals(statsAfterFirst.manifests.entries, 1);
       const second = getProjectCandidates(options);
       assertEquals(second.has("text-red-500"), true);
+    });
+
+    it("logs rejected source files without exposing absolute project paths", () => {
+      invalidateProjectCandidateManifests();
+      const captured = captureLogs();
+      try {
+        const projectDir = "/Users/someone/private/path/my-project";
+        const absoluteSourcePath = `${projectDir}/vendor/minified.js`;
+        const poisonContent = Array.from({ length: 100_001 }, (_, i) => `tok-${i}`).join(" ");
+
+        getProjectCandidates({
+          projectScope: "project-poison-log-redaction",
+          projectVersion: "v1",
+          projectDir,
+          files: [
+            { path: absoluteSourcePath, content: poisonContent },
+          ],
+          developmentMode: false,
+        });
+
+        const warning = captured.entries.find((entry) =>
+          entry.message === "Skipping file rejected by candidate extraction"
+        );
+        assertEquals(warning !== undefined, true, "the warning must be emitted");
+        assertEquals(warning!.context?.path, "vendor/minified.js");
+        assertEquals(JSON.stringify(warning!.context).includes(projectDir), false);
+        assertEquals(JSON.stringify(warning!.context).includes(absoluteSourcePath), false);
+      } finally {
+        captured.restore();
+      }
     });
 
     it("degrades a file that exceeds the byte-size admission cap instead of throwing", () => {
