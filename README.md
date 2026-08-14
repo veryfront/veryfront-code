@@ -6,6 +6,10 @@
 
 **Put your agents to work.**
 
+<p align="center">
+  <img src="./assets/banner.svg" alt="Veryfront" width="100%">
+</p>
+
 Veryfront Code is a full-stack framework for building AI-powered applications and agents with TypeScript and React.
 
 It combines agents, tools, workflows, and a complete React rendering stack, and runs on Node.js, Deno, and Bun.
@@ -14,10 +18,6 @@ Veryfront Code is open source under Apache-2.0. Develop locally, self-host in
 your own cloud or on-premises environment, or use the Veryfront platform for
 managed preview environments and production hosting. You do not need a
 Veryfront account for local development or self-hosting.
-
-<p align="center">
-  <img src="./assets/banner.svg" alt="Veryfront" width="100%">
-</p>
 
 ## Get started
 
