@@ -144,6 +144,7 @@ function containsControlCharacter(value: string): boolean {
 }
 
 const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*$/u;
+const LOCAL_PATH_BOUNDARIES = new Set(["=", ":", ",", " ", "\t", "\n", "\r", "'", '"']);
 
 function startsWithLocalPath(value: string): boolean {
   return /^file:/iu.test(value) ||
@@ -154,8 +155,8 @@ function containsLocalPath(value: string): boolean {
   if (startsWithLocalPath(value)) return true;
 
   for (let index = 0; index < value.length; index++) {
-    const separator = value[index];
-    if (separator !== "=" && separator !== ":" && separator !== ",") continue;
+    const separator = value[index]!;
+    if (!LOCAL_PATH_BOUNDARIES.has(separator)) continue;
 
     const suffix = value.slice(index + 1);
     if (!startsWithLocalPath(suffix)) continue;
@@ -231,6 +232,7 @@ export async function formatDuplicatedBinaryHint(
     "-t",
   ]);
   const opaqueWorkerConnectionOptions = new Set(["--redis", "--redis-url"]);
+  const opaqueServeHostOptions = new Set(["--host", "--hostname"]);
   const rootRelativeRouteOptions = new Set(["--exclude", "--include"]);
   const commandOptions = typeof correctedCommand === "string"
     ? COMMANDS[correctedCommand]?.options ?? []
@@ -254,7 +256,9 @@ export async function formatDuplicatedBinaryHint(
     const opaqueIssueOption = correctedCommand === "issues" && opaqueIssueOptions.has(option);
     const opaqueConnectionOption = (correctedCommand === "worker" &&
       opaqueWorkerConnectionOptions.has(option)) ||
-      (correctedCommand === "login" && option === "--base-url");
+      (correctedCommand === "login" && option === "--base-url") ||
+      ((correctedCommand === "serve" || correctedCommand === "preview") &&
+        opaqueServeHostOptions.has(option));
     const redactOptionValue = sensitiveOption || opaqueIssueOption ||
       opaqueConnectionOption ||
       (opaquePayloadOptions.has(option) && !fileOption);

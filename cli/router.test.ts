@@ -595,6 +595,26 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("redacts local paths embedded after whitespace in option values", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "login",
+          "--note",
+          "see /home/alice/private",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront login --note '<REDACTED>'",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("redacts root-relative paths outside build route filters", async () => {
       stubExit();
       stubLogger();
@@ -609,6 +629,47 @@ describe("cli/router helpers", () => {
         assertEquals(infoMessages, [
           '  You already included "veryfront". Use:',
           "    veryfront login --include '<REDACTED>'",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("redacts serve hostname option values in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "serve",
+          "--hostname",
+          "app.internal.example",
+          "--host=preview.internal.example",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront serve --hostname '<REDACTED>' --host='<REDACTED>'",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("redacts preview alias host option values in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "preview",
+          "--host",
+          "preview.internal.example",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront preview --host '<REDACTED>'",
         ]);
       } finally {
         restoreAll();
