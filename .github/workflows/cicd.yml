@@ -965,6 +965,19 @@ jobs:
           echo "Available binaries: $BINARIES"
           echo "Available SBOMs: $SBOMS"
 
+          # Publish a checksum manifest alongside the assets. install.sh verifies a
+          # downloaded binary against this before moving it into place, so the
+          # manifest must name assets exactly as they are uploaded -- basenames,
+          # not the artifact paths they were downloaded to.
+          SUMS_FILE="SHA256SUMS"
+          : > "$SUMS_FILE"
+          for f in $BINARIES scripts/install.sh scripts/install.ps1; do
+            [ -f "$f" ] || continue
+            sha256sum "$f" | sed "s#  .*/#  #" >> "$SUMS_FILE"
+          done
+          echo "Checksum manifest:"
+          cat "$SUMS_FILE"
+
           # Clean up rc pre-releases (created by the prerelease job on main pushes)
           gh release list --repo veryfront/veryfront --json tagName -q ".[].tagName" \
             | grep "^v${VERSION}-rc\." \
@@ -984,6 +997,7 @@ jobs:
           npm install -g veryfront
           ```' \
             $BINARIES \
+            "$SUMS_FILE" \
             scripts/install.sh \
             scripts/install.ps1 \
             $SBOMS
