@@ -57,6 +57,8 @@ interface RouterHarness {
   document: RuntimeDocument;
   headElements: RuntimeElement[];
   setNextPageData(data: PageDataPayload): void;
+  /** URLs handed to location.replace (replacing document navigations). */
+  replacedHrefs(): string[];
   /** router.params at the moment RouterProvider was built — what the new page renders with. */
   renderedRouterParams(): Record<string, string> | null;
   /** The `params` prop handed to the page component; must be normalized. */
@@ -222,6 +224,7 @@ function createRouterHarness(options: HarnessOptions = {}): RouterHarness {
 
   let assignedHref: string | undefined;
   let reloadCount = 0;
+  const replacedHrefs: string[] = [];
   const historyCalls: HistoryCall[] = [];
 
   const window = {
@@ -237,6 +240,9 @@ function createRouterHarness(options: HarnessOptions = {}): RouterHarness {
       },
       reload() {
         reloadCount++;
+      },
+      replace(url: string) {
+        replacedHrefs.push(url);
       },
     },
     history: {
@@ -375,6 +381,7 @@ function createRouterHarness(options: HarnessOptions = {}): RouterHarness {
     setNextPageData: (data) => {
       nextPageData = data;
     },
+    replacedHrefs: () => [...replacedHrefs],
     renderedRouterParams: () => renderedRouterParams,
     renderedPageParams: () => renderedPageParams,
     reloads: () => reloadCount,
@@ -930,6 +937,248 @@ describe("hydration-script-builder/runtime/router", () => {
       await harness.runtime.navigateSPA("/server-only");
 
       assertEquals(harness.window.location.href, "https://veryfront.test/server-only");
+    });
+
+    it("treats the fallback as designed behaviour, not a console error", async () => {
+      const errorLogs: unknown[][] = [];
+      const originalConsoleError = console.error;
+      console.error = (...args: unknown[]) => {
+        errorLogs.push(args);
+      };
+
+      try {
+        const harness = createRouterHarness();
+        harness.window.__veryfrontHydrationComplete?.();
+        harness.setNextPageData({ pagePath: "page", requiresFullDocumentNavigation: true });
+
+        await harness.runtime.navigateSPA("/server-only");
+
+        assertEquals(
+          harness.window.location.href,
+          "https://veryfront.test/server-only",
+          "fallback must still hand the route to the document loader",
+        );
+        assertEquals(errorLogs, [], "the designed fallback must not log a console error");
+      } finally {
+        console.error = originalConsoleError;
+      }
+    });
+
+    it("leaves the history entry to the document loader instead of pushing one first", async () => {
+      const harness = createRouterHarness();
+      harness.window.__veryfrontHydrationComplete?.();
+      harness.setNextPageData({ pagePath: "page", requiresFullDocumentNavigation: true });
+
+      await harness.runtime.navigateSPA("/server-only");
+
+      assertEquals(
+        harness.historyCalls,
+        [],
+        "pushState before a document navigation duplicates the history entry",
+      );
+    });
+
+    it("honours replace semantics when the fallback leaves the document", async () => {
+      const harness = createRouterHarness();
+      harness.window.__veryfrontHydrationComplete?.();
+      harness.setNextPageData({ pagePath: "page", requiresFullDocumentNavigation: true });
+
+      await harness.runtime.navigateSPA("/server-only", "replace");
+
+      assertEquals(
+        harness.replacedHrefs(),
+        ["https://veryfront.test/server-only"],
+        "replace-mode navigation must replace the current history entry",
+      );
+      assertEquals(
+        harness.window.location.href,
+        "https://veryfront.test/",
+        "an href assignment would add a Back-reachable entry for the replaced page",
+      );
+    });
+
+    it("replaces the document when a no-state popstate lands on a server-layout route", async () => {
+      const harness = createRouterHarness({ pathname: "/server-only", search: "?tab=x" });
+      harness.window.__veryfrontHydrationComplete?.();
+      harness.setNextPageData({ pagePath: "page", requiresFullDocumentNavigation: true });
+
+      const popstate = harness.listeners.popstate?.[0];
+      if (!popstate) throw new Error("popstate handler was not registered");
+      await popstate({ state: null } as unknown as RuntimeEvent);
+
+      assertEquals(
+        harness.replacedHrefs(),
+        ["https://veryfront.test/server-only"],
+        "history traversal is already on the target entry; the fallback must replace it",
+      );
+      assertEquals(
+        harness.window.location.href,
+        "https://veryfront.test/server-only?tab=x",
+        "an href assignment during popstate would push an extra history entry",
+      );
+    });
+
+    it("clears the navigation progress state before handing over to the document loader", async () => {
+      const harness = createRouterHarness();
+      harness.window.__veryfrontHydrationComplete?.();
+      harness.setNextPageData({ pagePath: "page", requiresFullDocumentNavigation: true });
+
+      await harness.runtime.navigateSPA("/server-only");
+
+      assertEquals(
+        harness.document.body.getAttribute("aria-busy"),
+        null,
+        "a cancelled unload (beforeunload) must not leave the page stuck aria-busy",
+      );
+    });
+
+    it("does not refetch a cached server-layout route while leaving the document", async () => {
+      const harness = createRouterHarness();
+      harness.window.__veryfrontHydrationComplete?.();
+      harness.setNextPageData({ pagePath: "page", requiresFullDocumentNavigation: true });
+
+      harness.router.prefetch("/server-only");
+      await flushUntil(() => harness.fetchCalls.length === 1);
+      // The fetch is recorded synchronously, but the cache is only populated
+      // once the stubbed response resolves — drain the microtask queue so the
+      // navigation below really starts from a cached payload.
+      for (let i = 0; i < 20; i++) await flushMicrotasks();
+
+      await harness.runtime.navigateSPA("/server-only");
+
+      assertEquals(
+        harness.window.location.href,
+        "https://veryfront.test/server-only",
+        "cached flag must still hand the route to the document loader",
+      );
+      assertEquals(
+        harness.fetchCalls.length,
+        1,
+        "a background refresh of a route we are leaving the document for is wasted work",
+      );
+    });
+  });
+
+  // Cross-cutting invariants of the navigation lifecycle: soft navigations stay
+  // inside the document and history mutates exactly once per navigation, while
+  // every path that leaves the SPA (redirects, server layouts) hands the
+  // history entry to the browser's document loader untouched.
+  describe("navigation contract", () => {
+    it("completes a soft navigation inside the current document without console errors", async () => {
+      const errorLogs: unknown[][] = [];
+      const originalConsoleError = console.error;
+      console.error = (...args: unknown[]) => {
+        errorLogs.push(args);
+      };
+
+      try {
+        const harness = createRouterHarness();
+        harness.window.__veryfrontHydrationComplete?.();
+        harness.setNextPageData({ pagePath: "page", params: {} });
+
+        await harness.runtime.navigateSPA("/next");
+
+        assertEquals(harness.router.pathname, "/next", "the SPA router must own the route");
+        assertEquals(
+          harness.historyCalls,
+          [{ method: "push", href: "/next" }],
+          "one soft navigation must mutate history exactly once",
+        );
+        assertEquals(harness.reloads(), 0, "a soft navigation must not reload the document");
+        assertEquals(
+          harness.window.location.href,
+          "https://veryfront.test/",
+          "a soft navigation must not tear down the document",
+        );
+        assertEquals(errorLogs, [], "a successful navigation must stay silent on console.error");
+      } finally {
+        console.error = originalConsoleError;
+      }
+    });
+
+    it("records a replace instead of a push when requested", async () => {
+      const harness = createRouterHarness();
+      harness.window.__veryfrontHydrationComplete?.();
+      harness.setNextPageData({ pagePath: "page", params: {} });
+
+      await harness.runtime.navigateSPA("/swapped", "replace");
+
+      assertEquals(
+        harness.historyCalls,
+        [{ method: "replace", href: "/swapped" }],
+        "replace-style navigation must not grow the history stack",
+      );
+    });
+
+    it("renders from prefetched page data even when the network refresh hangs", async () => {
+      const harness = createRouterHarness({
+        fetchImpl: (_url, options) => {
+          if (options.headers?.["X-Veryfront-Prefetch"] === "1") {
+            return Promise.resolve(pageDataResponse("prefetched"));
+          }
+          // The stale-while-revalidate refresh never answers; navigation must
+          // not depend on it.
+          return new Promise<RuntimeResponse>(() => {});
+        },
+      });
+      harness.window.__veryfrontHydrationComplete?.();
+
+      harness.router.prefetch("/prefetched");
+      await flushUntil(() => harness.fetchCalls.length === 1);
+      for (let i = 0; i < 20; i++) await flushMicrotasks();
+
+      await harness.runtime.navigateSPA("/prefetched");
+
+      assertEquals(
+        harness.router.pathname,
+        "/prefetched",
+        "the cached payload alone must complete the navigation",
+      );
+      assertEquals(harness.reloads(), 0, "a cache-served navigation must not reload");
+    });
+
+    it("leaves history untouched when a redirect hands over to the document loader", async () => {
+      const harness = createRouterHarness();
+      harness.window.__veryfrontHydrationComplete?.();
+      harness.setNextPageData({ redirect: { destination: "/moved" } });
+
+      await harness.runtime.navigateSPA("/from");
+
+      assertEquals(harness.window.location.href, "https://veryfront.test/moved");
+      assertEquals(
+        harness.historyCalls,
+        [],
+        "the document loader owns the history entry for a redirect",
+      );
+      assertEquals(
+        harness.fetchCalls.length,
+        1,
+        "a redirect must resolve from a single page-data request",
+      );
+    });
+
+    it("restores a page from history state on popstate without a network request", async () => {
+      const harness = createRouterHarness({
+        pathname: "/posts/42",
+        hydrationParams: { id: "42" },
+      });
+      harness.window.__veryfrontHydrationComplete?.();
+
+      harness.window.location.pathname = "/posts/7";
+      const popstate = harness.listeners.popstate?.[0];
+      if (!popstate) throw new Error("popstate handler was not registered");
+      await popstate(
+        {
+          state: { pageData: { pagePath: "page", params: { id: "7" } } },
+        } as unknown as RuntimeEvent,
+      );
+
+      assertEquals(harness.router.params, { id: "7" });
+      assertEquals(
+        harness.fetchCalls,
+        [],
+        "history state already carries the page data; popstate must not refetch",
+      );
     });
   });
 });

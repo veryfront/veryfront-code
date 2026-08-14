@@ -115,6 +115,7 @@ export interface RuntimeLocation {
   href: string;
   reload(): void;
   assign?(url: string): void;
+  replace?(url: string): void;
 }
 
 export interface RuntimeHistory {
