@@ -507,6 +507,25 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("explains how to remove a duplicated binary name before the help route", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "help",
+          "login",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront help login",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("preserves and safely renders positional arguments in the correction", async () => {
       stubExit();
       stubLogger();

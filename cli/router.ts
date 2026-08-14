@@ -275,7 +275,8 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
   const command = args._[0] as string | undefined;
   const secondCommand = args._[1];
   const duplicatedBinaryTarget = command === "veryfront" &&
-      typeof secondCommand === "string" && Object.hasOwn(commands, secondCommand)
+      typeof secondCommand === "string" &&
+      (secondCommand === "help" || Object.hasOwn(commands, secondCommand))
     ? secondCommand
     : undefined;
 
