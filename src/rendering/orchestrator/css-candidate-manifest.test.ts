@@ -229,6 +229,59 @@ describe("rendering/orchestrator/css-candidate-manifest", () => {
       assertEquals(result.has("text-blue-500"), false);
     });
 
+    it("degrades a file that exceeds the candidate-count admission cap instead of throwing", () => {
+      invalidateProjectCandidateManifests();
+      // >MAX_CSS_SELECTOR_TOKENS (100_000) distinct candidates in one file —
+      // the shape of a large minified vendor bundle in project sources.
+      const poisonContent = Array.from({ length: 100_001 }, (_, i) => `tok-${i}`).join(" ");
+      const options = {
+        projectScope: "project-poison-count",
+        projectVersion: "v1",
+        projectDir: "/project",
+        files: [
+          { path: "/project/vendor/minified.js", content: poisonContent },
+          {
+            path: "/project/pages/index.tsx",
+            content: '<div className="text-red-500">Home</div>',
+          },
+        ],
+        developmentMode: false,
+      };
+
+      const result = getProjectCandidates(options);
+
+      assertEquals(result.has("text-red-500"), true);
+      assertEquals(result.has("tok-0"), false);
+
+      // The completed manifest must be cached so the pathological file is not
+      // re-scanned (and cannot re-fail) on every request.
+      const statsAfterFirst = getCandidateManifestCacheStats();
+      assertEquals(statsAfterFirst.manifests.entries, 1);
+      const second = getProjectCandidates(options);
+      assertEquals(second.has("text-red-500"), true);
+    });
+
+    it("degrades a file that exceeds the byte-size admission cap instead of throwing", () => {
+      invalidateProjectCandidateManifests();
+      // >MAX_CSS_FILE_BYTES (16MB) — e.g. a giant generated asset in sources.
+      const oversized = "x".repeat(16 * 1024 * 1024 + 1);
+      const result = getProjectCandidates({
+        projectScope: "project-poison-bytes",
+        projectVersion: "v1",
+        projectDir: "/project",
+        files: [
+          { path: "/project/generated/blob.js", content: oversized },
+          {
+            path: "/project/pages/index.tsx",
+            content: '<div className="text-red-500">Home</div>',
+          },
+        ],
+        developmentMode: false,
+      });
+
+      assertEquals(result.has("text-red-500"), true);
+    });
+
     it("keeps configured runtime roots in the candidate graph", () => {
       invalidateProjectCandidateManifests();
       const result = getProjectCandidates({

@@ -123,7 +123,23 @@ function buildCandidateManifest(files: SourceFileLike[], projectDir: string): Ca
     if (!file.content) continue;
     if (!SOURCE_EXTENSIONS.some((ext) => file.path.endsWith(ext))) continue;
 
-    const candidates = new Set(extractCandidates(file.content));
+    // A file the tokenizer refuses to admit (over the byte or candidate-count
+    // cap) must degrade to "contributes no candidates", not abort the manifest:
+    // an escaping throw here propagates to the SSR boundary and, because it
+    // happens before manifestCache.set, is rebuilt and re-thrown on every
+    // request to the project (VERYFRONT-SERVER-F).
+    let extracted: string[];
+    try {
+      extracted = extractCandidates(file.content);
+    } catch (error) {
+      logger.warn("Skipping file rejected by candidate extraction", {
+        path: file.path,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      continue;
+    }
+
+    const candidates = new Set(extracted);
     const relativePath = toRelativeProjectPath(file.path, projectDir);
     const absolutePath = normalizePath(file.path);
 
