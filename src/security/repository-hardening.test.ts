@@ -7,7 +7,7 @@ const CREATE_APP_TOKEN_ACTION =
   "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1";
 
 async function readText(path: string): Promise<string> {
-  return await Deno.readTextFile(path);
+  return await Deno.readTextFile(new URL(`../../${path}`, import.meta.url));
 }
 
 function stripComments(text: string): string {
