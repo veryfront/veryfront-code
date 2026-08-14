@@ -10,8 +10,9 @@ const DB_CONNECTION_ERROR_CODES = [
   "query_wait_timeout",
   "CONNECTION_CLOSED",
 ] as const;
-const CLIENT_DB_CONNECTION_ERROR_CODES = ["CONNECTION_CLOSED"] as const;
+const POSTGRES_JS_CONNECTION_CLOSED_PATTERN = /^write CONNECTION_CLOSED(?:\s|$)/;
 const FAILED_QUERY_PREFIX = "Failed query: ";
+const FAILED_QUERY_PARAMS_DELIMITER = "\nparams:";
 const FAILED_QUERY_HEAD_MAX_LENGTH = 200;
 
 const SENTRY_TOKEN_PATTERN = /\bsntrys_[A-Za-z0-9_+/=-]+\b/g;
@@ -152,13 +153,16 @@ export function prepareSentryEvent<TEvent extends SentryPolicyEvent>(
 function detectDbConnectionErrorCode(event: SentryPolicyEvent): string | undefined {
   for (const exceptionValue of event.exception?.values ?? []) {
     const message = exceptionValue.value ?? "";
-    const candidates = exceptionValue.type === "PostgresError"
-      ? DB_CONNECTION_ERROR_CODES
-      : exceptionValue.type === "Error"
-      ? CLIENT_DB_CONNECTION_ERROR_CODES
-      : [];
-    const code = candidates.find((candidate) => message.includes(candidate));
-    if (code) return code;
+    if (exceptionValue.type === "PostgresError") {
+      const code = DB_CONNECTION_ERROR_CODES.find((candidate) => message.includes(candidate));
+      if (code) return code;
+    }
+    if (
+      exceptionValue.type === "Error" &&
+      POSTGRES_JS_CONNECTION_CLOSED_PATTERN.test(message)
+    ) {
+      return "CONNECTION_CLOSED";
+    }
   }
   return undefined;
 }
@@ -167,11 +171,13 @@ export function normalizeFailedQueryValue(value: string): string {
   if (!value.startsWith(FAILED_QUERY_PREFIX.trimEnd())) return value;
   const remainder = value.slice(FAILED_QUERY_PREFIX.trimEnd().length);
   if (!/^\s*\n/.test(remainder)) return value;
-  const head = remainder
+  const paramsDelimiterIndex = remainder.indexOf(FAILED_QUERY_PARAMS_DELIMITER);
+  const query = paramsDelimiterIndex === -1 ? remainder : remainder.slice(0, paramsDelimiterIndex);
+  const head = query
     .slice(0, FAILED_QUERY_HEAD_MAX_LENGTH)
     .replace(/\s+/g, " ")
     .trim();
-  const truncated = remainder.trimEnd().length > FAILED_QUERY_HEAD_MAX_LENGTH;
+  const truncated = query.trimEnd().length > FAILED_QUERY_HEAD_MAX_LENGTH;
   return `${FAILED_QUERY_PREFIX}${head}${truncated ? "…" : ""}`;
 }
 

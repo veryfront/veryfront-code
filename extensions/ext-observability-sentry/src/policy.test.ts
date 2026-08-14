@@ -224,6 +224,22 @@ it("policy groups client-side postgres.js connection closures reported as plain 
   assertEquals(event.fingerprint, ["veryfront-db-error", "CONNECTION_CLOSED"]);
 });
 
+it("policy leaves unrelated plain connection-closed errors on the default fingerprint", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "Error",
+          value: "upstream request failed: CONNECTION_CLOSED",
+        }],
+      },
+    },
+    "veryfront-api",
+  );
+
+  assertEquals(event.fingerprint, ["veryfront-api", "{{ default }}"]);
+});
+
 it("policy keeps the default fingerprint for non-connection PostgresErrors and other errors", () => {
   const postgresEvent = prepareSentryEvent(
     {
@@ -275,6 +291,25 @@ it("policy collapses leading sql whitespace in Failed query titles", () => {
   assertEquals(
     event.exception?.values?.[0]?.value,
     'Failed query: select "id", "email" from "users"',
+  );
+});
+
+it("policy excludes query parameters from Failed query titles", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value: 'Failed query: \n  select "id" from "users"\nparams: customer@example.test',
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  assertEquals(
+    event.exception?.values?.[0]?.value,
+    'Failed query: select "id" from "users"',
   );
 });
 
