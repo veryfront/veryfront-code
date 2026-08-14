@@ -68,6 +68,7 @@ import {
   createToolResultMessage,
   getProviderExecutedToolNames,
   getToolResultError,
+  hasSubstantiveAssistantText,
   isInterruptedClientToolCall,
   isRecoverablePlaceholderToolCall,
   isStreamedToolCallIncomplete,
@@ -1926,7 +1927,10 @@ export class AgentRuntime {
         }
       }
 
-      latestAssistantText = getTextFromParts(assistantMessage.parts);
+      const stepAssistantText = getTextFromParts(assistantMessage.parts);
+      if (hasSubstantiveAssistantText(stepAssistantText)) {
+        latestAssistantText = stepAssistantText;
+      }
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
 

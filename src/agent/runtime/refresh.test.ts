@@ -1886,6 +1886,7 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(body.includes("Unexpected second recovery."), false);
     const completedResponse = finishedResponse as AgentResponse | undefined;
     assertExists(completedResponse);
+    assertEquals(completedResponse.text, "Created the Outlook assistant.");
     const placeholderPart = completedResponse.messages
       .flatMap((message) => message.parts)
       .find((part) => "toolCallId" in part && part.toolCallId === "toolu_placeholder_after_text");
