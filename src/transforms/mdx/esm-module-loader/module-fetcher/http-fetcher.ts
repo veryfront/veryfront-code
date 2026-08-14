@@ -200,10 +200,16 @@ export async function fetchModuleViaHTTP(
     response = await withSpan(
       SpanNames.HTTP_CLIENT_FETCH,
       () =>
-        fetchModuleWithLoopbackFallback(fetchFn, moduleUrl, {
-          signal: controller.signal,
-          redirect: "error",
-        }, log, projectSlug),
+        fetchModuleWithLoopbackFallback(
+          fetchFn,
+          moduleUrl,
+          {
+            signal: controller.signal,
+            redirect: "error",
+          },
+          log,
+          projectSlug,
+        ),
       {
         "http.method": "GET",
         "http.url": moduleUrlString,

@@ -21,7 +21,9 @@ describe("module-fetcher/http-fetcher", () => {
       attempts.push({ url, projectSlug });
       if (attempts.length === 1) {
         // Shape of a Deno resolver failure on a glibc-only NSS setup.
-        return Promise.reject(new TypeError("error sending request: dns error: failed to lookup address"));
+        return Promise.reject(
+          new TypeError("error sending request: dns error: failed to lookup address"),
+        );
       }
       return Promise.resolve(new Response("export const ok = 1;"));
     }) as unknown as typeof fetch;
