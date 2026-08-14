@@ -932,6 +932,48 @@ describe("EsbuildBundler service crash recovery", () => {
     }
   });
 
+  it("treats an operation launched after service exit but before close as recoverable", async () => {
+    const observation = observeEsbuildServices();
+    const { services } = observation;
+    const bundler = new EsbuildBundler();
+    const exitTransform = Promise.withResolvers<
+      Awaited<ReturnType<EsbuildBundler["transform"]>>
+    >();
+
+    try {
+      await bundler.transform({ code: "export const managed = true;", loader: "ts" });
+      assertEquals(services.length, 1);
+
+      const managedService = services[0]!;
+      managedService.child.once("exit", () => {
+        void bundler.transform({
+          code: "export const duringExit: number = 1;",
+          loader: "ts",
+        }).then(exitTransform.resolve, exitTransform.reject);
+      });
+      managedService.child.ref();
+      managedService.child.kill("SIGKILL");
+
+      const exitResult = await exitTransform.promise;
+      assertStringIncludes(exitResult.code, "duringExit = 1");
+      await managedService.close;
+
+      const later = await bundler.transform({
+        code: "export const later: number = 2;",
+        loader: "ts",
+      });
+      assertStringIncludes(later.code, "later = 2");
+    } finally {
+      await bundler.stop().catch(() => undefined);
+      __resetServiceRecoveryForTests();
+      try {
+        await bundler.stop();
+      } finally {
+        observation.restore();
+      }
+    }
+  });
+
   it("does not let stop complete before an operation waiting for recovery", async () => {
     const observation = observeEsbuildServices();
     const { services } = observation;
@@ -1064,6 +1106,65 @@ describe("EsbuildBundler service crash recovery", () => {
     }
   });
 
+  it("disposes stale plugin resources before recreating a crashed context", async () => {
+    const observation = observeEsbuildServices();
+    const { services } = observation;
+    const bundler = new EsbuildBundler();
+    let ctx: BuildContext | undefined;
+    let activeResources = 0;
+    let setupCount = 0;
+    let disposeCount = 0;
+
+    try {
+      ctx = await bundler.context({
+        stdin: {
+          contents: "export const pluginContext: number = 1;",
+          sourcefile: "entry.ts",
+          loader: "ts",
+        },
+        bundle: false,
+        format: "esm",
+        write: false,
+        plugins: [{
+          name: "exclusive-plugin-resource",
+          setup(build) {
+            setupCount += 1;
+            activeResources += 1;
+            build.onDispose(() => {
+              activeResources -= 1;
+              disposeCount += 1;
+            });
+          },
+        }],
+      });
+      await ctx.rebuild();
+      assertEquals(activeResources, 1);
+      assertEquals(setupCount, 1);
+      assertEquals(disposeCount, 0);
+
+      const managedService = services[0]!;
+      managedService.child.ref();
+      managedService.child.kill("SIGKILL");
+      await managedService.close;
+
+      await bundler.transform({ code: "export const recovered = true;", loader: "ts" });
+      await ctx.rebuild();
+
+      assertEquals(setupCount, 2);
+      assertEquals(disposeCount, 1);
+      assertEquals(activeResources, 1);
+    } finally {
+      await ctx?.dispose().catch(() => undefined);
+      await bundler.stop().catch(() => undefined);
+      __resetServiceRecoveryForTests();
+      try {
+        await bundler.stop();
+      } finally {
+        observation.restore();
+      }
+    }
+  });
+
   it("latches the ownership error once the restart budget is exhausted", async () => {
     const observation = observeEsbuildServices();
     const { services } = observation;
@@ -1100,6 +1201,50 @@ describe("EsbuildBundler service crash recovery", () => {
       // The latch is sticky: later operations keep rejecting without respawns.
       await assertRejects(() =>
         bundler.transform({ code: "export const still = true;", loader: "ts" })
+      );
+      assertEquals(services.length, MAX_SERVICE_RESTARTS + 1);
+    } finally {
+      await bundler.stop().catch(() => undefined);
+      __resetServiceRecoveryForTests();
+      try {
+        await bundler.stop();
+      } finally {
+        observation.restore();
+      }
+    }
+  });
+
+  it("latches exhaustion when stop observes a closed lost service", async () => {
+    const observation = observeEsbuildServices();
+    const { services } = observation;
+    const bundler = new EsbuildBundler();
+
+    try {
+      await bundler.transform({ code: "export const seed: number = 0;", loader: "ts" });
+
+      for (let restart = 1; restart <= MAX_SERVICE_RESTARTS; restart++) {
+        const current = services[services.length - 1]!;
+        current.child.ref();
+        current.child.kill("SIGKILL");
+        await current.close;
+
+        await bundler.transform({
+          code: `export const retry${restart}: number = ${restart};`,
+          loader: "ts",
+        });
+      }
+
+      const exhausted = services[services.length - 1]!;
+      exhausted.child.ref();
+      exhausted.child.kill("SIGKILL");
+      await exhausted.close;
+
+      const stopError = await assertRejects(() => bundler.stop());
+      assertStringIncludes((stopError as Error).message, "module-wide adapter");
+      assertStringIncludes((stopError as Error).message, "exited unexpectedly");
+
+      await assertRejects(() =>
+        bundler.transform({ code: "export const afterStop = true;", loader: "ts" })
       );
       assertEquals(services.length, MAX_SERVICE_RESTARTS + 1);
     } finally {

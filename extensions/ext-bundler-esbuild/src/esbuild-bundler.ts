@@ -37,8 +37,8 @@ const ESBUILD_STOP_TIMEOUT_MS = 5_000;
  * Unexpected service-child deaths tolerated before the adapter gives up.
  *
  * The child can be killed by something outside the process (OOM-kill, a
- * container runtime signal). That is recoverable — esbuild respawns the
- * service once its module state is reset — so it must not poison the process
+ * container runtime signal). That is recoverable: esbuild respawns the
+ * service once its module state is reset, so it must not poison the process
  * the way foreign ownership does. The budget keeps a crash-looping binary
  * from respawning forever.
  */
@@ -60,6 +60,7 @@ interface OperationScope {
 interface MappedBundleOptions {
   options: Record<string, unknown>;
   activatePluginDisposals: () => void;
+  disposePluginGeneration: () => Promise<void>;
 }
 
 let esbuildModule: EsbuildModule | null = null;
@@ -191,8 +192,15 @@ function leaveStopBarrier(): void {
 function createPluginDisposalBarrier(scope: OperationScope): {
   wrap: (callback: () => unknown) => () => void;
   activate: () => void;
+  dispose: () => Promise<void>;
 } {
-  const callbacks: Array<{ started: boolean; settled: boolean }> = [];
+  const callbacks: Array<{
+    callback: () => unknown;
+    started: boolean;
+    settled: boolean;
+    settledPromise: Promise<void>;
+    resolveSettled: () => void;
+  }> = [];
   let activated = false;
   let holdingOperation = false;
 
@@ -203,14 +211,15 @@ function createPluginDisposalBarrier(scope: OperationScope): {
     endOperation();
   };
 
-  const settle = (callback: { started: boolean; settled: boolean }): void => {
+  const settle = (callback: { settled: boolean; resolveSettled: () => void }): void => {
     if (callback.settled) return;
     callback.settled = true;
+    callback.resolveSettled();
     releaseIfSettled();
   };
 
   const fail = (
-    callback: { started: boolean; settled: boolean },
+    callback: { settled: boolean; resolveSettled: () => void },
     error: unknown,
   ): void => {
     if (!pluginDisposalError) {
@@ -222,31 +231,50 @@ function createPluginDisposalBarrier(scope: OperationScope): {
     settle(callback);
   };
 
+  const start = (state: {
+    callback: () => unknown;
+    started: boolean;
+    settled: boolean;
+    resolveSettled: () => void;
+  }): void => {
+    if (state.started || state.settled) return;
+    state.started = true;
+    try {
+      const result = state.callback();
+      if (
+        result !== null &&
+        (typeof result === "object" || typeof result === "function") &&
+        typeof (result as PromiseLike<unknown>).then === "function"
+      ) {
+        void Promise.resolve(result).then(
+          () => settle(state),
+          (error) => fail(state, error),
+        );
+      } else {
+        settle(state);
+      }
+    } catch (error) {
+      fail(state, error);
+    }
+  };
+
   return {
     wrap(callback) {
-      const state = { started: false, settled: false };
+      let resolveSettled: () => void = () => {};
+      const settledPromise = new Promise<void>((resolve) => {
+        resolveSettled = resolve;
+      });
+      const state = {
+        callback,
+        started: false,
+        settled: false,
+        settledPromise,
+        resolveSettled,
+      };
       callbacks.push(state);
 
       return () => {
-        if (state.settled) return;
-        state.started = true;
-        try {
-          const result = callback();
-          if (
-            result !== null &&
-            (typeof result === "object" || typeof result === "function") &&
-            typeof (result as PromiseLike<unknown>).then === "function"
-          ) {
-            void Promise.resolve(result).then(
-              () => settle(state),
-              (error) => fail(state, error),
-            );
-          } else {
-            settle(state);
-          }
-        } catch (error) {
-          fail(state, error);
-        }
+        start(state);
       };
     },
     activate() {
@@ -268,6 +296,12 @@ function createPluginDisposalBarrier(scope: OperationScope): {
         }
         releaseIfSettled();
       }, 0);
+    },
+    async dispose() {
+      const pending = callbacks.filter((callback) => !callback.settled);
+      for (const callback of pending) start(callback);
+      await Promise.all(pending.map((callback) => callback.settledPromise));
+      if (pluginDisposalError) throw pluginDisposalError;
     },
   };
 }
@@ -382,15 +416,20 @@ function trackServiceChild(child: ChildProcess): EsbuildService {
     resolveClosed = resolve;
   });
   const service = { child, closed, expectedClose: false };
-  child.once("close", (exitCode, signalCode) => {
+  let lossRecorded = false;
+  const recordUnexpectedLoss = (exitCode: unknown, signalCode: unknown): void => {
     // An unexpected close of a child the adapter owns is a crash, not a
     // lifecycle violation; mark it recoverable instead of latching the
     // permanent ownership error.
-    if (!service.expectedClose) {
-      esbuildServiceLost = true;
-      esbuildServiceLostDetail = `exit code ${exitCode}, signal ${signalCode}`;
-      installServiceLossSpawnGuard();
-    }
+    if (service.expectedClose || lossRecorded) return;
+    lossRecorded = true;
+    esbuildServiceLost = true;
+    esbuildServiceLostDetail = `exit code ${exitCode}, signal ${signalCode}`;
+    installServiceLossSpawnGuard();
+  };
+  child.once("exit", recordUnexpectedLoss);
+  child.once("close", (exitCode, signalCode) => {
+    recordUnexpectedLoss(exitCode, signalCode);
     resolveClosed();
     if (esbuildService === service) esbuildService = null;
   });
@@ -584,6 +623,7 @@ function mapOptions(options: BundleOptions, scope: OperationScope): MappedBundle
   return {
     options: mapped,
     activatePluginDisposals: pluginDisposals.activate,
+    disposePluginGeneration: pluginDisposals.dispose,
   };
 }
 
@@ -661,6 +701,7 @@ export class EsbuildBundler implements Bundler {
         if (contextGeneration === esbuildServiceGeneration) return ctx;
         contextRefresh ??= (async () => {
           if (contextGeneration === esbuildServiceGeneration) return;
+          await mapped.disposePluginGeneration();
           const currentEsbuild = await getEsbuild();
           ctx = await invokeEsbuild(() => currentEsbuild.context(mapped.options)).catch(
             (error: unknown) => {
@@ -724,6 +765,17 @@ export class EsbuildBundler implements Bundler {
       ) {
         const error = recordOwnershipError(
           new Error("esbuild service was replaced outside the module-wide adapter"),
+        );
+        uninstallServiceLossSpawnGuard();
+        throw error;
+      }
+      if (esbuildServiceLost && remainingServiceRestarts <= 0) {
+        const error = recordOwnershipError(
+          new Error(
+            `esbuild service exited unexpectedly ${
+              MAX_SERVICE_RESTARTS + 1
+            } times (last: ${esbuildServiceLostDetail})`,
+          ),
         );
         uninstallServiceLossSpawnGuard();
         throw error;
