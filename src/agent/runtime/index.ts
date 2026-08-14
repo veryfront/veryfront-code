@@ -1867,9 +1867,21 @@ export class AgentRuntime {
       throwIfAborted(abortSignal);
       finalFinishReason = state.finishReason ?? finalFinishReason;
 
+      const streamedToolCalls = Array.from(state.toolCalls.values());
+      const finalToolResults = collectFinalStreamToolResults(state);
+      const canRecoverInterruptedLocalToolBatch = !recoveredInterruptedLocalToolBatch &&
+        step + 1 < maxSteps;
+      const shouldContinue = shouldContinueAfterStreamStep(state, {
+        recoverInterruptedToolCalls: canRecoverInterruptedLocalToolBatch,
+      });
+      const shouldRecoverInterruptedLocalToolBatch = canRecoverInterruptedLocalToolBatch &&
+        shouldContinue &&
+        streamedToolCalls.some(isInterruptedClientToolCall);
       const assistantMessage = buildStreamedAssistantMessage(state, {
         id: `msg_${Date.now()}_${step}`,
         timestamp: Date.now(),
+      }, {
+        preserveRecoverablePlaceholderToolCalls: shouldRecoverInterruptedLocalToolBatch,
       });
 
       for (const tc of state.toolCalls.values()) {
@@ -1917,7 +1929,6 @@ export class AgentRuntime {
       latestAssistantText = getTextFromParts(assistantMessage.parts);
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
-      const finalToolResults = collectFinalStreamToolResults(state);
 
       const persistToolResult = async (toolResult: StreamingToolResult): Promise<void> => {
         if (currentStepToolResults.has(toolResult.toolCallId)) {
@@ -1940,13 +1951,7 @@ export class AgentRuntime {
         );
       };
 
-      const canRecoverInterruptedLocalToolBatch = !recoveredInterruptedLocalToolBatch &&
-        step + 1 < maxSteps;
-      if (
-        !shouldContinueAfterStreamStep(state, {
-          recoverInterruptedToolCalls: canRecoverInterruptedLocalToolBatch,
-        })
-      ) {
+      if (!shouldContinue) {
         for (const toolResult of finalToolResults.values()) {
           await persistToolResult(toolResult);
         }
@@ -1955,9 +1960,6 @@ export class AgentRuntime {
       }
 
       this.status = "tool_execution";
-      const streamedToolCalls = Array.from(state.toolCalls.values());
-      const shouldRecoverInterruptedLocalToolBatch = canRecoverInterruptedLocalToolBatch &&
-        streamedToolCalls.some(isInterruptedClientToolCall);
       if (shouldRecoverInterruptedLocalToolBatch) {
         // Treat parallel local calls as one batch. Executing the finalized
         // prefix here could apply only part of the model's intended mutation.
@@ -1966,14 +1968,6 @@ export class AgentRuntime {
 
       for (const tc of streamedToolCalls) {
         throwIfAborted(abortSignal);
-        if (isRecoverablePlaceholderToolCall(tc)) {
-          // Provisional empty-object placeholder that never finalized. The
-          // model never committed arguments. At this point the continuation
-          // gate has confirmed there is no final assistant text, so the loop
-          // can continue and let the next model call recover the real tool
-          // call without executing or surfacing a stream-termination error.
-          continue;
-        }
         if (shouldRecoverInterruptedLocalToolBatch && tc.providerExecuted !== true) {
           const incomplete = isStreamedToolCallIncomplete(tc);
           const capturedInput = incomplete
@@ -2003,6 +1997,12 @@ export class AgentRuntime {
             toolCalls,
             { emitSse: incomplete ? tc.inputAnnounced === true : true },
           );
+          continue;
+        }
+        if (isRecoverablePlaceholderToolCall(tc)) {
+          // Provisional empty-object placeholder that never finalized. If the
+          // bounded recovery path was unavailable, do not execute or surface
+          // it as a committed call.
           continue;
         }
         if (isStreamedToolCallIncomplete(tc)) {

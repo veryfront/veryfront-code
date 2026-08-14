@@ -1705,8 +1705,101 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(body.includes("Recovered after interrupted tool batch."), true);
   });
 
-  it("does not re-call the model after final assistant text with a provisional placeholder", async () => {
+  it("fails closed when an interrupted local batch already has a final streamed result", async () => {
+    const executedMutations: string[] = [];
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/interrupted-batch-with-result",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount > 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Unexpected recovery." },
+              { type: "finish", finishReason: "stop" },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            {
+              type: "tool-call",
+              toolCallId: "already-applied-file",
+              toolName: "issue466_update_file",
+              input: '{"revision":"already-applied"}',
+            },
+            {
+              type: "tool-result",
+              toolCallId: "already-applied-file",
+              toolName: "issue466_update_file",
+              output: { revision: "already-applied" },
+            },
+            {
+              type: "tool-input-start",
+              id: "truncated-agent-after-result",
+              toolName: "issue466_update_agent",
+            },
+            {
+              type: "tool-input-delta",
+              id: "truncated-agent-after-result",
+              delta: '{"revision":"truncated',
+            },
+            {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 0, outputTokens: 0 },
+            },
+          ]),
+        };
+      },
+    };
+
+    const mutationTool = (id: string) =>
+      tool({
+        id,
+        description: `Apply ${id}`,
+        inputSchema: defineSchema((v) => v.object({ revision: v.string() }))(),
+        execute: async ({ revision }) => {
+          executedMutations.push(revision);
+          return { revision };
+        },
+      });
+
+    const assistant = eagerAgent({
+      model: "hosted/interrupted-batch-with-result",
+      system: "Do not repeat an interrupted batch after a terminal tool result.",
+      tools: {
+        issue466_update_file: mutationTool("issue466_update_file"),
+        issue466_update_agent: mutationTool("issue466_update_agent"),
+      },
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = (await assistant.stream({
+      input: "Update the taxonomy and agent",
+    })).toDataStreamResponse();
+    const body = await response.text();
+
+    assertEquals(callCount, 1);
+    assertEquals(executedMutations, []);
+    assertEquals(body.match(/"type":"tool-output-available"/g)?.length ?? 0, 1);
+    assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 0);
+    assertEquals(body.includes("Unexpected recovery."), false);
+  });
+
+  it("recovers a placeholder after assistant text only once", async () => {
     const toolResults: ToolExecutionResultRequest[] = [];
+    let finishedResponse: AgentResponse | undefined;
     let callCount = 0;
     const studioSuggestions = tool({
       id: "studio_suggestions",
@@ -1726,8 +1819,30 @@ describe("agent runtime refresh hooks", () => {
       },
       async doStream() {
         callCount++;
-        if (callCount > 1) {
-          throw new Error("unexpected second stream call");
+        if (callCount === 2) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-input-start",
+                id: "toolu_repeated_placeholder",
+                toolName: "studio_suggestions",
+              },
+              { type: "tool-input-delta", id: "toolu_repeated_placeholder", delta: "{}" },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+        if (callCount > 2) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Unexpected second recovery." },
+              { type: "finish", finishReason: "stop" },
+            ]),
+          };
         }
 
         return {
@@ -1752,7 +1867,7 @@ describe("agent runtime refresh hooks", () => {
     const assistant = eagerAgent({
       model: "hosted/text-placeholder-stream",
       system: "Placeholder recovery regression test",
-      maxSteps: 2,
+      maxSteps: 4,
       resolveModelTransport: async () => ({ model }),
       tools: { studio_suggestions: studioSuggestions },
       onToolResult: (request) => {
@@ -1762,12 +1877,34 @@ describe("agent runtime refresh hooks", () => {
 
     const response = (await assistant.stream({
       input: "Create an Outlook assistant",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
     })).toDataStreamResponse();
     const body = await response.text();
 
-    assertEquals(callCount, 1);
+    assertEquals(callCount, 2);
     assertEquals(toolResults, []);
     assertEquals(body.includes("Created the Outlook assistant."), true);
+    assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 0);
+    assertEquals(body.includes("Unexpected second recovery."), false);
+    const completedResponse = finishedResponse as AgentResponse | undefined;
+    assertExists(completedResponse);
+    const placeholderPart = completedResponse.messages
+      .flatMap((message) => message.parts)
+      .find((part) => "toolCallId" in part && part.toolCallId === "toolu_placeholder_after_text");
+    assertExists(placeholderPart);
+    const placeholderError = completedResponse.messages
+      .flatMap((message) => message.parts)
+      .find((part) =>
+        part.type === "tool-result" &&
+        part.toolCallId === "toolu_placeholder_after_text"
+      );
+    assertExists(placeholderError);
+    assertEquals((placeholderError as { result: unknown }).result, {
+      error:
+        'Stream terminated before tool-call event fired for "studio_suggestions". Received 2 chars of partial tool-input deltas.',
+    });
   });
 
   it("applies loaded skill maxSteps overrides to generate() invoke_agent calls", async () => {

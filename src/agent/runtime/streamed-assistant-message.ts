@@ -13,6 +13,7 @@ export interface StreamedAssistantMessageIdentity {
 export function buildStreamedAssistantMessage(
   state: Pick<ChatStreamState, "accumulatedText" | "reasoningParts" | "toolCalls">,
   identity: StreamedAssistantMessageIdentity,
+  options: { preserveRecoverablePlaceholderToolCalls?: boolean } = {},
 ): Message {
   const parts: MessagePart[] = [];
 
@@ -37,7 +38,10 @@ export function buildStreamedAssistantMessage(
   }
 
   for (const toolCall of state.toolCalls.values()) {
-    if (shouldOmitRecoverablePlaceholderToolCall(state, toolCall)) {
+    if (
+      options.preserveRecoverablePlaceholderToolCalls !== true &&
+      shouldOmitRecoverablePlaceholderToolCall(state, toolCall)
+    ) {
       continue;
     }
     parts.push(materializeStreamedToolCall(toolCall).part);

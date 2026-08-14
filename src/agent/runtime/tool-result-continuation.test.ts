@@ -297,6 +297,42 @@ describe("agent runtime streamed tool result collection", () => {
     assertEquals(shouldContinue, false);
   });
 
+  it("does not recover an interrupted local batch after a local result is final", () => {
+    const shouldContinue = shouldContinueAfterStreamStep({
+      accumulatedText: "",
+      finishReason: "stop",
+      toolCalls: new Map([
+        [
+          "toolu_completed_local",
+          {
+            id: "toolu_completed_local",
+            name: "update_file",
+            arguments: '{"path":"knowledge/case-triage-taxonomy.md"}',
+            inputAvailable: true,
+          },
+        ],
+        [
+          "toolu_incomplete_local",
+          {
+            id: "toolu_incomplete_local",
+            name: "update_agent",
+            arguments: '{"id":"classify-agent","source":"export const agent =',
+            inputAvailable: false,
+          },
+        ],
+      ]),
+      toolResults: [{
+        toolCallId: "toolu_completed_local",
+        toolName: "update_file",
+        output: { revision: "already-applied" },
+      }],
+    }, {
+      recoverInterruptedToolCalls: true,
+    });
+
+    assertEquals(shouldContinue, false);
+  });
+
   it("continues finalized client-executed tool calls when the provider reports stop", () => {
     const shouldContinue = shouldContinueAfterStreamStep({
       accumulatedText: "",
@@ -528,12 +564,14 @@ describe("agent runtime streamed tool result collection", () => {
         ],
       ]),
       toolResults: [],
+    }, {
+      recoverInterruptedToolCalls: true,
     });
 
     assertEquals(shouldContinue, true);
   });
 
-  it("stops instead of recovering a placeholder after final assistant text", () => {
+  it("recovers a provisional placeholder after assistant text when bounded recovery is available", () => {
     const shouldContinue = shouldContinueAfterStreamStep({
       accumulatedText: "Created the Outlook assistant.",
       finishReason: "tool-calls",
@@ -542,6 +580,29 @@ describe("agent runtime streamed tool result collection", () => {
           "toolu_placeholder_after_text",
           {
             id: "toolu_placeholder_after_text",
+            name: "studio_suggestions",
+            arguments: "{}",
+            inputAvailable: false,
+          },
+        ],
+      ]),
+      toolResults: [],
+    }, {
+      recoverInterruptedToolCalls: true,
+    });
+
+    assertEquals(shouldContinue, true);
+  });
+
+  it("does not recover a provisional placeholder without bounded recovery", () => {
+    const shouldContinue = shouldContinueAfterStreamStep({
+      accumulatedText: "",
+      finishReason: "tool-calls",
+      toolCalls: new Map([
+        [
+          "toolu_placeholder_exhausted",
+          {
+            id: "toolu_placeholder_exhausted",
             name: "studio_suggestions",
             arguments: "{}",
             inputAvailable: false,
