@@ -110,6 +110,12 @@ describe("transforms/mdx/compiler/mdx-compiler", () => {
           compileMarkdown() {
             throw new Error("not used");
           },
+          getRemarkPlugins() {
+            return [];
+          },
+          getRehypePlugins() {
+            return [];
+          },
         } satisfies ContentProcessor,
       );
 
