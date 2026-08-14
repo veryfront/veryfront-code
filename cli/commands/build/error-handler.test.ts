@@ -57,10 +57,11 @@ describe("build/error-handler", () => {
     });
 
     it("prints the underlying cause stack in verbose mode", () => {
+      const absoluteSourcePath = `${Deno.cwd()}/.cache/veryfront-http-bundle/http-deadbeef.mjs`;
       const cause = new ReferenceError("document is not defined");
       cause.stack = [
         "ReferenceError: document is not defined",
-        "    at <CACHE_DIR>/http-deadbeef.mjs:3:7",
+        `    at file://${absoluteSourcePath}:3:7`,
         "    at renderAppRouteToHTML (static-generation.ts:401:13)",
       ].join("\n");
       const error = new Error("Static site generation failed", { cause });
@@ -79,7 +80,8 @@ describe("build/error-handler", () => {
       const rendered = output.join("\n");
       assertEquals(rendered.includes("Underlying stack trace:"), true);
       assertEquals(rendered.includes("ReferenceError: document is not defined"), true);
-      assertEquals(rendered.includes("http-deadbeef.mjs:3:7"), true);
+      assertEquals(rendered.includes("<REDACTED>/http-deadbeef.mjs:3:7"), true);
+      assertEquals(rendered.includes(absoluteSourcePath), false);
     });
 
     it("points non-verbose failures with a cause to the diagnostic flag", () => {
