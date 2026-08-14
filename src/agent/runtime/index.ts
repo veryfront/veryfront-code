@@ -302,9 +302,9 @@ function stripTextDeltaPrefixFromSseChunk(
   }
 }
 
-function rewriteTextSseChunkId(
+function rewriteRecoveryTextSseChunkId(
   chunk: Uint8Array,
-  id: string,
+  fallbackId: string,
   encoder: TextEncoder,
 ): Uint8Array {
   const payload = new TextDecoder().decode(chunk);
@@ -320,6 +320,9 @@ function rewriteTextSseChunkId(
     ) {
       return chunk;
     }
+    const id = typeof event.id === "string" && event.id.length > 0
+      ? `${event.id}:recovery`
+      : fallbackId;
     return encoder.encode(`data: ${JSON.stringify({ ...event, id })}\n\n`);
   } catch {
     return chunk;
@@ -1986,7 +1989,11 @@ export class AgentRuntime {
             }
           } else {
             const textChunk = useReplacementTextPartId && output.isTextEvent
-              ? rewriteTextSseChunkId(output.chunk, replacementRecoveryTextPartId, encoder)
+              ? rewriteRecoveryTextSseChunkId(
+                output.chunk,
+                replacementRecoveryTextPartId,
+                encoder,
+              )
               : output.chunk;
             const stripped = output.isTextEvent
               ? stripTextDeltaPrefixFromSseChunk(
@@ -2065,7 +2072,11 @@ export class AgentRuntime {
           if (releasedDeferredRecoveryOutput) {
             controller.enqueue(
               releasedRecoveryReplacementTextPartId !== undefined
-                ? rewriteTextSseChunkId(chunk, releasedRecoveryReplacementTextPartId, encoder)
+                ? rewriteRecoveryTextSseChunkId(
+                  chunk,
+                  releasedRecoveryReplacementTextPartId,
+                  encoder,
+                )
                 : chunk,
             );
             return;

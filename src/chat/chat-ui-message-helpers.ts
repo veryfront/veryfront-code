@@ -254,6 +254,17 @@ function getReplayState(stateMap: Map<string, ReplayState>, id: string): ReplayS
   return created;
 }
 
+function replayChunkIdentity(chunk: { id: string; contentId?: string }): string {
+  return chunk.contentId ?? chunk.id;
+}
+
+function replayOutputIdentity(
+  chunk: { id: string; contentId?: string },
+  outputId: string,
+): { id: string; contentId?: string } {
+  return chunk.contentId === undefined ? { id: outputId } : { id: chunk.id, contentId: outputId };
+}
+
 function firstStringField(
   value: Record<string, unknown>,
   keys: readonly string[],
@@ -375,7 +386,7 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
   for await (const chunk of stream) {
     if (chunk.type === "text-start" || chunk.type === "reasoning-start") {
       const stateMap = chunk.type === "text-start" ? textStates : reasoningStates;
-      const state = getReplayState(stateMap, chunk.id);
+      const state = getReplayState(stateMap, replayChunkIdentity(chunk));
 
       if (state.started) {
         state.replayOffset = 0;
@@ -391,7 +402,8 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
 
     if (chunk.type === "text-delta" || chunk.type === "reasoning-delta") {
       const stateMap = chunk.type === "text-delta" ? textStates : reasoningStates;
-      const state = getReplayState(stateMap, chunk.id);
+      const inputId = replayChunkIdentity(chunk);
+      const state = getReplayState(stateMap, inputId);
       if (state.replayOffset !== null) {
         state.replayContent += chunk.delta;
       }
@@ -403,20 +415,24 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
         if (state.outputOpen) {
           yield {
             type: chunk.type === "text-delta" ? "text-end" : "reasoning-end",
-            id: state.outputId,
+            ...replayOutputIdentity(chunk, state.outputId),
           } as ChatUiMessageChunk<TMessageMetadata>;
         }
         state.replacementCount++;
-        state.outputId = `${chunk.id}:replacement:${state.replacementCount}`;
+        state.outputId = `${inputId}:replacement:${state.replacementCount}`;
         state.outputOpen = true;
         state.content = state.replayContent;
         state.replayContent = "";
         state.replayOffset = null;
         yield {
           type: chunk.type === "text-delta" ? "text-start" : "reasoning-start",
-          id: state.outputId,
+          ...replayOutputIdentity(chunk, state.outputId),
         } as ChatUiMessageChunk<TMessageMetadata>;
-        yield { ...chunk, id: state.outputId, delta: state.content };
+        yield {
+          ...chunk,
+          ...replayOutputIdentity(chunk, state.outputId),
+          delta: state.content,
+        };
         continue;
       }
 
@@ -428,16 +444,20 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
       if (!state.outputOpen) {
         const replacementContent = state.replayContent || emit;
         state.replacementCount++;
-        state.outputId = `${chunk.id}:replacement:${state.replacementCount}`;
+        state.outputId = `${inputId}:replacement:${state.replacementCount}`;
         state.outputOpen = true;
         state.content = replacementContent;
         state.replayContent = "";
         state.replayOffset = null;
         yield {
           type: chunk.type === "text-delta" ? "text-start" : "reasoning-start",
-          id: state.outputId,
+          ...replayOutputIdentity(chunk, state.outputId),
         } as ChatUiMessageChunk<TMessageMetadata>;
-        yield { ...chunk, id: state.outputId, delta: replacementContent };
+        yield {
+          ...chunk,
+          ...replayOutputIdentity(chunk, state.outputId),
+          delta: replacementContent,
+        };
         continue;
       }
 
@@ -445,7 +465,7 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
       state.content += emit;
       yield {
         ...chunk,
-        id: state.outputId,
+        ...replayOutputIdentity(chunk, state.outputId),
         delta: emit,
       };
       continue;
@@ -453,7 +473,7 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
 
     if (chunk.type === "text-end" || chunk.type === "reasoning-end") {
       const stateMap = chunk.type === "text-end" ? textStates : reasoningStates;
-      const state = stateMap.get(chunk.id);
+      const state = stateMap.get(replayChunkIdentity(chunk));
 
       if (!state || !state.outputOpen) {
         continue;
@@ -462,7 +482,7 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
       state.replayOffset = null;
       state.replayContent = "";
       state.outputOpen = false;
-      yield { ...chunk, id: state.outputId };
+      yield { ...chunk, ...replayOutputIdentity(chunk, state.outputId) };
       continue;
     }
 

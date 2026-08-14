@@ -263,6 +263,41 @@ describe("chat/chat-ui-message-helpers", () => {
     ]);
   });
 
+  it("keeps content-addressed replacement chunks on one block identity", async () => {
+    const result = await collect(dedupeChatUiMessageChunks(toStream([
+      { type: "text-start", id: "msg-1", contentId: "text-0" },
+      {
+        type: "text-delta",
+        id: "msg-1",
+        contentId: "text-0",
+        delta: "Created the assistant.",
+      },
+      { type: "text-start", id: "msg-1", contentId: "text-0" },
+      { type: "text-delta", id: "msg-1", contentId: "text-0", delta: "Created the " },
+      { type: "text-delta", id: "msg-1", contentId: "text-0", delta: "workflow." },
+      { type: "text-end", id: "msg-1", contentId: "text-0" },
+    ])));
+
+    assertEquals(result, [
+      { type: "text-start", id: "msg-1", contentId: "text-0" },
+      {
+        type: "text-delta",
+        id: "msg-1",
+        contentId: "text-0",
+        delta: "Created the assistant.",
+      },
+      { type: "text-end", id: "msg-1", contentId: "text-0" },
+      { type: "text-start", id: "msg-1", contentId: "text-0:replacement:1" },
+      {
+        type: "text-delta",
+        id: "msg-1",
+        contentId: "text-0:replacement:1",
+        delta: "Created the workflow.",
+      },
+      { type: "text-end", id: "msg-1", contentId: "text-0:replacement:1" },
+    ]);
+  });
+
   it("starts a complete replacement after a closed segment is extended", async () => {
     const result = await collect(dedupeChatUiMessageChunks(toStream([
       { type: "text-start", id: "msg-1" },

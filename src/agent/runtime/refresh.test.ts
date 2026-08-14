@@ -2459,6 +2459,9 @@ describe("agent runtime refresh hooks", () => {
             stream: createRuntimeStream([
               { type: "text-delta", text: "Created the " },
               { type: "text-delta", text: "workflow." },
+              { type: "reasoning-delta", id: "recovery-reasoning", delta: "Check result." },
+              { type: "reasoning-end", id: "recovery-reasoning" },
+              { type: "text-delta", text: " It is ready." },
               { type: "finish", finishReason: "stop" },
             ]),
           };
@@ -2508,17 +2511,27 @@ describe("agent runtime refresh hooks", () => {
       body.includes(':step:1:recovery","delta":"workflow."'),
       true,
     );
-    assertEquals(chunks, ["Created the assistant.", "Created the ", "workflow."]);
-    assertEquals(chunks.slice(1).join(""), "Created the workflow.");
+    const recoveryTextStartIds = [...body.matchAll(
+      /"type":"text-start","id":"([^"]*:step:1[^"]*)"/g,
+    )].map((match) => match[1]);
+    assertEquals(recoveryTextStartIds.length, 2);
+    assertEquals(new Set(recoveryTextStartIds).size, 2);
+    assertEquals(chunks, [
+      "Created the assistant.",
+      "Created the ",
+      "workflow.",
+      " It is ready.",
+    ]);
+    assertEquals(chunks.slice(1).join(""), "Created the workflow. It is ready.");
     const completedResponse = finishedResponse as AgentResponse | undefined;
     assertExists(completedResponse);
-    assertEquals(completedResponse.text, "Created the workflow.");
+    assertEquals(completedResponse.text, "Created the workflow. It is ready.");
     assertEquals(
       completedResponse.messages
         .filter((message) => message.role === "assistant")
         .flatMap((message) => message.parts)
         .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : []),
-      ["Created the assistant.", "Created the workflow."],
+      ["Created the assistant.", "Created the workflow. It is ready."],
     );
   });
 
