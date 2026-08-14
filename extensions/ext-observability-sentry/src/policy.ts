@@ -216,6 +216,33 @@ function redactSqlLiteralsForTitle(query: string): string {
       }
     }
 
+    if (character === "-" && query[index + 1] === "-") {
+      index += 2;
+      while (index < query.length && query[index] !== "\n" && query[index] !== "\r") {
+        index += 1;
+      }
+      redacted += "?";
+      continue;
+    }
+
+    if (character === "/" && query[index + 1] === "*") {
+      let depth = 1;
+      index += 2;
+      while (index < query.length && depth > 0) {
+        if (query[index] === "/" && query[index + 1] === "*") {
+          depth += 1;
+          index += 2;
+        } else if (query[index] === "*" && query[index + 1] === "/") {
+          depth -= 1;
+          index += 2;
+        } else {
+          index += 1;
+        }
+      }
+      redacted += "?";
+      continue;
+    }
+
     const canStartNumber = /[0-9]/.test(character) ||
       (character === "." && /[0-9]/.test(query[index + 1] ?? ""));
     const previousCharacter = query[index - 1] ?? "";

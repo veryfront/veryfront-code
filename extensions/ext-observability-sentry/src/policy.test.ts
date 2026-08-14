@@ -353,6 +353,46 @@ it("policy redacts dollar-quoted and numeric SQL literals without hiding query s
   );
 });
 
+it("policy redacts line comments from Failed query titles", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value:
+            'Failed query: \n  select "id" from "orders" -- customer@example.test\n  where "status" = \'ready\'',
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  assertEquals(
+    event.exception?.values?.[0]?.value,
+    'Failed query: select "id" from "orders" ? where "status" = ?',
+  );
+});
+
+it("policy redacts block comments without treating quoted comment markers as comments", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value:
+            'Failed query: \n  select "/* public_identifier */", $$-- template@example.test$$, \'/* private note */\', $1 /* order ORDER-731 */ from "orders"',
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  assertEquals(
+    event.exception?.values?.[0]?.value,
+    'Failed query: select "/* public_identifier */", ?, ?, $1 ? from "orders"',
+  );
+});
+
 it("policy caps collapsed Failed query values and leaves other values untouched", () => {
   const longSql = `\n  select ${"c, ".repeat(200)}from t`;
   const nonQueryError = "upstream select 'customer@example.test', 731 stays untouched";
