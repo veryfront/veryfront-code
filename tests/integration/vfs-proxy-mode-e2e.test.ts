@@ -164,6 +164,8 @@ async function startVFSServer(
     PROXY_MODE: "1",
     VERYFRONT_TRUST_FORWARDED_HEADERS: "1",
     VERYFRONT_API_BASE_URL: "https://api.veryfront.com",
+    VERYFRONT_API_INTERNAL_USER: "test-internal-user",
+    VERYFRONT_API_INTERNAL_PASS: "test-internal-pass",
     LOG_FORMAT: "text",
     VERYFRONT_CACHE_DIR: cacheDir,
     ...extraEnv,
