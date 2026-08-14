@@ -224,6 +224,21 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("finds executable imports after regex braces following control conditions", () => {
+      assertEquals(
+        specifiers(
+          'const html = `${(() => { if (ok) /}/.test(x); })() && import("./after-if-regex.js")}`;',
+        ),
+        ["./after-if-regex.js"],
+      );
+      assertEquals(
+        specifiers(
+          'const html = `${(() => { while (ok) /}/.test(x); })() && import("./after-while-regex.js")}`;',
+        ),
+        ["./after-while-regex.js"],
+      );
+    });
+
     it("ignores import-looking regex text inside template substitutions", () => {
       assertEquals(
         specifiers(
@@ -249,6 +264,18 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       assertEquals(
         specifiers('const html = `${x-- / 2} ${import("./inside-minus-minus.js")}`;'),
         ["./inside-minus-minus.js"],
+      );
+    });
+
+    it("bounds nested template substitution traversal", () => {
+      const depth = 12_000;
+      const source = "const html = `" + "${`".repeat(depth) + 'import("./deep.js")' +
+        "`}".repeat(depth) + "`;";
+
+      assertThrows(
+        () => specifiers(source),
+        RangeError,
+        "Template literal nesting exceeds scanner limit",
       );
     });
 

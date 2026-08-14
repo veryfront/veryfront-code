@@ -22,6 +22,14 @@ export interface StaticImportSpan {
 
 type SpecifierMatcher = (specifier: string) => string | null | undefined;
 
+const MAX_TEMPLATE_LITERAL_DEPTH = 512;
+
+function assertTemplateLiteralDepth(depth: number): void {
+  if (depth > MAX_TEMPLATE_LITERAL_DEPTH) {
+    throw new RangeError("Template literal nesting exceeds scanner limit");
+  }
+}
+
 export function replaceSourceSpans(
   source: string,
   replacements: SourceSpanReplacement[],
@@ -194,7 +202,13 @@ function readLiteralSpecifier(
   return null;
 }
 
-function skipFullTemplateLiteral(source: string, templateIndex: number): number {
+function skipFullTemplateLiteral(
+  source: string,
+  templateIndex: number,
+  depth = 0,
+): number {
+  assertTemplateLiteralDepth(depth);
+
   let cursor = templateIndex + 1;
 
   while (cursor < source.length) {
@@ -206,7 +220,7 @@ function skipFullTemplateLiteral(source: string, templateIndex: number): number 
     if (source[cursor] === "`") return cursor + 1;
 
     if (source[cursor] === "$" && source[cursor + 1] === "{") {
-      const expressionEnd = findTemplateExpressionEnd(source, cursor + 2);
+      const expressionEnd = findTemplateExpressionEnd(source, cursor + 2, depth + 1);
       if (expressionEnd === null) return source.length;
       cursor = expressionEnd + 1;
       continue;
@@ -232,11 +246,42 @@ function keywordBefore(source: string, index: number): string | null {
   return source.slice(start, end);
 }
 
+function isControlConditionCloseParen(source: string, index: number, rangeStart: number): boolean {
+  let depth = 1;
+  let cursor = index - 1;
+
+  while (cursor >= rangeStart) {
+    const char = source[cursor];
+
+    if (char === ")") {
+      depth++;
+      cursor--;
+      continue;
+    }
+
+    if (char === "(") {
+      depth--;
+      if (depth === 0) {
+        const keyword = keywordBefore(source, cursor);
+        return keyword === "if" || keyword === "while" || keyword === "for" ||
+          keyword === "with" || keyword === "switch";
+      }
+      cursor--;
+      continue;
+    }
+
+    cursor--;
+  }
+
+  return false;
+}
+
 function canStartRegexLiteral(source: string, index: number, rangeStart: number): boolean {
   const previous = previousSignificantIndex(source, index);
   if (previous < rangeStart) return true;
 
   const char = source[previous];
+  if (char === ")" && isControlConditionCloseParen(source, previous, rangeStart)) return true;
   if (
     (char === "+" || char === "-") &&
     previous - 1 >= rangeStart &&
@@ -297,7 +342,12 @@ function skipRegexLiteral(source: string, regexIndex: number): number {
   return source.length;
 }
 
-function skipExpressionIgnored(source: string, index: number, rangeStart: number): number {
+function skipExpressionIgnored(
+  source: string,
+  index: number,
+  rangeStart: number,
+  depth: number,
+): number {
   const char = source[index];
   const next = source[index + 1];
 
@@ -312,7 +362,7 @@ function skipExpressionIgnored(source: string, index: number, rangeStart: number
   }
 
   if (char === '"' || char === "'") return skipIgnored(source, index);
-  if (char === "`") return skipFullTemplateLiteral(source, index);
+  if (char === "`") return skipFullTemplateLiteral(source, index, depth + 1);
   if (char === "/" && canStartRegexLiteral(source, index, rangeStart)) {
     return skipRegexLiteral(source, index);
   }
@@ -320,12 +370,18 @@ function skipExpressionIgnored(source: string, index: number, rangeStart: number
   return index;
 }
 
-function findTemplateExpressionEnd(source: string, expressionIndex: number): number | null {
+function findTemplateExpressionEnd(
+  source: string,
+  expressionIndex: number,
+  depth = 0,
+): number | null {
+  assertTemplateLiteralDepth(depth);
+
   let cursor = expressionIndex;
   let braceDepth = 1;
 
   while (cursor < source.length) {
-    const skipped = skipExpressionIgnored(source, cursor, expressionIndex);
+    const skipped = skipExpressionIgnored(source, cursor, expressionIndex, depth);
     if (skipped !== cursor) {
       cursor = skipped;
       continue;

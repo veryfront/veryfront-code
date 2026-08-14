@@ -111,11 +111,14 @@ async function resolveSpecifier(
   // (VERYFRONT-SERVER-G).
   if (stringStartsWith(specifier, "@/")) {
     const aliasPath = stringSlice(specifier, 2);
-    const normalizedPath = normalizeExtension(aliasPath);
+    const suffixIndex = aliasPath.search(/[?#]/);
+    const pathOnly = suffixIndex === -1 ? aliasPath : stringSlice(aliasPath, 0, suffixIndex);
+    const suffix = suffixIndex === -1 ? "" : stringSlice(aliasPath, suffixIndex);
+    const normalizedPath = normalizeExtension(pathOnly);
     const jsPath = /\.(js|mjs|cjs|css)$/.test(normalizedPath)
       ? normalizedPath
       : `${normalizedPath}.js`;
-    return `/_vf_modules/${jsPath}`;
+    return `/_vf_modules/${jsPath}${suffix}`;
   }
 
   // Server-only packages (`redis`, `pg`, …), including their explicit `npm:`

@@ -225,6 +225,26 @@ describe("transforms/esm/specifier-resolver", () => {
       );
     });
 
+    it("preserves query and fragment suffixes in escaped @/ alias imports", async () => {
+      const code =
+        `import raw from "@/components/Card.tsx?raw"; import icon from "@/components/Icon.svg#glyph";`;
+      const cacheCalls: string[] = [];
+      const result = await buildReplacements(code, undefined, defaultOptions, async (url) => {
+        cacheCalls.push(url);
+        return "/tmp/cache/http-alias.mjs";
+      });
+
+      assertEquals(cacheCalls, []);
+      assertEquals(
+        result.replacements.get("@/components/Card.tsx?raw"),
+        "/_vf_modules/components/Card.js?raw",
+      );
+      assertEquals(
+        result.replacements.get("@/components/Icon.svg#glyph"),
+        "/_vf_modules/components/Icon.svg.js#glyph",
+      );
+    });
+
     it("never resolves an @/ alias against the page origin via an import-map prefix", async () => {
       // A project import map commonly maps "@/" to "./". Resolving that mapped
       // relative path against the page origin fetches the tenant's own public
