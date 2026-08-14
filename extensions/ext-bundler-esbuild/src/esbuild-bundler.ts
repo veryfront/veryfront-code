@@ -214,10 +214,22 @@ function isEsbuildServiceSpawn(spawnArgs: unknown[]): boolean {
     args.includes("--ping");
 }
 
+/**
+ * Keep lifecycle tracking tolerant of Node-compatible child-process shims.
+ *
+ * Native Node represents an active child with `null` exit fields. Some
+ * compatible runtimes leave those fields undefined until the child exits.
+ */
+export function isLiveEsbuildServiceProcess(
+  child: Pick<ChildProcess, "killed" | "exitCode" | "signalCode">,
+): boolean {
+  return !child.killed &&
+    (child.exitCode === null || child.exitCode === undefined) &&
+    (child.signalCode === null || child.signalCode === undefined);
+}
+
 function isLiveService(service: EsbuildService): boolean {
-  return !service.child.killed &&
-    service.child.exitCode === null &&
-    service.child.signalCode === null;
+  return isLiveEsbuildServiceProcess(service.child);
 }
 
 function invokeEsbuild<T extends Promise<unknown>>(operation: () => T): T {
