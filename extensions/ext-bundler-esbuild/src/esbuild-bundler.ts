@@ -72,6 +72,11 @@ let esbuildServiceLost = false;
 let esbuildServiceLostDetail = "";
 let remainingServiceRestarts = MAX_SERVICE_RESTARTS;
 let esbuildServiceRecovery: Promise<void> | null = null;
+let serviceLossSpawnGuard: {
+  guard: typeof childProcess.spawn;
+  previous: typeof childProcess.spawn;
+  foreignService: EsbuildService | null;
+} | null = null;
 let activeOperationCount = 0;
 let activeOperationsIdle: Promise<void> = Promise.resolve();
 let resolveActiveOperationsIdle: (() => void) | null = null;
@@ -258,6 +263,15 @@ function recoverLostService(): Promise<void> {
   esbuildServiceRecovery ??= (async () => {
     await activeOperationsIdle;
     if (!esbuildServiceLost) return;
+    const foreignService = serviceLossSpawnGuard?.foreignService;
+    if (foreignService) {
+      const error = recordOwnershipError(
+        new Error("esbuild service was replaced outside the module-wide adapter"),
+      );
+      uninstallServiceLossSpawnGuard();
+      throw error;
+    }
+    uninstallServiceLossSpawnGuard();
     if (remainingServiceRestarts <= 0) {
       throw recordOwnershipError(
         new Error(
@@ -324,6 +338,61 @@ function isEsbuildServiceSpawn(spawnArgs: unknown[]): boolean {
     args.includes("--ping");
 }
 
+function trackServiceChild(child: ChildProcess): EsbuildService {
+  let resolveClosed: () => void = () => {};
+  const closed = new Promise<void>((resolve) => {
+    resolveClosed = resolve;
+  });
+  const service = { child, closed, expectedClose: false };
+  child.once("close", (exitCode, signalCode) => {
+    // An unexpected close of a child the adapter owns is a crash, not a
+    // lifecycle violation; mark it recoverable instead of latching the
+    // permanent ownership error.
+    if (!service.expectedClose) {
+      esbuildServiceLost = true;
+      esbuildServiceLostDetail = `exit code ${exitCode}, signal ${signalCode}`;
+      installServiceLossSpawnGuard();
+    }
+    resolveClosed();
+    if (esbuildService === service) esbuildService = null;
+  });
+  return service;
+}
+
+function observeForeignServiceChild(child: ChildProcess): EsbuildService {
+  let resolveClosed: () => void = () => {};
+  const closed = new Promise<void>((resolve) => {
+    resolveClosed = resolve;
+  });
+  const service = { child, closed, expectedClose: false };
+  child.once("close", () => {
+    resolveClosed();
+  });
+  return service;
+}
+
+function installServiceLossSpawnGuard(): void {
+  if (serviceLossSpawnGuard) return;
+
+  const previous = childProcess.spawn;
+  const guard = ((...spawnArgs: unknown[]) => {
+    const child = Reflect.apply(previous, childProcess, spawnArgs) as ChildProcess;
+    if (isEsbuildServiceSpawn(spawnArgs)) {
+      serviceLossSpawnGuard!.foreignService = observeForeignServiceChild(child);
+    }
+    return child;
+  }) as typeof childProcess.spawn;
+
+  serviceLossSpawnGuard = { guard, previous, foreignService: null };
+  childProcess.spawn = guard;
+}
+
+function uninstallServiceLossSpawnGuard(): void {
+  const guard = serviceLossSpawnGuard;
+  serviceLossSpawnGuard = null;
+  if (guard && childProcess.spawn === guard.guard) childProcess.spawn = guard.previous;
+}
+
 /**
  * Keep lifecycle tracking tolerant of Node-compatible child-process shims.
  *
@@ -341,6 +410,7 @@ export function __resetServiceRecoveryForTests(): void {
   esbuildServiceLost = false;
   esbuildServiceLostDetail = "";
   remainingServiceRestarts = MAX_SERVICE_RESTARTS;
+  uninstallServiceLossSpawnGuard();
 }
 
 /** Exercise the latch without starting a real esbuild service. */
@@ -372,22 +442,7 @@ function invokeEsbuild<T extends Promise<unknown>>(operation: () => T): T {
   const trackedSpawn = ((...spawnArgs: unknown[]) => {
     const child = Reflect.apply(originalSpawn, childProcess, spawnArgs) as ChildProcess;
     if (isEsbuildServiceSpawn(spawnArgs)) {
-      let resolveClosed: () => void = () => {};
-      const closed = new Promise<void>((resolve) => {
-        resolveClosed = resolve;
-      });
-      const service = { child, closed, expectedClose: false };
-      child.once("close", (exitCode, signalCode) => {
-        // An unexpected close of a child the adapter owns is a crash, not a
-        // lifecycle violation; mark it recoverable instead of latching the
-        // permanent ownership error.
-        if (!service.expectedClose) {
-          esbuildServiceLost = true;
-          esbuildServiceLostDetail = `exit code ${exitCode}, signal ${signalCode}`;
-        }
-        resolveClosed();
-        if (esbuildService === service) esbuildService = null;
-      });
+      const service = trackServiceChild(child);
       capturedService = service;
       esbuildService = service;
       if (childProcess.spawn === trackedSpawn) childProcess.spawn = originalSpawn;
@@ -599,6 +654,15 @@ export class EsbuildBundler implements Bundler {
 
     const stopping = (async () => {
       await activeOperationsIdle;
+
+      if (esbuildServiceLost && serviceLossSpawnGuard?.foreignService) {
+        const error = recordOwnershipError(
+          new Error("esbuild service was replaced outside the module-wide adapter"),
+        );
+        uninstallServiceLossSpawnGuard();
+        throw error;
+      }
+      if (esbuildServiceLost) uninstallServiceLossSpawnGuard();
 
       const m = esbuildModule;
       const trackedService = esbuildService;

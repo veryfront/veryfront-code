@@ -104,7 +104,10 @@ describe("esbuild service lifecycle", () => {
         killed: false,
         exitCode: undefined,
         signalCode: undefined,
-      } as Pick<ReturnType<typeof childProcess.spawn>, "killed" | "exitCode" | "signalCode">),
+      } as unknown as Pick<
+        ReturnType<typeof childProcess.spawn>,
+        "killed" | "exitCode" | "signalCode"
+      >),
       true,
     );
   });
@@ -983,7 +986,7 @@ describe("EsbuildBundler unsupported lifecycle ownership", () => {
     __resetServiceRecoveryForTests();
   });
 
-  it("recovers after a raw service generation replaces the managed one", async () => {
+  it("rejects recovery when a raw service replaces a killed managed service", async () => {
     const observation = observeEsbuildServices();
     const { services } = observation;
     const rawEsbuild = await import("esbuild");
@@ -991,20 +994,65 @@ describe("EsbuildBundler unsupported lifecycle ownership", () => {
 
     try {
       await bundler.transform({ code: "export const managed = true;", loader: "ts" });
+      assertEquals(services.length, 1);
+
+      const managedService = services[0]!;
+      managedService.child.ref();
+      managedService.child.kill("SIGKILL");
+      await managedService.close;
+
+      await rawEsbuild.stop();
+      await rawEsbuild.transform("export const foreign = true;");
+      assertEquals(services.length, 2);
+      const foreignService = services[1]!;
+
+      const error = await assertRejects(() =>
+        bundler.transform({ code: "export const takeover = true;", loader: "ts" })
+      );
+      assertStringIncludes((error as Error).message, "module-wide adapter");
+
+      assertEquals(foreignService.closed, false);
+    } finally {
+      __resetServiceRecoveryForTests();
+      await bundler.stop().catch(() => undefined);
+      for (const service of services) service.child.ref();
+      try {
+        await rawEsbuild.stop();
+        await Promise.all(services.map((service) => service.close));
+      } finally {
+        for (const service of services) service.child.unref();
+        observation.restore();
+      }
+    }
+  });
+
+  it("rejects shutdown when a raw service replaces a killed managed service", async () => {
+    const observation = observeEsbuildServices();
+    const { services } = observation;
+    const rawEsbuild = await import("esbuild");
+    const bundler = new EsbuildBundler();
+
+    try {
+      await bundler.transform({ code: "export const managed = true;", loader: "ts" });
+      const managedService = services[0]!;
+      managedService.child.ref();
+      managedService.child.kill("SIGKILL");
+      await managedService.close;
+
       await rawEsbuild.stop();
       await rawEsbuild.transform("export const external = true;");
+      const foreignService = services[services.length - 1]!;
 
-      // The raw stop() killed the managed child, which is the recoverable
-      // crash case: shutdown stays clean instead of rejecting...
-      await bundler.stop();
+      const error = await assertRejects(() => bundler.stop());
+      assertStringIncludes((error as Error).message, "module-wide adapter");
+      assertEquals(foreignService.closed, false);
 
-      // ...and the next operation regains ownership with a fresh service.
-      const result = await bundler.transform({
-        code: "export const recovered: number = 1;",
-        loader: "ts",
-      });
-      assertStringIncludes(result.code, "recovered = 1");
-      assertEquals(services.length >= 3, true);
+      await assertRejects(() =>
+        bundler.transform({
+          code: "export const stillForeign = true;",
+          loader: "ts",
+        })
+      );
     } finally {
       await bundler.stop().catch(() => undefined);
       for (const service of services) service.child.ref();
