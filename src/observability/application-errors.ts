@@ -1,3 +1,4 @@
+import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { sanitizeTelemetryAttributes, sanitizeTelemetryText } from "./telemetry-error.ts";
 import { MAX_APPLICATION_ERROR_CONTEXT_VALUE_LENGTH } from "./limits.ts";
@@ -265,7 +266,13 @@ export async function flushApplicationErrors(timeoutMs = 2_000): Promise<boolean
 
 export function isExpectedApplicationError(error: unknown): boolean {
   try {
-    return error instanceof DOMException && error.name === "AbortError";
+    if (error instanceof DOMException && error.name === "AbortError") return true;
+    // Client-class (4xx) VeryfrontErrors describe caller or tenant content
+    // (e.g. a rejected hosted config), not a server fault. They are still
+    // logged at their throw sites; reporting them per request would flood the
+    // error tracker with failures no code change here can fix.
+    const snapshot = snapshotVeryfrontError(error);
+    return snapshot !== null && snapshot.status >= 400 && snapshot.status < 500;
   } catch {
     return false;
   }
