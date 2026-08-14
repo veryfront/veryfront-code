@@ -208,6 +208,12 @@ it("deferred generate can reload create_agent after a successful agent write", a
             return { id, source_path: `agents/${id}.ts` };
           },
         }),
+        read_project_secret: tool({
+          id: "read_project_secret",
+          description: "Read a private project secret",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({ value: "redacted" }),
+        }),
       },
       maxSteps: 5,
       resolveModelTransport: () => ({ model }),
@@ -219,14 +225,18 @@ it("deferred generate can reload create_agent after a successful agent write", a
 
   assertEquals(observedTools, [
     ["load_skill", "tool_search"],
-    ["create_agent", "load_skill"],
+    ["create_agent", "load_skill", "tool_search"],
     ["load_skill", "tool_search"],
-    ["create_agent", "load_skill"],
+    ["create_agent", "load_skill", "tool_search"],
     ["load_skill", "tool_search"],
   ]);
   assertEquals(
     observedSystems[2]?.includes("- create_agent: Create a project agent"),
     true,
+  );
+  assertEquals(
+    observedSystems[2]?.includes("- read_project_secret: Read a private project secret"),
+    false,
   );
   assertEquals(executionCount, 2);
   assertEquals(response.text, "Created both agents.");
@@ -234,6 +244,7 @@ it("deferred generate can reload create_agent after a successful agent write", a
 
 it("deferred stream can reload another agent write tool after a successful write", async () => {
   const observedTools: string[][] = [];
+  const observedSystems: string[] = [];
   let step = 0;
   const model: ModelRuntime = {
     provider: "hosted",
@@ -243,6 +254,7 @@ it("deferred stream can reload another agent write tool after a successful write
     },
     async doStream(options: unknown) {
       observedTools.push(toolNames(options));
+      observedSystems.push(systemPrompt(options));
       step++;
       if (step === 1 || step === 3) {
         return {
@@ -283,7 +295,12 @@ it("deferred stream can reload another agent write tool after a successful write
     {
       id: "deferred-agent-authoring-stream-test",
       model: "hosted/deferred-agent-authoring-stream",
-      system: "Create both requested agents, loading create_agent when needed.",
+      system: flattenSystemInstructions(
+        withRuntimeToolInventory(
+          "Create both requested agents, loading create_agent when needed.",
+          [],
+        ),
+      ),
       tools: {
         load_skill: tool({
           id: "load_skill",
@@ -309,6 +326,12 @@ it("deferred stream can reload another agent write tool after a successful write
             return { id, source_path: `agents/${id}.ts` };
           },
         }),
+        read_project_secret: tool({
+          id: "read_project_secret",
+          description: "Read a private project secret",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({ value: "redacted" }),
+        }),
       },
       maxSteps: 5,
       resolveModelTransport: () => ({ model }),
@@ -326,6 +349,14 @@ it("deferred stream can reload another agent write tool after a successful write
     ["load_skill", "tool_search", "update_agent"],
     ["load_skill", "tool_search"],
   ]);
+  assertEquals(
+    observedSystems[2]?.includes("- update_agent: Update a project agent"),
+    true,
+  );
+  assertEquals(
+    observedSystems[2]?.includes("- read_project_secret: Read a private project secret"),
+    false,
+  );
   assertEquals(executionCounts, { create: 1, update: 1 });
   assertEquals(body.includes("Created both agents."), true);
 });
