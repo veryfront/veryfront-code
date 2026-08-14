@@ -218,7 +218,79 @@ function skipFullTemplateLiteral(source: string, templateIndex: number): number 
   return source.length;
 }
 
-function skipExpressionIgnored(source: string, index: number): number {
+function previousSignificantIndex(source: string, index: number): number {
+  let cursor = index - 1;
+  while (cursor >= 0 && /\s/.test(source[cursor] ?? "")) cursor--;
+  return cursor;
+}
+
+function keywordBefore(source: string, index: number): string | null {
+  const end = previousSignificantIndex(source, index) + 1;
+  let start = end;
+  while (start > 0 && /[A-Za-z_$]/.test(source[start - 1] ?? "")) start--;
+  if (start === end) return null;
+  return source.slice(start, end);
+}
+
+function canStartRegexLiteral(source: string, index: number, rangeStart: number): boolean {
+  const previous = previousSignificantIndex(source, index);
+  if (previous < rangeStart) return true;
+
+  const char = source[previous];
+  if (char !== undefined && "([{=,:;!~?&|+-*%^<>".includes(char)) return true;
+
+  return [
+    "case",
+    "delete",
+    "do",
+    "else",
+    "in",
+    "instanceof",
+    "return",
+    "throw",
+    "typeof",
+    "void",
+    "yield",
+  ].includes(keywordBefore(source, index) ?? "");
+}
+
+function skipRegexLiteral(source: string, regexIndex: number): number {
+  let cursor = regexIndex + 1;
+  let inCharacterClass = false;
+
+  while (cursor < source.length) {
+    const char = source[cursor];
+
+    if (char === "\\") {
+      cursor += 2;
+      continue;
+    }
+
+    if (char === "[" && !inCharacterClass) {
+      inCharacterClass = true;
+      cursor++;
+      continue;
+    }
+
+    if (char === "]" && inCharacterClass) {
+      inCharacterClass = false;
+      cursor++;
+      continue;
+    }
+
+    if (char === "/" && !inCharacterClass) {
+      cursor++;
+      while (/[A-Za-z]/.test(source[cursor] ?? "")) cursor++;
+      return cursor;
+    }
+
+    cursor++;
+  }
+
+  return source.length;
+}
+
+function skipExpressionIgnored(source: string, index: number, rangeStart: number): number {
   const char = source[index];
   const next = source[index + 1];
 
@@ -234,6 +306,9 @@ function skipExpressionIgnored(source: string, index: number): number {
 
   if (char === '"' || char === "'") return skipIgnored(source, index);
   if (char === "`") return skipFullTemplateLiteral(source, index);
+  if (char === "/" && canStartRegexLiteral(source, index, rangeStart)) {
+    return skipRegexLiteral(source, index);
+  }
 
   return index;
 }
@@ -243,7 +318,7 @@ function findTemplateExpressionEnd(source: string, expressionIndex: number): num
   let braceDepth = 1;
 
   while (cursor < source.length) {
-    const skipped = skipExpressionIgnored(source, cursor);
+    const skipped = skipExpressionIgnored(source, cursor, expressionIndex);
     if (skipped !== cursor) {
       cursor = skipped;
       continue;
@@ -431,6 +506,11 @@ function scanDynamicImportRange(
       char === "'"
     ) {
       cursor = skipIgnored(source, cursor);
+      continue;
+    }
+
+    if (char === "/" && canStartRegexLiteral(source, cursor, rangeStart)) {
+      cursor = skipRegexLiteral(source, cursor);
       continue;
     }
 

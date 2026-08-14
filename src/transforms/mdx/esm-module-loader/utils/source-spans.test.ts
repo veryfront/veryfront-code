@@ -209,6 +209,30 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("finds executable imports after regex braces inside template substitutions", () => {
+      assertEquals(
+        specifiers('const html = `${/}/.test(x) ? import("./after-close.js") : null}`;'),
+        ["./after-close.js"],
+      );
+      assertEquals(
+        specifiers('const html = `${/\\}/.test(x) ? import("./after-escaped-close.js") : null}`;'),
+        ["./after-escaped-close.js"],
+      );
+      assertEquals(
+        specifiers('const html = `${/[{}]/.test(x) ? import("./after-class.js") : null}`;'),
+        ["./after-class.js"],
+      );
+    });
+
+    it("ignores import-looking regex text inside template substitutions", () => {
+      assertEquals(
+        specifiers(
+          'const html = `${/import\\("\\.\\/not\\.js"\\)/.test(x) ? import("./real.js") : null}`;',
+        ),
+        ["./real.js"],
+      );
+    });
+
     it("ignores a static import and a property called import", () => {
       assertEquals(specifiers(`import x from "./foo.js";`), []);
       assertEquals(specifiers(`obj.import("./foo.js");`), []);
