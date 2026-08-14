@@ -146,6 +146,100 @@ describe("project-env/cache", () => {
     await assertRejects(() => cache.get(scope()), Error, "network error");
   });
 
+  it("does not refetch a failed environment within the failure TTL", async () => {
+    // Mirrors the production incident: a persistent upstream refusal must not
+    // be refetched on every request (223 Sentry events from one misconfig).
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(() => {
+      fetchCount++;
+      return Promise.reject(new Error("Refusing masked environment variable response"));
+    });
+
+    const first = await assertRejects(
+      () => cache.get(scope()),
+      Error,
+      "Refusing masked environment variable response",
+    );
+    // Await the first rejection before the second call so inflight
+    // deduplication cannot mask missing negative caching.
+    const second = await assertRejects(
+      () => cache.get(scope()),
+      Error,
+      "Refusing masked environment variable response",
+    );
+    assertEquals(fetchCount, 1);
+    assertEquals(second, first);
+  });
+
+  it("retries the upstream once the failure TTL has elapsed", async () => {
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(
+      () => {
+        fetchCount++;
+        return Promise.reject(new Error(`refused ${fetchCount}`));
+      },
+      60_000,
+      100,
+      { failureTtlMs: 20 },
+    );
+
+    await assertRejects(() => cache.get(scope()), Error, "refused 1");
+    await assertRejects(() => cache.get(scope()), Error, "refused 1");
+    await delay(30);
+    await assertRejects(() => cache.get(scope()), Error, "refused 2");
+    assertEquals(fetchCount, 2);
+  });
+
+  it("clears a recorded failure once a fetch succeeds", async () => {
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(
+      () => {
+        fetchCount++;
+        if (fetchCount === 1) return Promise.reject(new Error("refused"));
+        return Promise.resolve({ VALUE: "recovered" });
+      },
+      60_000,
+      100,
+      { failureTtlMs: 20 },
+    );
+
+    await assertRejects(() => cache.get(scope()), Error, "refused");
+    await delay(30);
+    assertEquals(await cache.get(scope()), { VALUE: "recovered" });
+    assertEquals(await cache.get(scope()), { VALUE: "recovered" });
+    assertEquals(fetchCount, 2);
+  });
+
+  it("does not record an invalidated fetch as a negative-cache failure", async () => {
+    const oldFetch = deferred<Record<string, string>>();
+    const started = deferred<void>();
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(async () => {
+      fetchCount++;
+      if (fetchCount === 1) {
+        started.resolve();
+        return await oldFetch.promise;
+      }
+      return { VALUE: "fresh" };
+    });
+
+    const oldWaiter = cache.get(scope());
+    await started.promise;
+    cache.invalidate("env-shared");
+    await assertRejects(
+      () => oldWaiter,
+      Error,
+      "Project environment fetch was invalidated",
+    );
+
+    // The invalidation error must not be replayed to the newer epoch.
+    assertEquals(await cache.get(scope()), { VALUE: "fresh" });
+    oldFetch.reject(new Error("stale rejection"));
+    await delay(0);
+    assertEquals(await cache.get(scope()), { VALUE: "fresh" });
+    assertEquals(fetchCount, 2);
+  });
+
   it("does not leak another scope's stale value after a failed fetch", async () => {
     const cache = new EnvironmentVariableCache(async (input) => {
       if (input.projectSlug === "project-a") return { OWNER: "project-a" };
@@ -280,7 +374,8 @@ describe("project-env/cache", () => {
       },
       60_000,
       100,
-      { fetchTimeoutMs: 10, maxInflight: 1 },
+      // This test's subject is in-flight capacity cleanup, not retry pacing.
+      { fetchTimeoutMs: 10, maxInflight: 1, failureTtlMs: 0 },
     );
 
     await assertRejects(
@@ -294,11 +389,18 @@ describe("project-env/cache", () => {
 
   it("clears rejected in-flight work so a retry can succeed", async () => {
     let fetchCount = 0;
-    const cache = new EnvironmentVariableCache(async () => {
-      fetchCount++;
-      if (fetchCount === 1) throw new Error("temporary failure");
-      return { VALUE: "recovered" };
-    });
+    const cache = new EnvironmentVariableCache(
+      async () => {
+        fetchCount++;
+        if (fetchCount === 1) throw new Error("temporary failure");
+        return { VALUE: "recovered" };
+        // failureTtlMs: 0 — this test's subject is in-flight capacity cleanup,
+        // not retry pacing.
+      },
+      60_000,
+      100,
+      { failureTtlMs: 0 },
+    );
 
     await assertRejects(() => cache.get(scope()), Error, "temporary failure");
     assertEquals(await cache.get(scope()), { VALUE: "recovered" });

@@ -32,6 +32,12 @@ interface CacheEntry {
   environmentId: string;
 }
 
+interface FailureEntry {
+  error: unknown;
+  failedAt: number;
+  environmentId: string;
+}
+
 type Fetcher = (
   scope: ProjectEnvironmentScope,
   signal: AbortSignal,
@@ -44,11 +50,18 @@ export interface EnvironmentVariableCacheOptions {
   maxInflight?: number;
   /** Maximum number of distinct upstream fetches for one canonical project. */
   maxInflightPerProject?: number;
+  /**
+   * How long a failed fetch is rethrown before the upstream is retried.
+   * Collapses per-request refetch storms during a persistent upstream refusal
+   * without ever serving stale or empty data. Zero disables negative caching.
+   */
+  failureTtlMs?: number;
 }
 
 /** Max number of scoped environments to cache. Evicts oldest entry when exceeded. */
 const DEFAULT_MAX_ENTRIES = 100;
 const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
+const DEFAULT_FAILURE_TTL_MS = 5_000;
 const DEFAULT_MAX_INFLIGHT = 100;
 const DEFAULT_MAX_INFLIGHT_PER_PROJECT = 10;
 const encodeText = TextEncoder.prototype.encode;
@@ -147,6 +160,7 @@ function invalidatedError(): VeryfrontError {
 
 export class EnvironmentVariableCache {
   private cache = new Map<string, CacheEntry>();
+  private failures = new Map<string, FailureEntry>();
   private inflight = new Map<string, InflightEntry>();
   private inflightByProject = new Map<string, number>();
   private fetcher: Fetcher;
@@ -155,6 +169,7 @@ export class EnvironmentVariableCache {
   private fetchTimeoutMs: number;
   private maxInflight: number;
   private maxInflightPerProject: number;
+  private failureTtlMs: number;
   private globalEpoch = 0;
   private environmentEpochs = new Map<string, number>();
 
@@ -178,6 +193,10 @@ export class EnvironmentVariableCache {
     this.maxInflightPerProject = positiveInteger(
       options.maxInflightPerProject ?? DEFAULT_MAX_INFLIGHT_PER_PROJECT,
       "maxInflightPerProject",
+    );
+    this.failureTtlMs = nonNegativeInteger(
+      options.failureTtlMs ?? DEFAULT_FAILURE_TTL_MS,
+      "failureTtlMs",
     );
   }
 
@@ -203,6 +222,15 @@ export class EnvironmentVariableCache {
     // credential principal. A shared environment ID is never sufficient.
     const existing = this.inflight.get(key);
     if (existing) return existing.promise;
+
+    // Rethrow a recent upstream failure instead of starting another fetch so a
+    // persistent refusal produces one upstream fetch per TTL window instead of
+    // one per request. Still fails closed: no stale or empty data is served.
+    const failure = this.failures.get(key);
+    if (failure) {
+      if (now - failure.failedAt < this.failureTtlMs) throw failure.error;
+      this.failures.delete(key);
+    }
 
     this.assertAdmission(normalizedScope.projectSlug);
 
@@ -230,6 +258,7 @@ export class EnvironmentVariableCache {
       this.globalEpoch++;
       this.environmentEpochs.clear();
       this.cache.clear();
+      this.failures.clear();
       for (const entry of [...this.inflight.values()]) {
         this.invalidateInflight(entry);
       }
@@ -243,6 +272,10 @@ export class EnvironmentVariableCache {
 
     for (const [key, entry] of this.cache) {
       if (entry.environmentId === environmentId) this.cache.delete(key);
+    }
+
+    for (const [key, failure] of this.failures) {
+      if (failure.environmentId === environmentId) this.failures.delete(key);
     }
 
     for (const entry of [...this.inflight.values()]) {
@@ -291,6 +324,7 @@ export class EnvironmentVariableCache {
         throw invalidatedError();
       }
 
+      this.failures.delete(entry.key);
       this.cache.delete(entry.key);
       this.cache.set(entry.key, {
         vars,
@@ -299,6 +333,22 @@ export class EnvironmentVariableCache {
       });
       this.evictIfNeeded();
       return vars;
+    } catch (error) {
+      // Record only failures from the current epoch: invalidated work must not
+      // poison the newer epoch with its cancellation error.
+      if (
+        this.failureTtlMs > 0 &&
+        this.isCurrentEpoch(scope.environmentId, entry.epoch)
+      ) {
+        this.failures.delete(entry.key);
+        this.failures.set(entry.key, {
+          error,
+          failedAt: Date.now(),
+          environmentId: scope.environmentId,
+        });
+        this.evictFailuresIfNeeded();
+      }
+      throw error;
     } finally {
       clearTimeout(timeoutId);
       removeAbortListener();
@@ -351,6 +401,18 @@ export class EnvironmentVariableCache {
   private invalidateInflight(entry: InflightEntry): void {
     this.removeInflight(entry);
     entry.controller.abort(invalidatedError());
+  }
+
+  /** Evict oldest recorded failures when they exceed maxEntries. */
+  private evictFailuresIfNeeded(): void {
+    if (this.failures.size <= this.maxEntries) return;
+    const excess = this.failures.size - this.maxEntries;
+    let removed = 0;
+    for (const key of this.failures.keys()) {
+      if (removed >= excess) break;
+      this.failures.delete(key);
+      removed++;
+    }
   }
 
   /** Evict oldest entries when cache exceeds maxEntries. */

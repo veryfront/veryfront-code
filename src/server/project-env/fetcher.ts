@@ -70,7 +70,29 @@ async function readBoundedEnvironmentResponse(
   return text;
 }
 
-function parseEnvironmentResponse(text: string): Readonly<Record<string, string>> {
+/** Which endpoint produced the parsed body; masked values mean different things per source. */
+type EnvironmentResponseSource = "management" | "internal";
+
+function maskedEnvironmentError(source: EnvironmentResponseSource, key: string): Error {
+  if (source === "management") {
+    // The management endpoint masks every value by contract. Reaching a masked
+    // value here means the host has no internal credentials configured, so the
+    // refusal must state the operator-actionable cause.
+    return invalidEnvironmentResponse(
+      "Refusing masked environment variable response: the management endpoint masks values by contract " +
+        "and VERYFRONT_API_INTERNAL_USER/VERYFRONT_API_INTERNAL_PASS are not configured on this host",
+    );
+  }
+  // Key names are not secret; values are never logged.
+  return invalidEnvironmentResponse(
+    `Refusing masked environment variable response: the internal endpoint returned a masked value for "${key}"`,
+  );
+}
+
+function parseEnvironmentResponse(
+  text: string,
+  source: EnvironmentResponseSource,
+): Readonly<Record<string, string>> {
   let body: unknown;
   try {
     body = JSON.parse(text);
@@ -107,7 +129,7 @@ function parseEnvironmentResponse(text: string): Readonly<Record<string, string>
     }
     keys.add(key);
     if (value === MASKED_ENV_VALUE) {
-      throw invalidEnvironmentResponse("Refusing masked environment variable response");
+      throw maskedEnvironmentError(source, key);
     }
     result[key] = value;
   }
@@ -252,6 +274,7 @@ export async function fetchProjectEnvVars(
   try {
     const result = parseEnvironmentResponse(
       await readBoundedEnvironmentResponse(response, signal),
+      internalAuthorization ? "internal" : "management",
     );
 
     logger.debug("Fetched env vars", {
