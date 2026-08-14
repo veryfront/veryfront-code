@@ -162,6 +162,52 @@ describe("hydration-script-builder/runtime/renderer", () => {
       assertEquals(requested.length, 2);
     });
 
+    it("refuses the retry for a module that throws a non-Error value", async () => {
+      // Only module code produces a non-Error rejection; the loader's own
+      // failures are TypeError or SyntaxError. Probing /index.js here can only
+      // 404 and bury what the module threw.
+      const requested: string[] = [];
+      const thrown = await captureRejection(
+        loadPageModuleWithIndexFallback(
+          "http://modules/pages/vector-a",
+          "vector-a",
+          null,
+          (url) => {
+            requested.push(url);
+            return Promise.reject(url.endsWith("/vector-a.js") ? "boom" : notFound(url));
+          },
+        ),
+      );
+
+      assertEquals(thrown, "boom");
+      assertEquals(requested, ["http://modules/pages/vector-a.js"]);
+    });
+
+    it('refuses the retry for a trailing-period "Load failed."', async () => {
+      // Safari's message has no period. Allowing one widened the match past the
+      // engine wording for no gain, and an application error is free to end in
+      // a full stop.
+      const requested: string[] = [];
+      const evaluationError = new TypeError("Load failed.");
+
+      const thrown = await captureRejection(
+        loadPageModuleWithIndexFallback(
+          "http://modules/pages/vector-a",
+          "vector-a",
+          null,
+          (url) => {
+            requested.push(url);
+            return Promise.reject(
+              url.endsWith("/vector-a.js") ? evaluationError : notFound(url),
+            );
+          },
+        ),
+      );
+
+      assertEquals(thrown, evaluationError);
+      assertEquals(requested, ["http://modules/pages/vector-a.js"]);
+    });
+
     it("still refuses the retry for an evaluation TypeError that merely mentions loading", async () => {
       // The Safari match is exact, so an application error that happens to
       // contain the words does not reopen the noise #3667 removed.

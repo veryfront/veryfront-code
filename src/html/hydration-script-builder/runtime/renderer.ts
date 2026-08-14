@@ -35,11 +35,12 @@ export function isModuleNotFoundError(error: unknown): boolean {
   if (error instanceof SyntaxError) return false;
   const message = String((error as Error).message || error);
   // Safari reports a failed dynamic import as a bare "Load failed", with no
-  // wording that names modules at all. Matched exactly rather than as a
+  // wording that names modules at all. Matched exactly, with no trailing
+  // punctuation allowed, rather than as a
   // substring: the phrase is short enough that a loose match would swallow an
   // application error like "Image load failed" and retry a module that had in
   // fact evaluated. The other engines name the module in the message.
-  if (/^load failed\.?$/i.test(message.trim())) return true;
+  if (/^load failed$/i.test(message.trim())) return true;
   return /(?:dynamically imported module|Importing a module script failed|Failed to load module script)/i
     .test(message);
 }
@@ -70,7 +71,11 @@ export function preferReachedModuleError(earlier: unknown, later: unknown): unkn
  * file: retrying a sibling `<route>/index.js` can only 404.
  */
 function isReachedModuleEvaluationError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
+  // A rejection that is not an `Error` can only have come from module code that
+  // ran and threw it: the loader's own failures reject with `TypeError` or
+  // `SyntaxError`. Treating a thrown string or `null` as "not reached" sent the
+  // loader after `<route>/index.js`, which can only 404 and bury the throw.
+  if (!(error instanceof Error)) return true;
   if (error instanceof SyntaxError) return false;
   return !isModuleNotFoundError(error);
 }
