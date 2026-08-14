@@ -270,7 +270,9 @@ least one published article, and that `SELECT … FROM KnowledgeArticleVersion` 
 fresh org errors with `sObject type 'KnowledgeArticleVersion' is not supported`.
 The `salesforce__search_knowledge_articles` **tool still ships in the connector**
 and will break out-of-box if any agent calls it. Keep the pipeline off it, and
-have the tool degrade gracefully (§8).
+keep the tool out of the v1 discovery surface until the hosted integration
+executor implements the typed Knowledge-disabled adapter in §8. The static
+`connector.json` response transform cannot implement that non-2xx behavior.
 
 ### 4.4 Validation rules & required custom fields
 
@@ -520,7 +522,7 @@ accepts User IDs, not queue Group IDs.
 Task/Event (activities) become reachable through the generic tier after the §16
 enforcement gate is satisfied.
 `salesforce__search_knowledge_articles` stays but is documented as "requires
-Knowledge enabled" and degrades gracefully (§8).
+Knowledge enabled" only after the hosted error-adapter gate in §8 passes.
 
 ## 7. Reference org & seed data - "just works" needs *data*
 
@@ -532,11 +534,18 @@ scratch-org definition cannot seed an existing connected org, and automatically
 editing `Case.Reason` in a customer org mutates admin-owned picklists and
 record-type behaviour.
 
-- **Disposable orgs (Developer Edition / scratch org) - the golden path.** The template
-  *may* fully automate: an SFDX scratch-org definition or unmanaged package that
-  creates a few Accounts / Contacts / Cases with known subjects **and** installs a
-  Case `Reason` picklist aligned to `case-triage-taxonomy.md` v5. Taxonomy and
-  picklist are authored together, never independently.
+- **Disposable orgs (Developer Edition / scratch org) - the golden path.** Ship
+  two explicit setup phases because metadata installation does not create sample
+  records. First create or authenticate the disposable org and deploy the Case
+  `Reason` picklist metadata aligned to `case-triage-taxonomy.md` v5 (or install
+  the equivalent unmanaged metadata package). Then run a committed data loader,
+  for example
+  `sf data import tree --plan data/case-triage-plan.json`, that creates the known
+  Accounts, Contacts, and Cases used by the demo. The import plan must include at
+  least one open Case for triage and one recently modified closed Case for the
+  open-case exclusion test. A checked-in setup script must run metadata deployment
+  before data import and stop on either failure. Taxonomy, metadata, and seed data
+  are versioned together, never independently.
 - **Existing / customer orgs - no automatic schema changes.** The fork must *not*
   silently alter picklists. Require an explicit admin-run deploy, or (preferred)
   the "adapt to my org" step (§15) that maps the taxonomy to the org's *existing*
@@ -557,8 +566,21 @@ is promptable in the agents.
 | API disabled for edition | raw 403 | "This Salesforce edition has no API access. Use a free Developer Edition org: <link>." |
 | Restricted picklist bad value | raw `INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST` | catch → describe → retry only after the user confirms a taxonomy-to-org mapping; otherwise report the allowed set and fail closed |
 | Case listing not open-constrained | default `list_cases` can return recently modified closed cases | "The latest-open-cases tool is not open-case constrained. Add a fixed `IsClosed = false` query/filter before triage." |
-| Knowledge not enabled | raw `INVALID_TYPE` | `search_knowledge_articles` returns `[]` + a one-line hint |
+| Knowledge not enabled | raw `INVALID_TYPE` | The hosted integration executor recognizes only the fixed Knowledge query's Salesforce `INVALID_TYPE`, then returns `{ "records": [], "warning": { "code": "knowledge-not-enabled", "message": "Salesforce Knowledge is not enabled for this org." } }`; other non-2xx responses remain errors |
 | FLS Edit missing on Reason | silent drop / raw error | name the exact profile toggle |
+
+The Knowledge-disabled result is a hosted execution adapter, not a
+`connector.json` `response.transform`. The adapter applies only when the tool uses
+the server-owned fixed query with no `q` override and Salesforce returns
+`errorCode: "INVALID_TYPE"` for `KnowledgeArticleVersion`. The enabled and
+disabled paths must share the response shape: enabled searches return
+`{ "records": [...], "warning": null }`, and the disabled path returns the empty
+records plus warning object above. This is an intentional v1 tool-result contract;
+the generated description must tell callers to read `records`. An acceptance test
+must exercise a Knowledge-disabled org, assert that exact payload, and prove
+authentication, authorization, rate-limit, and malformed-query failures still
+fail. Until the hosted adapter and test exist, hide
+`salesforce__search_knowledge_articles` from v1 tool discovery.
 
 ## 9. The fork → run flow the blog narrates
 
@@ -570,9 +592,13 @@ is promptable in the agents.
    package in the target org and verifies that the packaged app is enabled.
 4. The Integrations panel shows **Salesforce → Connect**. The user authorizes
    against the same org where the package is installed.
-5. Run **"Triage latest open cases"** through the v1 open-case constrained listing
+5. For the disposable golden path, run the checked-in setup script. It deploys
+   the taxonomy-aligned metadata, imports the committed Account/Contact/Case data
+   plan, and verifies that the known open and closed Case records exist. Existing
+   customer orgs skip this step and use their own records.
+6. Run **"Triage latest open cases"** through the v1 open-case constrained listing
    tool, not a general recent-cases default.
-6. Pipeline runs green against seeded data; a `Reason` + triage comment land on
+7. Pipeline runs green against seeded data; a `Reason` + triage comment land on
    the case.
 
 The single biggest seam is step 3: package installation is an org-level admin
@@ -613,8 +639,8 @@ not installed the integration.
   replaces the current beta **Veryfront Salesforce Integration** package? The
   per-user OAuth contract remains an org-scoped packaged External Client App;
   service-account client credentials remain a separate customer-managed path.
-- **B. Seed mechanism.** SFDX scratch org, unmanaged package, or a first-run agent
-  step - and who owns keeping the taxonomy and the `Reason` picklist in lockstep?
+- **B. Seed ownership.** Which release owner updates the data-import plan whenever
+  the taxonomy, Case `Reason` metadata, or golden-path assertions change?
 - **C. Knowledge dependency.** Keep `case-classify` on the project-local taxonomy
   (current, robust), or offer an optional Salesforce-Knowledge variant behind a
   "Knowledge enabled" check?
