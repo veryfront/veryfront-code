@@ -335,6 +335,7 @@ function canStartRegexLiteral(source: string, index: number, rangeStart: number)
     "else",
     "in",
     "instanceof",
+    "of",
     "await",
     "return",
     "throw",

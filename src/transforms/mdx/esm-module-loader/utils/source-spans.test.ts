@@ -250,6 +250,15 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("finds executable imports after regex literals following of", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'const html = `${(() => { for (const x of /}/g) {} })() && import("/_vf_modules/for-of-lazy.js")}`;',
+        ),
+        ["/_vf_modules/for-of-lazy.js"],
+      );
+    });
+
     it("finds executable imports after regex braces following control conditions", () => {
       assertEquals(
         specifiers(
