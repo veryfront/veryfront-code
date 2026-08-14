@@ -1,10 +1,10 @@
 /**
- * Opaque pre-activation state for optional built-in extensions.
+ * Opaque pre-activation state for deferred built-in extensions.
  *
  * Public extension APIs continue to accept `ResolvedExtension`. A branded
- * resolved value lets the internal loader defer importing optional first-party
- * packages until after merge priority and disable filtering, without exposing
- * a second extension-authoring contract.
+ * resolved value lets the internal loader defer materializing first-party
+ * implementations until after merge priority and disable filtering, without
+ * exposing a second extension-authoring contract.
  */
 
 import type {
