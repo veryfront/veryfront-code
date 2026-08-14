@@ -96,9 +96,12 @@ This matters for every recommendation below, so state it precisely (verified in
   `type`/`in`/`required`/`default` (`remote-tools.ts:782-788`).
 
 **Takeaway:** the *set* of tools a project sees is already dynamic, but each tool
-is a static `connector.json` entry. "Make the tools dynamic" is therefore not a
-available knob - the available lever is **what those static entries declare**, plus
-the escape-hatch tools (`describe_object`, `run_soql_query`) and the agent prompts.
+is a static `connector.json` entry. `IntegrationEndpointSchema` accepts concrete
+endpoint strings, literal params, and literal defaults - not computed defaults or
+conditional endpoint composition. "Make the tools dynamic" is therefore not an
+available knob. The available lever is **what those static entries declare**, plus
+gated escape hatches such as `describe_object` and, after SOQL authorization is
+fail-closed, `run_soql_query`.
 
 ### 2.2 At a glance
 
@@ -138,10 +141,10 @@ Static tools, dynamic policy - capability and authorization are separate layers:
   │          update_record,   │               │                                    │
   │          delete_record,   │               │  discovered via describe()         │
   │          upsert_record    │               │  deny-by-default · searchable      │
-  │ escape:  run_soql_query,  │               └────────────────────────────────────┘
-  │          describe_object  │                 generic tier ships ONLY once per-CRUD
-  └──────────────────────────┘                 enforcement is live (today: object-level
-                                                only) - until then all generic tools are held
+  │ metadata: describe_object │               └────────────────────────────────────┘
+  │ deferred: run_soql_query  │                 generic CRUD + arbitrary-SOQL reads
+  └──────────────────────────┘                 ship ONLY once per-object enforcement
+                                                parses every referenced object
 ```
 
 One tool call, end to end (interpolation/transform/gating all server-side, §2.1):
@@ -200,7 +203,7 @@ The lesson is the general one:
    record-type/dependency scopes the values, sending `Type = "Question"` returns
    `INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST` ("bad value for restricted picklist
    field"), case-sensitive. Either way an off-list value is bad triage data - the
-   value must come from the org, via `describe`/`get_picklist_values`.
+   value must come from the org, via `describe`/`get_picklist_values_for_record_type`.
 3. **Write success must be judged by HTTP status, not response body.** POST
    (create) returns `{ id, success, errors }`; PATCH (update) and DELETE return
    `204 No Content` - an empty body **is** success. The tool/adapter must map
@@ -323,9 +326,14 @@ template, define it explicitly, and **fail closed**:
 Given §2.1, tools **must** be static `connector.json` entries. The design gets
 dynamic-*enough* behaviour from three levers that need no new platform machinery:
 
-1. **Read is already dynamic.** `find_customer`, `list_cases`, `search_contacts`,
-   etc. take an arbitrary SOQL `q`; `run_soql_query` is a universal read.
-   Read coverage of standard *and* custom objects is effectively total already.
+1. **Read can be dynamic only after SOQL authorization is fail-closed.**
+   `find_customer`, `list_cases`, `search_contacts`, etc. currently take an
+   arbitrary SOQL `q`; `run_soql_query` is a universal read. Those surfaces give
+   broad coverage, but they also move authorization from a known object path into
+   parsed query text. In v1, ship only fixed-object defaults or constrained filters
+   unless the server can parse every referenced object, relationship target, and
+   subquery in a supplied `q`, authorize each object against the matrix, and deny
+   unknown or unparseable queries fail-closed.
 2. **Passthrough writes - on the *generic* tools, not the least-privilege curated
    ones.** The schema already supports `bodyMode: "passthrough"` - and
    `src/integrations/schema.ts` cites *"Salesforce sObject … writes"* as its
@@ -347,18 +355,20 @@ dynamic-*enough* behaviour from three levers that need no new platform machinery
    real picklist values / required fields via `describe_object`. For a
    classification field such as `Reason`, the agent writes only through a
    user-confirmed taxonomy-to-org mapping. If no mapping exists, report the
-   allowed values and fail closed. It can be a prompt rule in `case-dispose`, or a
-   curated `get_picklist_values` convenience tool (a filtered describe).
+   allowed values and fail closed. It can be a prompt rule in `case-dispose`, or the
+   curated `get_picklist_values_for_record_type` helper.
 
 **Recommendation: hybrid.** Keep a comprehensive, ergonomic **static core** of
 curated tools (they make the demo legible and the agent fast, and stay
 field-scoped for least-privilege agents), add a **passthrough generic tier** for
-breadth, and lean on `describe_object` + `run_soql_query` as the completeness
-escape hatch. Do **not** pursue runtime-registered/dynamic tools - out of platform
-scope and unnecessary. **Precondition (§16):** the generic tier ships only once the
-per-operation authorization matrix is *enforced* server-side (fail-closed) against
-the runtime `sobjectType` - not before. Until then every generic CRUD tool,
-including `get_record`, stays out of the shipped surface.
+breadth, and lean on `describe_object` plus fixed-object curated reads for v1.
+`run_soql_query`, SOSL `search`, and curated arbitrary `q` overrides become
+completeness escape hatches only after §16 query parsing and authorization are
+enforced fail-closed. Do **not** pursue runtime-registered/dynamic tools - out of
+platform scope and unnecessary. **Precondition (§16):** the generic tier ships only
+once the per-operation authorization matrix is *enforced* server-side
+(fail-closed) against the runtime `sobjectType` - not before. Until then every
+generic CRUD tool, including `get_record`, stays out of the shipped surface.
 
 ## 6. Proposed comprehensive tool surface
 
@@ -385,15 +395,18 @@ still hard-defaults `Status = "New"` and `Origin = "Web"` (`connector.json`,
 unchanged by #3638). On an org that restricts those picklists - or scopes them by
 record type - a blind `New`/`Web` write fails, contradicting the describe-first
 rule (§5.3, §A.1 rule 2). Drop both defaults so Salesforce applies the org default
-when the field is omitted (or make `get_picklist_values` preflight mandatory before
-create), and add a restricted-picklist fixture proving create succeeds without
-assumed values.
+when the field is omitted (or make `get_picklist_values_for_record_type` preflight
+mandatory before create), and add a restricted-picklist fixture proving create
+succeeds without assumed values.
 
-**Tier 2 - Universal escape hatches (keep):** `describe_object`,
-`run_soql_query`, and `salesforce__search_knowledge_articles` (requires Knowledge
-enabled and degrades gracefully, §8). Add **`get_picklist_values`** (describe
-filtered to picklist fields) so `case-dispose` can validate `Reason` before
-writing.
+**Tier 2 - Universal escape hatches (partly gated):** keep `describe_object` and
+fixed-object curated read defaults in v1. Gate or remove `run_soql_query`, SOSL
+`search`, and any curated arbitrary `q` override until the server can parse and
+authorize every referenced object, relationship target, and subquery fail-closed
+(§16). Keep `salesforce__search_knowledge_articles` only if it uses a fixed
+Knowledge query and degrades gracefully when Knowledge is disabled (§8). Add
+**`get_picklist_values_for_record_type`** so `case-dispose` can validate `Reason`
+before writing.
 
 **Tier 3 - Generic sObject CRUD (specified, held until §16 enforcement):**
 `get_record`, `create_record`, `update_record`, `upsert_record`, and
@@ -409,9 +422,10 @@ surface.
 | | Tools | Count |
 | --- | --- | --- |
 | **Existing** (curated + escape) | the 16 in `connector.json` today | 16 |
-| **Add - helpers** | `update_case_reason` (`Reason`-only `case-dispose` write), `get_picklist_values`, `search` (SOSL) | +3 |
+| **Add - helpers (v1)** | `update_case_reason` (`Reason`-only `case-dispose` write), `get_picklist_values_for_record_type` | +2 |
+| **Add - read escape hatches (deferred)** | `run_soql_query`, curated arbitrary `q` overrides, `search` (SOSL), pending fail-closed query parsing and authorization | - |
 | **Add - generic CRUD (deferred)** | `get_record`, `create_record`, `update_record`, `upsert_record`, `delete_record` (pending fail-closed per-CRUD enforcement) | +5 |
-| **v1 total** | | **19** |
+| **v1 total** | | **18** |
 | **Optional curated wrappers** | `create_contact`, `update_account`, `create/update_opportunity`, `create_task`, `convert_lead` - sugar, not counted in core | - |
 
 **Authorization tests (acceptance gate).** Every least-privilege grant needs an
@@ -563,7 +577,7 @@ on every org - while treating picklist *values* and FLS as run-time unknowns.
    `Reason`, `Type` (Case), `Status` (Lead), `StageName` (Opp), `Rating`,
    `Industry`, etc. carry **org-specific values** - not API-restricted by default,
    but frequently restricted by admins and always meaningful. Either omit them, or
-   `describe`/`get_picklist_values` first and send a value the org actually has.
+   `describe`/`get_picklist_values_for_record_type` first and send a value the org actually has.
    Safe blind-write targets are **text, textarea, number, date, checkbox, and
    lookup-Id** fields.
 3. **Assume nothing about FLS or edition.** A standard field can be invisible to
@@ -629,12 +643,14 @@ The baseline exists so the fork runs green on day one; **customization is how th
 user makes it theirs**. The design must make that a config edit, not a fork of the
 code. Four extension points, in the order a user hits them:
 
-1. **Extend field coverage without touching tool code.** Curated read tools take a
-   SOQL `q`, so adding a custom column is `SELECT …, Priority_Score__c FROM Case`.
-   After the §16 enforcement gate is satisfied, the generic tier can take a
-   `fields` list and its passthrough write tools (§5) can accept any field key, so
-   writing `Region__c` or a custom `Type` value needs no new tool. Until then,
-   custom writes need a curated, scoped tool or remain out of the public template.
+1. **Extend field coverage without touching tool code.** After the §16 SOQL gate is
+   satisfied, curated read tools can safely accept custom `q` overrides, so adding a
+   custom column is `SELECT ..., Priority_Score__c FROM Case`. Until then, v1 read
+   tools use fixed-object defaults or constrained filters. After the generic CRUD
+   enforcement gate is satisfied, the generic tier can take a `fields` list and its
+   passthrough write tools (§5) can accept any field key, so writing `Region__c` or
+   a custom `Type` value needs no new tool. Until then, custom writes need a
+   curated, scoped tool or remain out of the public template.
 2. **Map the taxonomy to their picklists.** The one file a forker almost always
    edits is `knowledge/case-triage-taxonomy.md`: point each category's
    `reason_api_name` at *their* `Case.Reason` values (and add categories). Because
@@ -691,7 +707,8 @@ max-rows cap, and customer mapping.
    enforcement is live, custom objects are exercised through the **generic tool
    tier** (Appendix B), never through curated standard-object tools. Until then a
    custom-object write needs a curated, scoped tool or stays out of the shipped
-   surface.
+   surface. Custom-object reads through arbitrary SOQL are also held until the SOQL
+   authorization gate can parse every referenced object, relationship, and subquery.
 2. **Capability (tools) and authorization (matrix) are separate layers - but the
    fence must actually be *enforced* before the generic tools ship.** Today only
    `dataAccess.objects` (object-level) is enforced; the per-CRUD `permissions`
@@ -705,12 +722,15 @@ max-rows cap, and customer mapping.
    `sobjectType` before *every* generic CRUD call, and honour `allowExpertSoql`.
    `upsert_record` must require both Create and Update grants for the target
    `sobjectType`, or it must not ship. The entire generic tier stays out of v1
-   until per-CRUD enforcement is verified live. **This applies to metadata too,
-   not just record operations:** server-side parse and allowlist every object
-   referenced by `run_soql_query`, SOSL `search`, and the curated tools that accept
-   an arbitrary `q` - including relationship targets (`Account.Name`, `__r`) and
-   subqueries - and authorize the `sobjectType` for `describe_object` and
-   `get_picklist_values`. Deny unknown or unparseable requests (fail closed).
+   until per-CRUD enforcement is verified live. **Read escape hatches have their
+   own gate:** server-side parse and allowlist every object referenced by
+   `run_soql_query`, SOSL `search`, and the curated tools that accept an arbitrary
+   `q` - including relationship targets (`Account.Name`, `__r`) and subqueries.
+   Authorize each referenced object for Read, authorize the `sobjectType` for
+   `describe_object` and picklist tools, and deny unknown or unparseable requests
+   fail-closed. Until that parser/enforcer exists, v1 must remove or hide
+   `run_soql_query`, hide SOSL `search`, and disable arbitrary `q` overrides on
+   curated reads.
 3. **"Tools are static" still holds** (§2.1) - but *objects* and *permissions* are
    dynamically discovered and enforced. The static generic tools are the fixed
    *execution surface*; the Configure matrix is the dynamic *policy surface* over
@@ -765,7 +785,7 @@ Full `create_record` entry:
 {
   "id": "salesforce__create_record",
   "name": "Create Record",
-  "description": "Create a record in any Salesforce object (standard or custom). Governed by the project's Salesforce data-access grants. Call describe_object / get_picklist_values first for required fields and restricted picklists.",
+  "description": "Create a record in any Salesforce object (standard or custom). Governed by the project's Salesforce data-access grants. Call describe_object / get_picklist_values_for_record_type first for required fields and restricted picklists.",
   "requiresWrite": true,
   "endpoint": {
     "method": "POST",
@@ -786,32 +806,40 @@ Full `create_record` entry:
 `update_record` / `delete_record` / `upsert_record` mirror this with the path
 params above; `get_record` takes an optional `fields` query param to trim the
 response. All five entries are specification-only until the §16 enforcement gate
-is satisfied. Two additional non-CRUD tools complete the future surface:
+is satisfied. Additional non-CRUD tools complete the future surface:
 
-- **`get_picklist_values`** - returns the picklist values *applicable to a write*,
-  which is **record-type-scoped**, not the object-wide set. Object `describe` only
-  exposes each field's full `fields[].picklistValues`; the values actually valid for
-  a given record type come from the UI API. Contract:
-  - **Inputs:** `sobjectType` (required); `recordTypeId` (optional for create
-    preflight - defaults to the connected profile's default record type for that
-    object); `fieldApiName` (optional - filter to one picklist field, e.g.
-    `Reason`). For an update preflight, the caller must pass the target record's
-    actual `RecordTypeId`; do not use the profile default for an existing record.
+- **`get_picklist_values_for_record_type`** - returns the picklist values
+  *applicable to a write*, which is **record-type-scoped**, not the object-wide set.
+  Object `describe` only exposes each field's full `fields[].picklistValues`; the
+  values actually valid for a given record type come from the UI API. Contract:
+  - **Static endpoint:** one concrete `connector.json` entry with required path
+    params `sobjectType`, `recordTypeId`, and `fieldApiName`, mapped directly to
+    `GET /services/data/v61.0/ui-api/object-info/{sobjectType}/picklist-values/{recordTypeId}/{fieldApiName}`.
+    `IntegrationEndpointSchema` supports this because all path values are supplied
+    by the caller; it does **not** support a computed default `recordTypeId`, an
+    optional `fieldApiName` that changes the path shape, or an automatic fallback to
+    `describe_object`.
+  - **Caller contract:** for create preflight, first read the object-info/default
+    record-type separately or pass a known `recordTypeId`; for update preflight,
+    read the target record and pass its actual `RecordTypeId`. Do not use the
+    connected profile default for an existing record.
+  - **Composite alternative:** if one public tool must support "default record type"
+    or "all picklist fields", implement it as hosted server behavior behind a
+    dedicated static endpoint. Do not describe that behavior as plain
+    `connector.json` interpolation.
   - **Path safety:** validate `sobjectType` and `fieldApiName` as Salesforce API
     names and `recordTypeId` as a Salesforce ID; authorize the canonical
     `sobjectType`; reject traversal plus query/fragment delimiters; and encode each
-    path segment exactly once before composing either UI API endpoint form.
-  - **Endpoint:** `GET /services/data/v61.0/ui-api/object-info/{sobjectType}/picklist-values/{recordTypeId}/{fieldApiName}`
-    (per field), or the `object-info` form for all fields; fall back to
-    `describe_object` `fields[].picklistValues` **only** when the org has no record
-    types for the object.
+    path segment exactly once before composing the UI API endpoint.
   - **Response:** `{ sobjectType, fieldApiName, recordTypeId, values: [{ label, value, active, validFor }] }`
     - `value` (the API name) is what a write must send.
   - **Test:** a record type whose allowed `Reason`/`Status` set is a strict subset of
     the object-wide set, asserting the tool returns the record-type set, not the
     superset (§4.1, §5.3, §A.5).
-- **`search`** (SOSL) - `GET /search/?q=FIND {…} IN ALL FIELDS …` for cross-object
-  keyword lookup, distinct from the SOQL that `find_customer` uses.
+- **`search`** (SOSL, deferred) - `GET /search/?q=FIND {...} IN ALL FIELDS ...` for
+  cross-object keyword lookup, distinct from the SOQL that `find_customer` uses.
+  Ship only after the same fail-closed referenced-object authorization gate covers
+  SOSL.
 
 Curated per-object write wrappers (`create_contact`, `update_account`,
 `create_opportunity`/`update_opportunity`, `create_task`) and `convert_lead`
