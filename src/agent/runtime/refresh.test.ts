@@ -2565,7 +2565,13 @@ describe("agent runtime refresh hooks", () => {
     const { generated, streamed } = await withMockFetch(
       (input) => {
         const url = input instanceof Request ? input.url : String(input);
-        if (!url.includes("/integrations/tools/list")) {
+        // Match the whole pathname, not a substring: a loose test also accepts
+        // a neighbouring route like `/integrations/tools/listing`, so a call to
+        // the wrong endpoint would be answered with an empty catalogue and the
+        // test would still pass. Anchored at the end rather than compared whole
+        // because VERYFRONT_API_BASE_URL may carry a path prefix, and the client
+        // concatenates base and path (`${baseUrl}${path}`).
+        if (!new URL(url).pathname.endsWith("/integrations/tools/list")) {
           throw new Error(`Unexpected network call from a unit test: ${url}`);
         }
         return Promise.resolve(Response.json({ tools: [] }));
