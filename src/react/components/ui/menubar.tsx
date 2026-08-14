@@ -71,7 +71,7 @@ interface MenubarState {
   /** Adopt `value` as the initial roving trigger if none has been chosen yet. */
   registerFirst: (value: string) => void;
   /** Move focus `offset` triggers from `current` (wrapping), carrying an open menu. */
-  focusByOffset: (current: HTMLElement, offset: number | "first" | "last") => void;
+  focusByOffset: (current: HTMLElement | string, offset: number | "first" | "last") => void;
 }
 
 const MenubarContext = React.createContext<MenubarState | null>(null);
@@ -103,7 +103,7 @@ export function Menubar({ children, className, ref, ...props }: MenubarProps): R
   }, []);
 
   const focusByOffset = React.useCallback(
-    (current: HTMLElement, offset: number | "first" | "last") => {
+    (current: HTMLElement | string, offset: number | "first" | "last") => {
       const bar = barRef.current;
       if (!bar) return;
       const triggers = Array.from(
@@ -111,7 +111,9 @@ export function Menubar({ children, className, ref, ...props }: MenubarProps): R
       ).filter((trigger) =>
         !trigger.matches(":disabled") && trigger.getAttribute("aria-disabled") !== "true"
       );
-      const i = triggers.indexOf(current);
+      const i = typeof current === "string"
+        ? triggers.findIndex((trigger) => trigger.getAttribute("data-vf-menubar-value") === current)
+        : triggers.indexOf(current);
       if (i < 0 || triggers.length === 0) return;
       const nextIndex = offset === "first"
         ? 0
@@ -264,9 +266,25 @@ export interface MenubarContentProps extends DropdownMenuContentProps {
 
 /** The dropdown surface for one menu - reuses the `DropdownMenuContent` machinery. */
 export function MenubarContent(
-  { children, ...props }: MenubarContentProps,
+  { children, onKeyDown, ...props }: MenubarContentProps,
 ): React.ReactElement | null {
-  return <DropdownMenuContent {...props}>{children}</DropdownMenuContent>;
+  const ctx = useMenubarContext("MenubarContent");
+  const menuValue = React.useContext(MenubarMenuContext);
+  return (
+    <DropdownMenuContent
+      {...props}
+      onKeyDown={(event) => {
+        onKeyDown?.(event);
+        if (event.defaultPrevented || menuValue == null) return;
+        if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+          event.preventDefault();
+          ctx.focusByOffset(menuValue, event.key === "ArrowRight" ? 1 : -1);
+        }
+      }}
+    >
+      {children}
+    </DropdownMenuContent>
+  );
 }
 
 /** Props accepted by `<MenubarItem>`. */

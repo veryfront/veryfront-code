@@ -88,6 +88,8 @@ function installDom(dom: JSDOM): () => void {
 function render(element: React.ReactElement): {
   host: HTMLElement;
   click: (el: Element) => void;
+  pointerEnter: (el: Element) => Promise<void>;
+  pointerLeave: (el: Element) => Promise<void>;
   unmount: () => void;
 } {
   const dom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`);
@@ -100,6 +102,14 @@ function render(element: React.ReactElement): {
     host: host as unknown as HTMLElement,
     click: (el: Element) =>
       flushSync(() => el.dispatchEvent(new win.MouseEvent("click", { bubbles: true }))),
+    pointerEnter: async (el: Element) => {
+      el.dispatchEvent(new win.MouseEvent("pointerover", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    },
+    pointerLeave: async (el: Element) => {
+      el.dispatchEvent(new win.MouseEvent("pointerout", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    },
     unmount: () => {
       try {
         root.unmount();
@@ -260,6 +270,37 @@ describe("NavigationMenu behaviour", () => {
       click(triggers(host)[0]!);
       assertEquals(host.querySelector('[role="menu"]'), null, "no role=menu");
       assertEquals(host.querySelector('[role="menuitem"]'), null, "no role=menuitem");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("keeps a hover-open panel active while the pointer crosses from trigger to content", async () => {
+    const { host, pointerEnter, pointerLeave, unmount } = render(<Fixture />);
+    try {
+      const products = triggers(host)[0]!;
+      await pointerEnter(products);
+      const panel = host.querySelector<HTMLElement>('[data-slot="navigation-menu-content"]');
+      assert(panel, "pointer enter opens the panel");
+
+      await pointerLeave(products);
+      assert(
+        host.querySelector('[data-slot="navigation-menu-content"]'),
+        "leaving the trigger does not close the panel immediately",
+      );
+      await pointerEnter(panel);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      assert(
+        host.querySelector('[data-slot="navigation-menu-content"]'),
+        "entering the panel cancels the pending close",
+      );
+
+      await pointerLeave(panel);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      assert(
+        host.querySelector('[data-slot="navigation-menu-content"]') == null,
+        "the panel closes after the pointer leaves the coordinated region",
+      );
     } finally {
       unmount();
     }

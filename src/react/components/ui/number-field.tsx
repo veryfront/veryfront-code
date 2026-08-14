@@ -24,6 +24,9 @@
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
 
+const COMPLETE_NUMBER_PATTERN = /^[+-]?(?:\d+|\d*\.\d+)(?:[eE][+-]?\d+)?$/;
+const NUMERIC_PREFIX_PATTERN = /^[+-]?(?:(?:\d+\.?\d*)|(?:\.\d*))?(?:[eE][+-]?\d*)?$/;
+
 /** Props accepted by `<NumberField>`. */
 export interface NumberFieldProps
   extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "defaultValue" | "onChange"> {
@@ -76,12 +79,20 @@ export function NumberField({
   className,
   disabled,
   onKeyDown,
+  onBlur,
   ref,
   ...props
 }: NumberFieldProps): React.ReactElement {
   const isControlled = value !== undefined;
   const [internal, setInternal] = React.useState<number | null>(defaultValue ?? null);
+  const [draft, setDraft] = React.useState<string | null>(null);
   const current = isControlled ? value : internal;
+  const controlledValueRef = React.useRef(value);
+
+  React.useEffect(() => {
+    if (isControlled && !Object.is(controlledValueRef.current, value)) setDraft(null);
+    controlledValueRef.current = value;
+  }, [isControlled, value]);
 
   const commit = (next: number | null) => {
     if (!isControlled) setInternal(next);
@@ -90,14 +101,38 @@ export function NumberField({
 
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const raw = event.target.value.trim();
-    if (raw === "") return commit(null);
+    if (raw === "") {
+      setDraft(null);
+      return commit(null);
+    }
+    if (NUMERIC_PREFIX_PATTERN.test(raw) && !COMPLETE_NUMBER_PATTERN.test(raw)) {
+      setDraft(event.target.value);
+      return;
+    }
     const parsed = Number(raw);
     if (Number.isNaN(parsed)) return;
+    setDraft(null);
     commit(clamp(quantizeNumberFieldValue(parsed, step, min), min, max));
   };
 
+  const handleBlur = (event: React.FocusEvent<HTMLInputElement>) => {
+    onBlur?.(event);
+    if (event.defaultPrevented || draft == null) return;
+    const parsed = Number(draft.trim());
+    setDraft(null);
+    if (!Number.isNaN(parsed)) {
+      commit(clamp(quantizeNumberFieldValue(parsed, step, min), min, max));
+    }
+  };
+
   const nudge = (direction: 1 | -1) => {
-    const base = current ?? (direction === 1 ? (min ?? 0) - step : (max ?? 0) + step);
+    const parsedDraft = draft == null ? Number.NaN : Number(draft.trim());
+    const draftBase = Number.isNaN(parsedDraft)
+      ? null
+      : clamp(quantizeNumberFieldValue(parsedDraft, step, min), min, max);
+    const base = draftBase ?? current ??
+      (direction === 1 ? (min ?? 0) - step : (max ?? 0) + step);
+    setDraft(null);
     commit(clamp(base + direction * step, min, max));
   };
 
@@ -122,8 +157,9 @@ export function NumberField({
       aria-valuemin={min}
       aria-valuemax={max}
       disabled={disabled}
-      value={current ?? ""}
+      value={draft ?? current ?? ""}
       onChange={handleChange}
+      onBlur={handleBlur}
       onKeyDown={handleKeyDown}
       data-disabled={disabled ? "" : undefined}
       className={cn(

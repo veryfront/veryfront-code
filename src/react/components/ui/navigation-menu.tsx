@@ -40,12 +40,18 @@
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
 
+const CLOSE_DELAY_MS = 100;
+
 /** Root-level state shared from `NavigationMenu` down to every item. */
 interface NavigationMenuState {
   /** Internal id of the item whose panel is open, or `null` when all are closed. */
   openItemId: string | null;
   /** Open the item with `itemId` (or close all with `null`). */
   setOpenItemId: (itemId: string | null) => void;
+  /** Cancel a pending hover close when the pointer enters the coordinated region. */
+  cancelClose: () => void;
+  /** Close `itemId` after the pointer has time to cross into its panel. */
+  scheduleClose: (itemId: string) => void;
 }
 
 /** Per-item identity. `value` is the caller's label; `itemId` is unique per instance. */
@@ -88,10 +94,29 @@ export function NavigationMenu({
   ref,
   ...props
 }: NavigationMenuProps): React.ReactElement {
-  const [openItemId, setOpenItemId] = React.useState<string | null>(null);
+  const [openItemId, setOpenItemIdState] = React.useState<string | null>(null);
+  const closeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelClose = React.useCallback(() => {
+    if (closeTimerRef.current != null) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, []);
+  const setOpenItemId = React.useCallback((itemId: string | null) => {
+    cancelClose();
+    setOpenItemIdState(itemId);
+  }, [cancelClose]);
+  const scheduleClose = React.useCallback((itemId: string) => {
+    cancelClose();
+    closeTimerRef.current = setTimeout(() => {
+      closeTimerRef.current = null;
+      setOpenItemIdState((current) => current === itemId ? null : current);
+    }, CLOSE_DELAY_MS);
+  }, [cancelClose]);
+  React.useEffect(() => cancelClose, [cancelClose]);
   const ctx = React.useMemo<NavigationMenuState>(
-    () => ({ openItemId, setOpenItemId }),
-    [openItemId],
+    () => ({ openItemId, setOpenItemId, cancelClose, scheduleClose }),
+    [openItemId, setOpenItemId, cancelClose, scheduleClose],
   );
   return (
     <NavigationMenuContext.Provider value={ctx}>
@@ -188,6 +213,7 @@ export function NavigationMenuTrigger({
   className,
   onClick,
   onPointerEnter,
+  onPointerLeave,
   children,
   ref,
   ...props
@@ -212,6 +238,10 @@ export function NavigationMenuTrigger({
       onPointerEnter={(event: React.PointerEvent<HTMLButtonElement>) => {
         onPointerEnter?.(event);
         if (!event.defaultPrevented) ctx.setOpenItemId(itemId);
+      }}
+      onPointerLeave={(event: React.PointerEvent<HTMLButtonElement>) => {
+        onPointerLeave?.(event);
+        if (!event.defaultPrevented && open) ctx.scheduleClose(itemId);
       }}
       className={cn(
         "inline-flex h-9 select-none items-center gap-1 rounded-md px-3 text-sm font-medium",
@@ -254,6 +284,8 @@ export function NavigationMenuContent({
   className,
   children,
   ref,
+  onPointerEnter,
+  onPointerLeave,
   ...props
 }: NavigationMenuContentProps): React.ReactElement | null {
   const ctx = useNavigationMenuContext("NavigationMenuContent");
@@ -275,6 +307,14 @@ export function NavigationMenuContent({
         "rounded-md border border-[var(--border)] bg-[var(--popover)] text-[var(--popover-foreground)] shadow-md",
         className,
       )}
+      onPointerEnter={(event) => {
+        onPointerEnter?.(event);
+        if (!event.defaultPrevented) ctx.cancelClose();
+      }}
+      onPointerLeave={(event) => {
+        onPointerLeave?.(event);
+        if (!event.defaultPrevented) ctx.scheduleClose(itemId);
+      }}
       {...props}
     >
       {children}

@@ -261,4 +261,47 @@ describe("Menubar behaviour", () => {
       cleanup();
     }
   });
+
+  it("moves between open menus with horizontal arrows from focused menu content", () => {
+    const { scope, click, cleanup } = mount(<Fixture />);
+    try {
+      click(triggerAt(scope, 0));
+      const fileItem = scope.querySelector<HTMLElement>(".vf-test-new");
+      assert(fileItem, "the File menu item renders");
+      fileItem.focus();
+
+      flushSync(() => {
+        fileItem.dispatchEvent(
+          new globalThis.KeyboardEvent("keydown", {
+            bubbles: true,
+            cancelable: true,
+            key: "ArrowRight",
+          }),
+        );
+      });
+
+      assert(scope.querySelector(".vf-test-edit"), "ArrowRight opens the neighboring Edit menu");
+      assertEquals(scope.querySelector(".vf-test-file"), null, "the File menu closes");
+      assertEquals(triggerAt(scope, 1).getAttribute("data-state"), "open");
+
+      const editItem = scope.querySelector<HTMLElement>(".vf-test-edit [role='menuitem']");
+      assert(editItem, "the Edit menu item renders");
+      editItem.focus();
+      flushSync(() => {
+        editItem.dispatchEvent(
+          new globalThis.KeyboardEvent("keydown", {
+            bubbles: true,
+            cancelable: true,
+            key: "ArrowLeft",
+          }),
+        );
+      });
+
+      assert(scope.querySelector(".vf-test-file"), "ArrowLeft reopens the neighboring File menu");
+      assertEquals(scope.querySelector(".vf-test-edit"), null, "the Edit menu closes");
+      assertEquals(triggerAt(scope, 0).getAttribute("data-state"), "open");
+    } finally {
+      cleanup();
+    }
+  });
 });
