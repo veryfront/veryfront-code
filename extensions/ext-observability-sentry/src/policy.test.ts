@@ -17,6 +17,7 @@ function createSentrySdk(options: {
     contexts: [] as Array<[string, Record<string, unknown>]>,
     fingerprints: [] as string[][],
     flushTimeouts: [] as Array<number | undefined>,
+    levels: [] as string[],
     tags: [] as Array<[string, string]>,
   };
   const scope = {
@@ -25,6 +26,9 @@ function createSentrySdk(options: {
     },
     setFingerprint(fingerprint: string[]) {
       state.fingerprints.push(fingerprint);
+    },
+    setLevel(level: "error" | "warning") {
+      state.levels.push(level);
     },
     setTag(key: string, value: string) {
       state.tags.push([key, value]);
@@ -152,6 +156,37 @@ it("policy preserves process_role as a native Sentry tag", () => {
   assertEquals(
     state.tags.some(([key, value]) => key === "process_role" && value === "api"),
     true,
+  );
+});
+
+it("policy tags classified errors and applies their downgraded level", () => {
+  const { sdk, state } = createSentrySdk();
+
+  const eventId = captureWithSentryPolicy(sdk, "renderer", new Error("page failed to compile"), {
+    boundary: "ssr.render",
+    errorClass: "tenant-build",
+    level: "warning",
+  });
+
+  assertEquals(eventId, "event-id");
+  assertEquals(
+    state.tags.some(([key, value]) => key === "veryfront.error_class" && value === "tenant-build"),
+    true,
+  );
+  assertEquals(state.levels, ["warning"]);
+});
+
+it("policy leaves the event level alone for unclassified errors", () => {
+  const { sdk, state } = createSentrySdk();
+
+  captureWithSentryPolicy(sdk, "renderer", new Error("request failed"), {
+    boundary: "ssr.render",
+  });
+
+  assertEquals(state.levels, []);
+  assertEquals(
+    state.tags.some(([key]) => key === "veryfront.error_class"),
+    false,
   );
 });
 

@@ -221,6 +221,52 @@ export function initializeApplicationErrorReporter(options: {
   });
 }
 
+const TENANT_BUILD_ERROR_CLASS = "tenant-build";
+
+/**
+ * Tag applied by the module loader at the point of a compilation failure.
+ *
+ * The tag is read through the shared symbol registry instead of importing the
+ * rendering layer; see src/rendering/orchestrator/module-loader/build-failure.ts.
+ */
+const BUILD_FAILURE_TAG = Symbol.for("veryfront.module-loader.build-failure");
+
+/**
+ * Whether `error` describes tenant build/content failing to compile (a page
+ * that does not build, MDX that does not parse) rather than a framework fault.
+ *
+ * Recognizes the existing discriminators at their capture seam:
+ * - the module loader's build-failure tag,
+ * - `toError(createError({ type: "build" }))` structured error data,
+ * - `VeryfrontError` instances in the BUILD category, and
+ * - the render pipeline's `buildFailure` error context.
+ */
+function isTenantBuildError(error: unknown): boolean {
+  try {
+    if (error instanceof Error) {
+      if ((error as { [BUILD_FAILURE_TAG]?: unknown })[BUILD_FAILURE_TAG] === true) {
+        return true;
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(error, "context");
+      const data = descriptor && "value" in descriptor ? descriptor.value : undefined;
+      if (
+        typeof data === "object" && data !== null &&
+        (data as { type?: unknown }).type === "build"
+      ) {
+        return true;
+      }
+    }
+    const snapshot = snapshotVeryfrontError(error);
+    if (!snapshot) return false;
+    if (snapshot.category === "BUILD") return true;
+    const errorContext = snapshot.context;
+    return typeof errorContext === "object" && errorContext !== null &&
+      (errorContext as { buildFailure?: unknown }).buildFailure === true;
+  } catch {
+    return false;
+  }
+}
+
 export function captureApplicationError(
   error: unknown,
   context: ApplicationErrorContext,
@@ -230,7 +276,17 @@ export function captureApplicationError(
   if (!currentReporter) return undefined;
 
   try {
-    const snapshot = snapshotApplicationErrorContext(context);
+    // Tenant build/content failures stay captured for escalation analysis,
+    // but are tagged and downgraded so per-request tenant mistakes stop
+    // surfacing as error-level framework issues.
+    const classifiedContext = isTenantBuildError(error)
+      ? {
+        ...context,
+        errorClass: context.errorClass ?? TENANT_BUILD_ERROR_CLASS,
+        level: context.level ?? "warning" as const,
+      }
+      : context;
+    const snapshot = snapshotApplicationErrorContext(classifiedContext);
     return snapshot ? currentReporter.capture(error, snapshot) : undefined;
   } catch {
     // Error reporting is diagnostic and must never replace the application
@@ -286,11 +342,16 @@ function snapshotApplicationErrorContext(
   if (!boundary) return null;
 
   const snapshot: ApplicationErrorContext = { boundary };
-  for (const key of ["method", "processRole", "requestId", "spanId", "traceId"] as const) {
+  for (
+    const key of ["method", "processRole", "requestId", "spanId", "traceId", "errorClass"] as const
+  ) {
     const value = context[key];
     if (value === undefined) continue;
     const normalized = normalizeContextValue(value);
     if (normalized) snapshot[key] = normalized;
+  }
+  if (context.level === "error" || context.level === "warning") {
+    snapshot.level = context.level;
   }
   const attributes = sanitizeTelemetryAttributes(context.attributes);
   if (attributes && Object.keys(attributes).length > 0) {
