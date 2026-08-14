@@ -1902,6 +1902,22 @@ describe("agent runtime refresh hooks", () => {
       error:
         'Stream terminated before tool-call event fired for "studio_suggestions". Received 2 chars of partial tool-input deltas.',
     });
+    const repeatedPlaceholderError = completedResponse.messages
+      .flatMap((message) => message.parts)
+      .find((part) =>
+        part.type === "tool-result" &&
+        part.toolCallId === "toolu_repeated_placeholder"
+      );
+    assertExists(repeatedPlaceholderError);
+    assertEquals((repeatedPlaceholderError as { result: unknown }).result, {
+      error:
+        'Stream terminated before tool-call event fired for "studio_suggestions". Received 2 chars of partial tool-input deltas.',
+    });
+    const repeatedToolCall = completedResponse.toolCalls.find((toolCall) =>
+      toolCall.id === "toolu_repeated_placeholder"
+    );
+    assertExists(repeatedToolCall);
+    assertEquals(repeatedToolCall.status, "error");
   });
 
   it("applies loaded skill maxSteps overrides to generate() invoke_agent calls", async () => {

@@ -49,6 +49,7 @@ import { runWithRuntimeRemoteToolSources } from "./remote-tool-source-context.ts
 import {
   createStreamState,
   processStream,
+  type StreamingToolCall,
   type StreamingToolResult,
 } from "./chat-stream-handler.ts";
 import { repairToolCall } from "./repair-tool-call.ts";
@@ -1955,9 +1956,42 @@ export class AgentRuntime {
         );
       };
 
+      const recordIncompleteLocalToolError = async (
+        toolCall: StreamingToolCall,
+      ): Promise<boolean> => {
+        if (
+          toolCall.providerExecuted === true ||
+          !isStreamedToolCallIncomplete(toolCall) ||
+          finalToolResults.has(toolCall.id)
+        ) {
+          return false;
+        }
+        const incompleteToolCall: ToolCall = {
+          id: toolCall.id,
+          name: toolCall.name,
+          args: {},
+          ...(toolCall.arguments.length > 0 ? { inputText: toolCall.arguments } : {}),
+          status: "pending",
+        };
+        await this.recordToolError(
+          incompleteToolCall,
+          `Stream terminated before tool-call event fired for "${toolCall.name}". ` +
+            `Received ${toolCall.arguments.length} chars of partial tool-input deltas.`,
+          controller,
+          encoder,
+          currentMessages,
+          toolCalls,
+          { emitSse: toolCall.inputAnnounced === true },
+        );
+        return true;
+      };
+
       if (!shouldContinue) {
         for (const toolResult of finalToolResults.values()) {
           await persistToolResult(toolResult);
+        }
+        for (const toolCall of streamedToolCalls) {
+          await recordIncompleteLocalToolError(toolCall);
         }
         sendSSE(controller, encoder, { type: "step-end" });
         break;
@@ -1973,13 +2007,10 @@ export class AgentRuntime {
       for (const tc of streamedToolCalls) {
         throwIfAborted(abortSignal);
         if (shouldRecoverInterruptedLocalToolBatch && tc.providerExecuted !== true) {
-          const incomplete = isStreamedToolCallIncomplete(tc);
-          const capturedInput = incomplete
-            ? {
-              args: {},
-              ...(tc.arguments.length > 0 ? { inputText: tc.arguments } : {}),
-            }
-            : captureStreamedToolCallInput(tc);
+          if (await recordIncompleteLocalToolError(tc)) {
+            continue;
+          }
+          const capturedInput = captureStreamedToolCallInput(tc);
           const interruptedBatchToolCall: ToolCall = {
             id: tc.id,
             name: tc.name,
@@ -1987,19 +2018,14 @@ export class AgentRuntime {
             ...(capturedInput.inputText ? { inputText: capturedInput.inputText } : {}),
             status: "pending",
           };
-          const error = incomplete
-            ? `Stream terminated before tool-call event fired for "${tc.name}". ` +
-              `Received ${tc.arguments.length} chars of partial tool-input deltas.`
-            : "Tool execution skipped because another tool call in the same model step " +
-              "was interrupted before its input completed.";
           await this.recordToolError(
             interruptedBatchToolCall,
-            error,
+            "Tool execution skipped because another tool call in the same model step " +
+              "was interrupted before its input completed.",
             controller,
             encoder,
             currentMessages,
             toolCalls,
-            { emitSse: incomplete ? tc.inputAnnounced === true : true },
           );
           continue;
         }
@@ -2009,29 +2035,12 @@ export class AgentRuntime {
           // it as a committed call.
           continue;
         }
-        if (isStreamedToolCallIncomplete(tc)) {
+        if (await recordIncompleteLocalToolError(tc)) {
           // Stream ended before the provider finalized this tool call. We
           // cannot execute it, so record a distinct stream-termination error
           // (not a tool-argument parse error) so the parent step and any
           // upstream orchestrator (e.g. the child-fork watchdog) see a
           // completed step with a clearly-labelled failure and can recover.
-          const incompleteToolCall: ToolCall = {
-            id: tc.id,
-            name: tc.name,
-            args: {},
-            ...(tc.arguments.length > 0 ? { inputText: tc.arguments } : {}),
-            status: "pending",
-          };
-          await this.recordToolError(
-            incompleteToolCall,
-            `Stream terminated before tool-call event fired for "${tc.name}". ` +
-              `Received ${tc.arguments.length} chars of partial tool-input deltas.`,
-            controller,
-            encoder,
-            currentMessages,
-            toolCalls,
-            { emitSse: tc.inputAnnounced === true },
-          );
           continue;
         }
         const capturedInput = captureStreamedToolCallInput(tc);
