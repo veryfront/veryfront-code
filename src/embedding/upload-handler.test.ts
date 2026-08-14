@@ -58,6 +58,36 @@ describe("createUploadHandler", () => {
     clearCloudEnv();
   });
 
+  it("treats a pages-router context exactly like the equivalent Request", async () => {
+    const store = createStubStore();
+    const { POST, GET, DELETE } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
+
+    // The pages executor calls method handlers with the APIContext and passes
+    // no second argument. The contract is parity: whatever a real Request
+    // returns, the context form must return too, rather than throwing on
+    // `request.formData()` or `context.params`.
+    const body = "not multipart";
+    const realPost = await POST(
+      new Request("http://test/uploads", { method: "POST", body }),
+    );
+    const ctxRequest = new Request("http://test/uploads", { method: "POST", body });
+    const ctxPost = await POST(
+      { request: ctxRequest, req: ctxRequest } as unknown as Request,
+    );
+    assertEquals(ctxPost.status, realPost.status, "POST must match the Request form");
+
+    const realGet = await GET(new Request("http://test/uploads", { method: "GET" }));
+    const getReq = new Request("http://test/uploads", { method: "GET" });
+    const ctxGet = await GET({ request: getReq, req: getReq } as unknown as Request);
+    assertEquals(ctxGet.status, realGet.status, "GET must match the Request form");
+
+    // DELETE resolves its id from `?id=` when no params object is supplied,
+    // which is the only shape a pages mount can produce.
+    const delReq = new Request("http://test/uploads?id=doc-123", { method: "DELETE" });
+    const ctxDelete = await DELETE({ request: delReq, req: delReq } as unknown as Request);
+    assertEquals(ctxDelete.status < 500, true, "no params object must not throw");
+  });
+
   it("requires an explicit authentication policy", () => {
     assert(
       (() => {

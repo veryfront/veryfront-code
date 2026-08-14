@@ -5,6 +5,7 @@ import { serverLogger } from "#veryfront/utils";
 import type { RagDocumentMeta, RagStore } from "./types.ts";
 import { loadUpload } from "./upload-loader.ts";
 import * as nodeBuffer from "node:buffer";
+import { resolveValidatedRequest } from "#veryfront/security/input-validation/handler.ts";
 
 const FileCtor = globalThis.File ??
   (nodeBuffer as typeof nodeBuffer & { File: typeof File }).File;
@@ -207,8 +208,13 @@ function toUploadRegistryItem(upload: RagDocumentMeta): UploadRegistryItem {
   };
 }
 
-function resolveDeleteId(request: Request, context: { params: Record<string, string> }): string {
-  const fromParams = context.params.id;
+function resolveDeleteId(
+  request: Request,
+  context?: { params?: Record<string, string> },
+): string {
+  // The pages executor passes no second argument, so a route mounted there has
+  // no `params`. The `?id=` query fallback below is the documented form anyway.
+  const fromParams = context?.params?.id;
   if (fromParams) return fromParams;
 
   const fromQuery = new URL(request.url).searchParams.get("id");
@@ -357,7 +363,7 @@ export function createUploadHandler(
 
   async function DELETE(
     request: Request,
-    context: { params: Record<string, string> },
+    context?: { params?: Record<string, string> },
   ): Promise<Response> {
     try {
       const unauthorized = await authorizeUploadRequest(request, authorize);
@@ -386,5 +392,12 @@ export function createUploadHandler(
     }
   }
 
-  return { POST, GET, DELETE };
+  // Resolve at the boundary: these handlers read `formData`, `url` and headers,
+  // so unwrapping at one use would leave the others reading the context.
+  return {
+    POST: (request: Request) => POST(resolveValidatedRequest(request)),
+    GET: (request?: Request) => GET(request ? resolveValidatedRequest(request) : undefined),
+    DELETE: (request: Request, context?: { params?: Record<string, string> }) =>
+      DELETE(resolveValidatedRequest(request), context),
+  };
 }

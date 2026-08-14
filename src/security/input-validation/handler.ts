@@ -132,7 +132,18 @@ function snapshotSchema<T>(value: unknown, label: string): Schema<T> {
  * no POST body could ever be validated (issue #3666). Accept either shape and
  * hand the real `Request` to the body/limit machinery and to the handler.
  */
-function resolveValidatedRequest(candidate: Request): Request {
+/**
+ * Unwrap the live `Request` from whatever a router handed the handler.
+ *
+ * The app router passes a real `Request`; the pages executor passes its
+ * `APIContext`, which exposes the request as `.request` / `.req` and whose
+ * `body` is a reader *function*. A handler that assumes a `Request` therefore
+ * sails past `if (!request.body)` — a function is truthy — and throws on
+ * `request.body.getReader()`.
+ *
+ * @internal shared with the upload handlers, which take the same shape.
+ */
+export function resolveValidatedRequest(candidate: Request): Request {
   if (candidate instanceof Request) return candidate;
 
   if (typeof candidate === "object" && candidate !== null) {
