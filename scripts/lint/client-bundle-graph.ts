@@ -68,7 +68,10 @@ function isTypeOnlyClause(clause: string): boolean {
   const bindings = trimmed.slice(1, -1).split(",").map((b) => b.trim()).filter(
     (b) => b !== "",
   );
-  return bindings.length > 0 && bindings.every((b) => /^type\s/.test(b));
+  // `type as value` imports a binding *named* `type` and renames it, so it
+  // ships and must stay an edge. Only `type X` and `type X as Y` are erased.
+  return bindings.length > 0 &&
+    bindings.every((b) => /^type\s+(?!as\s)/.test(b));
 }
 
 const textEncoder = new TextEncoder();
@@ -76,13 +79,20 @@ const textEncoder = new TextEncoder();
 export function* staticSpecifiers(source: string): Generator<string> {
   let match: RegExpExecArray | null;
 
-  VALUE_FROM_RE.lastIndex = 0;
-  while ((match = VALUE_FROM_RE.exec(source)) !== null) {
+  // Fresh instances per call. These are generators, so two iterations can be
+  // interleaved by the caller; sharing a global regex would let one advance the
+  // other's `lastIndex` and skip specifiers in whichever source resumed second.
+  const valueFrom = new RegExp(VALUE_FROM_RE.source, VALUE_FROM_RE.flags);
+  const sideEffect = new RegExp(
+    SIDE_EFFECT_IMPORT_RE.source,
+    SIDE_EFFECT_IMPORT_RE.flags,
+  );
+
+  while ((match = valueFrom.exec(source)) !== null) {
     if (match[2] && !isTypeOnlyClause(match[1] ?? "")) yield match[2];
   }
 
-  SIDE_EFFECT_IMPORT_RE.lastIndex = 0;
-  while ((match = SIDE_EFFECT_IMPORT_RE.exec(source)) !== null) {
+  while ((match = sideEffect.exec(source)) !== null) {
     if (match[1]) yield match[1];
   }
 }

@@ -8,6 +8,7 @@ import {
   loadImportMap,
   type ReadModule,
   SERVER_ONLY_MODULE_PATTERNS,
+  staticSpecifiers,
   summarizeGraph,
   traceLeak,
 } from "./client-bundle-graph.ts";
@@ -122,6 +123,23 @@ describe("scripts/lint/client-bundle-graph", () => {
       ]);
     });
 
+    it("still follows `{ type as value }`, which imports a binding named type", async () => {
+      // `type as value` renames a binding *called* `type`; it is not the type
+      // modifier, so the module ships. Reading the leading word as the modifier
+      // dropped the edge and let a server module through the gate unseen.
+      const graph = await graphFrom({
+        "app/client-entry.ts":
+          'import { type as value } from "#veryfront/platform/adapters/runtime/deno/adapter.ts";\n' +
+          "export const x = value;",
+        "src/platform/adapters/runtime/deno/adapter.ts":
+          "export const type = {};",
+      });
+
+      assertEquals(findServerOnlyLeaks(graph), [
+        "src/platform/adapters/runtime/deno/adapter.ts",
+      ]);
+    });
+
     it("follows a bare side-effect import, which still ships the module", async () => {
       const graph = await graphFrom({
         "app/client-entry.ts":
@@ -132,6 +150,31 @@ describe("scripts/lint/client-bundle-graph", () => {
       assertEquals(findServerOnlyLeaks(graph), [
         "src/server/production-server.ts",
       ]);
+    });
+  });
+
+  describe("staticSpecifiers", () => {
+    it("keeps two interleaved iterations independent", () => {
+      // It is a generator, so it suspends mid-scan with a live `lastIndex`. A
+      // shared global regex would let one source advance the other's cursor and
+      // silently drop a specifier — a dropped edge is a leak this gate misses.
+      const a = 'import x from "./a1.ts";\nimport y from "./a2.ts";';
+      const b = 'import p from "./b1.ts";\nimport q from "./b2.ts";';
+
+      const ga = staticSpecifiers(a);
+      const gb = staticSpecifiers(b);
+      const fromA: string[] = [];
+      const fromB: string[] = [];
+      for (;;) {
+        const ra = ga.next();
+        const rb = gb.next();
+        if (!ra.done) fromA.push(ra.value);
+        if (!rb.done) fromB.push(rb.value);
+        if (ra.done && rb.done) break;
+      }
+
+      assertEquals(fromA, ["./a1.ts", "./a2.ts"]);
+      assertEquals(fromB, ["./b1.ts", "./b2.ts"]);
     });
   });
 
