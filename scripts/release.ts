@@ -8,6 +8,7 @@
  */
 
 import { createFileSystem } from "../src/platform/compat/fs.ts";
+import { bumpDenoJsonVersion } from "./release-version.ts";
 import { exit, getArgs } from "../src/platform/compat/process.ts";
 import { promptUser } from "../cli/utils/index.ts";
 
@@ -184,6 +185,7 @@ async function updateExampleVersions(newVersion: string) {
 	}
 }
 
+
 async function updateTemplates(newVersion: string) {
 	console.log("\n📝 Updating template versions...");
 	const filesToUpdate = [
@@ -282,14 +284,7 @@ async function runRelease() {
 		// which buries the one meaningful line under unrelated churn that then
 		// has to be reverted by hand.
 		const source = await fs.readTextFile(denoJsonPath);
-		const versionLine = /("version"\s*:\s*")[^"]*(")/;
-		if (!versionLine.test(source)) {
-			throw new Error('Could not find a "version" field in deno.json');
-		}
-		await fs.writeTextFile(
-			denoJsonPath,
-			source.replace(versionLine, `$1${newVersion}$2`),
-		);
+		await fs.writeTextFile(denoJsonPath, bumpDenoJsonVersion(source, newVersion));
 		denoJson.version = newVersion;
 	}
 
