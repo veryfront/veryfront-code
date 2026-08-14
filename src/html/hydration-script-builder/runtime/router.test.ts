@@ -997,6 +997,27 @@ describe("hydration-script-builder/runtime/router", () => {
       );
     });
 
+    it("replaces the document when a no-state popstate lands on a server-layout route", async () => {
+      const harness = createRouterHarness({ pathname: "/server-only", search: "?tab=x" });
+      harness.window.__veryfrontHydrationComplete?.();
+      harness.setNextPageData({ pagePath: "page", requiresFullDocumentNavigation: true });
+
+      const popstate = harness.listeners.popstate?.[0];
+      if (!popstate) throw new Error("popstate handler was not registered");
+      await popstate({ state: null } as unknown as RuntimeEvent);
+
+      assertEquals(
+        harness.replacedHrefs(),
+        ["https://veryfront.test/server-only"],
+        "history traversal is already on the target entry; the fallback must replace it",
+      );
+      assertEquals(
+        harness.window.location.href,
+        "https://veryfront.test/server-only?tab=x",
+        "an href assignment during popstate would push an extra history entry",
+      );
+    });
+
     it("clears the navigation progress state before handing over to the document loader", async () => {
       const harness = createRouterHarness();
       harness.window.__veryfrontHydrationComplete?.();

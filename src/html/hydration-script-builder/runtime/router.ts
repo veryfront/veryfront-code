@@ -580,7 +580,10 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
         // beforeunload guard on the current page), the document stays alive
         // and must not remain aria-busy behind a stuck progress bar.
         hideNavigationProgress();
-        navigateDocument(href, { replace: historyMode === "replace" });
+        // Only an explicit push may grow the history stack. "replace" must
+        // replace, and "none" (popstate) is already on the target entry — an
+        // href assignment there would push a duplicate.
+        navigateDocument(href, { replace: historyMode !== "push" });
         return;
       }
 
