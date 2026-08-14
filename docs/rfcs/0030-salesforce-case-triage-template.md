@@ -505,12 +505,18 @@ CRUD tool must be denied for an un-granted `sobjectType` (§16). `list_cases`
 needs a closed-case exclusion test: seed at least one recently modified closed
 Case and assert the v1 open-case listing cannot return it, and assert any missing
 or false open-case constraint fails closed rather than falling back to the
-unfiltered connector default.
+unfiltered connector default. Queue ownership needs the same object-scoped
+acceptance gate: seed one Case-only queue and one Lead-only queue, assert each
+lookup excludes the queue for the other object, and reject a queue `OwnerId`
+unless the selected `Group.Id` has a matching `QueueSobject` row for the target
+object. The fixed lookup requires Read authorization for both `Group` and
+`QueueSobject` and fails closed when either grant is absent.
 
 Coverage of the standard objects a "get-going" support/CRM demo needs:
 Account, Contact, Lead, Case, CaseComment, Opportunity - plus User for every
-owner lookup and Group only for queue-supported objects such as Case and Lead,
-reachable via SOQL. Opportunity ownership accepts User IDs, not queue Group IDs.
+owner lookup and Group plus QueueSobject only for queue-supported objects such as
+Case and Lead, reachable through fixed, object-scoped SOQL. Opportunity ownership
+accepts User IDs, not queue Group IDs.
 Task/Event (activities) become reachable through the generic tier after the §16
 enforcement gate is satisfied.
 `salesforce__search_knowledge_articles` stays but is documented as "requires
@@ -677,6 +683,7 @@ on every org - while treating picklist *values* and FLS as run-time unknowns.
 | **Event** (activity) | any | conditional: `DurationInMinutes`+`ActivityDateTime` **or** `StartDateTime`+`EndDateTime` ² | `Subject`, `WhoId`, `WhatId`, `Location`, `Description`, `OwnerId` | `ShowAs`, `EventSubtype` |
 | **User** | any (read-only for lookups) | - | *(don't create)* | - |
 | **Group** (queues) | any (read-only for lookups) | - | *(don't create)* | - |
+| **QueueSobject** (queue/object support) | any (read-only for lookups) | - | *(don't create)* | - |
 
 ¹ `Lead.Company` is marked `Nillable` in metadata but the Object Reference labels
 it *Required*; a null `Company` with a person-account record type converts the lead
@@ -698,7 +705,8 @@ never bake in a `__c`:
 - **CaseComment** - `Id, ParentId, CommentBody, IsPublished, CreatedById, CreatedDate` *(never select `Body`)*
 - **Opportunity** - `Id, Name, StageName, Amount, CloseDate, Probability, Type, AccountId, IsClosed, IsWon, OwnerId, CreatedDate`
 - **User** - `Id, Name, Email, Username, IsActive`
-- **Group** - `Id, Name, Type` *(filter `Type = 'Queue'` for case ownership)*
+- **Group** - `Id, Name, Type` *(filter `Type = 'Queue'` and semi-join `QueueSobject` for the target object before presenting owner choices)*
+- **QueueSobject** - `QueueId, SobjectType` *(filter `SobjectType` to the fixed target `Case` or `Lead`; never present this mapping record as an owner)*
 
 Do not include relationship fields such as `Account.Name`, `Account.Type`, or
 `Account.Industry` in fixed Contact defaults unless the server authorizes the
@@ -710,9 +718,26 @@ when the Account grant is present.
 Every owner assignment needs a real ID, not a name. Case and Lead can use an
 active `User.Id` or a supported queue `Group.Id`; Opportunity must use an active
 `User.Id` and must reject Group IDs. The baseline must ship the user lookup
-(`SELECT Id, Name FROM User WHERE IsActive = true`) for all three objects and the
-queue lookup (`SELECT Id, Name FROM Group WHERE Type = 'Queue'`) only for
-queue-supported Case/Lead assignment examples.
+(`SELECT Id, Name FROM User WHERE IsActive = true`) for all three objects. For
+Case and Lead, the baseline must ship an object-specific queue lookup of this
+form (using `Lead` instead of `Case` for Lead ownership):
+
+```sql
+SELECT Id, Name
+FROM Group
+WHERE Type = 'Queue'
+AND Id IN (
+  SELECT QueueId
+  FROM QueueSobject
+  WHERE SobjectType = 'Case'
+)
+```
+
+Build `SobjectType` from the fixed `Case`/`Lead` assignment path, never from an
+arbitrary query fragment. Before writing `OwnerId`, validate the selected
+`Group.Id` against that same object-specific result. A `Type = 'Queue'` Group
+without the matching `QueueSobject` row is not an eligible owner and must fail
+closed.
 
 ### A.5 What "standard" deliberately excludes (v1)
 
