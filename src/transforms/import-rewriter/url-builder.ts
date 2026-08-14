@@ -34,14 +34,14 @@ type EsmShOptions = {
 
 const ObjectEntries = Object.entries;
 const ReflectApply = Reflect.apply;
-const StringReplace = String.prototype.replace;
+const RegExpSymbolReplace = RegExp.prototype[Symbol.replace];
 
-function stringReplace(
+function regexReplace(
   value: string,
-  search: string | RegExp,
+  search: RegExp,
   replacement: string,
 ): string {
-  return ReflectApply(StringReplace, value, [search, replacement]) as string;
+  return ReflectApply(RegExpSymbolReplace, search, [value, replacement]) as string;
 }
 
 function buildEsmShParams(options?: EsmShOptions): string[] {
@@ -462,8 +462,8 @@ export function buildVeryfrontModuleUrl(path: string): string {
  * Normalize file extension for JavaScript output.
  */
 export function normalizeExtension(path: string, options?: { removeExtension?: boolean }): string {
-  if (options?.removeExtension) return stringReplace(path, /\.(tsx?|jsx|mdx)$/, "");
-  return stringReplace(path, /\.(tsx?|jsx|mdx)$/, ".js");
+  if (options?.removeExtension) return regexReplace(path, /\.(tsx?|jsx|mdx)$/, "");
+  return regexReplace(path, /\.(tsx?|jsx|mdx)$/, ".js");
 }
 
 /**

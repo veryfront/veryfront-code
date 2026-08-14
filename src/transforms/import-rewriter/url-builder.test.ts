@@ -440,6 +440,29 @@ describe("transforms/import-rewriter/url-builder", () => {
       }
     });
 
+    it("should use captured replace after RegExp Symbol.replace poisoning", () => {
+      const originalReplace = Object.getOwnPropertyDescriptor(RegExp.prototype, Symbol.replace)!;
+      let poisonCalls = 0;
+      try {
+        Object.defineProperty(RegExp.prototype, Symbol.replace, {
+          ...originalReplace,
+          value() {
+            poisonCalls += 1;
+            throw new Error("poisoned RegExp.prototype[Symbol.replace]");
+          },
+        });
+
+        assertEquals(normalizeExtension("components/Card.tsx"), "components/Card.js");
+        assertEquals(
+          normalizeExtension("components/Card.tsx", { removeExtension: true }),
+          "components/Card",
+        );
+        assertEquals(poisonCalls, 0);
+      } finally {
+        Object.defineProperty(RegExp.prototype, Symbol.replace, originalReplace);
+      }
+    });
+
     it("should keep .js unchanged", () => {
       assertEquals(normalizeExtension("file.js"), "file.js");
     });

@@ -180,7 +180,7 @@ export async function processNestedImports(
         start,
         end,
         expected: original,
-        replacement: `from "file://${stubPath}"`,
+        replacement: isDynamic ? `"file://${stubPath}"` : `from "file://${stubPath}"`,
       });
     }
   }

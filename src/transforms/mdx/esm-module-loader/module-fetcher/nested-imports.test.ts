@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import {
   findNestedImports,
   hasUnresolvedImports,
@@ -198,6 +199,29 @@ import { bar } from "./local.js";
           `export const unchanged = () => import(path);`,
         ].join("\n"),
       );
+    });
+
+    it("keeps dynamic import syntax when non-strict missing modules use stubs", async () => {
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-dynamic-stub-cache-" });
+
+      try {
+        const result = await resolveNestedModuleImports({
+          moduleCode: `export const load = () => import("./Missing.js");`,
+          esmCacheDir,
+          normalizedPath: "_vf_modules/pages/index.js",
+          projectSlug: "docs",
+          strictMissingModules: false,
+          fetchAndCacheModule: () => Promise.resolve(null),
+        });
+
+        assertEquals(result.includes("import(from "), false);
+        assertEquals(
+          /^export const load = \(\) => import\("file:\/\/.*stub-[a-f0-9]+\.mjs"\);$/.test(result),
+          true,
+        );
+      } finally {
+        await remove(esmCacheDir, { recursive: true });
+      }
     });
 
     it("resolves admitted fan-out with bounded concurrency", async () => {
