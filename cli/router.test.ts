@@ -541,7 +541,7 @@ describe("cli/router helpers", () => {
           "--environment",
           "staging",
           "--token=top-secret",
-          "file:///Users/alice/project",
+          "file:///local/project",
           "unsafe\u0085value",
         ]));
         assertEquals(code, 2);
