@@ -118,5 +118,33 @@ describe("commands/build/handler", () => {
       assertEquals(result.success, true);
       if (result.success) assertEquals(result.data.dryRun, true);
     });
+
+    it("rejects unknown options instead of silently ignoring them", () => {
+      const result = parseBuildArgs(
+        parseCliArgs(["build", "--totally-bogus-flag=xyz"]),
+      );
+
+      assertEquals(result.success, false);
+      if (!result.success) {
+        assertEquals(
+          result.error.message,
+          "Unknown option --totally-bogus-flag.",
+        );
+      }
+    });
+
+    it("suggests the closest documented option for a typo", () => {
+      const result = parseBuildArgs(
+        parseCliArgs(["build", "--output-dir", "custom-dist"]),
+      );
+
+      assertEquals(result.success, false);
+      if (!result.success) {
+        assertEquals(
+          result.error.message,
+          "Unknown option --output-dir. Did you mean --output?",
+        );
+      }
+    });
   });
 });
