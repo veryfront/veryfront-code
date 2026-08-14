@@ -13,6 +13,7 @@ import {
   setApplicationErrorReporter,
 } from "./application-errors.ts";
 import type { ApplicationErrorContext as SharedApplicationErrorContext } from "./application-error-contract.ts";
+import { CONFIG_PARSE_ERROR, INITIALIZATION_ERROR } from "#veryfront/errors";
 
 it("application error reporter is optional", async () => {
   setApplicationErrorReporter(undefined);
@@ -94,6 +95,40 @@ it("application error reporter ignores expected cancellation", () => {
 
   assertEquals(eventId, undefined);
   assertEquals(captured, false);
+});
+
+it("application error reporter ignores client-class veryfront errors", () => {
+  const captures: unknown[] = [];
+  setApplicationErrorReporter({
+    capture(error) {
+      captures.push(error);
+      return "event-id";
+    },
+    flush: () => Promise.resolve(true),
+  });
+
+  const clientError = CONFIG_PARSE_ERROR.create({
+    detail: "Hosted configuration rejected (forbidden-capability: unsupported-call)",
+  });
+  assertEquals(
+    captureApplicationError(clientError, { boundary: "renderer.request" }),
+    undefined,
+  );
+  assertEquals(captures, []);
+
+  const serverError = INITIALIZATION_ERROR.create({
+    detail: "renderer failed to initialize",
+  });
+  assertEquals(
+    captureApplicationError(serverError, { boundary: "renderer.request" }),
+    "event-id",
+  );
+  const plainError = new Error("render failed");
+  assertEquals(
+    captureApplicationError(plainError, { boundary: "renderer.request" }),
+    "event-id",
+  );
+  assertEquals(captures, [serverError, plainError]);
 });
 
 it("application error capture failures never replace application control flow", () => {
