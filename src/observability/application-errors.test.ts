@@ -20,6 +20,7 @@ import {
   CONFIG_PARSE_ERROR,
   createError,
   INITIALIZATION_ERROR,
+  MARKDOWN_COMPILE_ERROR,
   MDX_COMPILE_ERROR,
   RENDER_ERROR,
   SOURCEMAP_ERROR,
@@ -170,6 +171,9 @@ it("application error reporter downgrades tenant build errors to tagged warnings
   const mdxRegistryError = MDX_COMPILE_ERROR.create({
     detail: "MDX compilation failed in /pages/index.mdx",
   });
+  const markdownRegistryError = MARKDOWN_COMPILE_ERROR.create({
+    detail: "Markdown frontmatter failed in /pages/index.md",
+  });
   const frameworkError = INITIALIZATION_ERROR.create({
     detail: "renderer failed to initialize",
   });
@@ -196,6 +200,10 @@ it("application error reporter downgrades tenant build errors to tagged warnings
   );
   assertEquals(
     captureApplicationError(mdxRegistryError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+  assertEquals(
+    captureApplicationError(markdownRegistryError, { boundary: "ssr.render" }),
     "event-id",
   );
   assertEquals(
@@ -227,7 +235,7 @@ it("application error reporter downgrades tenant build errors to tagged warnings
     "event-id",
   );
 
-  assertEquals(captures.length, 10);
+  assertEquals(captures.length, 11);
   // Tenant build/content failures stay visible for escalation analysis, but
   // are tagged and downgraded so they stop surfacing as error-level issues.
   assertEquals(captures[0]?.context.errorClass, "tenant-build");
@@ -236,9 +244,9 @@ it("application error reporter downgrades tenant build errors to tagged warnings
   assertEquals(captures[1]?.context.level, "warning");
   assertEquals(captures[2]?.context.errorClass, "tenant-build");
   assertEquals(captures[2]?.context.level, "warning");
+  assertEquals(captures[3]?.context.errorClass, "tenant-build");
+  assertEquals(captures[3]?.context.level, "warning");
   // Genuine framework failures keep their default error-level capture.
-  assertEquals(captures[3]?.context.errorClass, undefined);
-  assertEquals(captures[3]?.context.level, undefined);
   assertEquals(captures[4]?.context.errorClass, undefined);
   assertEquals(captures[4]?.context.level, undefined);
   assertEquals(captures[5]?.context.errorClass, undefined);
@@ -251,6 +259,8 @@ it("application error reporter downgrades tenant build errors to tagged warnings
   assertEquals(captures[8]?.context.level, undefined);
   assertEquals(captures[9]?.context.errorClass, undefined);
   assertEquals(captures[9]?.context.level, undefined);
+  assertEquals(captures[10]?.context.errorClass, undefined);
+  assertEquals(captures[10]?.context.level, undefined);
 });
 it("application error capture failures never replace application control flow", () => {
   const hostile = new Proxy({}, {

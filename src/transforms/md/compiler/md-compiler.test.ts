@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../mdx/compiler/__tests__/content-processor-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import {
+  register as registerContract,
+  tryResolve as tryResolveContract,
+} from "#veryfront/extensions/contracts.ts";
+import type { ContentProcessor } from "#veryfront/extensions/content/index.ts";
 import { compileMarkdownRuntime } from "./md-compiler.ts";
 
 describe(
@@ -29,6 +35,60 @@ describe(
         assertEquals(typeof result.frontmatter, "object");
         assertEquals(result.frontmatter.title, "Test");
         assertEquals(result.frontmatter.author, "Jane");
+      });
+
+      it("classifies tenant Markdown frontmatter failures explicitly", async () => {
+        const error = await assertRejects(
+          () =>
+            compileMarkdownRuntime(
+              "runtime",
+              "/tmp/project",
+              "---\ntitle: [unterminated\n---\n# Content",
+              undefined,
+              "broken.md",
+            ),
+          VeryfrontError,
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(error.slug, "markdown-compile-error");
+        assertEquals(error.category, "BUILD");
+      });
+
+      it("preserves non-source processor failures", async () => {
+        const previous = tryResolveContract<ContentProcessor>("ContentProcessor");
+        registerContract(
+          "ContentProcessor",
+          {
+            compileMdx() {
+              throw new Error("not used");
+            },
+            compileMarkdown() {
+              throw new SyntaxError("YAML backend unavailable at line 1, column 1");
+            },
+          } satisfies ContentProcessor,
+        );
+
+        try {
+          const error = await assertRejects(() =>
+            compileMarkdownRuntime(
+              "runtime",
+              "/tmp/project",
+              "# Content",
+              undefined,
+              "framework-failure.md",
+            )
+          );
+
+          assertInstanceOf(error, Error);
+          assertEquals(error instanceof VeryfrontError, false);
+          assertEquals(
+            (error as Error).message,
+            "YAML backend unavailable at line 1, column 1",
+          );
+        } finally {
+          registerContract("ContentProcessor", previous);
+        }
       });
 
       it("extracts headings", async () => {

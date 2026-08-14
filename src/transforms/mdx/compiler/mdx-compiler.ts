@@ -6,10 +6,24 @@ import type {
   ContentProcessingResult,
   ContentProcessor,
 } from "#veryfront/extensions/content/index.ts";
-import { MDX_COMPILE_ERROR } from "#veryfront/errors";
+import { MDX_COMPILE_ERROR, VeryfrontError } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const logger = rendererLogger.component("mdx-compiler");
+
+function isMdxSourceCompileError(error: Error): boolean {
+  const candidate = error as Error & {
+    column?: unknown;
+    line?: unknown;
+    ruleId?: unknown;
+    source?: unknown;
+  };
+  return typeof candidate.source === "string" &&
+    /(?:^|-)mdx(?:-|$)|micromark|remark|recma|rehype/.test(candidate.source) &&
+    typeof candidate.ruleId === "string" &&
+    Number.isSafeInteger(candidate.line) &&
+    Number.isSafeInteger(candidate.column);
+}
 
 export function compileMDXRuntime(
   mode: CompilationMode,
@@ -37,16 +51,19 @@ export function compileMDXRuntime(
           studioEmbed,
         });
       } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
         logger.error("Compilation failed:", {
           filePath,
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
+          error: err.message,
+          stack: err.stack,
         });
 
+        if (err instanceof VeryfrontError || !isMdxSourceCompileError(err)) {
+          throw err;
+        }
+
         throw MDX_COMPILE_ERROR.create({
-          detail: `MDX compilation error: ${
-            error instanceof Error ? error.message : String(error)
-          } | file: ${filePath ?? "<memory>"}`,
+          detail: `MDX compilation error: ${err.message} | file: ${filePath ?? "<memory>"}`,
         });
       }
     },

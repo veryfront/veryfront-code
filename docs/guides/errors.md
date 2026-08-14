@@ -135,6 +135,13 @@ MDX compilation failed.
 - **HTTP status:** 500
 - **What to do:** Check your MDX file syntax
 
+### markdown-compile-error
+
+Markdown compilation failed.
+
+- **HTTP status:** 500
+- **What to do:** Check your Markdown file syntax and frontmatter
+
 ### asset-optimization-error
 
 Asset optimization failed.

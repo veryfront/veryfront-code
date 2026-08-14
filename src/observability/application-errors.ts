@@ -234,6 +234,7 @@ const TENANT_BUILD_FAILURE_TAG = Symbol.for("veryfront.module-loader.tenant-buil
 const TENANT_BUILD_ERROR_SLUGS = new Set([
   "typescript-error",
   "mdx-compile-error",
+  "markdown-compile-error",
   "ssg-generation-error",
   "compilation-error",
 ]);

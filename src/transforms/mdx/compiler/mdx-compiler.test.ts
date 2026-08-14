@@ -3,6 +3,11 @@ import "./__tests__/content-processor-setup.ts";
 import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
+import {
+  register as registerContract,
+  tryResolve as tryResolveContract,
+} from "#veryfront/extensions/contracts.ts";
+import type { ContentProcessor } from "#veryfront/extensions/content/index.ts";
 import { compileMDXRuntime } from "./mdx-compiler.ts";
 
 describe("transforms/mdx/compiler/mdx-compiler", () => {
@@ -92,6 +97,40 @@ describe("transforms/mdx/compiler/mdx-compiler", () => {
       assertInstanceOf(error, VeryfrontError);
       assertEquals(error.slug, "mdx-compile-error");
       assertEquals(error.category, "BUILD");
+    });
+
+    it("preserves non-source processor failures", async () => {
+      const previous = tryResolveContract<ContentProcessor>("ContentProcessor");
+      registerContract(
+        "ContentProcessor",
+        {
+          compileMdx() {
+            throw new Error("Expected ContentProcessor to initialize");
+          },
+          compileMarkdown() {
+            throw new Error("not used");
+          },
+        } satisfies ContentProcessor,
+      );
+
+      try {
+        const error = await assertRejects(() =>
+          compileMDXRuntime(
+            "production",
+            "/project",
+            "# Hello",
+            undefined,
+            "framework-failure.mdx",
+            "server",
+          )
+        );
+
+        assertInstanceOf(error, Error);
+        assertEquals(error instanceof VeryfrontError, false);
+        assertEquals((error as Error).message, "Expected ContentProcessor to initialize");
+      } finally {
+        registerContract("ContentProcessor", previous);
+      }
     });
   });
 });

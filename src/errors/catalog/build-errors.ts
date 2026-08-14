@@ -56,6 +56,21 @@ import Button from './components/Button.jsx'
 <Button>Click me</Button>`,
   }),
 
+  "markdown-compile-error": createErrorSolution("markdown-compile-error", {
+    title: "Markdown compilation failed",
+    message: "Failed to compile Markdown file.",
+    steps: [
+      "Check for syntax errors in your Markdown file",
+      "Ensure frontmatter YAML is valid",
+      "Check for unclosed frontmatter blocks",
+    ],
+    example: `---
+title: My Post
+---
+
+# Hello World`,
+  }),
+
   "asset-optimization-error": createSimpleError(
     "asset-optimization-error",
     "Asset optimization failed",
