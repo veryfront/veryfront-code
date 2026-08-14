@@ -1368,6 +1368,61 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     });
   });
 
+  it("does not blame esm.sh when a non-esm.sh origin returns HTML", async () => {
+    // VERYFRONT-SERVER-G: an unresolved import that fell through to the
+    // tenant's own site origin returned the HTML fallback page, and the
+    // diagnostic wrongly claimed the package "failed to build on esm.sh".
+    const siteUrl = "https://example.com/some/page";
+    const mockFetch = (() =>
+      Promise.resolve(
+        new Response("<!doctype html><title>site fallback</title>", {
+          headers: { "content-type": "text/html;charset=utf-8" },
+        }),
+      )) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-site-html-", mockFetch, async (tempDir) => {
+      const error = await assertRejects(
+        () => cacheModuleToLocal(siteUrl, tempDir),
+        Error,
+      );
+
+      assertInstanceOf(error, Error);
+      assert(!error.message.includes("esm.sh"), `must not blame esm.sh: ${error.message}`);
+      assert(
+        error.message.includes("Received HTML instead of JavaScript from " + siteUrl),
+        `must name the URL: ${error.message}`,
+      );
+      assert(
+        error.message.includes("unresolved import"),
+        `must point at an unresolved import falling through to the site origin: ${error.message}`,
+      );
+    });
+  });
+
+  it("hints at a failed alias import when an HTML response comes from an /@/ path", async () => {
+    const aliasUrl = "https://example.com/@/components/ResponsiveImage";
+    const mockFetch = (() =>
+      Promise.resolve(
+        new Response("<!doctype html><title>site fallback</title>", {
+          headers: { "content-type": "text/html;charset=utf-8" },
+        }),
+      )) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-alias-html-", mockFetch, async (tempDir) => {
+      const error = await assertRejects(
+        () => cacheModuleToLocal(aliasUrl, tempDir),
+        Error,
+      );
+
+      assertInstanceOf(error, Error);
+      assert(!error.message.includes("esm.sh"), `must not blame esm.sh: ${error.message}`);
+      assert(
+        error.message.includes('"@/" alias import'),
+        `must hint that an alias import failed to resolve: ${error.message}`,
+      );
+    });
+  });
+
   it("bounds transient failure attempts and cancels every response body", async () => {
     let fetchCount = 0;
     let cancelledBodies = 0;

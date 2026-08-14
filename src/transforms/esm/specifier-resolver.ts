@@ -27,11 +27,16 @@ import {
 } from "./http-cache-helpers.ts";
 
 const ReflectApply = Reflect.apply;
+const StringEndsWith = String.prototype.endsWith;
 const StringSlice = String.prototype.slice;
 const StringStartsWith = String.prototype.startsWith;
 
 function stringSlice(value: string, start: number, end?: number): string {
   return ReflectApply(StringSlice, value, end === undefined ? [start] : [start, end]) as string;
+}
+
+function stringEndsWith(value: string, search: string): boolean {
+  return ReflectApply(StringEndsWith, value, [search]) as boolean;
 }
 
 function stringStartsWith(value: string, search: string): boolean {
@@ -98,6 +103,19 @@ async function resolveSpecifier(
     options.moduleServerOrigin,
   );
   if (isExternalScheme(specifier)) return null;
+
+  // The "@/" project alias always denotes the project's own module transport:
+  // the framework's default import map pins "@/" to "/_vf_modules/". An alias
+  // that escaped an upstream rewrite must land there too — treating it as a
+  // bare specifier would route it to esm.sh as a bogus scoped package, and a
+  // project import map that maps "@/" to a relative prefix would resolve it
+  // against the page's public origin, which answers with HTML
+  // (VERYFRONT-SERVER-G).
+  if (stringStartsWith(specifier, "@/")) {
+    const aliasPath = stringSlice(specifier, 2);
+    const jsPath = stringEndsWith(aliasPath, ".js") ? aliasPath : `${aliasPath}.js`;
+    return `/_vf_modules/${jsPath}`;
+  }
 
   // Server-only packages (`redis`, `pg`, …), including their explicit `npm:`
   // form, must never be routed through esm.sh. esm.sh either 500s building them

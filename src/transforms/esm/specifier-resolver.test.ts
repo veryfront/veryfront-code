@@ -191,6 +191,48 @@ describe("transforms/esm/specifier-resolver", () => {
       assertEquals(cacheCalls, []);
     });
 
+    it("rewrites @/ alias imports to the project-module form without fetching", async () => {
+      // The "@/" project alias is framework-supported (the default import map
+      // maps "@/" -> "/_vf_modules/"). If one escapes the MDX loader's alias
+      // rewrite and reaches this resolver, it must land on the project-module
+      // transport — never on esm.sh as a bogus scoped package.
+      const code = `import ResponsiveImage from "@/components/ResponsiveImage";`;
+      const cacheCalls: string[] = [];
+      const result = await buildReplacements(code, undefined, defaultOptions, async (url) => {
+        cacheCalls.push(url);
+        return "/tmp/cache/http-alias.mjs";
+      });
+
+      assertEquals(cacheCalls, []);
+      assertEquals(
+        result.replacements.get("@/components/ResponsiveImage"),
+        "/_vf_modules/components/ResponsiveImage.js",
+      );
+    });
+
+    it("never resolves an @/ alias against the page origin via an import-map prefix", async () => {
+      // A project import map commonly maps "@/" to "./". Resolving that mapped
+      // relative path against the page origin fetches the tenant's own public
+      // site, which answers with HTML (VERYFRONT-SERVER-G).
+      const code = `import ResponsiveImage from "@/components/ResponsiveImage";`;
+      const cacheCalls: string[] = [];
+      const result = await buildReplacements(
+        code,
+        "https://responsive-image.example.com/foo",
+        { ...defaultOptions, importMap: { imports: { "@/": "./" } } },
+        async (url) => {
+          cacheCalls.push(url);
+          return "/tmp/cache/http-origin.mjs";
+        },
+      );
+
+      assertEquals(cacheCalls, []);
+      assertEquals(
+        result.replacements.get("@/components/ResponsiveImage"),
+        "/_vf_modules/components/ResponsiveImage.js",
+      );
+    });
+
     it("uses relative path when parent is an HTTP module", async () => {
       const code = `import lodash from "https://esm.sh/lodash@4";`;
       const mockCache: CacheHttpModuleFn = async () => "/tmp/cache/http-99999.mjs";

@@ -528,6 +528,37 @@ export function isCanonicalReactEsmUrl(rawUrl: string): boolean {
   return getCanonicalReactEsmVersion(rawUrl) !== null;
 }
 
+/**
+ * Diagnostic for an HTTP module fetch that answered with HTML.
+ *
+ * Only esm.sh gets the "package failed to build" explanation. Any other host
+ * answering HTML is almost always an unresolved import that fell through to
+ * the site's own origin — and a path starting with "/@/" is the "@/" project
+ * alias in absolute form, i.e. an alias import that failed to resolve.
+ */
+export function describeHtmlModuleResponse(rawUrl: string): string {
+  let hostname = "";
+  let pathname = "";
+  try {
+    const url = new IntrinsicURL(rawUrl);
+    hostname = getURLHostname(url);
+    pathname = getURLPathname(url);
+  } catch (_) {
+    /* expected: URL may be malformed */
+  }
+
+  const received = `Received HTML instead of JavaScript from ${rawUrl}.`;
+  if (hostname === "esm.sh") {
+    return `${received} The package may not exist or failed to build on esm.sh.`;
+  }
+
+  const aliasHint = stringStartsWith(pathname, "/@/")
+    ? ' The path looks like an "@/" alias import that failed to resolve to a project module.'
+    : "";
+  return `${received} The URL returned an HTML page — likely an unresolved import ` +
+    `that fell through to the site origin.${aliasHint}`;
+}
+
 export function isExternalScheme(specifier: string): boolean {
   return stringStartsWith(specifier, "node:") ||
     stringStartsWith(specifier, "data:") ||
