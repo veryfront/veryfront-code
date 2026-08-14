@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "./__tests__/content-processor-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { compileMDXRuntime } from "./mdx-compiler.ts";
 
 describe("transforms/mdx/compiler/mdx-compiler", () => {
@@ -72,6 +73,25 @@ describe("transforms/mdx/compiler/mdx-compiler", () => {
         "server",
       );
       assertEquals(typeof result.compiledCode, "string");
+    });
+
+    it("classifies tenant MDX syntax failures explicitly", async () => {
+      const error = await assertRejects(
+        () =>
+          compileMDXRuntime(
+            "production",
+            "/project",
+            "<Unclosed",
+            undefined,
+            "broken.mdx",
+            "server",
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "mdx-compile-error");
+      assertEquals(error.category, "BUILD");
     });
   });
 });

@@ -6,7 +6,7 @@ import type {
   ContentProcessingResult,
   ContentProcessor,
 } from "#veryfront/extensions/content/index.ts";
-import { createError, toError } from "#veryfront/errors";
+import { MDX_COMPILE_ERROR } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const logger = rendererLogger.component("mdx-compiler");
@@ -43,14 +43,11 @@ export function compileMDXRuntime(
           stack: error instanceof Error ? error.stack : undefined,
         });
 
-        throw toError(
-          createError({
-            type: "build",
-            message: `MDX compilation error: ${
-              error instanceof Error ? error.message : String(error)
-            } | file: ${filePath ?? "<memory>"}`,
-          }),
-        );
+        throw MDX_COMPILE_ERROR.create({
+          detail: `MDX compilation error: ${
+            error instanceof Error ? error.message : String(error)
+          } | file: ${filePath ?? "<memory>"}`,
+        });
       }
     },
     {
