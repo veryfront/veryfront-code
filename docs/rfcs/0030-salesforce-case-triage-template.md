@@ -40,7 +40,7 @@ single field was patched by hand, but the class of problem it represents -
 schema** - is the thing this RFC is really about.
 
 This RFC (a) catalogues every reason a *standard* org would not "just work",
-(b) resolves the "must the 16 tools be dynamic?" question against how the
+(b) resolves whether the 16 tools must be dynamic against how the
 platform actually loads tools, and (c) proposes a concrete design: a
 **comprehensive-but-safe static tool surface + passthrough writes +
 describe-driven preflight + a documented reference-org baseline + graceful,
