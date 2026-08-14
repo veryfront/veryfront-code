@@ -76,7 +76,7 @@ npm init -y >/dev/null 2>&1
 npm pkg set type=module >/dev/null
 npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-[0-9]*.tgz ./veryfront-ext-bundler-esbuild-*.tgz ./veryfront-ext-content-mdx-*.tgz ./veryfront-ext-css-tailwind-*.tgz ./veryfront-ext-dev-ui-react-*.tgz ./veryfront-ext-node-websocket-ws-*.tgz ./veryfront-ext-parser-babel-*.tgz ./veryfront-ext-yaml-*.tgz
 
-echo "== 1. root install: CLI and parser extension run under Node"
+echo "== 1. root install: CLI and deferred parser extension run under Node"
 node node_modules/veryfront/bin/veryfront.js --version | grep -q "Veryfront CLI" ||
   fail "CLI --version failed on root install"
 node node_modules/veryfront/bin/veryfront.js schema --json >/dev/null ||
@@ -93,10 +93,11 @@ const m = await import('./node_modules/veryfront/esm/src/extensions/builtin-exte
 const { getDeferredExtensionState } = await import(
   './node_modules/veryfront/esm/src/extensions/deferred-extension.js'
 );
-const resolved = m.createOptionalBuiltinExtension({
+const resolved = m.createDeferredBuiltinExtension({
   name: 'ext-parser-babel',
   origin: 'veryfront/ext-parser-babel',
   sourceDirectory: 'ext-parser-babel',
+  availability: 'package',
   contracts: { provides: ['CodeParser'] },
   capabilities: [],
 });
@@ -120,7 +121,7 @@ const ast = await codeParser.parse({
 });
 if (ast?.type !== 'File') throw new Error('TSX parse failed');
 await extension.teardown?.();
-" || fail "root optional builtin did not register a working CodeParser"
+" || fail "root deferred builtin did not register a working CodeParser"
 
 echo "== 2. root install: transformers optional peer declared"
 node -e "
