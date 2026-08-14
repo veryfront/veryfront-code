@@ -231,6 +231,16 @@ export async function formatDuplicatedBinaryHint(
     "--title",
     "-t",
   ]);
+  const opaqueDeployTargetOptions = new Set([
+    "--project",
+    "-p",
+    "--environment",
+    "--env",
+    "-e",
+    "--branch",
+    "-b",
+    "--release-name",
+  ]);
   const opaqueWorkerConnectionOptions = new Set(["--redis", "--redis-url"]);
   const opaqueServeHostOptions = new Set(["--host", "--hostname"]);
   const rootRelativeRouteOptions = new Set(["--exclude", "--include"]);
@@ -254,12 +264,14 @@ export async function formatDuplicatedBinaryHint(
     );
     const fileOption = optionDefinition?.flag.includes("<file>") === true;
     const opaqueIssueOption = correctedCommand === "issues" && opaqueIssueOptions.has(option);
+    const opaqueDeployTargetOption = correctedCommand === "deploy" &&
+      opaqueDeployTargetOptions.has(option);
     const opaqueConnectionOption = (correctedCommand === "worker" &&
       opaqueWorkerConnectionOptions.has(option)) ||
       (correctedCommand === "login" && option === "--base-url") ||
       ((correctedCommand === "serve" || correctedCommand === "preview") &&
         opaqueServeHostOptions.has(option));
-    const redactOptionValue = sensitiveOption || opaqueIssueOption ||
+    const redactOptionValue = sensitiveOption || opaqueIssueOption || opaqueDeployTargetOption ||
       opaqueConnectionOption ||
       (opaquePayloadOptions.has(option) && !fileOption);
     const allowRootRelativeRoute = correctedCommand === "build" &&

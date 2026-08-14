@@ -566,7 +566,7 @@ describe("cli/router helpers", () => {
         assertEquals(code, 2);
         assertEquals(infoMessages, [
           '  You already included "veryfront". Use:',
-          "    veryfront deploy --dry-run --environment staging --token='<REDACTED>' '<REDACTED>' '<REDACTED>'",
+          "    veryfront deploy --dry-run --environment '<REDACTED>' --token='<REDACTED>' '<REDACTED>' '<REDACTED>'",
         ]);
       } finally {
         restoreAll();
@@ -690,6 +690,39 @@ describe("cli/router helpers", () => {
           '  You already included "veryfront". Use:',
           "    veryfront preview --host '<REDACTED>'",
         ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("redacts deploy target identifiers in the correction", async () => {
+      stubExit();
+      stubLogger();
+      const targetOptions = [
+        "--project",
+        "-p",
+        "--environment",
+        "--env",
+        "-e",
+        "--branch",
+        "-b",
+        "--release-name",
+      ];
+      try {
+        for (const option of targetOptions) {
+          infoMessages.length = 0;
+          const code = await runAndCaptureExit(parseCliArgs([
+            "veryfront",
+            "deploy",
+            option,
+            "private-deployment-target",
+          ]));
+          assertEquals(code, 2);
+          assertEquals(infoMessages, [
+            '  You already included "veryfront". Use:',
+            `    veryfront deploy ${option} '<REDACTED>'`,
+          ]);
+        }
       } finally {
         restoreAll();
       }
