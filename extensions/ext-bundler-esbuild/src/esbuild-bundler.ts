@@ -54,6 +54,7 @@ interface MappedBundleOptions {
 
 let esbuildModule: EsbuildModule | null = null;
 let esbuildService: EsbuildService | null = null;
+let esbuildServiceCapture: Promise<void> | null = null;
 let esbuildOwnershipError: Error | null = null;
 let esbuildShutdownError: Error | null = null;
 let pluginDisposalError: Error | null = null;
@@ -233,14 +234,33 @@ function isLiveService(service: EsbuildService): boolean {
 }
 
 function invokeEsbuild<T extends Promise<unknown>>(operation: () => T): T {
+  if (esbuildService && isLiveService(esbuildService)) return operation();
+
+  if (esbuildServiceCapture) {
+    return esbuildServiceCapture.then(() => invokeEsbuild(operation)) as T;
+  }
+
   const originalSpawn = childProcess.spawn;
   let capturedService: EsbuildService | null = null;
-  let result: T;
+  const capture = Promise.withResolvers<void>();
+  esbuildServiceCapture = capture.promise;
+  void capture.promise.catch(() => undefined);
+
+  const finishCapture = (error?: unknown): void => {
+    if (esbuildServiceCapture === capture.promise) esbuildServiceCapture = null;
+    if (error === undefined) capture.resolve();
+    else capture.reject(error);
+  };
+
+  const restoreSpawn = (): void => {
+    if (childProcess.spawn === trackedSpawn) childProcess.spawn = originalSpawn;
+  };
 
   // esbuild does not expose its service child, and stop() resolves before that
-  // child closes. esbuild 0.28 starts it synchronously with --service and
-  // --ping, so keep interception to this operation and restore the shared
-  // binding with compare-and-swap.
+  // child closes. In compiled Deno runtimes that spawn may happen after the
+  // transform call returns, so keep one capture window open until the promise
+  // settles. Other initial operations wait for that window instead of nesting
+  // global child_process.spawn interception.
   const trackedSpawn = ((...spawnArgs: unknown[]) => {
     const child = Reflect.apply(originalSpawn, childProcess, spawnArgs) as ChildProcess;
     if (isEsbuildServiceSpawn(spawnArgs)) {
@@ -256,32 +276,40 @@ function invokeEsbuild<T extends Promise<unknown>>(operation: () => T): T {
       });
       capturedService = service;
       esbuildService = service;
-      if (childProcess.spawn === trackedSpawn) childProcess.spawn = originalSpawn;
+      restoreSpawn();
+      finishCapture();
     }
     return child;
   }) as typeof childProcess.spawn;
   childProcess.spawn = trackedSpawn;
 
+  let result: T;
   try {
     result = operation();
-  } finally {
-    if (childProcess.spawn === trackedSpawn) childProcess.spawn = originalSpawn;
+  } catch (error) {
+    restoreSpawn();
+    finishCapture(error);
+    throw error;
   }
 
-  const ownedService = capturedService ?? esbuildService;
-  if (!ownedService || !isLiveService(ownedService)) {
-    const ownershipError = recordOwnershipError();
-    return result.then(
-      () => {
+  return result.then(
+    (value) => {
+      restoreSpawn();
+      const ownedService = capturedService ?? esbuildService;
+      if (!ownedService || !isLiveService(ownedService)) {
+        const ownershipError = recordOwnershipError();
+        finishCapture(ownershipError);
         throw ownershipError;
-      },
-      (cause) => {
-        throw recordOwnershipError(cause);
-      },
-    ) as unknown as T;
-  }
-
-  return result;
+      }
+      finishCapture();
+      return value;
+    },
+    (cause) => {
+      restoreSpawn();
+      finishCapture(capturedService ? undefined : cause);
+      throw cause;
+    },
+  ) as T;
 }
 
 async function waitForServiceClose(service: EsbuildService): Promise<void> {

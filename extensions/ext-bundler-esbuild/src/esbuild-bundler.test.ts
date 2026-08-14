@@ -88,6 +88,21 @@ describe("EsbuildBundler.transform", () => {
       await bundler.stop();
     }
   });
+
+  it("coordinates concurrent transforms while the service is first captured", async () => {
+    const bundler = new EsbuildBundler();
+    try {
+      const [first, second] = await Promise.all([
+        bundler.transform({ code: "export const first: number = 1;", loader: "ts" }),
+        bundler.transform({ code: "export const second: number = 2;", loader: "ts" }),
+      ]);
+
+      assertStringIncludes(first.code, "first");
+      assertStringIncludes(second.code, "second");
+    } finally {
+      await bundler.stop();
+    }
+  });
 });
 
 describe("esbuild service lifecycle", () => {
