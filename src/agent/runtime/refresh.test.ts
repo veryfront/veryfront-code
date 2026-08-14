@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { FakeTime } from "#std/testing/time";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { type ModelRuntime } from "#veryfront/provider";
 import { type RemoteToolSource, tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -2556,9 +2557,32 @@ describe("agent runtime refresh hooks", () => {
       }),
     });
 
-    const generated = await assistant.generate({ input: "Load foo_bar" });
-    const streamed = await (await assistant.stream({ input: "Load ReleaseNotes" }))
-      .toDataStreamResponse().text();
+    // Runtime tool discovery fires whenever the run context carries a token, and
+    // `apiBaseUrl` falls back to the production API when VERYFRONT_API_BASE_URL is
+    // unset. Unmocked, generate() and stream() each POST /integrations/tools/list
+    // to api.veryfront.com and the test is at the mercy of a 30s fetch timeout.
+    // This test is about project skills, so answer discovery with no tools.
+    const { generated, streamed } = await withMockFetch(
+      (input) => {
+        const url = input instanceof Request ? input.url : String(input);
+        // Match the whole pathname, not a substring: a loose test also accepts
+        // a neighbouring route like `/integrations/tools/listing`, so a call to
+        // the wrong endpoint would be answered with an empty catalogue and the
+        // test would still pass. Anchored at the end rather than compared whole
+        // because VERYFRONT_API_BASE_URL may carry a path prefix, and the client
+        // concatenates base and path (`${baseUrl}${path}`).
+        if (!new URL(url).pathname.endsWith("/integrations/tools/list")) {
+          throw new Error(`Unexpected network call from a unit test: ${url}`);
+        }
+        return Promise.resolve(Response.json({ tools: [] }));
+      },
+      async () => {
+        const generated = await assistant.generate({ input: "Load foo_bar" });
+        const streamed = await (await assistant.stream({ input: "Load ReleaseNotes" }))
+          .toDataStreamResponse().text();
+        return { generated, streamed };
+      },
+    );
 
     assertEquals(catalog.map((skill) => skill.id), ["foo_bar", "ReleaseNotes"]);
     assertEquals(generated.toolCalls[0]?.status, "completed");
