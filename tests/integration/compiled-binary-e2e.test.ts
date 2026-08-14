@@ -3315,6 +3315,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         PRODUCTION_MODE: "1",
         VERYFRONT_TRUST_FORWARDED_HEADERS: "1",
         VERYFRONT_API_BASE_URL: UNREACHABLE_LOCAL_PROXY_API_BASE_URL,
+        VERYFRONT_API_INTERNAL_USER: "test-internal-user",
+        VERYFRONT_API_INTERNAL_PASS: "test-internal-pass",
         VERYFRONT_API_TOKEN: "",
       },
     );
@@ -3386,6 +3388,8 @@ export default function Home() {
         PRODUCTION_MODE: "1",
         VERYFRONT_TRUST_FORWARDED_HEADERS: "1",
         VERYFRONT_API_BASE_URL: UNREACHABLE_LOCAL_PROXY_API_BASE_URL,
+        VERYFRONT_API_INTERNAL_USER: "test-internal-user",
+        VERYFRONT_API_INTERNAL_PASS: "test-internal-pass",
         VERYFRONT_API_TOKEN: "",
       },
     );
