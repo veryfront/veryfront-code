@@ -1,5 +1,5 @@
 /**
- * Popover — BASIC fork of @radix-ui/react-popover with the same API shape
+ * Popover - BASIC fork of @radix-ui/react-popover with the same API shape
  * (Root / Trigger / Content + Title / Body / Footer / Actions section parts).
  * Classes are ported 1:1 from Studio's `Popover` (tokens remapped to
  * veryfront's `[var(--token)]` vocabulary). Anchored below the trigger;
@@ -40,7 +40,7 @@ export interface PopoverProps {
   onOpenChange?: (open: boolean) => void;
 }
 
-/** Popover root — owns open state and the positioning anchor. */
+/** Popover root - owns open state and the positioning anchor. */
 export function Popover(props: PopoverProps): React.ReactElement {
   const { popover } = useAdapter();
   return <popover.Root {...props} />;
@@ -55,7 +55,7 @@ export interface PopoverTriggerProps extends React.ButtonHTMLAttributes<HTMLButt
 }
 
 /**
- * Literal slotted trigger contract with an element-specific `ref` — for
+ * Literal slotted trigger contract with an element-specific `ref` - for
  * `asChild` triggers whose child is not a `<button>` (e.g. an `<a>`), so the
  * consumer's ref keeps its precise element type.
  */
@@ -64,7 +64,7 @@ export type PopoverSlottedTriggerProps<T extends HTMLElement = HTMLElement> =
   & { ref?: React.Ref<T> };
 
 /**
- * Trigger — toggles the popover; the positioning anchor. `asChild` merges onto
+ * Trigger - toggles the popover; the positioning anchor. `asChild` merges onto
  * the child element, which must forward `ref` to its DOM node. The generic
  * overload lets an `asChild` trigger carry an element-specific ref (e.g. an
  * `<a>`); `aria-haspopup` is supplied by the adapter's trigger.
@@ -88,7 +88,7 @@ export interface PopoverContentProps extends React.HTMLAttributes<HTMLDivElement
   ref?: React.Ref<HTMLDivElement>;
 }
 
-/** Popover surface — rendered below the trigger while open. */
+/** Popover surface - rendered below the trigger while open. */
 export function PopoverContent({
   children,
   className,

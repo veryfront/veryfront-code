@@ -26,6 +26,7 @@
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
 import { composeRefs } from "./slot.tsx";
+import { useIsomorphicLayoutEffect } from "./use-isomorphic-layout-effect.ts";
 
 interface FieldContextValue {
   /** Base id shared by the control and its `<FieldLabel htmlFor>`. */
@@ -40,6 +41,10 @@ interface FieldContextValue {
   descriptionPresent: boolean;
   /** Whether a `<FieldError>` will render (it renders nothing when empty). */
   errorPresent: boolean;
+  /** Register a description rendered through an opaque wrapper component. */
+  registerDescription: () => () => void;
+  /** Register a non-empty error rendered through an opaque wrapper component. */
+  registerError: () => () => void;
 }
 
 /**
@@ -93,7 +98,19 @@ export function Field({
   ...props
 }: FieldProps): React.ReactElement {
   const base = React.useId();
-  const { description: descriptionPresent, error: errorPresent } = findFieldParts(children);
+  const staticParts = findFieldParts(children);
+  const [mountedDescriptions, setMountedDescriptions] = React.useState(0);
+  const [mountedErrors, setMountedErrors] = React.useState(0);
+  const registerDescription = React.useCallback(() => {
+    setMountedDescriptions((count) => count + 1);
+    return () => setMountedDescriptions((count) => Math.max(0, count - 1));
+  }, []);
+  const registerError = React.useCallback(() => {
+    setMountedErrors((count) => count + 1);
+    return () => setMountedErrors((count) => Math.max(0, count - 1));
+  }, []);
+  const descriptionPresent = staticParts.description || mountedDescriptions > 0;
+  const errorPresent = staticParts.error || mountedErrors > 0;
   const ctx = React.useMemo<FieldContextValue>(
     () => ({
       id: base,
@@ -102,8 +119,17 @@ export function Field({
       invalid,
       descriptionPresent,
       errorPresent,
+      registerDescription,
+      registerError,
     }),
-    [base, invalid, descriptionPresent, errorPresent],
+    [
+      base,
+      invalid,
+      descriptionPresent,
+      errorPresent,
+      registerDescription,
+      registerError,
+    ],
   );
   return (
     <FieldContext.Provider value={ctx}>
@@ -202,6 +228,7 @@ export function FieldDescription({
   ...props
 }: FieldDescriptionProps): React.ReactElement {
   const ctx = useField("FieldDescription");
+  useIsomorphicLayoutEffect(() => ctx.registerDescription(), [ctx.registerDescription]);
   return (
     <p
       ref={ref}
@@ -228,7 +255,12 @@ export function FieldError({
   ...props
 }: FieldErrorProps): React.ReactElement | null {
   const ctx = useField("FieldError");
-  if (React.Children.count(children) === 0) return null;
+  const present = React.Children.count(children) > 0;
+  useIsomorphicLayoutEffect(
+    () => present ? ctx.registerError() : undefined,
+    [ctx.registerError, present],
+  );
+  if (!present) return null;
   return (
     <p
       ref={ref}

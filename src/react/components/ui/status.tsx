@@ -1,7 +1,7 @@
 /**
- * Status — ported 1:1 from Veryfront Studio. A coloured status dot with a
+ * Status - ported 1:1 from Veryfront Studio. A coloured status dot with a
  * label (optionally pulsing / responsively hidden). Semantic classes remapped
- * to veryfront's `[var(--token)]` vocabulary — the `--status-*` dot tokens all
+ * to veryfront's `[var(--token)]` vocabulary - the `--status-*` dot tokens all
  * exist in `theme.ts`. Private to the chat module.
  *
  * @module react/components/ui/status

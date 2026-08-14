@@ -156,7 +156,7 @@ export function NavigationMenuItem({
   // Identity is per instance, not per `value`. Two items may legitimately carry
   // the same `value`; keying open state on it would open both panels at once
   // and mint duplicate panel ids, making aria-controls ambiguous.
-  const reactId = React.useId().replace(/[^A-Za-z0-9_-]/g, "");
+  const reactId = React.useId();
   const itemId = `vf-navigation-menu-${reactId}`;
   const open = ctx?.openItemId === itemId;
   const identity = React.useMemo(() => ({ value, itemId }), [value, itemId]);

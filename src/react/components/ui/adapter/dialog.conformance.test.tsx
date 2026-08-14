@@ -160,6 +160,56 @@ function runDialogConformance(
       }
     });
 
+    it("DialogCancel respects a consumer-cancelled click", () => {
+      const { scope, click, cleanup } = mount(
+        <Wrap>
+          <Dialog>
+            <DialogTrigger>Open</DialogTrigger>
+            <DialogContent>
+              <DialogCancel onClick={(event) => event.preventDefault()}>
+                Keep open
+              </DialogCancel>
+            </DialogContent>
+          </Dialog>
+        </Wrap>,
+      );
+      try {
+        click(scope.querySelector("button")!);
+        const panel = scope.querySelector('[role="dialog"]');
+        assert(panel, "trigger opened the dialog");
+        click(panel!.querySelector("button")!);
+        assert(scope.querySelector('[role="dialog"]'), "preventDefault keeps the dialog open");
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("forwards consumer refs to trigger and close nodes", () => {
+      const triggerRef = React.createRef<HTMLButtonElement>();
+      const closeRef = React.createRef<HTMLButtonElement>();
+      const { scope, click, cleanup } = mount(
+        <Wrap>
+          <Dialog>
+            <DialogTrigger ref={triggerRef}>Open</DialogTrigger>
+            <DialogContent>
+              <DialogClose ref={closeRef}>Close</DialogClose>
+            </DialogContent>
+          </Dialog>
+        </Wrap>,
+      );
+      try {
+        const trigger = scope.querySelector("button");
+        assert(trigger, "trigger renders");
+        assertEquals(triggerRef.current, trigger, "trigger ref reaches the button node");
+        click(trigger);
+        const close = scope.querySelector('[role="dialog"] button');
+        assert(close, "close renders while open");
+        assertEquals(closeRef.current, close, "close ref reaches the button node");
+      } finally {
+        cleanup();
+      }
+    });
+
     it("forwards a consumer ref to the panel node (one-node contract)", () => {
       const panelRef = React.createRef<HTMLDivElement>();
       const { scope, click, cleanup } = mount(

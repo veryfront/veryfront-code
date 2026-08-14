@@ -36,7 +36,7 @@ function MenubarDocsPage() {
 
       <DocsSection
         title="Default"
-        description="Click a trigger to open its menu; only one menu is open at a time."
+        description="Select a trigger to open its menu; only one menu is open at a time."
       >
         <DocsExampleAuto of={Default} />
       </DocsSection>

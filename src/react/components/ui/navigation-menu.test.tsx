@@ -226,8 +226,13 @@ describe("NavigationMenu behaviour", () => {
       );
       assert(host.querySelector(".vf-test-one"), "the clicked item's own panel opened");
       assertEquals(host.querySelector(".vf-test-two"), null, "the other panel stayed closed");
-      const ids = Array.from(host.querySelectorAll("[id]")).map((el) => el.getAttribute("id"));
-      assertEquals(ids.length, new Set(ids).size, "panel ids must stay unique");
+      const firstPanelId = triggers(host)[0]!.getAttribute("aria-controls");
+      assert(firstPanelId, "the first open trigger references its panel");
+
+      click(triggers(host)[1]!);
+      const secondPanelId = triggers(host)[1]!.getAttribute("aria-controls");
+      assert(secondPanelId, "the second open trigger references its panel");
+      assert(firstPanelId !== secondPanelId, "duplicate values still receive distinct panel ids");
     } finally {
       unmount();
     }

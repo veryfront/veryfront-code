@@ -1,5 +1,5 @@
 /**
- * Dialog — BASIC fork of @radix-ui/react-dialog with the same API shape (Root /
+ * Dialog - BASIC fork of @radix-ui/react-dialog with the same API shape (Root /
  * Trigger / Content + Header / Title / Description / Body / Footer / Action /
  * Cancel / Close / Form). Classes ported 1:1 from Studio's `Dialog` (tokens
  * remapped; `Heading` level 2 + `Text` inlined). Modal overlay + centered panel;
@@ -46,21 +46,23 @@ export interface DialogProps {
   onOpenChange?: (open: boolean) => void;
 }
 
-/** Dialog root — owns open state. */
+/** Dialog root - owns open state. */
 export function Dialog(props: DialogProps): React.ReactElement {
   const { dialog } = useAdapter();
   return <dialog.Root {...props} />;
 }
 
-/** Trigger — opens the dialog. `asChild` merges onto the child element. */
+/** Trigger - opens the dialog. `asChild` merges onto the child element. */
 export function DialogTrigger(
-  props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
+  props:
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> },
 ): React.ReactElement {
   const { dialog } = useAdapter();
   return <dialog.Trigger {...props} />;
 }
 
-/** Modal surface — overlay + centered panel, rendered while open. */
+/** Modal surface - overlay + centered panel, rendered while open. */
 export function DialogContent({
   className,
   children,
@@ -91,7 +93,7 @@ export function DialogHeader(
   return <div className={cn("flex flex-col px-6 pt-6 shrink-0", className)} {...props} />;
 }
 
-/** Dialog title — Studio Heading level 2 (20px). Semibold so Inter reads at
+/** Dialog title - Studio Heading level 2 (20px). Semibold so Inter reads at
  * Studio's medium-on-Söhne weight (workbench heading convention). Registers its
  * id with the adapter so the panel adopts `aria-labelledby`. */
 export function DialogTitle({
@@ -122,7 +124,7 @@ export function DialogTitle({
   );
 }
 
-/** Dialog description — body text, left-aligned. Registers its id with the
+/** Dialog description - body text, left-aligned. Registers its id with the
  * adapter so the panel adopts `aria-describedby`. */
 export function DialogDescription({
   className,
@@ -176,7 +178,7 @@ export function DialogBody({
   );
 }
 
-/** Sticky footer row — action left, cancel right. */
+/** Sticky footer row - action left, cancel right. */
 export function DialogFooter(
   { className, ...props }: React.HTMLAttributes<HTMLDivElement>,
 ): React.ReactElement {
@@ -232,7 +234,7 @@ export function DialogCancel({
       className={className}
       onClick={(e) => {
         onClick?.(e);
-        ctx.setOpen(false);
+        if (!e.defaultPrevented) ctx.setOpen(false);
       }}
       {...props}
     />
@@ -241,7 +243,9 @@ export function DialogCancel({
 
 /** Closes the dialog. `asChild` merges onto the child element. */
 export function DialogClose(
-  props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
+  props:
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> },
 ): React.ReactElement {
   const { dialog } = useAdapter();
   return <dialog.Close {...props} />;

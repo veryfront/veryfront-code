@@ -35,7 +35,7 @@ const importCode = `import {
 } from "veryfront/ui"`;
 
 const compositionTree = `ContextMenu                     <- Root (owns open + pointer position)
-+-- ContextMenuTrigger          <- right-click region (contextmenu event)
++-- ContextMenuTrigger          <- context menu region (contextmenu event)
 +-- ContextMenuContent          <- panel portalled at the pointer
 |   +-- ContextMenuGroup        <- Groups related items
 |   |   +-- ContextMenuLabel    <- Group heading label
@@ -50,10 +50,13 @@ function ContextMenuDocsPage() {
     <DocsPage>
       <DocsHero
         title="ContextMenu"
-        lead="A menu opened by right-click at the pointer position, sharing DropdownMenu's surface and item styling."
+        lead="A menu opened at the pointer position, sharing DropdownMenu's surface and item styling."
       />
 
-      <DocsSection title="Default" description="Right-click the region to open the menu at the pointer.">
+      <DocsSection
+        title="Default"
+        description="Use the secondary pointer action in the region to open the menu at the pointer."
+      >
         <DocsExampleAuto of={Default} />
       </DocsSection>
 
@@ -89,7 +92,7 @@ function ContextMenuDocsPage() {
         />
         <DocsPropsTable
           component="ContextMenuTrigger"
-          description="Right-click region"
+          description="Context menu region"
           props={[
             { name: "asChild", type: "boolean", default: "false", description: "Merge trigger behaviour onto your own element" },
             { name: "className", type: "string", description: "Additional classes" },
@@ -145,7 +148,7 @@ export const Default: Story = {
   render: () => (
     <ContextMenu>
       <ContextMenuTrigger className={triggerClass}>
-        Right-click here
+        Open the context menu here
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuGroup>
@@ -164,7 +167,7 @@ export const WithLabelsAndSeparators: Story = {
   render: () => (
     <ContextMenu>
       <ContextMenuTrigger className={triggerClass}>
-        Right-click here
+        Open the context menu here
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuGroup>
@@ -188,7 +191,7 @@ export const WithIcons: Story = {
   render: () => (
     <ContextMenu>
       <ContextMenuTrigger className={triggerClass}>
-        Right-click here
+        Open the context menu here
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuGroup>
@@ -219,7 +222,7 @@ export const WithDisabledItem: Story = {
   render: () => (
     <ContextMenu>
       <ContextMenuTrigger className={triggerClass}>
-        Right-click here
+        Open the context menu here
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuGroup>

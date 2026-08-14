@@ -25,7 +25,7 @@ const importCode =
   `import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogTitle, AlertDialogTrigger } from "veryfront/ui"`;
 
 const compositionTree =
-  `AlertDialog                          <- Owns open state; no dismiss on outside-click / Escape
+  `AlertDialog                          <- Owns open state; no dismiss from outside interaction / Escape
 +-- AlertDialogTrigger               <- Opens the confirm modal
 +-- AlertDialogContent               <- role="alertdialog", labelled + described
 |   +-- AlertDialogTitle             <- Required accessible name
@@ -68,7 +68,7 @@ function AlertDialogDocsPage() {
     <DocsPage>
       <DocsHero
         title="AlertDialog"
-        lead="A confirmation modal - a Dialog with role='alertdialog', a required title + description, and explicit Action / Cancel buttons. It does not dismiss on outside-click or Escape; the user must choose."
+        lead="A confirmation modal - a Dialog with role='alertdialog', a required title + description, and explicit Action / Cancel buttons. It does not dismiss from outside interaction or Escape; the user must choose."
       />
 
       <DocsSection

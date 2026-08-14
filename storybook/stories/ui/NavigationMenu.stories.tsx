@@ -45,7 +45,7 @@ function NavigationMenuDocsPage() {
 
       <DocsSection
         title="With dropdown panels"
-        description="Two items each open a panel of links; hover or click the trigger to open. A third item is a plain link with no panel."
+        description="Two items each open a panel of links; hover over or select the trigger to open. A third item is a plain link with no panel."
       >
         <DocsExampleAuto of={WithPanels} />
       </DocsSection>

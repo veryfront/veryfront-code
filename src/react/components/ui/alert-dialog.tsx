@@ -37,6 +37,7 @@ import * as React from "react";
 import { cx as cn } from "./cva.ts";
 import { Button, type ButtonProps } from "./button.tsx";
 import { useAdapter } from "./adapter/context.tsx";
+import { registerDismissableLayer } from "./dismissable-layer.ts";
 import { composeRefs } from "./slot.tsx";
 
 // The confirm modal's open state / trigger reuse the Dialog slot of the active
@@ -119,6 +120,15 @@ export function AlertDialogContent({
   // Merge the internal panel ref (read by the focus effect) with any consumer
   // ref via `composeRefs`, which tracks + runs ref cleanups for us.
   const setNode = React.useMemo(() => composeRefs<HTMLDivElement>(panelRef, ref), [ref]);
+  React.useEffect(() => {
+    const panel = panelRef.current;
+    if (!open || !panel) return;
+    return registerDismissableLayer(
+      panel.ownerDocument,
+      () => panelRef.current,
+      () => {},
+    );
+  }, [open]);
   // Move focus into the panel on open (no Escape listener → no key-dismiss).
   React.useEffect(() => {
     if (!open) return;
@@ -229,7 +239,7 @@ export function AlertDialogFooter({
 /** Props accepted by `<AlertDialogAction>`. */
 export type AlertDialogActionProps = ButtonProps;
 
-/** Confirming action - runs its `onClick`, then closes the alert dialog. */
+/** Confirming action - runs `onClick`, then closes unless it calls `preventDefault()`. */
 export function AlertDialogAction({
   variant = "primary",
   size = "default",
@@ -256,7 +266,7 @@ export function AlertDialogAction({
 /** Props accepted by `<AlertDialogCancel>`. */
 export type AlertDialogCancelProps = ButtonProps;
 
-/** Dismissing action - closes the alert dialog without confirming. */
+/** Dismissing action - runs `onClick`, then closes unless it calls `preventDefault()`. */
 export function AlertDialogCancel({
   variant = "secondary",
   size = "default",

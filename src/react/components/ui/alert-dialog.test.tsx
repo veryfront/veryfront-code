@@ -28,6 +28,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "./alert-dialog.tsx";
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "./dialog.tsx";
 
 // ---------------------------------------------------------------------------
 // jsdom harness - installs a fresh DOM per render and stubs the browser APIs
@@ -99,6 +100,7 @@ function render(element: React.ReactElement): {
   const host = dom.window.document.getElementById("root")!;
   const root = createRoot(host);
   flushSync(() => root.render(element));
+  flushSync(() => {});
   return {
     doc: dom.window.document,
     host: host as unknown as HTMLElement,
@@ -134,6 +136,44 @@ describe("AlertDialog", () => {
     try {
       const panel = doc.querySelector('[role="alertdialog"]');
       assert(panel, "an element with role='alertdialog' must exist while open");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("blocks Escape from dismissing an underlying dialog", () => {
+    const { doc, click, unmount } = render(
+      <Dialog>
+        <DialogTrigger>Open outer dialog</DialogTrigger>
+        <DialogContent>
+          <DialogTitle>Outer dialog</DialogTitle>
+          <AlertDialog defaultOpen>
+            <AlertDialogContent>
+              <AlertDialogTitle>Confirm action</AlertDialogTitle>
+              <AlertDialogDescription>This action needs confirmation.</AlertDialogDescription>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+            </AlertDialogContent>
+          </AlertDialog>
+        </DialogContent>
+      </Dialog>,
+    );
+    try {
+      const trigger = Array.from(doc.querySelectorAll("button")).find((button) =>
+        button.textContent === "Open outer dialog"
+      );
+      assert(trigger, "outer trigger renders");
+      click(trigger);
+      assert(doc.querySelector('[role="dialog"]'), "underlying dialog renders");
+      assert(doc.querySelector('[role="alertdialog"]'), "alert dialog renders above it");
+      const event = new doc.defaultView!.KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Escape",
+      });
+      flushSync(() => doc.dispatchEvent(event));
+      assert(event.defaultPrevented, "the top alert dialog consumes Escape");
+      assert(doc.querySelector('[role="dialog"]'), "underlying dialog stays open");
+      assert(doc.querySelector('[role="alertdialog"]'), "alert dialog stays open");
     } finally {
       unmount();
     }

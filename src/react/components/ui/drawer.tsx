@@ -1,5 +1,5 @@
 /**
- * Drawer — BASIC bottom-sheet fork of Studio's `Drawer` (which is a large
+ * Drawer - BASIC bottom-sheet fork of Studio's `Drawer` (which is a large
  * Vaul-style component). Same API shape for the parts we need: Root / Trigger /
  * Content (overlay + sheet + drag handle) / Title / Header / Body / Footer /
  * Close. Surface classes ported 1:1 from Studio (tokens remapped). Slides up
@@ -24,7 +24,7 @@ import { useAdapter } from "./adapter/context.tsx";
 import { useIsomorphicLayoutEffect } from "./use-isomorphic-layout-effect.ts";
 
 // The Drawer's MECHANICS come from the active adapter's `drawer` slot
-// (`useAdapter().drawer`) — a static bottom sheet on the builtin, or real
+// (`useAdapter().drawer`) - a static bottom sheet on the builtin, or real
 // drag-to-dismiss / snap points when you vendor the Vaul specialist adapter
 // (`veryfront generate adapter vaul`) and swap it in via `UIAdapterProvider`.
 // This file supplies only the edge-sliding sheet layout.
@@ -41,21 +41,23 @@ export interface DrawerProps {
   onOpenChange?: (open: boolean) => void;
 }
 
-/** Drawer root — owns open state (via the adapter's drawer engine). */
+/** Drawer root - owns open state (via the adapter's drawer engine). */
 export function Drawer(props: DrawerProps): React.ReactElement {
   const { drawer } = useAdapter();
   return <drawer.Root {...props} />;
 }
 
-/** Trigger — opens the drawer. `asChild` merges onto the child element. */
+/** Trigger - opens the drawer. `asChild` merges onto the child element. */
 export function DrawerTrigger(
-  props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
+  props:
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> },
 ): React.ReactElement {
   const { drawer } = useAdapter();
   return <drawer.Trigger {...props} />;
 }
 
-/** Bottom sheet — overlay + sliding surface with a drag handle. */
+/** Bottom sheet - overlay + sliding surface with a drag handle. */
 export function DrawerContent({
   children,
   className,
@@ -81,7 +83,7 @@ export function DrawerContent({
   );
 }
 
-/** Drawer title — 18px medium (Studio Heading-ish). Add `sr-only` to hide.
+/** Drawer title - 18px medium (Studio Heading-ish). Add `sr-only` to hide.
  * Registers its id with the adapter so the sheet adopts `aria-labelledby`. */
 export function DrawerTitle({
   className,
@@ -144,7 +146,9 @@ export function DrawerFooter(
 
 /** Closes the drawer. `asChild` merges onto the child element. */
 export function DrawerClose(
-  props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
+  props:
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> },
 ): React.ReactElement {
   const { drawer } = useAdapter();
   return <drawer.Close {...props} />;

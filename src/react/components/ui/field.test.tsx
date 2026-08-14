@@ -9,7 +9,7 @@ import * as React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { assert } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 import { Field, FieldControl, FieldDescription, FieldError, FieldLabel } from "./field.tsx";
@@ -81,6 +81,7 @@ function render(element: React.ReactElement): {
   const host = dom.window.document.getElementById("root")!;
   const root = createRoot(host);
   flushSync(() => root.render(element));
+  flushSync(() => {});
   return {
     host: host as unknown as HTMLElement,
     unmount: () => {
@@ -218,12 +219,47 @@ describe("Field", () => {
     );
     try {
       const control = host.querySelector("input")!;
-      assert(node === control, "a ref on the child control must still receive the node");
+      assertEquals(node, control, "a ref on the child control must still receive the node");
       const describedBy = control.getAttribute("aria-describedby") ?? "";
       assert(
         describedBy.split(" ").includes("consumer-hint"),
         "the child's own aria-describedby must be merged, not dropped",
       );
+    } finally {
+      unmount();
+    }
+  });
+
+  it("wires descriptions and errors rendered by wrapper components", async () => {
+    function WrappedDescription(): React.ReactElement {
+      return <FieldDescription>Wrapped help</FieldDescription>;
+    }
+    function WrappedError(): React.ReactElement {
+      return <FieldError>Wrapped error</FieldError>;
+    }
+
+    const { host, unmount } = render(
+      <Field invalid>
+        <FieldControl>
+          <input />
+        </FieldControl>
+        <WrappedDescription />
+        <WrappedError />
+      </Field>,
+    );
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      flushSync(() => {});
+      const control = host.querySelector("input")!;
+      const describedBy = (control.getAttribute("aria-describedby") ?? "").split(" ");
+      const description = Array.from(host.querySelectorAll("p")).find((node) =>
+        node.textContent === "Wrapped help"
+      );
+      const error = host.querySelector('[role="alert"]');
+      assert(description, "wrapped description renders");
+      assert(error, "wrapped error renders");
+      assert(describedBy.includes(description.id), "control references the wrapped description");
+      assert(describedBy.includes(error.id), "control references the wrapped error");
     } finally {
       unmount();
     }

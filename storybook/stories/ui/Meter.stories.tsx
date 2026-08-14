@@ -17,33 +17,33 @@ function MeterDocsPage() {
     <DocsPage>
       <DocsHero
         title="Meter"
-        lead="A semantic gauge for a known, bounded reading: score, quota, or usage."
+        lead="Use Meter for a known, bounded reading, such as a score, quota, or usage."
       />
 
       <DocsSection
         title="Default"
-        description="The neutral variant: a plain fill for an unqualified reading."
+        description="Use the neutral variant for an unqualified reading."
       >
         <DocsExampleAuto of={Default} />
       </DocsSection>
 
       <DocsSection
         title="Success"
-        description="The success variant: a healthy, in-range reading."
+        description="Use the success variant for a healthy, in-range reading."
       >
         <DocsExampleAuto of={Success} />
       </DocsSection>
 
       <DocsSection
         title="Warning"
-        description="The warning variant: approaching a limit."
+        description="Use the warning variant when the value approaches a limit."
       >
         <DocsExampleAuto of={Warning} />
       </DocsSection>
 
       <DocsSection
         title="Danger"
-        description="The danger variant: over threshold; value clamps to max."
+        description="Use the danger variant when the value exceeds the threshold. Meter clamps the value to max."
       >
         <DocsExampleAuto of={Danger} />
       </DocsSection>

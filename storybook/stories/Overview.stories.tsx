@@ -7,7 +7,7 @@ import {
   PageHero,
 } from "../.storybook/components";
 
-// Chat landing page — mirrors the Veryfront Studio "Overview" concept: a hero
+// Chat landing page - mirrors the Veryfront Studio "Overview" concept: a hero
 // plus a navigable grid of every chat surface, grouped by Components and UI.
 // Tagged `showcase` so the addon panel is hidden.
 const meta = {
@@ -110,7 +110,7 @@ function ChatOverviewPage() {
     <Page>
       <PageHero
         title="Chat"
-        description="The chat components Veryfront ships — message turns, composer, sidebar, and the full assembled experiences. Open any entry for states, composition, and API reference."
+        description="The chat components Veryfront ships - message turns, composer, sidebar, and the full assembled experiences. Open any entry for states, composition, and API reference."
       />
 
       <div className="space-y-12 py-16">
@@ -128,7 +128,7 @@ function ChatOverviewPage() {
 }
 
 // `name: "Overview"` matches the title's last segment so Storybook collapses
-// the component + its single story into one sidebar leaf — "Overview" sits
+// the component + its single story into one sidebar leaf - "Overview" sits
 // directly under "Chat", not as an "Overview › Default" folder.
 export const Default: Story = {
   name: "Overview",

@@ -1,5 +1,5 @@
 /**
- * Tabs — ported from Veryfront Studio `components/Tabs/Tabs.tsx`, with the
+ * Tabs - ported from Veryfront Studio `components/Tabs/Tabs.tsx`, with the
  * `motion/react` spring-slide forked out: the active pill is a static
  * background (no dependency, no layout animation), only the `transition-colors`
  * CSS that Studio already ships. Semantic classes remapped to veryfront's
@@ -7,7 +7,7 @@
  *
  * The selection MECHANICS (`role="tablist"` / `role="tab"`, `aria-selected`,
  * select-on-click) come from the active adapter's `tabs` slot
- * (`useAdapter().tabs`) — with no provider that is the zero-dependency builtin,
+ * (`useAdapter().tabs`) - with no provider that is the zero-dependency builtin,
  * so behaviour and markup are unchanged. This skin owns only the API shape, the
  * `size` variant, and the visual look (including the active pill), which it
  * drives from the controlled `value` prop.
@@ -18,8 +18,8 @@
  * suffix (e.g. `px-8!`).
  *
  * Two sizes:
- * - `default` — filled track (`--input-bg`), 34/38px, accent pill.
- * - `sm` — flat, outlined, 32px, for panel headers.
+ * - `default` - filled track (`--input-bg`), 34/38px, accent pill.
+ * - `sm` - flat, outlined, 32px, for panel headers.
  *
  * @example
  * ```tsx
@@ -62,7 +62,7 @@ export interface TabsProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "o
   children: React.ReactNode;
 }
 
-/** Tablist container — delegates selection to the adapter, owns the size + look. */
+/** Tablist container - delegates selection to the adapter, owns the size + look. */
 export const Tabs = React.forwardRef<HTMLDivElement, TabsProps>(function Tabs(
   { value, onValueChange, size = "default", className, children, ...props },
   ref,
@@ -99,7 +99,7 @@ export interface TabsItemProps
 }
 
 /**
- * Individual tab — renders as a button, or an anchor when `href` is set. The
+ * Individual tab - renders as a button, or an anchor when `href` is set. The
  * adapter's `tabs.Tab` supplies the `role="tab"` / `aria-selected` / `data-state`
  * mechanics and composes selection onto the caller's `onClick` (caller's runs
  * first, then the tab activates); this skin renders the visual pill and forwards

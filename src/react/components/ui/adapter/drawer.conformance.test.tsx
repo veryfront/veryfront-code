@@ -11,7 +11,7 @@ import * as React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { assert } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { Drawer, DrawerClose, DrawerContent, DrawerTitle, DrawerTrigger } from "../drawer.tsx";
 import { UIAdapterProvider } from "./context.tsx";
@@ -114,6 +114,37 @@ function runDrawerConformance(label: string, Wrap: React.FC<{ children: React.Re
           h.textContent === "Sheet"
         );
         assert(!stillThere, "Close dismisses the sheet");
+      } finally {
+        unmount();
+      }
+    });
+
+    it("forwards consumer refs to trigger and close nodes", () => {
+      const triggerRef = React.createRef<HTMLButtonElement>();
+      const closeRef = React.createRef<HTMLButtonElement>();
+      const { doc, unmount } = render(
+        <Wrap>
+          <Drawer>
+            <DrawerTrigger ref={triggerRef}>Open</DrawerTrigger>
+            <DrawerContent>
+              <DrawerTitle>Sheet</DrawerTitle>
+              <DrawerClose ref={closeRef}>Done</DrawerClose>
+            </DrawerContent>
+          </Drawer>
+        </Wrap>,
+      );
+      try {
+        const trigger = Array.from(doc.querySelectorAll("button")).find((button) =>
+          button.textContent === "Open"
+        );
+        assert(trigger, "trigger renders");
+        assertEquals(triggerRef.current, trigger, "trigger ref reaches the button node");
+        click(trigger);
+        const close = Array.from(doc.querySelectorAll("button")).find((button) =>
+          button.textContent === "Done"
+        );
+        assert(close, "close renders while open");
+        assertEquals(closeRef.current, close, "close ref reaches the button node");
       } finally {
         unmount();
       }
