@@ -1793,6 +1793,68 @@ describe("agent runtime refresh hooks", () => {
     }
   });
 
+  it("does not report stale text when an ordinary tool-only step exhausts maxSteps", async () => {
+    let callCount = 0;
+    let finishedResponse: AgentResponse | undefined;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/tool-only-max-steps",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        return {
+          stream: createRuntimeStream([
+            ...(callCount === 1
+              ? [{ type: "text-delta" as const, text: "Starting the work." }]
+              : []),
+            {
+              type: "tool-call",
+              toolCallId: `ordinary-tool-${callCount}`,
+              toolName: "ordinary_tool",
+              input: "{}",
+            },
+            {
+              type: "finish",
+              finishReason: "tool-calls",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
+          ]),
+        };
+      },
+    };
+    const ordinaryTool = tool({
+      id: "ordinary_tool",
+      description: "Complete one ordinary step",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ ok: true }),
+    });
+    const assistant = eagerAgent({
+      model: "hosted/tool-only-max-steps",
+      system: "Complete two ordinary tool steps.",
+      tools: { ordinary_tool: ordinaryTool },
+      maxSteps: 2,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = (await assistant.stream({
+      input: "Complete both steps",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse();
+    await response.text();
+
+    assertEquals(callCount, 2);
+    assertExists(finishedResponse);
+    assertEquals(finishedResponse.text, "");
+  });
+
   it("recovers a placeholder after assistant text only once", async () => {
     const toolResults: ToolExecutionResultRequest[] = [];
     let finishedResponse: AgentResponse | undefined;

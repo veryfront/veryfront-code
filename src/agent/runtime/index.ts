@@ -1747,6 +1747,7 @@ export class AgentRuntime {
     // One retry gives the model a chance to reconstruct a transport-truncated
     // batch without allowing a repeatedly broken provider stream to loop.
     let recoveredInterruptedLocalToolBatch = false;
+    let interruptedLocalToolBatchRecoveryStep: number | undefined;
 
     for (let step = 0; step < maxSteps; step++) {
       throwIfAborted(abortSignal);
@@ -1930,7 +1931,10 @@ export class AgentRuntime {
       }
 
       const stepAssistantText = getTextFromParts(assistantMessage.parts);
-      if (hasSubstantiveAssistantText(stepAssistantText)) {
+      if (
+        hasSubstantiveAssistantText(stepAssistantText) ||
+        step !== interruptedLocalToolBatchRecoveryStep
+      ) {
         latestAssistantText = stepAssistantText;
       }
       currentMessages.push(assistantMessage);
@@ -2003,6 +2007,7 @@ export class AgentRuntime {
         // Treat parallel local calls as one batch. Executing the finalized
         // prefix here could apply only part of the model's intended mutation.
         recoveredInterruptedLocalToolBatch = true;
+        interruptedLocalToolBatchRecoveryStep = step + 1;
       }
 
       for (const tc of streamedToolCalls) {
