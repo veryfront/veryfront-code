@@ -60,7 +60,7 @@ describe("createUploadHandler", () => {
 
   it("treats a pages-router context exactly like the equivalent Request", async () => {
     const store = createStubStore();
-    const { POST, GET, DELETE } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
+    const { POST, GET } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     // The pages executor calls method handlers with the APIContext and passes
     // no second argument. The contract is parity: whatever a real Request
