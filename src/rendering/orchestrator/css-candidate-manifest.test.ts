@@ -283,6 +283,7 @@ describe("rendering/orchestrator/css-candidate-manifest", () => {
       try {
         const projectDir = "/Users/someone/private/path/my-project";
         const absoluteSourcePath = `${projectDir}/vendor/minified.js`;
+        const outsideSourcePath = "/Users/someone/other-parent/minified.js";
         const poisonContent = Array.from({ length: 100_001 }, (_, i) => `tok-${i}`).join(" ");
 
         getProjectCandidates({
@@ -291,17 +292,33 @@ describe("rendering/orchestrator/css-candidate-manifest", () => {
           projectDir,
           files: [
             { path: absoluteSourcePath, content: poisonContent },
+            { path: outsideSourcePath, content: poisonContent },
           ],
           developmentMode: false,
         });
 
-        const warning = captured.entries.find((entry) =>
-          entry.message === "Skipping file rejected by candidate extraction"
+        const projectWarning = captured.entries.find((entry) =>
+          entry.message === "Skipping file rejected by candidate extraction" &&
+          entry.context?.path === "vendor/minified.js"
         );
-        assertEquals(warning !== undefined, true, "the warning must be emitted");
-        assertEquals(warning!.context?.path, "vendor/minified.js");
-        assertEquals(JSON.stringify(warning!.context).includes(projectDir), false);
-        assertEquals(JSON.stringify(warning!.context).includes(absoluteSourcePath), false);
+        assertEquals(projectWarning !== undefined, true, "the in-project warning must be emitted");
+        assertEquals(JSON.stringify(projectWarning!.context).includes(projectDir), false);
+        assertEquals(JSON.stringify(projectWarning!.context).includes(absoluteSourcePath), false);
+
+        const outsideWarning = captured.entries.find((entry) =>
+          entry.message === "Skipping file rejected by candidate extraction" &&
+          entry.context?.path === "[outside-project]/minified.js"
+        );
+        assertEquals(
+          outsideWarning !== undefined,
+          true,
+          "the outside-project warning must be emitted",
+        );
+        assertEquals(outsideWarning!.context?.path, "[outside-project]/minified.js");
+        const outsideContext = JSON.stringify(outsideWarning!.context);
+        assertEquals(outsideContext.includes(outsideSourcePath), false);
+        assertEquals(outsideContext.includes("/Users/someone"), false);
+        assertEquals(outsideContext.includes("other-parent"), false);
       } finally {
         captured.restore();
       }
@@ -310,7 +327,9 @@ describe("rendering/orchestrator/css-candidate-manifest", () => {
     it("degrades a file that exceeds the byte-size admission cap instead of throwing", () => {
       invalidateProjectCandidateManifests();
       // >MAX_CSS_FILE_BYTES (16MB) — e.g. a giant generated asset in sources.
-      const oversized = "x".repeat(16 * 1024 * 1024 + 1);
+      const oversized = "text-blue-500 ".repeat(
+        Math.ceil((16 * 1024 * 1024 + 1) / "text-blue-500 ".length),
+      );
       const result = getProjectCandidates({
         projectScope: "project-poison-bytes",
         projectVersion: "v1",
@@ -326,6 +345,7 @@ describe("rendering/orchestrator/css-candidate-manifest", () => {
       });
 
       assertEquals(result.has("text-red-500"), true);
+      assertEquals(result.has("text-blue-500"), false);
     });
 
     it("keeps configured runtime roots in the candidate graph", () => {
