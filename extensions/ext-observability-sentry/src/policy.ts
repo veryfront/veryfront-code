@@ -215,11 +215,9 @@ function redactSqlLiteralsForTitle(query: string): string {
     }
 
     if (character === "$") {
-      const delimiter = query.slice(index).match(SQL_DOLLAR_QUOTE_START_PATTERN)?.[0];
-      if (delimiter) {
-        const contentStart = index + delimiter.length;
-        const closingDelimiter = query.indexOf(delimiter, contentStart);
-        index = closingDelimiter === -1 ? query.length : closingDelimiter + delimiter.length;
+      const dollarQuotedEnd = findDollarQuotedSqlTokenEnd(query, index);
+      if (dollarQuotedEnd !== undefined) {
+        index = dollarQuotedEnd;
         redacted += "?";
         continue;
       }
@@ -270,6 +268,23 @@ function redactSqlLiteralsForTitle(query: string): string {
   }
 
   return redacted;
+}
+
+function findDollarQuotedSqlTokenEnd(query: string, start: number): number | undefined {
+  const recognizedDelimiter = query.slice(start).match(SQL_DOLLAR_QUOTE_START_PATTERN)?.[0];
+  if (recognizedDelimiter) {
+    const contentStart = start + recognizedDelimiter.length;
+    const closingDelimiter = query.indexOf(recognizedDelimiter, contentStart);
+    return closingDelimiter === -1 ? query.length : closingDelimiter + recognizedDelimiter.length;
+  }
+
+  if (/[0-9]/.test(query[start + 1] ?? "")) return undefined;
+  const delimiterEnd = query.indexOf("$", start + 1);
+  if (delimiterEnd === -1) return undefined;
+
+  const delimiter = query.slice(start, delimiterEnd + 1);
+  const closingDelimiter = query.indexOf(delimiter, delimiterEnd + 1);
+  return closingDelimiter === -1 ? undefined : closingDelimiter + delimiter.length;
 }
 
 function findQuotedSqlTokenEnd(query: string, start: number, quote: string): number {

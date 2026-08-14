@@ -373,6 +373,26 @@ it("policy redacts dollar-quoted and numeric SQL literals without hiding query s
   );
 });
 
+it("policy redacts unrecognized dollar-quoted SQL literal tags", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value:
+            'Failed query: \n  select $😀$customer@example.test$😀$, $1 from "orders" where "id" = $2',
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  assertEquals(
+    event.exception?.values?.[0]?.value,
+    'Failed query: select ?, $1 from "orders" where "id" = $2',
+  );
+});
+
 it("policy redacts PostgreSQL radix integer literals", () => {
   const event = prepareSentryEvent(
     {
