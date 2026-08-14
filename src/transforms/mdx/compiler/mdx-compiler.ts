@@ -18,11 +18,17 @@ function isMdxSourceCompileError(error: Error): boolean {
     ruleId?: unknown;
     source?: unknown;
   };
-  return typeof candidate.source === "string" &&
+  const isMdxParserError = typeof candidate.source === "string" &&
     /(?:^|-)mdx(?:-|$)|micromark|remark|recma|rehype/.test(candidate.source) &&
     typeof candidate.ruleId === "string" &&
     Number.isSafeInteger(candidate.line) &&
     Number.isSafeInteger(candidate.column);
+  const isYamlFrontmatterError = error.name === "SyntaxError" &&
+    /\bline \d+, column \d+\b/i.test(error.message) &&
+    (error.stack?.includes("/src/platform/compat/std/front-matter-yaml.ts") === true ||
+      error.stack?.includes("/src/platform/compat/std/yaml.ts") === true ||
+      error.stack?.includes("/extensions/ext-yaml/src/adapter.ts") === true);
+  return isMdxParserError || isYamlFrontmatterError;
 }
 
 export function compileMDXRuntime(

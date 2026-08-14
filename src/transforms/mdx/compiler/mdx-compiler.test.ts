@@ -99,6 +99,25 @@ describe("transforms/mdx/compiler/mdx-compiler", () => {
       assertEquals(error.category, "BUILD");
     });
 
+    it("classifies tenant MDX frontmatter failures explicitly", async () => {
+      const error = await assertRejects(
+        () =>
+          compileMDXRuntime(
+            "production",
+            "/project",
+            "---\ntitle: [unterminated\n---\n# Content",
+            undefined,
+            "broken-frontmatter.mdx",
+            "server",
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "mdx-compile-error");
+      assertEquals(error.category, "BUILD");
+    });
+
     it("preserves non-source processor failures", async () => {
       const previous = tryResolveContract<ContentProcessor>("ContentProcessor");
       registerContract(
