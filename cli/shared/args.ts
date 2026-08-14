@@ -72,7 +72,7 @@ function validateKnownOptions<T>(
     .flatMap((spec) => spec?.keys ?? []);
   const allowedKeys = new Set([...commandKeys, ...ROUTER_ARG_KEYS]);
   const unknownKey = Object.keys(args).find((key) =>
-    key !== "_" && key !== "__explicit" && !allowedKeys.has(key)
+    key !== "_" && key !== "__explicit" && key !== "__raw" && !allowedKeys.has(key)
   );
   if (!unknownKey) return { success: true, data: undefined };
 
@@ -433,7 +433,7 @@ function parse(
 
 /** Parse raw CLI arguments into a structured `ParsedArgs` object with aliases. */
 export function parseCliArgs(args: string[]): ParsedArgs {
-  return parse(args, {
+  const parsed = parse(args, {
     alias: {
       h: "help",
       v: "version",
@@ -446,4 +446,6 @@ export function parseCliArgs(args: string[]): ParsedArgs {
       m: "mode",
     },
   }) as ParsedArgs;
+  parsed.__raw = [...args];
+  return parsed;
 }

@@ -9,6 +9,7 @@ import { routeCommand } from "./router.ts";
 import { cliLogger, VERSION } from "./utils/index.ts";
 import { setJsonMode } from "./shared/json-output.ts";
 import { isInteractive, resetInteractiveMode } from "./shared/interactive.ts";
+import { parseCliArgs } from "./shared/args.ts";
 import type { ParsedArgs } from "./shared/types.ts";
 
 /**
@@ -523,6 +524,28 @@ describe("cli/router helpers", () => {
         assertEquals(infoMessages, [
           '  You already included "veryfront". Use:',
           "    veryfront task 'sync data' 'it'\\''s ready' 'https://user:[REDACTED]@example.test/path'",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("preserves options in the correction without exposing sensitive values", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "deploy",
+          "--dry-run",
+          "--environment",
+          "staging",
+          "--token=top-secret",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront deploy --dry-run --environment staging --token='<REDACTED>'",
         ]);
       } finally {
         restoreAll();

@@ -163,10 +163,35 @@ function formatCommandHintArgument(
 
 async function formatDuplicatedBinaryHint(args: ParsedArgs): Promise<string> {
   const { sanitizeUrlCredentials } = await import("veryfront/utils");
-  const positionalArguments = args._.slice(1).map((value) =>
-    formatCommandHintArgument(value, sanitizeUrlCredentials)
-  );
-  return ["veryfront", ...positionalArguments].join(" ");
+  const hintArguments = args.__raw?.[0] === "veryfront"
+    ? args.__raw.slice(1)
+    : args._.slice(1).map(String);
+  const formatted: string[] = [];
+
+  for (let index = 0; index < hintArguments.length; index++) {
+    const argument = hintArguments[index]!;
+    const equalsIndex = argument.startsWith("-") ? argument.indexOf("=") : -1;
+    const option = equalsIndex > 0 ? argument.slice(0, equalsIndex) : argument;
+    const sensitiveOption = /^--?(?:.*-)?(?:auth|credential|key|password|secret|token)$/iu.test(
+      option,
+    );
+
+    if (equalsIndex > 0) {
+      const value = sensitiveOption
+        ? "'<REDACTED>'"
+        : formatCommandHintArgument(argument.slice(equalsIndex + 1), sanitizeUrlCredentials);
+      formatted.push(`${option}=${value}`);
+      continue;
+    }
+
+    formatted.push(formatCommandHintArgument(argument, sanitizeUrlCredentials));
+    if (sensitiveOption && hintArguments[index + 1] !== undefined) {
+      formatted.push("'<REDACTED>'");
+      index++;
+    }
+  }
+
+  return ["veryfront", ...formatted].join(" ");
 }
 
 async function outputCliJsonError(
