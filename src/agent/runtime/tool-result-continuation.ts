@@ -151,6 +151,7 @@ export function shouldContinueAfterStreamStep(
   state:
     & Pick<ChatStreamState, "accumulatedText" | "finishReason" | "toolCalls" | "toolResults">
     & Partial<Pick<ChatStreamState, "suppressedToolCalls">>,
+  options: { recoverInterruptedToolCalls?: boolean } = {},
 ): boolean {
   const hasAssistantText = hasSubstantiveAssistantText(state.accumulatedText);
 
@@ -176,13 +177,19 @@ export function shouldContinueAfterStreamStep(
       isStreamedToolCallIncomplete(toolCall) &&
       !isRecoverablePlaceholderToolCall(toolCall),
   );
+  const hasInterruptedProviderToolCall = streamedToolCalls.some(
+    (toolCall) =>
+      toolCall.providerExecuted === true &&
+      isStreamedToolCallIncomplete(toolCall) &&
+      !isRecoverablePlaceholderToolCall(toolCall),
+  );
   const hasRecoverablePlaceholderToolCall = streamedToolCalls.some(
     (toolCall) => shouldRecoverPlaceholderToolCall(state, toolCall),
   );
 
   if (state.finishReason === "tool-calls") {
     if (hasIncompleteDeadToolCall) {
-      return false;
+      return options.recoverInterruptedToolCalls === true && !hasInterruptedProviderToolCall;
     }
     if (hasProviderExecutedToolCall && !hasFinalizedClientToolCall) {
       return false;
@@ -195,6 +202,10 @@ export function shouldContinueAfterStreamStep(
 
   if (state.finishReason !== "stop") {
     return false;
+  }
+
+  if (hasIncompleteDeadToolCall) {
+    return options.recoverInterruptedToolCalls === true && !hasInterruptedProviderToolCall;
   }
 
   if (hasAssistantText) {
@@ -244,6 +255,19 @@ export function isStreamedToolCallIncomplete(
   toolCall: Pick<StreamingToolCall, "inputAvailable">,
 ): boolean {
   return toolCall.inputAvailable !== true;
+}
+
+export function isInterruptedClientToolCall(
+  toolCall: Pick<
+    StreamingToolCall,
+    "arguments" | "inputAvailable" | "providerExecuted"
+  >,
+): boolean {
+  // Provider-executed calls have a separate terminalization path. Only local
+  // calls can be safely turned into a model-visible failed batch and retried.
+  return toolCall.providerExecuted !== true &&
+    isStreamedToolCallIncomplete(toolCall) &&
+    !isRecoverablePlaceholderToolCall(toolCall);
 }
 
 export function isRecoverablePlaceholderToolCall(

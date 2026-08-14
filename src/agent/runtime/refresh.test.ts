@@ -1578,6 +1578,133 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolResults[0]?.context?.projectId, "project-stream");
   });
 
+  it("retries an interrupted local tool batch without partially executing it", async () => {
+    const executedMutations: string[] = [];
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/interrupted-tool-batch",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Applying the requested updates." },
+              {
+                type: "tool-call",
+                toolCallId: "aborted-file",
+                toolName: "issue466_update_file",
+                input: '{"revision":"aborted-file"}',
+              },
+              {
+                type: "tool-call",
+                toolCallId: "aborted-agent",
+                toolName: "issue466_update_agent",
+                input: '{"revision":"aborted-agent"}',
+              },
+              {
+                type: "tool-input-start",
+                id: "truncated-agent",
+                toolName: "issue466_update_agent",
+              },
+              {
+                type: "tool-input-delta",
+                id: "truncated-agent",
+                delta: '{"revision":"truncated',
+              },
+              {
+                type: "finish",
+                finishReason: "stop",
+                usage: { inputTokens: 0, outputTokens: 0 },
+              },
+            ]),
+          };
+        }
+
+        if (callCount === 2) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "retry-file",
+                toolName: "issue466_update_file",
+                input: '{"revision":"retry-file"}',
+              },
+              {
+                type: "tool-call",
+                toolCallId: "retry-agent-1",
+                toolName: "issue466_update_agent",
+                input: '{"revision":"retry-agent-1"}',
+              },
+              {
+                type: "tool-call",
+                toolCallId: "retry-agent-2",
+                toolName: "issue466_update_agent",
+                input: '{"revision":"retry-agent-2"}',
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "Recovered after interrupted tool batch." },
+            {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
+          ]),
+        };
+      },
+    };
+
+    const mutationTool = (id: string) =>
+      tool({
+        id,
+        description: `Apply ${id}`,
+        inputSchema: defineSchema((v) => v.object({ revision: v.string() }))(),
+        execute: async ({ revision }) => {
+          executedMutations.push(revision);
+          return { revision };
+        },
+      });
+
+    const assistant = eagerAgent({
+      model: "hosted/interrupted-tool-batch",
+      system: "Apply every requested mutation and recover interrupted model streams.",
+      tools: {
+        issue466_update_file: mutationTool("issue466_update_file"),
+        issue466_update_agent: mutationTool("issue466_update_agent"),
+      },
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = (await assistant.stream({
+      input: "Update the taxonomy and both agents",
+    })).toDataStreamResponse();
+    const body = await response.text();
+
+    assertEquals(callCount, 3);
+    assertEquals(executedMutations, ["retry-file", "retry-agent-1", "retry-agent-2"]);
+    assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 2);
+    assertEquals(body.includes("Recovered after interrupted tool batch."), true);
+  });
+
   it("does not re-call the model after final assistant text with a provisional placeholder", async () => {
     const toolResults: ToolExecutionResultRequest[] = [];
     let callCount = 0;

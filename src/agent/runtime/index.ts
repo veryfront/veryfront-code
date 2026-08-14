@@ -68,6 +68,7 @@ import {
   createToolResultMessage,
   getProviderExecutedToolNames,
   getToolResultError,
+  isInterruptedClientToolCall,
   isRecoverablePlaceholderToolCall,
   isStreamedToolCallIncomplete,
   materializeStreamedToolCall,
@@ -1741,6 +1742,9 @@ export class AgentRuntime {
     let currentSystemPrompt = systemPrompt;
     let currentRuntimeContext = runtimeContext;
     let agentWriteFinalResponseToolGuardEnabled = false;
+    // One retry gives the model a chance to reconstruct a transport-truncated
+    // batch without allowing a repeatedly broken provider stream to loop.
+    let recoveredInterruptedLocalToolBatch = false;
 
     for (let step = 0; step < maxSteps; step++) {
       throwIfAborted(abortSignal);
@@ -1936,7 +1940,13 @@ export class AgentRuntime {
         );
       };
 
-      if (!shouldContinueAfterStreamStep(state)) {
+      const canRecoverInterruptedLocalToolBatch = !recoveredInterruptedLocalToolBatch &&
+        step + 1 < maxSteps;
+      if (
+        !shouldContinueAfterStreamStep(state, {
+          recoverInterruptedToolCalls: canRecoverInterruptedLocalToolBatch,
+        })
+      ) {
         for (const toolResult of finalToolResults.values()) {
           await persistToolResult(toolResult);
         }
@@ -1946,6 +1956,13 @@ export class AgentRuntime {
 
       this.status = "tool_execution";
       const streamedToolCalls = Array.from(state.toolCalls.values());
+      const shouldRecoverInterruptedLocalToolBatch = canRecoverInterruptedLocalToolBatch &&
+        streamedToolCalls.some(isInterruptedClientToolCall);
+      if (shouldRecoverInterruptedLocalToolBatch) {
+        // Treat parallel local calls as one batch. Executing the finalized
+        // prefix here could apply only part of the model's intended mutation.
+        recoveredInterruptedLocalToolBatch = true;
+      }
 
       for (const tc of streamedToolCalls) {
         throwIfAborted(abortSignal);
@@ -1955,6 +1972,37 @@ export class AgentRuntime {
           // gate has confirmed there is no final assistant text, so the loop
           // can continue and let the next model call recover the real tool
           // call without executing or surfacing a stream-termination error.
+          continue;
+        }
+        if (shouldRecoverInterruptedLocalToolBatch && tc.providerExecuted !== true) {
+          const incomplete = isStreamedToolCallIncomplete(tc);
+          const capturedInput = incomplete
+            ? {
+              args: {},
+              ...(tc.arguments.length > 0 ? { inputText: tc.arguments } : {}),
+            }
+            : captureStreamedToolCallInput(tc);
+          const interruptedBatchToolCall: ToolCall = {
+            id: tc.id,
+            name: tc.name,
+            args: capturedInput.args,
+            ...(capturedInput.inputText ? { inputText: capturedInput.inputText } : {}),
+            status: "pending",
+          };
+          const error = incomplete
+            ? `Stream terminated before tool-call event fired for "${tc.name}". ` +
+              `Received ${tc.arguments.length} chars of partial tool-input deltas.`
+            : "Tool execution skipped because another tool call in the same model step " +
+              "was interrupted before its input completed.";
+          await this.recordToolError(
+            interruptedBatchToolCall,
+            error,
+            controller,
+            encoder,
+            currentMessages,
+            toolCalls,
+            { emitSse: incomplete ? tc.inputAnnounced === true : true },
+          );
           continue;
         }
         if (isStreamedToolCallIncomplete(tc)) {

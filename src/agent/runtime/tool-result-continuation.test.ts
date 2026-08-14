@@ -211,6 +211,59 @@ describe("agent runtime streamed tool result collection", () => {
     assertEquals(shouldContinue, false);
   });
 
+  it("continues an interrupted local tool batch when bounded recovery is available", () => {
+    const shouldContinue = shouldContinueAfterStreamStep({
+      accumulatedText: "Applying the requested updates.",
+      finishReason: "stop",
+      toolCalls: new Map([
+        [
+          "toolu_complete_1",
+          {
+            id: "toolu_complete_1",
+            name: "update_file",
+            arguments: '{"path":"knowledge/case-triage-taxonomy.md"}',
+            inputAvailable: true,
+          },
+        ],
+        [
+          "toolu_incomplete_1",
+          {
+            id: "toolu_incomplete_1",
+            name: "update_agent",
+            arguments: '{"id":"classify-agent","source":"export const agent =',
+            inputAvailable: false,
+          },
+        ],
+      ]),
+      toolResults: [],
+    }, {
+      recoverInterruptedToolCalls: true,
+    });
+
+    assertEquals(shouldContinue, true);
+  });
+
+  it("continues a single interrupted local tool call when bounded recovery is available", () => {
+    const shouldContinue = shouldContinueAfterStreamStep({
+      accumulatedText: "",
+      finishReason: "stop",
+      toolCalls: new Map([[
+        "toolu_incomplete_1",
+        {
+          id: "toolu_incomplete_1",
+          name: "update_file",
+          arguments: '{"path":"knowledge/case-triage-taxonomy.md","content":"# Case',
+          inputAvailable: false,
+        },
+      ]]),
+      toolResults: [],
+    }, {
+      recoverInterruptedToolCalls: true,
+    });
+
+    assertEquals(shouldContinue, true);
+  });
+
   it("continues finalized client-executed tool calls when the provider reports stop", () => {
     const shouldContinue = shouldContinueAfterStreamStep({
       accumulatedText: "",
