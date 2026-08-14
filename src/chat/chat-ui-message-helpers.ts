@@ -18,9 +18,12 @@ export interface BuildChatStreamChunkMessageMetadataInput {
 
 type ReplayState = {
   content: string;
+  outputId: string;
+  outputOpen: boolean;
+  replacementCount: number;
+  replayContent: string;
   replayOffset: number | null;
   started: boolean;
-  ended: boolean;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -210,35 +213,26 @@ function splitReplayDelta(
   existing: string,
   replayOffset: number,
   delta: string,
-): { emit: string; nextReplayOffset: number | null } {
+): { diverged: boolean; emit: string; nextReplayOffset: number | null } {
   const remaining = existing.slice(replayOffset);
 
   if (!remaining) {
-    return { emit: delta, nextReplayOffset: null };
+    return { diverged: false, emit: delta, nextReplayOffset: null };
   }
 
   if (delta === remaining.slice(0, delta.length)) {
-    return { emit: "", nextReplayOffset: replayOffset + delta.length };
+    return { diverged: false, emit: "", nextReplayOffset: replayOffset + delta.length };
   }
 
   if (delta.startsWith(remaining)) {
-    return { emit: delta.slice(remaining.length), nextReplayOffset: null };
+    return { diverged: false, emit: delta.slice(remaining.length), nextReplayOffset: null };
   }
 
   if (remaining.startsWith(delta)) {
-    return { emit: "", nextReplayOffset: replayOffset + delta.length };
+    return { diverged: false, emit: "", nextReplayOffset: replayOffset + delta.length };
   }
 
-  let sharedPrefixLength = 0;
-  const maxSharedPrefixLength = Math.min(remaining.length, delta.length);
-  while (
-    sharedPrefixLength < maxSharedPrefixLength &&
-    remaining.charCodeAt(sharedPrefixLength) === delta.charCodeAt(sharedPrefixLength)
-  ) {
-    sharedPrefixLength++;
-  }
-
-  return { emit: delta.slice(sharedPrefixLength), nextReplayOffset: null };
+  return { diverged: true, emit: delta, nextReplayOffset: null };
 }
 
 function getReplayState(stateMap: Map<string, ReplayState>, id: string): ReplayState {
@@ -249,9 +243,12 @@ function getReplayState(stateMap: Map<string, ReplayState>, id: string): ReplayS
 
   const created: ReplayState = {
     content: "",
+    outputId: id,
+    outputOpen: false,
+    replacementCount: 0,
+    replayContent: "",
     replayOffset: null,
     started: false,
-    ended: false,
   };
   stateMap.set(id, created);
   return created;
@@ -382,12 +379,12 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
 
       if (state.started) {
         state.replayOffset = 0;
-        state.ended = false;
+        state.replayContent = "";
         continue;
       }
 
       state.started = true;
-      state.ended = false;
+      state.outputOpen = true;
       yield chunk;
       continue;
     }
@@ -395,18 +392,60 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
     if (chunk.type === "text-delta" || chunk.type === "reasoning-delta") {
       const stateMap = chunk.type === "text-delta" ? textStates : reasoningStates;
       const state = getReplayState(stateMap, chunk.id);
-      const { emit, nextReplayOffset } = state.replayOffset === null
-        ? { emit: chunk.delta, nextReplayOffset: null as number | null }
+      if (state.replayOffset !== null) {
+        state.replayContent += chunk.delta;
+      }
+      const { diverged, emit, nextReplayOffset } = state.replayOffset === null
+        ? { diverged: false, emit: chunk.delta, nextReplayOffset: null as number | null }
         : splitReplayDelta(state.content, state.replayOffset, chunk.delta);
+
+      if (diverged) {
+        if (state.outputOpen) {
+          yield {
+            type: chunk.type === "text-delta" ? "text-end" : "reasoning-end",
+            id: state.outputId,
+          } as ChatUiMessageChunk<TMessageMetadata>;
+        }
+        state.replacementCount++;
+        state.outputId = `${chunk.id}:replacement:${state.replacementCount}`;
+        state.outputOpen = true;
+        state.content = state.replayContent;
+        state.replayContent = "";
+        state.replayOffset = null;
+        yield {
+          type: chunk.type === "text-delta" ? "text-start" : "reasoning-start",
+          id: state.outputId,
+        } as ChatUiMessageChunk<TMessageMetadata>;
+        yield { ...chunk, id: state.outputId, delta: state.content };
+        continue;
+      }
 
       state.replayOffset = nextReplayOffset;
       if (!emit) {
         continue;
       }
 
+      if (!state.outputOpen) {
+        const replacementContent = state.replayContent || emit;
+        state.replacementCount++;
+        state.outputId = `${chunk.id}:replacement:${state.replacementCount}`;
+        state.outputOpen = true;
+        state.content = replacementContent;
+        state.replayContent = "";
+        state.replayOffset = null;
+        yield {
+          type: chunk.type === "text-delta" ? "text-start" : "reasoning-start",
+          id: state.outputId,
+        } as ChatUiMessageChunk<TMessageMetadata>;
+        yield { ...chunk, id: state.outputId, delta: replacementContent };
+        continue;
+      }
+
+      state.replayContent = "";
       state.content += emit;
       yield {
         ...chunk,
+        id: state.outputId,
         delta: emit,
       };
       continue;
@@ -416,13 +455,14 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
       const stateMap = chunk.type === "text-end" ? textStates : reasoningStates;
       const state = stateMap.get(chunk.id);
 
-      if (!state || state.ended) {
+      if (!state || !state.outputOpen) {
         continue;
       }
 
       state.replayOffset = null;
-      state.ended = true;
-      yield chunk;
+      state.replayContent = "";
+      state.outputOpen = false;
+      yield { ...chunk, id: state.outputId };
       continue;
     }
 
