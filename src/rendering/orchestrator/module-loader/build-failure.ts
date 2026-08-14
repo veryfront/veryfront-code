@@ -28,7 +28,6 @@ const TENANT_BUILD_ERROR_SLUGS = new Set([
   "typescript-error",
   "mdx-compile-error",
   "markdown-compile-error",
-  "ssg-generation-error",
   "compilation-error",
 ]);
 

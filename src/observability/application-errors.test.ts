@@ -24,6 +24,7 @@ import {
   MDX_COMPILE_ERROR,
   RENDER_ERROR,
   SOURCEMAP_ERROR,
+  SSG_GENERATION_ERROR,
   toError,
   TYPESCRIPT_ERROR,
 } from "#veryfront/errors";
@@ -189,6 +190,11 @@ it("application error reporter downgrades tenant build errors to tagged warnings
   const frameworkBundleError = BUNDLE_ERROR.create({
     detail: "Failed to regenerate framework bundle cache entry: <REDACTED>",
   });
+  const ssgInfrastructureError = SSG_GENERATION_ERROR.create({
+    detail: "Failed to write generated page output",
+    cause: Object.assign(new Error("No space left on device"), { code: "ENOSPC" }),
+    context: { route: "/" },
+  });
 
   assertEquals(
     captureApplicationError(compileError, { boundary: "ssr.render" }),
@@ -234,8 +240,12 @@ it("application error reporter downgrades tenant build errors to tagged warnings
     captureApplicationError(legacyBuildError, { boundary: "ssr.render" }),
     "event-id",
   );
+  assertEquals(
+    captureApplicationError(ssgInfrastructureError, { boundary: "ssr.render" }),
+    "event-id",
+  );
 
-  assertEquals(captures.length, 11);
+  assertEquals(captures.length, 12);
   // Tenant build/content failures stay visible for escalation analysis, but
   // are tagged and downgraded so they stop surfacing as error-level issues.
   assertEquals(captures[0]?.context.errorClass, "tenant-build");
@@ -261,6 +271,8 @@ it("application error reporter downgrades tenant build errors to tagged warnings
   assertEquals(captures[9]?.context.level, undefined);
   assertEquals(captures[10]?.context.errorClass, undefined);
   assertEquals(captures[10]?.context.level, undefined);
+  assertEquals(captures[11]?.context.errorClass, undefined);
+  assertEquals(captures[11]?.context.level, undefined);
 });
 it("application error capture failures never replace application control flow", () => {
   const hostile = new Proxy({}, {

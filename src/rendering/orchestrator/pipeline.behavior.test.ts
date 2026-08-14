@@ -5,7 +5,7 @@ import { FakeTime } from "#std/testing/time";
 import { RenderPipeline, type RenderPipelineConfig } from "./pipeline.ts";
 import type { RenderOptions } from "./types.ts";
 import { isTenantBuildFailure, markBuildFailure } from "./module-loader/build-failure.ts";
-import { COMPILATION_ERROR, createError, toError } from "#veryfront/errors";
+import { COMPILATION_ERROR, createError, SSG_GENERATION_ERROR, toError } from "#veryfront/errors";
 import { cachePageCss, getPageCssCacheKey } from "./css-cache.ts";
 import { cacheCSSAsync, hashCSS } from "#veryfront/html/styles-builder/index.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
@@ -730,6 +730,16 @@ describe("RenderPipeline behavior", () => {
 
       assertEquals(buildFailureFlag(error), true);
       assertEquals(tenantBuildFailureFlag(error), false);
+    });
+
+    it("does not infer tenant source from an SSG wrapper", () => {
+      const infrastructureError = markBuildFailure(SSG_GENERATION_ERROR.create({
+        detail: "Failed to write generated page output",
+        cause: Object.assign(new Error("No space left on device"), { code: "ENOSPC" }),
+        context: { route: "/" },
+      }));
+
+      assertEquals(isTenantBuildFailure(infrastructureError), false);
     });
 
     it("does not report a module-scope runtime throw as a build failure", async () => {
