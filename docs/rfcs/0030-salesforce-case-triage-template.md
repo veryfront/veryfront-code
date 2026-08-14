@@ -61,8 +61,8 @@ Two artefacts that must stay 1:1:
     `salesforce__update_case`. Sets **only** `Case.Reason` and posts a comment -
     but that scoping is **prompt-driven today**: the granted `update_case` can write
     every writable Case field, so the boundary is instructed, not enforced. §5.2/§6
-    replace the grant with a field-scoped `update_case_reason` tool that makes it
-    structural.
+    replace the grant with a field-scoped `update_case_reason` tool plus explicit
+    fixed `Case` Update authorization that makes it structural.
 - **Companion example repository** (currently private). Mirrors the four agents
   as `agents/*.ts`, ships the taxonomy in `knowledge/`, ships
   **evals** (`evals/*.eval.ts` + `evals/mock-tools.ts`), and runs locally via
@@ -333,7 +333,12 @@ dynamic-*enough* behaviour from three levers that need no new platform machinery
    parsed query text. In v1, ship only fixed-object defaults or constrained filters
    unless the server can parse every referenced object, relationship target, and
    subquery in a supplied `q`, authorize each object against the matrix, and deny
-   unknown or unparseable queries fail-closed.
+   unknown or unparseable queries fail-closed. The same referenced-object rule
+   applies to static query defaults: a fixed `Contact` query that selects
+   `Account.Name`, `Account.Type`, or `Account.Industry` also needs `Account` Read.
+   Until that check exists for static defaults, remove relationship fields from the
+   v1 `find_customer` and `search_contacts` defaults instead of relying on Contact
+   Read alone.
 2. **Passthrough writes - on the *generic* tools, not the least-privilege curated
    ones.** The schema already supports `bodyMode: "passthrough"` - and
    `src/integrations/schema.ts` cites *"Salesforce sObject … writes"* as its
@@ -345,8 +350,15 @@ dynamic-*enough* behaviour from three levers that need no new platform machinery
    would let it (and the connected user) write *every* writable Case field. A tool
    is authorization, a prompt is not. Give `case-dispose` a dedicated, field-scoped
    `update_case_reason(caseId, Reason)` tool whose input schema admits **no other
-   field**, and reserve passthrough for the generic tier under the §16 matrix. An
-   input-schema authorization test (§6) proves the scoping - a prompt cannot.
+   field**, but ship it only with explicit fixed `Case` Update authorization before
+   the call. Because per-CRUD arrays are persisted but not enforced yet (§16),
+   object-level allowlisting or Contact/Case Read does not imply Update. The same
+   fixed authorization rule applies to retained curated writes such as
+   `add_case_comment`, `create_case`, `create_lead`, and any temporary retained
+   `update_case`; gate each write tool unless the server checks its concrete
+   object/operation pair fail-closed. Reserve passthrough for the generic tier
+   under the §16 matrix. An input-schema authorization test (§6) proves the scoping
+   - a prompt cannot.
    Trade-off: passthrough's
    looser JSON Schema gives the LLM less guidance - mitigate with a strong tool
    `description` and a describe preflight. These tools must remain unshipped until
@@ -388,7 +400,22 @@ plus `search_accounts`, `get_account`, `search_contacts`, `get_contact`,
 schema can write the standard writable Case fields listed in §3, so the present
 `case-dispose` scoping is a prompt rule. The hardened template must remove
 `update_case` from `case-dispose` and grant only `update_case_reason` once that
-field-scoped tool exists.
+field-scoped tool exists. `update_case_reason` still needs a fixed `Case` Update
+authorization check before execution; if that check is not available, the helper
+stays out of v1. Retained curated write tools also need fixed checks for their
+concrete operation (`CaseComment` Create, `Case` Create/Update, `Lead` Create).
+Do not infer those writes from `dataAccess.objects` or from a Read grant while the
+per-CRUD arrays are not enforced.
+
+**Caveat - fixed Contact queries with Account relationship fields.** The current
+`find_customer` default selects `Account.Name`, `Account.Type`, and
+`Account.Industry` through Contact, and `search_contacts` selects `Account.Name`.
+Contact Read alone is not enough for those fields because the query exposes Account
+data. V1 must either authorize every referenced object in static defaults
+fail-closed, or remove those relationship fields from the fixed defaults. The
+fixed-default v1 path removes them and keeps only Contact fields such as
+`AccountId`; Account details come from an Account-scoped tool after Account Read is
+granted.
 
 **Caveat - `create_case` static picklist defaults.** The curated `create_case`
 still hard-defaults `Status = "New"` and `Origin = "Web"` (`connector.json`,
@@ -420,7 +447,9 @@ surface.
 **Tool tally (single source of truth; Appendix B is canonical):** The connector
 has 16 tools today, but v1 removes or hides existing `run_soql_query` until the
 SOQL authorization gate is live. The other curated tools stay in v1 with
-arbitrary `q` overrides disabled.
+arbitrary `q` overrides disabled, relationship fields removed from fixed Contact
+query defaults unless referenced-object authorization exists, and fixed
+object/operation authorization enforced before every curated write.
 
 | | Tools | Count |
 | --- | --- | --- |
@@ -428,14 +457,18 @@ arbitrary `q` overrides disabled.
 | **Add - helpers (v1)** | `update_case_reason` (`Reason`-only `case-dispose` write), `get_picklist_values_for_record_type` | +2 |
 | **Read escape hatches (deferred)** | existing `run_soql_query`, curated arbitrary `q` overrides, `search` (SOSL), pending fail-closed query parsing and authorization | - |
 | **Add - generic CRUD (deferred)** | `get_record`, `create_record`, `update_record`, `upsert_record`, `delete_record` (pending fail-closed per-CRUD enforcement) | +5 |
-| **v1 total** | | **17** |
+| **v1 total** | after the fixed write authorization and static-query relationship-field gates above | **17** |
 | **Optional curated wrappers** | `create_contact`, `update_account`, `create/update_opportunity`, `create_task`, `convert_lead` - sugar, not counted in core | - |
 
 **Authorization tests (acceptance gate).** Every least-privilege grant needs an
 input-schema test, because the schema *is* the authorization boundary:
 `update_case_reason`'s schema must reject any body key other than `caseId`/`Reason`
 (so `case-dispose` cannot write `Status`/`OwnerId`/etc. even when prompted to), and
-each generic CRUD tool must be denied for an un-granted `sobjectType` (§16).
+the server must deny `update_case_reason` unless fixed `Case` Update authorization
+is present. Retained curated writes need the same fixed object/operation denial
+tests. Static Contact query defaults must also prove they either omit Account
+relationship fields or deny the query when Account Read is absent. Each generic
+CRUD tool must be denied for an un-granted `sobjectType` (§16).
 
 Coverage of the standard objects a "get-going" support/CRM demo needs:
 Account, Contact, Lead, Case, CaseComment, Opportunity - plus User for every
@@ -612,17 +645,23 @@ API flag - so supply a valid pair rather than assuming one field is required.
 
 ### A.3 Standard read-field sets (safe default `SELECT`s)
 
-Curated tools should default to these standard-only field lists (extend via the
-tool's `q`/`fields` argument, never bake in a `__c`):
+Curated tools should default to these standard-only field lists. Extend them via
+the tool's `q`/`fields` argument only after the SOQL authorization gate exists;
+never bake in a `__c`:
 
 - **Account** - `Id, Name, Type, Industry, Phone, Website, BillingCity, BillingState, BillingCountry, OwnerId, CreatedDate, LastModifiedDate`
-- **Contact** - `Id, FirstName, LastName, Email, Phone, Title, AccountId, Account.Name, OwnerId, CreatedDate, LastModifiedDate`
+- **Contact** - `Id, FirstName, LastName, Email, Phone, Title, AccountId, OwnerId, CreatedDate, LastModifiedDate`
 - **Lead** - `Id, FirstName, LastName, Company, Email, Phone, Status, LeadSource, IsConverted, OwnerId, CreatedDate`
 - **Case** - `Id, CaseNumber, Subject, Status, Priority, Origin, Reason, Type, ContactId, AccountId, OwnerId, IsClosed, ClosedDate, CreatedDate, LastModifiedDate`
 - **CaseComment** - `Id, ParentId, CommentBody, IsPublished, CreatedById, CreatedDate` *(never select `Body`)*
 - **Opportunity** - `Id, Name, StageName, Amount, CloseDate, Probability, Type, AccountId, IsClosed, IsWon, OwnerId, CreatedDate`
 - **User** - `Id, Name, Email, Username, IsActive`
 - **Group** - `Id, Name, Type` *(filter `Type = 'Queue'` for case ownership)*
+
+Do not include relationship fields such as `Account.Name`, `Account.Type`, or
+`Account.Industry` in fixed Contact defaults unless the server authorizes the
+referenced Account object for Read. Use Account-scoped tools for Account detail
+when the Account grant is present.
 
 ### A.4 Object → owner/queue lookups
 
@@ -733,12 +772,23 @@ max-rows cap, and customer mapping.
    `describe_object` and picklist tools, and deny unknown or unparseable requests
    fail-closed. Until that parser/enforcer exists, v1 must remove or hide
    `run_soql_query`, hide SOSL `search`, and disable arbitrary `q` overrides on
-   curated reads.
-3. **"Tools are static" still holds** (§2.1) - but *objects* and *permissions* are
+   curated reads. Static curated query defaults have the same referenced-object
+   obligation: if a default Contact query selects Account relationship fields, the
+   server must authorize Account Read or the default must remove those fields.
+   V1 uses the removal path for fixed defaults.
+3. **Curated writes need their own fixed authorization before per-CRUD arrays are
+   enforced.** A fixed-path curated write is safer than generic CRUD because its
+   object and operation are known, but it is still a write. Do not infer
+   `Case` Update, `Case` Create, `CaseComment` Create, or `Lead` Create from
+   `dataAccess.objects` or from any Read grant. V1 may ship `update_case_reason`
+   and retained curated writes only if the server checks the concrete
+   object/operation pair fail-closed before execution; otherwise those write tools
+   stay gated until the per-CRUD matrix is enforced.
+4. **"Tools are static" still holds** (§2.1) - but *objects* and *permissions* are
    dynamically discovered and enforced. The static generic tools are the fixed
    *execution surface*; the Configure matrix is the dynamic *policy surface* over
    whatever objects the org actually has.
-4. Known gap to track: with a **project-only** connection (no personal user
+5. Known gap to track: with a **project-only** connection (no personal user
    connection) object discovery returns `400 "not connected for this user"` - the
    fork→run flow must establish the right connection identity before Configure
    works.
