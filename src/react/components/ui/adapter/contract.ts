@@ -214,6 +214,10 @@ export interface ToastParts {
 export interface ModalState {
   open: boolean;
   setOpen: (open: boolean) => void;
+  /** Fallback id the content adopts before/without an explicit `id`. */
+  defaultContentId: string;
+  /** The active content id (trigger wires `aria-controls` to it). */
+  contentId: string;
   /** Fallback id the title adopts before/without an explicit `id`. */
   defaultTitleId: string;
   /** Fallback id the description adopts before/without an explicit `id`. */
@@ -222,6 +226,8 @@ export interface ModalState {
   descriptionId: string;
   /** Whether a description registered (skin adopts/drops `aria-describedby`). */
   descriptionPresent: boolean;
+  /** Register the active content id (drives the trigger's `aria-controls`). */
+  setContentId: React.Dispatch<React.SetStateAction<string>>;
   /** Register the active title id (drives the panel's `aria-labelledby`). */
   setTitleId: React.Dispatch<React.SetStateAction<string>>;
   /** Register the active description id (drives the panel's `aria-describedby`). */

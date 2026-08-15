@@ -28,6 +28,7 @@ import * as React from "react";
 import { cx as cn } from "./cva.ts";
 import { Calendar } from "./calendar.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover.tsx";
+import { composeRefs } from "./slot.tsx";
 
 interface DatePickerContextValue {
   /** The selected day (resolved: controlled `value` or internal state). */
@@ -44,6 +45,8 @@ interface DatePickerContextValue {
   format: (date: Date) => string;
   /** Month the calendar shows initially. */
   defaultMonth: Date | undefined;
+  /** Trigger button used for focus restoration after selecting a day. */
+  triggerRef: React.RefObject<HTMLButtonElement | null>;
 }
 
 const DatePickerContext = React.createContext<DatePickerContextValue | null>(null);
@@ -98,6 +101,7 @@ export function DatePicker({
   const openControlled = open !== undefined;
   const [internalOpen, setInternalOpen] = React.useState<boolean>(defaultOpen ?? false);
   const currentOpen = openControlled ? open : internalOpen;
+  const triggerRef = React.useRef<HTMLButtonElement | null>(null);
 
   const setValue = React.useCallback((date: Date) => {
     if (!valueControlled) setInternalValue(date);
@@ -118,8 +122,9 @@ export function DatePicker({
       placeholder,
       format,
       defaultMonth,
+      triggerRef,
     }),
-    [currentValue, setValue, currentOpen, setOpen, placeholder, format, defaultMonth],
+    [currentValue, setValue, currentOpen, setOpen, placeholder, format, defaultMonth, triggerRef],
   );
 
   return (
@@ -165,10 +170,14 @@ export function DatePickerTrigger({
 }: DatePickerTriggerProps): React.ReactElement {
   const ctx = useDatePickerContext("DatePickerTrigger");
   const empty = ctx.value == null;
+  const composedRef = React.useMemo(
+    () => composeRefs<HTMLButtonElement>(ctx.triggerRef, ref),
+    [ctx.triggerRef, ref],
+  );
   return (
     <PopoverTrigger asChild>
       <button
-        ref={ref}
+        ref={composedRef}
         type="button"
         data-empty={empty ? "true" : undefined}
         className={cn(
@@ -218,6 +227,7 @@ export function DatePickerContent({
         onChange={(date) => {
           ctx.setValue(date);
           ctx.setOpen(false);
+          ctx.triggerRef.current?.focus();
         }}
       />
     </PopoverContent>

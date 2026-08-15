@@ -135,6 +135,7 @@ describe("menu keyboard behaviour", () => {
       assertEquals(document.activeElement, after);
     } finally {
       flushSync(() => root.unmount());
+      await new Promise((resolve) => setTimeout(resolve, 0));
       restore();
     }
   });

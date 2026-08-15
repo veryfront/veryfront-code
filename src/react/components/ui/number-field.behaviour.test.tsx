@@ -78,6 +78,24 @@ function mount(props: React.ComponentProps<typeof NumberField>) {
 }
 
 describe("NumberField behaviour", () => {
+  it("normalizes uncontrolled defaultValue before the first render", () => {
+    const stepped = mount({ defaultValue: 3, step: 5 });
+    try {
+      assertEquals(stepped.input.value, "5");
+      assertEquals(stepped.input.getAttribute("aria-valuenow"), "5");
+    } finally {
+      stepped.cleanup();
+    }
+
+    const clamped = mount({ defaultValue: 15, max: 10 });
+    try {
+      assertEquals(clamped.input.value, "10");
+      assertEquals(clamped.input.getAttribute("aria-valuenow"), "10");
+    } finally {
+      clamped.cleanup();
+    }
+  });
+
   it("uses a decimal input mode for fractional steps and allows overrides", () => {
     const fractional = mount({ step: 0.1 });
     try {

@@ -149,6 +149,36 @@ const OPEN_CONFIRM = (
 );
 
 describe("AlertDialog", () => {
+  it("wires trigger aria-controls to the actual alert panel", async () => {
+    const { doc, click, unmount } = render(
+      <AlertDialog>
+        <AlertDialogTrigger id="confirm-trigger">Open confirmation</AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogTitle>Confirm action</AlertDialogTitle>
+          <AlertDialogDescription>This action needs confirmation.</AlertDialogDescription>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+        </AlertDialogContent>
+      </AlertDialog>,
+    );
+    try {
+      const trigger = doc.getElementById("confirm-trigger") as HTMLButtonElement;
+      click(trigger);
+      await waitFor(
+        () => doc.querySelector('[role="alertdialog"]') !== null,
+        "alert dialog did not open",
+      );
+      const panel = doc.querySelector<HTMLElement>('[role="alertdialog"]')!;
+      assertEquals(
+        trigger.getAttribute("aria-controls"),
+        panel.id,
+        "trigger aria-controls must resolve to the mounted alert panel",
+      );
+      assertEquals(doc.getElementById(panel.id), panel, "panel id must be present in the DOM");
+    } finally {
+      unmount();
+    }
+  });
+
   it("traps focus and restores it to the trigger after closing", async () => {
     const { doc, click, unmount } = render(
       <div data-vf-ui="">

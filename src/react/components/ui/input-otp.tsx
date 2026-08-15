@@ -2,9 +2,9 @@
  * InputOTP: a segmented one-time-code input. A single visually-hidden real
  * `<input>` (numeric, `autocomplete="one-time-code"`) captures typing and paste,
  * while `maxLength` presentational slots mirror each character of the controlled
- * `value`. The slot at `index === value.length` is the "active" caret position
- * and gets a focus ring. Fully controlled and self-contained (no floating engine,
- * no dependencies); skinned with the veryfront theme tokens.
+ * `value`. The slot at the caret position gets a focus ring; when the code is
+ * complete, the final slot stays active. Fully controlled and self-contained (no
+ * floating engine, no dependencies); skinned with the veryfront theme tokens.
  *
  * @example
  * ```tsx
@@ -55,6 +55,7 @@ export function InputOTP({
     const next = event.target.value.replace(/\D/g, "").slice(0, maxLength);
     onChange?.(next);
   };
+  const activeIndex = Math.min(code.length, maxLength - 1);
 
   return (
     <div
@@ -81,7 +82,7 @@ export function InputOTP({
       />
       {Array.from({ length: maxLength }, (_, index) => {
         const char = code[index] ?? "";
-        const active = index === code.length;
+        const active = index === activeIndex;
         return (
           <div
             key={index}

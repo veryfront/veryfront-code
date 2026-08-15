@@ -109,6 +109,32 @@ function render(element: React.ReactElement): {
 }
 
 describe("DatePicker behaviour", () => {
+  it("returns focus to the trigger after selecting a day", () => {
+    const { host, doc, click, unmount } = render(
+      <DatePicker defaultOpen defaultMonth={new Date(2026, 0, 1)}>
+        <DatePickerTrigger />
+        <DatePickerContent />
+      </DatePicker>,
+    );
+    try {
+      const trigger = host.querySelector("button") as HTMLButtonElement;
+      const grid = doc.querySelector('[role="grid"]');
+      assert(grid, "the Calendar grid appears while open");
+      const dayButtons = Array.from(grid!.querySelectorAll("button"));
+      const fifteenth = dayButtons.find((b) => b.textContent?.trim() === "15");
+      assert(fifteenth, "day button 15 renders");
+      (fifteenth as HTMLButtonElement).focus();
+      assertEquals(doc.activeElement, fifteenth, "the selected day has focus before closing");
+
+      click(fifteenth!);
+
+      assertEquals(doc.querySelector('[role="grid"]'), null, "the surface closed after picking");
+      assertEquals(doc.activeElement, trigger, "selecting a day restores focus to the trigger");
+    } finally {
+      unmount();
+    }
+  });
+
   it("opens the Calendar; picking a day fires onChange with that day and closes", () => {
     let picked: Date | undefined;
     const { host, doc, click, unmount } = render(

@@ -1,11 +1,10 @@
 import { getConfig } from "veryfront/config";
 import { cliLogger } from "#cli/utils";
 import { createError, toError } from "veryfront/errors";
+import { parseExtensionManifest } from "veryfront/extensions";
+import { exists, join, readTextFile } from "veryfront/fs";
 import { generateIntegration } from "./integration-generator.ts";
 import { isScaffoldType, scaffoldProjectFile } from "../../scaffold/engine.ts";
-import { exists, readTextFile } from "#veryfront/compat/fs.ts";
-import { join } from "#veryfront/compat/path";
-import { parseExtensionManifest } from "#veryfront/extensions/manifest-reader.ts";
 
 const PROJECT_MARKERS = [
   "veryfront.config.ts",

@@ -40,6 +40,7 @@ import { Button, type ButtonProps } from "./button.tsx";
 import { useAdapter } from "./adapter/context.tsx";
 import { getModalTokenScope, useModalContentEffect } from "./modal-surface.tsx";
 import { composeRefs } from "./slot.tsx";
+import { useIsomorphicLayoutEffect } from "./use-isomorphic-layout-effect.ts";
 
 // The confirm modal's open state / trigger reuse the Dialog slot of the active
 // UI adapter (zero-dependency `builtinDialog` with no provider), so open/close
@@ -137,6 +138,7 @@ export interface AlertDialogContentProps extends React.HTMLAttributes<HTMLDivEle
 export function AlertDialogContent({
   className,
   children,
+  id,
   ref,
   ...props
 }: AlertDialogContentProps): React.ReactElement | null {
@@ -148,6 +150,15 @@ export function AlertDialogContent({
   const panelRef = React.useRef<HTMLDivElement>(null);
   const [portalReady, setPortalReady] = React.useState(false);
   React.useEffect(() => setPortalReady(true), []);
+  const resolvedContentId = id ?? modal.defaultContentId;
+  useIsomorphicLayoutEffect(() => {
+    modal.setContentId(resolvedContentId);
+    return () => {
+      modal.setContentId((current) =>
+        current === resolvedContentId ? modal.defaultContentId : current
+      );
+    };
+  }, [modal.defaultContentId, modal.setContentId, resolvedContentId]);
   // Merge the internal panel ref (read by the focus effect) with any consumer
   // ref via `composeRefs`, which tracks + runs ref cleanups for us.
   const setNode = React.useMemo(() => composeRefs<HTMLDivElement>(panelRef, ref), [ref]);
@@ -174,6 +185,7 @@ export function AlertDialogContent({
         <div className="fixed inset-0 bg-[var(--overlay)]" data-state="open" />
         <div
           ref={setNode}
+          id={resolvedContentId}
           role="alertdialog"
           aria-modal="true"
           aria-labelledby={titleId}

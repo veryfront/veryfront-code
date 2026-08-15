@@ -68,6 +68,15 @@ export function quantizeNumberFieldValue(value: number, step: number, min?: numb
   return Number(quantized.toFixed(precision));
 }
 
+function normalizeNumberFieldValue(
+  value: number,
+  step: number,
+  min?: number,
+  max?: number,
+): number {
+  return clamp(quantizeNumberFieldValue(value, step, min), min, max);
+}
+
 /** Render a numeric input that clamps to `[min, max]` and steps by `step`. */
 export function NumberField({
   value,
@@ -85,7 +94,9 @@ export function NumberField({
   ...props
 }: NumberFieldProps): React.ReactElement {
   const isControlled = value !== undefined;
-  const [internal, setInternal] = React.useState<number | null>(defaultValue ?? null);
+  const [internal, setInternal] = React.useState<number | null>(() =>
+    defaultValue == null ? null : normalizeNumberFieldValue(defaultValue, step, min, max)
+  );
   const [draft, setDraft] = React.useState<string | null>(null);
   const current = isControlled ? value : internal;
   const controlledValueRef = React.useRef(value);
@@ -114,7 +125,7 @@ export function NumberField({
     const parsed = Number(raw);
     if (Number.isNaN(parsed)) return;
     setDraft(null);
-    commit(clamp(quantizeNumberFieldValue(parsed, step, min), min, max));
+    commit(normalizeNumberFieldValue(parsed, step, min, max));
   };
 
   const handleBlur = (event: React.FocusEvent<HTMLInputElement>) => {
@@ -123,7 +134,7 @@ export function NumberField({
     const parsed = Number(draft.trim());
     setDraft(null);
     if (!Number.isNaN(parsed)) {
-      commit(clamp(quantizeNumberFieldValue(parsed, step, min), min, max));
+      commit(normalizeNumberFieldValue(parsed, step, min, max));
     }
   };
 
@@ -131,7 +142,7 @@ export function NumberField({
     const parsedDraft = draft == null ? Number.NaN : Number(draft.trim());
     const draftBase = Number.isNaN(parsedDraft)
       ? null
-      : clamp(quantizeNumberFieldValue(parsedDraft, step, min), min, max);
+      : normalizeNumberFieldValue(parsedDraft, step, min, max);
     const base = draftBase ?? current ??
       (direction === 1 ? (min ?? 0) - step : (max ?? 0) + step);
     setDraft(null);

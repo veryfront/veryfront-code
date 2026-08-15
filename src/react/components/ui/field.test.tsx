@@ -289,4 +289,41 @@ describe("Field", () => {
       unmount();
     }
   });
+
+  it("uses custom ids from descriptions and errors rendered by wrapper components", async () => {
+    function WrappedDescription(): React.ReactElement {
+      return <FieldDescription id="wrapped-description">Wrapped help</FieldDescription>;
+    }
+    function WrappedError(): React.ReactElement {
+      return <FieldError id="wrapped-error">Wrapped error</FieldError>;
+    }
+
+    const { host, unmount } = render(
+      <Field invalid>
+        <FieldControl>
+          <input />
+        </FieldControl>
+        <WrappedDescription />
+        <WrappedError />
+      </Field>,
+    );
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      flushSync(() => {});
+      const control = host.querySelector("input")!;
+      const describedBy = (control.getAttribute("aria-describedby") ?? "").split(" ");
+      assertEquals(host.querySelector("#wrapped-description")?.textContent, "Wrapped help");
+      assertEquals(host.querySelector("#wrapped-error")?.textContent, "Wrapped error");
+      assert(
+        describedBy.includes("wrapped-description"),
+        "control references the wrapped custom description id",
+      );
+      assert(
+        describedBy.includes("wrapped-error"),
+        "control references the wrapped custom error id",
+      );
+    } finally {
+      unmount();
+    }
+  });
 });

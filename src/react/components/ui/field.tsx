@@ -42,9 +42,9 @@ interface FieldContextValue {
   /** Whether a `<FieldError>` will render (it renders nothing when empty). */
   errorPresent: boolean;
   /** Register a description rendered through an opaque wrapper component. */
-  registerDescription: () => () => void;
+  registerDescription: (id: string) => () => void;
   /** Register a non-empty error rendered through an opaque wrapper component. */
-  registerError: () => () => void;
+  registerError: (id: string) => () => void;
 }
 
 /**
@@ -108,20 +108,21 @@ export function Field({
 }: FieldProps): React.ReactElement {
   const base = React.useId();
   const staticParts = findFieldParts(children);
-  const [mountedDescriptions, setMountedDescriptions] = React.useState(0);
-  const [mountedErrors, setMountedErrors] = React.useState(0);
-  const descriptionId = staticParts.descriptionId ?? `${base}-description`;
-  const errorId = staticParts.errorId ?? `${base}-error`;
-  const registerDescription = React.useCallback(() => {
-    setMountedDescriptions((count) => count + 1);
-    return () => setMountedDescriptions((count) => Math.max(0, count - 1));
+  const [mountedDescriptionIds, setMountedDescriptionIds] = React.useState<string[]>([]);
+  const [mountedErrorIds, setMountedErrorIds] = React.useState<string[]>([]);
+  const descriptionId = staticParts.descriptionId ?? mountedDescriptionIds[0] ??
+    `${base}-description`;
+  const errorId = staticParts.errorId ?? mountedErrorIds[0] ?? `${base}-error`;
+  const registerDescription = React.useCallback((id: string) => {
+    setMountedDescriptionIds((ids) => ids.includes(id) ? ids : [...ids, id]);
+    return () => setMountedDescriptionIds((ids) => ids.filter((current) => current !== id));
   }, []);
-  const registerError = React.useCallback(() => {
-    setMountedErrors((count) => count + 1);
-    return () => setMountedErrors((count) => Math.max(0, count - 1));
+  const registerError = React.useCallback((id: string) => {
+    setMountedErrorIds((ids) => ids.includes(id) ? ids : [...ids, id]);
+    return () => setMountedErrorIds((ids) => ids.filter((current) => current !== id));
   }, []);
-  const descriptionPresent = staticParts.description || mountedDescriptions > 0;
-  const errorPresent = staticParts.error || mountedErrors > 0;
+  const descriptionPresent = staticParts.description || mountedDescriptionIds.length > 0;
+  const errorPresent = staticParts.error || mountedErrorIds.length > 0;
   const ctx = React.useMemo<FieldContextValue>(
     () => ({
       id: base,
@@ -242,11 +243,15 @@ export function FieldDescription({
   ...props
 }: FieldDescriptionProps): React.ReactElement {
   const ctx = useField("FieldDescription");
-  useIsomorphicLayoutEffect(() => ctx.registerDescription(), [ctx.registerDescription]);
+  const resolvedId = id ?? ctx.descriptionId;
+  useIsomorphicLayoutEffect(() => ctx.registerDescription(resolvedId), [
+    ctx.registerDescription,
+    resolvedId,
+  ]);
   return (
     <p
       ref={ref}
-      id={id ?? ctx.descriptionId}
+      id={resolvedId}
       className={cn("text-sm text-[var(--muted-foreground)]", className)}
       {...props}
     >
@@ -271,15 +276,16 @@ export function FieldError({
 }: FieldErrorProps): React.ReactElement | null {
   const ctx = useField("FieldError");
   const present = React.Children.count(children) > 0;
+  const resolvedId = id ?? ctx.errorId;
   useIsomorphicLayoutEffect(
-    () => present ? ctx.registerError() : undefined,
-    [ctx.registerError, present],
+    () => present ? ctx.registerError(resolvedId) : undefined,
+    [ctx.registerError, present, resolvedId],
   );
   if (!present) return null;
   return (
     <p
       ref={ref}
-      id={id ?? ctx.errorId}
+      id={resolvedId}
       role="alert"
       data-invalid={ctx.invalid || undefined}
       className={cn("text-sm text-[var(--destructive)]", className)}

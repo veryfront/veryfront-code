@@ -45,9 +45,8 @@ thin overview; it deliberately does not re-list every component or variant.
 (`deno task storybook`) - the Overview page links to a docs page for every
 primitive, grouped by Layout, Form, Overlay, Structure, and Theming.
 
-Compounds (e.g. `Dialog`) expose their parts as named exports **and** as a
-namespace (`DialogTrigger` ≡ `Dialog.Trigger`) so both import styles work and the
-parts tree-shake.
+Compounds (e.g. `Dialog`) expose their parts as named exports, such as `Dialog`,
+`DialogTrigger`, and `DialogContent`, so each part tree-shakes independently.
 
 ## Composition rules
 
@@ -154,13 +153,59 @@ normalized `{ open, setOpen }` state. Import the runtime helper from
 `veryfront/ui` and the contract types from `veryfront/ui/adapter`:
 
 ```tsx
+import * as React from "react";
+import { createPortal } from "react-dom";
 import { useTokenScope } from "veryfront/ui";
 import type { PopoverParts } from "veryfront/ui/adapter";
 
+const PopoverContext = React.createContext<
+  {
+    open: boolean;
+    setOpen: (open: boolean) => void;
+    getContainer: () => HTMLElement;
+  } | null
+>(null);
+
 export const myPopover: PopoverParts = {
-  Root: ({ open, defaultOpen, onOpenChange, children }) => /* … */,
-  Trigger: (props) => /* … */,
-  Content: (props) => /* … portal into useTokenScope() … */,
+  Root: ({ open, defaultOpen, onOpenChange, children }) => {
+    const { ref, getContainer } = useTokenScope();
+    const controlled = open !== undefined;
+    const [internalOpen, setInternalOpen] = React.useState(defaultOpen ?? false);
+    const currentOpen = controlled ? open : internalOpen;
+    const setOpen = React.useCallback((next: boolean) => {
+      if (!controlled) setInternalOpen(next);
+      onOpenChange?.(next);
+    }, [controlled, onOpenChange]);
+
+    return (
+      <span ref={ref}>
+        <PopoverContext.Provider value={{ open: currentOpen, setOpen, getContainer }}>
+          {children}
+        </PopoverContext.Provider>
+      </span>
+    );
+  },
+  Trigger: ({ asChild, children, onClick, ...props }) => {
+    const ctx = React.useContext(PopoverContext);
+    const triggerProps = {
+      ...props,
+      "aria-haspopup": "dialog" as const,
+      "aria-expanded": ctx?.open ?? false,
+      onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
+        onClick?.(event);
+        if (!event.defaultPrevented) ctx?.setOpen(!(ctx.open));
+      },
+    };
+    if (asChild && React.isValidElement(children)) {
+      return React.cloneElement(children, triggerProps);
+    }
+    return <button type="button" {...triggerProps}>{children}</button>;
+  },
+  Content: ({ align: _align, initialFocus: _initialFocus, children, ...props }) => {
+    const ctx = React.useContext(PopoverContext);
+    if (!ctx?.open) return null;
+    return createPortal(<div {...props}>{children}</div>, ctx.getContainer());
+  },
 };
 ```
 

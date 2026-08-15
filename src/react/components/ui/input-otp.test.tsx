@@ -141,8 +141,12 @@ describe("InputOTP behaviour", () => {
       assertEquals(slots.length, 6, "exactly maxLength slots render");
       assertEquals(
         host.querySelectorAll("[data-active]").length,
-        0,
-        "a full code leaves no active slot rather than indexing past the last one",
+        1,
+        "a full code keeps a visible focus indicator on one slot",
+      );
+      assert(
+        slots[5]?.hasAttribute("data-active"),
+        "the final slot stays active when the controlled code is full",
       );
     } finally {
       unmount();
