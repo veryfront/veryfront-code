@@ -35,7 +35,7 @@ import { createRuntimePromptBlock } from "./prompt-block.ts";
 import {
   buildRuntimeAuthorizedSkillIdsPromptBlock,
   buildRuntimeAvailableSkillsPromptBlock,
-  RUNTIME_SKILL_CATALOG_PREAMBLE,
+  RUNTIME_GENERATED_SKILL_CATALOG_MARKER,
 } from "./skill-prompt.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
 
@@ -166,7 +166,7 @@ function removeGeneratedSkillCatalogBlocks(instructions: string): string {
       break;
     }
     const content = result.slice(openIndex + openTag.length, closeIndex).trimStart();
-    if (!content.startsWith(RUNTIME_SKILL_CATALOG_PREAMBLE)) {
+    if (!content.startsWith(RUNTIME_GENERATED_SKILL_CATALOG_MARKER)) {
       searchIndex = closeIndex + closeTag.length;
       continue;
     }

@@ -377,10 +377,15 @@ function createAugmentedSystem(input: {
     const basePrompt =
       (typeof originalSystem === "function" ? await originalSystem() : originalSystem) ??
         "You are a helpful assistant.";
+    const preassembledSkillContext = (config as AgentConfig & {
+      __vfPreassembledSkillContext?: boolean;
+    }).__vfPreassembledSkillContext === true;
 
     return flattenSystemInstructions(buildAgentCallContext({
       instructions: basePrompt,
-      skills: snapshot.definitions.map(toRuntimeSkillDefinition),
+      ...(preassembledSkillContext
+        ? {}
+        : { skills: snapshot.definitions.map(toRuntimeSkillDefinition) }),
       ...(config.projectContext ? { projectContext: config.projectContext } : {}),
       ...(config.environmentContext ? { environmentContext: config.environmentContext } : {}),
     }));
