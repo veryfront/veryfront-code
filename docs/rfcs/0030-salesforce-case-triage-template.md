@@ -308,8 +308,15 @@ prerequisite, not ask the forker to create or supply a client ID and secret.
 Service-account automation is a separate path. It uses a customer-managed
 Connected App with client credentials, a dedicated Run As integration user,
 and the environment variables documented in the Salesforce setup guide. Do not
-present that service-account setup as the per-user connection path. See **Open
-Question A** for the package's production distribution and upgrade contract.
+present that service-account setup as the per-user connection path. Before the
+template ships, update `templates/integrations/salesforce/connector.json`, the
+generated setup page helpers, and generated `SETUP.md` copy so per-user OAuth
+asks the Salesforce administrator to install and enable the packaged External
+Client App, not to create a Connected App or set `SALESFORCE_CLIENT_ID` /
+`SALESFORCE_CLIENT_SECRET`. The service-account path may mention only the
+`SALESFORCE_SERVICE_ACCOUNT_*` variables and must stay separated from the
+fork-to-run connection path. See **Open Question A** for the package's
+production distribution and upgrade contract.
 
 ### 4.7 Housekeeping: API version drift
 
@@ -324,9 +331,9 @@ template, define it explicitly, and **fail closed**:
 
 - **Which fields** are passed downstream - an *allowlist* of non-PII operational
   fields (`Id`, `CaseNumber`, `Status`, `Priority`, `Reason`, `Origin`,
-  `CreatedDate`) plus the explicit sanitized classification fields below, not a
-  denylist of PII patterns. Custom `__c` fields and any newly appearing activity
-  fields must default to *excluded*, not forwarded raw.
+  `CreatedDate`, `RecordTypeId`) plus the explicit sanitized classification
+  fields below, not a denylist of PII patterns. Custom `__c` fields and any
+  newly appearing activity fields must default to *excluded*, not forwarded raw.
 - **Failure mode** - if redaction is uncertain or errors, stop rather than forward
   raw case data.
 - **Blast radius** - the same policy must cover child-run payloads, tool-error
@@ -344,6 +351,14 @@ redactor cannot classify a span, the validator rejects a value, or truncation
 would split a redaction marker, `case-ingest` stops without invoking
 `case-classify`. This preserves the text needed to classify a case without making
 raw customer text part of the downstream contract.
+
+For existing Case triage, the downstream object must also carry the source Case's
+actual `RecordTypeId` when Salesforce returns it. `case-dispose` uses that value
+when calling `get_picklist_values_for_record_type` before writing `Reason`; it
+must not fall back to the connected user's default record type for an existing
+Case. If `RecordTypeId` is absent and the org has multiple Case record types,
+`case-dispose` fails closed or performs a constrained Case lookup that returns
+only `Id` and `RecordTypeId`.
 
 ## 5. Static vs dynamic tools - the design decision
 
@@ -564,8 +579,12 @@ The PII gate needs fixture coverage too: raw `Subject`, `Description`, and
 `CommentBody` values containing email, phone, and customer identifiers must not
 appear in the child-run payload, errors, logs, or telemetry; the corresponding
 bounded `sanitizedSubject`, `sanitizedDescription`, and `sanitizedComments`
-values must remain available to `case-classify`. Unknown fields, over-limit text,
-and redactor or post-redaction validation failures must prevent the child run.
+values must remain available to `case-classify`, and `RecordTypeId` must remain
+available to `case-dispose` for record-type-scoped picklist validation. Unknown
+fields, over-limit text, and redactor or post-redaction validation failures must
+prevent the child run. Add a non-default Case record-type fixture that proves
+`case-dispose` calls `get_picklist_values_for_record_type` with the Case's actual
+`RecordTypeId` and does not use the connected profile default.
 
 Coverage of the standard objects a "get-going" support/CRM demo needs:
 Account, Contact, Lead, Case, CaseComment, Opportunity - plus User for every
@@ -1083,4 +1102,6 @@ Code references (this repo): `src/integrations/schema.ts:407-416,468`,
 `src/integrations/remote-tools.ts:560-600,782-788`,
 `scripts/build/generate-integrations-module.ts:86,98`,
 `templates/integrations/salesforce/connector.json`,
-`templates/integrations/salesforce/files/lib/salesforce-client.ts:3`.
+`templates/integrations/salesforce/files/lib/salesforce-client.ts:3`,
+`templates/integrations/_base/files/app/setup/page-helpers.tsx`, and generated
+`SETUP.md` setup copy.
