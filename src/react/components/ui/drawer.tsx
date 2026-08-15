@@ -24,9 +24,8 @@ import { useAdapter } from "./adapter/context.tsx";
 import { useIsomorphicLayoutEffect } from "./use-isomorphic-layout-effect.ts";
 
 // The Drawer's MECHANICS come from the active adapter's `drawer` slot
-// (`useAdapter().drawer`) - a static bottom sheet on the builtin, or real
-// drag-to-dismiss / snap points when you vendor the Vaul specialist adapter
-// (`veryfront generate adapter vaul`) and swap it in via `UIAdapterProvider`.
+// (`useAdapter().drawer`) - a static bottom sheet on the builtin, or custom
+// drawer mechanics from an adapter passed through `UIAdapterProvider`.
 // This file supplies only the edge-sliding sheet layout.
 
 /** Props accepted by `<Drawer>`. */

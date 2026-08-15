@@ -2,8 +2,7 @@
  * Builtin Drawer adapter - the zero-dependency STATIC bottom sheet: the shared
  * modal surface (overlay + panel, Escape/outside-click dismiss) assembled as
  * `DrawerParts`, with the drawer skin supplying the edge-slide layout. No drag
- * physics - for real drag-to-dismiss / snap points, vendor the **Vaul**
- * specialist adapter (`veryfront generate adapter vaul`) and swap it in via
+ * physics. Custom drawer adapters can supply different mechanics through
  * `UIAdapterProvider`.
  *
  * @module react/components/ui/adapter/builtin/drawer
