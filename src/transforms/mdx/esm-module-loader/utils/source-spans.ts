@@ -77,8 +77,6 @@ const TYPESCRIPT_DECLARATION_PREFIX_PATTERN = new RegExp(
     .raw`^(?:export\s+(?:default\s+)?)?(?:declare\s+)?(?:(?:interface\s+${IDENTIFIER_NAME_SOURCE}(?:\s*<[\s\S]*>)?(?:\s+extends\s+[\s\S]+)?)|(?:(?:const\s+)?enum\s+${IDENTIFIER_NAME_SOURCE})|(?:global)|(?:(?:namespace|module)\s+(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|${IDENTIFIER_NAME_SOURCE}(?:\s*\.\s*${IDENTIFIER_NAME_SOURCE})*)))\s*$`,
   "u",
 );
-const TYPESCRIPT_DECLARATION_KEYWORD_PATTERN =
-  /\b(?:declare|enum|global|interface|module|namespace)\b/u;
 
 function assertTemplateLiteralDepth(depth: number): void {
   if (depth > MAX_TEMPLATE_LITERAL_DEPTH) {
@@ -705,7 +703,11 @@ function declarationStatementStartBefore(
   return declarationAsiBoundaryBefore(source, separatorStart, index, keywords) ?? separatorStart;
 }
 
-function classDeclarationStatementStartBefore(source: string, index: number): number {
+function balancedDeclarationStatementStartBefore(
+  source: string,
+  index: number,
+  keywords: readonly string[],
+): number {
   let cursor = index - 1;
   let parenDepth = 0;
   let braceDepth = 0;
@@ -722,17 +724,22 @@ function classDeclarationStatementStartBefore(source: string, index: number): nu
     else if (parenDepth === 0 && braceDepth === 0 && bracketDepth === 0) {
       if (char === ";" || char === "{" || char === "}") {
         const separatorStart = cursor + 1;
-        return declarationAsiBoundaryBefore(source, separatorStart, index, [
-          "class",
-          "export",
-        ]) ?? separatorStart;
+        return declarationAsiBoundaryBefore(source, separatorStart, index, keywords) ??
+          separatorStart;
       }
     }
 
     cursor--;
   }
 
-  return declarationAsiBoundaryBefore(source, 0, index, ["class", "export"]) ?? 0;
+  return declarationAsiBoundaryBefore(source, 0, index, keywords) ?? 0;
+}
+
+function classDeclarationStatementStartBefore(source: string, index: number): number {
+  return balancedDeclarationStatementStartBefore(source, index, [
+    "class",
+    "export",
+  ]);
 }
 
 function startsWithDeclarationKeywordAt(
@@ -745,6 +752,27 @@ function startsWithDeclarationKeywordAt(
     !isIdentifierBoundaryBefore(source, index) &&
     !isIdentifierBoundaryAfter(source, index + keyword.length)
   );
+}
+
+function hasDeclarationKeywordBefore(
+  source: string,
+  start: number,
+  end: number,
+  keywords: readonly string[],
+): boolean {
+  for (const keyword of keywords) {
+    let index = source.indexOf(keyword, start);
+    while (index >= 0 && index < end) {
+      if (
+        !isIdentifierBoundaryBefore(source, index) &&
+        !isIdentifierBoundaryAfter(source, index + keyword.length)
+      ) {
+        return true;
+      }
+      index = source.indexOf(keyword, index + keyword.length);
+    }
+  }
+  return false;
 }
 
 function declarationAsiBoundaryBefore(
@@ -805,6 +833,11 @@ function isClassDeclarationBlockOpenBrace(
   index: number,
   currentParen: OpenParenContext | undefined,
 ): boolean {
+  const separatorStart = source.lastIndexOf(";", index - 1) + 1;
+  if (!hasDeclarationKeywordBefore(source, separatorStart, index, ["class", "export"])) {
+    return false;
+  }
+
   const declarationStart = classDeclarationStatementStartBefore(source, index);
   if (currentParen !== undefined && currentParen.index >= declarationStart) return false;
 
@@ -816,20 +849,7 @@ function isTypeScriptDeclarationBlockOpenBrace(
   source: string,
   index: number,
 ): boolean {
-  const separatorStart = Math.max(
-    source.lastIndexOf(";", index - 1),
-    source.lastIndexOf("{", index - 1),
-    source.lastIndexOf("}", index - 1),
-  ) + 1;
-  if (
-    !TYPESCRIPT_DECLARATION_KEYWORD_PATTERN.test(
-      source.slice(separatorStart, index),
-    )
-  ) {
-    return false;
-  }
-
-  const declarationStart = declarationStatementStartBefore(source, index, [
+  const keywords = [
     "const",
     "declare",
     "enum",
@@ -837,7 +857,13 @@ function isTypeScriptDeclarationBlockOpenBrace(
     "interface",
     "module",
     "namespace",
-  ]);
+  ];
+  const separatorStart = source.lastIndexOf(";", index - 1) + 1;
+  if (!hasDeclarationKeywordBefore(source, separatorStart, index, keywords)) {
+    return false;
+  }
+
+  const declarationStart = balancedDeclarationStatementStartBefore(source, index, keywords);
   const prefix = normalizedDeclarationPrefix(source, declarationStart, index);
   return TYPESCRIPT_DECLARATION_PREFIX_PATTERN.test(prefix);
 }

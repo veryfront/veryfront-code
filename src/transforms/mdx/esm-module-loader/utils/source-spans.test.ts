@@ -788,6 +788,20 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
       assertEquals(
         vfModuleSpecifiers(
+          'interface I<T extends {}> {} /import("\\/_vf_modules\\/fake-ts-interface-constraint.js")/.test(value); ' +
+            'import("/_vf_modules/after-ts-interface-constraint.js")',
+        ),
+        ["/_vf_modules/after-ts-interface-constraint.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'interface I extends Record<string, { value: number }> {} /import("\\/_vf_modules\\/fake-ts-interface-extends.js")/.test(value); ' +
+            'import("/_vf_modules/after-ts-interface-extends.js")',
+        ),
+        ["/_vf_modules/after-ts-interface-extends.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
           'const enum Mode { On } /import("\\/_vf_modules\\/fake-ts-enum.js")/.test(value); ' +
             'import("/_vf_modules/after-ts-enum.js")',
         ),
@@ -806,6 +820,13 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
             'import("/_vf_modules/after-ts-module.js")',
         ),
         ["/_vf_modules/after-ts-module.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'declare module "pkg" { export interface Config<T extends {}> {} } /import("\\/_vf_modules\\/fake-ts-module-nested.js")/.test(value); ' +
+            'import("/_vf_modules/after-ts-module-nested.js")',
+        ),
+        ["/_vf_modules/after-ts-module-nested.js"],
       );
       assertEquals(
         vfModuleSpecifiers(
