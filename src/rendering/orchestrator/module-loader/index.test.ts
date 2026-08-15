@@ -482,6 +482,38 @@ describe("module-loader/loadModule build-failure tagging", () => {
     );
   });
 
+  it("attributes a typo below a cached dependency on every load", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import { label } from "./dep";`,
+          `export default function Page() { return label; }`,
+        ].join("\n"),
+        "app/dep.tsx": [
+          `import { nested } from "./nested";`,
+          `export const label = nested;`,
+        ].join("\n"),
+        "app/nested.tsx": [
+          `import { gone } from "./gone";`,
+          `export const nested = gone;`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const pagePath = join(projectDir, "app/page.tsx");
+
+          const first = await assertRejects(() => loadModule(pagePath, config), Error);
+          assertEquals(isBuildFailure(first), true);
+          assertEquals(isTenantBuildFailure(first), true);
+
+          const second = await assertRejects(() => loadModule(pagePath, config), Error);
+          assertEquals(isBuildFailure(second), true);
+          assertEquals(isTenantBuildFailure(second), true);
+        });
+      },
+    );
+  });
+
   // The same seam must not launder a framework fault. A module whose imports
   // all resolve, and which then throws while executing, is an application
   // error: it must come back out of `loadModule` untagged on both predicates.

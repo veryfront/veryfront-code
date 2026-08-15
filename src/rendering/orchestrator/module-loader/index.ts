@@ -29,22 +29,34 @@ import {
 import { markBuildFailure, markTenantBuildFailure } from "./build-failure.ts";
 import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import { MODULE_CACHE_MAX_ENTRIES } from "#veryfront/utils/constants/cache.ts";
 
 export { isBuildFailure } from "./build-failure.ts";
 
 const logger = rendererLogger.component("module-loader");
 
 /**
- * Specifiers each transformed module left as authored, keyed by its transform
- * cache key.
+ * Specifiers each transformed module subtree left as authored, keyed by the
+ * root module's transform cache key.
  *
  * The transform cache lets a module skip dependency resolution entirely, so the
  * evidence has to outlive the resolution that produced it — otherwise a
  * dependency's dangling tenant import is only ever visible on the very first
- * transform. Bounded by the number of distinct cache keys, the same order as
- * the transform cache it mirrors, and holding only specifier strings.
+ * transform. The memo uses the module cache's entry bound and refreshes access
+ * order on reads, while holding only specifier strings.
  */
 const unresolvedSpecifiersByCacheKey = new Map<string, readonly string[]>();
+
+function cacheUnresolvedSpecifiers(cacheKey: string, specifiers: readonly string[]): void {
+  unresolvedSpecifiersByCacheKey.delete(cacheKey);
+  unresolvedSpecifiersByCacheKey.set(cacheKey, specifiers);
+
+  while (unresolvedSpecifiersByCacheKey.size > MODULE_CACHE_MAX_ENTRIES) {
+    const oldestKey = unresolvedSpecifiersByCacheKey.keys().next().value;
+    if (oldestKey === undefined) break;
+    unresolvedSpecifiersByCacheKey.delete(oldestKey);
+  }
+}
 
 function throwIfModuleLoadAborted(config: ModuleLoaderConfig): void {
   config.signal?.throwIfAborted();
@@ -137,12 +149,21 @@ export async function transformModuleWithDeps(
     // cache hit skips `resolveModuleDependencies`, so without this a dependency
     // that was already transformed contributes nothing and its tenant-authored
     // dangling import silently loses attribution.
-    for (const specifier of unresolvedSpecifiersByCacheKey.get(cacheKey) ?? []) {
+    const cachedUnresolvedSpecifiers = unresolvedSpecifiersByCacheKey.get(cacheKey) ?? [];
+    if (cachedUnresolvedSpecifiers.length > 0) {
+      cacheUnresolvedSpecifiers(cacheKey, cachedUnresolvedSpecifiers);
+    }
+    for (const specifier of cachedUnresolvedSpecifiers) {
       unresolvedSpecifiers.add(specifier);
     }
     markModuleLoadProgress(config, "module:cache-hit", filePath);
     return cachedPath;
   }
+
+  // Collect this module and every recursively transformed descendant into an
+  // isolated set. Once persistence succeeds, cache that complete subtree and
+  // merge it into the caller's aggregate evidence.
+  const moduleUnresolvedSpecifiers = new Set<string>();
 
   const readAdapter = useLocalAdapter ? localAdapter : adapter;
   let fileContent = decodeFileContent(await readAdapter.fs.readFile(filePath));
@@ -200,7 +221,7 @@ export async function transformModuleWithDeps(
           dep.isLocalLib,
           nextLineage,
           cycleTargets,
-          unresolvedSpecifiers,
+          moduleUnresolvedSpecifiers,
         );
 
         return { ...dep, depTempPath };
@@ -229,19 +250,15 @@ export async function transformModuleWithDeps(
     });
   }
 
-  const ownUnresolved: string[] = [];
   for (const dep of resolvedDeps) {
     if (dep.depFilePath) continue;
-    ownUnresolved.push(dep.path);
-    unresolvedSpecifiers.add(dep.path);
+    moduleUnresolvedSpecifiers.add(dep.path);
     logger.warn("Could not find dependency:", {
       path: dep.path,
       relativePath: dep.relativePath,
       projectDir,
     });
   }
-  unresolvedSpecifiersByCacheKey.set(cacheKey, ownUnresolved);
-
   const effectiveProjectId = projectId ?? projectDir;
   const { code: transformedCode } = await transformModuleCodeWithCache({
     fileContent,
@@ -274,6 +291,8 @@ export async function transformModuleWithDeps(
     dependencyPinningCacheKey: config.dependencyPinningCacheKey,
     isCycleTarget: cycleTargets.has(filePath),
   });
+  cacheUnresolvedSpecifiers(cacheKey, [...moduleUnresolvedSpecifiers]);
+  for (const specifier of moduleUnresolvedSpecifiers) unresolvedSpecifiers.add(specifier);
   markModuleLoadProgress(config, "module:persisted", filePath);
   return persistedPath;
 }
