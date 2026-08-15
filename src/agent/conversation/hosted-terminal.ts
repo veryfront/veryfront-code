@@ -4,6 +4,7 @@ import {
   finalizeConversationAgentRun,
 } from "./durable.ts";
 import type { HostedLifecycleTerminalState } from "../hosted/lifecycle.ts";
+import { resolveKnownProviderTerminalError } from "../streaming/stream-outcome.ts";
 
 /** Input payload for conversation hosted terminal state. */
 export interface ConversationHostedTerminalStateInput {
@@ -68,10 +69,13 @@ export function resolveConversationHostedTerminalState(
 export function resolveConversationHostedStreamErrorState(
   error: unknown,
 ): ConversationHostedTerminalStateResolution {
+  const knownProviderError = resolveKnownProviderTerminalError(error);
   return {
     status: "failed",
-    terminalErrorCode: CONVERSATION_HOSTED_STREAM_ERROR_TERMINAL_ERROR_CODE,
-    terminalErrorMessage: error instanceof Error ? error.message : String(error),
+    terminalErrorCode: knownProviderError?.code ??
+      CONVERSATION_HOSTED_STREAM_ERROR_TERMINAL_ERROR_CODE,
+    terminalErrorMessage: knownProviderError?.message ??
+      (error instanceof Error ? error.message : String(error)),
   };
 }
 
