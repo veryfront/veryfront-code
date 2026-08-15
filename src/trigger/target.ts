@@ -39,23 +39,20 @@ export interface AgentTriggerTarget extends TriggerTarget {
   conversationId?: string | null;
 }
 
-/** Author-facing target shape with conversation fields narrowed by kind. */
-export type TriggerTargetConfig =
-  | TaskTriggerTarget
-  | WorkflowTriggerTarget
-  | AgentTriggerTarget;
-
 /** Canonical reference to a runnable project definition. */
 export interface TriggerTarget {
   /** Definition kind resolved by project runtime discovery. */
   kind: "task" | "workflow" | "agent";
   /** Canonical slash-separated definition identifier. */
   id: string;
-  /** Hosted conversation behavior; valid only for agent targets. */
-  conversationMode?: AgentConversationMode;
-  /** Existing conversation UUID; valid only for agent targets. */
-  conversationId?: string | null;
 }
+
+/** Author-facing target shape with conversation fields narrowed by kind. */
+export type TriggerTargetConfig =
+  | TriggerTarget
+  | TaskTriggerTarget
+  | WorkflowTriggerTarget
+  | AgentTriggerTarget;
 
 /** Supported local trigger target kinds. */
 export type TriggerTargetKind = TriggerTarget["kind"];
@@ -167,15 +164,16 @@ export function declarationConflictDiagnostic(
 export function conversationConflictDiagnostic(
   label: string,
   legacyLabel: string,
-  target: TriggerTarget,
+  target: TriggerTargetConfig,
   legacyConversationMode: unknown,
   legacyConversationId: unknown,
 ): string | null {
   if (target.kind !== "agent") return null;
+  const agentTarget = target as AgentTriggerTarget;
   for (
     const [field, targetValue, legacyValue] of [
-      ["conversationMode", target.conversationMode, legacyConversationMode],
-      ["conversationId", target.conversationId, legacyConversationId],
+      ["conversationMode", agentTarget.conversationMode, legacyConversationMode],
+      ["conversationId", agentTarget.conversationId, legacyConversationId],
     ] as const
   ) {
     const detail = declarationConflictDiagnostic(
@@ -293,11 +291,11 @@ export function resolveTriggerTarget(
 /**
  * Validate and copy a trigger target without retaining caller-owned state.
  */
-export function snapshotTriggerTarget(value: unknown): TriggerTarget | null {
+export function snapshotTriggerTarget(value: unknown): TriggerTargetConfig | null {
   return resolveTriggerTarget("Trigger target", value).target ?? null;
 }
 
 /** Return true only for canonical targets stored in own data properties. */
-export function isTriggerTarget(value: unknown): value is TriggerTarget {
+export function isTriggerTarget(value: unknown): value is TriggerTargetConfig {
   return snapshotTriggerTarget(value) !== null;
 }

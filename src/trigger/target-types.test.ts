@@ -1,6 +1,10 @@
 import type { RuntimeAdapter } from "#veryfront/platform";
 import type { ScheduleConfig } from "#veryfront/schedule";
-import type { RunTriggerTargetOptions, WorkflowTriggerTarget } from "#veryfront/trigger";
+import type {
+  RunTriggerTargetOptions,
+  TriggerTarget,
+  WorkflowTriggerTarget,
+} from "#veryfront/trigger";
 import type { WebhookConfig } from "#veryfront/webhook";
 
 const adapter = {} as RuntimeAdapter;
@@ -19,10 +23,32 @@ const ownedWorkflowTarget: OwnedWorkflowTarget = {
   owner: "billing",
 };
 
+const exportedTriggerTarget: TriggerTarget = {
+  kind: "workflow",
+  id: "billing/sync",
+};
+
 acceptScheduleConfig({
   id: "billing-sync",
   schedule: "0 * * * *",
   target: ownedWorkflowTarget,
+});
+
+acceptScheduleConfig({
+  id: "exported-trigger-target-schedule",
+  schedule: "0 * * * *",
+  target: exportedTriggerTarget,
+});
+
+acceptWebhookConfig({
+  id: "exported-trigger-target-webhook",
+  target: exportedTriggerTarget,
+});
+
+acceptRunTriggerTargetOptions({
+  projectDir: "/project",
+  adapter,
+  target: exportedTriggerTarget,
 });
 
 acceptScheduleConfig({

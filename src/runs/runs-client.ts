@@ -8,7 +8,7 @@ import {
 } from "#veryfront/platform/adapters/veryfront-api-client/retry-handler.ts";
 import { API_CLIENT_ERROR } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
-import type { TriggerTarget } from "#veryfront/trigger/target.ts";
+import type { TriggerTargetConfig } from "#veryfront/trigger/target.ts";
 import {
   type CancelRunResponse,
   CancelRunResponseSchema,
@@ -102,7 +102,7 @@ export interface CreateScheduleRunFromSourceInput extends ProjectScopedOptions {
 export interface CreateScheduleRunFromSourceResult {
   scheduleRun: ScheduleRunCreateResponse;
   timeoutSeconds: number;
-  target: TriggerTarget;
+  target: TriggerTargetConfig;
 }
 
 /** Input payload for knowledge ingest by upload IDs. */

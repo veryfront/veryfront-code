@@ -23,6 +23,7 @@ import {
   type ScheduleDefinition,
 } from "veryfront/schedule";
 import {
+  type AgentTriggerTarget,
   conversationConflictDiagnostic,
   declarationConflictDiagnostic,
   isTriggerId,
@@ -237,7 +238,8 @@ export function toScheduleAgentOptions(
     throw INVALID_ARGUMENT.create({ detail: conflictDetail });
   }
 
-  const conversationMode = target.conversationMode ??
+  const agentTarget = target as AgentTriggerTarget;
+  const conversationMode = agentTarget.conversationMode ??
     legacyConversation.conversationMode;
   if (conversationMode === "existing") {
     throw INVALID_ARGUMENT.create({
