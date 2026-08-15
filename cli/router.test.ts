@@ -718,6 +718,50 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("preserves accepted short port aliases in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        for (const command of ["doctor", "dev", "serve", "start"]) {
+          for (const portArguments of [["-p", "4321"], ["-p=4321"]]) {
+            infoMessages.length = 0;
+            const code = await runAndCaptureExit(parseCliArgs([
+              "veryfront",
+              command,
+              ...portArguments,
+            ]));
+            assertEquals(code, 2);
+            assertEquals(infoMessages, [
+              '  You already included "veryfront". Use:',
+              `    veryfront ${command} ${portArguments.join(" ")}`,
+            ]);
+          }
+        }
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("redacts invalid short port alias values in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "doctor",
+          "-p",
+          "private-port-value",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront doctor -p '<REDACTED>'",
+        ]);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("redacts deploy target identifiers in the correction", async () => {
       stubExit();
       stubLogger();

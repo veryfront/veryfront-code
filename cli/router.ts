@@ -291,6 +291,7 @@ export async function formatDuplicatedBinaryHint(
     "uploads",
   ]);
   const knownUndocumentedLoginOptions = new Set(["--provider"]);
+  const acceptedShortPortAliasCommands = new Set(["doctor", "dev", "serve", "start"]);
   const rootRelativeRouteOptions = new Set(["--exclude", "--include"]);
   const globalBooleanOptions = new Set([
     "--color",
@@ -335,6 +336,16 @@ export async function formatDuplicatedBinaryHint(
     }
     const equalsIndex = argument.startsWith("-") ? argument.indexOf("=") : -1;
     const option = equalsIndex > 0 ? argument.slice(0, equalsIndex) : argument;
+    const nextArgument = hintArguments[index + 1];
+    const hasSeparateRawValue = isCliOptionValue(nextArgument);
+    const shortPortAliasValue = equalsIndex > 0
+      ? argument.slice(equalsIndex + 1)
+      : hasSeparateRawValue
+      ? nextArgument
+      : undefined;
+    const acceptedShortPortAlias = canonicalCommand !== undefined && option === "-p" &&
+      acceptedShortPortAliasCommands.has(canonicalCommand) &&
+      shortPortAliasValue !== undefined && /^\d+$/u.test(shortPortAliasValue);
     const optionDefinition = commandOptions.find((definition) =>
       (definition.flag.match(/--?[a-z0-9-]+/giu) ?? []).some((name) => name === option)
     );
@@ -352,8 +363,8 @@ export async function formatDuplicatedBinaryHint(
       (canonicalCommand === "serve" &&
         opaqueServeHostOptions.has(option));
     const knownGlobalOption = globalBooleanOptions.has(option) || globalValueOptions.has(option);
-    const knownUndocumentedOption = correctedCommand === "login" &&
-      knownUndocumentedLoginOptions.has(option);
+    const knownUndocumentedOption = (correctedCommand === "login" &&
+      knownUndocumentedLoginOptions.has(option)) || acceptedShortPortAlias;
     const unknownOption = option.startsWith("-") && optionDefinition === undefined &&
       !knownUndocumentedOption &&
       !knownGlobalOption;
@@ -364,9 +375,6 @@ export async function formatDuplicatedBinaryHint(
       rootRelativeRouteOptions.has(option);
     const booleanOption = globalBooleanOptions.has(option) ||
       (optionDefinition !== undefined && !optionDefinition.flag.includes("<"));
-    const nextArgument = hintArguments[index + 1];
-    const hasSeparateRawValue = isCliOptionValue(nextArgument);
-
     if (equalsIndex > 0) {
       const formattedOption = formatCommandHintArgument(option, sanitizeUrlCredentials);
       const rawValue = argument.slice(equalsIndex + 1);
