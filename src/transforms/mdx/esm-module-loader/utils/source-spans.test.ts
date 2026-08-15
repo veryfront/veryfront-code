@@ -511,6 +511,27 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("ignores import-looking regex text after Unicode declaration names", () => {
+      assertEquals(
+        specifiers('function λ() {}\n/import("\\.\\/fake-function.js")/.test(value);'),
+        [],
+      );
+      assertEquals(
+        specifiers('class Ω {}\n/import("\\.\\/fake-class.js")/.test(value);'),
+        [],
+      );
+      assertEquals(
+        specifiers(
+          'function \\u0061() {}\n/import("\\.\\/fake-escaped-function.js")/.test(value);',
+        ),
+        [],
+      );
+      assertEquals(
+        specifiers('class \\u{41} {}\n/import("\\.\\/fake-escaped-class.js")/.test(value);'),
+        [],
+      );
+    });
+
     it("recognizes Unicode line terminators in declaration comments", () => {
       for (const lineTerminator of ["\u2028", "\u2029"]) {
         assertEquals(
