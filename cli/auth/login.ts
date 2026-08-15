@@ -65,15 +65,14 @@ function describeApiTokenSource(token: string): string {
 
 async function readProjectConfigPreflight(
   env: EnvironmentConfig,
-): Promise<{ token: string; env: EnvironmentConfig } | null> {
+): Promise<{ token?: string; env: EnvironmentConfig }> {
   const config = await readConfigFile(cwd());
-  if (!config?.apiToken) return null;
 
   return {
-    token: config.apiToken,
+    token: config?.apiToken,
     env: {
       ...env,
-      apiUrl: resolveCliApiUrl(env, config.apiUrl),
+      apiUrl: resolveCliApiUrl(env, config?.apiUrl),
     },
   };
 }
@@ -532,11 +531,12 @@ async function describeExistingSession(
     authoritative?: boolean;
     env?: EnvironmentConfig;
   }[] = [];
+  const configPreflight = await readProjectConfigPreflight(env);
+  const defaultValidationEnv = configPreflight.env;
   if (env.apiToken && environmentTokenIsAuthoritative) {
     candidates.push({ token: env.apiToken, source: "environment", authoritative: true });
   }
-  const configPreflight = await readProjectConfigPreflight(env);
-  if (configPreflight) {
+  if (configPreflight.token) {
     candidates.push({
       token: configPreflight.token,
       source: "config-file",
@@ -553,7 +553,9 @@ async function describeExistingSession(
   const signal = AbortSignal.timeout(existingSessionTimeoutMs);
   let unavailable: CredentialValidationUnavailableError | null = null;
 
-  for (const { token, source, authoritative, env: validationEnv = env } of candidates) {
+  for (
+    const { token, source, authoritative, env: validationEnv = defaultValidationEnv } of candidates
+  ) {
     let identity: AuthIdentity | null;
     try {
       // Bounded: this preflight only decides whether to say "already logged in"
