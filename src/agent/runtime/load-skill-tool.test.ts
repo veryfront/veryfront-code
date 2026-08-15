@@ -2527,6 +2527,7 @@ it("createRuntimeLoadSkillTool keeps IDs out of the description and points to ru
   assertEquals(tool.description.includes("daily-briefing"), false);
   assertStringIncludes(tool.description, "<available_skills>");
   assertStringIncludes(tool.description, "<authorized_skill_ids>");
+  assertStringIncludes(tool.description, "Direct consumers can omit skillId");
   assertStringIncludes(tool.description, "You must not invent IDs");
   assertStringIncludes(tool.description, "omit skillId");
 });

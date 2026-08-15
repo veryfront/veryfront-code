@@ -121,9 +121,23 @@ it("bounds worst-case omitted skill-ID inventories without rejecting the catalog
   const authorized = buildRuntimeAuthorizedSkillIdsPromptBlock(skills);
 
   assertStringIncludes(available, "additional authorized skill IDs are omitted");
-  assertStringIncludes(authorized, "additional authorized skill IDs are omitted");
+  assertEquals(authorized.includes("additional authorized skill IDs are omitted"), false);
   assertEquals(available.length < 150_000, true);
-  assertEquals(authorized.length < 20_000, true);
+  assertStringIncludes(authorized, `"skill-999-${"x".repeat(240)}"`);
+  assertEquals(authorized.match(/"skill-/g)?.length, 1_000);
+});
+
+it("keeps every selector-valid authorized skill ID discoverable", () => {
+  const skills = Array.from(
+    { length: 1_000 },
+    (_, index) => createSkill({ id: `skill-${String(index).padStart(8, "0")}` }),
+  );
+
+  const block = buildRuntimeAuthorizedSkillIdsPromptBlock(skills);
+
+  assertStringIncludes(block, '"skill-00000000"');
+  assertStringIncludes(block, '"skill-00000999"');
+  assertEquals(block.match(/"skill-/g)?.length, 1_000);
 });
 
 it("buildRuntimeAuthorizedSkillIdsPromptBlock encodes every authorized ID as data", () => {

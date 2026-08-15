@@ -307,6 +307,7 @@ export type RuntimeLoadSkillToolOptions = {
   projectSkillLoader: RuntimeProjectSkillLoader;
   builtinSkillIds?: readonly string[];
   builtinStore?: RuntimeLoadSkillBuiltinStore;
+  /** Override the static default description for direct consumers that supply their own discovery context. */
   description?: string;
   logger?: RuntimeSkillMetadataLogger;
   skillDocumentParserProvider?: SkillDocumentParserProvider;
@@ -1176,7 +1177,7 @@ function buildRuntimeLoadSkillDescription(options: RuntimeLoadSkillToolOptions):
   // generated skill context, not in the tool definition. Keeping skill IDs out
   // of the description (and the advertised input schema) lets the tools array
   // join the shared cache prefix. See RFC 0001 (layered context).
-  return `${RUNTIME_LOAD_SKILL_DESCRIPTION} Skill IDs may be listed in the <available_skills> or <authorized_skill_ids> context block. You must not invent IDs.`;
+  return `${RUNTIME_LOAD_SKILL_DESCRIPTION} Skill IDs may be listed in the <available_skills> or <authorized_skill_ids> context block. Direct consumers can omit skillId to page authorized IDs or provide equivalent context. You must not invent IDs.`;
 }
 
 function snapshotRuntimeSkillIdInventory(
@@ -1699,7 +1700,14 @@ async function loadRuntimeSkillBody(
   return await options.projectSkillLoader.loadProjectSkill(options.context, skillId, { budget });
 }
 
-/** Create runtime load skill tool. */
+/**
+ * Create runtime load skill tool for prompts that provide skill context.
+ *
+ * Use this with {@link buildAgentCallContext} or an equivalent system prompt
+ * that supplies `<available_skills>` or `<authorized_skill_ids>`. Direct tool
+ * consumers that do not use that prompt context must pass `description` with
+ * their own authorized skill discovery text.
+ */
 export function createRuntimeLoadSkillTool(
   options: RuntimeLoadSkillToolOptions,
 ): Tool<RuntimeLoadSkillToolInput, RuntimeLoadSkillToolOutput> {
