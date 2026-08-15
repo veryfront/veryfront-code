@@ -284,6 +284,7 @@ interface HttpCacheRequestIdentityContext {
 }
 
 const HTTP_CACHE_REQUEST_IDENTITY_CONTEXT = Symbol("http-cache-request-identity-context");
+const HTTP_MODULE_REQUEST_FINGERPRINT_NAMESPACE = "veryfront:http-module-request:v1";
 
 type HttpCacheRequestIdentityCarrier = {
   [HTTP_CACHE_REQUEST_IDENTITY_CONTEXT]?: HttpCacheRequestIdentityContext;
@@ -673,6 +674,11 @@ export function normalizeHttpUrl(raw: string): string {
     /* expected: URL may be malformed */
     return raw;
   }
+}
+
+/** Build an opaque identity for correlating one exact HTTP module request. */
+export function fingerprintHttpModuleRequest(rawUrl: string): Promise<string> {
+  return computeHash(`${HTTP_MODULE_REQUEST_FINGERPRINT_NAMESPACE}\0${normalizeHttpUrl(rawUrl)}`);
 }
 
 export function resolveBareSpecifier(

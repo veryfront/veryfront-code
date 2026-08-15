@@ -12,7 +12,6 @@ import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 import { BUILD_FAILED } from "#veryfront/errors";
 import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
-import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import {
   appendSameOriginSSRDependencyPinningKey,
   normalizeExtension,
@@ -24,6 +23,7 @@ import { parseImports, replaceSpecifiers } from "./lexer.ts";
 
 import {
   type CacheOptions,
+  fingerprintHttpModuleRequest,
   getEffectiveHttpCacheRequest,
   isCanonicalReactEsmUrl,
   isExternalScheme,
@@ -49,16 +49,17 @@ function stringStartsWith(value: string, search: string): boolean {
 
 function classifyAuthoredPackageFetchError(
   error: unknown,
-  requestedPackageUrl: string | undefined,
+  requestedPackageFingerprint: string | undefined,
 ): unknown {
   const snapshot = snapshotVeryfrontError(error);
   const context = snapshot?.context;
   if (
     snapshot?.slug !== BUILD_FAILED.slug ||
     typeof context !== "object" || context === null ||
-    typeof requestedPackageUrl !== "string" ||
+    typeof requestedPackageFingerprint !== "string" ||
     (context as { httpStatus?: unknown }).httpStatus !== 404 ||
-    (context as { httpModuleUrl?: unknown }).httpModuleUrl !== requestedPackageUrl
+    (context as { httpModuleRequestFingerprint?: unknown }).httpModuleRequestFingerprint !==
+      requestedPackageFingerprint
   ) {
     return error;
   }
@@ -67,7 +68,11 @@ function classifyAuthoredPackageFetchError(
     message: snapshot.message,
     detail: snapshot.detail,
     cause: error,
-    context: { httpStatus: 404, httpModuleUrl: requestedPackageUrl, tenantBuildFailure: true },
+    context: {
+      httpStatus: 404,
+      httpModuleRequestFingerprint: requestedPackageFingerprint,
+      tenantBuildFailure: true,
+    },
   });
 }
 
@@ -232,14 +237,17 @@ async function resolveSpecifier(
   let requestedPackageUrl: string | undefined;
   const cacheAuthoredPackage: CacheHttpModuleFn = async (url, cacheOptions) => {
     const effective = getEffectiveHttpCacheRequest(url, cacheOptions);
-    requestedPackageUrl = sanitizeUrlForSpan(normalizeHttpUrl(effective.url));
+    requestedPackageUrl ??= normalizeHttpUrl(effective.url);
     return await cacheHttpModule(url, cacheOptions);
   };
 
   try {
     return await resolveSpecifier(mapped, baseUrl, options, cacheAuthoredPackage);
   } catch (error) {
-    throw classifyAuthoredPackageFetchError(error, requestedPackageUrl);
+    const requestedPackageFingerprint = requestedPackageUrl === undefined
+      ? undefined
+      : await fingerprintHttpModuleRequest(requestedPackageUrl);
+    throw classifyAuthoredPackageFetchError(error, requestedPackageFingerprint);
   }
 }
 

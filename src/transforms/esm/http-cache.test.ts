@@ -1294,6 +1294,42 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
+  it("distinguishes a package from a missing dependency at the same sanitized URL", async () => {
+    const packageUrl = "https://esm.sh/same-path-module.js?entry=root";
+    const dependencyUrl = "https://esm.sh/same-path-module.js?entry=dependency";
+    const mockFetch = ((input: string | URL | Request) => {
+      const url = String(input);
+      if (new URL(url).searchParams.get("entry") === "root") {
+        return Promise.resolve(
+          new Response(`import "${dependencyUrl}"; export const loaded = true;`, {
+            headers: { "content-type": "application/javascript" },
+          }),
+        );
+      }
+      return Promise.resolve(new Response("not found", { status: 404 }));
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache(
+      "vf-esm-same-sanitized-package-url-",
+      mockFetch,
+      async (tempDir) => {
+        const error = await assertRejects(
+          () =>
+            cacheHttpImportsToLocal('import "same-path-package";', {
+              cacheDir: tempDir,
+              importMap: {
+                imports: { "same-path-package": packageUrl },
+                scopes: {},
+              },
+            }),
+          Error,
+        );
+
+        assertEquals(isTenantSourceBuildError(error), false);
+      },
+    );
+  });
+
   it("retries failures while reading an HTTP module body", async () => {
     let fetchCount = 0;
 
