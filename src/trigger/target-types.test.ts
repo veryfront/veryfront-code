@@ -101,6 +101,23 @@ describe("trigger target public type contracts", () => {
         conversationMode: "existing",
         conversationId: "11111111-1111-4111-8111-111111111111",
       },
+      agentMessage: { prompt: "Triage open cases." },
+    });
+
+    // @ts-expect-error Task schedules cannot define an agent message.
+    const invalidTaskMessage = acceptScheduleConfig({
+      id: "bad-task-message",
+      schedule: "0 * * * *",
+      target: { kind: "task", id: "sync-helpdesk" },
+      agentMessage: { prompt: "This target is not an agent." },
+    });
+
+    // @ts-expect-error Workflow schedules cannot define an agent message.
+    const invalidWorkflowMessage = acceptScheduleConfig({
+      id: "bad-workflow-message",
+      schedule: "0 * * * *",
+      target: { kind: "workflow", id: "billing/sync" },
+      agentMessage: { prompt: "This target is not an agent." },
     });
 
     const invalidTaskSchedule = acceptScheduleConfig({
@@ -124,6 +141,8 @@ describe("trigger target public type contracts", () => {
     });
 
     assertEquals(agentSchedule.target.kind, "agent");
+    assertEquals(invalidTaskMessage.target.kind, "task");
+    assertEquals(invalidWorkflowMessage.target.kind, "workflow");
     assertEquals(invalidTaskSchedule.target.kind, "task");
     assertEquals(invalidWorkflowWebhook.target.kind, "workflow");
     assertEquals(invalidTaskRun.target.kind, "task");

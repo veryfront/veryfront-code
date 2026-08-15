@@ -1,4 +1,8 @@
-import type { ResolvedTriggerTarget, TriggerTargetConfig } from "#veryfront/trigger/target.ts";
+import type {
+  AgentTriggerTarget,
+  ResolvedTriggerTarget,
+  TriggerTargetConfig,
+} from "#veryfront/trigger/target.ts";
 import { isValidScheduleDefinition } from "./validation.ts";
 
 /** Behavior when a scheduled occurrence overlaps an active run. */
@@ -82,16 +86,12 @@ export interface ScheduleDefinition {
   integrationRequirements?: ScheduleIntegrationRequirement[];
 }
 
-/**
- * Author-facing recurring schedule configuration.
- *
- * `cron` is an alias for `schedule`; the factory emits only `schedule`.
- */
-export type ScheduleConfig =
-  & Omit<ScheduleDefinition, "schedule" | "integrationRequirements" | "target">
+type ScheduleConfigFields =
+  & Omit<
+    ScheduleDefinition,
+    "schedule" | "integrationRequirements" | "target" | "agentMessage"
+  >
   & {
-    /** Task, workflow, or agent invoked by each occurrence. */
-    target: TriggerTargetConfig;
     /** Alias for a five-field POSIX `schedule` expression. */
     cron?: string;
     /** Five-field POSIX cron expression. */
@@ -99,6 +99,28 @@ export type ScheduleConfig =
     /** Integration requirements; omitted collections default to empty. */
     integrationRequirements?: ScheduleIntegrationRequirementConfig[];
   };
+
+/**
+ * Author-facing recurring schedule configuration.
+ *
+ * `cron` is an alias for `schedule`; the factory emits only `schedule`.
+ */
+export type ScheduleConfig =
+  & ScheduleConfigFields
+  & (
+    | {
+      /** Agent invoked by each occurrence. */
+      target: AgentTriggerTarget;
+      /** Prompt content sent to the agent. */
+      agentMessage?: ScheduleAgentMessage;
+    }
+    | {
+      /** Task, workflow, or agent invoked by each occurrence. */
+      target: TriggerTargetConfig;
+      /** Agent messages are not accepted without a statically known agent target. */
+      agentMessage?: never;
+    }
+  );
 
 /** Return true only when every schedule field and nested invariant is valid. */
 export function isScheduleDefinition(value: unknown): value is ScheduleDefinition {
