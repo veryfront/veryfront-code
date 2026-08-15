@@ -75,6 +75,7 @@ function ComboboxRoot({
 
   React.useEffect(() => {
     if (currentValue === undefined && !isValueControlled) return;
+    if (!isValueControlled && synchronizedValueRef.current === currentValue) return;
     const label = optionLabels.find((option) => option.value === currentValue)?.text;
     if (label === undefined) {
       synchronizedValueRef.current = currentValue;
