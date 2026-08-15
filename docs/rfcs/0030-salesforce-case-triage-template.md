@@ -69,8 +69,10 @@ Two artefacts that must stay 1:1:
     performs the record-type-scoped `Reason` validation and the atomic
     Reason-plus-comment write server-side. `get_picklist_values_for_record_type`
     remains available as a metadata helper for setup and explanation, but it is
-    not the enforcement boundary. The target grant keeps fixed `Case` Update and
-    `CaseComment` Create authorization checks inside the coordinator. Any
+    not the enforcement boundary. The target grant keeps fixed `Case` Read,
+    `Case` Update, and `CaseComment` Create authorization checks inside the
+    coordinator. The Read grant is required for the coordinator's record-type
+    and open-state validation; an Update grant never implies Read. Any
     read-after-timeout reconciliation path also needs a separate fixed
     `CaseComment` Read check scoped to the same case and idempotency fields;
     Create permission alone is not enough to inspect already-written comments.
@@ -353,9 +355,19 @@ return raw Case and CaseComment payloads, including standard customer fields suc
 as `Subject`, `SuppliedEmail`, and `SuppliedPhone`, free text, and custom `__c`
 fields; if the agent runtime persists those tool results before `case-ingest`
 builds the sanitized child payload, durable run history already contains customer
-text. V1 must either return a hosted allowlisted projection before persistence or
-suppress persistence of the raw tool result and expose only the sanitized
-projection to the ingest model and to later persistence. The raw-result
+text. V1 must preserve those existing shared tool result contracts for projects
+that have not opted into the template policy. The Case Triage template must set
+an explicit project-scoped hosted result policy, for example
+`case-triage-v1`, that produces the allowlisted projection before persistence.
+The policy is part of the template's integration grant, not a global behavior
+change on the shared tool IDs. A project without that opt-in continues to receive
+the existing raw result shape. If the hosted executor cannot apply the policy
+before the result becomes agent-visible, add dedicated triage-safe read tool IDs
+instead; do not replace the shared tools' public response contracts.
+
+The opt-in policy must either return a hosted allowlisted projection before
+persistence or suppress persistence of the raw tool result and expose only the
+sanitized projection to the ingest model and to later persistence. The raw-result
 suppression alternative is not a permission to let `case-ingest` consume raw
 Salesforce responses and redact them afterward; the hosted executor or runtime
 boundary must build the projection before any agent-visible tool-result message
@@ -506,7 +518,7 @@ dependencies, not static-schema details:
 | Fixed object/operation authorization for curated writes | Hosted integration executor, using the Configure permission policy | Shipping `dispose_case_triage`, standalone `update_case_reason`, standalone `add_internal_case_comment`, retained `create_case`, retained `create_lead`, or any temporary retained `update_case` |
 | Disposal coordinator with record-type-scoped `Reason` validation, atomic write-time open-state enforcement, idempotency, and reconciliation | Hosted integration executor / tools API, using stable logical-disposal identity and fixed reconciliation reads | Revealing `case-dispose` or `dispose_case_triage` as a v1 disposal path; revealing `update_case_reason` or `add_internal_case_comment` as standalone writes |
 | Fixed owner lookup adapters and owner-eligibility validators for `User`, Case queues, and Lead queues | Hosted integration executor / tools API, using server-owned SOQL, typed filters, and a fixed target-object capability check | Discovering owner candidates for Case and Lead while arbitrary `run_soql_query` and `q` remain hidden, and rejecting an active user who cannot own the target object before any path writes `OwnerId`, including retained `update_case` and future generic `update_record`. Opportunity uses `User` candidates only. Lead and Opportunity assignment writes remain gated until scoped write tools or generic CRUD enforcement exists |
-| Pre-persistence PII projection or raw-result suppression before any agent-visible message | Hosted integration executor plus agent runtime persistence/streaming boundary | Revealing `get_case`, `list_cases`, `list_case_activity`, or the case-ingest template against customer text |
+| Project-scoped pre-persistence PII projection or dedicated triage-safe read tools before any agent-visible message | Hosted integration executor plus agent runtime persistence/streaming boundary | Revealing the case-ingest template against customer text without changing the existing shared read-tool result contracts |
 | Fixed metadata-helper authorization | Hosted integration executor, using the Configure permission policy | Retaining `describe_object` or `get_picklist_values_for_record_type` for an object while per-CRUD arrays are not generally enforced |
 | Referenced-object parser/enforcer for arbitrary SOQL/SOSL | Hosted integration executor and authorization layer | Re-enabling `run_soql_query`, SOSL `search`, or any arbitrary curated `q` override |
 | Per-CRUD enforcement against runtime `sobjectType` | Configure policy storage plus hosted authorization enforcement | Shipping any generic CRUD tool |
@@ -517,8 +529,8 @@ Sequence v1 conservatively: first land the hosted curated-query adapter with
 fixed Read authorization for every immutable-query object, fixed direct-read
 authorization, fixed owner lookup adapters, fixed curated-write authorization,
 the disposal coordinator with write-time open-state enforcement,
-idempotency/reconciliation, pre-persistence PII projection or raw-result
-suppression before any agent-visible message, fixed metadata-helper
+idempotency/reconciliation, a project-scoped pre-persistence PII projection or
+dedicated triage-safe reads before any agent-visible message, fixed metadata-helper
 authorization, path validators, and write-status plus Knowledge/picklist adapter
 contracts with fail-closed tests; then reveal the curated v1 tool surface. Keep
 generic CRUD and arbitrary
@@ -553,9 +565,11 @@ the coordinator's server-owned internal-comment subrequest. The coordinator
 accepts only the case ID, selected `Reason`, comment text, taxonomy version, and
 idempotency key. The hosted adapter constructs the Salesforce comment body with
 `IsPublished: false`; callers cannot override or supply that field. It also
-performs a fixed `Case` Update authorization check, fixed `CaseComment` Create
-authorization check, and record-type-scoped `Reason` validation before the atomic
-write. If those checks are not available, the coordinator stays out of v1.
+performs fixed `Case` Read and Update authorization checks, a fixed
+`CaseComment` Create authorization check, and record-type-scoped `Reason`
+validation before the atomic write. `Case` Read is mandatory because the
+coordinator must validate the target record type and open state; Update does not
+imply Read. If those checks are not available, the coordinator stays out of v1.
 Retained curated write tools also need fixed checks for their concrete operation
 (`Case` Create/Update, `Lead` Create). Do not infer those writes from
 `dataAccess.objects` or from a Read grant while the per-CRUD arrays are not
@@ -574,20 +588,27 @@ separate pre-write read is not sufficient by itself. The earlier `list_cases`
 `IsClosed = false` predicate is only selection-time evidence; if a human or
 automation closes the Case before or during disposal, the adapter must abort
 before writing either `Reason` or the internal comment. The atomic path still
-needs a stable request identity for the logical disposal, or read-after-timeout
-reconciliation, because Salesforce can commit the atomic request and lose the
-response before the client observes success. Any retry after an ambiguous
-committed timeout must find the already-created internal comment for the same case
-ID, taxonomy version, selected reason, and comment content instead of creating
-another `CaseComment`.
+needs a stable request identity for the logical disposal because Salesforce can
+commit the atomic request and lose the response before the client observes
+success. The coordinator must bind that identity to the supplied idempotency key,
+not derive it only from business fields. It must reserve a durable hosted ledger
+entry keyed by project, integration credential, case ID, and supplied idempotency
+key before submitting the transaction. The atomic comment subrequest must also
+include a server-generated, non-reversible marker bound to that ledger entry so
+an ambiguous timeout can be reconciled against the committed comment. The raw
+caller key must not be written to Salesforce. Reusing the same key resumes or
+returns the same logical disposal; a different key never matches an earlier
+disposal even when the case ID, taxonomy version, Reason, and comment content are
+identical.
 
 Any reconciliation read must be a fixed hosted query, not `run_soql_query` or an
 agent-supplied `q`. It requires an explicit `CaseComment` Read grant in addition
-to `CaseComment` Create, must filter by the target `ParentId`, and must compare
-only the stable idempotency fields for the same logical disposal (taxonomy
-version, selected reason, and internal comment content or derived key). Without
-that fixed `CaseComment` Read grant, the timeout path must fail closed and report
-that operator reconciliation is required instead of retrying a second write.
+to `CaseComment` Create, must filter by the target `ParentId`, and must match the
+server-generated marker for the supplied idempotency key. Matching only taxonomy
+version, selected Reason, comment content, or another business-field-derived key
+is forbidden. Without that fixed `CaseComment` Read grant, the timeout path must
+fail closed and report that operator reconciliation is required instead of
+retrying a second write.
 
 Retained direct reads need the same concrete-operation treatment for Read:
 `get_case`, `get_contact`, and `get_account` stay in v1 only if the hosted
@@ -693,8 +714,10 @@ input-schema test, because the schema *is* the authorization boundary:
 `dispose_case_triage`'s schema must reject every body key except `caseId`,
 `Reason`, comment text, taxonomy version, and idempotency key, so `case-dispose`
 cannot write `Status`/`OwnerId`/etc. even when prompted to. The server must deny
-`dispose_case_triage` unless fixed `Case` Update authorization and fixed
-`CaseComment` Create authorization are present. It must also validate the selected
+`dispose_case_triage` unless fixed `Case` Read and Update authorization and fixed
+`CaseComment` Create authorization are present. The Case Read denial fixture must
+prove that Update alone cannot enter either direct validation or token-backed
+disposal. It must also validate the selected
 `Reason` against the target Case's actual record-type value set at the write
 boundary, either by re-reading the Case's `RecordTypeId` and applicable values or
 by requiring a server-issued preflight token bound to the case ID, record type,
@@ -723,8 +746,10 @@ check but before Salesforce accepts the atomic disposal and prove the disposal
 fails without writing either `Reason` or `CaseComment`, another must prove no
 `Reason`-first or `CaseComment`-first partial state is possible when either half
 would fail, and another must prove a retry after a committed atomic response
-timeout uses stable request identity or read-after-timeout reconciliation without
-creating a duplicate `CaseComment`.
+timeout uses the supplied idempotency key and read-after-timeout reconciliation
+without creating a duplicate `CaseComment`. A paired fixture must submit two
+otherwise identical disposals with distinct idempotency keys and prove the second
+request cannot match the first request's ledger entry or comment marker.
 Every implementation branch must prove its write-time version or open-state
 condition, transactional lock, or equivalent atomic guard rejects the same
 stale-closure races. The timeout reconciliation path must converge without
@@ -779,10 +804,11 @@ and must reject queue Group IDs. Lead and Opportunity owner write acceptance
 criteria stay unmet in v1 unless the implementation adds scoped owner-write
 helpers with fixed `Lead` Update and `Opportunity` Update authorization.
 
-The PII gate needs fixture coverage too: raw `Subject`, `Description`,
-`CommentBody`, `SuppliedEmail`, `SuppliedPhone`, and a representative custom
-field containing email, phone, and customer identifiers must not appear from
-`get_case`, `list_cases`, or `list_case_activity` in persisted tool results,
+The PII gate needs fixture coverage too: when the Case Triage project-scoped
+result policy is enabled, raw `Subject`, `Description`, `CommentBody`,
+`SuppliedEmail`, `SuppliedPhone`, and a representative custom field containing
+email, phone, and customer identifiers must not appear from `get_case`,
+`list_cases`, or `list_case_activity` in persisted tool results,
 stored run memory, streaming tool-result history, child-run payloads, errors,
 logs, or telemetry; the corresponding bounded `sanitizedSubject`,
 `sanitizedDescription`, and `sanitizedComments` values must remain available to
@@ -790,7 +816,9 @@ logs, or telemetry; the corresponding bounded `sanitizedSubject`,
 record-type-scoped picklist validation. Unknown fields, over-limit text, and
 redactor or post-redaction validation failures must prevent persistence of raw
 tool output, prevent raw tool output from reaching the ingest model, and prevent
-the child run. Add a non-default Case record-type fixture that proves
+the child run. A compatibility fixture must invoke the same shared tool IDs
+without the template policy and prove their existing result shapes are unchanged.
+Add a non-default Case record-type fixture that proves
 `dispose_case_triage` validates against the Case's actual `RecordTypeId` at the
 write boundary and does not use the connected profile default. A companion
 fixture can prove `case-dispose` calls `get_picklist_values_for_record_type` for
@@ -1193,7 +1221,9 @@ max-rows cap, and customer mapping.
    `dataAccess.objects` or from any Read grant. V1 may ship `dispose_case_triage`
    and retained curated writes only if the server checks the concrete
    object/operation pair fail-closed before execution; otherwise those write tools
-   stay gated until the per-CRUD matrix is enforced. Any standalone
+   stay gated until the per-CRUD matrix is enforced. `dispose_case_triage` also
+   requires fixed `Case` Read for record-type and open-state validation; a Case
+   Update grant alone is insufficient. Any standalone
    `update_case_reason` reveal must also prove the record-type-scoped `Reason`
    preflight is bound to the write through a server-side validation or a
    server-issued preflight token.
@@ -1282,14 +1312,16 @@ is satisfied. Additional non-CRUD tools complete the future surface:
   version, and idempotency key, then performs one hosted disposal operation:
   read or verify the target Case's actual `RecordTypeId`, validate `Reason`
   against that record-type value set or a server-issued preflight token bound to
-  the same case/record type/reason/taxonomy version, check `Case` Update and
-  `CaseComment` Create grants, enforce the write-time open-state guard, and submit
+  the same case/record type/reason/taxonomy version, check `Case` Read and Update
+  plus `CaseComment` Create grants, enforce the write-time open-state guard, and submit
   the Reason update plus internal CaseComment through Salesforce Composite
   `allOrNone: true` or an explicitly named equivalent single atomic transaction.
   The Salesforce comment body always sets `IsPublished: false`; callers cannot
   supply or override it. A successful update returns an explicit
-  `{ success: true, caseId, commentId? }` shape, and ambiguous committed timeouts
-  reconcile through the fixed CaseComment read path described in §6. Standalone
+  `{ success: true, caseId, commentId? }` shape. The supplied idempotency key is
+  bound to the durable hosted ledger and non-reversible comment marker described
+  in §6; ambiguous committed timeouts reconcile only through that exact identity
+  and the fixed CaseComment read path. Standalone
   `update_case_reason` and `add_internal_case_comment` must not be granted to
   `case-dispose`; if they are surfaced elsewhere, they inherit the same
   authorization, preflight-token, and write-result requirements.
