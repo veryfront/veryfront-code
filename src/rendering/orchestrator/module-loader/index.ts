@@ -408,6 +408,32 @@ function missingModuleTarget(message: string): string {
   return match?.[1] ?? match?.[2] ?? "";
 }
 
+function normalizeMissingModuleTarget(message: string): string {
+  const target = missingModuleTarget(message).replace(/[?#].*$/, "");
+  if (target.startsWith("file://")) {
+    try {
+      return decodeURIComponent(new URL(target).pathname);
+    } catch {
+      return target.replace(/^file:\/+/, "/");
+    }
+  }
+  return target;
+}
+
+function normalizeUnresolvedSpecifier(specifier: string): string {
+  return specifier
+    .replace(/[?#].*$/, "")
+    .replace(/^@\//, "")
+    .replace(/^(\.\/|\.\.\/)+/, "")
+    .replace(/^\/+/, "");
+}
+
+function missingTargetMatchesSpecifier(target: string, specifier: string): boolean {
+  const normalizedSpecifier = normalizeUnresolvedSpecifier(specifier);
+  if (!normalizedSpecifier) return false;
+  return target === normalizedSpecifier || target.endsWith(`/${normalizedSpecifier}`);
+}
+
 export function isUnresolvedTenantImport(
   error: unknown,
   unresolvedSpecifiers: ReadonlySet<string>,
@@ -432,7 +458,10 @@ export function isUnresolvedTenantImport(
   if (rebuiltArtifactPath && missingModuleTarget(message).includes(rebuiltArtifactPath)) {
     return false;
   }
-  return true;
+  const missingTarget = normalizeMissingModuleTarget(message);
+  return [...unresolvedSpecifiers].some((specifier) =>
+    missingTargetMatchesSpecifier(missingTarget, specifier)
+  );
 }
 
 /**

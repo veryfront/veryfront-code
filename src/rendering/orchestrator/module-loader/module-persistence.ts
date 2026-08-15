@@ -228,10 +228,17 @@ export async function persistTransformedModule(
   // durable. A new worker can otherwise reuse the transformed artifact from
   // _index.json without knowing which authored imports remained unresolved.
   if (unresolvedSpecifiers.length > 0) {
-    await input.localAdapter.fs.writeFile(
-      `${tempFilePath}${UNRESOLVED_IMPORTS_SIDECAR_SUFFIX}`,
-      serializedUnresolvedSpecifiers,
-    );
+    try {
+      await input.localAdapter.fs.writeFile(
+        `${tempFilePath}${UNRESOLVED_IMPORTS_SIDECAR_SUFFIX}`,
+        serializedUnresolvedSpecifiers,
+      );
+    } catch (error) {
+      logger.warn("Failed to persist unresolved-import evidence", {
+        filePath: input.filePath.slice(-40),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   if (input.contentSourceId) {

@@ -13,9 +13,10 @@ import {
   findStaticSideEffectImportSpans,
   replaceSourceSpans,
   type SourceSpanReplacement,
+  type StaticImportSpan,
 } from "../utils/source-spans.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
-import { splitSpecifierSuffix } from "../../../shared/specifier-suffix.ts";
+import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 import type { Logger } from "#veryfront/utils";
 import { parallelMap } from "#veryfront/utils/parallel.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
@@ -38,6 +39,23 @@ type NestedImportSpan = {
   isDynamic?: boolean;
   isSideEffect?: boolean;
 };
+
+const MALFORMED_IMPORT_SPECIFIER = "<malformed import specifier>";
+
+function isMalformedSpecifierSyntaxError(error: unknown): boolean {
+  return error instanceof SyntaxError && error.message.includes("module specifier");
+}
+
+function scanImportSpans(
+  scan: () => StaticImportSpan[],
+): { spans: StaticImportSpan[]; malformed: boolean } {
+  try {
+    return { spans: scan(), malformed: false };
+  } catch (error) {
+    if (!isMalformedSpecifierSyntaxError(error)) throw error;
+    return { spans: [], malformed: true };
+  }
+}
 
 /**
  * Serialize a resolved module URL as a JavaScript string literal.
@@ -63,13 +81,51 @@ export function findNestedImports(
 } {
   const vfModules: NestedImportSpan[] = [];
   const relative: NestedImportSpan[] = [];
-
-  for (
-    const { original, path: rawPath, start, end } of findStaticImportFromSpans(
+  const staticVfModuleSpans = scanImportSpans(() =>
+    findStaticImportFromSpans(
       moduleCode,
       matchUnresolvedVfModuleSpecifier,
       MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
     )
+  ).spans;
+  const dynamicVfModuleSpans = scanImportSpans(() =>
+    findDynamicImportSpans(
+      moduleCode,
+      matchUnresolvedVfModuleSpecifier,
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+    )
+  ).spans;
+  const sideEffectVfModuleSpans = scanImportSpans(() =>
+    findStaticSideEffectImportSpans(
+      moduleCode,
+      matchUnresolvedVfModuleSpecifier,
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+    )
+  ).spans;
+  const staticRelativeSpans = scanImportSpans(() =>
+    findStaticImportFromSpans(
+      moduleCode,
+      (specifier) => specifier.match(/^(\.\.?\/.+)$/)?.[1],
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+    )
+  ).spans;
+  const dynamicRelativeSpans = scanImportSpans(() =>
+    findDynamicImportSpans(
+      moduleCode,
+      (specifier) => specifier.match(/^(\.\.?\/.+)$/)?.[1],
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+    )
+  ).spans;
+  const sideEffectRelativeSpans = scanImportSpans(() =>
+    findStaticSideEffectImportSpans(
+      moduleCode,
+      (specifier) => specifier.match(/^(\.\.?\/.+)$/)?.[1],
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+    )
+  ).spans;
+
+  for (
+    const { original, path: rawPath, start, end } of staticVfModuleSpans
   ) {
     const { path, suffix } = splitSpecifierSuffix(rawPath.replace(/^(?:file:\/\/)?\/+/, ""));
     // Strip file:// prefix and leading slashes to get clean _vf_modules/... path
@@ -83,11 +139,7 @@ export function findNestedImports(
   }
 
   for (
-    const { original, path: rawPath, start, end } of findDynamicImportSpans(
-      moduleCode,
-      matchUnresolvedVfModuleSpecifier,
-      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
-    )
+    const { original, path: rawPath, start, end } of dynamicVfModuleSpans
   ) {
     const { path, suffix } = splitSpecifierSuffix(rawPath.replace(/^(?:file:\/\/)?\/+/, ""));
     // Strip file:// prefix and leading slashes to get clean _vf_modules/... path
@@ -102,11 +154,7 @@ export function findNestedImports(
   }
 
   for (
-    const { original, path: rawPath, start, end } of findStaticSideEffectImportSpans(
-      moduleCode,
-      matchUnresolvedVfModuleSpecifier,
-      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
-    )
+    const { original, path: rawPath, start, end } of sideEffectVfModuleSpans
   ) {
     const { path, suffix } = splitSpecifierSuffix(rawPath.replace(/^(?:file:\/\/)?\/+/, ""));
     // Strip file:// prefix and leading slashes to get clean _vf_modules/... path
@@ -121,11 +169,7 @@ export function findNestedImports(
   }
 
   for (
-    const { original, path: rawPath, start, end } of findStaticImportFromSpans(
-      moduleCode,
-      (specifier) => specifier.match(/^(\.\.?\/.+)$/)?.[1],
-      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
-    )
+    const { original, path: rawPath, start, end } of staticRelativeSpans
   ) {
     const { path, suffix } = splitSpecifierSuffix(rawPath);
     relative.push({
@@ -138,11 +182,7 @@ export function findNestedImports(
   }
 
   for (
-    const { original, path: rawPath, start, end } of findDynamicImportSpans(
-      moduleCode,
-      (specifier) => specifier.match(/^(\.\.?\/.+)$/)?.[1],
-      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
-    )
+    const { original, path: rawPath, start, end } of dynamicRelativeSpans
   ) {
     const { path, suffix } = splitSpecifierSuffix(rawPath);
     relative.push({
@@ -156,11 +196,7 @@ export function findNestedImports(
   }
 
   for (
-    const { original, path: rawPath, start, end } of findStaticSideEffectImportSpans(
-      moduleCode,
-      (specifier) => specifier.match(/^(\.\.?\/.+)$/)?.[1],
-      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
-    )
+    const { original, path: rawPath, start, end } of sideEffectRelativeSpans
   ) {
     const { path, suffix } = splitSpecifierSuffix(rawPath);
     relative.push({
@@ -180,26 +216,40 @@ export function findNestedImports(
  * Check for unresolved /_vf_modules/ imports.
  */
 export function hasUnresolvedImports(moduleCode: string): { count: number; paths: string[] } {
+  const staticMatches = scanImportSpans(() =>
+    findStaticImportFromSpans(
+      moduleCode,
+      matchUnresolvedVfModuleSpecifier,
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+    )
+  );
+  const sideEffectMatches = scanImportSpans(() =>
+    findStaticSideEffectImportSpans(
+      moduleCode,
+      matchUnresolvedVfModuleSpecifier,
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+    )
+  );
+  const dynamicMatches = scanImportSpans(() =>
+    findDynamicImportSpans(
+      moduleCode,
+      matchUnresolvedVfModuleSpecifier,
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+    )
+  );
   const matches = [
-    ...findStaticImportFromSpans(
-      moduleCode,
-      matchUnresolvedVfModuleSpecifier,
-      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
-    ),
-    ...findStaticSideEffectImportSpans(
-      moduleCode,
-      matchUnresolvedVfModuleSpecifier,
-      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
-    ),
-    ...findDynamicImportSpans(
-      moduleCode,
-      matchUnresolvedVfModuleSpecifier,
-      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
-    ),
+    ...staticMatches.spans,
+    ...sideEffectMatches.spans,
+    ...dynamicMatches.spans,
   ];
+  const malformedCount = [staticMatches, sideEffectMatches, dynamicMatches]
+    .filter((result) => result.malformed).length;
   return {
-    count: matches.length,
-    paths: matches.map((match) => match.path).slice(0, 5),
+    count: matches.length + malformedCount,
+    paths: [
+      ...matches.map((match) => match.path),
+      ...Array.from({ length: malformedCount }, () => MALFORMED_IMPORT_SPECIFIER),
+    ].slice(0, 5),
   };
 }
 

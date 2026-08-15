@@ -64,6 +64,18 @@ import { bar } from "./local.js";
         "_vf_modules/polyfills/runtime.js",
       ]);
     });
+
+    it("does not abort on malformed escaped import specifiers", () => {
+      const code = [
+        `import bad from "./bad\\xZZ";`,
+        `import good from "/_vf_modules/components/Good.js";`,
+      ].join("\n");
+
+      const result = findNestedImports(code);
+
+      assertEquals(result.vfModules.map((module) => module.path), []);
+      assertEquals(result.relative.map((module) => module.path), []);
+    });
   });
 
   describe("hasUnresolvedImports", () => {
@@ -140,6 +152,20 @@ import { bar } from "./local.js";
       const result = hasUnresolvedImports(code);
       assertEquals(result.count, 0);
       assertEquals(result.paths, []);
+    });
+
+    it("treats malformed escaped import specifiers as unresolved evidence", () => {
+      const result = hasUnresolvedImports(`import bad from "/_vf_modules/bad\\xZZ";`);
+
+      assertEquals(result.count, 1);
+      assertEquals(result.paths, ["<malformed import specifier>"]);
+    });
+
+    it("treats raw line terminators in import specifiers as unresolved evidence", () => {
+      const result = hasUnresolvedImports('import bad from "/_vf_modules/bad\nmodule.js";');
+
+      assertEquals(result.count, 1);
+      assertEquals(result.paths, ["<malformed import specifier>"]);
     });
   });
 

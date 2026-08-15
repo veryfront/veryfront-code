@@ -653,6 +653,18 @@ describe("module-loader/isUnresolvedTenantImport", () => {
     assertEquals(isUnresolvedTenantImport(missing(), new Set(["./missing"])), true);
   });
 
+  it("does not classify an unrelated missing target alongside a dropped specifier", () => {
+    const unrelated = Object.assign(
+      new TypeError(
+        'Module not found "file:///tmp/out/veryfront-modules/proj-a/app/cycle-alias".\n' +
+          `    at file://${REBUILT}:1:23`,
+      ),
+      { code: "ERR_MODULE_NOT_FOUND" },
+    );
+
+    assertEquals(isUnresolvedTenantImport(unrelated, new Set(["./missing"]), REBUILT), false);
+  });
+
   // The cycle-breaking branch leaves a resolved target's specifier as authored
   // and relies on an alias the code itself marks as not runtime-verified. That
   // target resolved, so it is never recorded as dropped — and a framework path
@@ -687,9 +699,7 @@ describe("module-loader/isUnresolvedTenantImport", () => {
     );
 
     assertEquals(isUnresolvedTenantImport(evicted, new Set(["./missing"]), REBUILT), false);
-    // Without the artifact path the predicate cannot tell the two apart, which
-    // is why the call site passes it.
-    assertEquals(isUnresolvedTenantImport(evicted, new Set(["./missing"])), true);
+    assertEquals(isUnresolvedTenantImport(evicted, new Set(["./missing"])), false);
   });
 
   // The regression this pins: the importer line also names the rebuilt

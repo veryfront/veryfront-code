@@ -5,7 +5,10 @@ import { basename, dirname, join } from "#veryfront/compat/path/index.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { getModulePathCache } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
-import { buildMdxEsmPathCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import {
+  buildMdxEsmPathCacheKey,
+  UNRESOLVED_IMPORTS_SIDECAR_SUFFIX,
+} from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import {
   persistTransformedModule,
   readPersistedUnresolvedSpecifiers,
@@ -286,6 +289,47 @@ describe("module-loader/module-persistence", () => {
 
       assertEquals(rejected, true);
       assertEquals(writeCalls, 1);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("does not fail persistence when unresolved-import evidence cannot be written", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const filePath = join(projectDir, "lib/evidence.ts");
+    const moduleCache = new Map<string, string>();
+    const transformedCode = "export const evidence = true;";
+
+    const stubFs = Object.create(localAdapter.fs) as typeof localAdapter.fs;
+    stubFs.writeFile = (path: string, content: string) => {
+      if (path.endsWith(UNRESOLVED_IMPORTS_SIDECAR_SUFFIX)) {
+        return Promise.reject(new Error("ENOSPC: no space left on device"));
+      }
+      return localAdapter.fs.writeFile(path, content);
+    };
+    const stubAdapter = Object.create(localAdapter) as typeof localAdapter;
+    Object.defineProperty(stubAdapter, "fs", { value: stubFs });
+
+    try {
+      await Deno.mkdir(dirname(filePath), { recursive: true });
+
+      const result = await persistTransformedModule({
+        filePath,
+        projectDir,
+        tmpDir,
+        transformedCode,
+        localAdapter: stubAdapter,
+        moduleCache,
+        cacheKey: "evidence",
+        unresolvedSpecifiers: ["./missing"],
+      });
+
+      assertEquals(await Deno.readTextFile(result), transformedCode);
+      assertEquals(moduleCache.get("evidence"), result);
+      assertEquals(await readPersistedUnresolvedSpecifiers(result, stubAdapter), []);
     } finally {
       await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
       await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
