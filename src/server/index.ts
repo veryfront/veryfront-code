@@ -23,6 +23,7 @@
 
 import {
   DevServer,
+  type DevServerHandler,
   type DevServerOptions,
   type FileWatcherMetrics,
   type RouteDirectory,
@@ -55,7 +56,7 @@ import { type NodeUpgradeEventSource, NodeUpgradeLifecycle } from "./node-upgrad
 /** Default server port when no port is specified */
 const DEFAULT_SERVER_PORT = 3_000;
 
-export { DevServer, startDevServer, startProductionServer };
+export { DevServer, type DevServerHandler, startDevServer, startProductionServer };
 export {
   gracefullyShutdownProductionServer,
   type GracefulProductionShutdownOptions,

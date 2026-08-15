@@ -6,7 +6,12 @@
 
 export { DevServer } from "./server.ts";
 export { OptimizedFileWatcher } from "./file-watcher.ts";
-export type { DevServerOptions, FileWatcherMetrics, RouteDirectory } from "./types.ts";
+export type {
+  DevServerHandler,
+  DevServerOptions,
+  FileWatcherMetrics,
+  RouteDirectory,
+} from "./types.ts";
 
 import type { DevServerOptions } from "./types.ts";
 import type { DevServer } from "./server.ts";

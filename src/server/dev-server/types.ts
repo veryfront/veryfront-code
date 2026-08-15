@@ -1,3 +1,6 @@
+/** Public handler returned by a handler-only dev server. */
+export type DevServerHandler = (request: Request, nativeContext?: unknown) => Promise<Response>;
+
 /** Options accepted by dev server. */
 export interface DevServerOptions {
   port: number;

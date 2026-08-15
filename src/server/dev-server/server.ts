@@ -13,7 +13,7 @@ import { bootstrapDev } from "../bootstrap.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
 import { broadcastUpdate } from "../handlers/preview/hmr-message-router.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
-import type { DevServerOptions } from "./types.ts";
+import type { DevServerHandler, DevServerOptions } from "./types.ts";
 import { RequestHandler } from "./request-handler.ts";
 import { setupMiddleware } from "./middleware.ts";
 import { RouteDiscovery } from "./route-discovery.ts";
@@ -81,7 +81,7 @@ export class DevServer {
   private appConfig: VeryfrontConfig | undefined;
   private _nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
   private requestHandler?: RequestHandler;
-  private _handler?: (req: Request, nativeContext?: unknown) => Promise<Response>;
+  private _handler?: DevServerHandler;
   readonly ready: Promise<void>;
   private _resolveReady!: () => void;
   private _isReady = false;
@@ -325,7 +325,7 @@ export class DevServer {
    * Pass the native Deno, Node, or Bun request context as the second argument
    * so local-control routes can verify the transport peer.
    */
-  get handler(): (req: Request, nativeContext?: unknown) => Promise<Response> {
+  get handler(): DevServerHandler {
     if (!this._handler) {
       throw INITIALIZATION_ERROR.create({ detail: "DevServer not started. Call start() first." });
     }

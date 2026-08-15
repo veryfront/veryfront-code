@@ -1,5 +1,6 @@
 export {
   DevServer,
+  type DevServerHandler,
   type DevServerOptions,
   type FileWatcherMetrics,
   OptimizedFileWatcher,
