@@ -536,7 +536,9 @@ it("policy redacts backslash-escaped ordinary SQL strings conservatively", () =>
   );
 
   const value = event.exception?.values?.[0]?.value ?? "";
-  assertEquals(value, 'Failed query: select ? from "orders"');
+  // The trailing `from "orders"` goes too: an odd backslash run makes the literal's extent
+  // ambiguous, so the remainder is redacted rather than parsed under a guessed server setting.
+  assertEquals(value, "Failed query: select ?");
   assertEquals(value.includes("private@example.test"), false);
 });
 
@@ -597,6 +599,42 @@ it("policy redacts unterminated unrecognized dollar-quoted SQL literal tags", ()
     event.exception?.values?.[0]?.value,
     "Failed query: select ?",
   );
+});
+
+it("policy redacts the remainder when a backslash makes a string literal's extent ambiguous", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value: String.raw`Failed query: select 'safe\' customer@example.test' from "orders"`,
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  const value = event.exception?.values?.[0]?.value ?? "";
+  assertEquals(value, "Failed query: select ?");
+  assertEquals(value.includes("customer@example.test"), false);
+});
+
+it("policy keeps parsing when an even backslash run leaves the literal unambiguous", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value: String.raw`Failed query: select 'public\\' 'customer@example.test' from "orders"`,
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  const value = event.exception?.values?.[0]?.value ?? "";
+  assertEquals(value, 'Failed query: select ? ? from "orders"');
+  assertEquals(value.includes("customer@example.test"), false);
 });
 
 it("policy redacts dollar-quoted literals whose tag is longer than an identifier limit", () => {

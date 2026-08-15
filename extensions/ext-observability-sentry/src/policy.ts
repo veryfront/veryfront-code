@@ -241,10 +241,11 @@ function redactSqlLiteralsForTitle(query: string): string {
     }
 
     if (character === "'") {
-      // The event does not carry the server's `standard_conforming_strings`
-      // setting. Treat backslash escapes conservatively so a quote accepted as
-      // escaped by PostgreSQL cannot expose the rest of a sensitive literal.
-      index = findQuotedSqlTokenEnd(query, index, "'", { allowBackslashEscapes: true }).end;
+      // The event does not carry the server's `standard_conforming_strings` setting, and neither
+      // reading of a backslash is safe on its own: escaping exposes the next literal when the
+      // setting is on, not escaping exposes this one when it is off. Bail out on the ambiguous
+      // case instead of picking a side.
+      index = findQuotedSqlTokenEnd(query, index, "'", { bailOnAmbiguousBackslash: true }).end;
       redacted += "?";
       continue;
     }
@@ -333,7 +334,7 @@ function findQuotedSqlTokenEnd(
   query: string,
   start: number,
   quote: string,
-  options: { allowBackslashEscapes?: boolean } = {},
+  options: { allowBackslashEscapes?: boolean; bailOnAmbiguousBackslash?: boolean } = {},
 ): { end: number; terminated: boolean } {
   let index = start + 1;
   while (index < query.length) {
@@ -349,9 +350,21 @@ function findQuotedSqlTokenEnd(
       index += 2;
       continue;
     }
+    // An ordinary literal means different things on different servers: under
+    // `standard_conforming_strings = off` a backslash escapes the quote that follows it, so an odd
+    // run of backslashes here leaves the literal's extent genuinely ambiguous — the same bytes are
+    // one literal on one server and two on another. Guessing either way emits the other reading's
+    // contents verbatim, so stop and let the caller redact the remainder.
+    if (options.bailOnAmbiguousBackslash && hasOddTrailingBackslashRun(query, index)) break;
     return { end: index + 1, terminated: true };
   }
   return { end: query.length, terminated: false };
+}
+
+function hasOddTrailingBackslashRun(query: string, index: number): boolean {
+  let backslashes = 0;
+  while (index - backslashes - 1 >= 0 && query[index - backslashes - 1] === "\\") backslashes += 1;
+  return backslashes % 2 === 1;
 }
 
 export function redactSensitiveText(value: string): string {
