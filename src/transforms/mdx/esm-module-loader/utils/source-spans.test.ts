@@ -515,6 +515,13 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("finds imports inside raw JSX attribute expressions", () => {
+      assertEquals(
+        specifiers('<Comp loader={import("./attribute-lazy.ts")} />'),
+        ["./attribute-lazy.ts"],
+      );
+    });
+
     it("treats of as an identifier in a classic for-loop initializer", () => {
       assertEquals(
         vfModuleSpecifiers(

@@ -35,6 +35,11 @@ interface OpenBraceContext {
   isDeclarationBlock: boolean;
 }
 
+interface RawJsxTagSkip {
+  end: number;
+  expressionRanges: Array<{ start: number; end: number }>;
+}
+
 const MAX_TEMPLATE_LITERAL_DEPTH = 512;
 const StringFromCodePoint = String.fromCodePoint;
 const IDENTIFIER_START_PATTERN = /^[$_\p{ID_Start}]$/u;
@@ -903,17 +908,18 @@ function canStartRawJsxOpeningTag(source: string, index: number): boolean {
   return ["case", "default", "return", "throw", "yield"].includes(keyword ?? "");
 }
 
-function skipRawJsxTag(source: string, index: number): number {
-  if (source[index] !== "<") return index;
+function readRawJsxTag(source: string, index: number): RawJsxTagSkip | null {
+  if (source[index] !== "<") return null;
 
   const isClosingTag = source[index + 1] === "/";
-  if (!isClosingTag && !canStartRawJsxOpeningTag(source, index)) return index;
+  if (!isClosingTag && !canStartRawJsxOpeningTag(source, index)) return null;
 
   const nameStart = isClosingTag ? index + 2 : index + 1;
-  if (source[nameStart] !== ">" && !isIdentifierStartAt(source, nameStart)) return index;
+  if (source[nameStart] !== ">" && !isIdentifierStartAt(source, nameStart)) return null;
 
   let cursor = nameStart;
   let quote: string | null = null;
+  const expressionRanges: RawJsxTagSkip["expressionRanges"] = [];
   while (cursor < source.length) {
     const char = source[cursor];
 
@@ -935,17 +941,22 @@ function skipRawJsxTag(source: string, index: number): number {
 
     if (char === "{") {
       const expressionEnd = findTemplateExpressionEnd(source, cursor + 1);
-      if (expressionEnd === null) return index;
+      if (expressionEnd === null) return null;
+      expressionRanges.push({ start: cursor + 1, end: expressionEnd });
       cursor = expressionEnd + 1;
       continue;
     }
 
-    if (char === ">") return cursor + 1;
+    if (char === ">") return { end: cursor + 1, expressionRanges };
 
     cursor++;
   }
 
-  return index;
+  return null;
+}
+
+function skipRawJsxTag(source: string, index: number): number {
+  return readRawJsxTag(source, index)?.end ?? index;
 }
 
 function skipExpressionIgnored(
@@ -1361,10 +1372,14 @@ function scanDynamicImportRange(
     const char = source[cursor];
     const next = source[cursor + 1];
 
-    const jsxTagEnd = skipRawJsxTag(source, cursor);
-    if (jsxTagEnd !== cursor) {
-      previousTokenIndex = jsxTagEnd - 1;
-      cursor = jsxTagEnd;
+    const jsxTag = readRawJsxTag(source, cursor);
+    if (jsxTag !== null) {
+      for (const range of jsxTag.expressionRanges) {
+        scanDynamicImportRange(source, range.start, range.end, matcher, maxMatches, spans);
+        if (spans.length >= maxMatches) return;
+      }
+      previousTokenIndex = jsxTag.end - 1;
+      cursor = jsxTag.end;
       continue;
     }
 
