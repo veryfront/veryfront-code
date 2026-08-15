@@ -264,7 +264,7 @@ export async function initCommand(
       const { chdir } = await import("veryfront/platform");
       const { ensureAuthenticated, readToken } = await import("../../auth/index.ts");
       const { deployCommand } = await import("../deploy/index.ts");
-      const authResult = await ensureAuthenticated();
+      const authResult = await ensureAuthenticated(undefined, createdProjectDir);
 
       if (!authResult) {
         if (!quiet) console.log();

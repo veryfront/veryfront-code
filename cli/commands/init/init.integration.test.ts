@@ -750,6 +750,72 @@ describe("init command integration", () => {
     });
   });
 
+  describe("--deploy authentication", () => {
+    it("does not treat a parent config credential as the new project's stored session", async () => {
+      const parentDir = await makeTempDir({ prefix: "veryfront-init-auth-parent-" });
+      const name = `deploy-auth-${randomSuffix()}`;
+      const projectDir = join(parentDir, name);
+      const server = Deno.serve(
+        { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+        () => {
+          requests++;
+          return Response.json({ id: "user-1", email: "dev@example.test" });
+        },
+      );
+      const baseUrl = `http://127.0.0.1:${(server.addr as Deno.NetAddr).port}`;
+      let requests = 0;
+
+      try {
+        await Deno.writeTextFile(
+          join(parentDir, "veryfront.json"),
+          `${
+            JSON.stringify(
+              {
+                apiToken: "parent-config-token",
+                apiUrl: baseUrl,
+                projectSlug: "parent-project",
+              },
+              null,
+              2,
+            )
+          }\n`,
+        );
+
+        const result = await runInitCommand(
+          [
+            name,
+            "--template",
+            "minimal",
+            "--skip-install",
+            "--skip-env-prompt",
+            "--deploy",
+            "--no-color",
+          ],
+          {
+            cwd: parentDir,
+            env: {
+              VERYFRONT_API_TOKEN: "",
+              XDG_CONFIG_HOME: join(parentDir, "config"),
+              VERYFRONT_NO_UPDATE_CHECK: "1",
+              CI: "1",
+              NO_COLOR: "1",
+            },
+          },
+        );
+        const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+
+        assertEquals(result.code, 0);
+        assertEquals(requests, 0);
+        assertEquals(output.includes("Authentication required for --deploy."), true);
+        assertEquals(output.includes("Could not read auth token."), false);
+        assertEquals(await exists(join(projectDir, "app", "page.tsx")), true);
+      } finally {
+        await server.shutdown();
+        await remove(parentDir, { recursive: true }).catch(() => {});
+      }
+    });
+  });
+
   describe("output messages", () => {
     it("should show success message", async () => {
       const result = await runInitCommand([projectName, "-t", "minimal", "--skip-install"]);

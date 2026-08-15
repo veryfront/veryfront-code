@@ -805,10 +805,11 @@ export async function login(
 
 export async function ensureAuthenticated(
   env: EnvironmentConfig = getEnvironmentConfig(),
+  projectDir: string = cwd(),
 ): Promise<AuthIdentity | null> {
   const humanOutput = !isJsonMode();
 
-  const candidates = await resolveApiCredentialCandidatesForAuth(env);
+  const candidates = await resolveApiCredentialCandidatesForAuth(env, projectDir);
   for (const candidate of candidates) {
     const credential = await validateCredential(candidate.apiToken, candidate.validationEnv);
     if (credential) return credential;
