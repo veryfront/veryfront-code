@@ -114,10 +114,7 @@ it also contains `nextCursor`, call
 `nextCursor`. Then call `load_skill({ load: { skillId } })` with a listed ID.
 
 Direct local and project tool consumers use flat input forms. Call
-`load_skill({})` for the first authorized inventory page, then call
-`load_skill({ cursor: <CURSOR> })` when the previous response includes
-`nextCursor`. Call `load_skill({ skillId: "<SKILL_ID>" })` to load a skill.
-After loading it, call
+`load_skill({ skillId: "<SKILL_ID>" })` to load a skill. After loading it, call
 `load_skill_reference({ skillId: "<SKILL_ID>", reference: "<PATH>" })` to read
 a listed reference, resource, or asset.
 
