@@ -371,8 +371,8 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     });
   });
 
-  it("treats JSON-omitted TTL values as default 5m when normalizing mixed TTLs", () => {
-    for (const ttl of [() => "1h", Symbol("ttl")] as const) {
+  it("treats JSON-omitted cache TTL values as absent", () => {
+    for (const ttl of [() => "5m", Symbol("5m")]) {
       const body = buildAnthropicMessagesRequest(
         "claude-sonnet-4-6",
         "anthropic",
@@ -405,6 +405,104 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
         type: "ephemeral",
         ttl: "1h",
       });
+    }
+  });
+
+  it("ignores JSON-omitted cache controls in the breakpoint budget", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [
+          {
+            role: "system",
+            content: "Interactive system prompt",
+            providerOptions: {
+              anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+            },
+          },
+          { role: "user", content: [{ type: "text", text: "Hello" }] },
+        ],
+        providerOptions: {
+          anthropic: {
+            messages: [{
+              role: "user",
+              content: Array.from({ length: 4 }, (_, index) => ({
+                type: "text",
+                text: `Uncached ${index}`,
+                cache_control: index % 2 === 0 ? () => "ignored" : Symbol("ignored"),
+              })),
+            }],
+          },
+        },
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals((body.system as Array<Record<string, unknown>>)[0]?.cache_control, {
+      type: "ephemeral",
+      ttl: "1h",
+    });
+  });
+
+  it("rejects cache-affecting toJSON hooks without invoking them", () => {
+    for (
+      const placement of [
+        "request",
+        "messages",
+        "message",
+        "block",
+        "cache-control",
+      ] as const
+    ) {
+      let hookCalls = 0;
+      const toJSON = () => {
+        hookCalls += 1;
+        return undefined;
+      };
+      const cacheControl = placement === "cache-control"
+        ? { type: "ephemeral", toJSON }
+        : { type: "ephemeral" };
+      const block = {
+        type: "text",
+        text: "Cached",
+        cache_control: cacheControl,
+        ...(placement === "block" ? { toJSON } : {}),
+      };
+      const message = {
+        role: "user",
+        content: [block],
+        ...(placement === "message" ? { toJSON } : {}),
+      };
+      const messages = [message];
+      if (placement === "messages") {
+        Object.defineProperty(messages, "toJSON", {
+          enumerable: true,
+          value: toJSON,
+        });
+      }
+      const anthropic = {
+        messages,
+        ...(placement === "request" ? { toJSON } : {}),
+      };
+
+      assertThrows(
+        () =>
+          buildAnthropicMessagesRequest(
+            "claude-sonnet-4-6",
+            "anthropic",
+            {
+              prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+              providerOptions: { anthropic },
+            },
+            false,
+            createWarningCollector(),
+          ),
+        TypeError,
+        "Anthropic cache inputs must not define toJSON hooks",
+      );
+      assertEquals(hookCalls, 0);
     }
   });
 

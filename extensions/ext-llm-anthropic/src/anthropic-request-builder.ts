@@ -1236,9 +1236,44 @@ function applyAnthropicToolsCacheControl(
   );
 }
 
+function isOmittedJsonObjectPropertyValue(value: unknown): boolean {
+  return value === undefined || typeof value === "function" || typeof value === "symbol";
+}
+
+function assertNoAnthropicCacheJsonHook(value: object): void {
+  const visited = new Set<object>();
+  let candidate: object | null = value;
+  let depth = 0;
+  while (candidate !== null && !visited.has(candidate) && depth < 64) {
+    visited.add(candidate);
+    depth += 1;
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(candidate, "toJSON");
+    } catch {
+      throw new TypeError("Anthropic cache input toJSON hooks could not be inspected");
+    }
+    if (descriptor !== undefined) {
+      if (!Object.hasOwn(descriptor, "value") || typeof descriptor.value === "function") {
+        throw new TypeError("Anthropic cache inputs must not define toJSON hooks");
+      }
+      return;
+    }
+    try {
+      candidate = Object.getPrototypeOf(candidate);
+    } catch {
+      throw new TypeError("Anthropic cache input toJSON hooks could not be inspected");
+    }
+  }
+  if (candidate !== null) {
+    throw new TypeError("Anthropic cache input toJSON hooks could not be inspected");
+  }
+}
+
 const ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4;
 
 function hasEmittedAnthropicCacheBreakpoint(value: Record<string, unknown>): boolean {
+  assertNoAnthropicCacheJsonHook(value);
   let descriptor: PropertyDescriptor | undefined;
   try {
     descriptor = Object.getOwnPropertyDescriptor(value, "cache_control");
@@ -1253,10 +1288,11 @@ function hasEmittedAnthropicCacheBreakpoint(value: Record<string, unknown>): boo
       "Anthropic cache_control must be an own enumerable data property",
     );
   }
-  return descriptor.value !== undefined;
+  return !isOmittedJsonObjectPropertyValue(descriptor.value);
 }
 
 function readEmittedAnthropicMessageContent(message: AnthropicCompatibleMessage): unknown[] {
+  assertNoAnthropicCacheJsonHook(message);
   let descriptor: PropertyDescriptor | undefined;
   try {
     descriptor = Object.getOwnPropertyDescriptor(message, "content");
@@ -1271,7 +1307,11 @@ function readEmittedAnthropicMessageContent(message: AnthropicCompatibleMessage)
       "Anthropic message content must be an own enumerable data property",
     );
   }
-  return Array.isArray(descriptor.value) ? descriptor.value : [];
+  if (!Array.isArray(descriptor.value)) {
+    return [];
+  }
+  assertNoAnthropicCacheJsonHook(descriptor.value);
+  return descriptor.value;
 }
 
 function retainLatestAnthropicMessageCacheBreakpoints(
@@ -1364,6 +1404,7 @@ function readEmittedAnthropicCacheTtl(
   ) {
     return undefined;
   }
+  assertNoAnthropicCacheJsonHook(cacheControl);
 
   let keys: string[];
   try {
@@ -1378,20 +1419,22 @@ function readEmittedAnthropicCacheTtl(
         "Anthropic cache_control must contain only enumerable data properties",
       );
     }
-    if (property.value !== undefined && key !== "type" && key !== "ttl") {
+    if (!isOmittedJsonObjectPropertyValue(property.value) && key !== "type" && key !== "ttl") {
       return undefined;
     }
   }
   const type = readOwnEnumerableDataProperty(cacheControl, "type");
   const ttl = readOwnEnumerableDataProperty(cacheControl, "ttl");
-  if (!type?.present || type.value !== "ephemeral" || !ttl) {
+  if (
+    !type?.present || isOmittedJsonObjectPropertyValue(type.value) ||
+    type.value !== "ephemeral" || !ttl
+  ) {
     return undefined;
   }
   if (ttl.present && ttl.value === "1h") {
     return "1h";
   }
-  return !ttl.present || ttl.value === undefined || typeof ttl.value === "function" ||
-      typeof ttl.value === "symbol" || ttl.value === "5m"
+  return !ttl.present || isOmittedJsonObjectPropertyValue(ttl.value) || ttl.value === "5m"
     ? "5m"
     : undefined;
 }
@@ -1508,6 +1551,13 @@ function limitAnthropicCacheBreakpoints(
   tools: Array<Record<string, unknown>> | undefined;
   messages: AnthropicCompatibleMessage[];
 } {
+  assertNoAnthropicCacheJsonHook(messages);
+  if (Array.isArray(system)) {
+    assertNoAnthropicCacheJsonHook(system);
+  }
+  if (tools) {
+    assertNoAnthropicCacheJsonHook(tools);
+  }
   const boundedMessages = retainLatestAnthropicMessageCacheBreakpoints(
     messages,
     ANTHROPIC_MAX_CACHE_BREAKPOINTS,
@@ -1554,6 +1604,7 @@ function limitAnthropicCacheBreakpoints(
 function assertAnthropicCacheableRequestFields(
   body: Record<string, unknown>,
 ): asserts body is AnthropicCompatibleRequest {
+  assertNoAnthropicCacheJsonHook(body);
   if (!Array.isArray(body.messages)) {
     throw new TypeError("Anthropic messages must be an array");
   }
