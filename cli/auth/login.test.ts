@@ -519,6 +519,45 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("shares one preflight deadline across environment and stored credentials", async () => {
+      const originalFetch = globalThis.fetch;
+      const signals: AbortSignal[] = [];
+      await saveToken("stored-valid-token", testEnv);
+
+      try {
+        setNonInteractive(true);
+        const { __setExistingSessionTimeoutForTests } = await import("./login.ts");
+        __setExistingSessionTimeoutForTests(50);
+
+        globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            const signal = init?.signal;
+            if (!signal) {
+              return;
+            }
+            signals.push(signal);
+            const rejectAbort = () =>
+              reject(new DOMException("The signal has been aborted", "AbortError"));
+            if (signal.aborted) {
+              rejectAbort();
+            } else signal.addEventListener("abort", rejectAbort, { once: true });
+          })) as typeof fetch;
+
+        const { login } = await import("./login.ts");
+        const result = await login(undefined, { ...testEnv, apiToken: "env-token" });
+
+        assertEquals(result, null);
+        assertEquals(signals.length, 2);
+        assertEquals(signals[0], signals[1]);
+      } finally {
+        const { __setExistingSessionTimeoutForTests } = await import("./login.ts");
+        __setExistingSessionTimeoutForTests();
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
     it("still re-authenticates when a method is explicitly requested", async () => {
       // Switching accounts must stay possible: an explicit method is intent to
       // sign in again, so the existing session must not short-circuit it.

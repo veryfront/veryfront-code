@@ -33,6 +33,8 @@ export type AuthIdentity = UserInfo | ApiKeyIdentity;
 
 export interface CredentialValidationOptions {
   throwOnNetworkError?: boolean;
+  /** Reuse a caller-owned cancellation or deadline across validation attempts. */
+  signal?: AbortSignal;
   /**
    * Abort the request after this many milliseconds. Callers that must stay
    * responsive pass a deadline; omitting it keeps the previous unbounded
@@ -58,7 +60,7 @@ export function __setExistingSessionTimeoutForTests(ms?: number): void {
 }
 
 function requestSignal(options: CredentialValidationOptions): AbortSignal | undefined {
-  return options.timeoutMs ? AbortSignal.timeout(options.timeoutMs) : undefined;
+  return options.signal ?? (options.timeoutMs ? AbortSignal.timeout(options.timeoutMs) : undefined);
 }
 
 const AUTH_OPTIONS: { id: AuthMethod; label: string }[] = [
@@ -302,6 +304,8 @@ async function describeExistingSession(
   if (env.apiToken) candidates.push({ token: env.apiToken, source: "environment" });
   const storedToken = await readToken(env);
   if (storedToken) candidates.push({ token: storedToken, source: "stored" });
+  if (candidates.length === 0) return null;
+  const signal = AbortSignal.timeout(existingSessionTimeoutMs);
 
   for (const { token, source } of candidates) {
     let identity: AuthIdentity | null;
@@ -311,7 +315,7 @@ async function describeExistingSession(
       // answers would otherwise block sign-in entirely, so a stall falls
       // through to the normal flow rather than holding the command open.
       identity = await validateCredential(token, env, {
-        timeoutMs: existingSessionTimeoutMs,
+        signal,
       });
     } catch {
       continue;
