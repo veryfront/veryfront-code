@@ -43,6 +43,7 @@ export const DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER = "<!-- veryfront-runtime-cont
 
 const ENVIRONMENT_CONTEXT_BLOCK_NAME = "environment_context";
 const AVAILABLE_SKILLS_BLOCK_NAME = "available_skills";
+const AVAILABLE_SKILL_IDS_BLOCK_NAME = "available_skill_ids";
 
 /** Project the call runs against, rendered as the `<project_context>` block. */
 export type AgentCallProjectContext = {
@@ -127,11 +128,34 @@ function hasBlock(instructions: string, blockName: string): boolean {
   return instructions.indexOf(`</${blockName}>`, openIndex) > openIndex;
 }
 
+function removeCompleteBlocks(instructions: string, blockName: string): string {
+  const openTag = `<${blockName}>`;
+  const closeTag = `</${blockName}>`;
+  let result = instructions;
+  let openIndex = result.indexOf(openTag);
+
+  while (openIndex >= 0) {
+    const closeIndex = result.indexOf(closeTag, openIndex + openTag.length);
+    if (closeIndex < 0) {
+      break;
+    }
+    const before = result.slice(0, openIndex).trimEnd();
+    const after = result.slice(closeIndex + closeTag.length).trimStart();
+    result = before.length > 0 && after.length > 0 ? `${before}\n\n${after}` : `${before}${after}`;
+    openIndex = result.indexOf(openTag);
+  }
+
+  return result;
+}
+
 /** Builds the complete system-message set for one provider call. */
 export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSystemMessage[] {
   const runtimeContextMarker = input.runtimeContextMarker ?? DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER;
+  const sourceInstructions = input.skills === undefined
+    ? input.instructions
+    : removeCompleteBlocks(input.instructions, AVAILABLE_SKILL_IDS_BLOCK_NAME);
   const instructions = splitInstructionsAtMarker({
-    instructions: input.instructions,
+    instructions: sourceInstructions,
     runtimeContextMarker,
   });
 
@@ -155,7 +179,7 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
       continue;
     }
     const blockName = getBlockName(block);
-    if (blockName !== null && hasBlock(input.instructions, blockName)) {
+    if (blockName !== null && hasBlock(sourceInstructions, blockName)) {
       continue;
     }
     staticParts.push(block);
@@ -167,7 +191,7 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
 
   if (input.skills?.length) {
     staticParts.push(
-      hasBlock(input.instructions, AVAILABLE_SKILLS_BLOCK_NAME)
+      hasBlock(sourceInstructions, AVAILABLE_SKILLS_BLOCK_NAME)
         ? buildRuntimeAvailableSkillIdsPromptBlock(input.skills)
         : buildRuntimeAvailableSkillsPromptBlock(input.skills),
     );
@@ -183,7 +207,7 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
     },
   ];
 
-  if (input.environmentContext && !hasBlock(input.instructions, ENVIRONMENT_CONTEXT_BLOCK_NAME)) {
+  if (input.environmentContext && !hasBlock(sourceInstructions, ENVIRONMENT_CONTEXT_BLOCK_NAME)) {
     messages.push({
       role: "system",
       content: createRuntimePromptBlock({

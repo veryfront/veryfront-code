@@ -261,6 +261,30 @@ describe("agent/runtime/call-context", () => {
       assertEquals((message?.content ?? "").includes("Deployment guidance"), false);
     });
 
+    it("replaces an earlier generated skill-ID fallback during recomposition", () => {
+      const [first] = buildAgentCallContext({
+        instructions:
+          "Base\n\n<available_skills>\n- authored: An authored catalog\n</available_skills>",
+        skills: createSkills(),
+      });
+      const [second] = buildAgentCallContext({
+        instructions: first?.content ?? "",
+        skills: [{
+          id: "audit",
+          name: "Audit",
+          description: "Audit guidance",
+          instructions: "Audit the change",
+        }],
+      });
+
+      assertEquals((second?.content ?? "").match(/<available_skill_ids>/g)?.length, 1);
+      assertStringIncludes(
+        second?.content ?? "",
+        '<available_skill_ids>\nAuthoritative skill IDs: ["audit"]\n</available_skill_ids>',
+      );
+      assertEquals((second?.content ?? "").includes('Authoritative skill IDs: ["deploy"'), false);
+    });
+
     it("still emits the skills block when the instructions only name the tag in prose", () => {
       const [message] = buildAgentCallContext({
         instructions: "Your catalog arrives in an <available_skills> block.",

@@ -99,6 +99,35 @@ it("buildRuntimeAvailableSkillsPromptBlock keeps omitted skill IDs discoverable"
   assertEquals(block.includes("load_skill tool schema"), false);
 });
 
+it("keeps a complete short-ID inventory within the prompt budget", () => {
+  const skills = Array.from(
+    { length: 1_000 },
+    (_, index) => createSkill({ id: `skill-${index}` }),
+  );
+
+  const block = buildRuntimeAvailableSkillsPromptBlock(skills);
+
+  assertStringIncludes(block, '"skill-999"');
+});
+
+it("rejects an omitted skill-ID inventory that exceeds the prompt budget", () => {
+  const skills = Array.from(
+    { length: 1_000 },
+    (_, index) => createSkill({ id: `skill-${index}-${"x".repeat(240)}` }),
+  );
+
+  assertThrows(
+    () => buildRuntimeAvailableSkillsPromptBlock(skills),
+    RangeError,
+    "skill ID inventory exceeds",
+  );
+  assertThrows(
+    () => buildRuntimeAvailableSkillIdsPromptBlock(skills),
+    RangeError,
+    "skill ID inventory exceeds",
+  );
+});
+
 it("buildRuntimeAvailableSkillIdsPromptBlock encodes every authorized ID as data", () => {
   const skills = [
     createSkill({ id: "safe" }),

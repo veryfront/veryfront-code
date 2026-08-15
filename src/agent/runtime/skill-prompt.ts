@@ -11,6 +11,8 @@ import {
 /** Maximum value for runtime skill prompt entries. */
 export const MAX_RUNTIME_SKILL_PROMPT_ENTRIES = 30;
 const RUNTIME_SKILL_PROMPT_NAME_MAX_LENGTH = SKILL_ID_MAX_LENGTH;
+// Keep all typical short IDs discoverable while bounding worst-case escaped output.
+const RUNTIME_SKILL_PROMPT_ID_INVENTORY_MAX_CHARACTERS = 16_384;
 
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
@@ -234,6 +236,25 @@ function encodePromptJson(value: unknown): string {
   return escapePromptJson(encoded);
 }
 
+function appendEncodedRuntimeSkillId(
+  encodedSkillIds: string[],
+  skillId: unknown,
+  encodedCharacters: number,
+): number {
+  const encodedSkillId = encodePromptJson(
+    requireBoundedPromptString(skillId, "id", SKILL_ID_MAX_LENGTH),
+  );
+  const nextEncodedCharacters = encodedCharacters + encodedSkillId.length +
+    (encodedSkillIds.length > 0 ? 1 : 0);
+  if (nextEncodedCharacters > RUNTIME_SKILL_PROMPT_ID_INVENTORY_MAX_CHARACTERS) {
+    throw new NativeRangeError(
+      `Runtime skill ID inventory exceeds ${RUNTIME_SKILL_PROMPT_ID_INVENTORY_MAX_CHARACTERS} encoded characters`,
+    );
+  }
+  appendOwnArrayElement(encodedSkillIds, encodedSkillId);
+  return nextEncodedCharacters;
+}
+
 function requireRuntimeSkillModel(value: unknown): string {
   if (!isValidRuntimeSkillModel(value)) {
     throw new NativeTypeError(
@@ -363,8 +384,13 @@ export function buildStrictRuntimeAvailableSkillsPromptBlock(
   const skillsList = joinStrings(skillLines, "\n");
 
   const encodedOmittedSkillIds: string[] = [];
+  let encodedCharacters = 0;
   for (let index = 0; index < omittedSkillIds.length; index += 1) {
-    appendOwnArrayElement(encodedOmittedSkillIds, encodePromptJson(omittedSkillIds[index]!));
+    encodedCharacters = appendEncodedRuntimeSkillId(
+      encodedOmittedSkillIds,
+      omittedSkillIds[index],
+      encodedCharacters,
+    );
   }
   const truncationNote = omittedSkillIds.length > 0
     ? `\n\n(${omittedSkillIds.length} more skill summaries omitted.)\nOmitted skill IDs: ${`[${
@@ -398,6 +424,7 @@ export function buildRuntimeAvailableSkillIdsPromptBlock(
 ): string {
   const { displaySkills, omittedSkillIds } = snapshotRuntimeSkillPromptCatalog(skills);
   const encodedSkillIds: string[] = [];
+  let encodedCharacters = 0;
   for (let index = 0; index < displaySkills.length; index += 1) {
     const skillId = readPromptOwnDataProperty(
       displaySkills[index],
@@ -405,13 +432,18 @@ export function buildRuntimeAvailableSkillIdsPromptBlock(
       `Runtime skill catalog entry ${index}`,
       true,
     );
-    appendOwnArrayElement(
+    encodedCharacters = appendEncodedRuntimeSkillId(
       encodedSkillIds,
-      encodePromptJson(requireBoundedPromptString(skillId, "id", SKILL_ID_MAX_LENGTH)),
+      skillId,
+      encodedCharacters,
     );
   }
   for (let index = 0; index < omittedSkillIds.length; index += 1) {
-    appendOwnArrayElement(encodedSkillIds, encodePromptJson(omittedSkillIds[index]!));
+    encodedCharacters = appendEncodedRuntimeSkillId(
+      encodedSkillIds,
+      omittedSkillIds[index],
+      encodedCharacters,
+    );
   }
 
   return `<available_skill_ids>\nAuthoritative skill IDs: [${
