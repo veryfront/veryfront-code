@@ -117,9 +117,174 @@ export async function readPersistedUnresolvedSpecifiers(
  * `export { default } from …` forms.
  */
 function hasDefaultExport(code: string): boolean {
-  return /\bexport\s+default\b/.test(code) ||
-    /\bas\s+default\b/.test(code) ||
-    /\bexport\s*\{[^}]*\bdefault\b[^}]*\}/.test(code);
+  for (let index = 0; index < code.length;) {
+    index = skipTrivia(code, index);
+    if (index >= code.length) break;
+
+    if (startsIdentifier(code, index, "export")) {
+      const exportIndex = index;
+      index = skipTrivia(code, index + "export".length);
+      if (startsIdentifier(code, index, "default")) return true;
+      if (code[index] === "{" && exportListExposesDefault(code, index)) return true;
+      if (code[index] === "*") {
+        index = skipTrivia(code, index + 1);
+        if (startsIdentifier(code, index, "as")) {
+          index = skipTrivia(code, index + "as".length);
+          if (startsIdentifier(code, index, "default")) return true;
+        }
+      }
+      index = exportIndex + "export".length;
+      continue;
+    }
+
+    const next = skipTextToken(code, index);
+    index = next === index ? index + 1 : next;
+  }
+
+  return false;
+}
+
+function exportListExposesDefault(code: string, openBraceIndex: number): boolean {
+  const closeBraceIndex = findExportListCloseBrace(code, openBraceIndex);
+  if (closeBraceIndex === -1) return false;
+
+  const specifiers = splitExportSpecifiers(code.slice(openBraceIndex + 1, closeBraceIndex));
+  return specifiers.some((specifier) => exportedName(specifier) === "default");
+}
+
+function findExportListCloseBrace(code: string, openBraceIndex: number): number {
+  for (let index = openBraceIndex + 1; index < code.length;) {
+    const next = skipTextToken(code, index);
+    if (next !== index) {
+      index = next;
+      continue;
+    }
+    if (code[index] === "}") return index;
+    index++;
+  }
+  return -1;
+}
+
+function splitExportSpecifiers(list: string): string[] {
+  const specifiers: string[] = [];
+  let start = 0;
+
+  for (let index = 0; index < list.length;) {
+    const next = skipTextToken(list, index);
+    if (next !== index) {
+      index = next;
+      continue;
+    }
+    if (list[index] === ",") {
+      specifiers.push(list.slice(start, index));
+      start = index + 1;
+    }
+    index++;
+  }
+
+  specifiers.push(list.slice(start));
+  return specifiers;
+}
+
+function exportedName(specifier: string): string | undefined {
+  const tokens = identifierTokens(specifier);
+  if (tokens.length === 0) return undefined;
+
+  for (let index = tokens.length - 2; index >= 0; index--) {
+    if (tokens[index] === "as") return tokens[index + 1];
+  }
+
+  return tokens.length === 1 ? tokens[0] : undefined;
+}
+
+function identifierTokens(source: string): string[] {
+  const tokens: string[] = [];
+
+  for (let index = 0; index < source.length;) {
+    const next = skipTextToken(source, index);
+    if (next !== index) {
+      index = next;
+      continue;
+    }
+    if (isIdentifierStart(source[index])) {
+      const start = index;
+      index++;
+      while (index < source.length && isIdentifierPart(source[index])) index++;
+      tokens.push(source.slice(start, index));
+      continue;
+    }
+    index++;
+  }
+
+  return tokens;
+}
+
+function skipTrivia(source: string, index: number): number {
+  while (index < source.length) {
+    const char = source[index];
+    if (char === " " || char === "\t" || char === "\n" || char === "\r" || char === "\f") {
+      index++;
+      continue;
+    }
+
+    const next = skipComment(source, index);
+    if (next !== index) {
+      index = next;
+      continue;
+    }
+
+    break;
+  }
+  return index;
+}
+
+function skipTextToken(source: string, index: number): number {
+  const commentEnd = skipComment(source, index);
+  if (commentEnd !== index) return commentEnd;
+
+  const char = source[index];
+  if (char !== '"' && char !== "'" && char !== "`") return index;
+
+  for (index++; index < source.length; index++) {
+    if (source[index] === "\\") {
+      index++;
+      continue;
+    }
+    if (source[index] === char) return index + 1;
+  }
+
+  return source.length;
+}
+
+function skipComment(source: string, index: number): number {
+  if (source[index] !== "/" || index + 1 >= source.length) return index;
+  if (source[index + 1] === "/") {
+    const newlineIndex = source.indexOf("\n", index + 2);
+    return newlineIndex === -1 ? source.length : newlineIndex + 1;
+  }
+  if (source[index + 1] === "*") {
+    const closeIndex = source.indexOf("*/", index + 2);
+    return closeIndex === -1 ? source.length : closeIndex + 2;
+  }
+  return index;
+}
+
+function startsIdentifier(source: string, index: number, identifier: string): boolean {
+  if (source.slice(index, index + identifier.length) !== identifier) return false;
+  const before = index > 0 ? source[index - 1] : "";
+  const after = source[index + identifier.length] ?? "";
+  return !isIdentifierPart(before) && !isIdentifierPart(after);
+}
+
+function isIdentifierStart(char: string | undefined): boolean {
+  if (char === undefined) return false;
+  return char === "$" || char === "_" ||
+    (char >= "A" && char <= "Z") ||
+    (char >= "a" && char <= "z");
+}
+
+function isIdentifierPart(char: string | undefined): boolean {
+  return isIdentifierStart(char) || (char !== undefined && char >= "0" && char <= "9");
 }
 
 /**
