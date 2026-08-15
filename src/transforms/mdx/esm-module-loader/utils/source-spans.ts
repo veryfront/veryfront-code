@@ -517,6 +517,24 @@ function isPlainStatementBlockCloseBrace(
   return beforeLabel < rangeStart || source[beforeLabel] === ";" || source[beforeLabel] === "}";
 }
 
+function isArrowFunctionBodyCloseBraceAtAsiBoundary(
+  source: string,
+  index: number,
+  nextTokenIndex: number,
+  matchingOpenBraces: ReadonlyMap<number, OpenBraceContext>,
+): boolean {
+  const openBrace = matchingOpenBraces.get(index);
+  if (openBrace === undefined || source[openBrace.previousTokenIndex] !== ">") return false;
+
+  const beforeArrow = previousSignificantIndex(source, openBrace.previousTokenIndex);
+  if (source[beforeArrow] !== "=") return false;
+
+  for (let cursor = index + 1; cursor < nextTokenIndex; cursor++) {
+    if (isLineTerminator(source[cursor]!)) return true;
+  }
+  return false;
+}
+
 function isForOfKeywordBefore(
   source: string,
   rangeStart: number,
@@ -572,7 +590,13 @@ function canStartRegexLiteral(
     ) ||
       isDeclarationBlockCloseBrace(source, previous, matchingOpenBraces) ||
       isStatementBlockCloseBrace(source, previous, matchingOpenBraces) ||
-      isPlainStatementBlockCloseBrace(source, previous, rangeStart, matchingOpenBraces))
+      isPlainStatementBlockCloseBrace(source, previous, rangeStart, matchingOpenBraces) ||
+      isArrowFunctionBodyCloseBraceAtAsiBoundary(
+        source,
+        previous,
+        index,
+        matchingOpenBraces,
+      ))
   ) return true;
   if (
     (char === "+" || char === "-") &&

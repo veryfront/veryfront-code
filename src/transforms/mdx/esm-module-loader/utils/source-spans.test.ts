@@ -792,6 +792,15 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       }
     });
 
+    it("recognizes regex literals after arrow function bodies at ASI boundaries", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'const load = () => {}\n/import("\\/_vf_modules\\/fake.js")/.test(value);',
+        ),
+        [],
+      );
+    });
+
     it("ignores an import-looking string or comment", () => {
       assertEquals(specifiers(`const s = 'import("./foo.js")';`), []);
       assertEquals(specifiers(`// import("./foo.js")\nconst x = 1;`), []);
