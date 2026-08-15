@@ -362,6 +362,63 @@ it("application error reporter ignores inherited tenant build tags", () => {
   }
 });
 
+it("application error reporter rejects prototype-polluted accessor tag descriptors", () => {
+  const tenantBuildFailureTag = Symbol.for("veryfront.module-loader.tenant-build-failure");
+  const previousDescriptorValue = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+  const previousHasOwnProperty = Object.getOwnPropertyDescriptor(
+    Object.prototype,
+    "hasOwnProperty",
+  );
+  if (!previousHasOwnProperty) throw new Error("Expected Object.prototype.hasOwnProperty");
+  const frameworkError = new Error("framework failed");
+  Object.defineProperty(frameworkError, tenantBuildFailureTag, {
+    configurable: true,
+    get: undefined,
+    set: undefined,
+  });
+  const tenantError = new Error("tenant failed");
+  Object.defineProperty(tenantError, tenantBuildFailureTag, {
+    configurable: true,
+    value: true,
+  });
+  Object.defineProperty(Object.prototype, "hasOwnProperty", {
+    ...previousHasOwnProperty,
+    value: () => true,
+  });
+  Object.defineProperty(Object.prototype, "value", { configurable: true, value: true });
+
+  try {
+    const captures: Array<{ error: unknown; context: SharedApplicationErrorContext }> = [];
+    setApplicationErrorReporter({
+      capture(error, context) {
+        captures.push({ error, context });
+        return "event-id";
+      },
+      flush: () => Promise.resolve(true),
+    });
+
+    assertEquals(
+      captureApplicationError(frameworkError, { boundary: "ssr.render" }),
+      "event-id",
+    );
+    assertEquals(captures[0]?.context.errorClass, undefined);
+    assertEquals(captures[0]?.context.level, undefined);
+    assertEquals(
+      captureApplicationError(tenantError, { boundary: "ssr.render" }),
+      "event-id",
+    );
+    assertEquals(captures[1]?.context.errorClass, "tenant-build");
+    assertEquals(captures[1]?.context.level, "warning");
+  } finally {
+    if (previousDescriptorValue) {
+      Object.defineProperty(Object.prototype, "value", previousDescriptorValue);
+    } else {
+      delete (Object.prototype as { value?: unknown }).value;
+    }
+    Object.defineProperty(Object.prototype, "hasOwnProperty", previousHasOwnProperty);
+  }
+});
+
 it("application error reporter ignores poisoned Reflect descriptor lookups for tenant tags", () => {
   const previousDescriptor = Object.getOwnPropertyDescriptor(
     Reflect,

@@ -11,19 +11,35 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { isFrontmatterSyntaxError } from "./frontmatter-extractor.ts";
 
 const logger = rendererLogger.component("mdx-compiler");
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const ReflectApply = Reflect.apply;
+const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+
+function readOwnDataProperty(value: object, key: PropertyKey): unknown {
+  try {
+    const descriptor = ReflectGetOwnPropertyDescriptor(value, key);
+    if (
+      descriptor !== undefined &&
+      ReflectApply(ObjectPrototypeHasOwnProperty, descriptor, ["value"]) === true
+    ) {
+      return descriptor.value;
+    }
+  } catch {
+    // A hostile proxy cannot provide trusted source-diagnostic evidence.
+  }
+  return undefined;
+}
 
 function isMdxSourceCompileError(error: Error): boolean {
-  const candidate = error as Error & {
-    column?: unknown;
-    line?: unknown;
-    ruleId?: unknown;
-    source?: unknown;
-  };
-  const isMdxParserError = typeof candidate.source === "string" &&
-    /(?:^|-)mdx(?:-|$)|micromark|remark|recma|rehype/.test(candidate.source) &&
-    typeof candidate.ruleId === "string" &&
-    Number.isSafeInteger(candidate.line) &&
-    Number.isSafeInteger(candidate.column);
+  const source = readOwnDataProperty(error, "source");
+  const ruleId = readOwnDataProperty(error, "ruleId");
+  const line = readOwnDataProperty(error, "line");
+  const column = readOwnDataProperty(error, "column");
+  const isMdxParserError = typeof source === "string" &&
+    /(?:^|-)mdx(?:-|$)|micromark|remark|recma|rehype/.test(source) &&
+    typeof ruleId === "string" &&
+    Number.isSafeInteger(line) &&
+    Number.isSafeInteger(column);
   // Frontmatter failures are identified by the symbol `extractFrontmatter`
   // stamps at the throw site, not by matching stack-frame paths: `extract()` is
   // the only frontmatter path and it tags every SyntaxError it raises. A

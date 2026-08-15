@@ -17,6 +17,8 @@
 import { isTenantSourceBuildError } from "#veryfront/errors/tenant-classification.ts";
 
 const ObjectDefineProperty = Object.defineProperty;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const ReflectApply = Reflect.apply;
 const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 
 const BUILD_FAILURE = Symbol.for("veryfront.module-loader.build-failure");
@@ -38,8 +40,9 @@ function defineTag(error: Error, tag: symbol): void {
 
 function hasOwnTrueTag(error: Error, tag: symbol): boolean {
   const descriptor = ReflectGetOwnPropertyDescriptor(error, tag);
-  return descriptor !== undefined && !descriptor.get && !descriptor.set &&
-    "value" in descriptor && descriptor.value === true;
+  return descriptor !== undefined &&
+    ReflectApply(ObjectPrototypeHasOwnProperty, descriptor, ["value"]) === true &&
+    descriptor.value === true;
 }
 
 /** Tag `error` as a build failure and return it. */

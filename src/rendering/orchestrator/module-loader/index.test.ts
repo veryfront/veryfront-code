@@ -312,6 +312,11 @@ describe("module-loader/loadModule build-failure tagging", () => {
       assertEquals(isBuildFailure(frameworkError), false);
       assertEquals(isTenantBuildFailure(frameworkError), false);
 
+      const tenantError = new Error("tenant failed");
+      assertStrictEquals(markTenantBuildFailure(tenantError), tenantError);
+      assertEquals(isBuildFailure(tenantError), true);
+      assertEquals(isTenantBuildFailure(tenantError), true);
+
       const accessorTagError = new Error("framework failed");
       let buildGetterRead = false;
       let tenantGetterRead = false;
@@ -345,6 +350,45 @@ describe("module-loader/loadModule build-failure tagging", () => {
       } else {
         delete (Error.prototype as { [tenantBuildFailureTag]?: unknown })[tenantBuildFailureTag];
       }
+    }
+  });
+
+  it("rejects prototype-polluted accessor tag descriptors", () => {
+    const buildFailureTag = Symbol.for("veryfront.module-loader.build-failure");
+    const tenantBuildFailureTag = Symbol.for("veryfront.module-loader.tenant-build-failure");
+    const previousDescriptorValue = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+    const previousHasOwnProperty = Object.getOwnPropertyDescriptor(
+      Object.prototype,
+      "hasOwnProperty",
+    );
+    assert(previousHasOwnProperty);
+    const frameworkError = new Error("framework failed");
+    Object.defineProperty(frameworkError, buildFailureTag, {
+      configurable: true,
+      get: undefined,
+      set: undefined,
+    });
+    Object.defineProperty(frameworkError, tenantBuildFailureTag, {
+      configurable: true,
+      get: undefined,
+      set: undefined,
+    });
+    Object.defineProperty(Object.prototype, "hasOwnProperty", {
+      ...previousHasOwnProperty,
+      value: () => true,
+    });
+    Object.defineProperty(Object.prototype, "value", { configurable: true, value: true });
+
+    try {
+      assertEquals(isBuildFailure(frameworkError), false);
+      assertEquals(isTenantBuildFailure(frameworkError), false);
+    } finally {
+      if (previousDescriptorValue) {
+        Object.defineProperty(Object.prototype, "value", previousDescriptorValue);
+      } else {
+        delete (Object.prototype as { value?: unknown }).value;
+      }
+      Object.defineProperty(Object.prototype, "hasOwnProperty", previousHasOwnProperty);
     }
   });
 

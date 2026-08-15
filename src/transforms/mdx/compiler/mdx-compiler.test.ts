@@ -205,6 +205,119 @@ describe("transforms/mdx/compiler/mdx-compiler", () => {
       }
     });
 
+    it("preserves processor failures when MDX source fields are inherited", async () => {
+      const previous = tryResolveContract<ContentProcessor>("ContentProcessor");
+      const inheritedFields = {
+        source: "remark-mdx",
+        ruleId: "unexpected-token",
+        line: 1,
+        column: 1,
+      } as const;
+      const previousDescriptors = new Map(
+        Object.keys(inheritedFields).map((key) => [
+          key,
+          Object.getOwnPropertyDescriptor(Error.prototype, key),
+        ]),
+      );
+      const frameworkFailure = new Error("Expected ContentProcessor to initialize");
+      for (const [key, value] of Object.entries(inheritedFields)) {
+        Object.defineProperty(Error.prototype, key, { configurable: true, value });
+      }
+      registerContract(
+        "ContentProcessor",
+        {
+          compileMdx() {
+            throw frameworkFailure;
+          },
+          compileMarkdown() {
+            throw new Error("not used");
+          },
+          getRemarkPlugins() {
+            return [];
+          },
+          getRehypePlugins() {
+            return [];
+          },
+        } satisfies ContentProcessor,
+      );
+
+      try {
+        const error = await assertRejects(() =>
+          compileMDXRuntime(
+            "production",
+            "/project",
+            "# Hello",
+            undefined,
+            "framework-failure.mdx",
+            "server",
+          )
+        );
+        assertStrictEquals(error, frameworkFailure);
+      } finally {
+        registerContract("ContentProcessor", previous);
+        for (const [key, descriptor] of previousDescriptors) {
+          if (descriptor) Object.defineProperty(Error.prototype, key, descriptor);
+          else delete (Error.prototype as unknown as Record<string, unknown>)[key];
+        }
+      }
+    });
+
+    it("does not invoke accessor-backed MDX source fields", async () => {
+      const previous = tryResolveContract<ContentProcessor>("ContentProcessor");
+      const frameworkFailure = new Error("Expected ContentProcessor to initialize");
+      let getterReads = 0;
+      for (
+        const [key, value] of Object.entries({
+          source: "remark-mdx",
+          ruleId: "unexpected-token",
+          line: 1,
+          column: 1,
+        })
+      ) {
+        Object.defineProperty(frameworkFailure, key, {
+          configurable: true,
+          get() {
+            getterReads++;
+            return value;
+          },
+        });
+      }
+      registerContract(
+        "ContentProcessor",
+        {
+          compileMdx() {
+            throw frameworkFailure;
+          },
+          compileMarkdown() {
+            throw new Error("not used");
+          },
+          getRemarkPlugins() {
+            return [];
+          },
+          getRehypePlugins() {
+            return [];
+          },
+        } satisfies ContentProcessor,
+      );
+
+      try {
+        const error = await assertRejects(() =>
+          compileMDXRuntime(
+            "production",
+            "/project",
+            "# Hello",
+            undefined,
+            "framework-failure.mdx",
+            "server",
+          )
+        );
+        assertStrictEquals(error, frameworkFailure);
+        assertEquals(getterReads, 0);
+      } finally {
+        registerContract("ContentProcessor", previous);
+      }
+    });
+
     it("preserves framework SyntaxErrors when the frontmatter prototype is polluted", async () => {
       const marker = Symbol.for("veryfront.transforms.mdx.frontmatter-syntax-error");
       const previousMarker = Object.getOwnPropertyDescriptor(SyntaxError.prototype, marker);

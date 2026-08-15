@@ -4,11 +4,18 @@ import {
   assertExists,
   assertInstanceOf,
   assertRejects,
+  assertStrictEquals,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { VeryfrontError } from "#veryfront/errors";
+import type { Bundler } from "#veryfront/extensions/bundler/bundler.ts";
+import {
+  register as registerContract,
+  tryResolve as tryResolveContract,
+  unregister as unregisterContract,
+} from "#veryfront/extensions/contracts.ts";
 import { compilePlugin } from "./compile.ts";
 import { TransformStage } from "../types.ts";
 import type { TransformContext } from "../types.ts";
@@ -29,6 +36,26 @@ function createContext(code: string, filePath = "/project/lib/x.ts"): TransformC
     metadata: new Map(),
     reactVersion: "19.1.1",
   } as TransformContext;
+}
+
+async function transformWithBundlerFailure(cause: Error): Promise<VeryfrontError> {
+  const previous = tryResolveContract<Bundler>("Bundler");
+  registerContract<Bundler>("Bundler", {
+    bundle: () => Promise.reject(new Error("not used")),
+    transform: () => Promise.reject(cause),
+  });
+
+  try {
+    const error = await assertRejects(
+      async () => await compilePlugin.transform(createContext("export const value = 1;")),
+      VeryfrontError,
+    );
+    assertInstanceOf(error, VeryfrontError);
+    return error;
+  } finally {
+    if (previous) registerContract("Bundler", previous);
+    else unregisterContract("Bundler");
+  }
 }
 
 describe("transforms/pipeline/stages/compile", () => {
@@ -150,6 +177,92 @@ describe("transforms/pipeline/stages/compile", () => {
         (error.context as { tenantBuildFailure?: unknown } | undefined)?.tenantBuildFailure,
         true,
       );
+    });
+
+    it("does not use an inherited esbuild diagnostic collection", async () => {
+      const marker = Symbol.for("veryfront.bundler.esbuild-source-diagnostic");
+      const previousErrors = Object.getOwnPropertyDescriptor(Error.prototype, "errors");
+      const previousMarker = Object.getOwnPropertyDescriptor(Error.prototype, marker);
+      const frameworkFailure = new Error("esbuild service stopped");
+      Object.defineProperty(Error.prototype, "errors", {
+        configurable: true,
+        value: [{ location: { line: 1, column: 1 } }],
+      });
+      Object.defineProperty(Error.prototype, marker, { configurable: true, value: true });
+
+      try {
+        const error = await transformWithBundlerFailure(frameworkFailure);
+        assertStrictEquals(error.cause, frameworkFailure);
+        assertEquals(
+          (error.context as { tenantBuildFailure?: unknown } | undefined)?.tenantBuildFailure,
+          false,
+        );
+      } finally {
+        if (previousErrors) Object.defineProperty(Error.prototype, "errors", previousErrors);
+        else delete (Error.prototype as { errors?: unknown }).errors;
+        if (previousMarker) Object.defineProperty(Error.prototype, marker, previousMarker);
+        else delete (Error.prototype as { [marker]?: unknown })[marker];
+      }
+    });
+
+    it("does not use inherited esbuild diagnostic locations", async () => {
+      const frameworkFailure = new Error("esbuild service stopped");
+      Object.defineProperty(frameworkFailure, "errors", {
+        value: [Object.create({ location: { line: 1, column: 1 } })],
+      });
+
+      const error = await transformWithBundlerFailure(frameworkFailure);
+      assertStrictEquals(error.cause, frameworkFailure);
+      assertEquals(
+        (error.context as { tenantBuildFailure?: unknown } | undefined)?.tenantBuildFailure,
+        false,
+      );
+    });
+
+    it("does not invoke accessor-backed esbuild diagnostic fields", async () => {
+      const marker = Symbol.for("veryfront.bundler.esbuild-source-diagnostic");
+      let errorsGetterReads = 0;
+      let markerGetterReads = 0;
+      const accessorCollectionFailure = new Error("esbuild service stopped");
+      Object.defineProperty(accessorCollectionFailure, "errors", {
+        get() {
+          errorsGetterReads++;
+          return [{ location: { line: 1, column: 1 } }];
+        },
+      });
+      Object.defineProperty(accessorCollectionFailure, marker, {
+        get() {
+          markerGetterReads++;
+          return true;
+        },
+      });
+
+      const collectionError = await transformWithBundlerFailure(accessorCollectionFailure);
+      assertEquals(
+        (collectionError.context as { tenantBuildFailure?: unknown } | undefined)
+          ?.tenantBuildFailure,
+        false,
+      );
+      assertEquals(errorsGetterReads, 0);
+      assertEquals(markerGetterReads, 0);
+
+      let locationGetterReads = 0;
+      const diagnostic = Object.defineProperty({}, "location", {
+        get() {
+          locationGetterReads++;
+          return { line: 1, column: 1 };
+        },
+      });
+      const accessorLocationFailure = new Error("esbuild service stopped");
+      Object.defineProperty(accessorLocationFailure, "errors", { value: [diagnostic] });
+
+      const locationError = await transformWithBundlerFailure(accessorLocationFailure);
+      assertEquals(
+        (locationError.context as { tenantBuildFailure?: unknown } | undefined)
+          ?.tenantBuildFailure,
+        false,
+      );
+      assertEquals(locationGetterReads, 0);
     });
 
     // By the time an `.mdx` file reaches COMPILE, PARSE has already turned the

@@ -7,14 +7,36 @@ import { ESBUILD_SUPPORTED_FEATURES, getLoaderFromPath } from "../../esm/transfo
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
 const logger = rendererLogger.component("esm-transform");
+const ESBUILD_SOURCE_DIAGNOSTIC = Symbol.for(
+  "veryfront.bundler.esbuild-source-diagnostic",
+);
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const ReflectApply = Reflect.apply;
+const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+
+function readOwnDataProperty(value: unknown, key: PropertyKey): unknown {
+  if (
+    value === null ||
+    (typeof value !== "object" && typeof value !== "function")
+  ) {
+    return undefined;
+  }
+  try {
+    const descriptor = ReflectGetOwnPropertyDescriptor(value, key);
+    if (
+      descriptor !== undefined &&
+      ReflectApply(ObjectPrototypeHasOwnProperty, descriptor, ["value"]) === true
+    ) {
+      return descriptor.value;
+    }
+  } catch {
+    // A hostile proxy cannot provide trusted source-diagnostic evidence.
+  }
+  return undefined;
+}
 
 function isEsbuildSourceDiagnostic(error: unknown): boolean {
-  const diagnostics = (error as { errors?: unknown })?.errors;
-  if (!Array.isArray(diagnostics)) return false;
-  return diagnostics.some((diagnostic) => {
-    const location = (diagnostic as { location?: unknown })?.location;
-    return typeof location === "object" && location !== null;
-  });
+  return readOwnDataProperty(error, ESBUILD_SOURCE_DIAGNOSTIC) === true;
 }
 
 /**
