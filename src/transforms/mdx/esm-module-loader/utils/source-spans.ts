@@ -891,15 +891,61 @@ function skipRegexLiteral(source: string, regexIndex: number): number {
   return source.length;
 }
 
+function canStartRawJsxOpeningTag(source: string, index: number): boolean {
+  const previous = previousSignificantIndex(source, index);
+  if (previous < 0) return true;
+
+  const char = source[previous];
+  if (char !== undefined && "([{=,:;!~?&|+-*%^<>".includes(char)) return true;
+  if (char === "}") return true;
+
+  const keyword = keywordBefore(source, index, previous);
+  return ["case", "default", "return", "throw", "yield"].includes(keyword ?? "");
+}
+
 function skipRawJsxTag(source: string, index: number): number {
   if (source[index] !== "<") return index;
 
-  const nameStart = source[index + 1] === "/" ? index + 2 : index + 1;
-  if (source[nameStart] !== ">" && !isIdentifierStartAt(source, nameStart)) return index;
-  if (source[nameStart] === ">") return nameStart + 1;
+  const isClosingTag = source[index + 1] === "/";
+  if (!isClosingTag && !canStartRawJsxOpeningTag(source, index)) return index;
 
-  const end = source.indexOf(">", nameStart + 1);
-  return end === -1 ? index : end + 1;
+  const nameStart = isClosingTag ? index + 2 : index + 1;
+  if (source[nameStart] !== ">" && !isIdentifierStartAt(source, nameStart)) return index;
+
+  let cursor = nameStart;
+  let quote: string | null = null;
+  while (cursor < source.length) {
+    const char = source[cursor];
+
+    if (quote !== null) {
+      if (char === "\\") {
+        cursor += 2;
+        continue;
+      }
+      if (char === quote) quote = null;
+      cursor++;
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      cursor++;
+      continue;
+    }
+
+    if (char === "{") {
+      const expressionEnd = findTemplateExpressionEnd(source, cursor + 1);
+      if (expressionEnd === null) return index;
+      cursor = expressionEnd + 1;
+      continue;
+    }
+
+    if (char === ">") return cursor + 1;
+
+    cursor++;
+  }
+
+  return index;
 }
 
 function skipExpressionIgnored(

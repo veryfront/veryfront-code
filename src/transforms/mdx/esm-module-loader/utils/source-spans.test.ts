@@ -497,6 +497,24 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("keeps comparisons distinct from raw JSX tags", () => {
+      assertEquals(
+        vfModuleSpecifiers('const x = left<Right && import("/_vf_modules/lazy.js")>0;'),
+        ["/_vf_modules/lazy.js"],
+      );
+    });
+
+    it("finds imports after quoted greater-than signs in raw JSX tags", () => {
+      assertEquals(
+        specifiers('<Comp title=">">{import("./quoted-lazy.ts")}</Comp>'),
+        ["./quoted-lazy.ts"],
+      );
+      assertEquals(
+        specifiers('<Comp title={left > right}>{import("./expression-lazy.ts")}</Comp>'),
+        ["./expression-lazy.ts"],
+      );
+    });
+
     it("treats of as an identifier in a classic for-loop initializer", () => {
       assertEquals(
         vfModuleSpecifiers(
