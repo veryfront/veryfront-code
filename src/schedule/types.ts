@@ -86,41 +86,36 @@ export interface ScheduleDefinition {
   integrationRequirements?: ScheduleIntegrationRequirement[];
 }
 
-type ScheduleConfigFields =
-  & Omit<
+interface ScheduleConfigFields extends
+  Omit<
     ScheduleDefinition,
     "schedule" | "integrationRequirements" | "target" | "agentMessage"
-  >
-  & {
-    /** Alias for a five-field POSIX `schedule` expression. */
-    cron?: string;
-    /** Five-field POSIX cron expression. */
-    schedule?: string;
-    /** Integration requirements; omitted collections default to empty. */
-    integrationRequirements?: ScheduleIntegrationRequirementConfig[];
-  };
+  > {
+  /** Alias for a five-field POSIX `schedule` expression. */
+  cron?: string;
+  /** Five-field POSIX cron expression. */
+  schedule?: string;
+  /** Integration requirements; omitted collections default to empty. */
+  integrationRequirements?: ScheduleIntegrationRequirementConfig[];
+}
 
 /**
  * Author-facing recurring schedule configuration.
  *
  * `cron` is an alias for `schedule`; the factory emits only `schedule`.
  */
-export type ScheduleConfig =
-  & ScheduleConfigFields
-  & (
-    | {
-      /** Agent invoked by each occurrence. */
-      target: AgentTriggerTarget;
-      /** Prompt content sent to the agent. */
-      agentMessage?: ScheduleAgentMessage;
-    }
-    | {
-      /** Task, workflow, or agent invoked by each occurrence. */
-      target: TriggerTargetConfig;
-      /** Agent messages are not accepted without a statically known agent target. */
-      agentMessage?: never;
-    }
-  );
+export interface ScheduleConfig extends ScheduleConfigFields {
+  /** Task, workflow, or agent invoked by each occurrence. */
+  target: TriggerTargetConfig;
+}
+
+/** Author-facing schedule configuration with an agent prompt. */
+export interface AgentScheduleConfig extends ScheduleConfig {
+  /** Agent invoked by each occurrence. */
+  target: AgentTriggerTarget;
+  /** Prompt content sent to an agent target. */
+  agentMessage?: ScheduleAgentMessage;
+}
 
 /** Return true only when every schedule field and nested invariant is valid. */
 export function isScheduleDefinition(value: unknown): value is ScheduleDefinition {

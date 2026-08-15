@@ -2,6 +2,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform";
 import type { CreateScheduleRunFromSourceResult } from "#veryfront/runs";
+import { schedule } from "#veryfront/schedule";
 import type { ScheduleConfig, ScheduleDefinition } from "#veryfront/schedule";
 import type {
   AgentConversationMode,
@@ -14,9 +15,7 @@ import { resolveTriggerTarget } from "./target.ts";
 
 const adapter = {} as RuntimeAdapter;
 
-function acceptScheduleConfig(config: ScheduleConfig): ScheduleConfig {
-  return config;
-}
+const acceptScheduleConfig = ((config: ScheduleConfig) => config) as unknown as typeof schedule;
 
 function acceptWebhookConfig(config: WebhookConfig): WebhookConfig {
   return config;
@@ -50,6 +49,10 @@ interface OwnedWorkflowTarget extends WorkflowTriggerTarget {
   owner: "billing";
 }
 
+interface CustomScheduleConfig extends ScheduleConfig {
+  metadata: string;
+}
+
 describe("trigger target public type contracts", () => {
   it("accepts extended workflow and exported TriggerTarget values on public authoring surfaces", () => {
     const ownedWorkflowTarget: OwnedWorkflowTarget = {
@@ -75,6 +78,13 @@ describe("trigger target public type contracts", () => {
       target: exportedTriggerTarget,
     });
 
+    const customSchedule: CustomScheduleConfig = {
+      id: "custom-schedule",
+      schedule: "0 * * * *",
+      target: ownedWorkflowTarget,
+      metadata: "billing-owned",
+    };
+
     const webhook = acceptWebhookConfig({
       id: "exported-trigger-target-webhook",
       target: exportedTriggerTarget,
@@ -88,6 +98,7 @@ describe("trigger target public type contracts", () => {
 
     assertEquals(ownedSchedule.target, ownedWorkflowTarget);
     assertEquals(exportedSchedule.target, exportedTriggerTarget);
+    assertEquals(customSchedule.metadata, "billing-owned");
     assertEquals(webhook.target, exportedTriggerTarget);
     assertEquals(run.target, exportedTriggerTarget);
   });
@@ -121,10 +132,10 @@ describe("trigger target public type contracts", () => {
       agentMessage: { prompt: "This target is not an agent." },
     });
 
+    // @ts-expect-error Task schedule targets cannot carry conversation fields.
     const invalidTaskSchedule = acceptScheduleConfig({
       id: "bad-task",
       schedule: "0 * * * *",
-      // @ts-expect-error Task schedule targets cannot carry conversation fields.
       target: { kind: "task", id: "sync-helpdesk", conversationMode: "create_new" },
     });
 

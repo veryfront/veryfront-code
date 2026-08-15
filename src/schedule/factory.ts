@@ -1,4 +1,4 @@
-import type { ScheduleConfig, ScheduleDefinition } from "./types.ts";
+import type { AgentScheduleConfig, ScheduleConfig, ScheduleDefinition } from "./types.ts";
 import { normalizeScheduleConfig } from "./validation.ts";
 
 /**
@@ -13,6 +13,10 @@ import { normalizeScheduleConfig } from "./validation.ts";
  * `agentMessage.prompt` supplies the prompt. Both are rejected for task and
  * workflow targets.
  */
-export function schedule(config: ScheduleConfig): ScheduleDefinition {
+export function schedule(config: AgentScheduleConfig): ScheduleDefinition;
+export function schedule(config: ScheduleConfig): ScheduleDefinition;
+export function schedule(
+  config: AgentScheduleConfig | ScheduleConfig,
+): ScheduleDefinition {
   return normalizeScheduleConfig(config);
 }

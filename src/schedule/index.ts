@@ -20,6 +20,7 @@
 
 export { schedule } from "./factory.ts";
 export type {
+  AgentScheduleConfig,
   ScheduleAgentMessage,
   ScheduleConcurrencyPolicy,
   ScheduleConfig,
