@@ -454,6 +454,18 @@ function previousSignificantIndex(source: string, index: number): number {
   return cursor;
 }
 
+function previousSignificantIndexAcrossComments(source: string, index: number): number {
+  let cursor = previousSignificantIndex(source, index);
+
+  while (cursor >= 1 && source[cursor] === "/" && source[cursor - 1] === "*") {
+    const commentStart = source.lastIndexOf("/*", cursor - 1);
+    if (commentStart < 0) break;
+    cursor = previousSignificantIndex(source, commentStart);
+  }
+
+  return cursor;
+}
+
 function keywordBefore(
   source: string,
   index: number,
@@ -476,11 +488,14 @@ function isMemberNameBefore(
   while (start > 0 && /[A-Za-z_$]/.test(source[start - 1] ?? "")) start--;
   if (start === end) return false;
 
-  const before = previousSignificantIndex(source, start);
+  const before = previousSignificantIndexAcrossComments(source, start);
   if (before < 0) return false;
 
   const char = source[before];
-  return char === "." || char === "#";
+  if (char === "#") return true;
+  if (char !== ".") return false;
+
+  return source[before - 1] !== "." || source[before - 2] !== ".";
 }
 
 /**

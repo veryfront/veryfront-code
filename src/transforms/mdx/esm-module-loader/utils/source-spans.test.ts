@@ -623,6 +623,21 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       assertEquals(spans.map((span) => span.path), ["@/components/Chart"]);
     });
 
+    it("finds imports after commented reserved-name member divisions", () => {
+      assertEquals(
+        specifiers(
+          'const direct = mod./* note */default / 2; import("./after-direct.js");',
+        ),
+        ["./after-direct.js"],
+      );
+      assertEquals(
+        specifiers(
+          'const optional = mod?./* note */default / 2; import("./after-optional.js");',
+        ),
+        ["./after-optional.js"],
+      );
+    });
+
     const REGEX_PREFIX_KEYWORDS = [
       "of",
       "case",
@@ -685,6 +700,12 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           'function f() { return /re/.test(x); } import("./after-return-keyword.js");',
         ),
         ["./after-return-keyword.js"],
+      );
+      assertEquals(
+        specifiers(
+          '[...typeof /import(".\\/fake-spread.js")/]; import("./after-spread.js");',
+        ),
+        ["./after-spread.js"],
       );
       assertEquals(
         specifiers(
