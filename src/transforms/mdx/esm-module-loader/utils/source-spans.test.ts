@@ -528,6 +528,13 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("keeps newline-continued object literals distinct from statement blocks", () => {
+      assertEquals(
+        vfModuleSpecifiers('const value =\n{} / 2; import("/_vf_modules/after-object.js");'),
+        ["/_vf_modules/after-object.js"],
+      );
+    });
+
     it("ignores import-looking regex text after switch clause blocks", () => {
       assertEquals(
         vfModuleSpecifiers(

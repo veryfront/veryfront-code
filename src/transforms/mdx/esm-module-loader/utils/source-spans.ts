@@ -815,6 +815,19 @@ function isSwitchClauseBlockOpenBrace(
   return clausePrefix === "default" || /^case\b[\s\S]*\S$/.test(clausePrefix);
 }
 
+function canEndStatementBeforeLineTerminator(
+  source: string,
+  previousTokenIndex: number,
+): boolean {
+  const char = source[previousTokenIndex];
+  if (char === ")" || char === "]" || char === "}") return true;
+  if (char === '"' || char === "'" || char === "`") return true;
+  if (char === "+" && source[previousTokenIndex - 1] === "+") return true;
+  if (char === "-" && source[previousTokenIndex - 1] === "-") return true;
+  return isIdentifierPartAt(source, previousTokenIndex) ||
+    isIdentifierEscapeEndingAt(source, previousTokenIndex + 1);
+}
+
 function isPlainStatementBlockOpenBrace(
   source: string,
   rangeStart: number,
@@ -824,7 +837,12 @@ function isPlainStatementBlockOpenBrace(
 ): boolean {
   if (previousTokenIndex < rangeStart) return true;
   if (source[previousTokenIndex] === ";" || source[previousTokenIndex] === "}") return true;
-  if (hasLineTerminatorBetween(source, previousTokenIndex + 1, openBraceIndex)) return true;
+  if (
+    hasLineTerminatorBetween(source, previousTokenIndex + 1, openBraceIndex) &&
+    canEndStatementBeforeLineTerminator(source, previousTokenIndex)
+  ) {
+    return true;
+  }
   if (source[previousTokenIndex] !== ":") return false;
 
   const labelEnd = previousSignificantIndex(source, previousTokenIndex) + 1;
