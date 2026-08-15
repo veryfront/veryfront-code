@@ -779,6 +779,41 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         ),
         ["/_vf_modules/after-ts-class.js"],
       );
+      assertEquals(
+        vfModuleSpecifiers(
+          'interface I<T> extends Base {} /import("\\/_vf_modules\\/fake-ts-interface.js")/.test(value); ' +
+            'import("/_vf_modules/after-ts-interface.js")',
+        ),
+        ["/_vf_modules/after-ts-interface.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'const enum Mode { On } /import("\\/_vf_modules\\/fake-ts-enum.js")/.test(value); ' +
+            'import("/_vf_modules/after-ts-enum.js")',
+        ),
+        ["/_vf_modules/after-ts-enum.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'namespace Store.Core { export const ready = true } /import("\\/_vf_modules\\/fake-ts-namespace.js")/.test(value); ' +
+            'import("/_vf_modules/after-ts-namespace.js")',
+        ),
+        ["/_vf_modules/after-ts-namespace.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'declare module "pkg" {} /import("\\/_vf_modules\\/fake-ts-module.js")/.test(value); ' +
+            'import("/_vf_modules/after-ts-module.js")',
+        ),
+        ["/_vf_modules/after-ts-module.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'declare global {} /import("\\/_vf_modules\\/fake-ts-global.js")/.test(value); ' +
+            'import("/_vf_modules/after-ts-global.js")',
+        ),
+        ["/_vf_modules/after-ts-global.js"],
+      );
     });
 
     it("ignores import-looking regex text after exported declarations across ASI", () => {

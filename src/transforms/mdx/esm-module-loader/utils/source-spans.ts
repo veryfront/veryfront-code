@@ -72,6 +72,13 @@ const CLASS_DECLARATION_PREFIX_PATTERN = new RegExp(
     .raw`^(?:export\s+(?:default\s+)?)?(?:abstract\s+)?class(?:\s+${IDENTIFIER_NAME_SOURCE})?(?:\s*<[\s\S]*>)?(?:\s+extends\s+[\s\S]+?)?(?:\s+implements\s+[\s\S]+)?\s*$`,
   "u",
 );
+const TYPESCRIPT_DECLARATION_PREFIX_PATTERN = new RegExp(
+  String
+    .raw`^(?:export\s+(?:default\s+)?)?(?:declare\s+)?(?:(?:interface\s+${IDENTIFIER_NAME_SOURCE}(?:\s*<[\s\S]*>)?(?:\s+extends\s+[\s\S]+)?)|(?:(?:const\s+)?enum\s+${IDENTIFIER_NAME_SOURCE})|(?:global)|(?:(?:namespace|module)\s+(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|${IDENTIFIER_NAME_SOURCE}(?:\s*\.\s*${IDENTIFIER_NAME_SOURCE})*)))\s*$`,
+  "u",
+);
+const TYPESCRIPT_DECLARATION_KEYWORD_PATTERN =
+  /\b(?:declare|enum|global|interface|module|namespace)\b/u;
 
 function assertTemplateLiteralDepth(depth: number): void {
   if (depth > MAX_TEMPLATE_LITERAL_DEPTH) {
@@ -681,17 +688,21 @@ function normalizedDeclarationPrefix(source: string, start: number, end: number)
   );
 }
 
-function declarationStatementStartBefore(source: string, index: number): number {
+function declarationStatementStartBefore(
+  source: string,
+  index: number,
+  keywords: readonly string[] = [
+    "async",
+    "export",
+    "function",
+  ],
+): number {
   const separatorStart = Math.max(
     source.lastIndexOf(";", index - 1),
     source.lastIndexOf("{", index - 1),
     source.lastIndexOf("}", index - 1),
   ) + 1;
-  return declarationAsiBoundaryBefore(source, separatorStart, index, [
-    "async",
-    "export",
-    "function",
-  ]) ?? separatorStart;
+  return declarationAsiBoundaryBefore(source, separatorStart, index, keywords) ?? separatorStart;
 }
 
 function classDeclarationStatementStartBefore(source: string, index: number): number {
@@ -799,6 +810,36 @@ function isClassDeclarationBlockOpenBrace(
 
   const prefix = normalizedDeclarationPrefix(source, declarationStart, index);
   return CLASS_DECLARATION_PREFIX_PATTERN.test(prefix);
+}
+
+function isTypeScriptDeclarationBlockOpenBrace(
+  source: string,
+  index: number,
+): boolean {
+  const separatorStart = Math.max(
+    source.lastIndexOf(";", index - 1),
+    source.lastIndexOf("{", index - 1),
+    source.lastIndexOf("}", index - 1),
+  ) + 1;
+  if (
+    !TYPESCRIPT_DECLARATION_KEYWORD_PATTERN.test(
+      source.slice(separatorStart, index),
+    )
+  ) {
+    return false;
+  }
+
+  const declarationStart = declarationStatementStartBefore(source, index, [
+    "const",
+    "declare",
+    "enum",
+    "export",
+    "interface",
+    "module",
+    "namespace",
+  ]);
+  const prefix = normalizedDeclarationPrefix(source, declarationStart, index);
+  return TYPESCRIPT_DECLARATION_PREFIX_PATTERN.test(prefix);
 }
 
 function identifierStartBefore(source: string, end: number, rangeStart: number): number {
@@ -992,7 +1033,8 @@ function openBraceContext(
       source,
       previousTokenIndex,
       matchingOpenParens,
-    ) || isClassDeclarationBlockOpenBrace(source, index, currentParen),
+    ) || isClassDeclarationBlockOpenBrace(source, index, currentParen) ||
+      isTypeScriptDeclarationBlockOpenBrace(source, index),
     isPlainStatementBlock: isPlainStatementBlockOpenBrace(
       source,
       rangeStart,
