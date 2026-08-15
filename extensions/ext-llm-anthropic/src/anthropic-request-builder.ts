@@ -36,7 +36,27 @@ import {
 type ProviderCacheTtl = boolean | "5m" | "1h";
 
 const apply = Reflect.apply;
+const NativeSet = Set;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const objectHasOwn = Object.hasOwn;
+const objectKeys = Object.keys;
+const setAdd = Set.prototype.add;
+const setDelete = Set.prototype.delete;
+const setHas = Set.prototype.has;
 const stringValueOf = String.prototype.valueOf;
+
+function hasSetValue<T>(set: Set<T>, value: T): boolean {
+  return apply(setHas, set, [value]) as boolean;
+}
+
+function addSetValue<T>(set: Set<T>, value: T): void {
+  apply(setAdd, set, [value]);
+}
+
+function deleteSetValue<T>(set: Set<T>, value: T): void {
+  apply(setDelete, set, [value]);
+}
 
 type ProviderCacheControlOption = {
   system?: ProviderCacheTtl;
@@ -1247,29 +1267,29 @@ function isOmittedJsonObjectPropertyValue(value: unknown): boolean {
 }
 
 function assertNoAnthropicCacheJsonHook(value: object): void {
-  const visited = new Set<object>();
+  const visited = new NativeSet<object>();
   let candidate: object | null = value;
   let depth = 0;
-  while (candidate !== null && !visited.has(candidate) && depth < 64) {
+  while (candidate !== null && !hasSetValue(visited, candidate) && depth < 64) {
     if (isProxyWithoutHooks(candidate)) {
       throw new TypeError("Anthropic cache inputs must not contain Proxy values");
     }
-    visited.add(candidate);
+    addSetValue(visited, candidate);
     depth += 1;
     let descriptor: PropertyDescriptor | undefined;
     try {
-      descriptor = Object.getOwnPropertyDescriptor(candidate, "toJSON");
+      descriptor = objectGetOwnPropertyDescriptor(candidate, "toJSON");
     } catch {
       throw new TypeError("Anthropic cache input toJSON hooks could not be inspected");
     }
     if (descriptor !== undefined) {
-      if (!Object.hasOwn(descriptor, "value") || typeof descriptor.value === "function") {
+      if (!objectHasOwn(descriptor, "value") || typeof descriptor.value === "function") {
         throw new TypeError("Anthropic cache inputs must not define toJSON hooks");
       }
       return;
     }
     try {
-      candidate = Object.getPrototypeOf(candidate);
+      candidate = objectGetPrototypeOf(candidate);
     } catch {
       throw new TypeError("Anthropic cache input toJSON hooks could not be inspected");
     }
@@ -1281,60 +1301,63 @@ function assertNoAnthropicCacheJsonHook(value: object): void {
 
 function assertNoNestedAnthropicCacheJsonHooks(
   value: object,
-  ancestors = new Set<object>(),
+  label = "Anthropic cache_control",
+  ancestors = new NativeSet<object>(),
   depth = 0,
 ): void {
-  if (depth >= 64 || ancestors.has(value)) {
+  if (depth >= 64 || hasSetValue(ancestors, value)) {
     throw new TypeError("Anthropic cache input toJSON hooks could not be inspected");
   }
   assertNoAnthropicCacheJsonHook(value);
-  ancestors.add(value);
+  addSetValue(ancestors, value);
   try {
     let keys: string[];
     try {
-      keys = Object.keys(value);
+      keys = objectKeys(value);
     } catch {
       throw new TypeError("Anthropic cache input toJSON hooks could not be inspected");
     }
-    for (const key of keys) {
+    for (let index = 0; index < keys.length; index += 1) {
+      const key = keys[index]!;
       let descriptor: PropertyDescriptor | undefined;
       try {
-        descriptor = Object.getOwnPropertyDescriptor(value, key);
+        descriptor = objectGetOwnPropertyDescriptor(value, key);
       } catch {
         throw new TypeError("Anthropic cache input toJSON hooks could not be inspected");
       }
-      if (!descriptor || !Object.hasOwn(descriptor, "value")) {
-        continue;
+      if (!descriptor || !objectHasOwn(descriptor, "value")) {
+        throw new TypeError(`${label} must contain only enumerable data properties`);
       }
       const nested = descriptor.value;
       if (
         nested !== null &&
         (typeof nested === "object" || typeof nested === "function")
       ) {
-        assertNoNestedAnthropicCacheJsonHooks(nested, ancestors, depth + 1);
+        assertNoNestedAnthropicCacheJsonHooks(nested, label, ancestors, depth + 1);
       }
     }
   } finally {
-    ancestors.delete(value);
+    deleteSetValue(ancestors, value);
   }
 }
 
-function assertNoAnthropicCacheRecordAccessors(value: object): void {
+function assertNoAnthropicCacheRecordSerializationHooks(value: object): void {
   assertNoAnthropicCacheJsonHook(value);
   let keys: string[];
   try {
-    keys = Object.keys(value);
+    keys = objectKeys(value);
   } catch {
     throw new TypeError("Anthropic cache records could not be inspected");
   }
-  for (const key of keys) {
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index]!;
     let descriptor: PropertyDescriptor | undefined;
     try {
-      descriptor = Object.getOwnPropertyDescriptor(value, key);
+      descriptor = objectGetOwnPropertyDescriptor(value, key);
     } catch {
       throw new TypeError("Anthropic cache records could not be inspected");
     }
-    if (!descriptor || !Object.hasOwn(descriptor, "value")) {
+    if (!descriptor || !objectHasOwn(descriptor, "value")) {
       if (key === "cache_control") {
         throw new TypeError(
           "Anthropic cache_control must be an own enumerable data property",
@@ -1342,6 +1365,16 @@ function assertNoAnthropicCacheRecordAccessors(value: object): void {
       }
       throw new TypeError(
         "Anthropic cache records must contain only enumerable data properties",
+      );
+    }
+    const nested = descriptor.value;
+    if (
+      nested !== null &&
+      (typeof nested === "object" || typeof nested === "function")
+    ) {
+      assertNoNestedAnthropicCacheJsonHooks(
+        nested,
+        key === "cache_control" ? "Anthropic cache_control" : "Anthropic cache records",
       );
     }
   }
@@ -1355,23 +1388,23 @@ function assertNoInheritedAnthropicArrayElement(
   label: string,
 ): void {
   const key = `${index}`;
-  const visited = new Set<object>();
+  const visited = new NativeSet<object>();
   let candidate: object | null;
   try {
-    candidate = Object.getPrototypeOf(value);
+    candidate = objectGetPrototypeOf(value);
   } catch {
     throw new TypeError(`${label} inherited indexed properties could not be inspected`);
   }
   let depth = 0;
-  while (candidate !== null && !visited.has(candidate) && depth < 64) {
+  while (candidate !== null && !hasSetValue(visited, candidate) && depth < 64) {
     if (isProxyWithoutHooks(candidate)) {
       throw new TypeError(`${label} inherited indexed properties could not be inspected`);
     }
-    visited.add(candidate);
+    addSetValue(visited, candidate);
     depth += 1;
     let descriptor: PropertyDescriptor | undefined;
     try {
-      descriptor = Object.getOwnPropertyDescriptor(candidate, key);
+      descriptor = objectGetOwnPropertyDescriptor(candidate, key);
     } catch {
       throw new TypeError(`${label} inherited indexed properties could not be inspected`);
     }
@@ -1379,7 +1412,7 @@ function assertNoInheritedAnthropicArrayElement(
       throw new TypeError(`${label} must not contain inherited indexed properties`);
     }
     try {
-      candidate = Object.getPrototypeOf(candidate);
+      candidate = objectGetPrototypeOf(candidate);
     } catch {
       throw new TypeError(`${label} inherited indexed properties could not be inspected`);
     }
@@ -1398,7 +1431,7 @@ function snapshotAnthropicCacheArray<T>(
   for (let index = 0; index < value.length; index += 1) {
     let descriptor: PropertyDescriptor | undefined;
     try {
-      descriptor = Object.getOwnPropertyDescriptor(value, `${index}`);
+      descriptor = objectGetOwnPropertyDescriptor(value, `${index}`);
     } catch {
       throw new TypeError(`${label} could not be inspected`);
     }
@@ -1406,7 +1439,7 @@ function snapshotAnthropicCacheArray<T>(
       assertNoInheritedAnthropicArrayElement(value, index, label);
       continue;
     }
-    if (!Object.hasOwn(descriptor, "value")) {
+    if (!objectHasOwn(descriptor, "value")) {
       throw new TypeError(`${label} must contain only indexed data properties`);
     }
     snapshot[index] = descriptor.value as T;
@@ -1415,17 +1448,17 @@ function snapshotAnthropicCacheArray<T>(
 }
 
 function hasEmittedAnthropicCacheBreakpoint(value: Record<string, unknown>): boolean {
-  assertNoAnthropicCacheRecordAccessors(value);
+  assertNoAnthropicCacheRecordSerializationHooks(value);
   let descriptor: PropertyDescriptor | undefined;
   try {
-    descriptor = Object.getOwnPropertyDescriptor(value, "cache_control");
+    descriptor = objectGetOwnPropertyDescriptor(value, "cache_control");
   } catch {
     throw new TypeError("Anthropic cache_control could not be inspected");
   }
   if (descriptor === undefined || descriptor.enumerable !== true) {
     return false;
   }
-  if (!Object.hasOwn(descriptor, "value")) {
+  if (!objectHasOwn(descriptor, "value")) {
     throw new TypeError(
       "Anthropic cache_control must be an own enumerable data property",
     );
