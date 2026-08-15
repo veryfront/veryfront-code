@@ -58,14 +58,17 @@ Two artefacts that must stay 1:1:
     open-case constraint. Fetches + PII-redacts.
   - `case-classify` - **no Salesforce access**. Tools: `search_knowledge`,
     `get_file`. Classifies against the checked-in `knowledge/case-triage-taxonomy.md`.
-  - `case-dispose` - write. Tools: `salesforce__add_case_comment`,
+  - `case-dispose` - write. Tools: `salesforce__add_internal_case_comment`,
     `salesforce__update_case`. Sets **only** `Case.Reason` and posts a comment -
     but that Case-update scoping is **prompt-driven today**: the granted
     `update_case` can write every writable Case field, so the boundary is
     instructed, not enforced. §5.2/§6 replace the Case update grant with a
     field-scoped `update_case_reason` tool plus explicit fixed `Case` Update
-    authorization that makes it structural. The comment write remains a separate
-    `add_case_comment` grant with `CaseComment` Create authorization.
+    authorization that makes it structural. The hardened template also replaces
+    the generic `add_case_comment` grant with `add_internal_case_comment`, whose
+    schema omits `IsPublished` and whose server-owned request body always sets
+    `IsPublished: false`. It keeps a separate fixed `CaseComment` Create
+    authorization check.
 - **Companion example repository** (currently private). Mirrors the four agents
   as `agents/*.ts`, ships the taxonomy in `knowledge/`, ships
   **evals** (`evals/*.eval.ts` + `evals/mock-tools.ts`), and runs locally via
@@ -124,7 +127,7 @@ children):
    │  READ-only   │──────────▶│ NO SF access │─────────▶│   WRITE      │
    └──────┬───────┘           └──────┬───────┘          └──────┬───────┘
    get_case                   search_knowledge          update_case_reason
-   list_case_activity         get_file (taxonomy)       add_case_comment
+   list_case_activity         get_file (taxonomy)       add_internal_case_comment
    list_cases (open-constrained)     │                         │
           │                          ▼                         │
           ▼                  project taxonomy .md              ▼
@@ -420,8 +423,8 @@ dynamic-*enough* behaviour from three levers that need no new platform machinery
    the call. Because per-CRUD arrays are persisted but not enforced yet (§16),
    object-level allowlisting or Contact/Case Read does not imply Update. The same
    fixed authorization rule applies to retained curated writes such as
-   `add_case_comment`, `create_case`, `create_lead`, and any temporary retained
-   `update_case`; gate each write tool unless the server checks its concrete
+   `add_internal_case_comment`, `create_case`, `create_lead`, and any temporary
+   retained `update_case`; gate each write tool unless the server checks its concrete
    object/operation pair fail-closed. Reserve passthrough for the generic tier
    under the §16 matrix. An input-schema authorization test (§6) proves the scoping
    - a prompt cannot.
@@ -456,18 +459,23 @@ exists for ergonomics and blog readability.
 
 **Tier 1 - Curated triage happy path (keep, ergonomic wrappers):**
 `find_customer`, `list_cases`, `get_case`, `list_case_activity`,
-`add_case_comment`, `update_case` (curated standard Case update; incl. `Type` per
+`add_case_comment` (general curated wrapper, not granted to `case-dispose`),
+`update_case` (curated standard Case update; incl. `Type` per
 #3638; **not** passthrough, §5.2), `update_case_reason` (future field-scoped tool
 that writes `Case.Reason` only - the sole Case-update tool granted to
-`case-dispose`), plus `search_accounts`, `get_account`, `search_contacts`,
+`case-dispose`), `add_internal_case_comment` (future internal-only CaseComment
+helper granted to `case-dispose`), plus `search_accounts`, `get_account`, `search_contacts`,
 `get_contact`, `list_opportunities`, `create_case`, `create_lead`.
 
 `update_case` is **not** the structural least-privilege boundary today. Its current
 schema can write the standard writable Case fields listed in §3, so the present
 `case-dispose` scoping is a prompt rule. The hardened template must remove
 `update_case` from `case-dispose` and grant only `update_case_reason` for the Case
-update once that field-scoped tool exists, while retaining `add_case_comment` as
-the separate comment write. `update_case_reason` still needs a fixed `Case` Update
+update once that field-scoped tool exists. It must also replace the generic
+`add_case_comment` grant with `add_internal_case_comment`. The helper accepts only
+the case ID and comment text, and the hosted adapter constructs the Salesforce
+body with `IsPublished: false`; callers cannot override or supply that field.
+`update_case_reason` still needs a fixed `Case` Update
 authorization check before execution; if that check is not available, the helper
 stays out of v1. Retained curated write tools also need fixed checks for their
 concrete operation (`CaseComment` Create, `Case` Create/Update, `Lead` Create).
@@ -545,10 +553,10 @@ arbitrary SOQL surfaces.
 | | Tools | Count |
 | --- | --- | --- |
 | **Existing curated v1 baseline** | the 16 in `connector.json` today, minus existing `run_soql_query` while it is gated; `list_cases` counts only after the fixed open-case query/filter is in place | 15 |
-| **Add - helpers (v1)** | `update_case_reason` (`Reason`-only Case update for `case-dispose`; its existing `add_case_comment` grant remains separate), `get_picklist_values_for_record_type` | +2 |
+| **Add - helpers (v1)** | `update_case_reason` (`Reason`-only Case update for `case-dispose`), `add_internal_case_comment` (server-fixed `IsPublished: false`), `get_picklist_values_for_record_type` | +3 |
 | **Read escape hatches (deferred)** | existing `run_soql_query`, curated arbitrary `q` overrides, `search` (SOSL), pending fail-closed query parsing and authorization | - |
 | **Add - generic CRUD (deferred)** | `get_record`, `create_record`, `update_record`, `upsert_record`, `delete_record` (pending fail-closed per-CRUD enforcement) | +5 |
-| **v1 total** | after the fixed write authorization and static-query relationship-field gates above | **17** |
+| **v1 total** | after the fixed write authorization and static-query relationship-field gates above | **18** |
 | **Optional curated wrappers** | `create_contact`, `update_account`, `create/update_opportunity`, `create_task`, `convert_lead` - sugar, not counted in core | - |
 
 **Authorization tests (acceptance gate).** Every least-privilege grant needs an
@@ -556,7 +564,11 @@ input-schema test, because the schema *is* the authorization boundary:
 `update_case_reason`'s schema must reject any body key other than `caseId`/`Reason`
 (so `case-dispose` cannot write `Status`/`OwnerId`/etc. even when prompted to), and
 the server must deny `update_case_reason` unless fixed `Case` Update authorization
-is present. `case-dispose` must retain `add_case_comment` only with an independent
+is present. `add_internal_case_comment` must reject `IsPublished` and every body
+key other than `caseId` and comment text, while its server-owned Salesforce body
+must include `IsPublished: false`. Tests must prove that prompts, model output,
+and caller input cannot publish the comment. `case-dispose` must not receive the
+generic `add_case_comment` tool, and the internal helper still needs an independent
 `CaseComment` Create grant and denial test. Retained curated writes need the same
 fixed object/operation denial tests. Every immutable-query adapter entry must prove
 that `q` is absent from the published schema, a supplied `q` and unknown filters
