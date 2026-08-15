@@ -6,7 +6,7 @@
 
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import type { NestedImportResult } from "../types.ts";
-import { createStubModule } from "../utils/stub-module.ts";
+import { createStubModule, type DeferredImportErrorDescriptor } from "../utils/stub-module.ts";
 import {
   findDynamicImportSpans,
   findStaticImportFromSpans,
@@ -26,6 +26,7 @@ import {
   MAX_MDX_MODULE_IMPORTS_PER_FILE,
   MAX_MDX_MODULE_TRANSFORM_CONCURRENCY,
 } from "./limits.ts";
+import { VeryfrontError } from "#veryfront/errors";
 
 function matchUnresolvedVfModuleSpecifier(specifier: string): string | null {
   return specifier.match(/^((?:file:\/\/)?\/?\/?_vf_modules\/.+)$/)?.[1] ?? null;
@@ -45,6 +46,45 @@ const MALFORMED_IMPORT_SPECIFIER = "<malformed import specifier>";
 
 function isMalformedSpecifierSyntaxError(error: unknown): boolean {
   return error instanceof SyntaxError && error.message.includes("module specifier");
+}
+
+function dynamicDependencyFailure(
+  modulePath: string,
+  error: unknown,
+): DeferredImportErrorDescriptor | null {
+  if (!(error instanceof Error)) return null;
+
+  if (isMdxMissingModuleError(error)) {
+    return {
+      name: "MissingModuleError",
+      message:
+        `[Veryfront] Missing module: ${modulePath}. This module or file does not exist in your project.`,
+    };
+  }
+
+  if (error.name === "CircularModuleDependencyError") {
+    return {
+      name: "CircularModuleDependencyError",
+      message: `[Veryfront] Dynamic import failed for ${modulePath}: circular module dependency.`,
+    };
+  }
+
+  if (error.name === "ModuleSourceLimitError") {
+    return {
+      name: "ModuleSourceLimitError",
+      message:
+        `[Veryfront] Dynamic import failed for ${modulePath}: module source exceeds the allowed size.`,
+    };
+  }
+
+  if (error instanceof VeryfrontError && error.slug === "mdx-compile-error") {
+    return {
+      name: "MdxCompileError",
+      message: `[Veryfront] Dynamic import failed for ${modulePath}: MDX compilation failed.`,
+    };
+  }
+
+  return null;
 }
 
 function scanImportSpans(
@@ -276,6 +316,7 @@ export async function processNestedImports(
       isDynamic,
       isSideEffect,
       nestedFilePath,
+      deferredError,
       nestedPath,
       relativePath,
     } of results
@@ -302,7 +343,7 @@ export async function processNestedImports(
         moduleCode,
         original,
         esmCacheDir,
-        { failOnImport: strictMissingModules },
+        { failOnImport: strictMissingModules, deferredError },
       );
       if (deferredPath) {
         replacements.push({
@@ -442,8 +483,20 @@ export async function resolveNestedModuleImports(
           input.parentBasePath ?? input.normalizedPath,
         );
       } catch (error) {
-        if (!isDynamic || !isMdxMissingModuleError(error)) throw error;
+        const deferredError = isDynamic ? dynamicDependencyFailure(path, error) : null;
+        if (!deferredError) throw error;
         nestedFilePath = null;
+        return {
+          original,
+          start,
+          end,
+          suffix,
+          isDynamic,
+          isSideEffect,
+          nestedFilePath,
+          deferredError,
+          [key]: path,
+        };
       }
 
       return {

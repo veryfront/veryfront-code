@@ -3,6 +3,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { Logger } from "#veryfront/utils";
 import type { MDXModule } from "../types.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import type { DeferredImportErrorDescriptor } from "./utils/stub-module.ts";
 
 export interface ESMLoaderContext {
   esmCacheDir?: string;
@@ -60,6 +61,7 @@ export interface NestedImportResult {
   isSideEffect?: boolean;
   suffix?: string;
   nestedFilePath: string | null;
+  deferredError?: DeferredImportErrorDescriptor;
   nestedPath?: string;
   relativePath?: string;
 }

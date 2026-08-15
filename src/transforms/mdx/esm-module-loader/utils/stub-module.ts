@@ -69,12 +69,22 @@ ${namedExports}
 `;
 }
 
-function generateDeferredMissingModuleCode(modulePath: string): string {
+export interface DeferredImportErrorDescriptor {
+  name: string;
+  message: string;
+}
+
+function generateDeferredImportFailureCode(
+  modulePath: string,
+  deferredError?: DeferredImportErrorDescriptor,
+): string {
   const message = JSON.stringify(
-    `[Veryfront] Missing module: ${modulePath}. This module or file does not exist in your project.`,
+    deferredError?.message ??
+      `[Veryfront] Missing module: ${modulePath}. This module or file does not exist in your project.`,
   );
+  const name = JSON.stringify(deferredError?.name ?? "MissingModuleError");
   return `const error = new Error(${message});
-error.name = "MissingModuleError";
+error.name = ${name};
 throw error;
 `;
 }
@@ -82,6 +92,8 @@ throw error;
 export interface CreateStubModuleOptions {
   /** Reject a dynamic import when it executes instead of exporting fallback values. */
   failOnImport?: boolean;
+  /** Sanitized typed error to throw when a strict dynamic import executes. */
+  deferredError?: DeferredImportErrorDescriptor;
 }
 
 export async function createStubModule(
@@ -93,10 +105,15 @@ export async function createStubModule(
 ): Promise<string | null> {
   const namedImports = extractNamedImports(code, importStatement);
   const behavior = options.failOnImport ? "fail-on-import" : "fallback";
-  const stubHash = hashString(`stub:${behavior}:${modulePath}:${namedImports.join(",")}`);
+  const deferredIdentity = options.deferredError
+    ? `${options.deferredError.name}:${options.deferredError.message}`
+    : "";
+  const stubHash = hashString(
+    `stub:${behavior}:${modulePath}:${namedImports.join(",")}:${deferredIdentity}`,
+  );
   const stubPath = join(esmCacheDir, `stub-${stubHash}.mjs`);
   const stubCode = options.failOnImport
-    ? generateDeferredMissingModuleCode(modulePath)
+    ? generateDeferredImportFailureCode(modulePath, options.deferredError)
     : generateStubCode(modulePath, namedImports);
 
   try {
