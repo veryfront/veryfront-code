@@ -156,6 +156,37 @@ describe("module-loader/dependency-resolver", () => {
     );
   });
 
+  it("resolves side-effect imports after statements and keyword comments", async () => {
+    await withDependencyFixture(
+      {
+        "app/page.tsx": [
+          `const ready = true; import /* preload */ "@/setup";`,
+          `import /* preload */ "./local-setup";`,
+          `export default function Page() { return ready; }`,
+        ].join("\n"),
+        "components/setup.ts": `globalThis.aliasReady = true;`,
+        "app/local-setup.ts": `globalThis.localReady = true;`,
+      },
+      async ({ projectDir }) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.tsx");
+        const fileContent = await Deno.readTextFile(filePath);
+
+        const deps = await resolveModuleDependencies({
+          adapter,
+          fileContent,
+          filePath,
+          projectDir,
+        });
+
+        assertEquals(deps.map((dependency) => dependency.relativePath), [
+          "setup",
+          "./local-setup",
+        ]);
+      },
+    );
+  });
+
   it("resolves alias and relative imports while ignoring already transformed file imports", async () => {
     await withDependencyFixture(
       {
