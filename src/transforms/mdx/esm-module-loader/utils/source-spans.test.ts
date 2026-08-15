@@ -549,6 +549,10 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         specifiers('<><Component /></>\n\n{import("./fragment-lazy.ts")}'),
         ["./fragment-lazy.ts"],
       );
+      assertEquals(
+        specifiers('<Component>Hello</Component>\n\n{import("./text-child-lazy.ts")}'),
+        ["./text-child-lazy.ts"],
+      );
     });
 
     it("keeps comparisons distinct from raw JSX tags", () => {

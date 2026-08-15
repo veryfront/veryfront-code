@@ -38,6 +38,8 @@ interface OpenBraceContext {
 
 interface RawJsxTagSkip {
   end: number;
+  isClosingTag: boolean;
+  isSelfClosingTag: boolean;
   expressionRanges: Array<{ start: number; end: number }>;
 }
 
@@ -1133,11 +1135,20 @@ function canStartRawJsxOpeningTag(source: string, index: number): boolean {
   return ["case", "default", "return", "throw", "yield"].includes(keyword ?? "");
 }
 
-function readRawJsxTag(source: string, index: number): RawJsxTagSkip | null {
+function readRawJsxTag(
+  source: string,
+  index: number,
+  options: { allowClosingTagAfterText?: boolean } = {},
+): RawJsxTagSkip | null {
   if (source[index] !== "<") return null;
 
   const isClosingTag = source[index + 1] === "/";
-  if (!canStartRawJsxOpeningTag(source, index)) return null;
+  if (
+    !canStartRawJsxOpeningTag(source, index) &&
+    !(isClosingTag && options.allowClosingTagAfterText === true)
+  ) {
+    return null;
+  }
 
   const nameStart = isClosingTag ? index + 2 : index + 1;
   if (source[nameStart] !== ">" && !isIdentifierStartAt(source, nameStart)) return null;
@@ -1172,7 +1183,15 @@ function readRawJsxTag(source: string, index: number): RawJsxTagSkip | null {
       continue;
     }
 
-    if (char === ">") return { end: cursor + 1, expressionRanges };
+    if (char === ">") {
+      const beforeClose = previousSignificantIndex(source, cursor);
+      return {
+        end: cursor + 1,
+        expressionRanges,
+        isClosingTag,
+        isSelfClosingTag: !isClosingTag && source[beforeClose] === "/",
+      };
+    }
 
     cursor++;
   }
@@ -1596,16 +1615,24 @@ function scanDynamicImportRange(
   const openParens: OpenParenContext[] = [];
   const matchingOpenParens = new Map<number, OpenParenContext>();
   let previousTokenIndex = rangeStart - 1;
+  let rawJsxTextDepth = 0;
 
   while (cursor < rangeEnd) {
     const char = source[cursor];
     const next = source[cursor + 1];
 
-    const jsxTag = readRawJsxTag(source, cursor);
+    const jsxTag = readRawJsxTag(source, cursor, {
+      allowClosingTagAfterText: rawJsxTextDepth > 0,
+    });
     if (jsxTag !== null) {
       for (const range of jsxTag.expressionRanges) {
         scanDynamicImportRange(source, range.start, range.end, matcher, maxMatches, spans);
         if (spans.length >= maxMatches) return;
+      }
+      if (jsxTag.isClosingTag) {
+        rawJsxTextDepth = Math.max(0, rawJsxTextDepth - 1);
+      } else if (!jsxTag.isSelfClosingTag) {
+        rawJsxTextDepth++;
       }
       previousTokenIndex = jsxTag.end - 1;
       cursor = jsxTag.end;
