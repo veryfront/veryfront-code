@@ -1355,14 +1355,47 @@ function readEmittedAnthropicMessageContent(message: AnthropicCompatibleMessage)
   return descriptor.value;
 }
 
+function readAnthropicArrayDataElement(
+  value: unknown[],
+  index: number,
+  label: string,
+): unknown {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+  } catch {
+    throw new TypeError(`${label} could not be inspected`);
+  }
+  if (descriptor === undefined) {
+    return undefined;
+  }
+  if (!Object.hasOwn(descriptor, "value")) {
+    throw new TypeError(`${label} must contain only indexed data properties`);
+  }
+  return descriptor.value;
+}
+
 function retainLatestAnthropicMessageCacheBreakpoints(
   messages: AnthropicCompatibleMessage[],
   maximum: number,
 ): AnthropicCompatibleMessage[] {
   const breakpointPositions: Array<{ messageIndex: number; contentIndex: number }> = [];
-  for (const [messageIndex, message] of messages.entries()) {
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
+    const message = readAnthropicArrayDataElement(
+      messages,
+      messageIndex,
+      "Anthropic messages",
+    ) as AnthropicCompatibleMessage | undefined;
+    if (message === undefined) {
+      continue;
+    }
     const content = readEmittedAnthropicMessageContent(message);
-    for (const [contentIndex, block] of content.entries()) {
+    for (let contentIndex = 0; contentIndex < content.length; contentIndex += 1) {
+      const block = readAnthropicArrayDataElement(
+        content,
+        contentIndex,
+        "Anthropic message content",
+      );
       if (
         typeof block === "object" && block !== null && !Array.isArray(block) &&
         hasEmittedAnthropicCacheBreakpoint(block as Record<string, unknown>)
@@ -1386,12 +1419,28 @@ function retainLatestAnthropicMessageCacheBreakpoints(
     removalsByMessage.set(messageIndex, removals);
   }
 
-  return messages.map((message, messageIndex) => {
+  const normalizedMessages = new Array<AnthropicCompatibleMessage>(messages.length);
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
+    const message = readAnthropicArrayDataElement(
+      messages,
+      messageIndex,
+      "Anthropic messages",
+    ) as AnthropicCompatibleMessage | undefined;
+    if (message === undefined) {
+      continue;
+    }
     const removals = removalsByMessage.get(messageIndex);
     if (!removals) {
-      return message;
+      normalizedMessages[messageIndex] = message;
+      continue;
     }
-    const content = readEmittedAnthropicMessageContent(message).map((block, contentIndex) => {
+    const originalContent = readEmittedAnthropicMessageContent(message);
+    const content = Array.from({ length: originalContent.length }, (_, contentIndex) => {
+      const block = readAnthropicArrayDataElement(
+        originalContent,
+        contentIndex,
+        "Anthropic message content",
+      );
       if (
         !removals.has(contentIndex) || typeof block !== "object" || block === null ||
         Array.isArray(block)
@@ -1402,14 +1451,29 @@ function retainLatestAnthropicMessageCacheBreakpoints(
       Reflect.deleteProperty(next, "cache_control");
       return next;
     });
-    return { ...message, content } as AnthropicCompatibleMessage;
-  });
+    normalizedMessages[messageIndex] = { ...message, content } as AnthropicCompatibleMessage;
+  }
+  return normalizedMessages;
 }
 
 function countAnthropicMessageCacheBreakpoints(messages: AnthropicCompatibleMessage[]): number {
   let count = 0;
-  for (const message of messages) {
-    for (const block of readEmittedAnthropicMessageContent(message)) {
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
+    const message = readAnthropicArrayDataElement(
+      messages,
+      messageIndex,
+      "Anthropic messages",
+    ) as AnthropicCompatibleMessage | undefined;
+    if (message === undefined) {
+      continue;
+    }
+    const content = readEmittedAnthropicMessageContent(message);
+    for (let contentIndex = 0; contentIndex < content.length; contentIndex += 1) {
+      const block = readAnthropicArrayDataElement(
+        content,
+        contentIndex,
+        "Anthropic message content",
+      );
       if (
         typeof block === "object" && block !== null && !Array.isArray(block) &&
         hasEmittedAnthropicCacheBreakpoint(block as Record<string, unknown>)

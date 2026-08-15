@@ -446,6 +446,46 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     });
   });
 
+  it("budgets raw message breakpoints without invoking array entries overrides", () => {
+    let entriesCalls = 0;
+    const content = Array.from({ length: 5 }, (_, index) => ({
+      type: "text",
+      text: `Cached ${index}`,
+      cache_control: { type: "ephemeral" },
+    }));
+    Object.defineProperty(content, "entries", {
+      enumerable: true,
+      value() {
+        entriesCalls += 1;
+        return [][Symbol.iterator]();
+      },
+    });
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+        providerOptions: {
+          anthropic: {
+            messages: [{ role: "user", content }],
+          },
+        },
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(entriesCalls, 0);
+    assertEquals(body.messages[0]?.content[0]?.cache_control, undefined);
+    assertEquals(
+      body.messages[0]?.content
+        .filter((block: Record<string, unknown>) => block.cache_control !== undefined)
+        .length,
+      4,
+    );
+  });
+
   it("rejects cache-affecting toJSON hooks without invoking them", () => {
     for (
       const placement of [
