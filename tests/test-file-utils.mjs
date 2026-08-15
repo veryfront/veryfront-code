@@ -165,6 +165,12 @@ export function splitIntoShards(files, shardCount) {
   return shards;
 }
 
+/**
+ * @param {string[]} files
+ * @param {{ include?: string[]; exclude?: string[] }} [filters]
+ * @param {string} [cwd]
+ * @returns {string[]}
+ */
 export function filterTestFiles(files, { include = [], exclude = [] } = {}, cwd = process.cwd()) {
   if (files.length === 0) return [];
   const includeMatchers = include.map((pattern) => globToRegex(toPosixPath(pattern)));
