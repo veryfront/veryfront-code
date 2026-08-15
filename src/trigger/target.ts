@@ -54,6 +54,12 @@ export type TriggerTargetConfig =
   | WorkflowTriggerTarget
   | AgentTriggerTarget;
 
+/** Validated target value that narrows conversation fields by `kind`. */
+export type ResolvedTriggerTarget =
+  | TaskTriggerTarget
+  | WorkflowTriggerTarget
+  | AgentTriggerTarget;
+
 /** Supported local trigger target kinds. */
 export type TriggerTargetKind = TriggerTarget["kind"];
 
@@ -207,7 +213,7 @@ function formatDiagnosticProperty(label: string, key: string): string {
 
 /** A canonical target, or the reason the value is not one. */
 export type TriggerTargetResolution =
-  | { readonly target: TriggerTargetConfig; readonly detail?: undefined }
+  | { readonly target: ResolvedTriggerTarget; readonly detail?: undefined }
   | { readonly target?: undefined; readonly detail: string };
 
 function requireOwnDataField(
@@ -291,11 +297,11 @@ export function resolveTriggerTarget(
 /**
  * Validate and copy a trigger target without retaining caller-owned state.
  */
-export function snapshotTriggerTarget(value: unknown): TriggerTargetConfig | null {
+export function snapshotTriggerTarget(value: unknown): ResolvedTriggerTarget | null {
   return resolveTriggerTarget("Trigger target", value).target ?? null;
 }
 
 /** Return true only for canonical targets stored in own data properties. */
-export function isTriggerTarget(value: unknown): value is TriggerTargetConfig {
+export function isTriggerTarget(value: unknown): value is ResolvedTriggerTarget {
   return snapshotTriggerTarget(value) !== null;
 }

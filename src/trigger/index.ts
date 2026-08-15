@@ -43,6 +43,7 @@ export type { RunTriggerTargetOptions, TriggerTargetRunResult } from "./local-ru
 export type {
   AgentConversationMode,
   AgentTriggerTarget,
+  ResolvedTriggerTarget,
   TaskTriggerTarget,
   TriggerTarget,
   TriggerTargetConfig,

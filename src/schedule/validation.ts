@@ -3,9 +3,9 @@ import {
   agentConversationDiagnostic,
   conversationConflictDiagnostic,
   declarationConflictDiagnostic,
+  type ResolvedTriggerTarget,
   resolveTriggerTarget,
   type TriggerTarget,
-  type TriggerTargetConfig,
   triggerTargetKeys,
 } from "#veryfront/trigger/target.ts";
 import { snapshotSerializable, validateTriggerId } from "#veryfront/trigger/validation.ts";
@@ -319,7 +319,7 @@ function normalizeTimezone(
   return timezone;
 }
 
-function normalizeTarget(value: unknown): TriggerTargetConfig {
+function normalizeTarget(value: unknown): ResolvedTriggerTarget {
   const target = snapshotDataRecord(
     value,
     "Schedule target",

@@ -4,7 +4,7 @@ import type { ParsedArgs } from "#cli/shared/types";
 import { cliLogger, exitProcess } from "#cli/utils";
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { type AgentTriggerTarget, runTriggerTarget } from "veryfront/trigger";
+import { runTriggerTarget } from "veryfront/trigger";
 import {
   discoverWebhooks,
   isWebhookId,
@@ -46,8 +46,7 @@ export function toWebhookAgentOptions(
 } {
   const webhook = invocation.definition;
   if (webhook.target.kind !== "agent") return {};
-  const agentTarget = webhook.target as AgentTriggerTarget;
-  const conversationMode = agentTarget.conversationMode ??
+  const conversationMode = webhook.target.conversationMode ??
     webhook.agentMessage?.conversationMode;
   if (conversationMode === "existing") {
     throw INVALID_ARGUMENT.create({

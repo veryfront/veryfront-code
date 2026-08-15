@@ -1,4 +1,8 @@
-import type { AgentConversationMode, TriggerTargetConfig } from "#veryfront/trigger/target.ts";
+import type {
+  AgentConversationMode,
+  ResolvedTriggerTarget,
+  TriggerTargetConfig,
+} from "#veryfront/trigger/target.ts";
 import { isValidWebhookDefinition } from "./validation.ts";
 
 /** Whether every filter condition or at least one condition must match. */
@@ -64,7 +68,7 @@ export interface WebhookDefinition {
   /** Optional operator-facing description. */
   description?: string;
   /** Canonical task, workflow, or agent target. */
-  target: TriggerTargetConfig;
+  target: ResolvedTriggerTarget;
   /** Optional payload filter evaluated before target execution. */
   eventFilter?: WebhookEventFilter;
   /** Required for agent targets and unsupported for other targets. */

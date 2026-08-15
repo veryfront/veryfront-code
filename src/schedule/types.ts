@@ -1,4 +1,4 @@
-import type { TriggerTargetConfig } from "#veryfront/trigger/target.ts";
+import type { ResolvedTriggerTarget, TriggerTargetConfig } from "#veryfront/trigger/target.ts";
 import { isValidScheduleDefinition } from "./validation.ts";
 
 /** Behavior when a scheduled occurrence overlaps an active run. */
@@ -63,7 +63,7 @@ export interface ScheduleDefinition {
   /** Supported IANA timezone name; platform default when omitted. */
   timezone?: string;
   /** Task, workflow, or agent invoked by each occurrence. */
-  target: TriggerTargetConfig;
+  target: ResolvedTriggerTarget;
   /** Prompt content for an agent target; unsupported for other targets. */
   agentMessage?: ScheduleAgentMessage;
   /** Bounded JSON object copied into each target run. */

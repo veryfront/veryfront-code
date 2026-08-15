@@ -1,13 +1,15 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform";
-import type { ScheduleConfig } from "#veryfront/schedule";
+import type { CreateScheduleRunFromSourceResult } from "#veryfront/runs";
+import type { ScheduleConfig, ScheduleDefinition } from "#veryfront/schedule";
 import type {
+  AgentConversationMode,
   RunTriggerTargetOptions,
   TriggerTarget,
   WorkflowTriggerTarget,
 } from "#veryfront/trigger";
-import type { WebhookConfig } from "#veryfront/webhook";
+import type { WebhookConfig, WebhookDefinition } from "#veryfront/webhook";
 
 const adapter = {} as RuntimeAdapter;
 
@@ -23,6 +25,24 @@ function acceptRunTriggerTargetOptions(
   options: RunTriggerTargetOptions,
 ): RunTriggerTargetOptions {
   return options;
+}
+
+function readScheduleConversationMode(
+  target: ScheduleDefinition["target"],
+): AgentConversationMode | undefined {
+  return target.kind === "agent" ? target.conversationMode : undefined;
+}
+
+function readWebhookConversationMode(
+  target: WebhookDefinition["target"],
+): AgentConversationMode | undefined {
+  return target.kind === "agent" ? target.conversationMode : undefined;
+}
+
+function readRemoteScheduleConversationMode(
+  target: CreateScheduleRunFromSourceResult["target"],
+): AgentConversationMode | undefined {
+  return target.kind === "agent" ? target.conversationMode : undefined;
 }
 
 interface OwnedWorkflowTarget extends WorkflowTriggerTarget {
@@ -107,5 +127,17 @@ describe("trigger target public type contracts", () => {
     assertEquals(invalidTaskSchedule.target.kind, "task");
     assertEquals(invalidWorkflowWebhook.target.kind, "workflow");
     assertEquals(invalidTaskRun.target.kind, "task");
+  });
+
+  it("narrows canonical output targets by kind", () => {
+    const target = {
+      kind: "agent" as const,
+      id: "case-triage",
+      conversationMode: "create_new" as const,
+    };
+
+    assertEquals(readScheduleConversationMode(target), "create_new");
+    assertEquals(readWebhookConversationMode(target), "create_new");
+    assertEquals(readRemoteScheduleConversationMode(target), "create_new");
   });
 });

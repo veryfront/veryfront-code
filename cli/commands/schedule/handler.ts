@@ -23,11 +23,11 @@ import {
   type ScheduleDefinition,
 } from "veryfront/schedule";
 import {
-  type AgentTriggerTarget,
   conversationConflictDiagnostic,
   declarationConflictDiagnostic,
   isTriggerId,
   isTriggerTarget,
+  type ResolvedTriggerTarget,
   runTriggerTarget,
   type TriggerTarget,
 } from "veryfront/trigger";
@@ -238,8 +238,7 @@ export function toScheduleAgentOptions(
     throw INVALID_ARGUMENT.create({ detail: conflictDetail });
   }
 
-  const agentTarget = target as AgentTriggerTarget;
-  const conversationMode = agentTarget.conversationMode ??
+  const conversationMode = target.conversationMode ??
     legacyConversation.conversationMode;
   if (conversationMode === "existing") {
     throw INVALID_ARGUMENT.create({
@@ -332,7 +331,10 @@ export function formatRemoteScheduleRunOutput(run: Run): Record<string, unknown>
   };
 }
 
-export function resolveRemoteScheduleTarget(run: Run, fallback: TriggerTarget): TriggerTarget {
+export function resolveRemoteScheduleTarget(
+  run: Run,
+  fallback: TriggerTarget,
+): ResolvedTriggerTarget {
   const fallbackTarget = isTriggerTarget(fallback) ? { ...fallback } : null;
   if (!run.target) {
     if (fallbackTarget !== null) return fallbackTarget;

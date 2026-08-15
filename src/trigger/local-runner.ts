@@ -17,7 +17,7 @@ import {
 import { runTask } from "#veryfront/task/runner.ts";
 import { sleep } from "#veryfront/utils/sleep.ts";
 import {
-  type AgentTriggerTarget,
+  type ResolvedTriggerTarget,
   resolveTriggerTarget,
   type TriggerTarget,
   type TriggerTargetConfig,
@@ -71,7 +71,7 @@ interface NormalizedRunTriggerTargetOptions extends
     RunTriggerTargetOptions,
     "target"
   > {
-  target: TriggerTargetConfig;
+  target: ResolvedTriggerTarget;
 }
 
 function invalidTriggerConfiguration(detail: string): never {
@@ -377,8 +377,7 @@ export async function runTriggerTarget(
   // A local run never reaches the hosted conversation store, so only
   // `existing` is refusable: `create_new` and `none` both mean "run
   // standalone here" and need no local handling.
-  const agentTarget = target.kind === "agent" ? target as AgentTriggerTarget : null;
-  if (agentTarget?.conversationMode === "existing") {
+  if (target.kind === "agent" && target.conversationMode === "existing") {
     invalidTriggerConfiguration(
       "Local agent trigger runs cannot attach to an existing cloud conversation.",
     );

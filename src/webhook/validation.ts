@@ -2,9 +2,9 @@ import { VeryfrontError, WEBHOOK_CONFIG_INVALID } from "#veryfront/errors";
 import {
   agentConversationDiagnostic,
   conversationConflictDiagnostic,
+  type ResolvedTriggerTarget,
   resolveTriggerTarget,
   type TriggerTarget,
-  type TriggerTargetConfig,
   triggerTargetKeys,
 } from "#veryfront/trigger/target.ts";
 import { snapshotSerializable, validateTriggerId } from "#veryfront/trigger/validation.ts";
@@ -256,7 +256,7 @@ export function isWebhookId(value: unknown): value is string {
   }
 }
 
-function normalizeTarget(value: unknown): TriggerTargetConfig {
+function normalizeTarget(value: unknown): ResolvedTriggerTarget {
   const target = snapshotDataRecord(
     value,
     "Webhook target",
