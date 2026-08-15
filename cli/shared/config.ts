@@ -277,7 +277,7 @@ async function resolveApiCredentialCandidates(
     });
   }
 
-  if (envToken && !shellEnvToken && !projectEnvTokenAfterStored) {
+  if (envToken && !shellEnvToken) {
     candidates.push({
       apiToken: envToken,
       apiTokenSource: envSource.source === "env-file" ? "env-file" : "env",

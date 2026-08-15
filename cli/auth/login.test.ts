@@ -366,6 +366,61 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("falls back to a valid project dotenv credential after a rejected stored session", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalToken = getEnv("VERYFRONT_API_TOKEN");
+      const envDir = await makeTempDir({ prefix: "ensure-dotenv-fallback-" });
+      const requestedAuth: string[] = [];
+      await saveToken("stored-invalid-token", testEnv);
+
+      try {
+        deleteEnv("VERYFRONT_API_TOKEN");
+        await Deno.writeTextFile(
+          `${envDir}/.env`,
+          "VERYFRONT_API_TOKEN=env-file-valid-token\n",
+        );
+        const { __resetEnvLoaderForTests, loadEnv } = await import(
+          "veryfront/utils/env-loader"
+        );
+        __resetEnvLoaderForTests();
+        await loadEnv({ cwd: envDir });
+        setNonInteractive(true);
+
+        globalThis.fetch = ((_: string | URL | Request, init?: RequestInit) => {
+          const auth = String(new Headers(init?.headers).get("authorization") ?? "");
+          requestedAuth.push(auth);
+          if (auth === "Bearer stored-invalid-token") {
+            return Promise.resolve(new Response(null, { status: 401 }));
+          }
+          return Promise.resolve(
+            Response.json({ id: "env-user", email: "env@example.com" }),
+          );
+        }) as typeof fetch;
+
+        const { ensureAuthenticated } = await import("./login.ts");
+        const credential = await ensureAuthenticated({
+          ...testEnv,
+          apiToken: "env-file-valid-token",
+        });
+
+        assertEquals(credential, { id: "env-user", email: "env@example.com" });
+        assertEquals(requestedAuth, [
+          "Bearer stored-invalid-token",
+          "Bearer env-file-valid-token",
+        ]);
+        assertEquals(await readToken(testEnv), null);
+      } finally {
+        const { __resetEnvLoaderForTests } = await import("veryfront/utils/env-loader");
+        __resetEnvLoaderForTests();
+        if (originalToken) setEnv("VERYFRONT_API_TOKEN", originalToken);
+        else deleteEnv("VERYFRONT_API_TOKEN");
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+        await remove(envDir, { recursive: true });
+      }
+    });
+
     it("uses a valid veryfront.json API key without executing module config", async () => {
       const originalFetch = globalThis.fetch;
       const projectDir = await makeTempDir({ prefix: "ensure-config-token-" });
@@ -1022,7 +1077,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
-    it("does not accept a project dotenv token after a rejected stored login in JSON mode", async () => {
+    it("accepts a project dotenv token after a rejected stored login in JSON mode", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;
       const originalError = console.error;
@@ -1068,15 +1123,16 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         });
         const envelope = JSON.parse(output.join("\n"));
 
-        assertEquals(result, null);
-        assertEquals(envelope.error, {
-          code: "AUTHENTICATION_ERROR",
-          slug: "authentication-required",
-          registrySlug: "authentication-required",
-          message: "Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.",
+        assertEquals(result, { id: "env-user", email: "env@example.com" });
+        assertEquals(envelope.data, {
+          id: "env-user",
+          email: "env@example.com",
+          source: "env",
         });
-        assertEquals(requestedAuth, ["Bearer stored-invalid-token"]);
-        assertEquals(output.join("\n").includes("env@example.com"), false);
+        assertEquals(requestedAuth, [
+          "Bearer stored-invalid-token",
+          "Bearer env-file-valid-token",
+        ]);
         assertEquals(output.join("\n").includes("env-file-valid-token"), false);
         assertEquals(output.join("\n").includes("stored-invalid-token"), false);
         assertEquals(errors, []);
@@ -2490,6 +2546,67 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         assertEquals(requestedUrl, "https://auth.example.test/me");
       } finally {
         globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("falls back to a valid project dotenv credential after a rejected stored session", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const originalToken = getEnv("VERYFRONT_API_TOKEN");
+      const output: string[] = [];
+      const envDir = await makeTempDir({ prefix: "whoami-dotenv-fallback-" });
+      const requestedAuth: string[] = [];
+      await saveToken("stored-invalid-token", testEnv);
+
+      try {
+        deleteEnv("VERYFRONT_API_TOKEN");
+        await Deno.writeTextFile(
+          `${envDir}/.env`,
+          "VERYFRONT_API_TOKEN=env-file-valid-token\n",
+        );
+        const { __resetEnvLoaderForTests, loadEnv } = await import(
+          "veryfront/utils/env-loader"
+        );
+        __resetEnvLoaderForTests();
+        await loadEnv({ cwd: envDir });
+
+        globalThis.fetch = ((_: string | URL | Request, init?: RequestInit) => {
+          const auth = String(new Headers(init?.headers).get("authorization") ?? "");
+          requestedAuth.push(auth);
+          if (auth === "Bearer stored-invalid-token") {
+            return Promise.resolve(new Response(null, { status: 401 }));
+          }
+          return Promise.resolve(
+            Response.json({ id: "env-user", email: "env@example.com" }),
+          );
+        }) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+
+        const { whoami } = await import("./login.ts");
+        const user = await whoami({
+          ...testEnv,
+          apiToken: "env-file-valid-token",
+        });
+
+        assertEquals(user, { id: "env-user", email: "env@example.com" });
+        assertEquals(requestedAuth, [
+          "Bearer stored-invalid-token",
+          "Bearer env-file-valid-token",
+        ]);
+        const printed = output.join("\n");
+        assertStringIncludes(printed, "env@example.com");
+        assertStringIncludes(printed, ".env");
+        assertEquals(printed.includes("env-file-valid-token"), false);
+        assertEquals(printed.includes("stored-invalid-token"), false);
+      } finally {
+        const { __resetEnvLoaderForTests } = await import("veryfront/utils/env-loader");
+        __resetEnvLoaderForTests();
+        if (originalToken) setEnv("VERYFRONT_API_TOKEN", originalToken);
+        else deleteEnv("VERYFRONT_API_TOKEN");
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        await safeDeleteToken();
+        await remove(envDir, { recursive: true });
       }
     });
 
