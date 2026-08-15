@@ -816,8 +816,10 @@ export class EsbuildBundler implements Bundler {
         uninstallServiceLossSpawnGuard();
         throw error;
       }
+      let chargedLostService = false;
       if (esbuildServiceLost) {
         remainingServiceRestarts -= 1;
+        chargedLostService = true;
         uninstallServiceLossSpawnGuard();
       }
 
@@ -825,7 +827,7 @@ export class EsbuildBundler implements Bundler {
       const trackedService = esbuildService;
       if (
         trackedService && !trackedService.expectedClose && !isLiveService(trackedService) &&
-        remainingServiceRestarts <= 0
+        remainingServiceRestarts <= 0 && !chargedLostService
       ) {
         // A dead managed child within the restart budget is a crash, which a
         // stop resets anyway; only an exhausted budget still means giving up.
