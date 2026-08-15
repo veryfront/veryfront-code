@@ -1,4 +1,9 @@
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   isRequestFromLoopbackPeer,
@@ -24,7 +29,30 @@ describe("runRequestInterceptor", () => {
     assertEquals(isRequestFromLoopbackPeer(intercepted), true);
   });
 
-  it("isolates provenance when overlapping calls reuse one replacement request", async () => {
+  it("does not tee a one-owner streaming replacement body", async () => {
+    const request = new Request("http://localhost/");
+    recordRequestPeerFromTransport(request, {
+      runtime: "deno",
+      transport: "tcp",
+      hostname: "127.0.0.1",
+    });
+    const replacement = new Request("http://localhost/", {
+      method: "POST",
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("payload"));
+          controller.close();
+        },
+      }),
+    });
+
+    const intercepted = await runRequestInterceptor(request, () => replacement);
+
+    assertStrictEquals(intercepted, replacement);
+    assertEquals(await intercepted.text(), "payload");
+  });
+
+  it("rejects reuse before a replacement request can change provenance", async () => {
     const remoteRequest = new Request("http://localhost/");
     recordRequestPeerFromTransport(remoteRequest, {
       runtime: "deno",
@@ -44,19 +72,16 @@ describe("runRequestInterceptor", () => {
     const interceptor = () => sharedReplacement;
 
     const remoteIntercepted = await runRequestInterceptor(remoteRequest, interceptor);
-    const localIntercepted = await runRequestInterceptor(localRequest, interceptor);
 
-    assert(remoteIntercepted !== localIntercepted);
+    assertStrictEquals(remoteIntercepted, sharedReplacement);
     assertEquals(isRequestFromLoopbackPeer(remoteIntercepted), false);
-    assertEquals(isRequestFromLoopbackPeer(localIntercepted), true);
     assertEquals(isRequestFromLoopbackPeer(sharedReplacement), false);
-    assertEquals(
-      await Promise.all([
-        remoteIntercepted.text(),
-        localIntercepted.text(),
-        sharedReplacement.text(),
-      ]),
-      ["payload", "payload", "payload"],
+    await assertRejects(
+      () => runRequestInterceptor(localRequest, interceptor),
+      TypeError,
+      "Request interceptors must return a fresh replacement Request",
     );
+    assertEquals(isRequestFromLoopbackPeer(remoteIntercepted), false);
+    assertEquals(await remoteIntercepted.text(), "payload");
   });
 });

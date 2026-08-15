@@ -18,6 +18,7 @@ export interface RequestPeerProvenance {
 }
 
 const requestPeerProvenance = new WeakMap<Request, RequestPeerProvenance>();
+const interceptorReplacementRequests = new WeakSet<Request>();
 const MAX_PEER_HOSTNAME_CHARACTERS = 255;
 const DECIMAL_OCTET_PATTERN = /^(?:0|[1-9][0-9]{0,2})$/;
 const IPV4_MAPPED_IPV6_PATTERN = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
@@ -213,8 +214,13 @@ export async function runRequestInterceptor(
   const intercepted = await interceptor(request);
   if (intercepted === request) return request;
 
-  const requestLocalReplacement = Request.prototype.clone.call(intercepted);
-  return inheritRequestPeerProvenance(request, requestLocalReplacement);
+  if (interceptorReplacementRequests.has(intercepted)) {
+    throw new TypeError(
+      "Request interceptors must return a fresh replacement Request",
+    );
+  }
+  interceptorReplacementRequests.add(intercepted);
+  return inheritRequestPeerProvenance(request, intercepted);
 }
 
 /** @internal True for IPv4 127/8, IPv6 ::1, or mapped IPv4 127/8. */
