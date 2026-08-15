@@ -166,6 +166,17 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("finds static imports after JSX text inside template substitutions", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          'const rendered = `${<Comp>Hello</Comp>}`; import value from "./after-template-jsx.js"',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-template-jsx.js"],
+      );
+    });
+
     it("ignores static import-from text inside raw JSX text children", () => {
       assertEquals(
         findStaticImportFromSpans(
@@ -447,6 +458,13 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           'const html = `${await /}/.test(x) ? import("./after-await-regex.js") : null}`;',
         ),
         ["./after-await-regex.js"],
+      );
+    });
+
+    it("finds imports after JSX text inside template substitutions", () => {
+      assertEquals(
+        specifiers('const rendered = `${<Comp>Hello</Comp>}`; import("./after-template-jsx.js")'),
+        ["./after-template-jsx.js"],
       );
     });
 
@@ -753,6 +771,13 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           'class \\u0043 {} /import("\\/_vf_modules\\/fake.js")/.test(value); import("/_vf_modules/escaped-class-lazy.js")',
         ),
         ["/_vf_modules/escaped-class-lazy.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'class C<T> implements I {} /import("\\/_vf_modules\\/fake-ts-class.js")/.test(value); ' +
+            'import("/_vf_modules/after-ts-class.js")',
+        ),
+        ["/_vf_modules/after-ts-class.js"],
       );
     });
 
@@ -1147,6 +1172,20 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("keeps per-statement TypeScript assertion lookahead within a bounded runtime", () => {
+      const source = "<T>value;\n".repeat(16_000);
+      const startedAt = performance.now();
+
+      assertEquals(specifiers(source), []);
+
+      const durationMs = performance.now() - startedAt;
+      assert(
+        durationMs < 750,
+        `Expected a ${Math.round(source.length / 1024)} KB per-statement TypeScript assertion ` +
+          `scan to finish within 750 ms, got ${durationMs.toFixed(1)} ms`,
+      );
+    });
+
     it("finds imports after division when literal contents look like control conditions", () => {
       assertEquals(
         specifiers('foo("if(") / 2 && import("./after-string-division.js");'),
@@ -1477,6 +1516,17 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           UNBOUNDED,
         ).map((span) => span.path),
         ["./after-jsx-text-side-effect.js"],
+      );
+    });
+
+    it("finds side-effect imports after JSX text inside template substitutions", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'const rendered = `${<Comp>Hello</Comp>}`; import "./after-template-jsx.js"',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-template-jsx.js"],
       );
     });
 

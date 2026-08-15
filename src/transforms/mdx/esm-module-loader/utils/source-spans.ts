@@ -47,6 +47,7 @@ interface RawJsxTagSkip {
 interface RawJsxLookaheadCache {
   closingTags: Map<string, boolean>;
   statementEnds: Array<{ start: number; end: number }>;
+  statementEndCursor: number;
 }
 
 interface RawJsxTagOptions {
@@ -68,7 +69,7 @@ const FUNCTION_DECLARATION_PREFIX_PATTERN = new RegExp(
 );
 const CLASS_DECLARATION_PREFIX_PATTERN = new RegExp(
   String
-    .raw`^(?:export\s+(?:default\s+)?)?class(?:\s+${IDENTIFIER_NAME_SOURCE})?(?:\s+extends\s+[\s\S]+)?\s*$`,
+    .raw`^(?:export\s+(?:default\s+)?)?(?:abstract\s+)?class(?:\s+${IDENTIFIER_NAME_SOURCE})?(?:\s*<[\s\S]*>)?(?:\s+extends\s+[\s\S]+?)?(?:\s+implements\s+[\s\S]+)?\s*$`,
   "u",
 );
 
@@ -1356,7 +1357,7 @@ function findParenEnd(source: string, index: number): number | null {
 }
 
 function createRawJsxLookaheadCache(): RawJsxLookaheadCache {
-  return { closingTags: new Map(), statementEnds: [] };
+  return { closingTags: new Map(), statementEnds: [], statementEndCursor: 0 };
 }
 
 function statementEndAfter(
@@ -1365,12 +1366,40 @@ function statementEndAfter(
   cache?: RawJsxLookaheadCache,
 ): number {
   if (cache !== undefined) {
-    const cached = cache.statementEnds.find((range) => start >= range.start && start < range.end);
-    if (cached !== undefined) return cached.end;
+    const ranges = cache.statementEnds;
+    let rangeIndex = Math.min(cache.statementEndCursor, ranges.length - 1);
+
+    if (rangeIndex >= 0) {
+      if (start < ranges[rangeIndex]!.start) {
+        let low = 0;
+        let high = rangeIndex;
+        while (low <= high) {
+          const mid = Math.floor((low + high) / 2);
+          const range = ranges[mid]!;
+          if (start < range.start) high = mid - 1;
+          else if (start >= range.end) low = mid + 1;
+          else {
+            cache.statementEndCursor = mid;
+            return range.end;
+          }
+        }
+      } else {
+        while (rangeIndex < ranges.length && start >= ranges[rangeIndex]!.end) rangeIndex++;
+        if (
+          rangeIndex < ranges.length &&
+          start >= ranges[rangeIndex]!.start &&
+          start < ranges[rangeIndex]!.end
+        ) {
+          cache.statementEndCursor = rangeIndex;
+          return ranges[rangeIndex]!.end;
+        }
+      }
+    }
   }
 
   const end = nextStatementCursor(source, start);
   cache?.statementEnds.push({ start, end });
+  if (cache !== undefined) cache.statementEndCursor = cache.statementEnds.length - 1;
   return end;
 }
 
@@ -1385,15 +1414,19 @@ function hasRawJsxClosingTagBeforeStatementEnd(
   const cached = cache?.closingTags.get(cacheKey);
   if (cached !== undefined) return cached;
 
-  const closingPrefix = `</${name}`;
-  let closing = source.indexOf(closingPrefix, start);
+  let closing = source.indexOf("<", start);
   while (closing >= 0 && closing < statementEnd) {
-    const afterName = source[closing + closingPrefix.length];
-    if (afterName === ">" || afterName === "/" || /\s/.test(afterName ?? "")) {
+    const nameStart = closing + 2;
+    const afterName = source[nameStart + name.length];
+    if (
+      source[closing + 1] === "/" &&
+      source.startsWith(name, nameStart) &&
+      (afterName === ">" || afterName === "/" || /\s/.test(afterName ?? ""))
+    ) {
       cache?.closingTags.set(cacheKey, true);
       return true;
     }
-    closing = source.indexOf(closingPrefix, closing + closingPrefix.length);
+    closing = source.indexOf("<", closing + 1);
   }
   cache?.closingTags.set(cacheKey, false);
   return false;
@@ -1610,8 +1643,34 @@ function findTemplateExpressionEnd(
   let previousTokenIndex = expressionIndex - 1;
   const moduleDeclarationBefore = createModuleDeclarationTracker(source, expressionIndex);
   const rawJsxLookaheadCache = createRawJsxLookaheadCache();
+  let rawJsxTextDepth = 0;
+  let rawJsxExpressionBraceDepth = 0;
+  const rawJsxExpressionBraceStack: boolean[] = [];
 
   while (cursor < source.length) {
+    const jsxTag = readRawJsxTag(source, cursor, {
+      allowClosingTagAfterText: isInRawJsxText(rawJsxTextDepth, rawJsxExpressionBraceDepth),
+      lookaheadCache: rawJsxLookaheadCache,
+    });
+    if (jsxTag !== null) {
+      if (jsxTag.isClosingTag) {
+        rawJsxTextDepth = Math.max(0, rawJsxTextDepth - 1);
+      } else if (!jsxTag.isSelfClosingTag) {
+        rawJsxTextDepth++;
+      }
+      previousTokenIndex = jsxTag.end - 1;
+      cursor = jsxTag.end;
+      continue;
+    }
+
+    if (isInRawJsxText(rawJsxTextDepth, rawJsxExpressionBraceDepth)) {
+      const textEnd = skipRawJsxText(source, cursor);
+      if (textEnd !== cursor) {
+        cursor = textEnd;
+        continue;
+      }
+    }
+
     const skipped = skipExpressionIgnored(
       source,
       cursor,
@@ -1636,6 +1695,12 @@ function findTemplateExpressionEnd(
     }
 
     if (source[cursor] === "{") {
+      const isRawJsxExpressionBrace = isInRawJsxText(
+        rawJsxTextDepth,
+        rawJsxExpressionBraceDepth,
+      );
+      rawJsxExpressionBraceStack.push(isRawJsxExpressionBrace);
+      if (isRawJsxExpressionBrace) rawJsxExpressionBraceDepth++;
       openBraces.push(
         openBraceContext(
           source,
@@ -1656,6 +1721,10 @@ function findTemplateExpressionEnd(
     if (source[cursor] === "}") {
       braceDepth--;
       if (braceDepth === 0) return cursor;
+      const isRawJsxExpressionBrace = rawJsxExpressionBraceStack.pop();
+      if (isRawJsxExpressionBrace) {
+        rawJsxExpressionBraceDepth = Math.max(0, rawJsxExpressionBraceDepth - 1);
+      }
       const openBrace = openBraces.pop();
       if (openBrace !== undefined) matchingOpenBraces.set(cursor, openBrace);
       previousTokenIndex = cursor;
