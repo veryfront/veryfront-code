@@ -243,16 +243,20 @@ describe("agent/runtime/call-context", () => {
       assertEquals((messages[0]?.content ?? "").includes("Runtime facts"), false);
     });
 
-    it("skips the skills block when the instructions already carry one", () => {
+    it("keeps authorized skill IDs when instructions already carry a skills block", () => {
       const [message] = buildAgentCallContext({
         instructions:
           "Base\n\n<available_skills>\n- authored: An authored catalog\n</available_skills>",
         skills: createSkills(),
       });
 
-      assertEquals(
-        message?.content,
+      assertStringIncludes(
+        message?.content ?? "",
         "Base\n\n<available_skills>\n- authored: An authored catalog\n</available_skills>",
+      );
+      assertStringIncludes(
+        message?.content ?? "",
+        '<available_skill_ids>\nAuthoritative skill IDs: ["deploy","review"]\n</available_skill_ids>',
       );
       assertEquals((message?.content ?? "").includes("Deployment guidance"), false);
     });

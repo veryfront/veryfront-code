@@ -16,7 +16,8 @@
  * 1. One cached system message holding, in order, the instructions before the
  *    runtime-context marker, `<project_instructions>`, `<project_context>`,
  *    any caller-supplied extra blocks, the instructions after the marker, and
- *    `<available_skills>`.
+ *    `<available_skills>`, or an authoritative `<available_skill_ids>` fallback
+ *    when the instructions already carry an authored skill catalog.
  * 2. An uncached `<environment_context>` message.
  *
  * Only the instructions are unconditional: each block appears only when the
@@ -31,7 +32,10 @@
 
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { createRuntimePromptBlock } from "./prompt-block.ts";
-import { buildRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
+import {
+  buildRuntimeAvailableSkillIdsPromptBlock,
+  buildRuntimeAvailableSkillsPromptBlock,
+} from "./skill-prompt.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
 
 /** Marker authored instructions use to place runtime blocks mid-prompt. */
@@ -161,9 +165,11 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
     staticParts.push(instructions.after);
   }
 
-  if (input.skills?.length && !hasBlock(input.instructions, AVAILABLE_SKILLS_BLOCK_NAME)) {
+  if (input.skills?.length) {
     staticParts.push(
-      buildRuntimeAvailableSkillsPromptBlock(input.skills),
+      hasBlock(input.instructions, AVAILABLE_SKILLS_BLOCK_NAME)
+        ? buildRuntimeAvailableSkillIdsPromptBlock(input.skills)
+        : buildRuntimeAvailableSkillsPromptBlock(input.skills),
     );
   }
 

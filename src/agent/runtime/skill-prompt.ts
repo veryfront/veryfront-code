@@ -392,6 +392,33 @@ export function buildRuntimeAvailableSkillsPromptBlock(
   return buildStrictRuntimeAvailableSkillsPromptBlock(skills);
 }
 
+/** Builds the authoritative skill-ID fallback used beside authored catalogs. */
+export function buildRuntimeAvailableSkillIdsPromptBlock(
+  skills: readonly RuntimeSkillDefinition[],
+): string {
+  const { displaySkills, omittedSkillIds } = snapshotRuntimeSkillPromptCatalog(skills);
+  const encodedSkillIds: string[] = [];
+  for (let index = 0; index < displaySkills.length; index += 1) {
+    const skillId = readPromptOwnDataProperty(
+      displaySkills[index],
+      "id",
+      `Runtime skill catalog entry ${index}`,
+      true,
+    );
+    appendOwnArrayElement(
+      encodedSkillIds,
+      encodePromptJson(requireBoundedPromptString(skillId, "id", SKILL_ID_MAX_LENGTH)),
+    );
+  }
+  for (let index = 0; index < omittedSkillIds.length; index += 1) {
+    appendOwnArrayElement(encodedSkillIds, encodePromptJson(omittedSkillIds[index]!));
+  }
+
+  return `<available_skill_ids>\nAuthoritative skill IDs: [${
+    joinStrings(encodedSkillIds, ",")
+  }]\n</available_skill_ids>`;
+}
+
 type CompatibilitySkillMapIterator = ReturnType<Map<string, Skill>["entries"]>;
 
 function readMapIteratorDataProperty(value: object, key: PropertyKey): unknown {

@@ -40,9 +40,9 @@ import type { RuntimeLoadedSkillResponse } from "./skill-metadata.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 
 // The advertised input schema is intentionally STATIC and project-independent
-// (RFC 0001, layered context): skill IDs are surfaced in <available_skills>, not
-// baked into the tool definition, so the tools array can join the shared cache
-// prefix. Per-project validation (valid IDs, reload/body rules) still runs at
+// (RFC 0001, layered context): skill IDs are surfaced in generated skill context,
+// not baked into the tool definition, so the tools array can join the shared
+// cache prefix. Per-project validation (valid IDs, reload/body rules) still runs at
 // `.parse()` time and is covered by the execute() tests below. Every load state
 // must advertise this same schema — that invariance is what these assertions guard.
 const STATIC_LOAD_SKILL_INPUT_SCHEMA = {
@@ -53,7 +53,7 @@ const STATIC_LOAD_SKILL_INPUT_SCHEMA = {
       maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
       pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
       description:
-        'The skill ID to load. Use an ID from <available_skills>. A lowercase ".md" suffix is accepted when shown there.',
+        'The skill ID to load. Use an ID from <available_skills> or <available_skill_ids>. A lowercase ".md" suffix is accepted when shown there.',
     },
     file: {
       type: "string",
@@ -2520,6 +2520,7 @@ it("createRuntimeLoadSkillTool keeps skill IDs out of the description and points
   // definition, so the description is byte-identical across projects (RFC 0001).
   assertEquals(tool.description.includes("daily-briefing"), false);
   assertStringIncludes(tool.description, "<available_skills>");
+  assertStringIncludes(tool.description, "<available_skill_ids>");
   assertStringIncludes(tool.description, "You must not invent IDs");
 });
 

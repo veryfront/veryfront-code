@@ -349,7 +349,7 @@ const getStaticRuntimeLoadSkillToolInputSchema = defineSchema((v) =>
         'skillId must contain only letters, numbers, "_" or "-", with an optional lowercase ".md" suffix',
       )
       .describe(
-        'The skill ID to load. Use an ID from <available_skills>. A lowercase ".md" suffix is accepted when shown there.',
+        'The skill ID to load. Use an ID from <available_skills> or <available_skill_ids>. A lowercase ".md" suffix is accepted when shown there.',
       ),
     file: getRuntimeLoadSkillReferenceFileInputSchema().optional().describe(
       "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
@@ -1152,10 +1152,10 @@ function buildRuntimeLoadSkillDescription(options: RuntimeLoadSkillToolOptions):
   getKnownRuntimeSkillIds(options);
 
   // Static, project-independent: the per-project ID list lives in the
-  // <available_skills> context block, not in the tool definition. Keeping skill
-  // IDs out of the description (and the advertised input schema) lets the tools
-  // array join the shared cache prefix. See RFC 0001 (layered context).
-  return `${RUNTIME_LOAD_SKILL_DESCRIPTION} Skill IDs are listed in the <available_skills> context block. You must not invent IDs.`;
+  // generated skill context, not in the tool definition. Keeping skill IDs out
+  // of the description (and the advertised input schema) lets the tools array
+  // join the shared cache prefix. See RFC 0001 (layered context).
+  return `${RUNTIME_LOAD_SKILL_DESCRIPTION} Skill IDs are listed in the <available_skills> or <available_skill_ids> context block. You must not invent IDs.`;
 }
 
 function snapshotRuntimeSkillIdInventory(
