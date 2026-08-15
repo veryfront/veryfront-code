@@ -11,6 +11,11 @@
 
 import { snapshotVeryfrontError } from "./types.ts";
 
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const ReflectApply = Reflect.apply;
+const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+const SetPrototypeHas = Set.prototype.has;
+
 /**
  * BUILD registry slugs that describe tenant source failing to compile, as
  * opposed to framework cache/bundle/asset infrastructure failing in the same
@@ -21,6 +26,17 @@ const TENANT_BUILD_ERROR_SLUGS = new Set([
   "mdx-compile-error",
   "markdown-compile-error",
 ]);
+
+function hasOwnTrueDataProperty(value: object, key: PropertyKey): boolean {
+  try {
+    const descriptor = ReflectGetOwnPropertyDescriptor(value, key);
+    return descriptor !== undefined &&
+      ReflectApply(ObjectPrototypeHasOwnProperty, descriptor, ["value"]) === true &&
+      descriptor.value === true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Whether `error` describes tenant source or content failing to build (a page
@@ -41,9 +57,10 @@ export function isTenantSourceBuildError(error: unknown): boolean {
   const errorContext = snapshot.context;
   if (
     typeof errorContext === "object" && errorContext !== null &&
-    (errorContext as { tenantBuildFailure?: unknown }).tenantBuildFailure === true
+    hasOwnTrueDataProperty(errorContext, "tenantBuildFailure")
   ) {
     return true;
   }
-  return snapshot.category === "BUILD" && TENANT_BUILD_ERROR_SLUGS.has(snapshot.slug);
+  return snapshot.category === "BUILD" &&
+    ReflectApply(SetPrototypeHas, TENANT_BUILD_ERROR_SLUGS, [snapshot.slug]) === true;
 }

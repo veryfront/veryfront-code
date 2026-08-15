@@ -16,6 +16,7 @@
 
 import { isTenantSourceBuildError } from "#veryfront/errors/tenant-classification.ts";
 
+const ObjectDefineProperty = Object.defineProperty;
 const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 
 const BUILD_FAILURE = Symbol.for("veryfront.module-loader.build-failure");
@@ -28,7 +29,7 @@ const TENANT_BUILD_FAILURE = Symbol.for("veryfront.module-loader.tenant-build-fa
  */
 function defineTag(error: Error, tag: symbol): void {
   try {
-    Object.defineProperty(error, tag, { value: true, configurable: true });
+    ObjectDefineProperty(error, tag, { value: true, configurable: true });
   } catch {
     // Sealed or non-configurable: the error stays untagged, which degrades to
     // the pre-classification behavior rather than destroying the error.

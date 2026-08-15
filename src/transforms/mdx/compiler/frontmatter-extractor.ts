@@ -7,16 +7,27 @@ export interface FrontmatterExtractionResult {
 }
 
 const FRONTMATTER_SYNTAX_ERROR = Symbol.for("veryfront.transforms.mdx.frontmatter-syntax-error");
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const ReflectApply = Reflect.apply;
+const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 
 /** Return true when an error came from MDX or Markdown YAML frontmatter parsing. */
 export function isFrontmatterSyntaxError(error: unknown): error is SyntaxError {
-  return error instanceof SyntaxError &&
-    (error as { [FRONTMATTER_SYNTAX_ERROR]?: unknown })[FRONTMATTER_SYNTAX_ERROR] === true;
+  try {
+    if (!(error instanceof SyntaxError)) return false;
+    const descriptor = ReflectGetOwnPropertyDescriptor(error, FRONTMATTER_SYNTAX_ERROR);
+    return descriptor !== undefined &&
+      ReflectApply(ObjectPrototypeHasOwnProperty, descriptor, ["value"]) === true &&
+      descriptor.value === true;
+  } catch {
+    return false;
+  }
 }
 
 function createFrontmatterSyntaxError(cause: SyntaxError): SyntaxError {
   const error = new SyntaxError(`Invalid YAML frontmatter: ${cause.message}`, { cause });
-  Object.defineProperty(error, FRONTMATTER_SYNTAX_ERROR, { value: true });
+  ObjectDefineProperty(error, FRONTMATTER_SYNTAX_ERROR, { value: true });
   return error;
 }
 

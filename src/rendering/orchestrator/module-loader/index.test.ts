@@ -20,7 +20,12 @@ import {
   transformModuleWithDeps,
 } from "./index.ts";
 import { buildModuleTransformCacheVariant, getModuleCacheKey } from "./module-cache-lookup.ts";
-import { isBuildFailure, isTenantBuildFailure } from "./build-failure.ts";
+import {
+  isBuildFailure,
+  isTenantBuildFailure,
+  markBuildFailure,
+  markTenantBuildFailure,
+} from "./build-failure.ts";
 
 async function withModuleLoaderFixture<T>(
   files: Record<string, string>,
@@ -365,6 +370,36 @@ describe("module-loader/loadModule build-failure tagging", () => {
       assertEquals(isTenantBuildFailure(frameworkError), false);
     } finally {
       Object.defineProperty(Reflect, "getOwnPropertyDescriptor", previousDescriptor);
+    }
+  });
+
+  it("uses the definition intrinsic captured during module initialization", () => {
+    const tenantBuildFailureTag = Symbol.for("veryfront.module-loader.tenant-build-failure");
+    const defineProperty = Object.defineProperty;
+    const previous = Object.getOwnPropertyDescriptor(Object, "defineProperty");
+    if (!previous || typeof previous.value !== "function") {
+      throw new Error("Expected Object.defineProperty descriptor");
+    }
+    defineProperty(Object, "defineProperty", {
+      ...previous,
+      value: (target: object, tag: PropertyKey, descriptor: PropertyDescriptor) => {
+        defineProperty(target, tenantBuildFailureTag, { configurable: true, value: true });
+        return defineProperty(target, tag, descriptor);
+      },
+    });
+
+    try {
+      const frameworkError = new Error("framework failed");
+      assertStrictEquals(markBuildFailure(frameworkError), frameworkError);
+      assertEquals(isBuildFailure(frameworkError), true);
+      assertEquals(isTenantBuildFailure(frameworkError), false);
+
+      const tenantError = new Error("tenant failed");
+      assertStrictEquals(markTenantBuildFailure(tenantError), tenantError);
+      assertEquals(isBuildFailure(tenantError), true);
+      assertEquals(isTenantBuildFailure(tenantError), true);
+    } finally {
+      defineProperty(Object, "defineProperty", previous);
     }
   });
 

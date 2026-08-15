@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "./__tests__/content-processor-setup.ts";
-import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import {
@@ -197,6 +202,57 @@ describe("transforms/mdx/compiler/mdx-compiler", () => {
         assertEquals((error as Error).message, "Expected ContentProcessor to initialize");
       } finally {
         registerContract("ContentProcessor", previous);
+      }
+    });
+
+    it("preserves framework SyntaxErrors when the frontmatter prototype is polluted", async () => {
+      const marker = Symbol.for("veryfront.transforms.mdx.frontmatter-syntax-error");
+      const previousMarker = Object.getOwnPropertyDescriptor(SyntaxError.prototype, marker);
+      const previousProcessor = tryResolveContract<ContentProcessor>("ContentProcessor");
+      const frameworkFailure = new SyntaxError("Expected ContentProcessor to initialize");
+      Object.defineProperty(SyntaxError.prototype, marker, {
+        configurable: true,
+        value: true,
+      });
+      registerContract(
+        "ContentProcessor",
+        {
+          compileMdx() {
+            throw frameworkFailure;
+          },
+          compileMarkdown() {
+            throw new Error("not used");
+          },
+          getRemarkPlugins() {
+            return [];
+          },
+          getRehypePlugins() {
+            return [];
+          },
+        } satisfies ContentProcessor,
+      );
+
+      try {
+        const error = await assertRejects(
+          () =>
+            compileMDXRuntime(
+              "production",
+              "/project",
+              "# Hello",
+              undefined,
+              "framework-failure.mdx",
+              "server",
+            ),
+          SyntaxError,
+        );
+        assertStrictEquals(error, frameworkFailure);
+      } finally {
+        registerContract("ContentProcessor", previousProcessor);
+        if (previousMarker) {
+          Object.defineProperty(SyntaxError.prototype, marker, previousMarker);
+        } else {
+          delete (SyntaxError.prototype as { [marker]?: unknown })[marker];
+        }
       }
     });
   });
