@@ -100,8 +100,9 @@ supporting skill tools:
 | `load_skill_reference` | Local and project runtimes | Read a file from `references/`, `resources/`, or `assets/` |
 | `execute_skill_script` | Local and project runtimes | Execute a script from a skill (5-minute timeout)           |
 
-Hosted chat reads an advertised reference through
-`load_skill({ skillId, file })`. It does not execute skill scripts directly.
+After loading a skill, hosted chat can read only a reference listed by that
+skill through `load_skill({ skillId, file })`. It does not execute skill scripts
+directly.
 
 Call `load_skill({})` when the prompt does not show the complete authorized
 skill inventory. The result contains a bounded `skillIds` page. If it also

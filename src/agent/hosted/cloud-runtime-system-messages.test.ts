@@ -1,4 +1,5 @@
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import {
   buildVeryfrontCloudRuntimeInstructions,
   createVeryfrontCloudRuntimeSystemMessages,
@@ -140,7 +141,7 @@ Deno.test("buildVeryfrontCloudRuntimeInstructions adapts hosted preparation inpu
   assertStringIncludes(environmentMessage?.content ?? "", "Runtime facts");
 });
 
-Deno.test("buildVeryfrontCloudRuntimeInstructions preserves an authoritative empty skill set", () => {
+it("buildVeryfrontCloudRuntimeInstructions preserves an authoritative empty skill set", () => {
   const [message] = buildVeryfrontCloudRuntimeInstructions({
     agentConfig: createAgent({
       instructions:
