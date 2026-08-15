@@ -44,6 +44,16 @@ interface RawJsxTagSkip {
   expressionRanges: Array<{ start: number; end: number }>;
 }
 
+interface RawJsxLookaheadCache {
+  closingTags: Map<string, boolean>;
+  statementEnds: Array<{ start: number; end: number }>;
+}
+
+interface RawJsxTagOptions {
+  allowClosingTagAfterText?: boolean;
+  lookaheadCache?: RawJsxLookaheadCache;
+}
+
 const MAX_TEMPLATE_LITERAL_DEPTH = 512;
 const StringFromCodePoint = String.fromCodePoint;
 const IDENTIFIER_START_PATTERN = /^[$_\p{ID_Start}]$/u;
@@ -1345,19 +1355,47 @@ function findParenEnd(source: string, index: number): number | null {
   return null;
 }
 
+function createRawJsxLookaheadCache(): RawJsxLookaheadCache {
+  return { closingTags: new Map(), statementEnds: [] };
+}
+
+function statementEndAfter(
+  source: string,
+  start: number,
+  cache?: RawJsxLookaheadCache,
+): number {
+  if (cache !== undefined) {
+    const cached = cache.statementEnds.find((range) => start >= range.start && start < range.end);
+    if (cached !== undefined) return cached.end;
+  }
+
+  const end = nextStatementCursor(source, start);
+  cache?.statementEnds.push({ start, end });
+  return end;
+}
+
 function hasRawJsxClosingTagBeforeStatementEnd(
   source: string,
   name: string,
   start: number,
+  cache?: RawJsxLookaheadCache,
 ): boolean {
-  const statementEnd = nextStatementCursor(source, start);
+  const statementEnd = statementEndAfter(source, start, cache);
+  const cacheKey = `${name}\0${statementEnd}`;
+  const cached = cache?.closingTags.get(cacheKey);
+  if (cached !== undefined) return cached;
+
   const closingPrefix = `</${name}`;
   let closing = source.indexOf(closingPrefix, start);
   while (closing >= 0 && closing < statementEnd) {
     const afterName = source[closing + closingPrefix.length];
-    if (afterName === ">" || afterName === "/" || /\s/.test(afterName ?? "")) return true;
+    if (afterName === ">" || afterName === "/" || /\s/.test(afterName ?? "")) {
+      cache?.closingTags.set(cacheKey, true);
+      return true;
+    }
     closing = source.indexOf(closingPrefix, closing + closingPrefix.length);
   }
+  cache?.closingTags.set(cacheKey, false);
   return false;
 }
 
@@ -1366,6 +1404,7 @@ function looksLikeTypeScriptAngleConstruct(
   tagStart: number,
   tagEnd: number,
   name: string | null,
+  cache?: RawJsxLookaheadCache,
 ): boolean {
   if (name === null) return false;
 
@@ -1381,7 +1420,7 @@ function looksLikeTypeScriptAngleConstruct(
   if (
     source[next] !== undefined &&
     (isIdentifierStartAt(source, next) || source[next] === "(") &&
-    !hasRawJsxClosingTagBeforeStatementEnd(source, name, tagEnd)
+    !hasRawJsxClosingTagBeforeStatementEnd(source, name, tagEnd, cache)
   ) {
     const before = previousSignificantIndex(source, tagStart);
     return before >= 0 && "=(:,[!~?&|+-*%^<>".includes(source[before] ?? "");
@@ -1393,7 +1432,7 @@ function looksLikeTypeScriptAngleConstruct(
 function readRawJsxTag(
   source: string,
   index: number,
-  options: { allowClosingTagAfterText?: boolean } = {},
+  options: RawJsxTagOptions = {},
 ): RawJsxTagSkip | null {
   if (source[index] !== "<") return null;
 
@@ -1445,7 +1484,7 @@ function readRawJsxTag(
       if (
         !isClosingTag &&
         !isSelfClosingTag &&
-        looksLikeTypeScriptAngleConstruct(source, index, cursor + 1, name)
+        looksLikeTypeScriptAngleConstruct(source, index, cursor + 1, name, options.lookaheadCache)
       ) {
         return null;
       }
@@ -1464,8 +1503,12 @@ function readRawJsxTag(
   return null;
 }
 
-function skipRawJsxTag(source: string, index: number): number {
-  return readRawJsxTag(source, index)?.end ?? index;
+function skipRawJsxTag(
+  source: string,
+  index: number,
+  lookaheadCache?: RawJsxLookaheadCache,
+): number {
+  return readRawJsxTag(source, index, { lookaheadCache })?.end ?? index;
 }
 
 function skipRawJsxText(source: string, index: number): number {
@@ -1488,11 +1531,12 @@ function skipExpressionIgnored(
   moduleDeclarationBefore: (
     end: number,
   ) => { keyword: "import" | "export"; index: number } | null,
+  rawJsxLookaheadCache?: RawJsxLookaheadCache,
 ): number {
   const char = source[index];
   const next = source[index + 1];
 
-  const jsxTagEnd = skipRawJsxTag(source, index);
+  const jsxTagEnd = skipRawJsxTag(source, index, rawJsxLookaheadCache);
   if (jsxTagEnd !== index) return jsxTagEnd;
 
   if (char === "/" && next === "/") {
@@ -1565,6 +1609,7 @@ function findTemplateExpressionEnd(
   const matchingOpenParens = new Map<number, OpenParenContext>();
   let previousTokenIndex = expressionIndex - 1;
   const moduleDeclarationBefore = createModuleDeclarationTracker(source, expressionIndex);
+  const rawJsxLookaheadCache = createRawJsxLookaheadCache();
 
   while (cursor < source.length) {
     const skipped = skipExpressionIgnored(
@@ -1577,6 +1622,7 @@ function findTemplateExpressionEnd(
       openParens.at(-1),
       previousTokenIndex,
       moduleDeclarationBefore,
+      rawJsxLookaheadCache,
     );
     if (skipped !== cursor) {
       previousTokenIndex = tokenIndexAfterIgnored(
@@ -1724,11 +1770,13 @@ export function findStaticImportFromSpans(
   let rawJsxTextDepth = 0;
   let rawJsxExpressionBraceDepth = 0;
   const rawJsxExpressionBraceStack: boolean[] = [];
+  const rawJsxLookaheadCache = createRawJsxLookaheadCache();
 
   while (cursor < source.length) {
     const char = source[cursor];
     const jsxTag = readRawJsxTag(source, cursor, {
       allowClosingTagAfterText: isInRawJsxText(rawJsxTextDepth, rawJsxExpressionBraceDepth),
+      lookaheadCache: rawJsxLookaheadCache,
     });
     if (jsxTag !== null) {
       if (jsxTag.isClosingTag) {
@@ -1761,6 +1809,7 @@ export function findStaticImportFromSpans(
       openParens.at(-1),
       previousTokenIndex,
       moduleDeclarationBefore,
+      rawJsxLookaheadCache,
     );
     if (skipped !== cursor) {
       if (char === "/" && source[cursor + 1] === "/") atStatementStart = true;
@@ -1937,6 +1986,7 @@ function scanDynamicImportRange(
   let rawJsxExpressionBraceDepth = 0;
   const rawJsxExpressionBraceStack: boolean[] = [];
   const moduleDeclarationBefore = createModuleDeclarationTracker(source, rangeStart);
+  const rawJsxLookaheadCache = createRawJsxLookaheadCache();
 
   while (cursor < rangeEnd) {
     const char = source[cursor];
@@ -1944,6 +1994,7 @@ function scanDynamicImportRange(
 
     const jsxTag = readRawJsxTag(source, cursor, {
       allowClosingTagAfterText: isInRawJsxText(rawJsxTextDepth, rawJsxExpressionBraceDepth),
+      lookaheadCache: rawJsxLookaheadCache,
     });
     if (jsxTag !== null) {
       for (const range of jsxTag.expressionRanges) {
@@ -2196,11 +2247,13 @@ export function findStaticSideEffectImportSpans(
   let rawJsxTextDepth = 0;
   let rawJsxExpressionBraceDepth = 0;
   const rawJsxExpressionBraceStack: boolean[] = [];
+  const rawJsxLookaheadCache = createRawJsxLookaheadCache();
 
   while (cursor < source.length) {
     const char = source[cursor];
     const jsxTag = readRawJsxTag(source, cursor, {
       allowClosingTagAfterText: isInRawJsxText(rawJsxTextDepth, rawJsxExpressionBraceDepth),
+      lookaheadCache: rawJsxLookaheadCache,
     });
     if (jsxTag !== null) {
       if (jsxTag.isClosingTag) {
@@ -2233,6 +2286,7 @@ export function findStaticSideEffectImportSpans(
       openParens.at(-1),
       previousTokenIndex,
       moduleDeclarationBefore,
+      rawJsxLookaheadCache,
     );
     if (skipped !== cursor) {
       if (char === "/" && source[cursor + 1] === "/") atStatementStart = true;

@@ -275,6 +275,26 @@ describe("transforms/esm/specifier-resolver", () => {
       );
     });
 
+    it("preserves safe configured @/ module prefix mappings", async () => {
+      const code = `import ResponsiveImage from "@/components/ResponsiveImage";`;
+      const cacheCalls: string[] = [];
+      const result = await buildReplacements(
+        code,
+        undefined,
+        { ...defaultOptions, importMap: { imports: { "@/": "/_vf_modules/custom-root/" } } },
+        async (url) => {
+          cacheCalls.push(url);
+          return "/_vf_modules/unexpected-http-alias.mjs";
+        },
+      );
+
+      assertEquals(cacheCalls, []);
+      assertEquals(
+        result.replacements.get("@/components/ResponsiveImage"),
+        "/_vf_modules/custom-root/components/ResponsiveImage",
+      );
+    });
+
     it("materializes escaped @/ alias imports when a module-server origin is available", async () => {
       const code = `import ResponsiveImage from "@/components/ResponsiveImage";`;
       const cacheCalls: string[] = [];

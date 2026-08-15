@@ -122,6 +122,9 @@ async function resolveSpecifier(
   // result already ends in a JS-like or CSS extension. A different shape here
   // would resolve one specifier to two different module URLs.
   if (stringStartsWith(specifier, "@/")) {
+    const mappedAlias = resolveImport(specifier, options.importMap);
+    if (mappedAlias !== specifier && isLocalMappedSpecifier(mappedAlias)) return mappedAlias;
+
     const { path: pathOnly, suffix } = splitSpecifierSuffix(stringSlice(specifier, 2));
     const normalizedPath = normalizeExtension(pathOnly);
     const jsPath = regexpTest(/\.(js|mjs|cjs|css)$/, normalizedPath)
