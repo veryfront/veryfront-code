@@ -58,6 +58,7 @@ export interface CredentialValidationOptions {
  */
 const DEFAULT_EXISTING_SESSION_TIMEOUT_MS = 5_000;
 let existingSessionTimeoutMs = DEFAULT_EXISTING_SESSION_TIMEOUT_MS;
+const SESSION_VALIDATION_UNAVAILABLE = Symbol("session-validation-unavailable");
 
 function loginIdentityData(
   identity: AuthIdentity,
@@ -83,6 +84,15 @@ async function outputLoginAuthenticationRequiredJson(): Promise<void> {
   }));
 }
 
+async function outputLoginNetworkErrorJson(): Promise<void> {
+  await outputJson(createErrorEnvelope("login", {
+    code: "NETWORK_ERROR",
+    slug: "network-error",
+    registrySlug: "network-error",
+    message: "Could not reach the Veryfront API. Check your network connection and try again.",
+  }));
+}
+
 /** Test seam: shrink the preflight deadline so a stall is observable quickly. */
 export function __setExistingSessionTimeoutForTests(ms?: number): void {
   existingSessionTimeoutMs = ms ?? DEFAULT_EXISTING_SESSION_TIMEOUT_MS;
@@ -101,6 +111,15 @@ const AUTH_OPTIONS: { id: AuthMethod; label: string }[] = [
 
 class NetworkError extends Error {
   override name = "NetworkError";
+}
+
+function isCredentialNetworkFailure(error: unknown): boolean {
+  return error instanceof TypeError ||
+    error instanceof DOMException && error.name === "AbortError";
+}
+
+function throwNetworkError(): never {
+  throw new NetworkError("Could not reach the Veryfront API");
 }
 
 export function createOAuthState(): string {
@@ -140,14 +159,14 @@ export async function validateToken(
     if (!response.ok) {
       // Consume response body to prevent resource leak
       await response.body?.cancel();
+      if (options.throwOnNetworkError && response.status >= 500) throwNetworkError();
       return null;
     }
 
     return (await response.json()) as UserInfo;
   } catch (e) {
-    if (options.throwOnNetworkError && e instanceof TypeError) {
-      throw new NetworkError("Could not reach the Veryfront API");
-    }
+    if (e instanceof NetworkError) throw e;
+    if (options.throwOnNetworkError && isCredentialNetworkFailure(e)) throwNetworkError();
     return null;
   }
 }
@@ -175,11 +194,11 @@ async function validateApiKey(
       signal: requestSignal(options),
     });
     await response.body?.cancel();
+    if (options.throwOnNetworkError && response.status >= 500) throwNetworkError();
     return response.ok;
   } catch (e) {
-    if (options.throwOnNetworkError && e instanceof TypeError) {
-      throw new NetworkError("Could not reach the Veryfront API");
-    }
+    if (e instanceof NetworkError) throw e;
+    if (options.throwOnNetworkError && isCredentialNetworkFailure(e)) throwNetworkError();
     return false;
   }
 }
@@ -328,7 +347,7 @@ async function loginWithToken(): Promise<string | null> {
  */
 async function describeExistingSession(
   env: EnvironmentConfig,
-): Promise<AuthIdentity | null> {
+): Promise<AuthIdentity | typeof SESSION_VALIDATION_UNAVAILABLE | null> {
   const candidates: { token: string; source: "environment" | "stored" }[] = [];
   if (env.apiToken) candidates.push({ token: env.apiToken, source: "environment" });
   const storedToken = await readToken(env);
@@ -345,8 +364,10 @@ async function describeExistingSession(
       // through to the normal flow rather than holding the command open.
       identity = await validateCredential(token, env, {
         signal,
+        throwOnNetworkError: isJsonMode(),
       });
-    } catch {
+    } catch (e) {
+      if (isJsonMode() && e instanceof NetworkError) return SESSION_VALIDATION_UNAVAILABLE;
       continue;
     }
     if (!identity) continue;
@@ -415,6 +436,10 @@ export async function login(
   // that no longer validates falls through to the normal flow.
   if (method === undefined) {
     const existing = await describeExistingSession(env);
+    if (existing === SESSION_VALIDATION_UNAVAILABLE) {
+      await outputLoginNetworkErrorJson();
+      return null;
+    }
     if (existing) return existing;
     if (isJsonMode()) {
       await outputLoginAuthenticationRequiredJson();

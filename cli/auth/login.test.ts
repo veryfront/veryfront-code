@@ -492,7 +492,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
-    it("reports stalled credential validation as login JSON without prompting", async () => {
+    it("reports stalled credential validation as login network JSON without prompting", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;
       const originalError = console.error;
@@ -523,7 +523,9 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         assertEquals(result, null);
         assertEquals(envelope.success, false);
         assertEquals(envelope.command, "login");
-        assertEquals(envelope.error.slug, "authentication-required");
+        assertEquals(envelope.error.code, "NETWORK_ERROR");
+        assertEquals(envelope.error.slug, "network-error");
+        assertEquals(envelope.error.registrySlug, "network-error");
         assertEquals(output.join("\n").includes("Enter your API token"), false);
         assertEquals(output.join("\n").includes("stored-valid-token"), false);
         assertEquals(errors, []);
@@ -532,6 +534,47 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         const { __setExistingSessionTimeoutForTests } = await import("./login.ts");
         setJsonMode(false);
         __setExistingSessionTimeoutForTests();
+        console.log = originalLog;
+        console.error = originalError;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
+    it("reports server-side credential validation failures as login network JSON", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const originalError = console.error;
+      const output: string[] = [];
+      const errors: string[] = [];
+      await saveToken("stored-valid-token", testEnv);
+
+      try {
+        globalThis.fetch = (() =>
+          Promise.resolve(new Response(null, { status: 503 }))) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+        console.error = (message?: unknown) => errors.push(String(message));
+
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        const { login } = await import("./login.ts");
+        setJsonMode(true);
+
+        const result = await login(undefined, testEnv);
+        const envelope = JSON.parse(output.join("\n"));
+
+        assertEquals(result, null);
+        assertEquals(envelope.success, false);
+        assertEquals(envelope.command, "login");
+        assertEquals(envelope.error.code, "NETWORK_ERROR");
+        assertEquals(envelope.error.slug, "network-error");
+        assertEquals(envelope.error.registrySlug, "network-error");
+        assertEquals(output.join("\n").includes("Enter your API token"), false);
+        assertEquals(output.join("\n").includes("stored-valid-token"), false);
+        assertEquals(errors, []);
+      } finally {
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        setJsonMode(false);
         console.log = originalLog;
         console.error = originalError;
         globalThis.fetch = originalFetch;
