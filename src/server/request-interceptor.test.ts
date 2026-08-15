@@ -36,15 +36,19 @@ describe("runRequestInterceptor", () => {
       transport: "tcp",
       hostname: "127.0.0.1",
     });
-    const replacement = new Request("http://localhost/", {
-      method: "POST",
-      body: new ReadableStream({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode("payload"));
-          controller.close();
-        },
-      }),
-    });
+    const replacement = new Request(
+      "http://localhost/",
+      {
+        method: "POST",
+        duplex: "half",
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("payload"));
+            controller.close();
+          },
+        }),
+      } as RequestInit & { duplex: "half" },
+    );
 
     const intercepted = await runRequestInterceptor(request, () => replacement);
 
