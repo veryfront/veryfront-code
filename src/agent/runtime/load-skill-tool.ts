@@ -1,8 +1,7 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import type { InferSchema, JsonSchema } from "#veryfront/extensions/schema/index.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool/types.ts";
-import { zodToJsonSchema } from "#veryfront/tool/schema/zod-json-schema.ts";
 import {
   LOAD_SKILL_OVERRIDE_FORWARDING,
   LOAD_SKILL_POLICY_CLAUSES,
@@ -356,34 +355,48 @@ export const getRuntimeLoadSkillToolInputSchema = defineSchema((v) =>
 /** @deprecated Use getRuntimeLoadSkillToolInputSchema() */
 const runtimeLoadSkillToolInputSchema = lazySchema(getRuntimeLoadSkillToolInputSchema);
 
-const getStaticRuntimeLoadSkillToolInputSchema = defineSchema((v) =>
-  v.union([
-    v.object({
-      cursor: v.number().int().min(0).max(SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES)
-        .optional()
-        .describe(
-          "Pagination cursor from the prompt or a previous skill inventory response.",
-        ),
-    }).strict(),
-    v.object({
-      skillId: v.string().max(SKILL_ID_MAX_LENGTH + ".md".length)
-        .regex(
-          /^[a-zA-Z0-9_-]+(?:\.md)?$/,
-          'skillId must contain only letters, numbers, "_" or "-", with an optional lowercase ".md" suffix',
-        )
-        .describe(
-          'The listed skill ID to load. A lowercase ".md" suffix is accepted for a listed ID.',
-        ),
-      file: getRuntimeLoadSkillReferenceFileInputSchema().optional().describe(
+const staticRuntimeLoadSkillToolInputJsonSchema: JsonSchema = {
+  type: "object",
+  properties: {
+    cursor: {
+      type: "integer",
+      minimum: 0,
+      maximum: SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES,
+      description: "Pagination cursor from the prompt or a previous skill inventory response.",
+    },
+    skillId: {
+      type: "string",
+      maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
+      pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
+      description:
+        'The listed skill ID to load. A lowercase ".md" suffix is accepted for a listed ID.',
+    },
+    file: {
+      type: "string",
+      minLength: 1,
+      maxLength: SKILL_RELATIVE_PATH_MAX_LENGTH,
+      description:
         "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
-      ),
-    }).strict(),
-  ])
-);
-
-const staticRuntimeLoadSkillToolInputSchema = lazySchema(
-  getStaticRuntimeLoadSkillToolInputSchema,
-);
+    },
+  },
+  dependentRequired: {
+    file: ["skillId"],
+  },
+  dependentSchemas: {
+    cursor: {
+      properties: {
+        skillId: false,
+        file: false,
+      },
+    },
+    skillId: {
+      properties: {
+        cursor: false,
+      },
+    },
+  },
+  additionalProperties: false,
+};
 
 /**
  * Input payload for runtime load skill tool.
@@ -2143,7 +2156,7 @@ export function createRuntimeLoadSkillTool(
       // enforcement (valid IDs, reload/body rules) is preserved; the model
       // just no longer sees the per-project enum.
       refreshPrivateAuthorityScope();
-      return zodToJsonSchema(staticRuntimeLoadSkillToolInputSchema);
+      return staticRuntimeLoadSkillToolInputJsonSchema;
     },
     execute,
   };

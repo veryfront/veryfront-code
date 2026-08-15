@@ -21,6 +21,7 @@ import {
   LOAD_SKILL_ROOT_OWNERSHIP,
 } from "../conversation/delegation-policy.ts";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
+import { sanitizeProviderToolSchema } from "./provider-tool-compat.ts";
 import {
   SKILL_DOCUMENT_MAX_CHARACTERS,
   SKILL_ID_MAX_LENGTH,
@@ -48,41 +49,46 @@ import { it } from "#veryfront/testing/bdd.ts";
 // `.parse()` time and is covered by the execute() tests below. Every load state
 // must advertise this same schema — that invariance is what these assertions guard.
 const STATIC_LOAD_SKILL_INPUT_SCHEMA = {
-  anyOf: [
-    {
-      type: "object",
-      properties: {
-        cursor: {
-          type: "integer",
-          minimum: 0,
-          maximum: 1_000,
-          description: "Pagination cursor from the prompt or a previous skill inventory response.",
-        },
-      },
-      additionalProperties: false,
+  type: "object",
+  properties: {
+    cursor: {
+      type: "integer",
+      minimum: 0,
+      maximum: 1_000,
+      description: "Pagination cursor from the prompt or a previous skill inventory response.",
     },
-    {
-      type: "object",
-      properties: {
-        skillId: {
-          type: "string",
-          maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
-          pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
-          description:
-            'The listed skill ID to load. A lowercase ".md" suffix is accepted for a listed ID.',
-        },
-        file: {
-          type: "string",
-          minLength: 1,
-          maxLength: 1024,
-          description:
-            "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
-        },
-      },
-      required: ["skillId"],
-      additionalProperties: false,
+    skillId: {
+      type: "string",
+      maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
+      pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
+      description:
+        'The listed skill ID to load. A lowercase ".md" suffix is accepted for a listed ID.',
     },
-  ],
+    file: {
+      type: "string",
+      minLength: 1,
+      maxLength: SKILL_RELATIVE_PATH_MAX_LENGTH,
+      description:
+        "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+    },
+  },
+  dependentRequired: {
+    file: ["skillId"],
+  },
+  dependentSchemas: {
+    cursor: {
+      properties: {
+        skillId: false,
+        file: false,
+      },
+    },
+    skillId: {
+      properties: {
+        cursor: false,
+      },
+    },
+  },
+  additionalProperties: false,
 } as const;
 
 const PROJECT_CONTEXT: RuntimeProjectSkillContext = {
@@ -460,13 +466,52 @@ it("keeps supported .md IDs valid in the static provider schema", () => {
   });
 
   const parameters = toolToProviderDefinition(tool).parameters as {
-    anyOf?: Array<{
-      properties?: { skillId?: { maxLength?: number; pattern?: string } };
-    }>;
+    properties?: { skillId?: { maxLength?: number; pattern?: string } };
   };
-  const loadVariant = parameters.anyOf?.find((variant) => variant.properties?.skillId);
-  assertEquals(loadVariant?.properties?.skillId?.maxLength, SKILL_ID_MAX_LENGTH + ".md".length);
-  assertEquals(loadVariant?.properties?.skillId?.pattern, "^[a-zA-Z0-9_-]+(?:\\.md)?$");
+  assertEquals(parameters.properties?.skillId?.maxLength, SKILL_ID_MAX_LENGTH + ".md".length);
+  assertEquals(parameters.properties?.skillId?.pattern, "^[a-zA-Z0-9_-]+(?:\\.md)?$");
+});
+
+it("keeps the static provider schema constraints after provider sanitization", () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["plan.md"] }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+  const parameters = toolToProviderDefinition(tool).parameters;
+
+  for (
+    const model of [
+      "veryfront-cloud/anthropic/claude-opus-4-6",
+      "google-ai-studio/gemini-2.5-pro",
+    ]
+  ) {
+    const sanitized = sanitizeProviderToolSchema(parameters, { model }) as {
+      anyOf?: unknown;
+      oneOf?: unknown;
+      allOf?: unknown;
+      dependentRequired?: unknown;
+      dependentSchemas?: unknown;
+    };
+    assertEquals(sanitized.anyOf, undefined);
+    assertEquals(sanitized.oneOf, undefined);
+    assertEquals(sanitized.allOf, undefined);
+    assertEquals(sanitized.dependentRequired, { file: ["skillId"] });
+    assertEquals(sanitized.dependentSchemas, {
+      cursor: {
+        properties: {
+          skillId: false,
+          file: false,
+        },
+      },
+      skillId: {
+        properties: {
+          cursor: false,
+        },
+      },
+    });
+  }
 });
 
 it("keeps legacy .md alias execution when no manifest is available", async () => {
