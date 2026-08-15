@@ -966,6 +966,68 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("does not accept a stored login after a rejected veryfront.json token in JSON mode", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const originalError = console.error;
+      const output: string[] = [];
+      const errors: string[] = [];
+      const requestedAuth: string[] = [];
+      const projectDir = await makeTempDir({ prefix: "login-config-token-" });
+      await saveToken("stored-valid-token", testEnv);
+
+      try {
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.json`,
+          JSON.stringify({ apiToken: "config-invalid-token", projectSlug: "test-project" }) +
+            "\n",
+        );
+
+        globalThis.fetch = ((_: string | URL | Request, init?: RequestInit) => {
+          const auth = String(new Headers(init?.headers).get("authorization") ?? "");
+          requestedAuth.push(auth);
+          if (auth === "Bearer config-invalid-token") {
+            return Promise.resolve(new Response(null, { status: 401 }));
+          }
+          return Promise.resolve(
+            Response.json({ id: "stored-user", email: "stored@example.com" }),
+          );
+        }) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+        console.error = (message?: unknown) => errors.push(String(message));
+
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        const { withCwd } = await import("#veryfront/testing/cwd.ts");
+        const { login } = await import("./login.ts");
+        setJsonMode(true);
+
+        const result = await withCwd(projectDir, () => login(undefined, testEnv));
+        const envelope = JSON.parse(output.join("\n"));
+
+        assertEquals(result, null);
+        assertEquals(envelope.error, {
+          code: "AUTHENTICATION_ERROR",
+          slug: "authentication-required",
+          registrySlug: "authentication-required",
+          message: "Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.",
+        });
+        assertEquals(requestedAuth, ["Bearer config-invalid-token"]);
+        assertEquals(output.join("\n").includes("stored@example.com"), false);
+        assertEquals(output.join("\n").includes("config-invalid-token"), false);
+        assertEquals(output.join("\n").includes("stored-valid-token"), false);
+        assertEquals(errors, []);
+      } finally {
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        setJsonMode(false);
+        console.log = originalLog;
+        console.error = originalError;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
     it("preserves a malformed environment validation response over a valid stored login in JSON mode", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;

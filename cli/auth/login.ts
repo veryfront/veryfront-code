@@ -21,8 +21,8 @@ import {
 } from "../shared/json-output.ts";
 import { isInteractive } from "../shared/interactive.ts";
 import { getEnvSource } from "veryfront/utils/env-loader";
-import { basename, isAbsolute, relative } from "veryfront/platform/path";
-import { cwd, getEnv } from "veryfront/platform";
+import { basename, isAbsolute, join, relative } from "veryfront/platform/path";
+import { createFileSystem, cwd, getEnv } from "veryfront/platform";
 
 /**
  * Describe where an API-token credential actually came from.
@@ -59,6 +59,20 @@ function describeApiTokenSource(token: string): string {
   }
 
   return `(via VERYFRONT_API_TOKEN from ${formatEnvSourcePathForDisplay(origin.file)})`;
+}
+
+async function readProjectConfigApiToken(): Promise<string | null> {
+  const fs = createFileSystem();
+  const configPath = join(cwd(), "veryfront.json");
+
+  try {
+    if (!(await fs.exists(configPath))) return null;
+    const parsed = JSON.parse(await fs.readTextFile(configPath)) as { apiToken?: unknown };
+    return typeof parsed.apiToken === "string" && parsed.apiToken.trim() ? parsed.apiToken : null;
+  } catch (cause) {
+    cliLogger.debug("Failed to read veryfront.json for login preflight:", cause);
+    return null;
+  }
 }
 
 export type AuthMethod = "google" | "github" | "microsoft" | "token";
@@ -102,7 +116,7 @@ let existingSessionTimeoutMs = DEFAULT_EXISTING_SESSION_TIMEOUT_MS;
 
 function loginIdentityData(
   identity: AuthIdentity,
-  source: "env" | "token-store",
+  source: "config-file" | "env" | "token-store",
 ): Record<string, unknown> {
   if (isApiKeyIdentity(identity)) {
     return {
@@ -511,11 +525,15 @@ async function describeExistingSession(
   const environmentTokenIsAuthoritative = envTokenSource !== "env-file";
   const candidates: {
     token: string;
-    source: "environment" | "stored";
+    source: "config-file" | "environment" | "stored";
     authoritative?: boolean;
   }[] = [];
   if (env.apiToken && environmentTokenIsAuthoritative) {
     candidates.push({ token: env.apiToken, source: "environment", authoritative: true });
+  }
+  const configToken = await readProjectConfigApiToken();
+  if (configToken) {
+    candidates.push({ token: configToken, source: "config-file", authoritative: true });
   }
   const storedToken = await readToken(env);
   if (storedToken) candidates.push({ token: storedToken, source: "stored" });
@@ -540,19 +558,26 @@ async function describeExistingSession(
     } catch (error) {
       if (error instanceof CredentialValidationUnavailableError) {
         unavailable ??= error;
-        if (source === "environment" && authoritative) break;
+        if (authoritative) break;
       }
       continue;
     }
     if (!identity) {
-      if (source === "environment" && authoritative) break;
+      if (authoritative) break;
       continue;
     }
 
     if (isJsonMode()) {
       await outputJson(createSuccessEnvelope(
         "login",
-        loginIdentityData(identity, source === "environment" ? "env" : "token-store"),
+        loginIdentityData(
+          identity,
+          source === "environment"
+            ? "env"
+            : source === "config-file"
+            ? "config-file"
+            : "token-store",
+        ),
       ));
       return identity;
     }
