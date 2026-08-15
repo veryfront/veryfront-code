@@ -102,7 +102,19 @@ describe("trigger validation", () => {
     });
   });
 
-  it("rejects unknown keys and broken agent conversation invariants", () => {
+  it("drops extension fields when snapshotting canonical targets", () => {
+    assertEquals(isTriggerTarget({ kind: "agent", id: "support-agent", metadata: true }), true);
+    assertEquals(
+      snapshotTriggerTarget({
+        kind: "agent",
+        id: "support-agent",
+        metadata: "owned-by-consumer",
+      }),
+      { kind: "agent", id: "support-agent" },
+    );
+  });
+
+  it("rejects broken agent conversation invariants", () => {
     const conversationId = "11111111-1111-4111-8111-111111111111";
     const accessorMode = Object.defineProperties(
       { kind: "agent", id: "support-agent" },
@@ -111,7 +123,6 @@ describe("trigger validation", () => {
 
     for (
       const target of [
-        { kind: "agent", id: "support-agent", unsupported: true },
         { kind: "task", id: "sync-helpdesk", conversationMode: "create_new" },
         { kind: "workflow", id: "billing/sync", conversationId },
         { kind: "agent", id: "support-agent", conversationMode: "resume" },

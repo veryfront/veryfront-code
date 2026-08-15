@@ -8,6 +8,7 @@ import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { discoverSourceTriggers as discoverSourceTriggersRaw } from "./discovery.ts";
 import { runTriggerTarget } from "./local-runner.ts";
+import type { TriggerTarget } from "./target.ts";
 
 interface FixtureTrigger {
   id: string;
@@ -439,10 +440,10 @@ describe("trigger runtime", () => {
           projectDir: "/project",
           adapter,
           config: { fs: { type: "veryfront-api" } },
-          target: { kind: "agent", id: "triage", conversationmode: "create_new" } as never,
+          target: { kind: "agent", id: "triage", conversationMode: "resume" } as never,
         }),
       Error,
-      "Trigger target.conversationmode is not supported.",
+      "Trigger target.conversationMode must be create_new, existing, or none.",
     );
     await assertRejects(
       () =>
@@ -477,6 +478,38 @@ describe("trigger runtime", () => {
       "trigger cancelled before discovery",
     );
     assertEquals(existsCalls, 0);
+  });
+
+  it("runs extended trigger targets through the generic runtime helper", async () => {
+    interface OwnedTarget extends TriggerTarget {
+      metadata: string;
+    }
+
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/extended-target.ts": [
+        "export default {",
+        '  name: "Extended target",',
+        '  run() { return "accepted"; },',
+        "};",
+        "",
+      ].join("\n"),
+    });
+    const target: OwnedTarget = {
+      kind: "task",
+      id: "extended-target",
+      metadata: "owned-by-consumer",
+    };
+
+    const result = await runTriggerTarget({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } },
+      target,
+    });
+
+    assertEquals(result.kind, "task");
+    assertEquals(result.id, "extended-target");
+    assertEquals(result.output, "accepted");
   });
 
   it("executes from an input snapshot captured before discovery yields", async () => {

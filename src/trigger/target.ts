@@ -206,14 +206,24 @@ export type TriggerTargetResolution =
   | { readonly target: TriggerTarget; readonly detail?: undefined }
   | { readonly target?: undefined; readonly detail: string };
 
+function requireOwnDataField(
+  label: string,
+  value: object,
+  key: "conversationMode" | "conversationId",
+): TriggerTargetResolution | null {
+  const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+  if (descriptor === undefined || "value" in descriptor) return null;
+  return {
+    detail: `${formatDiagnosticProperty(label, key)} must be an own data property.`,
+  };
+}
+
 /**
- * Validate and copy a trigger target, reporting why a rejected value failed.
+ * Validate and copy the canonical fields of a trigger target.
  *
- * Unsupported keys are rejected rather than dropped, so addressing an agent
- * conversation with a misspelled field fails instead of silently disappearing.
- * `label` prefixes the diagnostic so a caller names its own field path, and
- * the reason is returned rather than collapsed so the misspelled key is named
- * instead of the id being blamed.
+ * Public `TriggerTarget` interfaces are intentionally extendable, so this
+ * generic helper ignores caller-owned extension fields. Schedule and webhook
+ * authoring validators apply strict key checks before calling this helper.
  */
 export function resolveTriggerTarget(
   label: string,
@@ -234,25 +244,23 @@ export function resolveTriggerTarget(
       return notATarget;
     }
 
-    const allowedKeys = new Set<PropertyKey>(triggerTargetKeys(value));
-    for (const key of Reflect.ownKeys(value)) {
-      if (typeof key === "symbol") {
-        return { detail: `${label} must not define symbol properties.` };
-      }
-      if (!allowedKeys.has(key)) {
-        return { detail: `${formatDiagnosticProperty(label, key)} is not supported.` };
-      }
-      const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
-      if (descriptor === undefined || !("value" in descriptor)) {
-        return {
-          detail: `${formatDiagnosticProperty(label, key)} must be an own data property.`,
-        };
-      }
-    }
-    if (kind !== "agent") return { target: { kind, id } };
+    const conversationModeField = requireOwnDataField(label, value, "conversationMode");
+    if (conversationModeField !== null) return conversationModeField;
+    const conversationIdField = requireOwnDataField(label, value, "conversationId");
+    if (conversationIdField !== null) return conversationIdField;
 
     const conversationMode = readOwnDataProperty(value, "conversationMode");
     const conversationId = readOwnDataProperty(value, "conversationId");
+    if (kind !== "agent") {
+      if (conversationMode !== undefined) {
+        return { detail: `${label}.conversationMode is supported only for agent targets.` };
+      }
+      if (conversationId !== undefined) {
+        return { detail: `${label}.conversationId is supported only for agent targets.` };
+      }
+      return { target: { kind, id } };
+    }
+
     const conversationDetail = agentConversationDiagnostic(
       label,
       conversationMode,
@@ -278,9 +286,6 @@ export function resolveTriggerTarget(
 
 /**
  * Validate and copy a trigger target without retaining caller-owned state.
- *
- * Unsupported keys are rejected rather than dropped, so addressing an agent
- * conversation with a misspelled field fails instead of silently disappearing.
  */
 export function snapshotTriggerTarget(value: unknown): TriggerTarget | null {
   return resolveTriggerTarget("Trigger target", value).target ?? null;
