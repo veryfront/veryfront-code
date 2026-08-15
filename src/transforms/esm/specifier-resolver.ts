@@ -10,8 +10,12 @@
 import { basename } from "#veryfront/compat/path/index.ts";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
-import { appendSameOriginSSRDependencyPinningKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import {
+  appendSameOriginSSRDependencyPinningKey,
+  normalizeExtension,
+} from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
+import { splitSpecifierSuffix } from "../shared/specifier-suffix.ts";
 import { isServerOnlyPackage } from "../shared/server-only-packages.ts";
 import { parseImports, replaceSpecifiers } from "./lexer.ts";
 
@@ -99,13 +103,35 @@ async function resolveSpecifier(
   );
   if (isExternalScheme(specifier)) return null;
 
+  // The "@/" project alias always denotes the project's own module transport.
+  // An alias that escaped every upstream rewrite must land there too: treating
+  // it as a bare specifier would route it to esm.sh as a bogus scoped package,
+  // and a project import map that maps "@/" to a relative prefix would resolve
+  // it against the page's public origin, which answers with HTML
+  // (VERYFRONT-SERVER-G).
+  //
+  // The URL shape is not invented here. It reproduces `AliasStrategy.rewrite`
+  // (transforms/import-rewriter/strategies/alias-strategy.ts), the framework's
+  // canonical "@/" rewriter, which emits this same shape for both its `ssr` and
+  // its browser target: `normalizeExtension`, then append `.js` unless the
+  // result already ends in a JS-like or CSS extension. A different shape here
+  // would resolve one specifier to two different module URLs.
+  if (stringStartsWith(specifier, "@/")) {
+    const { path: pathOnly, suffix } = splitSpecifierSuffix(stringSlice(specifier, 2));
+    const normalizedPath = normalizeExtension(pathOnly);
+    const jsPath = /\.(js|mjs|cjs|css)$/.test(normalizedPath)
+      ? normalizedPath
+      : `${normalizedPath}.js`;
+    return `/_vf_modules/${jsPath}${suffix}`;
+  }
+
   // Server-only packages (`redis`, `pg`, …), including their explicit `npm:`
   // form, must never be routed through esm.sh. esm.sh either 500s building them
   // or emits a browser bundle with Node built-ins stubbed that can never
   // connect. The framework's adapters only `import()` them behind a lazy,
   // configured code path, so leaving the specifier external lets the runtime
   // resolve the real package (node_modules on Node, npm: on Deno) if and when
-  // the backend is actually used — and costs nothing when it is not.
+  // the backend is actually used, and costs nothing when it is not.
   const serverOnlyCandidate = stringStartsWith(specifier, "npm:")
     ? stringSlice(specifier, 4)
     : specifier;

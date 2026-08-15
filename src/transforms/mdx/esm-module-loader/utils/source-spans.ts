@@ -22,6 +22,28 @@ export interface StaticImportSpan {
 
 type SpecifierMatcher = (specifier: string) => string | null | undefined;
 
+interface OpenParenContext {
+  index: number;
+  isControlCondition: boolean;
+  isForHeader: boolean;
+  hasSemicolon: boolean;
+}
+
+interface OpenBraceContext {
+  index: number;
+  previousTokenIndex: number;
+}
+
+const MAX_TEMPLATE_LITERAL_DEPTH = 512;
+const StringFromCodePoint = String.fromCodePoint;
+const IDENTIFIER_PART_PATTERN = /^[$_\p{ID_Continue}\u200C\u200D]$/u;
+
+function assertTemplateLiteralDepth(depth: number): void {
+  if (depth > MAX_TEMPLATE_LITERAL_DEPTH) {
+    throw new RangeError("Template literal nesting exceeds scanner limit");
+  }
+}
+
 export function replaceSourceSpans(
   source: string,
   replacements: SourceSpanReplacement[],
@@ -62,20 +84,47 @@ export function replaceSourceSpans(
 }
 
 function isIdentifierChar(char: string | undefined): boolean {
-  return char !== undefined && /[A-Za-z0-9_$]/.test(char);
+  return char !== undefined && IDENTIFIER_PART_PATTERN.test(char);
+}
+
+function identifierCharacterAt(source: string, index: number): string | undefined {
+  if (index < 0 || index >= source.length) return undefined;
+
+  let characterIndex = index;
+  const codeUnit = source.charCodeAt(characterIndex);
+  if (
+    codeUnit >= 0xdc00 && codeUnit <= 0xdfff && characterIndex > 0
+  ) {
+    const previousCodeUnit = source.charCodeAt(characterIndex - 1);
+    if (previousCodeUnit >= 0xd800 && previousCodeUnit <= 0xdbff) characterIndex--;
+  }
+
+  const codePoint = source.codePointAt(characterIndex);
+  return codePoint === undefined ? undefined : StringFromCodePoint(codePoint);
+}
+
+function isIdentifierPartAt(source: string, index: number): boolean {
+  return isIdentifierChar(identifierCharacterAt(source, index));
+}
+
+function skipLineComment(source: string, index: number): number {
+  let cursor = index + 2;
+  while (cursor < source.length && !isLineTerminator(source[cursor]!)) cursor++;
+  if (cursor >= source.length) return source.length;
+  return source[cursor] === "\r" && source[cursor + 1] === "\n" ? cursor + 2 : cursor + 1;
 }
 
 function isStatementKeywordAt(
   source: string,
   index: number,
   keyword: "import" | "export",
+  atStatementStart: boolean,
 ): boolean {
+  if (!atStatementStart) return false;
   if (!source.startsWith(keyword, index)) return false;
-  if (isIdentifierChar(source[index - 1]) || source[index - 1] === ".") return false;
-  if (isIdentifierChar(source[index + keyword.length])) return false;
-
-  const lineStart = source.lastIndexOf("\n", index - 1) + 1;
-  return /^[\t ]*$/.test(source.slice(lineStart, index));
+  if (isIdentifierPartAt(source, index - 1) || source[index - 1] === ".") return false;
+  if (isIdentifierPartAt(source, index + keyword.length)) return false;
+  return true;
 }
 
 function skipIgnored(source: string, index: number): number {
@@ -83,8 +132,7 @@ function skipIgnored(source: string, index: number): number {
   const next = source[index + 1];
 
   if (char === "/" && next === "/") {
-    const newline = source.indexOf("\n", index + 2);
-    return newline === -1 ? source.length : newline + 1;
+    return skipLineComment(source, index);
   }
 
   if (char === "/" && next === "*") {
@@ -135,11 +183,139 @@ function skipWhitespaceAndComments(source: string, index: number): number {
 }
 
 function nextStatementCursor(source: string, index: number): number {
-  const semicolon = source.indexOf(";", index);
-  const newline = source.indexOf("\n", index);
-  const candidates = [semicolon, newline].filter((position) => position >= 0);
-  if (candidates.length === 0) return source.length;
-  return Math.min(...candidates) + 1;
+  let cursor = index;
+  while (cursor < source.length) {
+    if (source[cursor] === ";") return cursor + 1;
+    if (isLineTerminator(source[cursor]!)) {
+      return source[cursor] === "\r" && source[cursor + 1] === "\n" ? cursor + 2 : cursor + 1;
+    }
+    cursor++;
+  }
+  return source.length;
+}
+
+function hexDigitValue(char: string | undefined): number {
+  if (char === undefined) return -1;
+  const code = char.charCodeAt(0);
+  if (code >= 48 && code <= 57) return code - 48;
+  if (code >= 65 && code <= 70) return code - 55;
+  if (code >= 97 && code <= 102) return code - 87;
+  return -1;
+}
+
+function decodeHexEscape(source: string, start: number, length: number): number | null {
+  let value = 0;
+  for (let offset = 0; offset < length; offset++) {
+    const digit = hexDigitValue(source[start + offset]);
+    if (digit === -1) return null;
+    value = value * 16 + digit;
+  }
+  return value;
+}
+
+function invalidEscapedSpecifier(): never {
+  throw new SyntaxError("Invalid escaped module specifier");
+}
+
+function isLineTerminator(char: string): boolean {
+  return char === "\r" || char === "\n" || char === "\u2028" || char === "\u2029";
+}
+
+function decodeLiteralContents(
+  source: string,
+  start: number,
+  end: number,
+  allowLineTerminators: boolean,
+): string {
+  let result = "";
+  let cursor = start;
+
+  while (cursor < end) {
+    const char = source[cursor]!;
+    if (char !== "\\") {
+      if (isLineTerminator(char)) {
+        if (!allowLineTerminators) invalidEscapedSpecifier();
+        if (char === "\r") {
+          result += "\n";
+          cursor += source[cursor + 1] === "\n" ? 2 : 1;
+          continue;
+        }
+      }
+      result += char;
+      cursor++;
+      continue;
+    }
+
+    const escaped = source[cursor + 1];
+    if (escaped === undefined || cursor + 1 >= end) invalidEscapedSpecifier();
+
+    if (isLineTerminator(escaped)) {
+      cursor += escaped === "\r" && source[cursor + 2] === "\n" ? 3 : 2;
+      continue;
+    }
+
+    const simpleEscape = {
+      b: "\b",
+      f: "\f",
+      n: "\n",
+      r: "\r",
+      t: "\t",
+      v: "\v",
+    }[escaped];
+    if (simpleEscape !== undefined) {
+      result += simpleEscape;
+      cursor += 2;
+      continue;
+    }
+
+    if (escaped === "0") {
+      if (/[0-9]/.test(source[cursor + 2] ?? "")) invalidEscapedSpecifier();
+      result += "\0";
+      cursor += 2;
+      continue;
+    }
+    if (/[1-9]/.test(escaped)) invalidEscapedSpecifier();
+
+    if (escaped === "x") {
+      const value = decodeHexEscape(source, cursor + 2, 2);
+      if (value === null || cursor + 4 > end) invalidEscapedSpecifier();
+      result += StringFromCodePoint(value);
+      cursor += 4;
+      continue;
+    }
+
+    if (escaped === "u") {
+      if (source[cursor + 2] === "{") {
+        let escapeEnd = cursor + 3;
+        let value = 0;
+        let digitCount = 0;
+        while (escapeEnd < end && source[escapeEnd] !== "}") {
+          const digit = hexDigitValue(source[escapeEnd]);
+          if (digit === -1) invalidEscapedSpecifier();
+          value = value * 16 + digit;
+          digitCount++;
+          escapeEnd++;
+        }
+        if (
+          digitCount === 0 || source[escapeEnd] !== "}" || value > 0x10ffff
+        ) invalidEscapedSpecifier();
+        result += StringFromCodePoint(value);
+        cursor = escapeEnd + 1;
+        continue;
+      }
+
+      const value = decodeHexEscape(source, cursor + 2, 4);
+      if (value === null || cursor + 6 > end) invalidEscapedSpecifier();
+      result += StringFromCodePoint(value);
+      cursor += 6;
+      continue;
+    }
+
+    result += escaped;
+    cursor += 2;
+  }
+
+  return result;
 }
 
 function readQuotedSpecifier(
@@ -156,11 +332,470 @@ function readQuotedSpecifier(
       continue;
     }
     if (source[cursor] === quote) {
+      const specifier = decodeLiteralContents(source, quoteIndex + 1, cursor, false);
       return {
         end: cursor + 1,
-        specifier: source.slice(quoteIndex + 1, cursor),
+        specifier,
       };
     }
+    cursor++;
+  }
+
+  return null;
+}
+
+function readLiteralSpecifier(
+  source: string,
+  literalIndex: number,
+): { end: number; specifier: string } | null {
+  const quote = source[literalIndex];
+  if (quote === '"' || quote === "'") return readQuotedSpecifier(source, literalIndex);
+  if (quote !== "`") return null;
+
+  let cursor = literalIndex + 1;
+  while (cursor < source.length) {
+    if (source[cursor] === "\\") {
+      cursor += 2;
+      continue;
+    }
+    if (source[cursor] === "$" && source[cursor + 1] === "{") return null;
+    if (source[cursor] === "`") {
+      const specifier = decodeLiteralContents(source, literalIndex + 1, cursor, true);
+      return {
+        end: cursor + 1,
+        specifier,
+      };
+    }
+    cursor++;
+  }
+
+  return null;
+}
+
+function skipFullTemplateLiteral(
+  source: string,
+  templateIndex: number,
+  depth = 0,
+): number {
+  assertTemplateLiteralDepth(depth);
+
+  let cursor = templateIndex + 1;
+
+  while (cursor < source.length) {
+    if (source[cursor] === "\\") {
+      cursor += 2;
+      continue;
+    }
+
+    if (source[cursor] === "`") return cursor + 1;
+
+    if (source[cursor] === "$" && source[cursor + 1] === "{") {
+      const expressionEnd = findTemplateExpressionEnd(source, cursor + 2, depth + 1);
+      if (expressionEnd === null) return source.length;
+      cursor = expressionEnd + 1;
+      continue;
+    }
+
+    cursor++;
+  }
+
+  return source.length;
+}
+
+function previousSignificantIndex(source: string, index: number): number {
+  let cursor = index - 1;
+  while (cursor >= 0 && /\s/.test(source[cursor] ?? "")) cursor--;
+  return cursor;
+}
+
+function keywordBefore(
+  source: string,
+  index: number,
+  previousTokenIndex = previousSignificantIndex(source, index),
+): string | null {
+  const end = previousTokenIndex + 1;
+  let start = end;
+  while (start > 0 && /[A-Za-z_$]/.test(source[start - 1] ?? "")) start--;
+  if (start === end) return null;
+  return source.slice(start, end);
+}
+
+function openParenContext(
+  source: string,
+  index: number,
+  previousTokenIndex: number,
+): OpenParenContext {
+  const keyword = keywordBefore(source, index, previousTokenIndex);
+  return {
+    index,
+    isControlCondition: keyword === "if" || keyword === "while" || keyword === "for" ||
+      keyword === "with" || keyword === "switch" || keyword === "catch",
+    isForHeader: keyword === "for",
+    hasSemicolon: false,
+  };
+}
+
+function isControlConditionCloseParen(
+  index: number,
+  rangeStart: number,
+  matchingOpenParens: ReadonlyMap<number, OpenParenContext>,
+): boolean {
+  const openParen = matchingOpenParens.get(index);
+  return openParen !== undefined && openParen.index >= rangeStart &&
+    openParen.isControlCondition;
+}
+
+function isControlBlockCloseBrace(
+  source: string,
+  index: number,
+  rangeStart: number,
+  matchingOpenBraces: ReadonlyMap<number, OpenBraceContext>,
+  matchingOpenParens: ReadonlyMap<number, OpenParenContext>,
+): boolean {
+  const openBrace = matchingOpenBraces.get(index);
+  if (openBrace === undefined) return false;
+
+  const beforeOpenBrace = openBrace.previousTokenIndex;
+  return beforeOpenBrace >= rangeStart &&
+    source[beforeOpenBrace] === ")" &&
+    isControlConditionCloseParen(beforeOpenBrace, rangeStart, matchingOpenParens);
+}
+
+function isDeclarationBlockCloseBrace(
+  source: string,
+  index: number,
+  matchingOpenBraces: ReadonlyMap<number, OpenBraceContext>,
+): boolean {
+  const openBrace = matchingOpenBraces.get(index);
+  if (openBrace === undefined) return false;
+
+  const declarationStart = Math.max(
+    source.lastIndexOf(";", openBrace.index - 1),
+    source.lastIndexOf("{", openBrace.index - 1),
+    source.lastIndexOf("}", openBrace.index - 1),
+  ) + 1;
+  const prefix = source.slice(declarationStart, openBrace.index).trimStart().replace(
+    /\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g,
+    " ",
+  );
+  return /^(?:async\s+)?function(?:\s*\*)?(?:\s+[$A-Za-z_][$\w]*)?\s*\(/.test(prefix) ||
+    /^class(?:\s+[$A-Za-z_][$\w]*)?(?:\s+extends\s+[\s\S]+)?\s*$/.test(prefix);
+}
+
+function isStatementBlockCloseBrace(
+  source: string,
+  index: number,
+  matchingOpenBraces: ReadonlyMap<number, OpenBraceContext>,
+): boolean {
+  const openBrace = matchingOpenBraces.get(index);
+  if (openBrace === undefined) return false;
+  const keyword = keywordBefore(source, openBrace.index, openBrace.previousTokenIndex);
+  return keyword === "try" || keyword === "catch" || keyword === "finally" ||
+    keyword === "do" || keyword === "else";
+}
+
+function isPlainStatementBlockCloseBrace(
+  source: string,
+  index: number,
+  rangeStart: number,
+  matchingOpenBraces: ReadonlyMap<number, OpenBraceContext>,
+): boolean {
+  const openBrace = matchingOpenBraces.get(index);
+  if (openBrace === undefined) return false;
+
+  const beforeOpenBrace = openBrace.previousTokenIndex;
+  if (beforeOpenBrace < rangeStart) return true;
+  if (source[beforeOpenBrace] === ";" || source[beforeOpenBrace] === "}") return true;
+  if (source[beforeOpenBrace] !== ":") return false;
+
+  const labelEnd = previousSignificantIndex(source, beforeOpenBrace) + 1;
+  let labelStart = labelEnd;
+  while (labelStart > rangeStart && isIdentifierChar(source[labelStart - 1])) labelStart--;
+  if (labelStart === labelEnd || !/[$A-Za-z_]/.test(source[labelStart] ?? "")) return false;
+
+  const beforeLabel = previousSignificantIndex(source, labelStart);
+  return beforeLabel < rangeStart || source[beforeLabel] === ";" || source[beforeLabel] === "}";
+}
+
+function isForOfKeywordBefore(
+  source: string,
+  rangeStart: number,
+  currentParen: OpenParenContext | undefined,
+  previousTokenIndex: number,
+): boolean {
+  const keywordEnd = previousTokenIndex + 1;
+  let keywordStart = keywordEnd;
+  while (keywordStart > rangeStart && /[A-Za-z_$]/.test(source[keywordStart - 1] ?? "")) {
+    keywordStart--;
+  }
+  if (source.slice(keywordStart, keywordEnd) !== "of") return false;
+
+  const beforeKeyword = previousSignificantIndex(source, keywordStart);
+  if (beforeKeyword >= rangeStart && source[beforeKeyword] === ".") return false;
+  const beforeKeywordChar = source[beforeKeyword];
+  if (
+    !isIdentifierPartAt(source, beforeKeyword) &&
+    beforeKeywordChar !== "]" &&
+    beforeKeywordChar !== "}" &&
+    beforeKeywordChar !== ")"
+  ) {
+    return false;
+  }
+  return currentParen?.isForHeader === true && !currentParen.hasSemicolon;
+}
+
+function canStartRegexLiteral(
+  source: string,
+  index: number,
+  rangeStart: number,
+  matchingOpenBraces: ReadonlyMap<number, OpenBraceContext>,
+  matchingOpenParens: ReadonlyMap<number, OpenParenContext>,
+  currentParen: OpenParenContext | undefined,
+  previousTokenIndex: number,
+): boolean {
+  const previous = previousTokenIndex;
+  if (previous < rangeStart) return true;
+
+  const char = source[previous];
+  if (
+    char === ")" &&
+    isControlConditionCloseParen(previous, rangeStart, matchingOpenParens)
+  ) return true;
+  if (
+    char === "}" &&
+    (isControlBlockCloseBrace(
+      source,
+      previous,
+      rangeStart,
+      matchingOpenBraces,
+      matchingOpenParens,
+    ) ||
+      isDeclarationBlockCloseBrace(source, previous, matchingOpenBraces) ||
+      isStatementBlockCloseBrace(source, previous, matchingOpenBraces) ||
+      isPlainStatementBlockCloseBrace(source, previous, rangeStart, matchingOpenBraces))
+  ) return true;
+  if (
+    (char === "+" || char === "-") &&
+    previous - 1 >= rangeStart &&
+    source[previous - 1] === char
+  ) {
+    return false;
+  }
+  if (
+    char === "." &&
+    previous - 2 >= rangeStart &&
+    source[previous - 1] === "." &&
+    source[previous - 2] === "."
+  ) {
+    return true;
+  }
+  if (char !== undefined && "([{=,:;!~?&|+-*%^<>".includes(char)) return true;
+
+  const keyword = keywordBefore(source, index, previous);
+  if (keyword === "of") {
+    return isForOfKeywordBefore(source, rangeStart, currentParen, previous);
+  }
+
+  return [
+    "case",
+    "default",
+    "delete",
+    "do",
+    "else",
+    "extends",
+    "in",
+    "instanceof",
+    "new",
+    "await",
+    "break",
+    "continue",
+    "debugger",
+    "return",
+    "throw",
+    "typeof",
+    "void",
+    "yield",
+  ].includes(keyword ?? "");
+}
+
+function skipRegexLiteral(source: string, regexIndex: number): number {
+  let cursor = regexIndex + 1;
+  let inCharacterClass = false;
+
+  while (cursor < source.length) {
+    const char = source[cursor];
+
+    if (char === "\\") {
+      cursor += 2;
+      continue;
+    }
+
+    if (char === "[" && !inCharacterClass) {
+      inCharacterClass = true;
+      cursor++;
+      continue;
+    }
+
+    if (char === "]" && inCharacterClass) {
+      inCharacterClass = false;
+      cursor++;
+      continue;
+    }
+
+    if (char === "/" && !inCharacterClass) {
+      cursor++;
+      while (/[A-Za-z]/.test(source[cursor] ?? "")) cursor++;
+      return cursor;
+    }
+
+    cursor++;
+  }
+
+  return source.length;
+}
+
+function skipExpressionIgnored(
+  source: string,
+  index: number,
+  rangeStart: number,
+  depth: number,
+  matchingOpenBraces: ReadonlyMap<number, OpenBraceContext>,
+  matchingOpenParens: ReadonlyMap<number, OpenParenContext>,
+  currentParen: OpenParenContext | undefined,
+  previousTokenIndex: number,
+): number {
+  const char = source[index];
+  const next = source[index + 1];
+
+  if (char === "/" && next === "/") {
+    return skipLineComment(source, index);
+  }
+
+  if (char === "/" && next === "*") {
+    const end = source.indexOf("*/", index + 2);
+    return end === -1 ? source.length : end + 2;
+  }
+
+  if (char === '"' || char === "'") return skipIgnored(source, index);
+  if (char === "`") return skipFullTemplateLiteral(source, index, depth + 1);
+  if (
+    char === "/" &&
+    canStartRegexLiteral(
+      source,
+      index,
+      rangeStart,
+      matchingOpenBraces,
+      matchingOpenParens,
+      currentParen,
+      previousTokenIndex,
+    )
+  ) {
+    return skipRegexLiteral(source, index);
+  }
+
+  return index;
+}
+
+function tokenIndexAfterIgnored(
+  source: string,
+  index: number,
+  skipped: number,
+  previousTokenIndex: number,
+): number {
+  const isComment = source[index] === "/" &&
+    (source[index + 1] === "/" || source[index + 1] === "*");
+  return isComment ? previousTokenIndex : Math.max(index, skipped - 1);
+}
+
+function isPropertyAccessBeforeImport(
+  source: string,
+  previousTokenIndex: number,
+  rangeStart: number,
+): boolean {
+  const previous = source[previousTokenIndex];
+  if (previous === "#") return true;
+  if (previous !== ".") return false;
+  const isSpread = previousTokenIndex - 2 >= rangeStart &&
+    source[previousTokenIndex - 1] === "." &&
+    source[previousTokenIndex - 2] === ".";
+  return !isSpread;
+}
+
+function findTemplateExpressionEnd(
+  source: string,
+  expressionIndex: number,
+  depth = 0,
+): number | null {
+  assertTemplateLiteralDepth(depth);
+
+  let cursor = expressionIndex;
+  let braceDepth = 1;
+  const openBraces: OpenBraceContext[] = [];
+  const matchingOpenBraces = new Map<number, OpenBraceContext>();
+  const openParens: OpenParenContext[] = [];
+  const matchingOpenParens = new Map<number, OpenParenContext>();
+  let previousTokenIndex = expressionIndex - 1;
+
+  while (cursor < source.length) {
+    const skipped = skipExpressionIgnored(
+      source,
+      cursor,
+      expressionIndex,
+      depth,
+      matchingOpenBraces,
+      matchingOpenParens,
+      openParens.at(-1),
+      previousTokenIndex,
+    );
+    if (skipped !== cursor) {
+      previousTokenIndex = tokenIndexAfterIgnored(
+        source,
+        cursor,
+        skipped,
+        previousTokenIndex,
+      );
+      cursor = skipped;
+      continue;
+    }
+
+    if (source[cursor] === "{") {
+      openBraces.push({ index: cursor, previousTokenIndex });
+      braceDepth++;
+      previousTokenIndex = cursor;
+      cursor++;
+      continue;
+    }
+
+    if (source[cursor] === "}") {
+      braceDepth--;
+      if (braceDepth === 0) return cursor;
+      const openBrace = openBraces.pop();
+      if (openBrace !== undefined) matchingOpenBraces.set(cursor, openBrace);
+      previousTokenIndex = cursor;
+      cursor++;
+      continue;
+    }
+
+    if (source[cursor] === "(") {
+      openParens.push(openParenContext(source, cursor, previousTokenIndex));
+      previousTokenIndex = cursor;
+      cursor++;
+      continue;
+    }
+
+    if (source[cursor] === ")") {
+      const openParen = openParens.pop();
+      if (openParen !== undefined) matchingOpenParens.set(cursor, openParen);
+      previousTokenIndex = cursor;
+      cursor++;
+      continue;
+    }
+
+    if (source[cursor] === ";" && openParens.at(-1)?.isForHeader) {
+      openParens.at(-1)!.hasSemicolon = true;
+    }
+
+    if (!/\s/.test(source[cursor] ?? "")) previousTokenIndex = cursor;
     cursor++;
   }
 
@@ -185,10 +820,10 @@ function findFromSpan(
 
     if (
       source.startsWith("from", cursor) &&
-      !isIdentifierChar(source[cursor - 1]) &&
-      !isIdentifierChar(source[cursor + 4])
+      !isIdentifierPartAt(source, cursor - 1) &&
+      !isIdentifierPartAt(source, cursor + 4)
     ) {
-      const quoteIndex = skipWhitespace(source, cursor + 4);
+      const quoteIndex = skipWhitespaceAndComments(source, cursor + 4);
       const quoted = readQuotedSpecifier(source, quoteIndex);
       if (!quoted) {
         cursor++;
@@ -238,24 +873,102 @@ export function findStaticImportFromSpans(
 
   const spans: StaticImportSpan[] = [];
   let cursor = 0;
+  let atStatementStart = true;
+  const openBraces: OpenBraceContext[] = [];
+  const matchingOpenBraces = new Map<number, OpenBraceContext>();
+  const openParens: OpenParenContext[] = [];
+  const matchingOpenParens = new Map<number, OpenParenContext>();
+  let previousTokenIndex = -1;
 
   while (cursor < source.length) {
-    const skipped = skipIgnored(source, cursor);
+    const char = source[cursor];
+    const skipped = skipExpressionIgnored(
+      source,
+      cursor,
+      0,
+      0,
+      matchingOpenBraces,
+      matchingOpenParens,
+      openParens.at(-1),
+      previousTokenIndex,
+    );
     if (skipped !== cursor) {
+      if (char === "/" && source[cursor + 1] === "/") atStatementStart = true;
+      else if (!(char === "/" && source[cursor + 1] === "*")) atStatementStart = false;
+      previousTokenIndex = tokenIndexAfterIgnored(
+        source,
+        cursor,
+        skipped,
+        previousTokenIndex,
+      );
       cursor = skipped;
       continue;
     }
 
-    const isImport = isStatementKeywordAt(source, cursor, "import");
-    const isExport = isStatementKeywordAt(source, cursor, "export");
+    if (char === "{") {
+      openBraces.push({ index: cursor, previousTokenIndex });
+      atStatementStart = false;
+      previousTokenIndex = cursor;
+      cursor++;
+      continue;
+    }
+    if (char === "}") {
+      const openBrace = openBraces.pop();
+      if (openBrace !== undefined) matchingOpenBraces.set(cursor, openBrace);
+      atStatementStart = true;
+      previousTokenIndex = cursor;
+      cursor++;
+      continue;
+    }
+    if (char === "(") {
+      openParens.push(openParenContext(source, cursor, previousTokenIndex));
+      atStatementStart = false;
+      previousTokenIndex = cursor;
+      cursor++;
+      continue;
+    }
+    if (char === ")") {
+      const openParen = openParens.pop();
+      if (openParen !== undefined) matchingOpenParens.set(cursor, openParen);
+      atStatementStart = false;
+      previousTokenIndex = cursor;
+      cursor++;
+      continue;
+    }
+    if (char === ";" && openParens.at(-1)?.isForHeader) {
+      openParens.at(-1)!.hasSemicolon = true;
+    }
+    if (char === ";" || (char !== undefined && isLineTerminator(char))) {
+      atStatementStart = true;
+      if (char === ";") previousTokenIndex = cursor;
+      cursor++;
+      continue;
+    }
+    if (/\s/.test(char ?? "")) {
+      cursor++;
+      continue;
+    }
+
+    const isImport = isStatementKeywordAt(source, cursor, "import", atStatementStart);
+    const isExport = isStatementKeywordAt(source, cursor, "export", atStatementStart);
     if (!isImport && !isExport) {
+      atStatementStart = false;
+      previousTokenIndex = cursor;
       cursor++;
       continue;
     }
 
     const keywordLength = isImport ? "import".length : "export".length;
-    const afterKeyword = skipWhitespace(source, cursor + keywordLength);
+    const afterKeyword = skipWhitespaceAndComments(source, cursor + keywordLength);
     if (isImport && source[afterKeyword] === "(") {
+      atStatementStart = false;
+      openParens.push({
+        index: afterKeyword,
+        isControlCondition: false,
+        isForHeader: false,
+        hasSemicolon: false,
+      });
+      previousTokenIndex = afterKeyword;
       cursor = afterKeyword + 1;
       continue;
     }
@@ -264,14 +977,224 @@ export function findStaticImportFromSpans(
     if (span) {
       spans.push(span);
       if (spans.length >= maxMatches) return spans;
+      atStatementStart = false;
+      previousTokenIndex = span.end - 1;
       cursor = span.end;
       continue;
     }
 
+    atStatementStart = true;
     cursor = nextStatementCursor(source, afterKeyword);
+    previousTokenIndex = Math.max(previousTokenIndex, cursor - 1);
   }
 
   return spans;
+}
+
+function scanTemplateExpressionDynamicImports(
+  source: string,
+  templateIndex: number,
+  rangeEnd: number,
+  matcher: SpecifierMatcher,
+  maxMatches: number,
+  spans: StaticImportSpan[],
+): number {
+  let cursor = templateIndex + 1;
+
+  while (cursor < rangeEnd && cursor < source.length) {
+    if (source[cursor] === "\\") {
+      cursor += 2;
+      continue;
+    }
+
+    if (source[cursor] === "`") return cursor + 1;
+
+    if (source[cursor] === "$" && source[cursor + 1] === "{") {
+      const expressionStart = cursor + 2;
+      const expressionEnd = findTemplateExpressionEnd(source, expressionStart);
+      if (expressionEnd === null) return source.length;
+
+      scanDynamicImportRange(source, expressionStart, expressionEnd, matcher, maxMatches, spans);
+      if (spans.length >= maxMatches) return expressionEnd + 1;
+
+      cursor = expressionEnd + 1;
+      continue;
+    }
+
+    cursor++;
+  }
+
+  return source.length;
+}
+
+function scanDynamicImportRange(
+  source: string,
+  rangeStart: number,
+  rangeEnd: number,
+  matcher: SpecifierMatcher,
+  maxMatches: number,
+  spans: StaticImportSpan[],
+): void {
+  let cursor = rangeStart;
+  const openBraces: OpenBraceContext[] = [];
+  const matchingOpenBraces = new Map<number, OpenBraceContext>();
+  const openParens: OpenParenContext[] = [];
+  const matchingOpenParens = new Map<number, OpenParenContext>();
+  let previousTokenIndex = rangeStart - 1;
+
+  while (cursor < rangeEnd) {
+    const char = source[cursor];
+    const next = source[cursor + 1];
+
+    if (
+      (char === "/" && (next === "/" || next === "*")) ||
+      char === '"' ||
+      char === "'"
+    ) {
+      const skipped = skipIgnored(source, cursor);
+      previousTokenIndex = tokenIndexAfterIgnored(
+        source,
+        cursor,
+        skipped,
+        previousTokenIndex,
+      );
+      cursor = skipped;
+      continue;
+    }
+
+    if (
+      char === "/" &&
+      canStartRegexLiteral(
+        source,
+        cursor,
+        rangeStart,
+        matchingOpenBraces,
+        matchingOpenParens,
+        openParens.at(-1),
+        previousTokenIndex,
+      )
+    ) {
+      cursor = skipRegexLiteral(source, cursor);
+      previousTokenIndex = cursor - 1;
+      continue;
+    }
+
+    if (char === "`") {
+      cursor = scanTemplateExpressionDynamicImports(
+        source,
+        cursor,
+        rangeEnd,
+        matcher,
+        maxMatches,
+        spans,
+      );
+      if (spans.length >= maxMatches) return;
+      previousTokenIndex = cursor - 1;
+      continue;
+    }
+
+    if (char === "{") {
+      openBraces.push({ index: cursor, previousTokenIndex });
+      previousTokenIndex = cursor;
+      cursor++;
+      continue;
+    }
+
+    if (char === "}") {
+      const openBrace = openBraces.pop();
+      if (openBrace !== undefined) matchingOpenBraces.set(cursor, openBrace);
+      previousTokenIndex = cursor;
+      cursor++;
+      continue;
+    }
+
+    if (char === "(") {
+      openParens.push(openParenContext(source, cursor, previousTokenIndex));
+      previousTokenIndex = cursor;
+      cursor++;
+      continue;
+    }
+
+    if (char === ")") {
+      const openParen = openParens.pop();
+      if (openParen !== undefined) matchingOpenParens.set(cursor, openParen);
+      previousTokenIndex = cursor;
+      cursor++;
+      continue;
+    }
+
+    if (char === ";" && openParens.at(-1)?.isForHeader) {
+      openParens.at(-1)!.hasSemicolon = true;
+    }
+
+    if (/\s/.test(char ?? "")) {
+      cursor++;
+      continue;
+    }
+
+    // `import` used as an expression: not preceded by an identifier char or a
+    // dot (which would make it `foo.import` or part of a longer word).
+    if (
+      !source.startsWith("import", cursor) ||
+      isIdentifierPartAt(source, cursor - 1) ||
+      isPropertyAccessBeforeImport(source, previousTokenIndex, rangeStart) ||
+      isIdentifierPartAt(source, cursor + "import".length)
+    ) {
+      previousTokenIndex = cursor;
+      cursor++;
+      continue;
+    }
+
+    const parenIndex = skipWhitespaceAndComments(source, cursor + "import".length);
+    if (parenIndex >= rangeEnd || source[parenIndex] !== "(") {
+      previousTokenIndex = cursor;
+      cursor++;
+      continue;
+    }
+    // The scanner jumps directly from `import` to its argument, so record the
+    // opening parenthesis that the ordinary character walk does not visit.
+    openParens.push({
+      index: parenIndex,
+      isControlCondition: false,
+      isForHeader: false,
+      hasSemicolon: false,
+    });
+
+    const literalIndex = skipWhitespaceAndComments(source, parenIndex + 1);
+    if (literalIndex >= rangeEnd) {
+      previousTokenIndex = parenIndex;
+      cursor = parenIndex + 1;
+      continue;
+    }
+
+    const literal = readLiteralSpecifier(source, literalIndex);
+    if (!literal || literal.end > rangeEnd) {
+      previousTokenIndex = parenIndex;
+      cursor = parenIndex + 1;
+      continue;
+    }
+
+    // The literal must be the whole first argument. `)` closes the call and `,`
+    // starts the import-attributes argument; anything else (`+`, a template
+    // continuation, a ternary) means the runtime specifier is not this string.
+    const afterSpecifier = skipWhitespaceAndComments(source, literal.end);
+    const isWholeArgument = afterSpecifier < rangeEnd &&
+      (source[afterSpecifier] === ")" || source[afterSpecifier] === ",");
+
+    const matchedPath = isWholeArgument ? matcher(literal.specifier) : null;
+    if (matchedPath) {
+      spans.push({
+        original: source.slice(literalIndex, literal.end),
+        path: matchedPath,
+        start: literalIndex,
+        end: literal.end,
+      });
+      if (spans.length >= maxMatches) return;
+    }
+
+    previousTokenIndex = literal.end - 1;
+    cursor = literal.end;
+  }
 }
 
 /**
@@ -279,10 +1202,16 @@ export function findStaticImportFromSpans(
  *
  * The returned span covers the quoted specifier itself (quotes included), not
  * the surrounding `import(...)`, so a replacement is a bare quoted string.
- * Dynamic imports whose argument is not a string literal are skipped, since
- * their target is only known at runtime. That includes an argument the literal
+ *
+ * A literal here is a single- or double-quoted string, or a backtick template
+ * with no `${}` substitution — the three forms whose target is fully known at
+ * scan time. An interpolated template and any other expression are skipped,
+ * since their target is only known at runtime. So is an argument the literal
  * merely starts: rewriting the `"./foo"` in `import("./foo" + suffix)` would
  * build a path out of a resolved prefix and an unresolved tail.
+ *
+ * The scan also runs inside template substitutions, so a dynamic import nested
+ * in a `${…}` expression is found.
  *
  * `maxMatches` bounds the scan on the same terms as
  * {@link findStaticImportFromSpans}.
@@ -295,60 +1224,7 @@ export function findDynamicImportSpans(
   assertMaxMatches(maxMatches);
 
   const spans: StaticImportSpan[] = [];
-  let cursor = 0;
-
-  while (cursor < source.length) {
-    const skipped = skipIgnored(source, cursor);
-    if (skipped !== cursor) {
-      cursor = skipped;
-      continue;
-    }
-
-    // `import` used as an expression: not preceded by an identifier char or a
-    // dot (which would make it `foo.import` or part of a longer word).
-    if (
-      !source.startsWith("import", cursor) ||
-      isIdentifierChar(source[cursor - 1]) ||
-      source[cursor - 1] === "." ||
-      isIdentifierChar(source[cursor + "import".length])
-    ) {
-      cursor++;
-      continue;
-    }
-
-    const parenIndex = skipWhitespaceAndComments(source, cursor + "import".length);
-    if (source[parenIndex] !== "(") {
-      cursor++;
-      continue;
-    }
-
-    const quoteIndex = skipWhitespaceAndComments(source, parenIndex + 1);
-    const quoted = readQuotedSpecifier(source, quoteIndex);
-    if (!quoted) {
-      cursor = parenIndex + 1;
-      continue;
-    }
-
-    // The literal must be the whole first argument. `)` closes the call and `,`
-    // starts the import-attributes argument; anything else (`+`, a template
-    // continuation, a ternary) means the runtime specifier is not this string.
-    const afterSpecifier = skipWhitespaceAndComments(source, quoted.end);
-    const isWholeArgument = source[afterSpecifier] === ")" || source[afterSpecifier] === ",";
-
-    const matchedPath = isWholeArgument ? matcher(quoted.specifier) : null;
-    if (matchedPath) {
-      spans.push({
-        original: source.slice(quoteIndex, quoted.end),
-        path: matchedPath,
-        start: quoteIndex,
-        end: quoted.end,
-      });
-      if (spans.length >= maxMatches) return spans;
-    }
-
-    cursor = quoted.end;
-  }
-
+  scanDynamicImportRange(source, 0, source.length, matcher, maxMatches, spans);
   return spans;
 }
 
@@ -367,38 +1243,112 @@ export function findStaticSideEffectImportSpans(
 
   const spans: StaticImportSpan[] = [];
   let cursor = 0;
+  let atStatementStart = true;
+  const openBraces: OpenBraceContext[] = [];
+  const matchingOpenBraces = new Map<number, OpenBraceContext>();
+  const openParens: OpenParenContext[] = [];
+  const matchingOpenParens = new Map<number, OpenParenContext>();
+  let previousTokenIndex = -1;
 
   while (cursor < source.length) {
-    const skipped = skipIgnored(source, cursor);
+    const char = source[cursor];
+    const skipped = skipExpressionIgnored(
+      source,
+      cursor,
+      0,
+      0,
+      matchingOpenBraces,
+      matchingOpenParens,
+      openParens.at(-1),
+      previousTokenIndex,
+    );
     if (skipped !== cursor) {
+      if (char === "/" && source[cursor + 1] === "/") atStatementStart = true;
+      else if (!(char === "/" && source[cursor + 1] === "*")) atStatementStart = false;
+      previousTokenIndex = tokenIndexAfterIgnored(
+        source,
+        cursor,
+        skipped,
+        previousTokenIndex,
+      );
       cursor = skipped;
       continue;
     }
 
-    if (!isStatementKeywordAt(source, cursor, "import")) {
+    if (char === "{") {
+      openBraces.push({ index: cursor, previousTokenIndex });
+      atStatementStart = false;
+      previousTokenIndex = cursor;
+      cursor++;
+      continue;
+    }
+    if (char === "}") {
+      const openBrace = openBraces.pop();
+      if (openBrace !== undefined) matchingOpenBraces.set(cursor, openBrace);
+      atStatementStart = true;
+      previousTokenIndex = cursor;
+      cursor++;
+      continue;
+    }
+    if (char === "(") {
+      openParens.push(openParenContext(source, cursor, previousTokenIndex));
+      atStatementStart = false;
+      previousTokenIndex = cursor;
+      cursor++;
+      continue;
+    }
+    if (char === ")") {
+      const openParen = openParens.pop();
+      if (openParen !== undefined) matchingOpenParens.set(cursor, openParen);
+      atStatementStart = false;
+      previousTokenIndex = cursor;
+      cursor++;
+      continue;
+    }
+    if (char === ";" && openParens.at(-1)?.isForHeader) {
+      openParens.at(-1)!.hasSemicolon = true;
+    }
+    if (char === ";" || (char !== undefined && isLineTerminator(char))) {
+      atStatementStart = true;
+      if (char === ";") previousTokenIndex = cursor;
+      cursor++;
+      continue;
+    }
+    if (/\s/.test(char ?? "")) {
       cursor++;
       continue;
     }
 
-    const quoteIndex = skipWhitespace(source, cursor + "import".length);
-    const quoted = readQuotedSpecifier(source, quoteIndex);
-    if (!quoted) {
-      cursor = nextStatementCursor(source, quoteIndex);
+    if (!isStatementKeywordAt(source, cursor, "import", atStatementStart)) {
+      atStatementStart = false;
+      previousTokenIndex = cursor;
+      cursor++;
       continue;
     }
 
-    const matchedPath = matcher(quoted.specifier);
+    const literalIndex = skipWhitespaceAndComments(source, cursor + "import".length);
+    const literal = readLiteralSpecifier(source, literalIndex);
+    if (!literal) {
+      atStatementStart = true;
+      cursor = nextStatementCursor(source, literalIndex);
+      previousTokenIndex = Math.max(previousTokenIndex, cursor - 1);
+      continue;
+    }
+
+    const matchedPath = matcher(literal.specifier);
     if (matchedPath) {
       spans.push({
-        original: source.slice(cursor, quoted.end),
+        original: source.slice(cursor, literal.end),
         path: matchedPath,
         start: cursor,
-        end: quoted.end,
+        end: literal.end,
       });
       if (spans.length >= maxMatches) return spans;
     }
 
-    cursor = quoted.end;
+    atStatementStart = false;
+    previousTokenIndex = literal.end - 1;
+    cursor = literal.end;
   }
 
   return spans;

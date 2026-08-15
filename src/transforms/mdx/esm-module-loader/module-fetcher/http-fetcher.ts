@@ -13,7 +13,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { rewriteVeryfrontImports } from "./import-rewriter.ts";
-import { findNestedImports } from "./nested-imports.ts";
+import { findNestedImports, toImportStringLiteral } from "./nested-imports.ts";
 import { replaceSourceSpans, type SourceSpanReplacement } from "../utils/source-spans.ts";
 import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 import { readHttpModuleText } from "../../../shared/http-module-response.ts";
@@ -87,7 +87,7 @@ function isNameResolutionError(error: unknown): boolean {
  * RFC 6761 only *recommends* that resolvers map the `.localhost` tree to
  * loopback. macOS, systemd-resolved and CI honour it for arbitrary subdomains,
  * but a plain glibc NSS setup can resolve only the bare name and fail
- * `<slug>.localhost` with EAI_AGAIN/ENOTFOUND — which would make this fallback
+ * `<slug>.localhost` with EAI_AGAIN/ENOTFOUND, which would make this fallback
  * unable to reach the dev server at all.
  *
  * Pinning the connection to 127.0.0.1 while keeping subdomain routing is not an
@@ -96,8 +96,8 @@ function isNameResolutionError(error: unknown): boolean {
  *
  * The retry therefore carries the project in `x-project-slug`, which the dev
  * server reads inbound (see server/context/request-context.ts and
- * server/runtime-handler/project-resolution.ts) and which fetch — unlike `Host`
- * — is allowed to set. Without it a multi-project workspace would lose tenant
+ * server/runtime-handler/project-resolution.ts) and which fetch, unlike `Host`,
+ * is allowed to set. Without it a multi-project workspace would lose tenant
  * identity, because resolveDefaultProjectSlug() returns undefined there.
  */
 async function fetchModuleWithLoopbackFallback(
@@ -237,18 +237,24 @@ export async function fetchModuleViaHTTP(
 
     const { vfModules, relative } = findNestedImports(moduleCode);
     const allImports = [
-      ...vfModules.map(({ original, path, start, end }) => ({
+      ...vfModules.map(({ original, path, suffix, start, end, isDynamic, isSideEffect }) => ({
         original,
         path,
+        suffix,
         start,
         end,
+        isDynamic,
+        isSideEffect,
         key: "nestedPath" as const,
       })),
-      ...relative.map(({ original, path, start, end }) => ({
+      ...relative.map(({ original, path, suffix, start, end, isDynamic, isSideEffect }) => ({
         original,
         path,
+        suffix,
         start,
         end,
+        isDynamic,
+        isSideEffect,
         key: "relativePath" as const,
       })),
     ];
@@ -256,9 +262,18 @@ export async function fetchModuleViaHTTP(
 
     const results = await parallelMap(
       allImports,
-      async ({ original, path, start, end, key }) => {
+      async ({ original, path, suffix, start, end, isDynamic, isSideEffect, key }) => {
         const nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
-        return { original, start, end, nestedFilePath, [key]: path };
+        return {
+          original,
+          start,
+          end,
+          suffix,
+          isDynamic,
+          isSideEffect,
+          nestedFilePath,
+          [key]: path,
+        };
       },
       {
         semaphore: new Semaphore(MAX_MDX_MODULE_TRANSFORM_CONCURRENCY),
@@ -266,13 +281,23 @@ export async function fetchModuleViaHTTP(
     );
 
     const replacements: SourceSpanReplacement[] = [];
-    for (const { original, start, end, nestedFilePath } of results) {
+    for (
+      const { original, start, end, suffix, isDynamic, isSideEffect, nestedFilePath } of results
+    ) {
       if (nestedFilePath) {
+        // The suffix and the cache path are author- and filesystem-controlled.
+        // Interpolating either into a hand-written double-quoted literal emits
+        // a module that fails to parse whenever one contains `"` or `\`.
+        const importTarget = toImportStringLiteral(`file://${nestedFilePath}${suffix ?? ""}`);
         replacements.push({
           start,
           end,
           expected: original,
-          replacement: `from "file://${nestedFilePath}"`,
+          replacement: isDynamic
+            ? importTarget
+            : isSideEffect
+            ? `import ${importTarget}`
+            : `from ${importTarget}`,
         });
       }
     }

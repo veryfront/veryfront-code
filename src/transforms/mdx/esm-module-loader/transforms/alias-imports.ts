@@ -15,12 +15,14 @@ import type { FSAdapter } from "../types.ts";
 import { hashString } from "../utils/hash.ts";
 import { resolveFileWithExtension } from "../resolution/file-finder.ts";
 import { parseImports, replaceSpecifiers } from "../../../esm/lexer.ts";
+import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 
 type ImportType = "project-alias" | "vf-modules";
 
 interface AliasImport {
   specifier: string;
   relativePath: string;
+  suffix: string;
   type: ImportType;
 }
 
@@ -33,9 +35,11 @@ async function findAliasImports(code: string): Promise<AliasImport[]> {
     if (!specifier) continue;
 
     if (specifier.startsWith("@/")) {
+      const { path, suffix } = splitSpecifierSuffix(specifier.slice(2));
       imports.push({
         specifier,
-        relativePath: specifier.slice(2),
+        relativePath: path,
+        suffix,
         type: "project-alias",
       });
       continue;
@@ -45,11 +49,11 @@ async function findAliasImports(code: string): Promise<AliasImport[]> {
     if (!normalized.startsWith("_vf_modules/")) continue;
 
     const modulePath = normalized.slice("_vf_modules/".length);
-    const queryStart = modulePath.indexOf("?");
-    const relativePath = queryStart === -1 ? modulePath : modulePath.slice(0, queryStart);
+    const { path, suffix } = splitSpecifierSuffix(modulePath);
     imports.push({
       specifier,
-      relativePath: relativePath.replace(/\.js$/, ""),
+      relativePath: path.replace(/\.js$/, ""),
+      suffix,
       type: "vf-modules",
     });
   }
@@ -134,6 +138,13 @@ async function transformImport(
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Transformed ${getPathDesc(imp)} -> ${transformedPath}`);
 
+    // The suffix is split off the specifier so the path resolves, but it is
+    // deliberately not carried onto the emitted URL. `alias-<hash>.mjs` is a
+    // fully materialized artifact: `?raw` is already not honoured, and a cache
+    // buster is meaningless once the content is inlined. Keeping the suffix
+    // would only make `@/Card.tsx` and `@/Card.tsx?raw` — which hash to one
+    // file — resolve to two module records, giving the same module two
+    // instances and two copies of its module-level state.
     return { specifier: imp.specifier, replacement: `file://${transformedPath}` };
   } catch (error) {
     logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to transform ${getPathDesc(imp)}`, error);
