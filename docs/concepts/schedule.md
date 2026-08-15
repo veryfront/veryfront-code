@@ -126,11 +126,12 @@ between the two `conversationId` fields, or between `agentMessage.prompt` and
 because honoring one copy would detach the deployed schedule from what the
 other copy names.
 
-`input._schedule_target` is held to the same conversation rules as the
-canonical target: its `conversationMode` must be `create_new`, `existing`, or
-`none`, `existing` requires a `conversationId`, and any other key is rejected.
-Addressing a conversation only through the legacy location therefore fails
-loudly on a typo instead of shipping a schedule that addresses nothing.
+When `schedule()` evaluates a definition, it holds `input._schedule_target` to
+the same conversation rules as the canonical target: its `conversationMode`
+must be `create_new`, `existing`, or `none`, `existing` requires a
+`conversationId`, and any other key is rejected. Use the canonical target
+fields for new source schedules so hosted discovery applies the same strict
+validation.
 
 `veryfront schedule run --input <file>` replaces the authored input without
 passing back through `schedule()`, so it applies the same agreement rules
