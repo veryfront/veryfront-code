@@ -114,6 +114,33 @@ describe("module-loader/module-persistence", () => {
     }
   });
 
+  it("writes a JavaScript cycle target at the authored stable path", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const filePath = join(projectDir, "app/page.js");
+    const transformedCode = "export const page = 1;";
+
+    try {
+      const result = await persistTransformedModule({
+        filePath,
+        projectDir,
+        tmpDir,
+        transformedCode,
+        localAdapter,
+        moduleCache: new Map<string, string>(),
+        cacheKey: "javascript-cycle-target",
+        isCycleTarget: true,
+      });
+
+      assertEquals(result, join(tmpDir, "app/page.js"));
+      assertEquals(await Deno.readTextFile(result), transformedCode);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
   it("recreates the output directory when it disappears after being cached", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
     const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
