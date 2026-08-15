@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "#veryfront/testing/assert";
+import { assert, assertEquals, assertNotEquals } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
 import { writeTextFile } from "#veryfront/compat/fs.ts";
@@ -49,6 +49,69 @@ describe("Server Public Entrypoints", { sanitizeResources: false, sanitizeOps: f
         );
       } finally {
         await server.stop();
+      }
+    });
+  });
+
+  it("records Deno serve peer provenance in the public handler path", async () => {
+    const { createHandler } = await import("veryfront");
+
+    await withTestContext("public-handler-deno-peer-provenance", async (context) => {
+      const handler = await createHandler({
+        projectDir: context.projectDir,
+        port: await context.allocatePort(),
+      });
+
+      try {
+        const localResponse = await handler(
+          new Request("http://localhost/_metrics", {
+            headers: { host: "localhost" },
+          }),
+          {
+            remoteAddr: {
+              transport: "tcp",
+              hostname: "127.0.0.1",
+              port: 52_000,
+            },
+          },
+        );
+        assertEquals(localResponse.status, 200);
+
+        const remoteResponse = await handler(
+          new Request("http://localhost/_metrics", {
+            headers: {
+              host: "localhost",
+              "x-forwarded-for": "127.0.0.1",
+            },
+          }),
+          {
+            remoteAddr: {
+              transport: "tcp",
+              hostname: "192.168.1.25",
+              port: 52_001,
+            },
+          },
+        );
+        assertNotEquals(remoteResponse.status, 200);
+
+        const spoofedResponse = await handler(
+          new Request("http://localhost/_metrics", {
+            headers: {
+              host: "localhost",
+              "x-real-ip": "127.0.0.1",
+            },
+          }),
+          {
+            remoteAddr: {
+              transport: "tcp",
+              hostname: "127.0.0.1",
+              port: 52_002,
+            },
+          },
+        );
+        assertNotEquals(spoofedResponse.status, 200);
+      } finally {
+        await handler.dispose();
       }
     });
   });
