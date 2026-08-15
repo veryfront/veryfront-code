@@ -600,6 +600,88 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    // Every keyword the classifier accepts as a regex prefix is also a legal
+    // property name in ES5+, so `metrics.in / 2` is ordinary code in which the
+    // slash divides. Reading it as a regex opens a literal that never closes,
+    // and the scan swallows the rest of the module — every later import
+    // vanishes from materialization and from dependency collection alike.
+    //
+    // The list is iterated rather than spelled out case by case, so a keyword
+    // added to the classifier cannot arrive without coverage.
+    const REGEX_PREFIX_KEYWORDS = [
+      "of",
+      "case",
+      "default",
+      "delete",
+      "do",
+      "else",
+      "extends",
+      "in",
+      "instanceof",
+      "new",
+      "await",
+      "break",
+      "continue",
+      "debugger",
+      "return",
+      "throw",
+      "typeof",
+      "void",
+      "yield",
+    ];
+
+    for (const keyword of REGEX_PREFIX_KEYWORDS) {
+      it(`divides after a \`.${keyword}\` property instead of opening a regex`, () => {
+        assertEquals(
+          specifiers(
+            `const ratio = metrics.${keyword} / 2; import("./after-${keyword}-property.js");`,
+          ),
+          [`./after-${keyword}-property.js`],
+        );
+      });
+
+      it(`divides after an optionally chained \`?.${keyword}\` property`, () => {
+        assertEquals(
+          specifiers(
+            `const ratio = metrics?.${keyword} / 2; import("./after-${keyword}-optional.js");`,
+          ),
+          [`./after-${keyword}-optional.js`],
+        );
+      });
+
+      it(`divides after a \`#${keyword}\` private field`, () => {
+        assertEquals(
+          specifiers(
+            `class C { #${keyword} = 1; m() { const r = this.#${keyword} / 2; ` +
+              `return import("./after-${keyword}-private.js"); } }`,
+          ),
+          [`./after-${keyword}-private.js`],
+        );
+      });
+    }
+
+    // The opposite direction: genuine keyword positions must still read as
+    // regex prefixes, or the member-name gate would trade one silent drop for
+    // another.
+    it("still treats genuine keyword positions as regex prefixes", () => {
+      assertEquals(
+        specifiers('const t = typeof /re/; import("./after-typeof-keyword.js");'),
+        ["./after-typeof-keyword.js"],
+      );
+      assertEquals(
+        specifiers('function f() { return /re/.test(x); } import("./after-return-keyword.js");'),
+        ["./after-return-keyword.js"],
+      );
+      assertEquals(
+        specifiers('switch (v) { case /re/.source: break; } import("./after-case-keyword.js");'),
+        ["./after-case-keyword.js"],
+      );
+      assertEquals(
+        specifiers('for (const x of /re/.exec(s) ?? []) {} import("./after-for-of-regex.js");'),
+        ["./after-for-of-regex.js"],
+      );
+    });
+
     it("keeps brace-heavy division scans within a bounded runtime", () => {
       const source = "x={a:1}/2;\n".repeat(7_200);
       const startedAt = performance.now();

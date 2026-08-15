@@ -15,7 +15,7 @@ import {
   normalizeExtension,
 } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
-import { splitSpecifierSuffix } from "../shared/specifier-suffix.ts";
+import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 import { isServerOnlyPackage } from "../shared/server-only-packages.ts";
 import { parseImports, replaceSpecifiers } from "./lexer.ts";
 

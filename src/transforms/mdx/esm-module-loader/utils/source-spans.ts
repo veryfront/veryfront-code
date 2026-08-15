@@ -420,6 +420,35 @@ function keywordBefore(
   return source.slice(start, end);
 }
 
+/**
+ * Whether the word ending at `previousTokenIndex` is a member name, not a keyword.
+ *
+ * Every keyword the classifier accepts as a regex prefix is also a legal
+ * property name in ES5+, so `metrics.in / 2` and `metrics.return / 2` are
+ * ordinary code in which the slash divides. Reading the word as a keyword
+ * opens a regex literal that never closes, and the scan then swallows the rest
+ * of the module — every later import disappears from nested materialization
+ * and from dependency collection alike.
+ *
+ * Covers `.name`, optional chaining `?.name` (the character before the word is
+ * `.` either way) and private fields `#name`.
+ */
+function isMemberNameBefore(
+  source: string,
+  previousTokenIndex: number,
+): boolean {
+  const end = previousTokenIndex + 1;
+  let start = end;
+  while (start > 0 && /[A-Za-z_$]/.test(source[start - 1] ?? "")) start--;
+  if (start === end) return false;
+
+  const before = previousSignificantIndex(source, start);
+  if (before < 0) return false;
+
+  const char = source[before];
+  return char === "." || char === "#";
+}
+
 function openParenContext(
   source: string,
   index: number,
@@ -592,6 +621,9 @@ function canStartRegexLiteral(
   if (char !== undefined && "([{=,:;!~?&|+-*%^<>".includes(char)) return true;
 
   const keyword = keywordBefore(source, index, previous);
+  // One gate for every keyword in the list below, rather than a guard per
+  // keyword: one added later inherits it automatically.
+  if (keyword !== null && isMemberNameBefore(source, previous)) return false;
   if (keyword === "of") {
     return isForOfKeywordBefore(source, rangeStart, currentParen, previous);
   }

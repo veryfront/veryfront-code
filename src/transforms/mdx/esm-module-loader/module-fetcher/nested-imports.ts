@@ -15,7 +15,7 @@ import {
   type SourceSpanReplacement,
 } from "../utils/source-spans.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
-import { splitSpecifierSuffix } from "../../../shared/specifier-suffix.ts";
+import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 import type { Logger } from "#veryfront/utils";
 import { parallelMap } from "#veryfront/utils/parallel.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
