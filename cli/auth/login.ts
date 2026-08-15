@@ -318,6 +318,7 @@ export async function validateToken(
       if (e instanceof TypeError) {
         throw new CredentialValidationUnavailableError("network");
       }
+      throw e;
     }
     if (e instanceof NetworkError) throw e;
     if (options.throwOnNetworkError && isCredentialNetworkFailure(e)) throwNetworkError();
@@ -370,6 +371,7 @@ async function validateApiKey(
       if (e instanceof TypeError) {
         throw new CredentialValidationUnavailableError("network");
       }
+      throw e;
     }
     if (e instanceof NetworkError) throw e;
     if (options.throwOnNetworkError && isCredentialNetworkFailure(e)) throwNetworkError();
@@ -654,8 +656,9 @@ async function describeExistingSession(
           }
           break;
         }
+        continue;
       }
-      continue;
+      throw error;
     }
     if (!identity) {
       if (authoritative) {

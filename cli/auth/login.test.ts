@@ -221,6 +221,48 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("rethrows unexpected token validation failures in strict mode", async () => {
+      const originalFetch = globalThis.fetch;
+
+      try {
+        globalThis.fetch = (() =>
+          Promise.reject(new Error("unexpected token failure"))) as typeof fetch;
+        const { validateCredential } = await import("./login.ts");
+
+        await assertRejects(
+          () =>
+            validateCredential("session-token", testEnv, {
+              throwOnCredentialValidationUnavailable: true,
+            }),
+          Error,
+          "unexpected token failure",
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("rethrows unexpected API key validation failures in strict mode", async () => {
+      const originalFetch = globalThis.fetch;
+
+      try {
+        globalThis.fetch = (() =>
+          Promise.reject(new Error("unexpected API key failure"))) as typeof fetch;
+        const { validateCredential } = await import("./login.ts");
+
+        await assertRejects(
+          () =>
+            validateCredential("vf_test_secret", testEnv, {
+              throwOnCredentialValidationUnavailable: true,
+            }),
+          Error,
+          "unexpected API key failure",
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
     it("reports an API key as authenticated in whoami JSON without exposing the key", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;
@@ -2062,6 +2104,35 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         assertEquals(printed.includes("stored login"), false);
         assertEquals(printed.includes("vf_env_existing"), false);
         assertEquals(printed.includes("stored-valid-token"), false);
+      } finally {
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
+    it("rethrows unexpected existing-session validation failures", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const output: string[] = [];
+      await saveToken("stored-valid-token", testEnv);
+
+      try {
+        setNonInteractive(true);
+        globalThis.fetch = (() =>
+          Promise.reject(new Error("unexpected existing-session failure"))) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+
+        const { login } = await import("./login.ts");
+
+        await assertRejects(
+          () => login(undefined, testEnv),
+          Error,
+          "unexpected existing-session failure",
+        );
+        assertEquals(output.join("\n").includes("Not logged in"), false);
+        assertEquals(output.join("\n").includes("Enter your API token"), false);
       } finally {
         console.log = originalLog;
         globalThis.fetch = originalFetch;
