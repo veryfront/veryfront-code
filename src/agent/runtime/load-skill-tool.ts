@@ -46,6 +46,7 @@ import {
 } from "./data-property-descriptor.ts";
 
 const ArrayIsArray = Array.isArray;
+const ArrayPrototypeSlice = Array.prototype.slice;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
@@ -1257,7 +1258,10 @@ function buildRuntimeSkillInventoryPage(
     };
   }
 
-  const skillIds = knownSkillIds.slice(cursor, cursor + RUNTIME_SKILL_INVENTORY_PAGE_MAX_IDS);
+  const skillIds = ReflectApply(ArrayPrototypeSlice, knownSkillIds, [
+    cursor,
+    cursor + RUNTIME_SKILL_INVENTORY_PAGE_MAX_IDS,
+  ]) as string[];
   const nextCursor = cursor + skillIds.length;
   return nextCursor < knownSkillIds.length ? { skillIds, nextCursor } : { skillIds };
 }

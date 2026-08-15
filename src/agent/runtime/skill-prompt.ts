@@ -236,17 +236,6 @@ function encodePromptJson(value: unknown): string {
   return escapePromptJson(encoded);
 }
 
-function appendEncodedRuntimeSkillId(
-  encodedSkillIds: string[],
-  skillId: unknown,
-): string {
-  const encodedSkillId = encodePromptJson(
-    requireBoundedPromptString(skillId, "id", SKILL_ID_MAX_LENGTH),
-  );
-  appendOwnArrayElement(encodedSkillIds, encodedSkillId);
-  return encodedSkillId;
-}
-
 function appendBoundedEncodedRuntimeSkillId(
   encodedSkillIds: string[],
   skillId: unknown,
@@ -443,32 +432,50 @@ export function buildRuntimeAvailableSkillsPromptBlock(
   return buildStrictRuntimeAvailableSkillsPromptBlock(skills);
 }
 
-/** Builds the authorized skill-ID fallback used beside authored catalogs. */
+/** Builds the bounded authorized skill-ID fallback used beside authored catalogs. */
 export function buildRuntimeAuthorizedSkillIdsPromptBlock(
   skills: readonly RuntimeSkillDefinition[],
 ): string {
   const { displaySkills, omittedSkillIds } = snapshotRuntimeSkillPromptCatalog(skills);
-  const encodedSkillIds: string[] = [];
+  const skillIds: string[] = [];
   for (let index = 0; index < displaySkills.length; index += 1) {
-    const skillId = readPromptOwnDataProperty(
-      displaySkills[index],
-      "id",
-      `Runtime skill catalog entry ${index}`,
-      true,
-    );
-    appendEncodedRuntimeSkillId(
-      encodedSkillIds,
-      skillId,
+    appendOwnArrayElement(
+      skillIds,
+      requireBoundedPromptString(
+        readPromptOwnDataProperty(
+          displaySkills[index],
+          "id",
+          `Runtime skill catalog entry ${index}`,
+          true,
+        ),
+        "id",
+        SKILL_ID_MAX_LENGTH,
+      ),
     );
   }
   for (let index = 0; index < omittedSkillIds.length; index += 1) {
-    appendEncodedRuntimeSkillId(
-      encodedSkillIds,
-      omittedSkillIds[index],
-    );
+    appendOwnArrayElement(skillIds, omittedSkillIds[index]!);
   }
 
-  return `<authorized_skill_ids>\n[${joinStrings(encodedSkillIds, ",")}]\n</authorized_skill_ids>`;
+  const encodedSkillIds: string[] = [];
+  let encodedCharacters = 0;
+  for (let index = 0; index < skillIds.length; index += 1) {
+    const nextEncodedCharacters = appendBoundedEncodedRuntimeSkillId(
+      encodedSkillIds,
+      skillIds[index],
+      encodedCharacters,
+    );
+    if (nextEncodedCharacters === null) break;
+    encodedCharacters = nextEncodedCharacters;
+  }
+  const hiddenSkillIdCount = skillIds.length - encodedSkillIds.length;
+  const discoveryNote = hiddenSkillIdCount > 0
+    ? buildRuntimeSkillDiscoveryNote(hiddenSkillIdCount, encodedSkillIds.length)
+    : "";
+
+  return `<authorized_skill_ids>\n[${
+    joinStrings(encodedSkillIds, ",")
+  }]${discoveryNote}\n</authorized_skill_ids>`;
 }
 
 type CompatibilitySkillMapIterator = ReturnType<Map<string, Skill>["entries"]>;

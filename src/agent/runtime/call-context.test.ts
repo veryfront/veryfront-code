@@ -261,6 +261,29 @@ describe("agent/runtime/call-context", () => {
       );
     });
 
+    it("bounds authorized skill IDs beside an authored skills block", () => {
+      const skills = Array.from(
+        { length: 1_000 },
+        (_, index) => ({
+          id: `skill-${index}-${"x".repeat(240)}`,
+          name: `skill-${index}`,
+          description: `Description ${index}`,
+          instructions: `Instructions ${index}`,
+        }),
+      );
+      const [message] = buildAgentCallContext({
+        instructions:
+          "Base\n\n<available_skills>\n- authored: An authored catalog\n</available_skills>",
+        skills,
+      });
+      const content = message?.content ?? "";
+      const cursorMatch = /Call load_skill\(\{ cursor: (\d+) \}\)/.exec(content);
+
+      assertEquals(cursorMatch === null, false);
+      assertEquals(Number(cursorMatch?.[1]), content.match(/"skill-/g)?.length);
+      assertEquals(content.length < 21_000, true);
+    });
+
     it("emits an empty authorized inventory for an authoritative empty skill set", () => {
       const [message] = buildAgentCallContext({
         instructions:

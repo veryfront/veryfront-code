@@ -2571,6 +2571,42 @@ it("createRuntimeLoadSkillTool pages authorized IDs for standalone consumers", a
   });
 });
 
+it("createRuntimeLoadSkillTool does not invoke inherited slice while paging IDs", async () => {
+  const availableSkillIds = Array.from(
+    { length: 65 },
+    (_, index) => `skill-${index.toString().padStart(3, "0")}`,
+  );
+  const expectedSkillIds = availableSkillIds.slice(60);
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+  const originalSlice = Object.getOwnPropertyDescriptor(Array.prototype, "slice");
+  let sliceCalls = 0;
+  let page: unknown;
+
+  try {
+    Object.defineProperty(Array.prototype, "slice", {
+      configurable: true,
+      writable: true,
+      value: () => {
+        sliceCalls += 1;
+        return ["forged-skill-id"];
+      },
+    });
+    page = await tool.execute({ cursor: 60 });
+  } finally {
+    if (originalSlice) {
+      Object.defineProperty(Array.prototype, "slice", originalSlice);
+    }
+  }
+
+  assertEquals(sliceCalls, 0);
+  assertEquals(page, { skillIds: expectedSkillIds });
+});
+
 it("createRuntimeLoadSkillTool discovers the maximum catalog within the default step budget", async () => {
   const availableSkillIds = Array.from(
     { length: 1_000 },
