@@ -579,6 +579,106 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     });
   });
 
+  it("uses descriptor snapshots during message TTL normalization", async () => {
+    const result = await runNoBrandEval(`
+      const { buildAnthropicMessagesRequest } = await import(
+        "./extensions/ext-llm-anthropic/src/anthropic-request-builder.ts"
+      );
+      const originalIterator = Array.prototype[Symbol.iterator];
+      const messages = [
+        {
+          role: "user",
+          content: [{ type: "text", text: "First" }],
+        },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Uncached" },
+            {
+              type: "text",
+              text: "Five minute",
+              cache_control: { type: "ephemeral", ttl: "5m" },
+            },
+            {
+              type: "text",
+              text: "One hour",
+              cache_control: { type: "ephemeral", ttl: "1h" },
+            },
+          ],
+        },
+      ];
+      Object.defineProperty(Array.prototype, Symbol.iterator, {
+        configurable: true,
+        writable: true,
+        value() {
+          if (
+            this !== messages &&
+            this.length === 2 &&
+            this[0]?.content?.[0]?.text === "First"
+          ) {
+            return Reflect.apply(originalIterator, [], []);
+          }
+          if (
+            this !== messages[1].content &&
+            this.length === 3 &&
+            this[0]?.text === "Uncached"
+          ) {
+            return Reflect.apply(originalIterator, [], []);
+          }
+          return Reflect.apply(originalIterator, this, []);
+        },
+      });
+
+      let body;
+      try {
+        body = buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+            providerOptions: {
+              anthropic: { messages },
+            },
+          },
+          false,
+          { push() {}, drain() { return []; } },
+        );
+      } finally {
+        Object.defineProperty(Array.prototype, Symbol.iterator, {
+          configurable: true,
+          writable: true,
+          value: originalIterator,
+        });
+      }
+      console.log(JSON.stringify({ messages: body.messages }));
+    `);
+
+    assertEquals(result, {
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: "First" }],
+        },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Uncached" },
+            {
+              type: "text",
+              text: "Five minute",
+              cache_control: { type: "ephemeral", ttl: "1h" },
+            },
+            {
+              type: "text",
+              text: "One hour",
+              cache_control: { type: "ephemeral", ttl: "1h" },
+            },
+          ],
+        },
+      ],
+    });
+  });
+
   it("rejects edge-runtime Proxy cache fields without invoking traps", async () => {
     const result = await runNoBrandEval(`
       Object.defineProperty(globalThis, "caches", {
@@ -1640,6 +1740,54 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
           {
             prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
             providerOptions: { anthropic: { tools } },
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic cache records must contain only enumerable data properties",
+    );
+    assertEquals(getterCalls, 0);
+  });
+
+  it("rejects enumerable sibling accessors before budgeting message breakpoints", () => {
+    let getterCalls = 0;
+    const mutatingBlock: Record<string, unknown> = {
+      type: "text",
+      text: "Mutating",
+    };
+    Object.defineProperty(mutatingBlock, "mutate", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        mutatingBlock.cache_control = { type: "ephemeral" };
+        return "mutated";
+      },
+    });
+    mutatingBlock.cache_control = () => "omitted";
+
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+            providerOptions: {
+              anthropic: {
+                messages: [{
+                  role: "user",
+                  content: [
+                    mutatingBlock,
+                    ...Array.from({ length: 4 }, (_, index) => ({
+                      type: "text",
+                      text: `Cached ${index}`,
+                      cache_control: { type: "ephemeral" },
+                    })),
+                  ],
+                }],
+              },
+            },
           },
           false,
           createWarningCollector(),
