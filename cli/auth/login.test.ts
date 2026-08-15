@@ -501,6 +501,67 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    // The case above loads its `.env` from a temp directory outside the working
+    // directory, so it exercises the degradation branch — the bare name — and
+    // renders ".env" either way. That cannot distinguish a cwd-relative path
+    // from a leaked absolute one, so the headline behaviour needs its own case:
+    // a file *under* the working directory must render relative to it.
+    it("renders a .env under the working directory as a relative path", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const output: string[] = [];
+      const { __resetEnvLoaderForTests, loadEnv } = await import("veryfront/utils/env-loader");
+      const { withCwd } = await import("#veryfront/testing/cwd.ts");
+      // The working directory moves to a temp tree rather than the repository,
+      // and `withCwd` serializes that against every other test in the process.
+      // `realPath` first: a macOS temp dir is reached through /var, a symlink to
+      // /private/var, and `cwd()` reports the resolved form — comparing the
+      // unresolved path would make the fixture look like it sits outside cwd.
+      const root = await Deno.realPath(
+        await Deno.makeTempDir({ prefix: "whoami-env-relative-" }),
+      );
+      const nested = `${root}/config`;
+
+      try {
+        deleteEnv("VERYFRONT_API_TOKEN");
+        __resetEnvLoaderForTests();
+        await Deno.mkdir(nested, { recursive: true });
+        await Deno.writeTextFile(`${nested}/.env`, "VERYFRONT_API_TOKEN=vf_nested\n");
+        await loadEnv({ cwd: nested });
+
+        globalThis.fetch = (() =>
+          Promise.resolve(
+            new Response(JSON.stringify({ data: [], page_info: {} }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          )) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+
+        const { whoami } = await import("./login.ts");
+        await withCwd(root, () =>
+          whoami({
+            ...testEnv,
+            apiBaseUrl: "https://auth.example.test",
+            apiUrl: undefined,
+            apiToken: "vf_nested",
+          }));
+
+        const printed = output.join("\n");
+        // Relative to the working directory, and therefore never the absolute
+        // path — which is what the bare-name fallback cannot prove.
+        assertStringIncludes(printed, "./config/.env");
+        assertEquals(printed.includes(root), false);
+        assertEquals(printed.includes("vf_nested"), false);
+      } finally {
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        __resetEnvLoaderForTests();
+        deleteEnv("VERYFRONT_API_TOKEN");
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+
     it("still reports a real environment variable without inventing a file", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;

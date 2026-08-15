@@ -36,12 +36,17 @@ function describeApiTokenSource(): string {
   // Repo-relative only: AGENTS.md forbids local absolute paths in user-facing
   // output. A file outside the working directory degrades to its name rather
   // than exposing the layout above it.
+  // A bare filename stays bare (`.env`); anything nested is prefixed so it
+  // reads unambiguously as a path (`./config/.env`). The test is for a
+  // separator rather than a leading ".", because a dot-*directory* also starts
+  // with one — `.config/.env` would otherwise be the only nested path printed
+  // without the prefix.
   const rel = relative(cwd(), origin.file);
   const shown = !rel || rel.startsWith("..")
     ? basename(origin.file)
-    : rel.startsWith(".")
-    ? rel
-    : `./${rel}`;
+    : /[/\\]/.test(rel) && !rel.startsWith("./")
+    ? `./${rel}`
+    : rel;
   return `(via VERYFRONT_API_TOKEN from ${shown})`;
 }
 
