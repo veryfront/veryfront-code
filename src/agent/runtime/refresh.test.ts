@@ -41,6 +41,26 @@ function createRuntimeStream(parts: unknown[]) {
   });
 }
 
+async function readResponseBody(
+  response: Response,
+  onText?: (text: string) => void,
+): Promise<string> {
+  const reader = response.body?.getReader();
+  assertExists(reader);
+  const decoder = new TextDecoder();
+  let body = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      body += decoder.decode();
+      return body;
+    }
+    const text = decoder.decode(value, { stream: true });
+    body += text;
+    onText?.(body);
+  }
+}
+
 function extractSystemPrompt(options: unknown): string {
   const prompt = (options as { prompt?: Array<{ role?: string; content?: unknown }> })
     .prompt;
@@ -1578,8 +1598,299 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolResults[0]?.context?.projectId, "project-stream");
   });
 
-  it("does not re-call the model after final assistant text with a provisional placeholder", async () => {
+  it("retries a wholly uncommitted local tool batch without partially executing it", async () => {
+    const executedMutations: string[] = [];
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/interrupted-tool-batch",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Applying the requested updates." },
+              {
+                type: "tool-input-start",
+                id: "truncated-agent",
+                toolName: "issue466_update_agent",
+              },
+              {
+                type: "tool-input-delta",
+                id: "truncated-agent",
+                delta: '{"revision":"truncated',
+              },
+              {
+                type: "finish",
+                finishReason: "stop",
+                usage: { inputTokens: 0, outputTokens: 0 },
+              },
+            ]),
+          };
+        }
+
+        if (callCount === 2) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "retry-file",
+                toolName: "issue466_update_file",
+                input: '{"revision":"retry-file"}',
+              },
+              {
+                type: "tool-call",
+                toolCallId: "retry-agent-1",
+                toolName: "issue466_update_agent",
+                input: '{"revision":"retry-agent-1"}',
+              },
+              {
+                type: "tool-call",
+                toolCallId: "retry-agent-2",
+                toolName: "issue466_update_agent",
+                input: '{"revision":"retry-agent-2"}',
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "Recovered after interrupted tool batch." },
+            {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
+          ]),
+        };
+      },
+    };
+
+    const mutationTool = (id: string) =>
+      tool({
+        id,
+        description: `Apply ${id}`,
+        inputSchema: defineSchema((v) => v.object({ revision: v.string() }))(),
+        execute: async ({ revision }) => {
+          executedMutations.push(revision);
+          return { revision };
+        },
+      });
+
+    const assistant = eagerAgent({
+      model: "hosted/interrupted-tool-batch",
+      system: "Apply every requested mutation and recover interrupted model streams.",
+      tools: {
+        issue466_update_file: mutationTool("issue466_update_file"),
+        issue466_update_agent: mutationTool("issue466_update_agent"),
+      },
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = (await assistant.stream({
+      input: "Update the taxonomy and both agents",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse();
+    const body = await response.text();
+
+    assertEquals(callCount, 3);
+    assertEquals(executedMutations, ["retry-file", "retry-agent-1", "retry-agent-2"]);
+    assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 0);
+    assertEquals(body.includes("Recovered after interrupted tool batch."), true);
+    assertExists(finishedResponse);
+    assertEquals(
+      finishedResponse.toolCalls.map((toolCall) => [toolCall.id, toolCall.status]),
+      [
+        ["retry-file", "completed"],
+        ["retry-agent-1", "completed"],
+        ["retry-agent-2", "completed"],
+      ],
+    );
+  });
+
+  it("fails closed after a local sibling was exposed, with or without a final result", async () => {
+    for (const hasFinalResult of [false, true]) {
+      const executedMutations: string[] = [];
+      let callCount = 0;
+      const model: ModelRuntime = {
+        provider: "hosted",
+        modelId: `hosted/interrupted-exposed-batch-${hasFinalResult}`,
+        async doGenerate() {
+          return {
+            content: [{ type: "text", text: "unused" }],
+            finishReason: "stop",
+            usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          };
+        },
+        async doStream() {
+          callCount++;
+          if (callCount > 1) {
+            return {
+              stream: createRuntimeStream([
+                { type: "text-delta", text: "Unexpected recovery." },
+                { type: "finish", finishReason: "stop" },
+              ]),
+            };
+          }
+
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "exposed-file",
+                toolName: "issue466_update_file",
+                input: '{"revision":"already-exposed"}',
+              },
+              ...(hasFinalResult
+                ? [{
+                  type: "tool-result",
+                  toolCallId: "exposed-file",
+                  toolName: "issue466_update_file",
+                  output: { revision: "already-applied" },
+                }]
+                : []),
+              {
+                type: "tool-input-start",
+                id: "truncated-agent-after-exposure",
+                toolName: "issue466_update_agent",
+              },
+              {
+                type: "tool-input-delta",
+                id: "truncated-agent-after-exposure",
+                delta: '{"revision":"truncated',
+              },
+              {
+                type: "finish",
+                finishReason: "stop",
+                usage: { inputTokens: 0, outputTokens: 0 },
+              },
+            ]),
+          };
+        },
+      };
+
+      const mutationTool = (id: string) =>
+        tool({
+          id,
+          description: `Apply ${id}`,
+          inputSchema: defineSchema((v) => v.object({ revision: v.string() }))(),
+          execute: async ({ revision }) => {
+            executedMutations.push(revision);
+            return { revision };
+          },
+        });
+
+      const assistant = eagerAgent({
+        model: `hosted/interrupted-exposed-batch-${hasFinalResult}`,
+        system: "Do not repeat an interrupted batch after exposing a local tool call.",
+        tools: {
+          issue466_update_file: mutationTool("issue466_update_file"),
+          issue466_update_agent: mutationTool("issue466_update_agent"),
+        },
+        maxSteps: 3,
+        resolveModelTransport: async () => ({ model }),
+      });
+
+      const response = (await assistant.stream({
+        input: "Update the taxonomy and agent",
+      })).toDataStreamResponse();
+      const body = await response.text();
+
+      assertEquals(callCount, 1);
+      assertEquals(executedMutations, []);
+      assertEquals(body.match(/"type":"tool-input-available"/g)?.length ?? 0, 1);
+      assertEquals(
+        body.match(/"type":"tool-output-available"/g)?.length ?? 0,
+        hasFinalResult ? 1 : 0,
+      );
+      assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 0);
+      assertEquals(body.includes("Unexpected recovery."), false);
+    }
+  });
+
+  it("does not report stale text when an ordinary tool-only step exhausts maxSteps", async () => {
+    let callCount = 0;
+    let finishedResponse: AgentResponse | undefined;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/tool-only-max-steps",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        return {
+          stream: createRuntimeStream([
+            ...(callCount === 1
+              ? [{ type: "text-delta" as const, text: "Starting the work." }]
+              : []),
+            {
+              type: "tool-call",
+              toolCallId: `ordinary-tool-${callCount}`,
+              toolName: "ordinary_tool",
+              input: "{}",
+            },
+            {
+              type: "finish",
+              finishReason: "tool-calls",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
+          ]),
+        };
+      },
+    };
+    const ordinaryTool = tool({
+      id: "ordinary_tool",
+      description: "Complete one ordinary step",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ ok: true }),
+    });
+    const assistant = eagerAgent({
+      model: "hosted/tool-only-max-steps",
+      system: "Complete two ordinary tool steps.",
+      tools: { ordinary_tool: ordinaryTool },
+      maxSteps: 2,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = (await assistant.stream({
+      input: "Complete both steps",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse();
+    await response.text();
+
+    assertEquals(callCount, 2);
+    assertExists(finishedResponse);
+    assertEquals(finishedResponse.text, "");
+  });
+
+  it("recovers a placeholder after assistant text only once", async () => {
     const toolResults: ToolExecutionResultRequest[] = [];
+    let finishedResponse: AgentResponse | undefined;
     let callCount = 0;
     const studioSuggestions = tool({
       id: "studio_suggestions",
@@ -1599,8 +1910,32 @@ describe("agent runtime refresh hooks", () => {
       },
       async doStream() {
         callCount++;
-        if (callCount > 1) {
-          throw new Error("unexpected second stream call");
+        if (callCount === 2) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Created the Outlook " },
+              { type: "text-delta", text: "assistant." },
+              {
+                type: "tool-input-start",
+                id: "toolu_repeated_placeholder",
+                toolName: "studio_suggestions",
+              },
+              { type: "tool-input-delta", id: "toolu_repeated_placeholder", delta: "{}" },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+        if (callCount > 2) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Unexpected second recovery." },
+              { type: "finish", finishReason: "stop" },
+            ]),
+          };
         }
 
         return {
@@ -1625,7 +1960,7 @@ describe("agent runtime refresh hooks", () => {
     const assistant = eagerAgent({
       model: "hosted/text-placeholder-stream",
       system: "Placeholder recovery regression test",
-      maxSteps: 2,
+      maxSteps: 4,
       resolveModelTransport: async () => ({ model }),
       tools: { studio_suggestions: studioSuggestions },
       onToolResult: (request) => {
@@ -1635,12 +1970,1589 @@ describe("agent runtime refresh hooks", () => {
 
     const response = (await assistant.stream({
       input: "Create an Outlook assistant",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
     })).toDataStreamResponse();
     const body = await response.text();
 
-    assertEquals(callCount, 1);
+    assertEquals(callCount, 2);
     assertEquals(toolResults, []);
-    assertEquals(body.includes("Created the Outlook assistant."), true);
+    assertEquals(body.match(/Created the Outlook assistant\./g)?.length ?? 0, 1);
+    assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 0);
+    assertEquals(body.includes("Unexpected second recovery."), false);
+    const completedResponse = finishedResponse as AgentResponse | undefined;
+    assertExists(completedResponse);
+    assertEquals(completedResponse.text, "Created the Outlook assistant.");
+    assertEquals(
+      completedResponse.messages
+        .filter((message) => message.role === "assistant")
+        .flatMap((message) => message.parts)
+        .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : []),
+      ["Created the Outlook assistant."],
+    );
+    const placeholderPart = completedResponse.messages
+      .flatMap((message) => message.parts)
+      .find((part) => "toolCallId" in part && part.toolCallId === "toolu_placeholder_after_text");
+    assertExists(placeholderPart);
+    const placeholderError = completedResponse.messages
+      .flatMap((message) => message.parts)
+      .find((part) =>
+        part.type === "tool-result" &&
+        part.toolCallId === "toolu_placeholder_after_text"
+      );
+    assertExists(placeholderError);
+    assertEquals((placeholderError as { result: unknown }).result, {
+      error:
+        'Stream terminated before tool-call event fired for "studio_suggestions". Received 2 chars of partial tool-input deltas.',
+    });
+    assertEquals(
+      completedResponse.toolCalls.some((toolCall) =>
+        toolCall.id === "toolu_placeholder_after_text"
+      ),
+      false,
+    );
+    const repeatedPlaceholderError = completedResponse.messages
+      .flatMap((message) => message.parts)
+      .find((part) =>
+        part.type === "tool-result" &&
+        part.toolCallId === "toolu_repeated_placeholder"
+      );
+    assertExists(repeatedPlaceholderError);
+    assertEquals((repeatedPlaceholderError as { result: unknown }).result, {
+      error:
+        'Stream terminated before tool-call event fired for "studio_suggestions". Received 2 chars of partial tool-input deltas.',
+    });
+    const repeatedPlaceholderPart = completedResponse.messages
+      .flatMap((message) => message.parts)
+      .find((part) =>
+        part.type === "tool-studio_suggestions" &&
+        part.toolCallId === "toolu_repeated_placeholder"
+      );
+    assertExists(repeatedPlaceholderPart);
+    const repeatedToolCall = completedResponse.toolCalls.find((toolCall) =>
+      toolCall.id === "toolu_repeated_placeholder"
+    );
+    assertExists(repeatedToolCall);
+    assertEquals(repeatedToolCall.status, "error");
+  });
+
+  it("keeps prior text while interrupted recovery returns only a tool call", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    let executionCount = 0;
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => {
+        executionCount++;
+        return { suggestions: [] };
+      },
+    });
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/tool-only-recovery",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Preparing the Studio suggestions." },
+              {
+                type: "tool-input-start",
+                id: "toolu_tool_only_placeholder",
+                toolName: "studio_suggestions",
+              },
+              { type: "tool-input-delta", id: "toolu_tool_only_placeholder", delta: "{}" },
+              { type: "finish", finishReason: "tool-calls" },
+            ]),
+          };
+        }
+        return {
+          stream: createRuntimeStream([
+            {
+              type: "tool-call",
+              toolCallId: "toolu_reconstructed_suggestions",
+              toolName: "studio_suggestions",
+              input: "{}",
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "hosted/tool-only-recovery",
+      system: "Recover an interrupted local placeholder once.",
+      tools: { studio_suggestions: studioSuggestions },
+      maxSteps: 2,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const body = await (await assistant.stream({
+      input: "Prepare Studio suggestions",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse().text();
+
+    assertEquals(callCount, 2);
+    assertEquals(executionCount, 1);
+    assertEquals(body.match(/Preparing the Studio suggestions\./g)?.length ?? 0, 1);
+    assertExists(finishedResponse);
+    assertEquals(finishedResponse.text, "Preparing the Studio suggestions.");
+    assertEquals(
+      finishedResponse.toolCalls.map((toolCall) => ({
+        id: toolCall.id,
+        status: toolCall.status,
+      })),
+      [{ id: "toolu_reconstructed_suggestions", status: "completed" }],
+    );
+    const interruptedPlaceholderPart = finishedResponse.messages
+      .flatMap((message) => message.parts)
+      .find((part) => "toolCallId" in part && part.toolCallId === "toolu_tool_only_placeholder");
+    assertExists(interruptedPlaceholderPart);
+    const interruptedPlaceholderError = finishedResponse.messages
+      .flatMap((message) => message.parts)
+      .find((part) =>
+        part.type === "tool-result" &&
+        part.toolCallId === "toolu_tool_only_placeholder"
+      );
+    assertExists(interruptedPlaceholderError);
+    assertEquals((interruptedPlaceholderError as { result: unknown }).result, {
+      error:
+        'Stream terminated before tool-call event fired for "studio_suggestions". Received 2 chars of partial tool-input deltas.',
+    });
+    const recoveredToolCall = finishedResponse.toolCalls.find((toolCall) =>
+      toolCall.id === "toolu_reconstructed_suggestions"
+    );
+    assertExists(recoveredToolCall);
+    assertEquals(recoveredToolCall.status, "completed");
+  });
+
+  it("delivers distinct terminal text from placeholder recovery", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    let observedRecoveryChunkBeforeFinish = false;
+    let observedRecoveryStreamBeforeFinish = false;
+    const chunks: string[] = [];
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/distinct-placeholder-recovery-text",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 2) {
+          let recoveryPart = 0;
+          return {
+            stream: new ReadableStream<unknown>({
+              async pull(controller) {
+                recoveryPart++;
+                if (recoveryPart === 1) {
+                  controller.enqueue({ type: "text-delta", text: "Recovered final answer." });
+                  return;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 0));
+                observedRecoveryChunkBeforeFinish = chunks.includes("Recovered final answer.");
+                observedRecoveryStreamBeforeFinish = observedRecoveryStreamBeforeFinish ||
+                  recoveryStreamObserved;
+                controller.enqueue({ type: "finish", finishReason: "stop" });
+                controller.close();
+              },
+            }),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "Initial partial answer." },
+            {
+              type: "tool-input-start",
+              id: "toolu_distinct_recovery",
+              toolName: "studio_suggestions",
+            },
+            { type: "tool-input-delta", id: "toolu_distinct_recovery", delta: "{}" },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "hosted/distinct-placeholder-recovery-text",
+      system: "Distinct placeholder recovery text regression test",
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+      tools: { studio_suggestions: studioSuggestions },
+    });
+
+    let recoveryStreamObserved = false;
+    const response = (await assistant.stream({
+      input: "Create an Outlook assistant",
+      onChunk: (chunk) => chunks.push(chunk),
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse();
+    const body = await readResponseBody(response, (text) => {
+      if (text.includes("Recovered final answer.")) {
+        recoveryStreamObserved = true;
+      }
+    });
+
+    assertEquals(callCount, 2);
+    assertEquals(observedRecoveryChunkBeforeFinish, true);
+    assertEquals(observedRecoveryStreamBeforeFinish, true);
+    assertEquals(body.match(/Initial partial answer\./g)?.length ?? 0, 1);
+    assertEquals(body.match(/Recovered final answer\./g)?.length ?? 0, 1);
+    assertEquals(chunks, ["Initial partial answer.", "Recovered final answer."]);
+    const completedResponse = finishedResponse as AgentResponse | undefined;
+    assertExists(completedResponse);
+    assertEquals(completedResponse.text, "Recovered final answer.");
+    assertEquals(
+      completedResponse.messages
+        .filter((message) => message.role === "assistant")
+        .flatMap((message) => message.parts)
+        .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : []),
+      ["Initial partial answer.", "Recovered final answer."],
+    );
+  });
+
+  it("streams distinct recovery text before finish without an onChunk callback", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    let observedRecoveryStreamBeforeFinish = false;
+    let recoveryStreamObserved = false;
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/distinct-placeholder-recovery-without-callback",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 2) {
+          let recoveryPart = 0;
+          return {
+            stream: new ReadableStream<unknown>({
+              async pull(controller) {
+                recoveryPart++;
+                if (recoveryPart === 1) {
+                  controller.enqueue({ type: "text-delta", text: "Recovered final answer." });
+                  return;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 0));
+                observedRecoveryStreamBeforeFinish = recoveryStreamObserved;
+                controller.enqueue({ type: "finish", finishReason: "stop" });
+                controller.close();
+              },
+            }),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "Initial partial answer." },
+            {
+              type: "tool-input-start",
+              id: "toolu_distinct_recovery_without_callback",
+              toolName: "studio_suggestions",
+            },
+            {
+              type: "tool-input-delta",
+              id: "toolu_distinct_recovery_without_callback",
+              delta: "{}",
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "hosted/distinct-placeholder-recovery-without-callback",
+      system: "Distinct placeholder recovery response stream regression test",
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+      tools: { studio_suggestions: studioSuggestions },
+    });
+
+    const response = (await assistant.stream({
+      input: "Create an Outlook assistant",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse();
+    const body = await readResponseBody(response, (text) => {
+      if (text.includes("Recovered final answer.")) {
+        recoveryStreamObserved = true;
+      }
+    });
+
+    assertEquals(callCount, 2);
+    assertEquals(observedRecoveryStreamBeforeFinish, true);
+    assertEquals(body.match(/Initial partial answer\./g)?.length ?? 0, 1);
+    assertEquals(body.match(/Recovered final answer\./g)?.length ?? 0, 1);
+    const completedResponse = finishedResponse as AgentResponse | undefined;
+    assertExists(completedResponse);
+    assertEquals(completedResponse.text, "Recovered final answer.");
+  });
+
+  it("delivers only the new suffix when recovery extends prior text", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    let observedRecoverySuffixBeforeFinish = false;
+    let observedRecoverySuffixStreamBeforeFinish = false;
+    const chunks: string[] = [];
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/prefix-placeholder-recovery-text",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 2) {
+          const recoveryParts = [
+            { type: "text-delta", text: "Created the " },
+            { type: "text-delta", text: "assistant. It is ready." },
+          ];
+          let recoveryPart = 0;
+          return {
+            stream: new ReadableStream<unknown>({
+              async pull(controller) {
+                if (recoveryPart < recoveryParts.length) {
+                  controller.enqueue(recoveryParts[recoveryPart++]);
+                  return;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 0));
+                observedRecoverySuffixBeforeFinish = chunks.includes(" It is ready.");
+                observedRecoverySuffixStreamBeforeFinish =
+                  observedRecoverySuffixStreamBeforeFinish || recoverySuffixStreamObserved;
+                controller.enqueue({ type: "finish", finishReason: "stop" });
+                controller.close();
+              },
+            }),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "Created the assistant." },
+            {
+              type: "tool-input-start",
+              id: "toolu_prefix_recovery",
+              toolName: "studio_suggestions",
+            },
+            { type: "tool-input-delta", id: "toolu_prefix_recovery", delta: "{}" },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "hosted/prefix-placeholder-recovery-text",
+      system: "Prefix placeholder recovery text regression test",
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+      tools: { studio_suggestions: studioSuggestions },
+    });
+
+    let recoverySuffixStreamObserved = false;
+    const response = (await assistant.stream({
+      input: "Create an assistant",
+      onChunk: (chunk) => chunks.push(chunk),
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse();
+    const body = await readResponseBody(response, (text) => {
+      if (text.includes(" It is ready.")) {
+        recoverySuffixStreamObserved = true;
+      }
+    });
+
+    assertEquals(callCount, 2);
+    assertEquals(observedRecoverySuffixBeforeFinish, true);
+    assertEquals(observedRecoverySuffixStreamBeforeFinish, true);
+    assertEquals(body.match(/Created the assistant\./g)?.length ?? 0, 1);
+    assertEquals(body.match(/ It is ready\./g)?.length ?? 0, 1);
+    assertEquals(chunks, ["Created the assistant.", " It is ready."]);
+    const completedResponse = finishedResponse as AgentResponse | undefined;
+    assertExists(completedResponse);
+    assertEquals(completedResponse.text, "Created the assistant. It is ready.");
+    assertEquals(
+      completedResponse.messages
+        .filter((message) => message.role === "assistant")
+        .flatMap((message) => message.parts)
+        .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : []),
+      ["Created the assistant.", " It is ready."],
+    );
+  });
+
+  it("starts a replacement stream segment when recovery diverges after a shared prefix", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    const chunks: string[] = [];
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/divergent-prefix-placeholder-recovery-text",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 2) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Created the " },
+              { type: "text-delta", text: "workflow." },
+              { type: "reasoning-delta", id: "recovery-reasoning", delta: "Check result." },
+              { type: "reasoning-end", id: "recovery-reasoning" },
+              { type: "text-delta", text: " It is ready." },
+              { type: "finish", finishReason: "stop" },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "Created the assistant." },
+            {
+              type: "tool-input-start",
+              id: "toolu_divergent_prefix_recovery",
+              toolName: "studio_suggestions",
+            },
+            { type: "tool-input-delta", id: "toolu_divergent_prefix_recovery", delta: "{}" },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "hosted/divergent-prefix-placeholder-recovery-text",
+      system: "Divergent prefix placeholder recovery text regression test",
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+      tools: { studio_suggestions: studioSuggestions },
+    });
+
+    const body = await (await assistant.stream({
+      input: "Create an assistant",
+      onChunk: (chunk) => chunks.push(chunk),
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse().text();
+
+    assertEquals(callCount, 2);
+    assertEquals(body.match(/Created the assistant\./g)?.length ?? 0, 1);
+    assertEquals(body.includes(":step:1:recovery"), true);
+    assertEquals(body.includes('"type":"text-start","id":"text-'), true);
+    assertEquals(body.includes(':step:1:recovery"}'), true);
+    assertEquals(
+      body.includes(':step:1:recovery","delta":"Created the "'),
+      true,
+    );
+    assertEquals(
+      body.includes(':step:1:recovery","delta":"workflow."'),
+      true,
+    );
+    const recoveryTextStartIds = [...body.matchAll(
+      /"type":"text-start","id":"([^"]*:step:1[^"]*)"/g,
+    )].map((match) => match[1]);
+    assertEquals(recoveryTextStartIds.length, 2);
+    assertEquals(new Set(recoveryTextStartIds).size, 2);
+    assertEquals(chunks, [
+      "Created the assistant.",
+      "Created the ",
+      "workflow.",
+      " It is ready.",
+    ]);
+    assertEquals(chunks.slice(1).join(""), "Created the workflow. It is ready.");
+    const completedResponse = finishedResponse as AgentResponse | undefined;
+    assertExists(completedResponse);
+    assertEquals(completedResponse.text, "Created the workflow. It is ready.");
+    assertEquals(
+      completedResponse.messages
+        .filter((message) => message.role === "assistant")
+        .flatMap((message) => message.parts)
+        .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : []),
+      ["Created the assistant.", "Created the workflow. It is ready."],
+    );
+  });
+
+  it("suppresses a shorter replay prefix without shortening the final text", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    const chunks: string[] = [];
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/short-prefix-placeholder-recovery-text",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 2) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Created the " },
+              { type: "finish", finishReason: "stop" },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "Created the assistant." },
+            {
+              type: "tool-input-start",
+              id: "toolu_short_prefix_recovery",
+              toolName: "studio_suggestions",
+            },
+            { type: "tool-input-delta", id: "toolu_short_prefix_recovery", delta: "{}" },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "hosted/short-prefix-placeholder-recovery-text",
+      system: "Short prefix placeholder recovery text regression test",
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+      tools: { studio_suggestions: studioSuggestions },
+    });
+
+    const body = await (await assistant.stream({
+      input: "Create an assistant",
+      onChunk: (chunk) => chunks.push(chunk),
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse().text();
+
+    assertEquals(callCount, 2);
+    assertEquals(body.match(/Created the /g)?.length ?? 0, 1);
+    assertEquals(chunks, ["Created the assistant."]);
+    const completedResponse = finishedResponse as AgentResponse | undefined;
+    assertExists(completedResponse);
+    assertEquals(completedResponse.text, "Created the assistant.");
+    assertEquals(
+      completedResponse.messages
+        .filter((message) => message.role === "assistant")
+        .flatMap((message) => message.parts)
+        .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : []),
+      ["Created the assistant."],
+    );
+  });
+
+  it("stops after distinct recovery text with a finalized provider result", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Checking the requested update." },
+              {
+                type: "tool-input-start",
+                id: "toolu_interrupted_suggestions",
+                toolName: "studio_suggestions",
+              },
+              { type: "tool-input-delta", id: "toolu_interrupted_suggestions", delta: "{}" },
+              { type: "finish", finishReason: "tool-calls" },
+            ]),
+          };
+        }
+        if (callCount === 2) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "The provider lookup completed." },
+              {
+                type: "tool-call",
+                toolCallId: "provider-search",
+                toolName: "web_search",
+                input: '{"query":"status"}',
+                providerExecuted: true,
+              },
+              {
+                type: "tool-result",
+                toolCallId: "provider-search",
+                toolName: "web_search",
+                output: { results: [] },
+                providerExecuted: true,
+              },
+              { type: "finish", finishReason: "stop" },
+            ]),
+          };
+        }
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "Unexpected continuation." },
+            { type: "finish", finishReason: "stop" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Recover an interrupted local placeholder once.",
+      tools: { studio_suggestions: studioSuggestions },
+      providerTools: ["web_search"],
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const body = await (await assistant.stream({
+      input: "Check the update",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse().text();
+
+    assertEquals(callCount, 2);
+    assertEquals(body.includes("Checking the requested update."), true);
+    assertEquals(body.includes("The provider lookup completed."), true);
+    assertEquals(body.includes("Unexpected continuation."), false);
+    assertExists(finishedResponse);
+    assertEquals(finishedResponse.text, "The provider lookup completed.");
+    assertEquals(
+      finishedResponse.messages
+        .filter((message) => message.role === "assistant")
+        .flatMap((message) => message.parts)
+        .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : []),
+      ["Checking the requested update.", "The provider lookup completed."],
+    );
+  });
+
+  it("streams provider events after an exact recovery replay before finish", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    let providerEventObserved = false;
+    let observedProviderEventBeforeFinish = false;
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Checking the requested update." },
+              {
+                type: "tool-input-start",
+                id: "toolu_interrupted_exact_replay",
+                toolName: "studio_suggestions",
+              },
+              {
+                type: "tool-input-delta",
+                id: "toolu_interrupted_exact_replay",
+                delta: "{}",
+              },
+              { type: "finish", finishReason: "tool-calls" },
+            ]),
+          };
+        }
+
+        let recoveryPart = 0;
+        return {
+          stream: new ReadableStream<unknown>({
+            async pull(controller) {
+              recoveryPart++;
+              if (recoveryPart === 1) {
+                controller.enqueue({ type: "text-delta", text: "Checking the requested update." });
+                return;
+              }
+              if (recoveryPart === 2) {
+                controller.enqueue({
+                  type: "tool-call",
+                  toolCallId: "provider-search-exact-replay",
+                  toolName: "web_search",
+                  input: '{"query":"status"}',
+                  providerExecuted: true,
+                });
+                return;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 0));
+              observedProviderEventBeforeFinish = providerEventObserved;
+              controller.enqueue({
+                type: "tool-result",
+                toolCallId: "provider-search-exact-replay",
+                toolName: "web_search",
+                output: { results: [] },
+                providerExecuted: true,
+              });
+              controller.enqueue({ type: "finish", finishReason: "stop" });
+              controller.close();
+            },
+          }),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Recover an interrupted local placeholder once.",
+      tools: { studio_suggestions: studioSuggestions },
+      providerTools: ["web_search"],
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = (await assistant.stream({
+      input: "Check the update",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse();
+    const body = await readResponseBody(response, (text) => {
+      if (text.includes("provider-search-exact-replay")) {
+        providerEventObserved = true;
+      }
+    });
+
+    assertEquals(callCount, 2);
+    assertEquals(observedProviderEventBeforeFinish, true);
+    assertEquals(body.match(/Checking the requested update\./g)?.length ?? 0, 1);
+    assertEquals(body.includes("provider-search-exact-replay"), true);
+    assertExists(finishedResponse);
+    assertEquals(finishedResponse.text, "Checking the requested update.");
+  });
+
+  it("streams provider events after a partial recovery replay prefix", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    let providerEventObserved = false;
+    let observedProviderEventBeforeReplayCompleted = false;
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Checking the requested update." },
+              {
+                type: "tool-input-start",
+                id: "toolu_interrupted_partial_replay",
+                toolName: "studio_suggestions",
+              },
+              {
+                type: "tool-input-delta",
+                id: "toolu_interrupted_partial_replay",
+                delta: "{}",
+              },
+              { type: "finish", finishReason: "tool-calls" },
+            ]),
+          };
+        }
+
+        let recoveryPart = 0;
+        return {
+          stream: new ReadableStream<unknown>({
+            async pull(controller) {
+              recoveryPart++;
+              if (recoveryPart === 1) {
+                controller.enqueue({ type: "text-delta", text: "Checking " });
+                return;
+              }
+              if (recoveryPart === 2) {
+                controller.enqueue({
+                  type: "tool-call",
+                  toolCallId: "provider-search-partial-replay",
+                  toolName: "web_search",
+                  input: '{"query":"status"}',
+                  providerExecuted: true,
+                });
+                return;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 0));
+              observedProviderEventBeforeReplayCompleted = providerEventObserved;
+              controller.enqueue({ type: "text-delta", text: "the requested update. Done." });
+              controller.enqueue({
+                type: "tool-result",
+                toolCallId: "provider-search-partial-replay",
+                toolName: "web_search",
+                output: { results: [] },
+                providerExecuted: true,
+              });
+              controller.enqueue({ type: "finish", finishReason: "stop" });
+              controller.close();
+            },
+          }),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Partial recovery replay provider event regression test",
+      tools: { studio_suggestions: studioSuggestions },
+      providerTools: ["web_search"],
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = (await assistant.stream({
+      input: "Check the update",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse();
+    const body = await readResponseBody(response, (text) => {
+      if (text.includes("provider-search-partial-replay")) {
+        providerEventObserved = true;
+      }
+    });
+
+    assertEquals(callCount, 2);
+    assertEquals(observedProviderEventBeforeReplayCompleted, true);
+    assertEquals(body.match(/Checking the requested update\./g)?.length ?? 0, 1);
+    assertEquals(body.match(/ Done\./g)?.length ?? 0, 1);
+    assertEquals(body.includes("provider-search-partial-replay"), true);
+    assertExists(finishedResponse);
+    assertEquals(finishedResponse.text, "Checking the requested update. Done.");
+    assertEquals(
+      finishedResponse.messages
+        .filter((message) => message.role === "assistant")
+        .flatMap((message) => message.parts)
+        .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : []),
+      ["Checking the requested update.", " Done."],
+    );
+  });
+
+  it("does not replay a retained prefix after a provider-tool text boundary", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    const chunks: string[] = [];
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Checking the update." },
+              {
+                type: "tool-input-start",
+                id: "toolu_interrupted_segment_replay",
+                toolName: "studio_suggestions",
+              },
+              {
+                type: "tool-input-delta",
+                id: "toolu_interrupted_segment_replay",
+                delta: "{}",
+              },
+              { type: "finish", finishReason: "tool-calls" },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "Checking " },
+            {
+              type: "tool-call",
+              toolCallId: "provider-search-segment-replay",
+              toolName: "web_search",
+              input: '{"query":"status"}',
+              providerExecuted: true,
+            },
+            {
+              type: "tool-result",
+              toolCallId: "provider-search-segment-replay",
+              toolName: "web_search",
+              output: { results: [] },
+              providerExecuted: true,
+            },
+            { type: "text-delta", text: "Done." },
+            { type: "finish", finishReason: "stop" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Text-segment recovery replay regression test",
+      tools: { studio_suggestions: studioSuggestions },
+      providerTools: ["web_search"],
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const body = await (await assistant.stream({
+      input: "Check the update",
+      onChunk: (chunk) => chunks.push(chunk),
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse().text();
+
+    assertEquals(callCount, 2);
+    assertEquals(body.match(/Checking /g)?.length ?? 0, 1);
+    assertEquals(body.match(/Done\./g)?.length ?? 0, 1);
+    assertEquals(body.indexOf("provider-search-segment-replay") < body.indexOf("Done."), true);
+    assertEquals(chunks, ["Checking the update.", "Done."]);
+    assertExists(finishedResponse);
+    assertEquals(finishedResponse.text, "Checking the update.Done.");
+    assertEquals(
+      finishedResponse.messages
+        .filter((message) => message.role === "assistant")
+        .flatMap((message) => message.parts)
+        .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : []),
+      ["Checking the update.", "Done."],
+    );
+  });
+
+  it("does not retry a truncated non-placeholder tool call after exposing reasoning", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        return {
+          stream: createRuntimeStream([
+            { type: "reasoning-start", id: "reasoning-before-interruption" },
+            {
+              type: "reasoning-delta",
+              id: "reasoning-before-interruption",
+              delta: "Check hidden state.",
+            },
+            { type: "reasoning-end", id: "reasoning-before-interruption" },
+            {
+              type: "tool-input-start",
+              id: "toolu_interrupted_after_reasoning",
+              toolName: "studio_suggestions",
+            },
+            {
+              type: "tool-input-delta",
+              id: "toolu_interrupted_after_reasoning",
+              delta: '{"suggestions":[',
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Reasoning recovery replay regression test",
+      tools: { studio_suggestions: studioSuggestions },
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const body = await (await assistant.stream({
+      input: "Check before acting",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse().text();
+
+    assertEquals(callCount, 1);
+    assertEquals(body.match(/Check hidden state\./g)?.length ?? 0, 1);
+    assertExists(finishedResponse);
+    assertEquals(
+      finishedResponse.messages
+        .filter((message) => message.role === "assistant")
+        .flatMap((message) => message.parts)
+        .filter((part) => part.type === "reasoning")
+        .flatMap((part) => "text" in part && typeof part.text === "string" ? [part.text] : []),
+      ["Check hidden state."],
+    );
+
+    // Terminal state. Declining recovery ends the run here, so the truncated
+    // call has to reach the client as a failed tool card: its tool-input-start
+    // was buffered awaiting a commit that never came, and without flushing it
+    // the stream would stop after the reasoning block with nothing rendered.
+    assertEquals(body.match(/"type":"message-finish"/g)?.length ?? 0, 1);
+    assertEquals(body.includes('"finishReason":"tool-calls"'), true);
+    assertEquals(body.match(/"type":"tool-input-start"/g)?.length ?? 0, 1);
+    assertEquals(body.match(/"type":"tool-input-available"/g)?.length ?? 0, 0);
+    assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 1);
+    // Both terminal error events key off `inputAnnounced`, and only statement
+    // order keeps the incomplete-tool loop from firing before the announce.
+    // Exactly one failure event must reach the client, never two.
+    assertEquals(body.match(/"type":"tool-input-error"/g)?.length ?? 0, 0);
+    assertEquals(
+      body.includes(
+        'Stream terminated before tool-call event fired for \\"studio_suggestions\\"',
+      ),
+      true,
+    );
+    assertEquals(
+      finishedResponse.toolCalls.map((toolCall) => [toolCall.name, toolCall.status]),
+      [["studio_suggestions", "error"]],
+    );
+  });
+
+  it("announces a truncated delegated remote tool under its namespaced name", async () => {
+    // The announce on the declined-recovery path is only reachable when
+    // `tool-call` never fired — that event sets `inputAvailable: true`, which
+    // makes `recordIncompleteLocalToolError` return at its guard. So no later
+    // event can supersede the name, and the name on the card must equal both
+    // the one the provider streamed and the one written to history.
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    const gmailSource: RemoteToolSource = {
+      id: "gmail",
+      listTools: () =>
+        Promise.resolve([{
+          name: "gmail__list_emails",
+          description: "List Gmail messages",
+          parameters: { type: "object", properties: {} },
+        }]),
+      executeTool: () => Promise.resolve({ messages: [] }),
+    };
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount > 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Unexpected recovery." },
+              { type: "finish", finishReason: "stop" },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "reasoning-start", id: "reasoning-before-remote" },
+            {
+              type: "reasoning-delta",
+              id: "reasoning-before-remote",
+              delta: "Check the inbox first.",
+            },
+            { type: "reasoning-end", id: "reasoning-before-remote" },
+            {
+              type: "tool-input-start",
+              id: "toolu_remote_truncated",
+              toolName: "gmail__list_emails",
+            },
+            {
+              type: "tool-input-delta",
+              id: "toolu_remote_truncated",
+              delta: '{"query":"is:unread',
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent(
+      {
+        model: "anthropic/claude-sonnet-4-6",
+        system: "Remote tool truncation regression test",
+        tools: { gmail__list_emails: true },
+        __vfRemoteToolSources: [gmailSource],
+        __vfAllowedRemoteTools: ["gmail__list_emails"],
+        maxSteps: 3,
+        resolveModelTransport: async () => ({ model }),
+      } as AgentConfig & RuntimeRemoteToolConfig,
+    );
+
+    const body = await (await assistant.stream({
+      input: "Summarize my inbox",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse().text();
+
+    assertEquals(callCount, 1);
+    assertEquals(body.includes("Unexpected recovery."), false);
+    assertExists(finishedResponse);
+
+    // The card is announced under the exact namespaced name the provider sent.
+    // No bare `list_emails`, and no placeholder for an unresolved namespace.
+    assertEquals(body.match(/"type":"tool-input-start"/g)?.length ?? 0, 1);
+    assertEquals(
+      body.match(
+        /"type":"tool-input-start","toolCallId":"toolu_remote_truncated","toolName":"gmail__list_emails"/g,
+      )
+        ?.length ?? 0,
+      1,
+    );
+    assertEquals(body.match(/"toolName":"list_emails"/g)?.length ?? 0, 0);
+    assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 1);
+    assertEquals(body.match(/"type":"tool-input-error"/g)?.length ?? 0, 0);
+    assertEquals(body.match(/"type":"tool-input-available"/g)?.length ?? 0, 0);
+
+    // The name on the wire matches the name persisted to history, so a reload
+    // renders the same tool as the live stream did.
+    const persistedToolNames = finishedResponse.messages
+      .flatMap((message) => message.parts)
+      .flatMap((part) =>
+        "toolCallId" in part && part.toolCallId === "toolu_remote_truncated" &&
+          "toolName" in part && typeof part.toolName === "string"
+          ? [part.toolName]
+          : []
+      );
+    assertEquals(persistedToolNames.every((name) => name === "gmail__list_emails"), true);
+    assertEquals(persistedToolNames.length > 0, true);
+    assertEquals(
+      finishedResponse.toolCalls.map((toolCall) => [toolCall.name, toolCall.status]),
+      [["gmail__list_emails", "error"]],
+    );
+  });
+
+  it("announces the finalized name when tool-call supersedes the buffered one", async () => {
+    // The buffered-name concern in the abstract: a `tool-call` carrying a
+    // different name than its `tool-input-start`. It is handled where the
+    // rename happens — `tool-call` announces the final name itself — and it
+    // also sets `inputAvailable: true`, so the terminal announce on the
+    // declined-recovery path can never see a superseded name.
+    let callCount = 0;
+    const renamed = tool({
+      id: "summarize_inbox",
+      description: "Summarize the inbox",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ messages: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount > 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Done." },
+              { type: "finish", finishReason: "stop" },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "reasoning-start", id: "reasoning-before-rename" },
+            {
+              type: "reasoning-delta",
+              id: "reasoning-before-rename",
+              delta: "Check the inbox.",
+            },
+            { type: "reasoning-end", id: "reasoning-before-rename" },
+            {
+              type: "tool-input-start",
+              id: "toolu_renamed",
+              toolName: "list_emails",
+            },
+            { type: "tool-input-delta", id: "toolu_renamed", delta: "{}" },
+            {
+              type: "tool-call",
+              toolCallId: "toolu_renamed",
+              toolName: "summarize_inbox",
+              input: "{}",
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Tool rename regression test",
+      tools: { summarize_inbox: renamed },
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const body = await (await assistant.stream({ input: "Summarize my inbox" }))
+      .toDataStreamResponse().text();
+
+    // Announced once, under the finalized name, by the `tool-call` branch.
+    assertEquals(body.match(/"type":"tool-input-start"/g)?.length ?? 0, 1);
+    assertEquals(
+      body.match(
+        /"type":"tool-input-start","toolCallId":"toolu_renamed","toolName":"summarize_inbox"/g,
+      )
+        ?.length ?? 0,
+      1,
+    );
+    assertEquals(body.match(/"toolName":"list_emails"/g)?.length ?? 0, 0);
+    // Finalized, so it is not an incomplete call: the terminal announce path
+    // is not reached and no failure is fabricated for it.
+    assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 0);
+    assertEquals(body.match(/"type":"tool-input-error"/g)?.length ?? 0, 0);
+  });
+
+  it("preserves a bare placeholder tool call when reasoning blocks recovery", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount > 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Unexpected recovery." },
+              { type: "finish", finishReason: "stop" },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "reasoning-start", id: "reasoning-before-placeholder" },
+            {
+              type: "reasoning-delta",
+              id: "reasoning-before-placeholder",
+              delta: "Plan the suggestions.",
+            },
+            { type: "reasoning-end", id: "reasoning-before-placeholder" },
+            { type: "text-delta", text: "Created the Outlook assistant." },
+            {
+              type: "tool-input-start",
+              id: "toolu_placeholder_after_reasoning",
+              toolName: "studio_suggestions",
+            },
+            { type: "tool-input-delta", id: "toolu_placeholder_after_reasoning", delta: "{}" },
+            {
+              type: "finish",
+              finishReason: "tool-calls",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Reasoning recovery placeholder regression test",
+      tools: { studio_suggestions: studioSuggestions },
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const body = await (await assistant.stream({
+      input: "Create an Outlook assistant",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse().text();
+
+    assertEquals(callCount, 1);
+    assertEquals(body.includes("Unexpected recovery."), false);
+    assertExists(finishedResponse);
+
+    // A bare `{}` placeholder is normally dropped from the assistant message
+    // when substantive text accompanies it. Terminalizing the step passes
+    // `preserveRecoverablePlaceholderToolCalls`, so the call and its error are
+    // kept in history and go back to the model on the next turn — the same
+    // outcome as maxSteps exhaustion.
+    const assistantParts = finishedResponse.messages
+      .filter((message) => message.role === "assistant")
+      .flatMap((message) => message.parts);
+    assertEquals(
+      assistantParts.filter((part) => part.type === "reasoning")
+        .flatMap((part) => "text" in part && typeof part.text === "string" ? [part.text] : []),
+      ["Plan the suggestions."],
+    );
+    assertEquals(
+      assistantParts.flatMap((part) => part.type === "text" && "text" in part ? [part.text] : []),
+      ["Created the Outlook assistant."],
+    );
+    assertExists(
+      assistantParts.find((part) =>
+        "toolCallId" in part && part.toolCallId === "toolu_placeholder_after_reasoning"
+      ),
+    );
+    assertEquals(
+      finishedResponse.toolCalls.map((toolCall) => [toolCall.name, toolCall.status]),
+      [["studio_suggestions", "error"]],
+    );
+    assertEquals(
+      finishedResponse.messages
+        .flatMap((message) => message.parts)
+        .filter((part) =>
+          part.type === "tool-result" && "toolCallId" in part &&
+          part.toolCallId === "toolu_placeholder_after_reasoning"
+        ).length,
+      1,
+    );
+    assertEquals(body.match(/"type":"tool-input-start"/g)?.length ?? 0, 1);
+    assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 1);
+    assertEquals(body.match(/"type":"tool-input-error"/g)?.length ?? 0, 0);
+  });
+
+  it("streams provider events before recovery replay text begins", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    let providerEventObserved = false;
+    let observedProviderEventBeforeReplay = false;
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Checking the requested update." },
+              {
+                type: "tool-input-start",
+                id: "toolu_interrupted_provider_first",
+                toolName: "studio_suggestions",
+              },
+              {
+                type: "tool-input-delta",
+                id: "toolu_interrupted_provider_first",
+                delta: "{}",
+              },
+              { type: "finish", finishReason: "tool-calls" },
+            ]),
+          };
+        }
+
+        let recoveryPart = 0;
+        return {
+          stream: new ReadableStream<unknown>({
+            async pull(controller) {
+              recoveryPart++;
+              if (recoveryPart === 1) {
+                controller.enqueue({
+                  type: "tool-call",
+                  toolCallId: "provider-search-before-replay",
+                  toolName: "web_search",
+                  input: '{"query":"status"}',
+                  providerExecuted: true,
+                });
+                return;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 0));
+              observedProviderEventBeforeReplay = providerEventObserved;
+              controller.enqueue({ type: "text-delta", text: "Checking the requested update." });
+              controller.enqueue({
+                type: "tool-result",
+                toolCallId: "provider-search-before-replay",
+                toolName: "web_search",
+                output: { results: [] },
+                providerExecuted: true,
+              });
+              controller.enqueue({ type: "finish", finishReason: "stop" });
+              controller.close();
+            },
+          }),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Recover an interrupted local placeholder once.",
+      tools: { studio_suggestions: studioSuggestions },
+      providerTools: ["web_search"],
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = (await assistant.stream({
+      input: "Check the update",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse();
+    const body = await readResponseBody(response, (text) => {
+      if (text.includes("provider-search-before-replay")) {
+        providerEventObserved = true;
+      }
+    });
+
+    assertEquals(callCount, 2);
+    assertEquals(observedProviderEventBeforeReplay, true);
+    assertEquals(body.match(/Checking the requested update\./g)?.length ?? 0, 1);
+    assertEquals(body.includes("provider-search-before-replay"), true);
+    assertExists(finishedResponse);
+    assertEquals(finishedResponse.text, "Checking the requested update.");
   });
 
   it("applies loaded skill maxSteps overrides to generate() invoke_agent calls", async () => {

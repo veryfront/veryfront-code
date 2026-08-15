@@ -11,7 +11,7 @@ import type { CrossProjectImport, MissingImport } from "#veryfront/transforms/es
 import { parseLocalImports } from "#veryfront/transforms/esm/import-parser.ts";
 import { registerCSSImport } from "../css-import-collector.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { createError, toError } from "#veryfront/errors";
+import { BUILD_FAILED, createError, toError, VeryfrontError } from "#veryfront/errors";
 import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { MAX_TRANSFORM_DEPTH, TRANSFORM_BATCH_SIZE } from "./constants.ts";
@@ -22,6 +22,32 @@ import {
 } from "#veryfront/cache/dependency-graph.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
+
+function isTerminalHttpModuleFetchFailure(error: unknown): error is VeryfrontError {
+  if (!(error instanceof VeryfrontError) || error.slug !== BUILD_FAILED.slug) return false;
+  const context = error.context;
+  return typeof context === "object" && context !== null &&
+    (context as { phase?: unknown }).phase === "http-module-fetch";
+}
+
+/**
+ * Pick the rejection a settled dependency batch should propagate.
+ *
+ * Both batch loops catch everything except a terminal HTTP module fetch
+ * failure, so today every rejection is that failure. Select on the predicate
+ * rather than on "first rejection" so a throw added outside either try block
+ * later cannot be mistaken for the terminal failure — and fall back to the
+ * first rejection so such a throw is still propagated rather than dropped.
+ */
+function selectPropagatedFailure(
+  results: PromiseSettledResult<unknown>[],
+): PromiseRejectedResult | undefined {
+  const rejections = results.filter((result): result is PromiseRejectedResult =>
+    result.status === "rejected"
+  );
+  return rejections.find((rejection) => isTerminalHttpModuleFetchFailure(rejection.reason)) ??
+    rejections[0];
+}
 
 /**
  * Manages dependency validation for SSR module loading:
@@ -115,13 +141,34 @@ export class SSRDependencyValidator {
       createDependencyHashCache(),
     );
 
-    for (let i = 0; i < parseResult.crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
-      const batch = parseResult.crossProjectImports.slice(i, i + TRANSFORM_BATCH_SIZE);
-      await Promise.all(
+    await this.processCrossProjectImports(parseResult.crossProjectImports, filePath);
+  }
+
+  /**
+   * Process cross-project imports in batches, building a map of
+   * specifier -> temp file path.
+   *
+   * Non-terminal failures are aggregated into {@link missingDependencies} so the
+   * caller can report every unresolved specifier at once. A terminal HTTP module
+   * fetch failure is rethrown untouched instead: it means the source could not be
+   * retrieved at all, so reporting it as a missing dependency would mislabel a
+   * transient network failure as a broken component.
+   */
+  async processCrossProjectImports(
+    crossProjectImports: CrossProjectImport[],
+    filePath: string,
+  ): Promise<Map<string, string>> {
+    const crossProjectPaths = new Map<string, string>();
+
+    for (let i = 0; i < crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
+      const batch = crossProjectImports.slice(i, i + TRANSFORM_BATCH_SIZE);
+      const results = await Promise.allSettled(
         batch.map(async (crossImport) => {
           try {
-            await this.transformCrossProjectImport(crossImport);
+            const tempPath = await this.transformCrossProjectImport(crossImport);
+            crossProjectPaths.set(crossImport.specifier, tempPath);
           } catch (error) {
+            if (isTerminalHttpModuleFetchFailure(error)) throw error;
             this.missingDependencies.push({
               specifier: crossImport.specifier,
               fromFile: filePath,
@@ -132,7 +179,11 @@ export class SSRDependencyValidator {
           }
         }),
       );
+      const failure = selectPropagatedFailure(results);
+      if (failure) throw failure.reason;
     }
+
+    return crossProjectPaths;
   }
 
   /**
@@ -150,7 +201,7 @@ export class SSRDependencyValidator {
 
     for (let i = 0; i < imports.length; i += TRANSFORM_BATCH_SIZE) {
       const batch = imports.slice(i, i + TRANSFORM_BATCH_SIZE);
-      await Promise.all(
+      const results = await Promise.allSettled(
         batch.map(async (imp) => {
           try {
             const depSource = await this.readLocalImportSource(imp.absolutePath, localFs);
@@ -165,6 +216,7 @@ export class SSRDependencyValidator {
             importPathMap.set(imp.specifier, depEntry.tempPath);
             importPathMap.set(imp.absolutePath, depEntry.tempPath);
           } catch (error) {
+            if (isTerminalHttpModuleFetchFailure(error)) throw error;
             this.missingDependencies.push({
               specifier: imp.specifier,
               fromFile: fromFilePath,
@@ -175,6 +227,8 @@ export class SSRDependencyValidator {
           }
         }),
       );
+      const failure = selectPropagatedFailure(results);
+      if (failure) throw failure.reason;
     }
 
     return importPathMap;

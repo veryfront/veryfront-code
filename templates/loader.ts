@@ -1,20 +1,39 @@
 /**
- * Template loader using JSON manifest.
+ * Template loader using a compressed manifest.
  *
- * Templates are compiled to a JSON manifest at build time, which allows
+ * Templates are compiled to a compressed manifest at build time, which allows
  * them to be embedded in compiled binaries without deno compile trying
  * to analyze them as TypeScript modules.
  */
 
 import type { TemplateFile } from "./types.ts";
-import manifest from "./manifest.json" with { type: "json" };
+import { COMPRESSED_TEMPLATE_MANIFEST_BASE64 } from "./manifest.generated.ts";
 
 interface TemplateManifest {
   version: number;
   templates: Record<string, { files: Record<string, string> }>;
 }
 
-const typedManifest = manifest as TemplateManifest;
+let manifestPromise: Promise<TemplateManifest> | undefined;
+
+function decodeBase64(value: string): ArrayBuffer {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes.buffer;
+}
+
+async function decompressManifest(): Promise<TemplateManifest> {
+  const bytes = decodeBase64(COMPRESSED_TEMPLATE_MANIFEST_BASE64);
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return JSON.parse(await new Response(stream).text()) as TemplateManifest;
+}
+
+function getManifest(): Promise<TemplateManifest> {
+  return manifestPromise ??= decompressManifest();
+}
 
 function getSortedFiles(entry: { files: Record<string, string> }): TemplateFile[] {
   return Object.entries(entry.files)
@@ -22,17 +41,17 @@ function getSortedFiles(entry: { files: Record<string, string> }): TemplateFile[
     .sort((a, b) => a.path.localeCompare(b.path));
 }
 
-export function loadTemplateFromDirectory(
+export async function loadTemplateFromDirectory(
   templateName: string,
 ): Promise<TemplateFile[]> {
-  const entry = typedManifest.templates[templateName];
-  if (!entry) return Promise.resolve([]);
+  const entry = (await getManifest()).templates[templateName];
+  if (!entry) return [];
 
-  return Promise.resolve(getSortedFiles(entry));
+  return getSortedFiles(entry);
 }
 
-export function loadAiRuleTemplate(templateName: string): string | null {
-  const entry = typedManifest.templates[`ai-rules:${templateName}`];
+export async function loadAiRuleTemplate(templateName: string): Promise<string | null> {
+  const entry = (await getManifest()).templates[`ai-rules:${templateName}`];
   if (!entry) return null;
 
   return entry.files[templateName] ?? null;
@@ -43,29 +62,29 @@ export function getTemplateDirectory(templateName: string): string {
   return `manifest://${templateName}`;
 }
 
-export function templateDirectoryExists(
+export async function templateDirectoryExists(
   templateName: string,
 ): Promise<boolean> {
-  return Promise.resolve(templateName in typedManifest.templates);
+  return templateName in (await getManifest()).templates;
 }
 
-export function getIntegrationTemplate(
+export async function getIntegrationTemplate(
   integrationName: string,
-): TemplateFile[] | null {
-  const entry = typedManifest.templates[`integration:${integrationName}`];
+): Promise<TemplateFile[] | null> {
+  const entry = (await getManifest()).templates[`integration:${integrationName}`];
   if (!entry) return null;
 
   return getSortedFiles(entry);
 }
 
-export function listTemplates(): string[] {
-  return Object.keys(typedManifest.templates).filter(
+export async function listTemplates(): Promise<string[]> {
+  return Object.keys((await getManifest()).templates).filter(
     (name) => !name.startsWith("integration:"),
   );
 }
 
-export function listIntegrations(): string[] {
-  return Object.keys(typedManifest.templates)
+export async function listIntegrations(): Promise<string[]> {
+  return Object.keys((await getManifest()).templates)
     .filter((name) => name.startsWith("integration:"))
     .map((name) => name.replace("integration:", ""));
 }

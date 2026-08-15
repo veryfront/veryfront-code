@@ -7,12 +7,15 @@ import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts
 import { defineSchema } from "veryfront/schemas";
 import {
   type ArgSpec,
+  BOOLEAN_FLAGS,
   CommonArgs,
   createArgParser,
   extractArg,
   extractArgs,
+  GLOBAL_BOOLEAN_FLAGS,
   parseCliArgs,
 } from "./args.ts";
+import { COMMANDS } from "../help/command-definitions.ts";
 import type { ParsedArgs } from "./types.ts";
 
 if (!tryResolve<SchemaValidator>("SchemaValidator")) {
@@ -317,6 +320,60 @@ describe("cli/shared/args", () => {
       const args = parseCliArgs(["test", "--", "--filter", "literal"]);
       assertEquals(args._, ["test", "--filter", "literal"]);
       assertEquals(args.filter, undefined);
+    });
+  });
+
+  describe("BOOLEAN_FLAGS coverage", () => {
+    // A documented boolean absent from BOOLEAN_FLAGS is parsed as value-taking
+    // whenever the command word cannot resolve its arity — an unknown command,
+    // or a flag written before the command word. It then swallows the following
+    // positional out of `args._`, silently. These two tests are the guard.
+    function collectDocumentedOptionNames(): {
+      booleans: Map<string, string[]>;
+      valueTaking: Map<string, string[]>;
+    } {
+      const booleans = new Map<string, string[]>();
+      const valueTaking = new Map<string, string[]>();
+      for (const [command, definition] of Object.entries(COMMANDS)) {
+        for (const option of definition.options ?? []) {
+          const target = option.flag.includes("<") ? valueTaking : booleans;
+          for (const flag of option.flag.match(/--[a-z0-9-]+/gi) ?? []) {
+            const name = flag.replace(/^-+/, "");
+            target.set(name, [...(target.get(name) ?? []), command]);
+          }
+        }
+      }
+      return { booleans, valueTaking };
+    }
+
+    it("should list every documented boolean option", () => {
+      const { booleans } = collectDocumentedOptionNames();
+      const missing = [...booleans]
+        .filter(([name]) => !BOOLEAN_FLAGS.has(name) && !GLOBAL_BOOLEAN_FLAGS.has(name))
+        .map(([name, commands]) => `--${name} (${commands.join(", ")})`)
+        .sort();
+      assertEquals(missing, []);
+    });
+
+    it("should have no option documented as both boolean and value-taking", () => {
+      const { booleans, valueTaking } = collectDocumentedOptionNames();
+      const ambiguous = [...booleans.keys()].filter((name) => valueTaking.has(name)).sort();
+      assertEquals(ambiguous, []);
+    });
+
+    it("should not swallow a positional after a documented boolean of an unknown command", () => {
+      // `positionalArgs[0]` is not a known command, so arity falls back to BOOLEAN_FLAGS.
+      assertEquals(parseCliArgs(["veryfront", "pull", "--prune", "my-app"])._, [
+        "veryfront",
+        "pull",
+        "my-app",
+      ]);
+      assertEquals(parseCliArgs(["veryfront", "open", "--site", "my-app"])._, [
+        "veryfront",
+        "open",
+        "my-app",
+      ]);
+      assertEquals(parseCliArgs(["veryfront", "login", "--token"])._, ["veryfront", "login"]);
     });
   });
 });

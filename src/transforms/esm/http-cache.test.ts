@@ -36,6 +36,7 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
 import { HTTP_MODULE_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { MODULE_LOAD_TIMEOUT_MS } from "#veryfront/rendering/orchestrator/module-collection.ts";
 import { isTenantSourceBuildError } from "#veryfront/errors/tenant-classification.ts";
 import { FakeTime } from "#std/testing/time";
@@ -1361,6 +1362,27 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(fetchCount, 3);
       assertInstanceOf(error, Error);
       assert(!error.message.includes("super-secret"));
+    });
+  });
+
+  it("labels exhausted AbortError retries as HTTP module fetch failures", async () => {
+    let fetchCount = 0;
+    const mockFetch = (() => {
+      fetchCount += 1;
+      return Promise.reject(new DOMException("request aborted", "AbortError"));
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-abort-failure-", mockFetch, async (tempDir) => {
+      const error = await assertRejects(
+        () => cacheModuleToLocal("https://esm.sh/aborted-package", tempDir),
+        VeryfrontError,
+        "Failed to fetch https://esm.sh/aborted-package: AbortError",
+      );
+
+      assertEquals(fetchCount, 3);
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "build-failed");
+      assertEquals(error.context, { phase: "http-module-fetch" });
     });
   });
 

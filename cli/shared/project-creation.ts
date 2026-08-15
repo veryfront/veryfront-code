@@ -238,7 +238,7 @@ async function loadTemplateFiles(
     });
   }
 
-  const agentsGuide = getAiRuleTemplate("agents.md");
+  const agentsGuide = await getAiRuleTemplate("agents.md");
   if (!agentsGuide) throw createConfigError("Project agent guide template not found");
 
   if (!files.some((file) => file.path === "AGENTS.md")) {

@@ -489,6 +489,72 @@ describe("cli/router helpers", () => {
       }
     });
 
+    const DUPLICATED_BINARY_MESSAGE =
+      '  You already included "veryfront". Remove the extra "veryfront" argument and run the command again.';
+
+    it("a duplicated binary name explains how to remove it", async () => {
+      stubExit();
+      stubLogger();
+      stubConsole();
+      try {
+        const code = await runAndCaptureExit({ _: ["veryfront", "dev"] } as ParsedArgs);
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [DUPLICATED_BINARY_MESSAGE]);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("a duplicated binary name is explained rather than shadowed by --help", async () => {
+      stubExit();
+      stubLogger();
+      stubConsole();
+      try {
+        const code = await runAndCaptureExit(
+          { _: ["veryfront", "login"], help: true } as ParsedArgs,
+        );
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [DUPLICATED_BINARY_MESSAGE]);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("a duplicated binary name followed by an unknown command falls through", async () => {
+      stubExit();
+      stubLogger();
+      stubConsole();
+      try {
+        const code = await runAndCaptureExit({ _: ["veryfront", "nosuch"] } as ParsedArgs);
+        assertEquals(code, 2);
+        assertEquals(infoMessages.includes(DUPLICATED_BINARY_MESSAGE), false);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("a duplicated binary name with --json suggests the intended command", async () => {
+      stubExit();
+      stubConsole();
+      setJsonMode(true);
+      try {
+        const code = await runAndCaptureExit(
+          { _: ["veryfront", "login"], json: true } as ParsedArgs,
+        );
+        assertEquals(code, 2);
+        assertEquals(consoleOutput.length, 1);
+        const parsed = JSON.parse(consoleOutput[0]!);
+        assertEquals(parsed.success, false);
+        assertEquals(parsed.command, "veryfront");
+        assertEquals(parsed.error.code, "USAGE_ERROR");
+        assertEquals(parsed.error.slug, "unknown-command");
+        assertEquals(parsed.error.message, "Unknown command: veryfront");
+        assertEquals(parsed.error.context.suggestions, ["login"]);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("command validation failure with --json outputs a JSON error envelope", async () => {
       stubExit();
       stubConsole();

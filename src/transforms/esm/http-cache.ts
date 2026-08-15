@@ -181,6 +181,16 @@ interface HttpModuleFetchResult {
   contentType: string;
 }
 
+function terminalHttpModuleFetchError(
+  detail: string,
+  context: { httpStatus?: number } = {},
+): VeryfrontError {
+  return BUILD_FAILED.create({
+    detail,
+    context: { phase: "http-module-fetch", ...context },
+  });
+}
+
 class HttpModuleResponseError extends Error {
   constructor(readonly status: number) {
     super(`HTTP module response returned status ${status}`);
@@ -309,20 +319,18 @@ async function fetchHttpModule(
     );
   } catch (error) {
     if (error instanceof HttpModuleResponseError) {
-      throw BUILD_FAILED.create({
-        detail: `Failed to fetch ${safeUrl}: ${error.status}`,
-        context: { httpStatus: error.status },
-      });
+      throw terminalHttpModuleFetchError(
+        `Failed to fetch ${safeUrl}: ${error.status}`,
+        { httpStatus: error.status },
+      );
     }
     if (error instanceof HttpModuleRequestError) {
-      throw BUILD_FAILED.create({
-        detail: `Failed to fetch ${safeUrl}: ${error.requestErrorType}`,
-      });
+      throw terminalHttpModuleFetchError(
+        `Failed to fetch ${safeUrl}: ${error.requestErrorType}`,
+      );
     }
     if (error instanceof HttpModuleBodyError) {
-      throw BUILD_FAILED.create({
-        detail: `Failed to fetch ${safeUrl}: ${error.message}`,
-      });
+      throw terminalHttpModuleFetchError(`Failed to fetch ${safeUrl}: ${error.message}`);
     }
     if (error instanceof OutboundRequestBlockedError) {
       // Preserve the policy-denial type so downstream specifier resolution can

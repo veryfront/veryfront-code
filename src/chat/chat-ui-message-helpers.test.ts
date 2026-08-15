@@ -243,6 +243,104 @@ describe("chat/chat-ui-message-helpers", () => {
     ]);
   });
 
+  it("starts a replacement segment when replayed text diverges", async () => {
+    const result = await collect(dedupeChatUiMessageChunks(toStream([
+      { type: "text-start", id: "msg-1" },
+      { type: "text-delta", id: "msg-1", delta: "Created the assistant." },
+      { type: "text-start", id: "msg-1" },
+      { type: "text-delta", id: "msg-1", delta: "Created the " },
+      { type: "text-delta", id: "msg-1", delta: "workflow." },
+      { type: "text-end", id: "msg-1" },
+    ])));
+
+    assertEquals(result, [
+      { type: "text-start", id: "msg-1" },
+      { type: "text-delta", id: "msg-1", delta: "Created the assistant." },
+      { type: "text-end", id: "msg-1" },
+      { type: "text-start", id: "msg-1:replacement:1" },
+      { type: "text-delta", id: "msg-1:replacement:1", delta: "Created the workflow." },
+      { type: "text-end", id: "msg-1:replacement:1" },
+    ]);
+  });
+
+  it("keeps content-addressed replacement chunks on one block identity", async () => {
+    const result = await collect(dedupeChatUiMessageChunks(toStream([
+      { type: "text-start", id: "msg-1", contentId: "text-0" },
+      {
+        type: "text-delta",
+        id: "msg-1",
+        contentId: "text-0",
+        delta: "Created the assistant.",
+      },
+      { type: "text-start", id: "msg-1", contentId: "text-0" },
+      { type: "text-delta", id: "msg-1", contentId: "text-0", delta: "Created the " },
+      { type: "text-delta", id: "msg-1", contentId: "text-0", delta: "workflow." },
+      { type: "text-end", id: "msg-1", contentId: "text-0" },
+    ])));
+
+    assertEquals(result, [
+      { type: "text-start", id: "msg-1", contentId: "text-0" },
+      {
+        type: "text-delta",
+        id: "msg-1",
+        contentId: "text-0",
+        delta: "Created the assistant.",
+      },
+      { type: "text-end", id: "msg-1", contentId: "text-0" },
+      { type: "text-start", id: "msg-1", contentId: "text-0:replacement:1" },
+      {
+        type: "text-delta",
+        id: "msg-1",
+        contentId: "text-0:replacement:1",
+        delta: "Created the workflow.",
+      },
+      { type: "text-end", id: "msg-1", contentId: "text-0:replacement:1" },
+    ]);
+  });
+
+  it("starts a complete replacement after a closed segment is extended", async () => {
+    const result = await collect(dedupeChatUiMessageChunks(toStream([
+      { type: "text-start", id: "msg-1" },
+      { type: "text-delta", id: "msg-1", delta: "Created the assistant." },
+      { type: "text-end", id: "msg-1" },
+      { type: "text-start", id: "msg-1" },
+      { type: "text-delta", id: "msg-1", delta: "Created the assistant. It is ready." },
+      { type: "text-end", id: "msg-1" },
+    ])));
+
+    assertEquals(result, [
+      { type: "text-start", id: "msg-1" },
+      { type: "text-delta", id: "msg-1", delta: "Created the assistant." },
+      { type: "text-end", id: "msg-1" },
+      { type: "text-start", id: "msg-1:replacement:1" },
+      {
+        type: "text-delta",
+        id: "msg-1:replacement:1",
+        delta: "Created the assistant. It is ready.",
+      },
+      { type: "text-end", id: "msg-1:replacement:1" },
+    ]);
+  });
+
+  it("preserves reasoning end metadata on a divergent replacement", async () => {
+    const result = await collect(dedupeChatUiMessageChunks(toStream([
+      { type: "reasoning-start", id: "reasoning-1" },
+      { type: "reasoning-delta", id: "reasoning-1", delta: "Plan A" },
+      { type: "reasoning-start", id: "reasoning-1" },
+      { type: "reasoning-delta", id: "reasoning-1", delta: "Plan B" },
+      { type: "reasoning-end", id: "reasoning-1", signature: "signed" },
+    ])));
+
+    assertEquals(result, [
+      { type: "reasoning-start", id: "reasoning-1" },
+      { type: "reasoning-delta", id: "reasoning-1", delta: "Plan A" },
+      { type: "reasoning-end", id: "reasoning-1" },
+      { type: "reasoning-start", id: "reasoning-1:replacement:1" },
+      { type: "reasoning-delta", id: "reasoning-1:replacement:1", delta: "Plan B" },
+      { type: "reasoning-end", id: "reasoning-1:replacement:1", signature: "signed" },
+    ]);
+  });
+
   it("normalizes a hosted UI stream with metadata and replay dedupe", async () => {
     const result = await collect(normalizeChatUiMessageStream(toStream([
       { type: "start", messageId: "msg-1", messageMetadata: { agentId: "agent-1" } },

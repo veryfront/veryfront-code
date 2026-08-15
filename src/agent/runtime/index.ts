@@ -47,8 +47,10 @@ import {
 } from "./mcp-server-tool-sources.ts";
 import { runWithRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
 import {
+  announceStreamedToolCallInput,
   createStreamState,
   processStream,
+  type StreamingToolCall,
   type StreamingToolResult,
 } from "./chat-stream-handler.ts";
 import { repairToolCall } from "./repair-tool-call.ts";
@@ -68,6 +70,8 @@ import {
   createToolResultMessage,
   getProviderExecutedToolNames,
   getToolResultError,
+  hasSubstantiveAssistantText,
+  isInterruptedClientToolCall,
   isRecoverablePlaceholderToolCall,
   isStreamedToolCallIncomplete,
   materializeStreamedToolCall,
@@ -101,8 +105,12 @@ import {
   prepareAgentRuntimeStep,
   withIntegrationToolDiscoveryStatus,
 } from "./agent-runtime-step.ts";
-import { buildStreamedAssistantMessage } from "./streamed-assistant-message.ts";
 import {
+  buildStreamedAssistantMessage,
+  isPersistedReasoningPart,
+} from "./streamed-assistant-message.ts";
+import {
+  type DeferredToolSummary,
   flattenSystemInstructions,
   hasRuntimeToolInventory,
   withRuntimeToolInventory,
@@ -216,6 +224,7 @@ import { buildRuntimeUsageTraceAttributes } from "./trace-usage.ts";
 import {
   createToolExposureCheckpoint,
   createToolExposureState,
+  createToolSearchDefinition,
   searchToolExposure,
   TOOL_SEARCH_TOOL_NAME,
   type ToolExposureCheckpoint,
@@ -226,6 +235,119 @@ import {
 
 const logger = serverLogger.component("agent");
 const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = ["load_skill", "load_skill_reference"] as const;
+
+type DeferredRecoveryOutput =
+  | { kind: "sse"; chunk: Uint8Array; isTextEvent: boolean }
+  | { kind: "callback"; chunk: string };
+
+function isTextSseChunk(chunk: Uint8Array): boolean {
+  const payload = new TextDecoder().decode(chunk);
+  if (!payload.startsWith("data: ")) {
+    return false;
+  }
+
+  try {
+    const event = JSON.parse(payload.slice("data: ".length)) as { type?: unknown };
+    return event.type === "text-start" || event.type === "text-delta" ||
+      event.type === "text-end";
+  } catch {
+    return false;
+  }
+}
+
+function isTextEndSseChunk(chunk: Uint8Array): boolean {
+  const payload = new TextDecoder().decode(chunk);
+  if (!payload.startsWith("data: ")) {
+    return false;
+  }
+
+  try {
+    const event = JSON.parse(payload.slice("data: ".length)) as { type?: unknown };
+    return event.type === "text-end";
+  } catch {
+    return false;
+  }
+}
+
+function textDeltaFromSseChunk(chunk: Uint8Array): string | undefined {
+  const payload = new TextDecoder().decode(chunk);
+  if (!payload.startsWith("data: ")) {
+    return undefined;
+  }
+
+  try {
+    const event = JSON.parse(payload.slice("data: ".length)) as Record<string, unknown>;
+    return event.type === "text-delta" && typeof event.delta === "string" ? event.delta : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function stripLeadingText(
+  text: string,
+  remainingPrefixLength: number,
+): { text: string; remainingPrefixLength: number } {
+  const consumedLength = Math.min(text.length, remainingPrefixLength);
+  return {
+    text: text.slice(consumedLength),
+    remainingPrefixLength: remainingPrefixLength - consumedLength,
+  };
+}
+
+function stripTextDeltaPrefixFromSseChunk(
+  chunk: Uint8Array,
+  remainingPrefixLength: number,
+  encoder: TextEncoder,
+): { chunk: Uint8Array | undefined; remainingPrefixLength: number } {
+  const payload = new TextDecoder().decode(chunk);
+  if (!payload.startsWith("data: ")) {
+    return { chunk, remainingPrefixLength };
+  }
+
+  try {
+    const event = JSON.parse(payload.slice("data: ".length)) as Record<string, unknown>;
+    if (event.type !== "text-delta" || typeof event.delta !== "string") {
+      return { chunk, remainingPrefixLength };
+    }
+    const stripped = stripLeadingText(event.delta, remainingPrefixLength);
+    if (stripped.text.length === 0) {
+      return { chunk: undefined, remainingPrefixLength: stripped.remainingPrefixLength };
+    }
+    return {
+      chunk: encoder.encode(`data: ${JSON.stringify({ ...event, delta: stripped.text })}\n\n`),
+      remainingPrefixLength: stripped.remainingPrefixLength,
+    };
+  } catch {
+    return { chunk, remainingPrefixLength };
+  }
+}
+
+function rewriteRecoveryTextSseChunkId(
+  chunk: Uint8Array,
+  fallbackId: string,
+  encoder: TextEncoder,
+): Uint8Array {
+  const payload = new TextDecoder().decode(chunk);
+  if (!payload.startsWith("data: ")) {
+    return chunk;
+  }
+
+  try {
+    const event = JSON.parse(payload.slice("data: ".length)) as Record<string, unknown>;
+    if (
+      event.type !== "text-start" && event.type !== "text-delta" &&
+      event.type !== "text-end"
+    ) {
+      return chunk;
+    }
+    const id = typeof event.id === "string" && event.id.length > 0
+      ? `${event.id}:recovery`
+      : fallbackId;
+    return encoder.encode(`data: ${JSON.stringify({ ...event, id })}\n\n`);
+  } catch {
+    return chunk;
+  }
+}
 
 function buildGeneratedAssistantMessage(
   response: RuntimeGenerateTextResult,
@@ -386,12 +508,43 @@ function shouldHideProjectToolAfterAgentWriteSuccess(toolName: string): boolean 
   return AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES.has(toolName);
 }
 
-function applyAgentWriteFinalResponseGuard(plan: ToolExposurePlan): ToolExposurePlan {
+function didReloadProjectAgentWriteTool(result: ToolSearchResult): boolean {
+  return result.matches.some((match) =>
+    match.status === "loaded" && shouldHideProjectToolAfterAgentWriteSuccess(match.name)
+  );
+}
+
+function compareToolNames(left: { name: string }, right: { name: string }): number {
+  return left.name < right.name ? -1 : left.name > right.name ? 1 : 0;
+}
+
+function applyAgentWriteFinalResponseGuard(
+  plan: ToolExposurePlan,
+  options: { reloadable: boolean },
+): ToolExposurePlan {
   const keep = (tool: { name: string }) => !shouldHideProjectToolAfterAgentWriteSuccess(tool.name);
   for (const toolName of plan.loadedToolNames) {
     if (shouldHideProjectToolAfterAgentWriteSuccess(toolName)) {
       plan.loadedToolNames.delete(toolName);
     }
+  }
+  if (options.reloadable) {
+    const guardedTools = plan.authorized.filter((tool) => !keep(tool));
+    const visible = plan.visible.filter(keep);
+    const deferredByName = new Map(
+      [...plan.deferred, ...guardedTools].map((tool) => [tool.name, tool]),
+    );
+    if (
+      guardedTools.length > 0 &&
+      !visible.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME)
+    ) {
+      visible.push(createToolSearchDefinition());
+    }
+    return {
+      ...plan,
+      visible: visible.sort(compareToolNames),
+      deferred: [...deferredByName.values()].sort(compareToolNames),
+    };
   }
   return {
     ...plan,
@@ -404,12 +557,17 @@ function applyAgentWriteFinalResponseGuard(plan: ToolExposurePlan): ToolExposure
 function synchronizeRuntimeToolInventory(
   systemPrompt: string,
   runtimeTools: Record<string, unknown> | undefined,
+  deferredTools: readonly DeferredToolSummary[] = [],
 ): string {
   if (!hasRuntimeToolInventory(systemPrompt)) {
     return systemPrompt;
   }
   return flattenSystemInstructions(
-    withRuntimeToolInventory(systemPrompt, Object.keys(runtimeTools ?? {}).sort()),
+    withRuntimeToolInventory(
+      systemPrompt,
+      Object.keys(runtimeTools ?? {}).sort(),
+      deferredTools,
+    ),
   );
 }
 
@@ -1104,6 +1262,7 @@ export class AgentRuntime {
           sandbox: undefined,
         }
         : runConfig;
+      const runtimeStepToolLoading = resolveRuntimeToolLoading(runtimeStepConfig);
       const allowedRemoteToolNames = hasToolReplacements
         ? undefined
         : getRuntimeAllowedRemoteTools(this.config);
@@ -1143,7 +1302,8 @@ export class AgentRuntime {
           allowedRemoteToolNames,
           config: runtimeStepConfig,
           effectiveModel,
-          excludedToolNames: agentWriteFinalResponseToolGuardEnabled
+          excludedToolNames: agentWriteFinalResponseToolGuardEnabled &&
+              runtimeStepToolLoading.mode === "eager"
             ? AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES
             : undefined,
           forwardedRemoteToolDefinitions,
@@ -1170,11 +1330,13 @@ export class AgentRuntime {
         currentRuntimeContext = preparedStep.runtimeContext;
         const toolContext = preparedStep.toolContext;
         const effectiveToolExposurePlan = agentWriteFinalResponseToolGuardEnabled
-          ? applyAgentWriteFinalResponseGuard(preparedStep.toolExposurePlan)
+          ? applyAgentWriteFinalResponseGuard(preparedStep.toolExposurePlan, {
+            reloadable: runtimeStepToolLoading.mode === "deferred",
+          })
           : preparedStep.toolExposurePlan;
         const tools = effectiveToolExposurePlan.visible;
         setSpanAttributes(loopSpan, {
-          "tool.loading.mode": resolveRuntimeToolLoading(runtimeStepConfig).mode,
+          "tool.loading.mode": runtimeStepToolLoading.mode,
           "tool.loading.provenance": toolLoadingResolution.provenance,
           "tool.catalog.authorized_count": preparedStep.toolExposurePlan.authorized.length,
           "tool.catalog.visible_count": tools.length,
@@ -1195,7 +1357,15 @@ export class AgentRuntime {
           providerTools: stepProviderTools,
         });
         currentSystemPrompt = withIntegrationToolDiscoveryStatus(
-          synchronizeRuntimeToolInventory(currentSystemPrompt, runtimeTools),
+          synchronizeRuntimeToolInventory(
+            currentSystemPrompt,
+            runtimeTools,
+            agentWriteFinalResponseToolGuardEnabled
+              ? effectiveToolExposurePlan.deferred.filter((tool) =>
+                shouldHideProjectToolAfterAgentWriteSuccess(tool.name)
+              )
+              : [],
+          ),
           preparedStep.integrationToolDiscovery,
         );
         const response = await withSpan("agent.generate_text", async (span) => {
@@ -1404,6 +1574,9 @@ export class AgentRuntime {
                   plan: effectiveToolExposurePlan,
                   state: toolExposureState,
                 });
+                if (didReloadProjectAgentWriteTool(search.result)) {
+                  agentWriteFinalResponseToolGuardEnabled = false;
+                }
                 toolCall.status = "completed";
                 toolCall.result = search.result;
                 setSpanAttributes(toolSpan, {
@@ -1741,6 +1914,11 @@ export class AgentRuntime {
     let currentSystemPrompt = systemPrompt;
     let currentRuntimeContext = runtimeContext;
     let agentWriteFinalResponseToolGuardEnabled = false;
+    // One retry gives the model a chance to reconstruct a transport-truncated
+    // batch without allowing a repeatedly broken provider stream to loop.
+    let recoveredInterruptedLocalToolBatch = false;
+    let interruptedLocalToolBatchRecoveryStep: number | undefined;
+    let interruptedLocalToolBatchRecoveryText: string | undefined;
 
     for (let step = 0; step < maxSteps; step++) {
       throwIfAborted(abortSignal);
@@ -1757,7 +1935,8 @@ export class AgentRuntime {
         allowedRemoteToolNames,
         config: runtimeStepConfig,
         effectiveModel,
-        excludedToolNames: agentWriteFinalResponseToolGuardEnabled
+        excludedToolNames: agentWriteFinalResponseToolGuardEnabled &&
+            toolLoadingResolution.mode === "eager"
           ? AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES
           : undefined,
         forwardedRemoteToolDefinitions,
@@ -1782,7 +1961,9 @@ export class AgentRuntime {
       currentRuntimeContext = preparedStep.runtimeContext;
       const toolContext = preparedStep.toolContext;
       const effectiveToolExposurePlan = agentWriteFinalResponseToolGuardEnabled
-        ? applyAgentWriteFinalResponseGuard(preparedStep.toolExposurePlan)
+        ? applyAgentWriteFinalResponseGuard(preparedStep.toolExposurePlan, {
+          reloadable: toolLoadingResolution.mode === "deferred",
+        })
         : preparedStep.toolExposurePlan;
       const tools = effectiveToolExposurePlan.visible;
       setOtelActiveSpanAttributes({
@@ -1803,7 +1984,15 @@ export class AgentRuntime {
         providerTools: stepProviderTools,
       });
       currentSystemPrompt = withIntegrationToolDiscoveryStatus(
-        synchronizeRuntimeToolInventory(currentSystemPrompt, runtimeTools),
+        synchronizeRuntimeToolInventory(
+          currentSystemPrompt,
+          runtimeTools,
+          agentWriteFinalResponseToolGuardEnabled
+            ? effectiveToolExposurePlan.deferred.filter((tool) =>
+              shouldHideProjectToolAfterAgentWriteSuccess(tool.name)
+            )
+            : [],
+        ),
         preparedStep.integrationToolDiscovery,
       );
       const runtimeToolNames = Object.keys(runtimeTools ?? {}).sort();
@@ -1841,11 +2030,194 @@ export class AgentRuntime {
       );
 
       const state = createStreamState();
+      // Hold a possible replay only while it remains a prefix of the text the
+      // client already received. Once it diverges, resume live delivery.
+      const deferInterruptedRecoveryOutput = step === interruptedLocalToolBatchRecoveryStep &&
+        interruptedLocalToolBatchRecoveryText !== undefined;
+      const deferredRecoveryOutput: DeferredRecoveryOutput[] | undefined =
+        deferInterruptedRecoveryOutput ? [] : undefined;
+      const previousRecoveryText = interruptedLocalToolBatchRecoveryText ?? "";
+      let deferredRecoverySseText = "";
+      let deferredRecoveryCallbackText = "";
+      let releasedDeferredRecoveryOutput = false;
+      let releasedRecoveryReplacementTextPartId: string | undefined;
+      let suppressedRecoveryReplayTextLength = 0;
       const stepTextPartId = textPartId === undefined || step === 0
         ? textPartId
         : `${textPartId}:step:${step}`;
-      await processStream(streamSource, state, controller, encoder, stepTextPartId, {
-        onChunk: callbacks?.onChunk,
+      const replacementRecoveryTextPartId = stepTextPartId === undefined
+        ? `recovery:step:${step}`
+        : `${stepTextPartId}:recovery`;
+      const remainingRecoveryReplayText = () =>
+        previousRecoveryText.slice(suppressedRecoveryReplayTextLength);
+      const flushDeferredRecoveryOutput = (
+        interruptedRecoveryPrefixLength: number,
+        repeatsInterruptedRecoveryText: boolean,
+        useReplacementTextPartId: boolean,
+      ): void => {
+        if (deferredRecoveryOutput === undefined) return;
+
+        let remainingSsePrefixLength = interruptedRecoveryPrefixLength;
+        let remainingCallbackPrefixLength = interruptedRecoveryPrefixLength;
+        for (const output of deferredRecoveryOutput) {
+          if (
+            repeatsInterruptedRecoveryText &&
+            (output.kind === "callback" || output.isTextEvent)
+          ) {
+            continue;
+          }
+          if (output.kind === "callback") {
+            const stripped = stripLeadingText(output.chunk, remainingCallbackPrefixLength);
+            remainingCallbackPrefixLength = stripped.remainingPrefixLength;
+            if (stripped.text.length > 0) {
+              callbacks?.onChunk?.(stripped.text);
+            }
+          } else {
+            const textChunk = useReplacementTextPartId && output.isTextEvent
+              ? rewriteRecoveryTextSseChunkId(
+                output.chunk,
+                replacementRecoveryTextPartId,
+                encoder,
+              )
+              : output.chunk;
+            const stripped = output.isTextEvent
+              ? stripTextDeltaPrefixFromSseChunk(
+                textChunk,
+                remainingSsePrefixLength,
+                encoder,
+              )
+              : { chunk: textChunk, remainingPrefixLength: remainingSsePrefixLength };
+            remainingSsePrefixLength = stripped.remainingPrefixLength;
+            if (stripped.chunk !== undefined) {
+              controller.enqueue(stripped.chunk);
+            }
+          }
+        }
+        deferredRecoveryOutput.length = 0;
+      };
+      const releaseDeferredRecoveryOutputAfterDivergence = (): void => {
+        if (deferredRecoveryOutput === undefined || releasedDeferredRecoveryOutput) return;
+
+        const expectedReplayText = remainingRecoveryReplayText();
+        const sseDiverged = !expectedReplayText.startsWith(deferredRecoverySseText);
+        const callbackDiverged = callbacks?.onChunk === undefined ||
+          !expectedReplayText.startsWith(deferredRecoveryCallbackText);
+        if (!sseDiverged || !callbackDiverged) return;
+
+        const observedRecoveryText = callbacks?.onChunk === undefined
+          ? deferredRecoverySseText
+          : deferredRecoveryCallbackText;
+        const extendsPreviousRecoveryText = observedRecoveryText.startsWith(expectedReplayText);
+        flushDeferredRecoveryOutput(
+          extendsPreviousRecoveryText ? expectedReplayText.length : 0,
+          false,
+          !extendsPreviousRecoveryText && suppressedRecoveryReplayTextLength === 0,
+        );
+        if (extendsPreviousRecoveryText && suppressedRecoveryReplayTextLength > 0) {
+          suppressedRecoveryReplayTextLength += expectedReplayText.length;
+        }
+        if (!extendsPreviousRecoveryText && suppressedRecoveryReplayTextLength === 0) {
+          releasedRecoveryReplacementTextPartId = replacementRecoveryTextPartId;
+        }
+        releasedDeferredRecoveryOutput = true;
+      };
+      const releaseDeferredRecoveryOutputAfterExactReplay = (
+        isTextEvent: boolean,
+      ): void => {
+        if (
+          isTextEvent || deferredRecoveryOutput === undefined || releasedDeferredRecoveryOutput ||
+          deferredRecoverySseText !== remainingRecoveryReplayText() ||
+          (callbacks?.onChunk !== undefined &&
+            deferredRecoveryCallbackText !== remainingRecoveryReplayText())
+        ) {
+          return;
+        }
+
+        flushDeferredRecoveryOutput(remainingRecoveryReplayText().length, false, false);
+        releasedDeferredRecoveryOutput = true;
+      };
+      const releaseDeferredRecoveryNonTextOutput = (
+        isTextEvent: boolean,
+      ): void => {
+        if (
+          isTextEvent || deferredRecoveryOutput === undefined || releasedDeferredRecoveryOutput
+        ) {
+          return;
+        }
+
+        const retainedOutput = deferredRecoveryOutput.filter((output) =>
+          output.kind === "callback" || output.isTextEvent
+        );
+        for (const output of deferredRecoveryOutput) {
+          if (output.kind === "sse" && !output.isTextEvent) {
+            controller.enqueue(output.chunk);
+          }
+        }
+        deferredRecoveryOutput.length = 0;
+        deferredRecoveryOutput.push(...retainedOutput);
+      };
+      const reconcileDeferredRecoveryTextSegment = (
+        isTextEndEvent: boolean,
+      ): void => {
+        if (
+          !isTextEndEvent || deferredRecoveryOutput === undefined ||
+          releasedDeferredRecoveryOutput ||
+          !remainingRecoveryReplayText().startsWith(deferredRecoverySseText) ||
+          (callbacks?.onChunk !== undefined &&
+            !remainingRecoveryReplayText().startsWith(deferredRecoveryCallbackText))
+        ) {
+          return;
+        }
+
+        // A tool or reasoning event closes the current text segment. If that
+        // segment only replayed a prefix the client already received, discard
+        // it now and treat later text as a distinct segment. Otherwise retained
+        // prefix events could be released after the boundary when later text
+        // diverges, duplicating and reordering the replay.
+        suppressedRecoveryReplayTextLength += deferredRecoverySseText.length;
+        deferredRecoveryOutput.length = 0;
+        deferredRecoverySseText = "";
+        deferredRecoveryCallbackText = "";
+      };
+      const stepController = deferredRecoveryOutput === undefined ? controller : {
+        enqueue(chunk: Uint8Array) {
+          if (releasedDeferredRecoveryOutput) {
+            controller.enqueue(
+              releasedRecoveryReplacementTextPartId !== undefined
+                ? rewriteRecoveryTextSseChunkId(
+                  chunk,
+                  releasedRecoveryReplacementTextPartId,
+                  encoder,
+                )
+                : chunk,
+            );
+            return;
+          }
+          deferredRecoverySseText += textDeltaFromSseChunk(chunk) ?? "";
+          const isTextEvent = isTextSseChunk(chunk);
+          deferredRecoveryOutput.push({
+            kind: "sse",
+            chunk,
+            isTextEvent,
+          });
+          releaseDeferredRecoveryOutputAfterDivergence();
+          releaseDeferredRecoveryOutputAfterExactReplay(isTextEvent);
+          releaseDeferredRecoveryNonTextOutput(isTextEvent);
+          reconcileDeferredRecoveryTextSegment(isTextEndSseChunk(chunk));
+        },
+      } as ReadableStreamDefaultController;
+      await processStream(streamSource, state, stepController, encoder, stepTextPartId, {
+        onChunk: deferredRecoveryOutput === undefined ? callbacks?.onChunk : (chunk) => {
+          if (releasedDeferredRecoveryOutput) {
+            callbacks?.onChunk?.(chunk);
+            return;
+          }
+          deferredRecoveryCallbackText += chunk;
+          if (callbacks?.onChunk !== undefined) {
+            deferredRecoveryOutput.push({ kind: "callback", chunk });
+          }
+          releaseDeferredRecoveryOutputAfterDivergence();
+        },
         onUsage: (usage) => accumulateUsage(totalUsage, usage),
         providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
         availableToolNames: runtimeToolNames,
@@ -1861,11 +2233,77 @@ export class AgentRuntime {
         },
       }, abortSignal);
       throwIfAborted(abortSignal);
+      const interruptedRecoveryPrefixLength = deferredRecoveryOutput === undefined
+        ? 0
+        : state.accumulatedText.startsWith(previousRecoveryText)
+        ? previousRecoveryText.length
+        : previousRecoveryText.startsWith(state.accumulatedText)
+        ? state.accumulatedText.length
+        : 0;
+      const recoveryPresentationPrefixLength = suppressedRecoveryReplayTextLength > 0
+        ? suppressedRecoveryReplayTextLength
+        : interruptedRecoveryPrefixLength;
+      const recoveryPresentationText = state.accumulatedText.slice(
+        recoveryPresentationPrefixLength,
+      );
+      const repeatsInterruptedRecoveryText = interruptedRecoveryPrefixLength > 0 &&
+        recoveryPresentationText.length === 0;
+      if (deferredRecoveryOutput !== undefined && !releasedDeferredRecoveryOutput) {
+        flushDeferredRecoveryOutput(
+          interruptedRecoveryPrefixLength,
+          repeatsInterruptedRecoveryText,
+          previousRecoveryText.length > 0 && interruptedRecoveryPrefixLength === 0 &&
+            !repeatsInterruptedRecoveryText && state.accumulatedText.length > 0,
+        );
+      }
       finalFinishReason = state.finishReason ?? finalFinishReason;
 
-      const assistantMessage = buildStreamedAssistantMessage(state, {
+      const streamedToolCalls = Array.from(state.toolCalls.values());
+      const finalToolResults = collectFinalStreamToolResults(state);
+      // Recovery replays the whole step, so it also re-emits this step's
+      // reasoning — duplicating it in the live stream and in history, with a
+      // signature that no longer matches the replayed content. Reasoning that
+      // was persisted is reasoning the client already saw, so fail closed.
+      // This is a stopgap: reasoning is default-on across the hosted catalog,
+      // which makes recovery inert on most hosted paths. See #3736 for the
+      // reconciliation protocol that would let it run again.
+      const hasExposedReasoning = state.reasoningParts.some(isPersistedReasoningPart);
+      const canRecoverInterruptedLocalToolBatch = !recoveredInterruptedLocalToolBatch &&
+        step + 1 < maxSteps &&
+        !hasExposedReasoning;
+      const shouldContinue = shouldContinueAfterStreamStep(state, {
+        recoverInterruptedToolCalls: canRecoverInterruptedLocalToolBatch,
+      });
+      const shouldRecoverInterruptedLocalToolBatch = canRecoverInterruptedLocalToolBatch &&
+        shouldContinue &&
+        streamedToolCalls.some(isInterruptedClientToolCall);
+      // Exactly `shouldRecoverInterruptedLocalToolBatch` with the reasoning
+      // gate lifted: the batch this step would have replayed had it not
+      // already exposed reasoning. Re-asking is what separates "recovery was
+      // declined" from "this step merely carried reasoning";
+      // `shouldContinueAfterStreamStep` only reads state, so asking twice has
+      // no side effects, and the cheap conditions short-circuit ahead of it.
+      const declinedRecoveryForExposedReasoning = hasExposedReasoning &&
+        !recoveredInterruptedLocalToolBatch &&
+        step + 1 < maxSteps &&
+        streamedToolCalls.some(isInterruptedClientToolCall) &&
+        shouldContinueAfterStreamStep(state, { recoverInterruptedToolCalls: true });
+      if (declinedRecoveryForExposedReasoning) {
+        logger.warn("Declined interrupted local tool batch recovery after exposed reasoning", {
+          step,
+          toolName: streamedToolCalls.find(isInterruptedClientToolCall)?.name,
+          reasoningPartCount: state.reasoningParts.filter(isPersistedReasoningPart).length,
+        });
+      }
+      const assistantMessage = buildStreamedAssistantMessage({
+        ...state,
+        accumulatedText: recoveryPresentationText,
+      }, {
         id: `msg_${Date.now()}_${step}`,
         timestamp: Date.now(),
+      }, {
+        preserveRecoverablePlaceholderToolCalls: shouldRecoverInterruptedLocalToolBatch ||
+          !shouldContinue,
       });
 
       for (const tc of state.toolCalls.values()) {
@@ -1873,10 +2311,10 @@ export class AgentRuntime {
 
         if (materialized.kind === "incomplete" && isRecoverablePlaceholderToolCall(tc)) {
           // Provisional empty-object placeholder that never finalized. The
-          // model never committed arguments. The assistant message builder
-          // omits it when final text exists; otherwise it remains transparent
-          // history while the loop recovers by re-calling the model. Surface no
-          // termination warning or error.
+          // model never committed arguments. Preserve it when recovery or
+          // terminalization records a matching tool result; otherwise the
+          // assistant message builder can omit it beside final text. Surface no
+          // input warning or error for the provisional fragment.
           continue;
         }
 
@@ -1910,10 +2348,26 @@ export class AgentRuntime {
         }
       }
 
-      latestAssistantText = getTextFromParts(assistantMessage.parts);
+      const stepAssistantText = getTextFromParts(assistantMessage.parts);
+      if (
+        step === interruptedLocalToolBatchRecoveryStep &&
+        suppressedRecoveryReplayTextLength > 0
+      ) {
+        latestAssistantText = `${previousRecoveryText}${recoveryPresentationText}`;
+      } else if (
+        step === interruptedLocalToolBatchRecoveryStep && interruptedRecoveryPrefixLength > 0
+      ) {
+        latestAssistantText = previousRecoveryText.startsWith(state.accumulatedText)
+          ? previousRecoveryText
+          : state.accumulatedText;
+      } else if (
+        hasSubstantiveAssistantText(stepAssistantText) ||
+        step !== interruptedLocalToolBatchRecoveryStep
+      ) {
+        latestAssistantText = stepAssistantText;
+      }
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
-      const finalToolResults = collectFinalStreamToolResults(state);
 
       const persistToolResult = async (toolResult: StreamingToolResult): Promise<void> => {
         if (currentStepToolResults.has(toolResult.toolCallId)) {
@@ -1936,50 +2390,117 @@ export class AgentRuntime {
         );
       };
 
-      if (!shouldContinueAfterStreamStep(state)) {
+      const recordIncompleteLocalToolError = async (
+        toolCall: StreamingToolCall,
+        options: { includeInResponse?: boolean; announceInput?: boolean } = {},
+      ): Promise<boolean> => {
+        if (
+          toolCall.providerExecuted === true ||
+          !isStreamedToolCallIncomplete(toolCall) ||
+          finalToolResults.has(toolCall.id)
+        ) {
+          return false;
+        }
+        if (options.announceInput === true) {
+          // An interrupted call never reached `tool-input-end`, so its
+          // `tool-input-start` is still buffered and `inputAnnounced` is false
+          // — which would suppress the `tool-output-error` below. On the
+          // declined-recovery path that leaves the client with a reasoning
+          // block and then nothing at all.
+          //
+          // The name is safe to publish here. `tool-call` is what can supersede
+          // a name, and it also sets `inputAvailable`, which fails the guard
+          // above — so reaching this line means no such event arrived and the
+          // buffered name is the only one this call will ever have. It is the
+          // same name recorded below and in the persisted assistant message,
+          // so the card matches a reload. Announcing is idempotent, so a call
+          // surfaced upstream is not reported twice.
+          announceStreamedToolCallInput(controller, encoder, toolCall);
+        }
+        const incompleteToolCall: ToolCall = {
+          id: toolCall.id,
+          name: toolCall.name,
+          args: {},
+          ...(toolCall.arguments.length > 0 ? { inputText: toolCall.arguments } : {}),
+          status: "pending",
+        };
+        await this.recordToolError(
+          incompleteToolCall,
+          `Stream terminated before tool-call event fired for "${toolCall.name}". ` +
+            `Received ${toolCall.arguments.length} chars of partial tool-input deltas.`,
+          controller,
+          encoder,
+          currentMessages,
+          toolCalls,
+          {
+            emitSse: toolCall.inputAnnounced === true,
+            includeInResponse: options.includeInResponse,
+          },
+        );
+        return true;
+      };
+
+      if (!shouldContinue) {
         for (const toolResult of finalToolResults.values()) {
           await persistToolResult(toolResult);
+        }
+        for (const toolCall of streamedToolCalls) {
+          await recordIncompleteLocalToolError(toolCall, {
+            announceInput: declinedRecoveryForExposedReasoning,
+          });
         }
         sendSSE(controller, encoder, { type: "step-end" });
         break;
       }
 
       this.status = "tool_execution";
-      const streamedToolCalls = Array.from(state.toolCalls.values());
+      if (shouldRecoverInterruptedLocalToolBatch) {
+        // Treat parallel local calls as one batch. Executing the finalized
+        // prefix here could apply only part of the model's intended mutation.
+        recoveredInterruptedLocalToolBatch = true;
+        interruptedLocalToolBatchRecoveryStep = step + 1;
+        interruptedLocalToolBatchRecoveryText = hasSubstantiveAssistantText(stepAssistantText)
+          ? stepAssistantText
+          : undefined;
+      }
 
       for (const tc of streamedToolCalls) {
         throwIfAborted(abortSignal);
-        if (isRecoverablePlaceholderToolCall(tc)) {
-          // Provisional empty-object placeholder that never finalized. The
-          // model never committed arguments. At this point the continuation
-          // gate has confirmed there is no final assistant text, so the loop
-          // can continue and let the next model call recover the real tool
-          // call without executing or surfacing a stream-termination error.
+        if (shouldRecoverInterruptedLocalToolBatch && tc.providerExecuted !== true) {
+          if (await recordIncompleteLocalToolError(tc, { includeInResponse: false })) {
+            continue;
+          }
+          const capturedInput = captureStreamedToolCallInput(tc);
+          const interruptedBatchToolCall: ToolCall = {
+            id: tc.id,
+            name: tc.name,
+            args: capturedInput.args,
+            ...(capturedInput.inputText ? { inputText: capturedInput.inputText } : {}),
+            status: "pending",
+          };
+          await this.recordToolError(
+            interruptedBatchToolCall,
+            "Tool execution skipped because another tool call in the same model step " +
+              "was interrupted before its input completed.",
+            controller,
+            encoder,
+            currentMessages,
+            toolCalls,
+          );
           continue;
         }
-        if (isStreamedToolCallIncomplete(tc)) {
+        if (isRecoverablePlaceholderToolCall(tc)) {
+          // Provisional empty-object placeholder that never finalized. If the
+          // bounded recovery path was unavailable, do not execute or surface
+          // it as a committed call.
+          continue;
+        }
+        if (await recordIncompleteLocalToolError(tc)) {
           // Stream ended before the provider finalized this tool call. We
           // cannot execute it, so record a distinct stream-termination error
           // (not a tool-argument parse error) so the parent step and any
           // upstream orchestrator (e.g. the child-fork watchdog) see a
           // completed step with a clearly-labelled failure and can recover.
-          const incompleteToolCall: ToolCall = {
-            id: tc.id,
-            name: tc.name,
-            args: {},
-            ...(tc.arguments.length > 0 ? { inputText: tc.arguments } : {}),
-            status: "pending",
-          };
-          await this.recordToolError(
-            incompleteToolCall,
-            `Stream terminated before tool-call event fired for "${tc.name}". ` +
-              `Received ${tc.arguments.length} chars of partial tool-input deltas.`,
-            controller,
-            encoder,
-            currentMessages,
-            toolCalls,
-            { emitSse: tc.inputAnnounced === true },
-          );
           continue;
         }
         const capturedInput = captureStreamedToolCallInput(tc);
@@ -2098,6 +2619,9 @@ export class AgentRuntime {
               plan: effectiveToolExposurePlan,
               state: toolExposureState,
             });
+            if (didReloadProjectAgentWriteTool(search.result)) {
+              agentWriteFinalResponseToolGuardEnabled = false;
+            }
             toolCall.status = "completed";
             toolCall.result = search.result;
             toolCalls.push(toolCall);
@@ -2321,11 +2845,13 @@ export class AgentRuntime {
     encoder: TextEncoder,
     currentMessages: Message[],
     toolCalls: ToolCall[],
-    options: { emitSse?: boolean } = {},
+    options: { emitSse?: boolean; includeInResponse?: boolean } = {},
   ): Promise<void> {
     toolCall.status = "error";
     toolCall.error = errorStr;
-    toolCalls.push(toolCall);
+    if (options.includeInResponse !== false) {
+      toolCalls.push(toolCall);
+    }
 
     if (options.emitSse !== false) {
       const dynamic = isDynamicTool(toolCall.name);
