@@ -24,8 +24,8 @@
  * @module react/components/ui/field
  */
 import * as React from "react";
+import { composeRefs } from "#veryfront/react/components/ui/slot.tsx";
 import { cx as cn } from "./cva.ts";
-import { composeRefs } from "./slot.tsx";
 import { useIsomorphicLayoutEffect } from "./use-isomorphic-layout-effect.ts";
 
 interface FieldContextValue {
