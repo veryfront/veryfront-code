@@ -14,6 +14,7 @@ import {
   MAX_MDX_MODULE_TRANSFORM_CONCURRENCY,
   ModuleImportLimitError,
 } from "./limits.ts";
+import { buildMissingModuleError } from "../missing-module.ts";
 
 describe("transforms/mdx/esm-module-loader/module-fetcher/nested-imports", () => {
   describe("findNestedImports", () => {
@@ -391,16 +392,27 @@ import { bar } from "./local.js";
 
     it("defers a missing strict dynamic import until the branch executes", async () => {
       const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-dynamic-missing-cache-" });
+      const source =
+        `export const load = (enabled) => enabled ? import("./optional.js") : Promise.resolve("skipped");`;
+      const calls: string[] = [];
 
       try {
         const result = await resolveNestedModuleImports({
-          moduleCode:
-            `export const load = (enabled) => enabled ? import("./optional.js") : Promise.resolve("skipped");`,
+          moduleCode: source,
           esmCacheDir,
           normalizedPath: "_vf_modules/pages/index.js",
           projectSlug: "docs",
           strictMissingModules: true,
-          fetchAndCacheModule: () => Promise.resolve(null),
+          fetchAndCacheModule: (path) => {
+            calls.push(path);
+            throw buildMissingModuleError({
+              modulePath: path,
+              importer: "_vf_modules/pages/index.js",
+              importStatement: `import("./optional.js")`,
+              code: source,
+              projectSlug: "docs",
+            });
+          },
         });
         const parentPath = join(esmCacheDir, "dynamic-parent.mjs");
         await Deno.writeTextFile(parentPath, result);
@@ -408,6 +420,7 @@ import { bar } from "./local.js";
           `${toFileUrl(parentPath).href}?test=${crypto.randomUUID()}`
         ) as { load(enabled: boolean): Promise<unknown> };
 
+        assertEquals(calls, ["./optional.js"]);
         assertEquals(await loaded.load(false), "skipped");
         await assertRejects(
           () => loaded.load(true),
