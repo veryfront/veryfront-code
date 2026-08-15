@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { BUILD_FAILED, VeryfrontError } from "#veryfront/errors";
@@ -46,7 +46,7 @@ describe("SSRDependencyValidator", () => {
         "Failed to fetch https://esm.sh/marked: AbortError",
       );
 
-      assertEquals(error, fetchError);
+      assertStrictEquals(error, fetchError);
       assertEquals(validator.missingDependencies, []);
     } finally {
       await remove(tempDir, { recursive: true });
@@ -104,7 +104,7 @@ describe("SSRDependencyValidator", () => {
 
       releaseSibling.resolve();
       const error = await assertRejects(() => load, VeryfrontError);
-      assertEquals(error, fetchError);
+      assertStrictEquals(error, fetchError);
     } finally {
       releaseSibling.resolve();
       await remove(tempDir, { recursive: true });
@@ -134,7 +134,7 @@ describe("SSRDependencyValidator", () => {
       "Failed to fetch https://esm.sh/marked: AbortError",
     );
 
-    assertEquals(error, fetchError);
+    assertStrictEquals(error, fetchError);
     assertEquals(validator.missingDependencies, []);
   });
 
@@ -180,7 +180,7 @@ describe("SSRDependencyValidator", () => {
 
       releaseSibling.resolve();
       const error = await assertRejects(() => load, VeryfrontError);
-      assertEquals(error, fetchError);
+      assertStrictEquals(error, fetchError);
       assertEquals(validator.missingDependencies.length, 1);
       assertEquals(
         validator.missingDependencies[0]?.specifier,

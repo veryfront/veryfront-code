@@ -122,12 +122,32 @@ export class SSRDependencyValidator {
       createDependencyHashCache(),
     );
 
-    for (let i = 0; i < parseResult.crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
-      const batch = parseResult.crossProjectImports.slice(i, i + TRANSFORM_BATCH_SIZE);
+    await this.processCrossProjectImports(parseResult.crossProjectImports, filePath);
+  }
+
+  /**
+   * Process cross-project imports in batches, building a map of
+   * specifier -> temp file path.
+   *
+   * Non-terminal failures are aggregated into {@link missingDependencies} so the
+   * caller can report every unresolved specifier at once. A terminal HTTP module
+   * fetch failure is rethrown untouched instead: it means the source could not be
+   * retrieved at all, so reporting it as a missing dependency would mislabel a
+   * transient network failure as a broken component.
+   */
+  async processCrossProjectImports(
+    crossProjectImports: CrossProjectImport[],
+    filePath: string,
+  ): Promise<Map<string, string>> {
+    const crossProjectPaths = new Map<string, string>();
+
+    for (let i = 0; i < crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
+      const batch = crossProjectImports.slice(i, i + TRANSFORM_BATCH_SIZE);
       const results = await Promise.allSettled(
         batch.map(async (crossImport) => {
           try {
-            await this.transformCrossProjectImport(crossImport);
+            const tempPath = await this.transformCrossProjectImport(crossImport);
+            crossProjectPaths.set(crossImport.specifier, tempPath);
           } catch (error) {
             if (isTerminalHttpModuleFetchFailure(error)) throw error;
             this.missingDependencies.push({
@@ -140,9 +160,21 @@ export class SSRDependencyValidator {
           }
         }),
       );
-      const terminalFailure = results.find((result) => result.status === "rejected");
-      if (terminalFailure?.status === "rejected") throw terminalFailure.reason;
+      // Only the guarded rethrow above can reject today, but select on the
+      // predicate rather than on "first rejection" so a throw added outside the
+      // try block later cannot be mistaken for the terminal failure. Any other
+      // rejection is still propagated rather than dropped.
+      const rejections = results.filter((result): result is PromiseRejectedResult =>
+        result.status === "rejected"
+      );
+      const terminalFailure = rejections.find((rejection) =>
+        isTerminalHttpModuleFetchFailure(rejection.reason)
+      );
+      const failure = terminalFailure ?? rejections[0];
+      if (failure) throw failure.reason;
     }
+
+    return crossProjectPaths;
   }
 
   /**

@@ -1,13 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../../transforms/plugins/__tests__/code-parser-setup.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { BUILD_FAILED, VeryfrontError } from "#veryfront/errors";
 import { FakeTime } from "#std/testing/time";
 import { join } from "#veryfront/compat/path";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { clearSSRModuleCache, clearSSRModuleCacheForProject, SSRModuleLoader } from "./index.ts";
 import { __ssrModuleLoaderInternals } from "./loader.ts";
-import { globalInProgress, globalModuleCache } from "./cache/memory.ts";
+import { globalCrossProjectCache, globalInProgress, globalModuleCache } from "./cache/memory.ts";
 import {
   TRANSFORM_IN_PROGRESS_STALE_EVICTION_MS,
   TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS,
@@ -1311,6 +1317,64 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       globalInProgress.delete(inProgressKey);
       globalModuleCache.delete(contentCacheKey);
       globalModuleCache.delete(filePathCacheKey);
+    }
+  });
+
+  it("preserves a terminal cross-project fetch failure on a cold load", async () => {
+    clearSSRModuleCache();
+    globalCrossProjectCache.clear();
+
+    const projectDir = "/app";
+    const filePath = "/app/app/page.tsx";
+    const projectId = "project-cold-cross-project-terminal";
+    const specifier = "acme-ui@1.2.3/@/components/Button.tsx";
+    const source = [
+      `import Button from "${specifier}";`,
+      `export default function Page() {`,
+      `  return Button;`,
+      `}`,
+    ].join("\n");
+
+    // The failure http-cache.ts raises once its retries are exhausted. The
+    // registry fetch is the only network boundary the loader crosses on this
+    // path, so raising it there reproduces a cold cross-project fetch failure.
+    const fetchError = BUILD_FAILED.create({
+      detail: "Failed to fetch https://esm.sh/marked: AbortError",
+      context: { phase: "http-module-fetch" },
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes("acme-ui@1.2.3")) return Promise.reject(fetchError);
+      return originalFetch(input, init);
+    }) as typeof fetch;
+
+    const loader = new SSRModuleLoader({
+      projectDir,
+      projectId,
+      contentSourceId: "release-1",
+      adapter: createProxyProjectAdapter({ "app/page.tsx": source }),
+      apiBaseUrl: "https://registry.example.test/api",
+      dev: true,
+    });
+
+    try {
+      const error = await assertRejects(
+        () => loader.loadRawModule(filePath, source),
+        VeryfrontError,
+        "Failed to fetch https://esm.sh/marked: AbortError",
+      );
+
+      assertStrictEquals(error, fetchError);
+      // The cold path used to swallow this into `missingDependencies`, finish
+      // the transform, and publish a module whose cross-project specifier was
+      // never rewritten. Nothing may reach the cache when the fetch is terminal.
+      assertEquals(globalModuleCache.size, 0);
+      assertEquals(globalCrossProjectCache.size, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+      clearSSRModuleCache();
+      globalCrossProjectCache.clear();
     }
   });
 });
