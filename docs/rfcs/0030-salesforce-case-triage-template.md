@@ -418,7 +418,7 @@ and path validation. The design gets dynamic-*enough* behaviour from three lever
    | `list_case_activity` | `CaseComment` fields from §A.3 with required validated `ParentId = caseId`; limit at most 50 |
    | `search_knowledge_articles` | the exact hosted Knowledge adapter and fixed query contract in §8 |
    | `list_opportunities` | `Opportunity` fields from §A.3 only; optional validated `AccountId`, owner, or closed-state filters; limit at most 50 |
-   | `list_active_users` | `User` fields `Id, Name` only with mandatory `IsActive = true`; optional escaped name filter; limit at most 50. This discovers active users but does not prove they can own the target object; every owner write needs a fixed object-specific eligibility check. |
+   | `list_active_users` | `User` fields `Id, Name` only with mandatory `IsActive = true`; optional escaped name filter; limit at most 50. This discovers active users but does not prove they can own the target object; every path that writes `OwnerId` needs a fixed target-object eligibility check. |
    | `list_case_queues` | `Group` fields `Id, Name, Type` only with mandatory `Type = 'Queue'` and server-owned `QueueSobject.SobjectType = 'Case'` semi-join; limit at most 50 |
    | `list_lead_queues` | `Group` fields `Id, Name, Type` only with mandatory `Type = 'Queue'` and server-owned `QueueSobject.SobjectType = 'Lead'` semi-join; limit at most 50 |
 
@@ -493,7 +493,7 @@ dependencies, not static-schema details:
 | Curated-query adapter that maps tool IDs to server-owned SOQL plus typed filters | Hosted integration executor / tools API | Retaining `find_customer`, `list_cases`, `list_case_activity`, `search_accounts`, `search_contacts`, `list_opportunities`, or Knowledge search after agent-facing `q` is hidden |
 | Fixed object/Read authorization for retained direct reads | Hosted integration executor, using the Configure permission policy | Retaining direct sObject tools such as `get_case`, `get_contact`, and `get_account` while per-CRUD arrays are not generally enforced |
 | Fixed object/operation authorization for curated writes | Hosted integration executor, using the Configure permission policy | Shipping `update_case_reason`, `add_internal_case_comment`, retained `create_case`, retained `create_lead`, or any temporary retained `update_case` |
-| Fixed owner lookup adapters and owner-eligibility validators for `User`, Case queues, and Lead queues | Hosted integration executor / tools API, using server-owned SOQL, typed filters, and a fixed target-object capability check | Discovering owner candidates for Case and Lead while arbitrary `run_soql_query` and `q` remain hidden, and rejecting an active user who cannot own the target object before any `OwnerId` write. Opportunity uses `User` candidates only. Lead and Opportunity assignment writes remain gated until scoped write tools or generic CRUD enforcement exist |
+| Fixed owner lookup adapters and owner-eligibility validators for `User`, Case queues, and Lead queues | Hosted integration executor / tools API, using server-owned SOQL, typed filters, and a fixed target-object capability check | Discovering owner candidates for Case and Lead while arbitrary `run_soql_query` and `q` remain hidden, and rejecting an active user who cannot own the target object before any path writes `OwnerId`, including retained `update_case` and future generic `update_record`. Opportunity uses `User` candidates only. Lead and Opportunity assignment writes remain gated until scoped write tools or generic CRUD enforcement exists |
 | Pre-persistence PII projection or raw-result suppression before any agent-visible message | Hosted integration executor plus agent runtime persistence/streaming boundary | Revealing `get_case`, `list_cases`, `list_case_activity`, or the case-ingest template against customer text |
 | Fixed metadata-helper authorization | Hosted integration executor, using the Configure permission policy | Retaining `describe_object` or `get_picklist_values_for_record_type` for an object while per-CRUD arrays are not generally enforced |
 | Referenced-object parser/enforcer for arbitrary SOQL/SOSL | Hosted integration executor and authorization layer | Re-enabling `run_soql_query`, SOSL `search`, or any arbitrary curated `q` override |
@@ -710,14 +710,18 @@ or false open-case constraint fails closed rather than falling back to the
 unfiltered connector default. Owner assignment needs fixed lookup acceptance gates:
 `list_active_users` must return only active `User.Id`/`Name` values and must be
 denied without `User` Read. Its result is active-user discovery, not proof that a
-user can own Case, Lead, or Opportunity. Before a scoped owner-write tool sends
-`OwnerId`, the hosted adapter must validate the selected user through a fixed
-target-object ownership-capability check and fail closed if Salesforce cannot
-establish eligibility. Seed an active user whose license or effective permissions
-lack Read access to the target object, prove the lookup result cannot authorize
-the write by itself, and assert the adapter rejects that ID before calling the
-Salesforce write endpoint. Also prove an eligible active user passes the same
-check. `list_case_queues` and `list_lead_queues` must use
+user can own Case, Lead, or Opportunity. Before any hosted path sends `OwnerId`,
+including retained `update_case` and future generic `update_record`, the hosted
+adapter must validate the selected user through a fixed target-object
+ownership-capability check and fail closed if Salesforce cannot establish
+eligibility. Seed an active user whose license or effective permissions lack Read
+access to the target object, prove the lookup result cannot authorize the write
+by itself, and assert each OwnerId-capable write path rejects that ID before
+calling the Salesforce write endpoint. The fixture must cover retained
+`update_case` when it remains shipped, each scoped owner-write helper that ships,
+and generic `update_record` before the generic tier is enabled. Also prove an
+eligible active user passes the same check on every shipped OwnerId-capable path.
+`list_case_queues` and `list_lead_queues` must use
 server-owned `QueueSobject.SobjectType` values, seed one Case-only queue and one
 Lead-only queue, assert each lookup excludes the queue for the other object, and
 reject a queue `OwnerId` unless the selected `Group.Id` has a matching
@@ -1004,15 +1008,16 @@ AND Id IN (
 ```
 
 Build `SobjectType` from the fixed `Case`/`Lead` owner lookup path, never from an
-arbitrary query fragment. Before any scoped owner-write tool writes `OwnerId`,
-validate the selected `Group.Id` against that same object-specific result. A
-`Type = 'Queue'` Group without the matching `QueueSobject` row is not an eligible
-owner and must fail closed. For a selected `User.Id`, separately validate through
-a fixed target-object ownership-capability check that the user is active and can
-own the target Case, Lead, or Opportunity. Do not infer eligibility from
-`IsActive = true`, `User` Read, or the ability to return the user from
-`list_active_users`. If Salesforce cannot establish eligibility, reject the write
-before sending the `OwnerId` update.
+arbitrary query fragment. Before any hosted path writes `OwnerId`, including
+retained `update_case` and future generic `update_record`, validate the selected
+`Group.Id` against that same object-specific result. A `Type = 'Queue'` Group
+without the matching `QueueSobject` row is not an eligible owner and must fail
+closed. For a selected `User.Id`, separately validate through a fixed
+target-object ownership-capability check that the user is active and can own the
+target Case, Lead, or Opportunity. Do not infer eligibility from `IsActive =
+true`, `User` Read, or the ability to return the user from `list_active_users`.
+If Salesforce cannot establish eligibility, reject the write before sending the
+`OwnerId` update.
 
 ### A.5 What "standard" deliberately excludes (v1)
 
@@ -1253,19 +1258,22 @@ is satisfied. Additional non-CRUD tools complete the future surface:
   `list_active_users` returns active `User` owner candidates from
   `SELECT Id, Name FROM User WHERE IsActive = true`; it may accept only typed safe
   filters such as escaped name text and a bounded limit, and it requires `User`
-  Read. Active status alone is not ownership eligibility. Every scoped owner-write
-  helper must perform a fixed target-object capability check for the selected
-  `User.Id` and fail closed before the Salesforce write when that user cannot own
-  the target object or eligibility cannot be established. `list_case_queues` and
-  `list_lead_queues` return queue `Group` owner
+  Read. Active status alone is not ownership eligibility. Every path that can
+  write `OwnerId`, including retained `update_case`, scoped owner-write helpers,
+  and future generic `update_record`, must perform a fixed target-object
+  capability check for the selected `User.Id` and fail closed before the
+  Salesforce write when that user cannot own the target object or eligibility
+  cannot be established. `list_case_queues` and `list_lead_queues` return queue
+  `Group` owner
   candidates through the fixed `QueueSobject` semi-join in §A.4; the target object
   is encoded in the tool ID, not supplied by the caller. They require `Group` Read
   and `QueueSobject` Read. Tests must prove Case queues never appear in
   `list_lead_queues`, Lead queues never appear in `list_case_queues`, inactive
   users are excluded, an active user without target-object Read cannot authorize
-  an owner write, an eligible active user passes the same preflight, and
-  Opportunity owner candidate lookup rejects every queue `Group.Id`. These
-  helpers do not ship Lead or Opportunity owner writes.
+  an owner write on any OwnerId-capable path, an eligible active user passes the
+  same preflight on every shipped OwnerId-capable path, and Opportunity owner
+  candidate lookup rejects every queue `Group.Id`. These helpers do not ship Lead
+  or Opportunity owner writes.
 - **`search`** (SOSL, deferred) - `GET /search/?q=FIND {...} IN ALL FIELDS ...` for
   cross-object keyword lookup, distinct from the SOQL that `find_customer` uses.
   Ship only after the same fail-closed referenced-object authorization gate covers
