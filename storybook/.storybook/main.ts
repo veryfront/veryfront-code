@@ -1,11 +1,29 @@
 import type { StorybookConfig } from "@storybook/react-vite";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
-import { mergeConfig } from "vite";
+import { fileURLToPath } from "node:url";
+import { type AliasOptions, mergeConfig } from "vite";
 import {
   createVeryfrontAliases,
   veryfrontRepoRoot,
 } from "./veryfront-aliases.ts";
+
+const asyncHooksShim = fileURLToPath(
+  new URL("./shims/async-hooks.ts", import.meta.url),
+);
+
+function withStorybookBrowserAliases(aliases: AliasOptions): AliasOptions {
+  const browserAliases = [
+    {
+      find: /^#veryfront\/platform\/compat\/async-context\.ts$/,
+      replacement: asyncHooksShim,
+    },
+    { find: /^node:async_hooks$/, replacement: asyncHooksShim },
+  ];
+
+  if (Array.isArray(aliases)) return [...browserAliases, ...aliases];
+  return { ...aliases, "node:async_hooks": asyncHooksShim };
+}
 
 const config: StorybookConfig = {
   stories: ["../stories/**/*.stories.@(ts|tsx|mdx)"],
@@ -31,7 +49,7 @@ const config: StorybookConfig = {
       },
       plugins: [react(), tailwindcss()],
       resolve: {
-        alias: createVeryfrontAliases(),
+        alias: withStorybookBrowserAliases(createVeryfrontAliases()),
       },
       server: {
         fs: {

@@ -7,7 +7,7 @@ import {
   PageHero,
 } from "../.storybook/components";
 
-// Chat landing page — mirrors the Veryfront Studio "Overview" concept: a hero
+// Chat landing page - mirrors the Veryfront Studio "Overview" concept: a hero
 // plus a navigable grid of every chat surface, grouped by Components and UI.
 // Tagged `showcase` so the addon panel is hidden.
 const meta = {
@@ -75,6 +75,26 @@ const UI: NavGridEntry[] = [
   { title: "ProgressBar", id: "ui-progressbar--docs" },
   { title: "ScrollFade", id: "ui-scrollfade--docs" },
   { title: "CodeBlock", id: "ui-codeblock--docs" },
+  { title: "Separator", id: "ui-separator--docs" },
+  { title: "AspectRatio", id: "ui-aspectratio--docs" },
+  { title: "Toggle", id: "ui-toggle--docs" },
+  { title: "Slider", id: "ui-slider--docs" },
+  { title: "Meter", id: "ui-meter--docs" },
+  { title: "NumberField", id: "ui-numberfield--docs" },
+  { title: "InputOTP", id: "ui-inputotp--docs" },
+  { title: "Field", id: "ui-field--docs" },
+  { title: "ScrollArea", id: "ui-scrollarea--docs" },
+  { title: "Calendar", id: "ui-calendar--docs" },
+  { title: "DatePicker", id: "ui-datepicker--docs" },
+  { title: "Breadcrumb", id: "ui-breadcrumb--docs" },
+  { title: "Pagination", id: "ui-pagination--docs" },
+  { title: "NavigationMenu", id: "ui-navigationmenu--docs" },
+  { title: "Menubar", id: "ui-menubar--docs" },
+  { title: "ContextMenu", id: "ui-contextmenu--docs" },
+  { title: "HoverCard", id: "ui-hovercard--docs" },
+  { title: "Combobox", id: "ui-combobox--docs" },
+  { title: "Autocomplete", id: "ui-autocomplete--docs" },
+  { title: "AlertDialog", id: "ui-alertdialog--docs" },
 ];
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -90,7 +110,7 @@ function ChatOverviewPage() {
     <Page>
       <PageHero
         title="Chat"
-        description="The chat components Veryfront ships — message turns, composer, sidebar, and the full assembled experiences. Open any entry for states, composition, and API reference."
+        description="The chat components Veryfront ships - message turns, composer, sidebar, and the full assembled experiences. Open any entry for states, composition, and API reference."
       />
 
       <div className="space-y-12 py-16">
@@ -108,7 +128,7 @@ function ChatOverviewPage() {
 }
 
 // `name: "Overview"` matches the title's last segment so Storybook collapses
-// the component + its single story into one sidebar leaf — "Overview" sits
+// the component + its single story into one sidebar leaf - "Overview" sits
 // directly under "Chat", not as an "Overview › Default" folder.
 export const Default: Story = {
   name: "Overview",

@@ -51,6 +51,7 @@ export {
   mergeExtensions,
   parsePackageMetadata,
 } from "./discovery.ts";
+export { parseExtensionManifest } from "./manifest-reader.ts";
 
 // Loader
 export { ExtensionLoader } from "./loader.ts";

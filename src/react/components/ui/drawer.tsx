@@ -1,55 +1,76 @@
 /**
- * Dependency-free bottom-sheet primitive with the Studio part API used by
- * Veryfront. It shares the dialog's modal focus, ARIA, scroll-lock, and
- * dismissal contracts while presenting a drawer surface.
+ * Drawer - BASIC bottom-sheet fork of Studio's `Drawer` (which is a large
+ * Vaul-style component). Same API shape for the parts we need: Root / Trigger /
+ * Content (overlay + sheet + drag handle) / Title / Header / Body / Footer /
+ * Close. Surface classes ported 1:1 from Studio (tokens remapped). Slides up
+ * from the bottom; dismisses on `Escape` and overlay click. A11y work tracked
+ * in modal-surface.tsx.
+ *
+ * @example
+ * ```tsx
+ * import { Button, Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from "veryfront/ui";
+ *
+ * <Drawer>
+ *   <DrawerTrigger asChild><Button>Edit</Button></DrawerTrigger>
+ *   <DrawerContent><DrawerTitle>Edit profile</DrawerTitle></DrawerContent>
+ * </Drawer>;
+ * ```
  *
  * @module react/components/ui/drawer
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
-import { createModalSurfaceParts } from "./modal-surface.tsx";
+import { useAdapter } from "./adapter/context.tsx";
 import { useIsomorphicLayoutEffect } from "./use-isomorphic-layout-effect.ts";
 
-// Per-skin context + machinery -- distinct from Dialog's instance so a
-// DialogClose nested inside a Drawer cannot accidentally close the Drawer.
-const {
-  ModalRoot: _Root,
-  useModal: _hook,
-  ModalTrigger: _Trigger,
-  ModalClose: _Close,
-  ModalContent: _Content,
-} = createModalSurfaceParts("Drawer");
+// The Drawer's MECHANICS come from the active adapter's `drawer` slot
+// (`useAdapter().drawer`) - a static bottom sheet on the builtin, or custom
+// drawer mechanics from an adapter passed through `UIAdapterProvider`.
+// This file supplies only the edge-sliding sheet layout.
 
 /** Props accepted by `<Drawer>`. */
 export interface DrawerProps {
+  /** The trigger and content parts to compose. */
   children: React.ReactNode;
+  /** Controlled open state (pair with `onOpenChange`). */
   open?: boolean;
+  /** Initial open state when uncontrolled. */
   defaultOpen?: boolean;
+  /** Fires when the open state changes. */
   onOpenChange?: (open: boolean) => void;
 }
 
-/** Drawer root — owns open state. */
+/** Drawer root - owns open state (via the adapter's drawer engine). */
 export function Drawer(props: DrawerProps): React.ReactElement {
-  return <_Root {...props} />;
+  const { drawer } = useAdapter();
+  return <drawer.Root {...props} />;
 }
 
-/** Trigger — opens the drawer. `asChild` merges onto the child element. */
+/** Trigger - opens the drawer. `asChild` merges onto the child element. */
 export function DrawerTrigger(
   props:
     & React.ButtonHTMLAttributes<HTMLButtonElement>
     & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> },
 ): React.ReactElement {
-  return <_Trigger {...props} />;
+  const { drawer } = useAdapter();
+  return <drawer.Trigger {...props} />;
 }
 
-/** Bottom sheet — overlay + sliding surface with a drag handle. */
+/** Props accepted by `<DrawerContent>`. */
+export interface DrawerContentProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** React 19: ref is a regular prop, forwarded to the drawer panel. */
+  ref?: React.Ref<HTMLDivElement>;
+}
+
+/** Bottom sheet - overlay + sliding surface with a drag handle. */
 export function DrawerContent({
   children,
   className,
   ...props
-}: React.HTMLAttributes<HTMLDivElement>): React.ReactElement | null {
+}: DrawerContentProps): React.ReactElement | null {
+  const { drawer } = useAdapter();
   return (
-    <_Content
+    <drawer.Content
       className={cn(
         "fixed inset-x-0 bottom-0 z-50 flex flex-col max-h-[85vh] w-full rounded-t-xl bg-[var(--drawer)] text-[var(--foreground)] outline-none",
         className,
@@ -63,17 +84,19 @@ export function DrawerContent({
       {...props}
     >
       {children}
-    </_Content>
+    </drawer.Content>
   );
 }
 
-/** Drawer title — 18px medium (Studio Heading-ish). Add `sr-only` to hide. */
+/** Drawer title - 18px medium (Studio Heading-ish). Add `sr-only` to hide.
+ * Registers its id with the adapter so the sheet adopts `aria-labelledby`. */
 export function DrawerTitle({
   className,
   id,
   ...props
 }: React.HTMLAttributes<HTMLHeadingElement>): React.ReactElement {
-  const modal = _hook();
+  const { drawer } = useAdapter();
+  const modal = drawer.useDrawer();
   const resolvedId = id ?? modal.defaultTitleId;
   useIsomorphicLayoutEffect(() => {
     modal.setTitleId(resolvedId);
@@ -82,12 +105,7 @@ export function DrawerTitle({
       modal.setTitlePresent(false);
       modal.setTitleId((current) => current === resolvedId ? modal.defaultTitleId : current);
     };
-  }, [
-    modal.defaultTitleId,
-    modal.setTitleId,
-    modal.setTitlePresent,
-    resolvedId,
-  ]);
+  }, [modal.defaultTitleId, modal.setTitleId, modal.setTitlePresent, resolvedId]);
   return (
     <h2
       id={resolvedId}
@@ -137,5 +155,6 @@ export function DrawerClose(
     & React.ButtonHTMLAttributes<HTMLButtonElement>
     & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> },
 ): React.ReactElement {
-  return <_Close {...props} />;
+  const { drawer } = useAdapter();
+  return <drawer.Close {...props} />;
 }

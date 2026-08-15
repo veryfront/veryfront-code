@@ -1,6 +1,7 @@
 import { getConfig } from "veryfront/config";
 import { cliLogger } from "#cli/utils";
 import { createError, toError } from "veryfront/errors";
+import { parseExtensionManifest } from "veryfront/extensions";
 import { exists, join, readTextFile } from "veryfront/fs";
 import { generateIntegration } from "./integration-generator.ts";
 import { isScaffoldType, scaffoldProjectFile } from "../../scaffold/engine.ts";
@@ -24,97 +25,6 @@ const PROJECT_MANIFESTS = [
   { name: "deno.jsonc", syntax: "jsonc" },
 ] as const;
 
-function stripProjectJsoncComments(source: string): string {
-  let output = "";
-  let inString = false;
-  let escaped = false;
-
-  for (let index = 0; index < source.length; index++) {
-    const char = source[index]!;
-    if (inString) {
-      output += char;
-      if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
-      else if (char === '"') inString = false;
-      continue;
-    }
-    if (char === '"') {
-      inString = true;
-      output += char;
-      continue;
-    }
-    if (char === "/" && source[index + 1] === "/") {
-      output += "  ";
-      index += 2;
-      while (index < source.length && !/[\r\n\u2028\u2029]/.test(source[index]!)) {
-        output += " ";
-        index++;
-      }
-      if (index < source.length) output += source[index]!;
-      continue;
-    }
-    if (char === "/" && source[index + 1] === "*") {
-      output += "  ";
-      index += 2;
-      while (index < source.length) {
-        if (source[index] === "*" && source[index + 1] === "/") {
-          output += "  ";
-          index++;
-          break;
-        }
-        output += /[\r\n\u2028\u2029]/.test(source[index]!) ? source[index]! : " ";
-        index++;
-      }
-      continue;
-    }
-    output += char;
-  }
-
-  return output;
-}
-
-function stripProjectJsoncTrailingCommas(source: string): string {
-  let output = "";
-  let inString = false;
-  let escaped = false;
-
-  for (let index = 0; index < source.length; index++) {
-    const char = source[index]!;
-    if (inString) {
-      output += char;
-      if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
-      else if (char === '"') inString = false;
-      continue;
-    }
-    if (char === '"') {
-      inString = true;
-      output += char;
-      continue;
-    }
-    if (char === ",") {
-      let next = index + 1;
-      while (/\s/.test(source[next] ?? "")) next++;
-      output += source[next] === "}" || source[next] === "]" ? " " : ",";
-      continue;
-    }
-    output += char;
-  }
-
-  return output;
-}
-
-function parseProjectManifest(source: string, syntax: "json" | "jsonc"): {
-  dependencies?: Record<string, unknown>;
-  devDependencies?: Record<string, unknown>;
-  imports?: Record<string, unknown>;
-} {
-  const json = syntax === "jsonc"
-    ? stripProjectJsoncTrailingCommas(stripProjectJsoncComments(source))
-    : source;
-  return JSON.parse(json);
-}
-
 /**
  * `generate` writes into whatever directory it is invoked from, so running it
  * one level above the project (or in the wrong terminal tab) silently produces
@@ -130,7 +40,11 @@ async function looksLikeVeryfrontProject(projectDir: string): Promise<boolean> {
     const path = join(projectDir, manifest.name);
     if (!(await exists(path))) continue;
     try {
-      const parsed = parseProjectManifest(await readTextFile(path), manifest.syntax);
+      const parsed = parseExtensionManifest<{
+        dependencies?: Record<string, unknown>;
+        devDependencies?: Record<string, unknown>;
+        imports?: Record<string, unknown>;
+      }>(await readTextFile(path), manifest.syntax, manifest.name);
       const specifiers = [
         ...Object.keys(parsed.dependencies ?? {}),
         ...Object.keys(parsed.devDependencies ?? {}),
