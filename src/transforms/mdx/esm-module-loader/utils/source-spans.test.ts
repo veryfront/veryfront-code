@@ -925,6 +925,10 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           'try /* note */ {} finally /* note */ {} /import("\\/_vf_modules\\/fake.js")/.test(value);',
           'function /* note */ load() {} /import("\\/_vf_modules\\/fake.js")/.test(value);',
           'class /* note */ Loader {} /import("\\/_vf_modules\\/fake.js")/.test(value);',
+          'export function load() {} /import("\\/_vf_modules\\/fake.js")/.test(value);',
+          'export default function load() {} /import("\\/_vf_modules\\/fake.js")/.test(value);',
+          'export class Loader {} /import("\\/_vf_modules\\/fake.js")/.test(value);',
+          'export default class Loader {} /import("\\/_vf_modules\\/fake.js")/.test(value);',
         ]
       ) {
         assertEquals(vfModuleSpecifiers(source), []);

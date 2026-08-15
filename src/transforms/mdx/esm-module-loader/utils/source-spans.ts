@@ -556,8 +556,15 @@ function isDeclarationBlockCloseBrace(
     /\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g,
     " ",
   );
-  return /^(?:async\s+)?function(?:\s*\*)?(?:\s+[$A-Za-z_][$\w]*)?\s*\(/.test(prefix) ||
-    /^class(?:\s+[$A-Za-z_][$\w]*)?(?:\s+extends\s+[\s\S]+)?\s*$/.test(prefix);
+  const isFunctionDeclaration =
+    /^(?:export\s+(?:default\s+)?)?(?:async\s+)?function(?:\s*\*)?(?:\s+[$A-Za-z_][$\w]*)?\s*\(/
+      .test(
+        prefix,
+      );
+  const isClassDeclaration =
+    /^(?:export\s+(?:default\s+)?)?class(?:\s+[$A-Za-z_][$\w]*)?(?:\s+extends\s+[\s\S]+)?\s*$/
+      .test(prefix);
+  return isFunctionDeclaration || isClassDeclaration;
 }
 
 function isStatementBlockCloseBrace(
