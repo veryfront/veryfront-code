@@ -84,4 +84,36 @@ describe("runRequestInterceptor", () => {
     assertEquals(isRequestFromLoopbackPeer(remoteIntercepted), false);
     assertEquals(await remoteIntercepted.text(), "payload");
   });
+
+  it("rejects reuse of a prior unchanged input request", async () => {
+    const remoteRequest = new Request("http://localhost/");
+    recordRequestPeerFromTransport(remoteRequest, {
+      runtime: "deno",
+      transport: "tcp",
+      hostname: "192.0.2.10",
+    });
+    const localRequest = new Request("http://localhost/");
+    recordRequestPeerFromTransport(localRequest, {
+      runtime: "deno",
+      transport: "tcp",
+      hostname: "127.0.0.1",
+    });
+    let firstInput: Request | undefined;
+    const interceptor = (request: Request) => {
+      if (firstInput) return firstInput;
+      firstInput = request;
+      return request;
+    };
+
+    const remoteIntercepted = await runRequestInterceptor(remoteRequest, interceptor);
+
+    assertStrictEquals(remoteIntercepted, remoteRequest);
+    assertEquals(isRequestFromLoopbackPeer(remoteIntercepted), false);
+    await assertRejects(
+      () => runRequestInterceptor(localRequest, interceptor),
+      TypeError,
+      "Request interceptors must return a fresh replacement Request",
+    );
+    assertEquals(isRequestFromLoopbackPeer(remoteIntercepted), false);
+  });
 });
