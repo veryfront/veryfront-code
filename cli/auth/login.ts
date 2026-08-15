@@ -459,9 +459,10 @@ async function loginWithToken(): Promise<string | null> {
 /**
  * Report an already-valid session, or null when there is nothing usable.
  *
- * Returns null on any failure — no credential, a rejected one, or an
- * unreachable API — so the caller falls through to the normal sign-in flow
- * rather than blocking on a network hiccup.
+ * Returns null when no active credential is usable, or when an authoritative
+ * environment credential is rejected, so the caller falls through to the normal
+ * sign-in flow instead of reporting a lower-priority stored token that later
+ * commands will not use.
  */
 async function describeExistingSession(
   env: EnvironmentConfig,
@@ -492,7 +493,10 @@ async function describeExistingSession(
       }
       continue;
     }
-    if (!identity) continue;
+    if (!identity) {
+      if (source === "environment") break;
+      continue;
+    }
 
     if (isJsonMode()) {
       await outputJson(createSuccessEnvelope(

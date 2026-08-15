@@ -768,6 +768,58 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("preserves an environment rejection over a valid stored login in JSON mode", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const originalError = console.error;
+      const output: string[] = [];
+      const errors: string[] = [];
+      const requestedAuth: string[] = [];
+      await saveToken("stored-valid-token", testEnv);
+
+      try {
+        globalThis.fetch = ((_: string | URL | Request, init?: RequestInit) => {
+          const auth = String(new Headers(init?.headers).get("authorization") ?? "");
+          requestedAuth.push(auth);
+          if (auth === "Bearer env-invalid-token") {
+            return Promise.resolve(new Response(null, { status: 401 }));
+          }
+          return Promise.resolve(
+            Response.json({ id: "user-123", email: "stored@example.com" }),
+          );
+        }) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+        console.error = (message?: unknown) => errors.push(String(message));
+
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        const { login } = await import("./login.ts");
+        setJsonMode(true);
+
+        const result = await login(undefined, { ...testEnv, apiToken: "env-invalid-token" });
+        const envelope = JSON.parse(output.join("\n"));
+
+        assertEquals(result, null);
+        assertEquals(envelope.error, {
+          code: "AUTHENTICATION_ERROR",
+          slug: "authentication-required",
+          registrySlug: "authentication-required",
+          message: "Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.",
+        });
+        assertEquals(requestedAuth, ["Bearer env-invalid-token"]);
+        assertEquals(output.join("\n").includes("stored@example.com"), false);
+        assertEquals(output.join("\n").includes("stored-valid-token"), false);
+        assertEquals(errors, []);
+      } finally {
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        setJsonMode(false);
+        console.log = originalLog;
+        console.error = originalError;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
     it("preserves a malformed environment validation response over a valid stored login in JSON mode", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;
@@ -981,7 +1033,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
-    it("falls back to a valid stored session when the env token is invalid", async () => {
+    it("does not mask a rejected environment token with a valid stored session", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;
       const output: string[] = [];
@@ -1006,13 +1058,10 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         const env = { ...testEnv, apiToken: "env-invalid-token" };
         const result = await login(undefined, env);
 
-        assertEquals(result, { id: "user-123", email: "stored@example.com" });
-        assertEquals(requestedAuth, [
-          "Bearer env-invalid-token",
-          "Bearer stored-valid-token",
-        ]);
+        assertEquals(result, null);
+        assertEquals(requestedAuth, ["Bearer env-invalid-token"]);
         const printed = output.join("\n");
-        assertStringIncludes(printed, "stored@example.com");
+        assertEquals(printed.includes("stored@example.com"), false);
         assertEquals(printed.includes("Enter your API token"), false);
         assertEquals(printed.includes("stored-valid-token"), false);
       } finally {
@@ -1203,14 +1252,20 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
           })) as typeof fetch;
 
         const { login } = await import("./login.ts");
-        const outcome = await Promise.race([
-          login(undefined, testEnv),
-          new Promise((resolve) =>
-            setTimeout(() => resolve("TIMED_OUT"), 3000)
-          ),
-        ]);
+        let timer: number | undefined;
+        try {
+          const outcome = await Promise.race([
+            login(undefined, testEnv),
+            new Promise((resolve) => {
+              timer = setTimeout(() =>
+                resolve("TIMED_OUT"), 3000);
+            }),
+          ]);
 
-        assertEquals(outcome, null);
+          assertEquals(outcome, null);
+        } finally {
+          if (timer !== undefined) clearTimeout(timer);
+        }
       } finally {
         const { __setExistingSessionTimeoutForTests } = await import("./login.ts");
         __setExistingSessionTimeoutForTests();
@@ -1220,7 +1275,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
-    it("shares one preflight deadline across environment and stored credentials", async () => {
+    it("does not start stored validation after a rejected environment credential", async () => {
       const originalFetch = globalThis.fetch;
       const signals: AbortSignal[] = [];
       await saveToken("stored-valid-token", testEnv);
@@ -1253,8 +1308,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         const result = await login(undefined, { ...testEnv, apiToken: "env-token" });
 
         assertEquals(result, null);
-        assertEquals(signals.length, 2);
-        assertEquals(signals[0], signals[1]);
+        assertEquals(signals.length, 1);
       } finally {
         const { __setExistingSessionTimeoutForTests } = await import("./login.ts");
         __setExistingSessionTimeoutForTests();
