@@ -61,23 +61,33 @@ function deleteSetValue<T>(set: Set<T>, value: T): void {
   apply(setDelete, set, [value]);
 }
 
-function hasBoxedPrimitiveBrand(value: object, valueOf: (this: unknown) => unknown): boolean {
+function boxedPrimitiveKind(value: object): "boolean" | "number" | "string" | undefined {
   try {
-    apply(valueOf, value, []);
-    return true;
+    apply(booleanValueOf, value, []);
+    return "boolean";
   } catch {
-    return false;
+    // Continue with the other intrinsic brand checks.
+  }
+  try {
+    apply(numberValueOf, value, []);
+    return "number";
+  } catch {
+    // Continue with the other intrinsic brand checks.
+  }
+  try {
+    apply(stringValueOf, value, []);
+    return "string";
+  } catch {
+    return undefined;
   }
 }
 
 function isBoxedPrimitive(value: object): boolean {
-  return hasBoxedPrimitiveBrand(value, booleanValueOf) ||
-    hasBoxedPrimitiveBrand(value, numberValueOf) ||
-    hasBoxedPrimitiveBrand(value, stringValueOf);
+  return boxedPrimitiveKind(value) !== undefined;
 }
 
 function isBoxedString(value: object): boolean {
-  return hasBoxedPrimitiveBrand(value, stringValueOf);
+  return boxedPrimitiveKind(value) === "string";
 }
 
 type ProviderCacheControlOption = {
@@ -172,12 +182,12 @@ function readOwnAnthropicMetadataProperty(
 ): unknown {
   let descriptor: PropertyDescriptor | undefined;
   try {
-    descriptor = Object.getOwnPropertyDescriptor(value, key);
+    descriptor = objectGetOwnPropertyDescriptor(value, key);
   } catch {
     throw new TypeError(malformedMessage);
   }
   if (descriptor === undefined) return undefined;
-  if (!Object.hasOwn(descriptor, "value") || descriptor.enumerable !== true) {
+  if (!objectHasOwn(descriptor, "value") || descriptor.enumerable !== true) {
     throw new TypeError(malformedMessage);
   }
   return descriptor.value;
@@ -368,9 +378,9 @@ function readOwnEnumerableDataProperty(
   key: string,
 ): { present: boolean; value?: unknown } | undefined {
   try {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    const descriptor = objectGetOwnPropertyDescriptor(value, key);
     if (descriptor === undefined) return { present: false };
-    if (!Object.hasOwn(descriptor, "value") || descriptor.enumerable !== true) {
+    if (!objectHasOwn(descriptor, "value") || descriptor.enumerable !== true) {
       return undefined;
     }
     return { present: true, value: descriptor.value };
@@ -387,7 +397,7 @@ function readAnthropicServerToolResultErrorFields(
   }
   try {
     if (
-      Object.keys(value).some((key) => !ANTHROPIC_SERVER_TOOL_RESULT_ERROR_FIELDS.has(key))
+      objectKeys(value).some((key) => !ANTHROPIC_SERVER_TOOL_RESULT_ERROR_FIELDS.has(key))
     ) {
       return undefined;
     }
@@ -907,9 +917,14 @@ function resolveAnthropicSystemMessageCacheControl(
   }
   let unsupportedFields: string[];
   try {
-    unsupportedFields = Object.keys(rawCacheControl).filter((key) =>
-      key !== "type" && key !== "ttl"
-    );
+    const keys = objectKeys(rawCacheControl);
+    unsupportedFields = [];
+    for (let index = 0; index < keys.length; index += 1) {
+      const key = keys[index]!;
+      if (key !== "type" && key !== "ttl") {
+        unsupportedFields.push(key);
+      }
+    }
   } catch {
     throw new TypeError("Anthropic system message cacheControl could not be inspected");
   }
@@ -1727,7 +1742,8 @@ function readEmittedAnthropicCacheTtl(
   } catch {
     return undefined;
   }
-  for (const key of keys) {
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index]!;
     const property = readOwnEnumerableDataProperty(cacheControl, key);
     if (!property) {
       throw new TypeError(
@@ -2121,15 +2137,15 @@ export function buildAnthropicMessagesRequestWithCorrelationState(
   );
   if (
     mcpConfiguration &&
-    (Object.hasOwn(rawProviderOptions, "mcp_servers") ||
-      Object.hasOwn(rawProviderOptions, "tools"))
+    (objectHasOwn(rawProviderOptions, "mcp_servers") ||
+      objectHasOwn(rawProviderOptions, "tools"))
   ) {
     throw new TypeError(
       "Anthropic MCP configuration must not be split between mcpServers and providerOptions",
     );
   }
   if (
-    Object.hasOwn(rawProviderOptions, "tools") &&
+    objectHasOwn(rawProviderOptions, "tools") &&
     containsAnthropicMcpToolset(callerTools)
   ) {
     throw new TypeError(

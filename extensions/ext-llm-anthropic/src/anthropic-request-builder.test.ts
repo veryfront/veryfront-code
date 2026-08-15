@@ -1841,8 +1841,13 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
         name: `boxed-${index}`,
         input_schema: { type: "object", properties: {} },
       };
-      const metadata = new Number(index);
+      const metadata = index % 3 === 0
+        ? new Number(index)
+        : index % 3 === 1
+        ? new Boolean(index % 2)
+        : new String(`${index}`);
       Object.defineProperty(metadata, Symbol.toPrimitive, {
+        configurable: true,
         value() {
           hookCalls += 1;
           tool.cache_control = { type: "ephemeral" };
@@ -1870,6 +1875,65 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       "Anthropic cache records must not contain boxed primitive values",
     );
     assertEquals(hookCalls, 0);
+  });
+
+  it("uses captured descriptors when budgeting message breakpoints", async () => {
+    const result = await runNoBrandEval(`
+      const { buildAnthropicMessagesRequest } = await import(
+        "./extensions/ext-llm-anthropic/src/anthropic-request-builder.ts"
+      );
+      const originalDescriptor = Object.getOwnPropertyDescriptor;
+      let mutableDescriptorCalls = 0;
+      Object.defineProperty(Object, "getOwnPropertyDescriptor", {
+        configurable: true,
+        value(target, key) {
+          mutableDescriptorCalls += 1;
+          if (key === "content") return undefined;
+          return Reflect.apply(originalDescriptor, Object, [target, key]);
+        },
+        writable: true,
+      });
+
+      let body;
+      try {
+        body = buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+            providerOptions: {
+              anthropic: {
+                messages: [{
+                  role: "user",
+                  content: Array.from({ length: 5 }, (_, index) => ({
+                    type: "text",
+                    text: \`Cached \${index}\`,
+                    cache_control: { type: "ephemeral" },
+                  })),
+                }],
+              },
+            },
+          },
+          false,
+          { push() {}, drain() { return []; } },
+        );
+      } finally {
+        Object.defineProperty(Object, "getOwnPropertyDescriptor", {
+          configurable: true,
+          value: originalDescriptor,
+          writable: true,
+        });
+      }
+      const cacheBreakpoints = body.messages[0].content.filter(
+        (block) => block.cache_control,
+      ).length;
+      console.log(JSON.stringify({ cacheBreakpoints, mutableDescriptorCalls }));
+    `);
+
+    assertEquals(result, {
+      cacheBreakpoints: 4,
+      mutableDescriptorCalls: 0,
+    });
   });
 
   it("uses captured key enumeration when validating cache records", () => {
@@ -1922,54 +1986,6 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       "Anthropic cache records must contain only enumerable data properties",
     );
     assertEquals(getterCalls, 0);
-  });
-
-  it("uses captured descriptors when budgeting message content", () => {
-    const message = {
-      role: "user",
-      content: Array.from({ length: 5 }, (_, index) => ({
-        type: "text",
-        text: `Cached ${index}`,
-        cache_control: { type: "ephemeral" },
-      })),
-    };
-    const originalDescriptor = Object.getOwnPropertyDescriptor(
-      Object,
-      "getOwnPropertyDescriptor",
-    );
-    Object.defineProperty(Object, "getOwnPropertyDescriptor", {
-      configurable: true,
-      writable: true,
-      value(value: object, key: PropertyKey) {
-        if (value === message && key === "content") {
-          return undefined;
-        }
-        return Reflect.getOwnPropertyDescriptor(value, key);
-      },
-    });
-
-    let body: ReturnType<typeof buildAnthropicMessagesRequest>;
-    try {
-      body = buildAnthropicMessagesRequest(
-        "claude-sonnet-4-6",
-        "anthropic",
-        {
-          prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
-          providerOptions: { anthropic: { messages: [message] } },
-        },
-        false,
-        createWarningCollector(),
-      );
-    } finally {
-      if (originalDescriptor) {
-        Object.defineProperty(Object, "getOwnPropertyDescriptor", originalDescriptor);
-      }
-    }
-
-    assertEquals(
-      body.messages[0]?.content.filter((block) => block.cache_control !== undefined).length,
-      4,
-    );
   });
 
   it("rejects message sibling accessors before budgeting content", () => {
