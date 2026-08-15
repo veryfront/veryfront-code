@@ -434,7 +434,7 @@ function keywordBefore(
  * comment cannot leak into the for-await check: its `*` + `/` terminator stops
  * `skipWhitespaceAndComments`, so a `for` written inside one never reads as
  * adjacent to a later `await`. A line comment ends at a newline, which that
- * same scan treats as ordinary whitespace and walks straight through — so the
+ * same scan treats as ordinary whitespace and walks straight through, so the
  * commented word is read as code.
  *
  * Lexing only the current line is both sufficient and bounded: a line comment
@@ -479,7 +479,7 @@ function isForAwaitHeader(
       isStandaloneKeyword &&
       // The search runs over raw text, so it also finds a `for` that is not
       // code. Everything but a line comment is already excluded by the
-      // adjacency check below — see `isInsideLineComment`.
+      // adjacency check below (see `isInsideLineComment`).
       !isInsideLineComment(source, forStart) &&
       skipWhitespaceAndComments(source, forStart + "for".length) === awaitStart
     ) return true;

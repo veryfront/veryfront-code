@@ -578,10 +578,10 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
     });
 
     // The for-await search runs over raw text, so it also finds a `for` that is
-    // not code. A block comment cannot fool it — the `*/` terminator stops the
-    // adjacency scan — but a line comment ends at a newline, which that scan
+    // not code. A block comment cannot fool it because the `*/` terminator
+    // stops the adjacency scan. A line comment ends at a newline, which the scan
     // treats as ordinary whitespace and walks straight through. A comment whose
-    // last word is `for` sitting above a top-level `await (…)` therefore read as
+    // last word is `for` sitting above a top-level `await (...)` therefore read as
     // a for-await header, and the `/` that actually divides was taken as a regex
     // opening, hiding a real dynamic import inside it.
     it("does not read a line comment ending in for as a for-await header", () => {
@@ -599,7 +599,7 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
 
     // The converse over-correction: `//` inside a string is not a comment, so a
     // URL on the same line must not stop a genuine for-await header from being
-    // recognised — that would put the phantom-import bug straight back.
+    // recognized. Otherwise, the phantom-import bug would return.
     it("still reads a for-await header on a line holding a url string", () => {
       assertEquals(
         specifiers(
