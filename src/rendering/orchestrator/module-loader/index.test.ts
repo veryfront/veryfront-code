@@ -390,6 +390,29 @@ describe("module-loader/loadModule build-failure tagging", () => {
     );
   });
 
+  it("tags a missing project alias import as a tenant build failure", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import { label } from "@/components/Missing";`,
+          `export default function Page() { return label; }`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const error = await assertRejects(
+            () => loadModule(join(projectDir, "app/page.tsx"), config),
+            Error,
+          );
+
+          assertEquals(isMissingModuleError(error), true);
+          assertEquals(isBuildFailure(error), true);
+          assertEquals(isTenantBuildFailure(error), true);
+        });
+      },
+    );
+  });
+
   it("tags missing side-effect imports in every legal declaration position", async () => {
     for (
       const source of [
