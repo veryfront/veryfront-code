@@ -131,8 +131,6 @@ children):
    get_case                   search_knowledge          update_case_reason
    list_case_activity         get_file (taxonomy)       add_internal_case_comment
    list_cases (open-constrained)     │                   get_picklist_values_for_record_type
-         │                    │                          list_active_users
-         │                    │                          list_case_queues
           │                          ▼                         │
           ▼                  project taxonomy .md              ▼
       Salesforce            (NOT Salesforce Knowledge)     Salesforce
@@ -472,15 +470,15 @@ dependencies, not static-schema details:
 | Referenced-object parser/enforcer for arbitrary SOQL/SOSL | Hosted integration executor and authorization layer | Re-enabling `run_soql_query`, SOSL `search`, or any arbitrary curated `q` override |
 | Per-CRUD enforcement against runtime `sobjectType` | Configure policy storage plus hosted authorization enforcement | Shipping any generic CRUD tool |
 | Server-side path validators for API names, Salesforce IDs, and encoded path segments | Hosted integration executor before URL interpolation | Shipping generic CRUD, picklist helpers, or any future path-composed static endpoint |
-| Knowledge-disabled and normalized-result adapters | Hosted integration executor response/error adapter layer | Returning the RFC's Knowledge fallback shape or normalized picklist result shape instead of raw Salesforce responses |
+| Write-status, Knowledge-disabled, and normalized-result adapters | Hosted integration executor response/error adapter layer | Returning `{ success: true }` for successful 204 writes, the RFC's Knowledge fallback shape, or normalized picklist result shape instead of raw Salesforce responses |
 
 Sequence v1 conservatively: first land the hosted curated-query adapter, fixed
 owner lookup adapters, fixed curated-write authorization, path validators, and
-Knowledge/picklist adapter contracts with fail-closed tests; then reveal the
-curated v1 tool surface. Keep generic CRUD and arbitrary SOQL/SOSL hidden until
-the per-CRUD matrix and referenced-object query parser are enforced. The
-companion template and Studio project must not advertise a tool before the hosted
-dependency that makes its contract fail-closed is live.
+write-status plus Knowledge/picklist adapter contracts with fail-closed tests;
+then reveal the curated v1 tool surface. Keep generic CRUD and arbitrary
+SOQL/SOSL hidden until the per-CRUD matrix and referenced-object query parser are
+enforced. The companion template and Studio project must not advertise a tool
+before the hosted dependency that makes its contract fail-closed is live.
 
 ## 6. Proposed comprehensive tool surface
 
@@ -604,12 +602,14 @@ must include `IsPublished: false`. Tests must prove that prompts, model output,
 and caller input cannot publish the comment. `case-dispose` must not receive the
 generic `add_case_comment` tool, and the internal helper still needs an independent
 `CaseComment` Create grant and denial test. Retained curated writes need the same
-fixed object/operation denial tests. Every immutable-query adapter entry must prove
-that `q` is absent from the published schema, a supplied `q` and unknown filters
-are rejected, and the exact fixed object, field list, predicates, ordering, and
-limit reach Salesforce. Static Contact query defaults must also prove they either
-omit Account relationship fields or deny the query when Account Read is absent.
-Each generic
+fixed object/operation denial tests. Successful `204 No Content` writes, including
+`update_case_reason`, must return an explicit `{ success: true }` adapter result
+instead of an empty string, and tests must prove the agent-visible result cannot be
+misread as failure. Every immutable-query adapter entry must prove that `q` is
+absent from the published schema, a supplied `q` and unknown filters are rejected,
+and the exact fixed object, field list, predicates, ordering, and limit reach
+Salesforce. Static Contact query defaults must also prove they either omit Account
+relationship fields or deny the query when Account Read is absent. Each generic
 CRUD tool must be denied for an un-granted `sobjectType` (§16). `list_cases`
 needs a closed-case exclusion test: seed at least one recently modified closed
 Case and assert the v1 open-case listing cannot return it, and assert any missing
