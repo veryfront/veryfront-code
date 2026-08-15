@@ -1936,6 +1936,74 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     });
   });
 
+  it("uses captured deletion when trimming cache breakpoints", async () => {
+    const result = await runNoBrandEval(`
+      const { buildAnthropicMessagesRequest } = await import(
+        "./extensions/ext-llm-anthropic/src/anthropic-request-builder.ts"
+      );
+      const originalDeleteProperty = Reflect.deleteProperty;
+      let mutableDeleteCalls = 0;
+      Object.defineProperty(Reflect, "deleteProperty", {
+        configurable: true,
+        value(target, key) {
+          mutableDeleteCalls += 1;
+          return true;
+        },
+        writable: true,
+      });
+
+      const build = (anthropic) => buildAnthropicMessagesRequest(
+        "claude-sonnet-4-6",
+        "anthropic",
+        {
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+          providerOptions: { anthropic },
+        },
+        false,
+        { push() {}, drain() { return []; } },
+      );
+      let systemBody;
+      let messageBody;
+      try {
+        systemBody = build({
+          system: Array.from({ length: 5 }, (_, index) => ({
+            type: "text",
+            text: \`System \${index}\`,
+            cache_control: { type: "ephemeral" },
+          })),
+        });
+        messageBody = build({
+          messages: [{
+            role: "user",
+            content: Array.from({ length: 5 }, (_, index) => ({
+              type: "text",
+              text: \`Message \${index}\`,
+              cache_control: { type: "ephemeral" },
+            })),
+          }],
+        });
+      } finally {
+        Object.defineProperty(Reflect, "deleteProperty", {
+          configurable: true,
+          value: originalDeleteProperty,
+          writable: true,
+        });
+      }
+      const count = (values) => values.filter((value) => value.cache_control).length;
+      console.log(JSON.stringify({
+        messageBreakpoints: count(messageBody.messages[0].content),
+        mutableDeleteCalls,
+        systemBreakpoints: count(systemBody.system),
+      }));
+    `);
+
+    assertEquals(result, {
+      messageBreakpoints: 4,
+      mutableDeleteCalls: 0,
+      systemBreakpoints: 4,
+    });
+  });
+
   it("uses captured key enumeration when validating cache records", () => {
     let getterCalls = 0;
     const tool: Record<string, unknown> = {

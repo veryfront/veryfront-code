@@ -44,6 +44,7 @@ const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectGetPrototypeOf = Object.getPrototypeOf;
 const objectHasOwn = Object.hasOwn;
 const objectKeys = Object.keys;
+const reflectDeleteProperty = Reflect.deleteProperty;
 const setAdd = Set.prototype.add;
 const setDelete = Set.prototype.delete;
 const setHas = Set.prototype.has;
@@ -1636,7 +1637,7 @@ function retainLatestAnthropicMessageCacheBreakpoints(
         );
       }
       const next = { ...block };
-      Reflect.deleteProperty(next, "cache_control");
+      reflectDeleteProperty(next, "cache_control");
       content[contentIndex] = next;
       remainingToRemove -= 1;
     }
@@ -1887,7 +1888,7 @@ function retainLatestAnthropicCacheBreakpoints(
   for (let position = 0; position < removalCount; position += 1) {
     const index = breakpointIndexes[position]!;
     const next = { ...retained[index] };
-    Reflect.deleteProperty(next, "cache_control");
+    reflectDeleteProperty(next, "cache_control");
     retained[index] = next;
   }
   return retained;
@@ -2272,12 +2273,12 @@ export function buildAnthropicMessagesRequestWithCorrelationState(
     body.messages,
   );
   if (boundedCacheBreakpoints.system === undefined) {
-    Reflect.deleteProperty(body, "system");
+    reflectDeleteProperty(body, "system");
   } else {
     body.system = boundedCacheBreakpoints.system;
   }
   if (boundedCacheBreakpoints.tools === undefined) {
-    Reflect.deleteProperty(body, "tools");
+    reflectDeleteProperty(body, "tools");
   } else {
     body.tools = boundedCacheBreakpoints.tools;
   }
