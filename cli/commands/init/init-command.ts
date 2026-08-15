@@ -262,7 +262,7 @@ export async function initCommand(
       }
     } else {
       const { chdir } = await import("veryfront/platform");
-      const { ensureAuthenticated, readToken } = await import("../../auth/index.ts");
+      const { ensureAuthenticated } = await import("../../auth/index.ts");
       const { deployCommand } = await import("../deploy/index.ts");
       const authResult = await ensureAuthenticated(undefined, createdProjectDir);
 
@@ -270,36 +270,30 @@ export async function initCommand(
         if (!quiet) console.log();
         log(`  Authentication required for --deploy. ${manualDeployHint}`);
       } else {
-        const token = await readToken();
-        if (!token) {
-          if (!quiet) console.log();
-          log(`  Could not read auth token. ${manualDeployHint}`);
-        } else {
-          if (!quiet) console.log();
-          log(`  Deploying project...`);
+        if (!quiet) console.log();
+        log(`  Deploying project...`);
 
-          try {
-            chdir(createdProjectDir);
+        try {
+          chdir(createdProjectDir);
 
-            const deployment = await deployCommand({
-              projectDir: createdProjectDir,
-              branch: "main",
-              env: "production",
-              force: true,
-              dryRun: false,
-              quiet: true,
-            });
+          const deployment = await deployCommand({
+            projectDir: createdProjectDir,
+            branch: "main",
+            env: "production",
+            force: true,
+            dryRun: false,
+            quiet: true,
+          });
 
-            if (!deployment) {
-              throw new Error("Deploy completed without a verified result.");
-            }
-            deployedUrl = deployment.url;
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            if (!quiet) console.log();
-            log(`  Deploy failed: ${message}`);
-            log(`  Your project was created locally. ${manualDeployHint}`);
+          if (!deployment) {
+            throw new Error("Deploy completed without a verified result.");
           }
+          deployedUrl = deployment.url;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (!quiet) console.log();
+          log(`  Deploy failed: ${message}`);
+          log(`  Your project was created locally. ${manualDeployHint}`);
         }
       }
     }
