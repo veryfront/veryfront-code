@@ -17,6 +17,23 @@ function isEsbuildSourceDiagnostic(error: unknown): boolean {
   });
 }
 
+/**
+ * `.mdx` and `.md` reach this stage as *generated* JSX: PARSE has already run
+ * the MDX compiler over the tenant's source, so `ctx.code` here is framework
+ * output. A diagnostic with a location points into that generated code, not
+ * into anything the project wrote, so it must not claim tenant ownership — a
+ * remark/rehype/recma plugin emitting broken JSX is a framework fault that has
+ * to page someone.
+ *
+ * Nothing is lost by refusing to infer ownership for these two extensions:
+ * genuine MDX and Markdown *source* errors are classified upstream at PARSE as
+ * `mdx-compile-error` / `markdown-compile-error`, both of which the shared
+ * tenant classifier already recognizes.
+ */
+function isGeneratedContentOutput(filePath: string): boolean {
+  return filePath.endsWith(".mdx") || filePath.endsWith(".md");
+}
+
 export const compilePlugin: TransformPlugin = {
   name: "esbuild-compile",
   stage: TransformStage.COMPILE,
@@ -79,7 +96,10 @@ export const compilePlugin: TransformPlugin = {
       throw COMPILATION_ERROR.create({
         detail: `ESM transform failed for ${ctx.filePath} (loader: ${loader}): ${errorMsg}`,
         cause: err,
-        context: { tenantBuildFailure: isEsbuildSourceDiagnostic(err) },
+        context: {
+          tenantBuildFailure: !isGeneratedContentOutput(ctx.filePath) &&
+            isEsbuildSourceDiagnostic(err),
+        },
       });
     }
   },

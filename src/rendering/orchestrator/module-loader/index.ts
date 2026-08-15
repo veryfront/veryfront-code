@@ -26,7 +26,7 @@ import {
   getModuleCacheKey,
   resolveCachedModulePath,
 } from "./module-cache-lookup.ts";
-import { markBuildFailure } from "./build-failure.ts";
+import { markBuildFailure, markTenantBuildFailure } from "./build-failure.ts";
 import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 
@@ -403,7 +403,22 @@ export async function loadModule(
         throw markBuildFailure(rebuildError);
       }
 
-      return await import(`${toFileUrl(rebuiltPath).href}?t=${Date.now()}&rebuilt=1`);
+      try {
+        return await import(`${toFileUrl(rebuiltPath).href}?t=${Date.now()}&rebuilt=1`);
+      } catch (retryError) {
+        // A specifier that still does not resolve after a full rebuild from
+        // source is not an evicted cache artifact — it is a path the project
+        // authored that points at nothing. `resolveModuleDependencies` only
+        // resolves `@/` aliases and relative imports, and silently drops the
+        // ones it cannot find, so the unresolvable specifier survives into the
+        // built module and fails here. That is a tenant build failure, and it
+        // has to be classified explicitly: `ERR_MODULE_NOT_FOUND` is not a
+        // VeryfrontError, so slug-based classification cannot see it.
+        if (isMissingModuleError(retryError)) throw markTenantBuildFailure(retryError);
+        // Anything else means the module was found and ran, which is an
+        // ordinary application error the project's own error page presents.
+        throw retryError;
+      }
     }
 
     logger.error("Failed to import module:", {

@@ -18,7 +18,7 @@ import {
   transformModuleWithDeps,
 } from "./index.ts";
 import { buildModuleTransformCacheVariant, getModuleCacheKey } from "./module-cache-lookup.ts";
-import { isBuildFailure } from "./build-failure.ts";
+import { isBuildFailure, isTenantBuildFailure } from "./build-failure.ts";
 
 async function withModuleLoaderFixture<T>(
   files: Record<string, string>,
@@ -334,6 +334,44 @@ describe("module-loader/loadModule build-failure tagging", () => {
         });
       },
     );
+  });
+
+  // A relative import that resolves to nothing is dropped by
+  // `resolveModuleDependencies` and survives into the built module as authored,
+  // so the failure only surfaces at `import()` time as ERR_MODULE_NOT_FOUND —
+  // after the self-heal rebuild has already retried it. That rejection used to
+  // leave `loadModule` untagged, so a tenant typo in an import path was
+  // reported at error level forever.
+  it("tags a missing local static import as a tenant build failure", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import "./missing";`,
+          `export default function Page() { return null; }`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const error = await assertRejects(
+            () => loadModule(join(projectDir, "app/page.tsx"), config),
+            Error,
+          );
+
+          assertEquals(isMissingModuleError(error), true);
+          assertEquals(isBuildFailure(error), true);
+          assertEquals(isTenantBuildFailure(error), true);
+        });
+      },
+    );
+  });
+
+  // The same seam must not launder a framework fault: a module that was found
+  // and threw while executing is an application error, not a build failure.
+  it("leaves a non-resolution import failure untagged", () => {
+    const runtimeError = new TypeError("x is not a function");
+
+    assertEquals(isBuildFailure(runtimeError), false);
+    assertEquals(isTenantBuildFailure(runtimeError), false);
   });
 });
 

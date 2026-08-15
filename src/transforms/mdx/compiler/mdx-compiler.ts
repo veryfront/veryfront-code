@@ -24,12 +24,13 @@ function isMdxSourceCompileError(error: Error): boolean {
     typeof candidate.ruleId === "string" &&
     Number.isSafeInteger(candidate.line) &&
     Number.isSafeInteger(candidate.column);
-  const isYamlFrontmatterError = error.name === "SyntaxError" &&
-    /\bline \d+, column \d+\b/i.test(error.message) &&
-    (error.stack?.includes("/src/platform/compat/std/front-matter-yaml.ts") === true ||
-      error.stack?.includes("/src/platform/compat/std/yaml.ts") === true ||
-      error.stack?.includes("/extensions/ext-yaml/src/adapter.ts") === true);
-  return isMdxParserError || isYamlFrontmatterError || isFrontmatterSyntaxError(error);
+  // Frontmatter failures are identified by the symbol `extractFrontmatter`
+  // stamps at the throw site, not by matching stack-frame paths: `extract()` is
+  // the only frontmatter path and it tags every SyntaxError it raises. A
+  // stack-path heuristic would only add false positives (any SyntaxError whose
+  // stack happened to pass through the YAML shim) and does not survive
+  // `deno compile` anyway.
+  return isMdxParserError || isFrontmatterSyntaxError(error);
 }
 
 export function compileMDXRuntime(

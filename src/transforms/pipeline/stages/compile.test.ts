@@ -151,5 +151,44 @@ describe("transforms/pipeline/stages/compile", () => {
         true,
       );
     });
+
+    // By the time an `.mdx` file reaches COMPILE, PARSE has already turned the
+    // tenant's source into JSX, so `ctx.code` is the framework's MDX-compiler
+    // output. A remark/rehype/recma plugin emitting broken JSX still yields an
+    // esbuild diagnostic with a valid location — pointing into generated code.
+    // Claiming tenant ownership there would downgrade a broken content-MDX
+    // release to a Sentry warning and nobody would be paged.
+    it("does not claim tenant ownership of a diagnostic in MDX-compiler output", async () => {
+      const error = await assertRejects(
+        async () =>
+          await compilePlugin.transform(
+            createContext("export const value = ;", "/project/app/post.mdx"),
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "compilation-error");
+      assertEquals(
+        (error.context as { tenantBuildFailure?: unknown } | undefined)?.tenantBuildFailure,
+        false,
+      );
+    });
+
+    it("does not claim tenant ownership of a diagnostic in Markdown-compiler output", async () => {
+      const error = await assertRejects(
+        async () =>
+          await compilePlugin.transform(
+            createContext("export const value = ;", "/project/app/post.md"),
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(
+        (error.context as { tenantBuildFailure?: unknown } | undefined)?.tenantBuildFailure,
+        false,
+      );
+    });
   });
 });

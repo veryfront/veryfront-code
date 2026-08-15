@@ -14,7 +14,7 @@
  * error at the point of failure instead of leaving later layers to infer it.
  */
 
-import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
+import { isTenantSourceBuildError } from "#veryfront/errors/tenant-classification.ts";
 
 const BUILD_FAILURE = Symbol.for("veryfront.module-loader.build-failure");
 const TENANT_BUILD_FAILURE = Symbol.for("veryfront.module-loader.tenant-build-failure");
@@ -24,30 +24,40 @@ type TaggedError = Error & {
   [TENANT_BUILD_FAILURE]?: true;
 };
 
-const TENANT_BUILD_ERROR_SLUGS = new Set([
-  "typescript-error",
-  "mdx-compile-error",
-  "markdown-compile-error",
-]);
-
-function isExplicitTenantBuildFailure(error: Error): boolean {
-  const snapshot = snapshotVeryfrontError(error);
-  const errorContext = snapshot?.context;
-  if (
-    typeof errorContext === "object" && errorContext !== null &&
-    (errorContext as { tenantBuildFailure?: unknown }).tenantBuildFailure === true
-  ) {
-    return true;
+/**
+ * Modules are strict mode, so a plain assignment onto a frozen error throws.
+ * These taggers run inside `catch` blocks, where a throw would replace the
+ * original error with a `TypeError` and lose the failure entirely.
+ */
+function defineTag(error: Error, tag: symbol): void {
+  try {
+    Object.defineProperty(error, tag, { value: true, configurable: true });
+  } catch {
+    // Sealed or non-configurable: the error stays untagged, which degrades to
+    // the pre-classification behavior rather than destroying the error.
   }
-  return snapshot?.category === "BUILD" && TENANT_BUILD_ERROR_SLUGS.has(snapshot.slug);
 }
 
 /** Tag `error` as a build failure and return it. */
 export function markBuildFailure(error: unknown): unknown {
   if (error instanceof Error) {
-    const tagged = error as TaggedError;
-    tagged[BUILD_FAILURE] = true;
-    if (isExplicitTenantBuildFailure(error)) tagged[TENANT_BUILD_FAILURE] = true;
+    defineTag(error, BUILD_FAILURE);
+    if (isTenantSourceBuildError(error)) defineTag(error, TENANT_BUILD_FAILURE);
+  }
+  return error;
+}
+
+/**
+ * Tag `error` as a build failure the tenant's own source caused, and return it.
+ *
+ * For seams that know the provenance from control flow rather than from a
+ * registry slug — an import specifier that still does not resolve after a full
+ * rebuild, for instance, is a path the project authored.
+ */
+export function markTenantBuildFailure(error: unknown): unknown {
+  if (error instanceof Error) {
+    defineTag(error, BUILD_FAILURE);
+    defineTag(error, TENANT_BUILD_FAILURE);
   }
   return error;
 }

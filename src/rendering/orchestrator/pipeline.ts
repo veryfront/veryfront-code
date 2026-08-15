@@ -447,7 +447,14 @@ export class RenderPipeline {
           buildFailure: criticalFailures.some((f) => f.buildFailure),
           // Only explicit compiler/source classifications may affect
           // observability severity. Infrastructure can fail in the same phase.
-          tenantBuildFailure: criticalFailures.some((f) => f.tenantBuildFailure),
+          //
+          // `every` rather than `some`: today `criticalFailures` holds at most
+          // one entry (collectModulesToLoad pushes exactly one `type: "page"`,
+          // and only pages reach here), so the two are equivalent. If that ever
+          // changes, one tenant mistake must not downgrade a framework fault
+          // that failed alongside it. The array is non-empty inside this branch,
+          // so `every` cannot vacuously return true.
+          tenantBuildFailure: criticalFailures.every((f) => f.tenantBuildFailure),
           loadedCount: loaded.length,
           totalModules: modules.length,
         },

@@ -1,4 +1,5 @@
 import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
+import { isTenantSourceBuildError } from "#veryfront/errors/tenant-classification.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { sanitizeTelemetryAttributes, sanitizeTelemetryText } from "./telemetry-error.ts";
 import { MAX_APPLICATION_ERROR_CONTEXT_VALUE_LENGTH } from "./limits.ts";
@@ -231,21 +232,15 @@ const TENANT_BUILD_ERROR_CLASS = "tenant-build";
  * rendering layer; see src/rendering/orchestrator/module-loader/build-failure.ts.
  */
 const TENANT_BUILD_FAILURE_TAG = Symbol.for("veryfront.module-loader.tenant-build-failure");
-const TENANT_BUILD_ERROR_SLUGS = new Set([
-  "typescript-error",
-  "mdx-compile-error",
-  "markdown-compile-error",
-]);
 
 /**
  * Whether `error` describes tenant build/content failing to compile (a page
  * that does not build, MDX that does not parse) rather than a framework fault.
  *
  * Recognizes the existing discriminators at their capture seam:
- * - the module loader's tenant-build-failure tag,
- * - the render pipeline's `tenantBuildFailure` error context, and
- * - tenant-facing BUILD registry slugs that do not also describe framework
- *   cache or bundle infrastructure failures.
+ * - the module loader's tenant-build-failure tag, and
+ * - the shared slug/context classification in `#veryfront/errors`, which is the
+ *   single owner of the tenant-source verdict.
  */
 function isTenantBuildError(error: unknown): boolean {
   try {
@@ -256,16 +251,7 @@ function isTenantBuildError(error: unknown): boolean {
         return true;
       }
     }
-    const snapshot = snapshotVeryfrontError(error);
-    if (!snapshot) return false;
-    const errorContext = snapshot.context;
-    if (
-      typeof errorContext === "object" && errorContext !== null &&
-      (errorContext as { tenantBuildFailure?: unknown }).tenantBuildFailure === true
-    ) {
-      return true;
-    }
-    return snapshot.category === "BUILD" && TENANT_BUILD_ERROR_SLUGS.has(snapshot.slug);
+    return isTenantSourceBuildError(error);
   } catch {
     return false;
   }
