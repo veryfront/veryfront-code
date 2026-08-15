@@ -453,6 +453,27 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("ignores import-looking regex text after module declarations", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'import value from "./dep.js"\n/import("\\/_vf_modules\\/after-import.js")/.test(value);',
+        ),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'export { value } from "./dep.js"\n/import("\\/_vf_modules\\/after-export.js")/.test(value);',
+        ),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'import value from "./dep.js"\nvalue\n/import("\\/_vf_modules\\/after-expression.js")/.test(value);',
+        ),
+        ["/_vf_modules/after-expression.js"],
+      );
+    });
+
     it("ignores import-looking regex text after plain and labeled blocks", () => {
       assertEquals(
         vfModuleSpecifiers('{} /import("\\/_vf_modules\\/plain.js")/.test(value);'),

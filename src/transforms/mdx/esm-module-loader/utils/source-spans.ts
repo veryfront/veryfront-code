@@ -893,6 +893,117 @@ function isForOfKeywordBefore(
   return currentParen?.isForHeader === true && !currentParen.hasSemicolon;
 }
 
+function moduleDeclarationKeywordBefore(
+  source: string,
+  rangeStart: number,
+  end: number,
+): { keyword: "import" | "export"; index: number } | null {
+  let cursor = rangeStart;
+  let atStatementStart = true;
+  let parenDepth = 0;
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let candidate: { keyword: "import" | "export"; index: number } | null = null;
+
+  while (cursor <= end) {
+    const skipped = skipIgnored(source, cursor);
+    if (skipped !== cursor) {
+      if (source[cursor] === "/" && source[cursor + 1] === "/") {
+        atStatementStart = true;
+      } else if (
+        source[cursor] === "/" &&
+        source[cursor + 1] === "*" &&
+        hasLineTerminatorBetween(source, cursor + 2, skipped - 2)
+      ) {
+        atStatementStart = true;
+      } else {
+        atStatementStart = false;
+      }
+      cursor = skipped;
+      continue;
+    }
+
+    const char = source[cursor];
+    if (char === "(") parenDepth++;
+    else if (char === ")" && parenDepth > 0) parenDepth--;
+    else if (char === "{") braceDepth++;
+    else if (char === "}" && braceDepth > 0) braceDepth--;
+    else if (char === "[") bracketDepth++;
+    else if (char === "]" && bracketDepth > 0) bracketDepth--;
+
+    const atTopLevel = parenDepth === 0 && braceDepth === 0 && bracketDepth === 0;
+    if (atTopLevel && char === ";") {
+      candidate = null;
+      atStatementStart = true;
+      cursor++;
+      continue;
+    }
+    if (atTopLevel && char !== undefined && isLineTerminator(char)) {
+      atStatementStart = true;
+      cursor++;
+      continue;
+    }
+    if (/\s/.test(char ?? "")) {
+      cursor++;
+      continue;
+    }
+
+    if (atTopLevel && atStatementStart) {
+      if (
+        source.startsWith("import", cursor) &&
+        !isIdentifierBoundaryBefore(source, cursor) &&
+        !isIdentifierBoundaryAfter(source, cursor + "import".length)
+      ) {
+        candidate = { keyword: "import", index: cursor };
+        atStatementStart = false;
+        cursor += "import".length;
+        continue;
+      }
+      if (
+        source.startsWith("export", cursor) &&
+        !isIdentifierBoundaryBefore(source, cursor) &&
+        !isIdentifierBoundaryAfter(source, cursor + "export".length)
+      ) {
+        candidate = { keyword: "export", index: cursor };
+        atStatementStart = false;
+        cursor += "export".length;
+        continue;
+      }
+    }
+
+    if (atTopLevel) atStatementStart = false;
+    cursor++;
+  }
+
+  return candidate;
+}
+
+function isCompletedModuleDeclarationBeforeRegex(
+  source: string,
+  index: number,
+  rangeStart: number,
+  previousTokenIndex: number,
+): boolean {
+  if (!hasLineTerminatorBetween(source, previousTokenIndex + 1, index)) return false;
+
+  const declaration = moduleDeclarationKeywordBefore(source, rangeStart, previousTokenIndex);
+  if (declaration === null) return false;
+
+  const declarationSource = normalizedDeclarationPrefix(
+    source,
+    declaration.index,
+    previousTokenIndex + 1,
+  ).trim();
+
+  if (declaration.keyword === "import") {
+    return (
+      /^import\s*["'`][\s\S]*["'`]$/.test(declarationSource) ||
+      /^import\b[\s\S]*\bfrom\s*["'`][\s\S]*["'`]$/.test(declarationSource)
+    ) && !/^import\s*[.(]/.test(declarationSource);
+  }
+  return /^export\b[\s\S]*\bfrom\s*["'`][\s\S]*["'`]$/.test(declarationSource);
+}
+
 function canStartRegexLiteral(
   source: string,
   index: number,
@@ -904,6 +1015,7 @@ function canStartRegexLiteral(
 ): boolean {
   const previous = previousTokenIndex;
   if (previous < rangeStart) return true;
+  if (isCompletedModuleDeclarationBeforeRegex(source, index, rangeStart, previous)) return true;
 
   const char = source[previous];
   if (
