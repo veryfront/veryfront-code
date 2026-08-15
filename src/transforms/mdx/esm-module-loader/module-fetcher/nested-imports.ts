@@ -295,6 +295,25 @@ export async function processNestedImports(
     }
 
     const modulePath = nestedPath || relativePath || "";
+    if (isDynamic) {
+      const deferredPath = await createStubModule(
+        modulePath,
+        moduleCode,
+        original,
+        esmCacheDir,
+        { failOnImport: strictMissingModules },
+      );
+      if (deferredPath) {
+        replacements.push({
+          start,
+          end,
+          expected: original,
+          replacement: toImportStringLiteral(`file://${deferredPath}${suffix ?? ""}`),
+        });
+        continue;
+      }
+    }
+
     if (strictMissingModules) {
       throw buildMissingModuleError({
         modulePath,

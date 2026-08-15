@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
+import { join, toFileUrl } from "#veryfront/compat/path/index.ts";
 import {
   findNestedImports,
   hasUnresolvedImports,
@@ -386,6 +387,52 @@ import { bar } from "./local.js";
       } finally {
         await remove(esmCacheDir, { recursive: true });
       }
+    });
+
+    it("defers a missing strict dynamic import until the branch executes", async () => {
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-dynamic-missing-cache-" });
+
+      try {
+        const result = await resolveNestedModuleImports({
+          moduleCode:
+            `export const load = (enabled) => enabled ? import("./optional.js") : Promise.resolve("skipped");`,
+          esmCacheDir,
+          normalizedPath: "_vf_modules/pages/index.js",
+          projectSlug: "docs",
+          strictMissingModules: true,
+          fetchAndCacheModule: () => Promise.resolve(null),
+        });
+        const parentPath = join(esmCacheDir, "dynamic-parent.mjs");
+        await Deno.writeTextFile(parentPath, result);
+        const loaded = await import(
+          `${toFileUrl(parentPath).href}?test=${crypto.randomUUID()}`
+        ) as { load(enabled: boolean): Promise<unknown> };
+
+        assertEquals(await loaded.load(false), "skipped");
+        await assertRejects(
+          () => loaded.load(true),
+          Error,
+          "Missing module: ./optional.js",
+        );
+      } finally {
+        await remove(esmCacheDir, { recursive: true });
+      }
+    });
+
+    it("keeps strict static imports fail-fast", async () => {
+      await assertRejects(
+        () =>
+          resolveNestedModuleImports({
+            moduleCode: `import value from "./missing.js"; export { value };`,
+            esmCacheDir: "/tmp/veryfront-unused",
+            normalizedPath: "_vf_modules/pages/index.js",
+            projectSlug: "docs",
+            strictMissingModules: true,
+            fetchAndCacheModule: () => Promise.resolve(null),
+          }),
+        Error,
+        "Missing module: ./missing.js",
+      );
     });
 
     it("resolves admitted fan-out with bounded concurrency", async () => {
