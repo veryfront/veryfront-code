@@ -537,6 +537,7 @@ function canStartRegexLiteral(
     "delete",
     "do",
     "else",
+    "extends",
     "in",
     "instanceof",
     "new",
@@ -770,18 +771,63 @@ export function findStaticImportFromSpans(
   const spans: StaticImportSpan[] = [];
   let cursor = 0;
   let atStatementStart = true;
+  const openBraces: number[] = [];
+  const matchingOpenBraces = new Map<number, number>();
+  const openParens: OpenParenContext[] = [];
+  const matchingOpenParens = new Map<number, number>();
 
   while (cursor < source.length) {
     const char = source[cursor];
-    const skipped = skipIgnored(source, cursor);
+    const skipped = skipExpressionIgnored(
+      source,
+      cursor,
+      0,
+      0,
+      matchingOpenBraces,
+      matchingOpenParens,
+      openParens.at(-1),
+    );
     if (skipped !== cursor) {
       if (char === "/" && source[cursor + 1] === "/") atStatementStart = true;
-      else if (char !== "/") atStatementStart = false;
+      else if (!(char === "/" && source[cursor + 1] === "*")) atStatementStart = false;
       cursor = skipped;
       continue;
     }
 
-    if (char === ";" || char === "\n" || char === "}") {
+    if (char === "{") {
+      openBraces.push(cursor);
+      atStatementStart = false;
+      cursor++;
+      continue;
+    }
+    if (char === "}") {
+      const openBrace = openBraces.pop();
+      if (openBrace !== undefined) matchingOpenBraces.set(cursor, openBrace);
+      atStatementStart = true;
+      cursor++;
+      continue;
+    }
+    if (char === "(") {
+      openParens.push({
+        index: cursor,
+        isForHeader: keywordBefore(source, cursor) === "for",
+        hasSemicolon: false,
+      });
+      atStatementStart = false;
+      cursor++;
+      continue;
+    }
+    if (char === ")") {
+      const openParen = openParens.pop();
+      if (openParen !== undefined) matchingOpenParens.set(cursor, openParen.index);
+      atStatementStart = false;
+      cursor++;
+      continue;
+    }
+    if (char === ";" && openParens.at(-1)?.isForHeader) {
+      openParens.at(-1)!.hasSemicolon = true;
+    }
+    if (char === ";" || char === "\n") {
       atStatementStart = true;
       cursor++;
       continue;

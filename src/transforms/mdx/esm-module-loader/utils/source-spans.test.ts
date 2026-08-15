@@ -154,6 +154,46 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         ["./after-function.js"],
       );
     });
+
+    it("finds static imports after regex literals containing string delimiters", () => {
+      const cases = [
+        [`const single = /it's/; import single from "./after-single.js";`, "./after-single.js"],
+        ['const double = /"/; import double from "./after-double.js";', "./after-double.js"],
+        [
+          'const template = /`/; import template from "./after-template.js";',
+          "./after-template.js",
+        ],
+      ] as const;
+
+      for (const [source, expected] of cases) {
+        assertEquals(
+          findStaticImportFromSpans(source, matchRelative, UNBOUNDED).map((span) => span.path),
+          [expected],
+        );
+      }
+    });
+
+    it("ignores static import-from text inside regex literals", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          'const r = /;import value from "\\/_vf_modules\\/fake.js"/;',
+          (specifier) => specifier.startsWith("/_vf_modules/") ? specifier : null,
+          UNBOUNDED,
+        ),
+        [],
+      );
+    });
+
+    it("keeps division distinct from regex literals", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          'const ratio = total / 2; import value from "./after-division.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-division.js"],
+      );
+    });
   });
 
   describe("findDynamicImportSpans", () => {
@@ -312,6 +352,15 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
     it("ignores import-looking regex text after export default", () => {
       assertEquals(
         vfModuleSpecifiers('export default /import("\\/_vf_modules\\/a.js")/;'),
+        [],
+      );
+    });
+
+    it("ignores import-looking regex text after extends", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'class X extends /import("\\/_vf_modules\\/fake.js")/.constructor {}',
+        ),
         [],
       );
     });
