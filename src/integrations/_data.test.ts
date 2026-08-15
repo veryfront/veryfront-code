@@ -428,6 +428,7 @@ describe("integration endpoint specs", () => {
 
   it("opts only scoped Salesforce SOQL defaults into model-facing schemas", () => {
     const connector = getConnector("salesforce");
+    const exposedToolIds: string[] = [];
     let exposedDefaults = 0;
 
     for (const tool of connector.tools) {
@@ -448,9 +449,18 @@ describe("integration endpoint specs", () => {
         true,
         `Expected ${tool.id} to expose its safe SOQL default`,
       );
+      exposedToolIds.push(tool.id);
       exposedDefaults += 1;
     }
 
+    assertEquals(exposedToolIds, [
+      "salesforce__find_customer",
+      "salesforce__search_accounts",
+      "salesforce__search_contacts",
+      "salesforce__list_cases",
+      "salesforce__search_knowledge_articles",
+      "salesforce__list_opportunities",
+    ]);
     assertEquals(exposedDefaults, 6);
   });
 
