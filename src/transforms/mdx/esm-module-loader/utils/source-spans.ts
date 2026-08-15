@@ -559,7 +559,7 @@ function findFromSpan(
       !isIdentifierChar(source[cursor - 1]) &&
       !isIdentifierChar(source[cursor + 4])
     ) {
-      const quoteIndex = skipWhitespace(source, cursor + 4);
+      const quoteIndex = skipWhitespaceAndComments(source, cursor + 4);
       const quoted = readQuotedSpecifier(source, quoteIndex);
       if (!quoted) {
         cursor++;
@@ -625,7 +625,7 @@ export function findStaticImportFromSpans(
     }
 
     const keywordLength = isImport ? "import".length : "export".length;
-    const afterKeyword = skipWhitespace(source, cursor + keywordLength);
+    const afterKeyword = skipWhitespaceAndComments(source, cursor + keywordLength);
     if (isImport && source[afterKeyword] === "(") {
       cursor = afterKeyword + 1;
       continue;
@@ -779,10 +779,16 @@ function scanDynamicImportRange(
  *
  * The returned span covers the quoted specifier itself (quotes included), not
  * the surrounding `import(...)`, so a replacement is a bare quoted string.
- * Dynamic imports whose argument is not a string literal are skipped, since
- * their target is only known at runtime. That includes an argument the literal
+ *
+ * A literal here is a single- or double-quoted string, or a backtick template
+ * with no `${}` substitution — the three forms whose target is fully known at
+ * scan time. An interpolated template and any other expression are skipped,
+ * since their target is only known at runtime. So is an argument the literal
  * merely starts: rewriting the `"./foo"` in `import("./foo" + suffix)` would
  * build a path out of a resolved prefix and an unresolved tail.
+ *
+ * The scan also runs inside template substitutions, so a dynamic import nested
+ * in a `${…}` expression is found.
  *
  * `maxMatches` bounds the scan on the same terms as
  * {@link findStaticImportFromSpans}.
@@ -827,7 +833,7 @@ export function findStaticSideEffectImportSpans(
       continue;
     }
 
-    const literalIndex = skipWhitespace(source, cursor + "import".length);
+    const literalIndex = skipWhitespaceAndComments(source, cursor + "import".length);
     const literal = readLiteralSpecifier(source, literalIndex);
     if (!literal) {
       cursor = nextStatementCursor(source, literalIndex);

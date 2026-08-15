@@ -15,6 +15,7 @@ import {
   type SourceSpanReplacement,
 } from "../utils/source-spans.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
+import { splitSpecifierSuffix } from "../../../shared/specifier-suffix.ts";
 import type { Logger } from "#veryfront/utils";
 import { parallelMap } from "#veryfront/utils/parallel.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
@@ -28,18 +29,6 @@ function matchUnresolvedVfModuleSpecifier(specifier: string): string | null {
   return specifier.match(/^((?:file:\/\/)?\/?\/?_vf_modules\/.+)$/)?.[1] ?? null;
 }
 
-function splitSpecifierSuffix(specifier: string): { path: string; suffix: string } {
-  const queryStart = specifier.indexOf("?");
-  const hashStart = specifier.indexOf("#");
-  const suffixStart =
-    [queryStart, hashStart].filter((index) => index >= 0).sort((a, b) => a - b)[0];
-  if (suffixStart === undefined) return { path: specifier, suffix: "" };
-  return {
-    path: specifier.slice(0, suffixStart),
-    suffix: specifier.slice(suffixStart),
-  };
-}
-
 type NestedImportSpan = {
   original: string;
   path: string;
@@ -50,7 +39,15 @@ type NestedImportSpan = {
   isSideEffect?: boolean;
 };
 
-function toImportStringLiteral(url: string): string {
+/**
+ * Serialize a resolved module URL as a JavaScript string literal.
+ *
+ * A preserved suffix is author-controlled text (`?label="x"`, a backslash in a
+ * cache path). Wrapping it in quotes by hand emits a module that fails to
+ * parse, taking every other import in the file down with it, so every emitted
+ * specifier must go through this.
+ */
+export function toImportStringLiteral(url: string): string {
   return JSON.stringify(url);
 }
 

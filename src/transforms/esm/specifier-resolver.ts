@@ -15,6 +15,7 @@ import {
   normalizeExtension,
 } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
+import { splitSpecifierSuffix } from "../shared/specifier-suffix.ts";
 import { isServerOnlyPackage } from "../shared/server-only-packages.ts";
 import { parseImports, replaceSpecifiers } from "./lexer.ts";
 
@@ -30,13 +31,8 @@ import {
 } from "./http-cache-helpers.ts";
 
 const ReflectApply = Reflect.apply;
-const StringIndexOf = String.prototype.indexOf;
 const StringSlice = String.prototype.slice;
 const StringStartsWith = String.prototype.startsWith;
-
-function stringIndexOf(value: string, search: string): number {
-  return ReflectApply(StringIndexOf, value, [search]) as number;
-}
 
 function stringSlice(value: string, start: number, end?: number): string {
   return ReflectApply(StringSlice, value, end === undefined ? [start] : [start, end]) as string;
@@ -88,22 +84,6 @@ function isLocalMappedSpecifier(specifier: string): boolean {
     stringStartsWith(specifier, "file://");
 }
 
-function splitSpecifierSuffix(specifier: string): { path: string; suffix: string } {
-  const queryStart = stringIndexOf(specifier, "?");
-  const hashStart = stringIndexOf(specifier, "#");
-  const suffixStart = queryStart === -1
-    ? hashStart
-    : hashStart === -1
-    ? queryStart
-    : Math.min(queryStart, hashStart);
-
-  if (suffixStart === -1) return { path: specifier, suffix: "" };
-  return {
-    path: stringSlice(specifier, 0, suffixStart),
-    suffix: stringSlice(specifier, suffixStart),
-  };
-}
-
 /**
  * Resolve a single import specifier to a local cached path.
  *
@@ -123,13 +103,19 @@ async function resolveSpecifier(
   );
   if (isExternalScheme(specifier)) return null;
 
-  // The "@/" project alias always denotes the project's own module transport:
-  // the framework's default import map pins "@/" to "/_vf_modules/". An alias
-  // that escaped an upstream rewrite must land there too. Treating it as a
-  // bare specifier would route it to esm.sh as a bogus scoped package, and a
-  // project import map that maps "@/" to a relative prefix would resolve it
-  // against the page's public origin, which answers with HTML
+  // The "@/" project alias always denotes the project's own module transport.
+  // An alias that escaped every upstream rewrite must land there too: treating
+  // it as a bare specifier would route it to esm.sh as a bogus scoped package,
+  // and a project import map that maps "@/" to a relative prefix would resolve
+  // it against the page's public origin, which answers with HTML
   // (VERYFRONT-SERVER-G).
+  //
+  // The URL shape is not invented here. It reproduces `AliasStrategy.rewrite`
+  // (transforms/import-rewriter/strategies/alias-strategy.ts), the framework's
+  // canonical "@/" rewriter, which emits this same shape for both its `ssr` and
+  // its browser target: `normalizeExtension`, then append `.js` unless the
+  // result already ends in a JS-like or CSS extension. A different shape here
+  // would resolve one specifier to two different module URLs.
   if (stringStartsWith(specifier, "@/")) {
     const { path: pathOnly, suffix } = splitSpecifierSuffix(stringSlice(specifier, 2));
     const normalizedPath = normalizeExtension(pathOnly);

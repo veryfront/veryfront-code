@@ -122,6 +122,27 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         ["./value-0.js", "./value-1.js", "./value-2.js"],
       );
     });
+
+    // A comment is legal after the keyword and after `from`, on the same terms
+    // as whitespace.
+    it("finds specifiers behind comments after the keyword and after from", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          'import /* a */ value from /* b */ "./value.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./value.js"],
+      );
+      assertEquals(
+        findStaticImportFromSpans(
+          'export // a\n{ value } from // b\n"./value.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./value.js"],
+      );
+    });
   });
 
   describe("findDynamicImportSpans", () => {
@@ -501,6 +522,29 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         UNBOUNDED,
       );
       assertEquals(span?.original, "import `./value.js`");
+      assertEquals(span?.path, "./value.js");
+    });
+
+    // Comments are legal wherever whitespace is, so a bundler hint can sit
+    // between the keyword and the specifier. Missing the span leaves the
+    // dependency neither materialised nor reported as unresolved: the module is
+    // cached with a live `/_vf_modules/…` specifier and fails at execute time.
+    it("finds a side-effect specifier behind a block comment", () => {
+      const [span] = findStaticSideEffectImportSpans(
+        'import /* @vite-ignore */ "./value.js";',
+        matchRelative,
+        UNBOUNDED,
+      );
+      assertEquals(span?.original, 'import /* @vite-ignore */ "./value.js"');
+      assertEquals(span?.path, "./value.js");
+    });
+
+    it("finds a side-effect specifier behind a line comment", () => {
+      const [span] = findStaticSideEffectImportSpans(
+        'import // @vite-ignore\n"./value.js";',
+        matchRelative,
+        UNBOUNDED,
+      );
       assertEquals(span?.path, "./value.js");
     });
   });

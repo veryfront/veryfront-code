@@ -13,7 +13,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { rewriteVeryfrontImports } from "./import-rewriter.ts";
-import { findNestedImports } from "./nested-imports.ts";
+import { findNestedImports, toImportStringLiteral } from "./nested-imports.ts";
 import { replaceSourceSpans, type SourceSpanReplacement } from "../utils/source-spans.ts";
 import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 import { readHttpModuleText } from "../../../shared/http-module-response.ts";
@@ -285,15 +285,19 @@ export async function fetchModuleViaHTTP(
       const { original, start, end, suffix, isDynamic, isSideEffect, nestedFilePath } of results
     ) {
       if (nestedFilePath) {
+        // The suffix and the cache path are author- and filesystem-controlled.
+        // Interpolating either into a hand-written double-quoted literal emits
+        // a module that fails to parse whenever one contains `"` or `\`.
+        const importTarget = toImportStringLiteral(`file://${nestedFilePath}${suffix ?? ""}`);
         replacements.push({
           start,
           end,
           expected: original,
           replacement: isDynamic
-            ? `"file://${nestedFilePath}${suffix ?? ""}"`
+            ? importTarget
             : isSideEffect
-            ? `import "file://${nestedFilePath}${suffix ?? ""}"`
-            : `from "file://${nestedFilePath}${suffix ?? ""}"`,
+            ? `import ${importTarget}`
+            : `from ${importTarget}`,
         });
       }
     }

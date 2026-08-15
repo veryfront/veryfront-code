@@ -15,6 +15,7 @@ import type { FSAdapter } from "../types.ts";
 import { hashString } from "../utils/hash.ts";
 import { resolveFileWithExtension } from "../resolution/file-finder.ts";
 import { parseImports, replaceSpecifiers } from "../../../esm/lexer.ts";
+import { splitSpecifierSuffix } from "../../../shared/specifier-suffix.ts";
 
 type ImportType = "project-alias" | "vf-modules";
 
@@ -23,18 +24,6 @@ interface AliasImport {
   relativePath: string;
   suffix: string;
   type: ImportType;
-}
-
-function splitSpecifierSuffix(specifier: string): { path: string; suffix: string } {
-  const queryStart = specifier.indexOf("?");
-  const hashStart = specifier.indexOf("#");
-  const suffixStart =
-    [queryStart, hashStart].filter((index) => index >= 0).sort((a, b) => a - b)[0];
-  if (suffixStart === undefined) return { path: specifier, suffix: "" };
-  return {
-    path: specifier.slice(0, suffixStart),
-    suffix: specifier.slice(suffixStart),
-  };
 }
 
 async function findAliasImports(code: string): Promise<AliasImport[]> {
@@ -149,7 +138,14 @@ async function transformImport(
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Transformed ${getPathDesc(imp)} -> ${transformedPath}`);
 
-    return { specifier: imp.specifier, replacement: `file://${transformedPath}${imp.suffix}` };
+    // The suffix is split off the specifier so the path resolves, but it is
+    // deliberately not carried onto the emitted URL. `alias-<hash>.mjs` is a
+    // fully materialized artifact: `?raw` is already not honoured, and a cache
+    // buster is meaningless once the content is inlined. Keeping the suffix
+    // would only make `@/Card.tsx` and `@/Card.tsx?raw` — which hash to one
+    // file — resolve to two module records, giving the same module two
+    // instances and two copies of its module-level state.
+    return { specifier: imp.specifier, replacement: `file://${transformedPath}` };
   } catch (error) {
     logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to transform ${getPathDesc(imp)}`, error);
     return null;

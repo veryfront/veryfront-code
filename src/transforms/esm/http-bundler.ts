@@ -8,6 +8,7 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 import type { Plugin } from "veryfront/extensions/bundler";
 import { replaceSpecifiers } from "./lexer.ts";
+import { describeHtmlModuleResponse } from "./http-cache-helpers.ts";
 import { DEFAULT_REACT_VERSION, getReactUrls } from "./react-cdn.ts";
 import {
   type EnvironmentConfig,
@@ -174,12 +175,11 @@ export function createHTTPPlugin(options: HttpPluginOptions = {}): Plugin {
 
           if (isHtmlContent) {
             logger.warn(`${LOG_PREFIX} Received HTML instead of JS for ${safeUrl}`);
-            return {
-              errors: [{
-                text:
-                  `Received HTML instead of JavaScript from ${safeUrl}. Package may not exist or failed to build on esm.sh.`,
-              }],
-            };
+            // Blaming esm.sh for every host that answers HTML sends the reader
+            // to a registry that was never involved. The shared helper reports
+            // the real cause, including an unresolved "@/" alias that fell
+            // through to the site origin (VERYFRONT-SERVER-G).
+            return { errors: [{ text: describeHtmlModuleResponse(safeUrl) }] };
           }
 
           return { contents, loader: "js" };

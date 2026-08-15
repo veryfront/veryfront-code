@@ -5,6 +5,7 @@ import type { CacheHttpModuleFn } from "./specifier-resolver.ts";
 import { buildReplacements, rewriteModuleImports } from "./specifier-resolver.ts";
 import type { CacheOptions } from "./http-cache-helpers.ts";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
+import { aliasStrategy } from "#veryfront/transforms/import-rewriter/strategies/alias-strategy.ts";
 
 describe("transforms/esm/specifier-resolver", () => {
   const defaultOptions: CacheOptions = {
@@ -279,6 +280,71 @@ describe("transforms/esm/specifier-resolver", () => {
         result.replacements.get("@/components/Icon.svg#glyph"),
         "/_vf_modules/components/Icon.svg.js#glyph",
       );
+    });
+
+    // The URL shape is not chosen here. `AliasStrategy` is the framework's
+    // canonical "@/" rewriter and emits this exact shape for both its `ssr` and
+    // its browser target, so this resolver — a late fallback for an alias that
+    // escaped every earlier rewrite — must agree with it byte for byte or one
+    // specifier resolves to two different module URLs.
+    it("matches AliasStrategy for every extension class", async () => {
+      const paths = [
+        "components/ResponsiveImage",
+        "components/Card.tsx",
+        "components/Card.ts",
+        "components/Card.jsx",
+        "post.mdx",
+        "post.md",
+        "lib/data.json",
+        "components/Icon.svg",
+        "styles/globals.css",
+        "vendor/bundle.mjs",
+        "vendor/bundle.cjs",
+        "vendor/bundle.js",
+      ];
+
+      const code = paths.map((path, index) => `import m${index} from "@/${path}";`).join("\n");
+      const result = await buildReplacements(code, undefined, defaultOptions, async () => {
+        throw new Error("an @/ alias must never be fetched");
+      });
+
+      for (const path of paths) {
+        const expected = aliasStrategy.rewrite(
+          { specifier: `@/${path}` } as Parameters<typeof aliasStrategy.rewrite>[0],
+          { target: "ssr" } as Parameters<typeof aliasStrategy.rewrite>[1],
+        ).specifier;
+
+        assertEquals(result.replacements.get(`@/${path}`), expected, `@/${path}`);
+      }
+    });
+
+    // `.json` and `.md` reach the module server as `<path>.<ext>.js`, which it
+    // strips before source lookup (`module-server.ts` `filePathWithoutExt`), so
+    // the doubled extension resolves to the real file. `.svg` and `.css` are not
+    // servable through `/_vf_modules/` with or without the `.js`, so appending
+    // it costs nothing.
+    it("appends .js to non-JS source extensions and passes JS-like ones through", async () => {
+      const expectations: ReadonlyArray<readonly [string, string]> = [
+        ["@/lib/data.json", "/_vf_modules/lib/data.json.js"],
+        ["@/post.md", "/_vf_modules/post.md.js"],
+        ["@/post.mdx", "/_vf_modules/post.js"],
+        ["@/components/Icon.svg", "/_vf_modules/components/Icon.svg.js"],
+        ["@/components/Button", "/_vf_modules/components/Button.js"],
+        ["@/styles/globals.css", "/_vf_modules/styles/globals.css"],
+        ["@/vendor/bundle.mjs", "/_vf_modules/vendor/bundle.mjs"],
+        ["@/vendor/bundle.cjs", "/_vf_modules/vendor/bundle.cjs"],
+      ];
+
+      const code = expectations
+        .map(([specifier], index) => `import m${index} from "${specifier}";`)
+        .join("\n");
+      const result = await buildReplacements(code, undefined, defaultOptions, async () => {
+        throw new Error("an @/ alias must never be fetched");
+      });
+
+      for (const [specifier, expected] of expectations) {
+        assertEquals(result.replacements.get(specifier), expected, specifier);
+      }
     });
 
     it("never resolves an @/ alias against the page origin via an import-map prefix", async () => {

@@ -187,6 +187,41 @@ describe("module-fetcher/http-fetcher", () => {
     );
   });
 
+  // A single-quoted specifier may legally contain a double quote, and a cache
+  // path may contain a backslash. Interpolating either into a hand-written
+  // double-quoted literal emits a module that fails to parse, which takes down
+  // every other import in the file, not just the offending one.
+  it("escapes quotes and backslashes in emitted HTTP fallback import literals", async () => {
+    const result = await fetchModuleViaHTTP(
+      "_vf_modules/pages/index.js",
+      { env: { get: () => undefined } } as unknown as RuntimeAdapter,
+      () => Promise.resolve(`/cache/we"ird\\path.mjs`),
+      { debug: () => {}, warn: () => {} } as unknown as Logger,
+      "docs",
+      true,
+      undefined,
+      {
+        fetchFn: (() =>
+          Promise.resolve(
+            new Response([
+              `import a from '/_vf_modules/a.js?label="x"';`,
+              `import '/_vf_modules/b.js?label="y"';`,
+              `export const lazy = () => import('./c.js?label="z"');`,
+            ].join("\n")),
+          )) as typeof fetch,
+      },
+    );
+
+    assertEquals(
+      result,
+      [
+        `import a from "file:///cache/we\\"ird\\\\path.mjs?label=\\"x\\"";`,
+        `import "file:///cache/we\\"ird\\\\path.mjs?label=\\"y\\"";`,
+        `export const lazy = () => import("file:///cache/we\\"ird\\\\path.mjs?label=\\"z\\"");`,
+      ].join("\n"),
+    );
+  });
+
   it("uses the request origin for pinned local module fetches", async () => {
     const logger = { debug: () => {}, warn: () => {} } as unknown as Logger;
     const adapter = {

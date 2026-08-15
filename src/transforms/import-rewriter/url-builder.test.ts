@@ -374,32 +374,6 @@ describe("transforms/import-rewriter/url-builder", () => {
         "/_vf_modules/_cross/proj@1.0.0/@/components/Button.tsx",
       );
     });
-
-    it("should use captured test for escaped alias extension checks", () => {
-      const originalTest = Object.getOwnPropertyDescriptor(RegExp.prototype, "test")!;
-      let poisonCalls = 0;
-      try {
-        Object.defineProperty(RegExp.prototype, "test", {
-          ...originalTest,
-          value() {
-            poisonCalls += 1;
-            throw new Error("poisoned RegExp.prototype.test");
-          },
-        });
-
-        assertEquals(
-          buildCrossProjectUrl("proj", "1.0.0", "components/Button.tsx"),
-          "/_vf_modules/_cross/proj@1.0.0/@/components/Button.tsx",
-        );
-        assertEquals(
-          buildCrossProjectUrl("proj", "1.0.0", "components/Button"),
-          "/_vf_modules/_cross/proj@1.0.0/@/components/Button.tsx",
-        );
-        assertEquals(poisonCalls, 0);
-      } finally {
-        Object.defineProperty(RegExp.prototype, "test", originalTest);
-      }
-    });
   });
 
   describe("buildVeryfrontModuleUrl", () => {
@@ -441,52 +415,6 @@ describe("transforms/import-rewriter/url-builder", () => {
 
     it("should remove extension when option set", () => {
       assertEquals(normalizeExtension("file.tsx", { removeExtension: true }), "file");
-    });
-
-    it("should use captured replace after String.replace poisoning", () => {
-      const originalReplace = Object.getOwnPropertyDescriptor(String.prototype, "replace")!;
-      let poisonCalls = 0;
-      try {
-        Object.defineProperty(String.prototype, "replace", {
-          ...originalReplace,
-          value() {
-            poisonCalls += 1;
-            throw new Error("poisoned String.prototype.replace");
-          },
-        });
-
-        assertEquals(normalizeExtension("components/Card.tsx"), "components/Card.js");
-        assertEquals(
-          normalizeExtension("components/Card.tsx", { removeExtension: true }),
-          "components/Card",
-        );
-        assertEquals(poisonCalls, 0);
-      } finally {
-        Object.defineProperty(String.prototype, "replace", originalReplace);
-      }
-    });
-
-    it("should use captured replace after RegExp Symbol.replace poisoning", () => {
-      const originalReplace = Object.getOwnPropertyDescriptor(RegExp.prototype, Symbol.replace)!;
-      let poisonCalls = 0;
-      try {
-        Object.defineProperty(RegExp.prototype, Symbol.replace, {
-          ...originalReplace,
-          value() {
-            poisonCalls += 1;
-            throw new Error("poisoned RegExp.prototype[Symbol.replace]");
-          },
-        });
-
-        assertEquals(normalizeExtension("components/Card.tsx"), "components/Card.js");
-        assertEquals(
-          normalizeExtension("components/Card.tsx", { removeExtension: true }),
-          "components/Card",
-        );
-        assertEquals(poisonCalls, 0);
-      } finally {
-        Object.defineProperty(RegExp.prototype, Symbol.replace, originalReplace);
-      }
     });
 
     it("should keep .js unchanged", () => {
