@@ -427,6 +427,43 @@ function keywordBefore(
   return source.slice(start, end);
 }
 
+/**
+ * Whether `index` sits inside a `//` line comment.
+ *
+ * Only line comments need this, and the asymmetry is structural. A block
+ * comment cannot leak into the for-await check: its `*` + `/` terminator stops
+ * `skipWhitespaceAndComments`, so a `for` written inside one never reads as
+ * adjacent to a later `await`. A line comment ends at a newline, which that
+ * same scan treats as ordinary whitespace and walks straight through — so the
+ * commented word is read as code.
+ *
+ * Lexing only the current line is both sufficient and bounded: a line comment
+ * cannot have started on an earlier line. The quote tracking matters because a
+ * `//` inside a string on the same line (a URL, say) is not a comment start,
+ * and treating it as one would fail to recognise a real `for await` header.
+ */
+function isInsideLineComment(source: string, index: number): boolean {
+  let cursor = index;
+  while (cursor > 0 && !isLineTerminator(source[cursor - 1] ?? "")) cursor--;
+
+  let quote: string | null = null;
+  for (; cursor < index; cursor++) {
+    const char = source[cursor]!;
+    if (quote !== null) {
+      if (char === "\\") cursor++;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+      continue;
+    }
+    if (char === "/" && source[cursor + 1] === "/") return true;
+  }
+
+  return false;
+}
+
 function isForAwaitHeader(
   source: string,
   previousTokenIndex: number,
@@ -440,6 +477,10 @@ function isForAwaitHeader(
       !isIdentifierPartAt(source, forStart + "for".length);
     if (
       isStandaloneKeyword &&
+      // The search runs over raw text, so it also finds a `for` that is not
+      // code. Everything but a line comment is already excluded by the
+      // adjacency check below — see `isInsideLineComment`.
+      !isInsideLineComment(source, forStart) &&
       skipWhitespaceAndComments(source, forStart + "for".length) === awaitStart
     ) return true;
 

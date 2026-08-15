@@ -577,6 +577,38 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    // The for-await search runs over raw text, so it also finds a `for` that is
+    // not code. A block comment cannot fool it — the `*/` terminator stops the
+    // adjacency scan — but a line comment ends at a newline, which that scan
+    // treats as ordinary whitespace and walks straight through. A comment whose
+    // last word is `for` sitting above a top-level `await (…)` therefore read as
+    // a for-await header, and the `/` that actually divides was taken as a regex
+    // opening, hiding a real dynamic import inside it.
+    it("does not read a line comment ending in for as a for-await header", () => {
+      assertEquals(
+        specifiers('// for\nawait (ready)\n/import(".\\/after-line-comment.js")/.source;'),
+        ["./after-line-comment.js"],
+      );
+      assertEquals(
+        specifiers(
+          '// what we are waiting for\nawait (ready)\n/import(".\\/after-prose-comment.js")/.source;',
+        ),
+        ["./after-prose-comment.js"],
+      );
+    });
+
+    // The converse over-correction: `//` inside a string is not a comment, so a
+    // URL on the same line must not stop a genuine for-await header from being
+    // recognised — that would put the phantom-import bug straight back.
+    it("still reads a for-await header on a line holding a url string", () => {
+      assertEquals(
+        specifiers(
+          'const origin = "http://example.test"; for await (const value of source) {}\n/import(".\\/url-line-fake.js")/.test(value);',
+        ),
+        [],
+      );
+    });
+
     it("ignores import-looking regex text inside template substitutions", () => {
       assertEquals(
         specifiers(
