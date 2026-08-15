@@ -1326,7 +1326,7 @@ function assertNoInheritedAnthropicArrayElement(
   index: number,
   label: string,
 ): void {
-  const key = String(index);
+  const key = `${index}`;
   const visited = new Set<object>();
   let candidate: object | null;
   try {
