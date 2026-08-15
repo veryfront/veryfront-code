@@ -660,10 +660,45 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       });
     }
 
-    // The opposite direction: genuine keyword positions must still read as
-    // regex prefixes, or the member-name gate would trade one silent drop for
-    // another.
-    it("still treats genuine keyword positions as regex prefixes", () => {
+    // The opposite direction, tabled over the same list so the two cannot drift
+    // apart: in genuine keyword position the slash must still open a regex. The
+    // assertion is discriminating — a fake specifier sits *inside* the regex, so
+    // treating the slash as division would surface it. Finding only the real
+    // import afterwards proves the regex was consumed as a regex.
+    //
+    // `of` is deliberately absent: `isForOfKeywordBefore` requires a real
+    // `for (… of …)` header, so a bare `of /…/` is division. Its regex form is
+    // asserted separately below.
+    for (const keyword of REGEX_PREFIX_KEYWORDS.filter((word) => word !== "of")) {
+      it(`opens a regex after the \`${keyword}\` keyword`, () => {
+        assertEquals(
+          specifiers(
+            `${keyword} /import("\\/_vf_modules\\/fake-after-${keyword}.js")/;\n` +
+              `import("./real-after-${keyword}.js");`,
+          ),
+          [`./real-after-${keyword}.js`],
+        );
+      });
+    }
+
+    it("opens a regex after `of` only inside a for-of header", () => {
+      // Genuine for-of position: the slash opens a regex, so the fake specifier
+      // inside it is not surfaced.
+      assertEquals(
+        specifiers(
+          'for (const x of /import("\\/_vf_modules\\/fake-for-of.js")/.exec(s) ?? []) {}\n' +
+            'import("./real-after-for-of.js");',
+        ),
+        ["./real-after-for-of.js"],
+      );
+      // Bare `of` is an ordinary identifier, so the slash divides.
+      assertEquals(
+        specifiers('const ratio = of / 2; import("./real-after-of-identifier.js");'),
+        ["./real-after-of-identifier.js"],
+      );
+    });
+
+    it("reads keyword positions in ordinary code as regex prefixes", () => {
       assertEquals(
         specifiers('const t = typeof /re/; import("./after-typeof-keyword.js");'),
         ["./after-typeof-keyword.js"],
@@ -679,6 +714,22 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       assertEquals(
         specifiers('for (const x of /re/.exec(s) ?? []) {} import("./after-for-of-regex.js");'),
         ["./after-for-of-regex.js"],
+      );
+    });
+
+    // The shape from the Sentry issue this PR closes: a standard interop
+    // property beside standard React code-splitting. Reading `.default` as a
+    // keyword swallowed everything to the next slash, so the `@/` specifier
+    // reached the runtime unrewritten and resolved against the page origin.
+    it("finds a code-split alias import after a `.default` division", () => {
+      assertEquals(
+        findDynamicImportSpans(
+          "const half = mod.default / 2;\n" +
+            'const L = lazy(() => import("@/components/Chart"));',
+          (specifier) => specifier.startsWith("@/") ? specifier : null,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["@/components/Chart"],
       );
     });
 
