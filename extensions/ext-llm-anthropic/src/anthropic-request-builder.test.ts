@@ -451,6 +451,57 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     });
   });
 
+  it("uses intrinsic array index conversion after import", async () => {
+    const result = await runNoBrandEval(`
+      const { buildAnthropicMessagesRequest } = await import(
+        "./extensions/ext-llm-anthropic/src/anthropic-request-builder.ts"
+      );
+      let stringCalls = 0;
+      Object.defineProperty(globalThis, "String", {
+        configurable: true,
+        value() {
+          stringCalls += 1;
+          return "not-an-index";
+        },
+      });
+
+      const body = buildAnthropicMessagesRequest(
+        "claude-sonnet-4-6",
+        "anthropic",
+        {
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+          providerOptions: {
+            anthropic: {
+              messages: [{
+                role: "user",
+                content: [{
+                  type: "text",
+                  text: "Cached",
+                  cache_control: { type: "ephemeral" },
+                }],
+              }],
+            },
+          },
+        },
+        false,
+        { push() {}, drain() { return []; } },
+      );
+      console.log(JSON.stringify({ messages: body.messages, stringCalls }));
+    `);
+
+    assertEquals(result, {
+      messages: [{
+        role: "user",
+        content: [{
+          type: "text",
+          text: "Cached",
+          cache_control: { type: "ephemeral" },
+        }],
+      }],
+      stringCalls: 0,
+    });
+  });
+
   it("rejects edge-runtime Proxy cache fields without invoking traps", async () => {
     const result = await runNoBrandEval(`
       Object.defineProperty(globalThis, "caches", {

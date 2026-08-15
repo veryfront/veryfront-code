@@ -1370,7 +1370,7 @@ function snapshotAnthropicCacheArray<T>(
   for (let index = 0; index < value.length; index += 1) {
     let descriptor: PropertyDescriptor | undefined;
     try {
-      descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      descriptor = Object.getOwnPropertyDescriptor(value, `${index}`);
     } catch {
       throw new TypeError(`${label} could not be inspected`);
     }
@@ -1460,7 +1460,7 @@ function readAnthropicArrayDataElement(
 ): unknown {
   let descriptor: PropertyDescriptor | undefined;
   try {
-    descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    descriptor = Object.getOwnPropertyDescriptor(value, `${index}`);
   } catch {
     throw new TypeError(`${label} could not be inspected`);
   }
