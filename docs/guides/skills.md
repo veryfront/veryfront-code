@@ -104,11 +104,12 @@ After loading a skill, hosted chat can read only a reference listed by that
 skill through `load_skill({ skillId, file })`. It does not execute skill scripts
 directly.
 
-Call `load_skill({})` when the prompt does not show the complete authorized
-skill inventory. The result contains a bounded `skillIds` page. If it also
-contains `nextCursor`, call `load_skill({ cursor: nextCursor })` until the
-response omits `nextCursor`. Then call `load_skill({ skillId })` with a listed
-ID.
+When the prompt provides a discovery cursor, call
+`load_skill({ cursor: <CURSOR> })`. Otherwise, call `load_skill({})` when the
+prompt does not show the complete authorized skill inventory. The result
+contains a bounded `skillIds` page. If it also contains `nextCursor`, call
+`load_skill({ cursor: nextCursor })` until the response omits `nextCursor`.
+Then call `load_skill({ skillId })` with a listed ID.
 
 Discovered skills visible to the agent are advertised by default:
 

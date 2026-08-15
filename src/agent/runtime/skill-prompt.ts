@@ -264,8 +264,11 @@ function appendBoundedEncodedRuntimeSkillId(
   return nextEncodedCharacters;
 }
 
-function buildRuntimeSkillDiscoveryNote(hiddenSkillIdCount: number, cursor: number): string {
-  return `\n\n(${hiddenSkillIdCount} additional authorized skill IDs are omitted from this prompt. Call load_skill with cursor ${cursor} and no skillId, then follow each nextCursor value to discover them.)`;
+function buildRuntimeSkillDiscoveryNote(
+  hiddenSkillIdCount: number,
+  cursor: number,
+): string {
+  return `\n\n(${hiddenSkillIdCount} additional authorized skill IDs are omitted from this prompt. Call load_skill({ cursor: ${cursor} }), then follow each nextCursor value to discover them.)`;
 }
 
 function requireRuntimeSkillModel(value: unknown): string {
@@ -408,13 +411,13 @@ export function buildStrictRuntimeAvailableSkillsPromptBlock(
     encodedCharacters = nextEncodedCharacters;
   }
   const hiddenSkillIdCount = omittedSkillIds.length - encodedOmittedSkillIds.length;
-  const discoverableSkillIdCount = displaySkills.length + encodedOmittedSkillIds.length;
+  const discoveryCursor = displaySkills.length + encodedOmittedSkillIds.length;
   const truncationNote = omittedSkillIds.length > 0
     ? `\n\n(${omittedSkillIds.length} more skill summaries omitted.)\nOmitted skill IDs: ${`[${
       joinStrings(encodedOmittedSkillIds, ",")
     }]`}${
       hiddenSkillIdCount > 0
-        ? buildRuntimeSkillDiscoveryNote(hiddenSkillIdCount, discoverableSkillIdCount)
+        ? buildRuntimeSkillDiscoveryNote(hiddenSkillIdCount, discoveryCursor)
         : ""
     }`
     : "";

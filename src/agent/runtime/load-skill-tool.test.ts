@@ -37,6 +37,8 @@ import type {
 import { createRuntimeProjectSkillLoader } from "./project-skill-loader.ts";
 import { getRuntimeProjectSkillCatalog } from "./project-skill-catalog.ts";
 import type { RuntimeLoadedSkillResponse } from "./skill-metadata.ts";
+import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
+import { buildRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 
 // The advertised input schema is intentionally STATIC and project-independent
@@ -46,30 +48,41 @@ import { it } from "#veryfront/testing/bdd.ts";
 // `.parse()` time and is covered by the execute() tests below. Every load state
 // must advertise this same schema — that invariance is what these assertions guard.
 const STATIC_LOAD_SKILL_INPUT_SCHEMA = {
-  type: "object",
-  properties: {
-    skillId: {
-      type: "string",
-      maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
-      pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
-      description:
-        'The skill ID to load. Omit skillId to list authorized IDs. A lowercase ".md" suffix is accepted for a listed ID.',
+  anyOf: [
+    {
+      type: "object",
+      properties: {
+        cursor: {
+          type: "integer",
+          minimum: 0,
+          maximum: 1_000,
+          description: "Pagination cursor from the prompt or a previous skill inventory response.",
+        },
+      },
+      additionalProperties: false,
     },
-    file: {
-      type: "string",
-      minLength: 1,
-      maxLength: 1024,
-      description:
-        "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+    {
+      type: "object",
+      properties: {
+        skillId: {
+          type: "string",
+          maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
+          pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
+          description:
+            'The listed skill ID to load. A lowercase ".md" suffix is accepted for a listed ID.',
+        },
+        file: {
+          type: "string",
+          minLength: 1,
+          maxLength: 1024,
+          description:
+            "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+        },
+      },
+      required: ["skillId"],
+      additionalProperties: false,
     },
-    cursor: {
-      type: "integer",
-      minimum: 0,
-      maximum: 1_000,
-      description:
-        "Pagination cursor from a previous skill inventory response. Use only when skillId is omitted.",
-    },
-  },
+  ],
 } as const;
 
 const PROJECT_CONTEXT: RuntimeProjectSkillContext = {
@@ -447,10 +460,13 @@ it("keeps supported .md IDs valid in the static provider schema", () => {
   });
 
   const parameters = toolToProviderDefinition(tool).parameters as {
-    properties?: { skillId?: { maxLength?: number; pattern?: string } };
+    anyOf?: Array<{
+      properties?: { skillId?: { maxLength?: number; pattern?: string } };
+    }>;
   };
-  assertEquals(parameters.properties?.skillId?.maxLength, SKILL_ID_MAX_LENGTH + ".md".length);
-  assertEquals(parameters.properties?.skillId?.pattern, "^[a-zA-Z0-9_-]+(?:\\.md)?$");
+  const loadVariant = parameters.anyOf?.find((variant) => variant.properties?.skillId);
+  assertEquals(loadVariant?.properties?.skillId?.maxLength, SKILL_ID_MAX_LENGTH + ".md".length);
+  assertEquals(loadVariant?.properties?.skillId?.pattern, "^[a-zA-Z0-9_-]+(?:\\.md)?$");
 });
 
 it("keeps legacy .md alias execution when no manifest is available", async () => {
@@ -2582,6 +2598,39 @@ it("createRuntimeLoadSkillTool discovers the maximum catalog within the default 
 
   assertEquals(discoveredSkillIds, availableSkillIds);
   assertEquals(calls <= 17, true);
+});
+
+it("createRuntimeLoadSkillTool continues after the IDs embedded in the prompt", async () => {
+  const availableSkillIds = Array.from(
+    { length: 1_000 },
+    (_, index) => `skill-${(999 - index).toString().padStart(8, "0")}`,
+  );
+  const skills: RuntimeSkillDefinition[] = availableSkillIds.map((id) => ({
+    id,
+    name: id,
+    description: `Description for ${id}`,
+    instructions: `Instructions for ${id}`,
+  }));
+  const prompt = buildRuntimeAvailableSkillsPromptBlock(skills);
+  const cursorMatch = /load_skill\(\{ cursor: (\d+) \}\)/.exec(prompt);
+
+  assertEquals(cursorMatch !== null, true);
+  if (cursorMatch === null) return;
+  const cursor = Number(cursorMatch[1]);
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+  const page = await tool.execute({ cursor }) as {
+    skillIds: string[];
+    nextCursor?: number;
+  };
+
+  assertEquals(page.skillIds[0], availableSkillIds[cursor]);
+  assertEquals(page.skillIds, availableSkillIds.slice(cursor));
+  assertEquals(page.nextCursor, undefined);
 });
 
 it("createRuntimeLoadSkillTool rejects mixed load and inventory inputs", async () => {

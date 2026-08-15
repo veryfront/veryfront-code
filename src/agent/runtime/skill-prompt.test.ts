@@ -108,8 +108,7 @@ it("keeps ordinary selector-valid catalogs usable within the prompt budget", () 
   const block = buildRuntimeAvailableSkillsPromptBlock(skills);
 
   assertStringIncludes(block, "additional authorized skill IDs are omitted");
-  assertStringIncludes(block, "Call load_skill with cursor ");
-  assertStringIncludes(block, "and no skillId");
+  assertEquals(/Call load_skill\(\{ cursor: \d+ \}\)/.test(block), true);
 });
 
 it("bounds worst-case omitted skill-ID inventories without rejecting the catalog", () => {
@@ -122,7 +121,7 @@ it("bounds worst-case omitted skill-ID inventories without rejecting the catalog
   const authorized = buildRuntimeAuthorizedSkillIdsPromptBlock(skills);
 
   assertStringIncludes(available, "additional authorized skill IDs are omitted");
-  const cursorMatch = available.match(/Call load_skill with cursor (\d+) and no skillId/);
+  const cursorMatch = available.match(/Call load_skill\(\{ cursor: (\d+) \}\)/);
   assertEquals(cursorMatch === null, false);
   assertEquals(Number(cursorMatch?.[1]) > 30, true);
   assertEquals(authorized.includes("additional authorized skill IDs are omitted"), false);
