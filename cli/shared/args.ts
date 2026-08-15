@@ -233,7 +233,8 @@ export const CommonArgs = {
 // Used once in cli/main.ts before routing to individual command handlers.
 
 const ARRAY_FLAGS = new Set(["with", "candidate-model"]);
-const GLOBAL_BOOLEAN_FLAGS = new Set([
+/** Boolean options accepted by every command, regardless of the command word. */
+export const GLOBAL_BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "help",
   "version",
   "json",
@@ -265,7 +266,14 @@ function getDocumentedFlagKind(
   return undefined;
 }
 
-const BOOLEAN_FLAGS = new Set([
+/**
+ * Boolean options used when the command word cannot resolve an option's arity —
+ * an unknown command, or a flag that appears before the command word. Every
+ * documented long-name boolean in `COMMANDS` must be listed here, otherwise it
+ * is parsed as value-taking and swallows the positional that follows it.
+ * `cli/shared/args.test.ts` asserts that invariant.
+ */
+export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "all",
   "auto",
   "binary",
@@ -301,14 +309,19 @@ const BOOLEAN_FLAGS = new Set([
   "open",
   "parallel",
   "prefetch",
+  "prune",
   "quiet",
   "recursive",
+  "remote",
+  "require-export",
+  "site",
   "skip-env-prompt",
   "skip-install",
   "split",
   "ssg",
   "strict",
   "studio",
+  "token",
   "update",
   "verbose",
   "verify",
