@@ -85,8 +85,8 @@ static tools over OAuth2, served verbatim by `GET /integrations/salesforce`.
 
 ### 2.1 How a `connector.json` tool actually becomes a runnable tool
 
-This matters for every recommendation below, so state it precisely (verified in
-`phoenix`):
+This matters for every recommendation below, so state it precisely from the
+repo evidence below:
 
 - Tools are a **required, statically-declared array**: `tools: v.array(...)` on
   the connector (`src/integrations/schema.ts:468`), each entry validated by
@@ -663,23 +663,29 @@ cannot enforce both grants for one call, remove `upsert_record` from the shipped
 surface.
 
 **Tool tally (single source of truth; Appendix B is canonical):** The connector
-has 16 tools today. This RFC specifies 7 additional static tools, for a 23-tool
-Salesforce surface. V1 discovery still removes or hides existing `run_soql_query`
-until the SOQL authorization gate is live. The other curated tools stay in v1 with
-arbitrary `q` overrides disabled, relationship fields removed from fixed Contact
-query defaults unless referenced-object authorization exists, and fixed
-object/operation authorization enforced before every curated write. `list_cases`
-also requires the fixed open-case query/filter above before it counts as retained
-in v1; otherwise it moves to the deferred read escape-hatch bucket with the other
-arbitrary SOQL surfaces.
+has 16 static entries today. V1 adds 7 static helper/coordinator entries and
+keeps the v1 core at 23 static entries. That 23-entry v1 core is not the future
+full surface: the generic CRUD tier adds 5 specified-but-deferred entries, and
+the new SOSL `search` escape hatch adds 1 specified-but-deferred entry, for 29
+future static entries when every deferred gate is satisfied. V1 discovery still
+removes or hides existing `run_soql_query` until the SOQL authorization gate is
+live. The other curated tools stay in v1 with arbitrary `q` overrides disabled,
+relationship fields removed from fixed Contact query defaults unless
+referenced-object authorization exists, and fixed object/operation authorization
+enforced before every curated write. `list_cases` also requires the fixed
+open-case query/filter above before it counts as retained in v1; otherwise it
+moves to the deferred read escape-hatch bucket with the other arbitrary SOQL
+surfaces.
 
 | | Tools | Count |
 | --- | --- | --- |
-| **Existing static baseline** | the 16 in `connector.json` today; v1 discovery hides `run_soql_query` while it is gated, and `list_cases` counts as revealed only after the fixed open-case query/filter is in place | 16 |
-| **Add - helpers/coordinators** | `dispose_case_triage` (atomic Case triage disposal), `update_case_reason` (`Reason`-only Case update helper, not a separate `case-dispose` grant), `add_internal_case_comment` (server-fixed `IsPublished: false`, not a separate `case-dispose` grant), `get_picklist_values_for_record_type`, `list_active_users`, `list_case_queues`, `list_lead_queues` | +7 |
-| **Read escape hatches (deferred)** | existing `run_soql_query`, curated arbitrary `q` overrides, `search` (SOSL), pending fail-closed query parsing and authorization | - |
-| **Add - generic CRUD (deferred)** | `get_record`, `create_record`, `update_record`, `upsert_record`, `delete_record` (pending fail-closed per-CRUD enforcement) | +5 |
-| **Specified static surface** | existing baseline plus the 7 added helpers/coordinators | **23** |
+| **Existing static baseline** | the 16 entries in `connector.json` today. V1 discovery hides existing `run_soql_query` while it is gated, disables curated arbitrary `q` overrides, and reveals `list_cases` only after the fixed open-case query/filter is in place | 16 |
+| **V1 additions/reveals** | `dispose_case_triage` (the sole `case-dispose` write boundary), `update_case_reason` (`Reason`-only Case update helper, not a separate `case-dispose` grant), `add_internal_case_comment` (server-fixed `IsPublished: false`, not a separate `case-dispose` grant), `get_picklist_values_for_record_type`, `list_active_users`, `list_case_queues`, `list_lead_queues` | +7 |
+| **V1 core static entries** | existing baseline plus the 7 added helper/coordinator entries. This count includes hidden/gated existing entries such as `run_soql_query` because they remain static connector entries, but they are not discoverable until their gates pass | **23** |
+| **Deferred existing read escape hatches** | existing `run_soql_query` and curated arbitrary `q` overrides, pending fail-closed query parsing and authorization | +0 new entries |
+| **Deferred new generic CRUD** | `get_record`, `create_record`, `update_record`, `upsert_record`, `delete_record` (pending fail-closed per-CRUD enforcement) | +5 |
+| **Deferred new SOSL search** | `search` (SOSL), pending fail-closed query parsing and authorization | +1 |
+| **Future static entries after deferred gates** | v1 core plus deferred generic CRUD plus deferred SOSL `search`; revealing existing `run_soql_query` later does not add a new static entry | **29** |
 | **Optional curated wrappers** | `create_contact`, `update_account`, `create/update_opportunity`, `create_task`, `convert_lead` - sugar, not counted in core | - |
 
 **Authorization tests (acceptance gate).** Every least-privilege grant needs an
