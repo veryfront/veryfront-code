@@ -1,11 +1,13 @@
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  buildInteractiveVeryfrontCloudRuntimeInstructions,
   buildVeryfrontCloudRuntimeInstructions,
   createVeryfrontCloudRuntimeSystemMessages,
 } from "./cloud-runtime-system-messages.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
+import type { BuildVeryfrontCloudRuntimeInstructionsOptions } from "veryfront/agent";
 
 function createAgent(
   overrides: Partial<RuntimeAgentMarkdownDefinition> = {},
@@ -82,6 +84,17 @@ describe("cloud runtime system messages", () => {
     });
     assertStringIncludes(messages[2]?.content ?? "", 'project_reference: "project-123"');
     assertEquals(messages[2]?.providerOptions, undefined);
+  });
+
+  it("falls back to authored instructions when structured system messages are empty", () => {
+    const messages = createVeryfrontCloudRuntimeSystemMessages({
+      agent: createAgent({
+        instructions: "Use the authored fallback instructions.",
+        system: [],
+      }),
+    });
+
+    assertEquals(messages[0]?.content, "Use the authored fallback instructions.");
   });
 
   it("createVeryfrontCloudRuntimeSystemMessages uses main branch guidance when branch id is absent", () => {
@@ -208,5 +221,97 @@ describe("cloud runtime system messages", () => {
       dynamicMsg?.content ?? "",
       "<authorized_skill_ids>\n[]\n</authorized_skill_ids>",
     );
+  });
+
+  it("defaults the static breakpoint to 5m", () => {
+    const [staticMsg] = createVeryfrontCloudRuntimeSystemMessages({ agent: createAgent() });
+
+    assertEquals(staticMsg?.providerOptions, {
+      anthropic: { cacheControl: { type: "ephemeral" } },
+    });
+  });
+
+  it("extends the static breakpoint to 1h when requested", () => {
+    const [staticMsg] = createVeryfrontCloudRuntimeSystemMessages({
+      agent: createAgent(),
+      cacheTtl: "1h",
+    });
+
+    assertEquals(staticMsg?.providerOptions, {
+      anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+    });
+  });
+
+  it("forwards the 1h cache TTL option to Layer 0", () => {
+    const options: BuildVeryfrontCloudRuntimeInstructionsOptions = { cacheTtl: "1h" };
+    const [staticMsg] = buildVeryfrontCloudRuntimeInstructions(
+      {
+        agentConfig: createAgent(),
+        projectId: null,
+        branchId: null,
+        instructions: "",
+        skills: [],
+      },
+      options,
+    );
+
+    assertEquals(staticMsg?.providerOptions, {
+      anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+    });
+  });
+
+  it("adds the interactive 1h breakpoint to structured code-agent prompts", () => {
+    const messages = buildInteractiveVeryfrontCloudRuntimeInstructions({
+      agentConfig: createAgent({
+        system: [
+          {
+            role: "system",
+            content: "Structured prefix",
+            providerOptions: {
+              anthropic: { cacheControl: { type: "ephemeral" } },
+            },
+          },
+          { role: "system", content: "Structured tail" },
+        ],
+      }),
+      projectId: "project-one",
+      branchId: "branch-one",
+      instructions: "Use the project policy.",
+      skills: [],
+    });
+
+    assertEquals(messages[0]?.providerOptions, {
+      anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+    });
+    assertEquals(messages[1]?.providerOptions, {
+      anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+    });
+    assertStringIncludes(messages[2]?.content ?? "", 'project_reference: "project-one"');
+    assertEquals(messages[2]?.providerOptions, undefined);
+  });
+
+  it("keeps the cached prefix byte-identical across interactive requests", () => {
+    const first = buildInteractiveVeryfrontCloudRuntimeInstructions({
+      agentConfig: createAgent(),
+      projectId: "project-one",
+      branchId: "branch-one",
+      instructions: "Use the first project policy.",
+      skills: [],
+    });
+    const second = buildInteractiveVeryfrontCloudRuntimeInstructions({
+      agentConfig: createAgent(),
+      projectId: "project-two",
+      branchId: "branch-two",
+      instructions: "Use the second project policy.",
+      skills: [],
+    });
+
+    assertEquals(first[0], second[0]);
+    assertEquals(first[0]?.providerOptions, {
+      anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+    });
+    assertEquals(first[1]?.content === second[1]?.content, false);
+    assertEquals(first[1]?.providerOptions, undefined);
+    assertEquals(second[1]?.providerOptions, undefined);
   });
 });

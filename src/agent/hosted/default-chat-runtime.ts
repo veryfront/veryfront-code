@@ -39,7 +39,7 @@ import {
   type PrepareHostedChatRuntimeToolAssemblyInput,
 } from "./chat-runtime-tool-assembly.ts";
 import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
-import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
+import { buildInteractiveVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
 import {
   createHostedRuntimeStateResolver,
   type HostedRuntimeStateResolverContext,
@@ -200,7 +200,7 @@ async function buildToolAssembly(
     instructions: input.options.instructions,
     ...(liveProjectSteering === undefined ? {} : {
       renderInstructions: (modelVisibleToolNames: readonly string[]) =>
-        buildVeryfrontCloudRuntimeInstructions({
+        buildInteractiveVeryfrontCloudRuntimeInstructions({
           agentConfig: liveProjectSteering.agent,
           projectId: input.taskContext.projectId,
           branchId: input.taskContext.branchId,
