@@ -789,6 +789,54 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     );
   });
 
+  it("budgets raw system breakpoints after Array.prototype mutation", () => {
+    let flatMapCalls = 0;
+    const originalFlatMap = Object.getOwnPropertyDescriptor(Array.prototype, "flatMap");
+    Object.defineProperty(Array.prototype, "flatMap", {
+      configurable: true,
+      writable: true,
+      value() {
+        flatMapCalls += 1;
+        return [];
+      },
+    });
+
+    try {
+      const body = buildAnthropicMessagesRequest(
+        "claude-sonnet-4-6",
+        "anthropic",
+        {
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+          providerOptions: {
+            anthropic: {
+              system: Array.from({ length: 5 }, (_, index) => ({
+                type: "text",
+                text: `Cached ${index}`,
+                cache_control: { type: "ephemeral" },
+              })),
+            },
+          },
+        },
+        false,
+        createWarningCollector(),
+      );
+
+      const emitted = body.system as Array<Record<string, unknown>>;
+      assertEquals(flatMapCalls, 0);
+      assertEquals(emitted[0]?.cache_control, undefined);
+      assertEquals(
+        emitted.filter((block) => block.cache_control !== undefined).length,
+        4,
+      );
+    } finally {
+      if (originalFlatMap) {
+        Object.defineProperty(Array.prototype, "flatMap", originalFlatMap);
+      } else {
+        Reflect.deleteProperty(Array.prototype, "flatMap");
+      }
+    }
+  });
+
   it("rejects cache-affecting toJSON hooks without invoking them", () => {
     for (
       const placement of [

@@ -1759,24 +1759,38 @@ function retainLatestAnthropicCacheBreakpoints(
   values: Array<Record<string, unknown>>,
   maximum: number,
 ): Array<Record<string, unknown>> {
-  const breakpointIndexes = values.flatMap((value, index) =>
-    hasEmittedAnthropicCacheBreakpoint(value) ? [index] : []
-  );
-  const indexesToRemove = new Set(
-    breakpointIndexes.slice(0, Math.max(0, breakpointIndexes.length - maximum)),
-  );
-  if (indexesToRemove.size === 0) {
+  const breakpointIndexes = new Array<number>(values.length);
+  let breakpointCount = 0;
+  for (let index = 0; index < values.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(values, `${index}`);
+    if (
+      descriptor !== undefined &&
+      hasEmittedAnthropicCacheBreakpoint(descriptor.value)
+    ) {
+      breakpointIndexes[breakpointCount] = index;
+      breakpointCount += 1;
+    }
+  }
+
+  const removalCount = breakpointCount > maximum ? breakpointCount - maximum : 0;
+  if (removalCount === 0) {
     return values;
   }
 
-  return values.map((value, index) => {
-    if (!indexesToRemove.has(index)) {
-      return value;
+  const retained = new Array<Record<string, unknown>>(values.length);
+  for (let index = 0; index < values.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(values, `${index}`);
+    if (descriptor !== undefined) {
+      retained[index] = descriptor.value;
     }
-    const next = { ...value };
+  }
+  for (let position = 0; position < removalCount; position += 1) {
+    const index = breakpointIndexes[position]!;
+    const next = { ...retained[index] };
     Reflect.deleteProperty(next, "cache_control");
-    return next;
-  });
+    retained[index] = next;
+  }
+  return retained;
 }
 
 function limitAnthropicCacheBreakpoints(
