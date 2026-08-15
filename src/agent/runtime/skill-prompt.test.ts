@@ -79,6 +79,24 @@ Deno.test("buildRuntimeAvailableSkillsPromptBlock keeps canonical name out of di
   assertEquals(block.includes('"name":"process-email"'), false);
 });
 
+Deno.test("buildRuntimeAvailableSkillsPromptBlock keeps omitted skill IDs discoverable", () => {
+  const skills = Array.from(
+    { length: 32 },
+    (_, index) =>
+      createSkill({
+        id: `skill-${index}`,
+        description: `Summary ${index}`,
+      }),
+  );
+
+  const block = buildRuntimeAvailableSkillsPromptBlock(skills);
+
+  assertStringIncludes(block, '"skillId":"skill-29"');
+  assertStringIncludes(block, 'Exact omitted skill IDs: ["skill-30","skill-31"]');
+  assertEquals(block.includes("Summary 30"), false);
+  assertEquals(block.includes("load_skill tool schema"), false);
+});
+
 Deno.test("buildStrictRuntimeAvailableSkillsPromptBlock encodes untrusted catalog metadata", () => {
   const block = buildStrictRuntimeAvailableSkillsPromptBlock([
     createSkill({
