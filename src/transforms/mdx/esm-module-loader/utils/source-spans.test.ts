@@ -556,6 +556,10 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         vfModuleSpecifiers('const x = left<Right && import("/_vf_modules/lazy.js")>0;'),
         ["/_vf_modules/lazy.js"],
       );
+      assertEquals(
+        specifiers('const x = left </foo/.test(s); import("./comparison-lazy.js") > 0;'),
+        ["./comparison-lazy.js"],
+      );
     });
 
     it("finds imports after quoted greater-than signs in raw JSX tags", () => {

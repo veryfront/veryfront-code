@@ -1137,7 +1137,7 @@ function readRawJsxTag(source: string, index: number): RawJsxTagSkip | null {
   if (source[index] !== "<") return null;
 
   const isClosingTag = source[index + 1] === "/";
-  if (!isClosingTag && !canStartRawJsxOpeningTag(source, index)) return null;
+  if (!canStartRawJsxOpeningTag(source, index)) return null;
 
   const nameStart = isClosingTag ? index + 2 : index + 1;
   if (source[nameStart] !== ">" && !isIdentifierStartAt(source, nameStart)) return null;
