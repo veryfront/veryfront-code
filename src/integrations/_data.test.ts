@@ -449,6 +449,7 @@ describe("integration endpoint specs", () => {
         true,
         `Expected ${tool.id} to expose its safe SOQL default`,
       );
+      assertExists(tool.id, "Expected exposed Salesforce tools to declare an id");
       exposedToolIds.push(tool.id);
       exposedDefaults += 1;
     }
