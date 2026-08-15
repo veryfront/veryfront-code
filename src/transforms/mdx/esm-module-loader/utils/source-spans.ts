@@ -176,22 +176,43 @@ function decodeHexEscape(source: string, start: number, length: number): number 
   return value;
 }
 
-function decodeLiteralContents(source: string, start: number, end: number): string | null {
+function invalidEscapedSpecifier(): never {
+  throw new SyntaxError("Invalid escaped module specifier");
+}
+
+function isLineTerminator(char: string): boolean {
+  return char === "\r" || char === "\n" || char === "\u2028" || char === "\u2029";
+}
+
+function decodeLiteralContents(
+  source: string,
+  start: number,
+  end: number,
+  allowLineTerminators: boolean,
+): string {
   let result = "";
   let cursor = start;
 
   while (cursor < end) {
     const char = source[cursor]!;
     if (char !== "\\") {
+      if (isLineTerminator(char)) {
+        if (!allowLineTerminators) invalidEscapedSpecifier();
+        if (char === "\r") {
+          result += "\n";
+          cursor += source[cursor + 1] === "\n" ? 2 : 1;
+          continue;
+        }
+      }
       result += char;
       cursor++;
       continue;
     }
 
     const escaped = source[cursor + 1];
-    if (escaped === undefined || cursor + 1 >= end) return null;
+    if (escaped === undefined || cursor + 1 >= end) invalidEscapedSpecifier();
 
-    if (escaped === "\r" || escaped === "\n" || escaped === "\u2028" || escaped === "\u2029") {
+    if (isLineTerminator(escaped)) {
       cursor += escaped === "\r" && source[cursor + 2] === "\n" ? 3 : 2;
       continue;
     }
@@ -211,16 +232,16 @@ function decodeLiteralContents(source: string, start: number, end: number): stri
     }
 
     if (escaped === "0") {
-      if (/[0-9]/.test(source[cursor + 2] ?? "")) return null;
+      if (/[0-9]/.test(source[cursor + 2] ?? "")) invalidEscapedSpecifier();
       result += "\0";
       cursor += 2;
       continue;
     }
-    if (/[1-9]/.test(escaped)) return null;
+    if (/[1-9]/.test(escaped)) invalidEscapedSpecifier();
 
     if (escaped === "x") {
       const value = decodeHexEscape(source, cursor + 2, 2);
-      if (value === null || cursor + 4 > end) return null;
+      if (value === null || cursor + 4 > end) invalidEscapedSpecifier();
       result += StringFromCodePoint(value);
       cursor += 4;
       continue;
@@ -233,21 +254,21 @@ function decodeLiteralContents(source: string, start: number, end: number): stri
         let digitCount = 0;
         while (escapeEnd < end && source[escapeEnd] !== "}") {
           const digit = hexDigitValue(source[escapeEnd]);
-          if (digit === -1) return null;
+          if (digit === -1) invalidEscapedSpecifier();
           value = value * 16 + digit;
           digitCount++;
           escapeEnd++;
         }
         if (
           digitCount === 0 || source[escapeEnd] !== "}" || value > 0x10ffff
-        ) return null;
+        ) invalidEscapedSpecifier();
         result += StringFromCodePoint(value);
         cursor = escapeEnd + 1;
         continue;
       }
 
       const value = decodeHexEscape(source, cursor + 2, 4);
-      if (value === null || cursor + 6 > end) return null;
+      if (value === null || cursor + 6 > end) invalidEscapedSpecifier();
       result += StringFromCodePoint(value);
       cursor += 6;
       continue;
@@ -274,8 +295,7 @@ function readQuotedSpecifier(
       continue;
     }
     if (source[cursor] === quote) {
-      const specifier = decodeLiteralContents(source, quoteIndex + 1, cursor);
-      if (specifier === null) return null;
+      const specifier = decodeLiteralContents(source, quoteIndex + 1, cursor, false);
       return {
         end: cursor + 1,
         specifier,
@@ -303,8 +323,7 @@ function readLiteralSpecifier(
     }
     if (source[cursor] === "$" && source[cursor + 1] === "{") return null;
     if (source[cursor] === "`") {
-      const specifier = decodeLiteralContents(source, literalIndex + 1, cursor);
-      if (specifier === null) return null;
+      const specifier = decodeLiteralContents(source, literalIndex + 1, cursor, true);
       return {
         end: cursor + 1,
         specifier,
@@ -419,6 +438,29 @@ function isStatementBlockCloseBrace(
     keyword === "do" || keyword === "else";
 }
 
+function isPlainStatementBlockCloseBrace(
+  source: string,
+  index: number,
+  rangeStart: number,
+  matchingOpenBraces: ReadonlyMap<number, number>,
+): boolean {
+  const openBrace = matchingOpenBraces.get(index);
+  if (openBrace === undefined) return false;
+
+  const beforeOpenBrace = previousSignificantIndex(source, openBrace);
+  if (beforeOpenBrace < rangeStart) return true;
+  if (source[beforeOpenBrace] === ";" || source[beforeOpenBrace] === "}") return true;
+  if (source[beforeOpenBrace] !== ":") return false;
+
+  const labelEnd = previousSignificantIndex(source, beforeOpenBrace) + 1;
+  let labelStart = labelEnd;
+  while (labelStart > rangeStart && isIdentifierChar(source[labelStart - 1])) labelStart--;
+  if (labelStart === labelEnd || !/[$A-Za-z_]/.test(source[labelStart] ?? "")) return false;
+
+  const beforeLabel = previousSignificantIndex(source, labelStart);
+  return beforeLabel < rangeStart || source[beforeLabel] === ";" || source[beforeLabel] === "}";
+}
+
 function isForOfKeywordBefore(
   source: string,
   index: number,
@@ -472,7 +514,8 @@ function canStartRegexLiteral(
       matchingOpenParens,
     ) ||
       isDeclarationBlockCloseBrace(source, previous, matchingOpenBraces) ||
-      isStatementBlockCloseBrace(source, previous, matchingOpenBraces))
+      isStatementBlockCloseBrace(source, previous, matchingOpenBraces) ||
+      isPlainStatementBlockCloseBrace(source, previous, rangeStart, matchingOpenBraces))
   ) return true;
   if (
     (char === "+" || char === "-") &&
@@ -1006,18 +1049,63 @@ export function findStaticSideEffectImportSpans(
   const spans: StaticImportSpan[] = [];
   let cursor = 0;
   let atStatementStart = true;
+  const openBraces: number[] = [];
+  const matchingOpenBraces = new Map<number, number>();
+  const openParens: OpenParenContext[] = [];
+  const matchingOpenParens = new Map<number, number>();
 
   while (cursor < source.length) {
     const char = source[cursor];
-    const skipped = skipIgnored(source, cursor);
+    const skipped = skipExpressionIgnored(
+      source,
+      cursor,
+      0,
+      0,
+      matchingOpenBraces,
+      matchingOpenParens,
+      openParens.at(-1),
+    );
     if (skipped !== cursor) {
       if (char === "/" && source[cursor + 1] === "/") atStatementStart = true;
-      else if (char !== "/") atStatementStart = false;
+      else if (!(char === "/" && source[cursor + 1] === "*")) atStatementStart = false;
       cursor = skipped;
       continue;
     }
 
-    if (char === ";" || char === "\n" || char === "}") {
+    if (char === "{") {
+      openBraces.push(cursor);
+      atStatementStart = false;
+      cursor++;
+      continue;
+    }
+    if (char === "}") {
+      const openBrace = openBraces.pop();
+      if (openBrace !== undefined) matchingOpenBraces.set(cursor, openBrace);
+      atStatementStart = true;
+      cursor++;
+      continue;
+    }
+    if (char === "(") {
+      openParens.push({
+        index: cursor,
+        isForHeader: keywordBefore(source, cursor) === "for",
+        hasSemicolon: false,
+      });
+      atStatementStart = false;
+      cursor++;
+      continue;
+    }
+    if (char === ")") {
+      const openParen = openParens.pop();
+      if (openParen !== undefined) matchingOpenParens.set(cursor, openParen.index);
+      atStatementStart = false;
+      cursor++;
+      continue;
+    }
+    if (char === ";" && openParens.at(-1)?.isForHeader) {
+      openParens.at(-1)!.hasSemicolon = true;
+    }
+    if (char === ";" || char === "\n") {
       atStatementStart = true;
       cursor++;
       continue;

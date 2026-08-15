@@ -491,6 +491,7 @@ describe("rendering/chunk-optimizer", () => {
         "~~~",
         'import React from "react";',
         'import EscapedReact from "\\x72eact";',
+        'import LiteralBackslash from "./literal\\\\x2ejs";',
         'import ReactAgain from "react";',
       ].join("\n");
       const fs = createMockFS(
@@ -503,7 +504,7 @@ describe("rendering/chunk-optimizer", () => {
       const analysis = await analyzeProjectChunks("/project", fs);
       const page = analysis.pages.get("/project/pages/index.mdx");
       assertExists(page);
-      assertEquals(page.local, ["./lazy.ts"]);
+      assertEquals(page.local, ["./lazy.ts", "./literal\\x2ejs"]);
       assertEquals(page.remote, []);
       assertEquals(page.shared, [
         "side-effect",

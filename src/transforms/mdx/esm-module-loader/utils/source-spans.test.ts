@@ -204,13 +204,28 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
     it("matches cooked quoted and template-literal specifiers while preserving source spans", () => {
       const quotedSource = 'import("./lazy\\x2ejs");';
       const templateSource = "import(`./lazy\\u002ejs`);";
+      const escapedBackslashSource = 'import("./lazy\\\\x2ejs");';
       const [quoted] = findDynamicImportSpans(quotedSource, matchRelative, UNBOUNDED);
       const [template] = findDynamicImportSpans(templateSource, matchRelative, UNBOUNDED);
+      const [escapedBackslash] = findDynamicImportSpans(
+        escapedBackslashSource,
+        matchRelative,
+        UNBOUNDED,
+      );
 
       assertEquals(quoted?.path, "./lazy.js");
       assertEquals(quoted?.original, '"./lazy\\x2ejs"');
       assertEquals(template?.path, "./lazy.js");
       assertEquals(template?.original, "`./lazy\\u002ejs`");
+      assertEquals(escapedBackslash?.path, "./lazy\\x2ejs");
+    });
+
+    it("rejects malformed escaped import specifiers", () => {
+      assertThrows(
+        () => findDynamicImportSpans('import("./lazy\\xZZ");', matchRelative, UNBOUNDED),
+        SyntaxError,
+        "escaped module specifier",
+      );
     });
 
     it("finds a literal specifier with import attributes", () => {
@@ -291,6 +306,17 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           'const html = `${new /}/.constructor() && import("/_vf_modules/lazy.js")}`;',
         ),
         ["/_vf_modules/lazy.js"],
+      );
+    });
+
+    it("ignores import-looking regex text after plain and labeled blocks", () => {
+      assertEquals(
+        vfModuleSpecifiers('{} /import("\\/_vf_modules\\/plain.js")/.test(value);'),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers('label: {} /import("\\/_vf_modules\\/labeled.js")/.test(value);'),
+        [],
       );
     });
 
@@ -716,6 +742,17 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           UNBOUNDED,
         ).map((span) => span.path),
         ["./after-class.js"],
+      );
+    });
+
+    it("ignores side-effect import text inside regex literals", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'const r = /;import "\\/_vf_modules\\/a.js"/;',
+          (specifier) => specifier.startsWith("/_vf_modules/") ? specifier : null,
+          UNBOUNDED,
+        ),
+        [],
       );
     });
   });
