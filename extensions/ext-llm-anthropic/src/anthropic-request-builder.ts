@@ -1,4 +1,5 @@
 import {
+  isProxyWithoutHooks,
   jsonValuesEqual,
   readProviderOptions,
   readRecord,
@@ -1245,6 +1246,9 @@ function assertNoAnthropicCacheJsonHook(value: object): void {
   let candidate: object | null = value;
   let depth = 0;
   while (candidate !== null && !visited.has(candidate) && depth < 64) {
+    if (isProxyWithoutHooks(candidate)) {
+      throw new TypeError("Anthropic cache inputs must not contain Proxy values");
+    }
     visited.add(candidate);
     depth += 1;
     let descriptor: PropertyDescriptor | undefined;
@@ -1267,6 +1271,43 @@ function assertNoAnthropicCacheJsonHook(value: object): void {
   }
   if (candidate !== null) {
     throw new TypeError("Anthropic cache input toJSON hooks could not be inspected");
+  }
+}
+
+function assertNoNestedAnthropicCacheJsonHooks(
+  value: object,
+  ancestors = new Set<object>(),
+  depth = 0,
+): void {
+  if (depth >= 64 || ancestors.has(value)) {
+    throw new TypeError("Anthropic cache input toJSON hooks could not be inspected");
+  }
+  assertNoAnthropicCacheJsonHook(value);
+  ancestors.add(value);
+  try {
+    let keys: string[];
+    try {
+      keys = Object.keys(value);
+    } catch {
+      throw new TypeError("Anthropic cache input toJSON hooks could not be inspected");
+    }
+    for (const key of keys) {
+      let descriptor: PropertyDescriptor | undefined;
+      try {
+        descriptor = Object.getOwnPropertyDescriptor(value, key);
+      } catch {
+        throw new TypeError("Anthropic cache input toJSON hooks could not be inspected");
+      }
+      if (!descriptor || !Object.hasOwn(descriptor, "value")) {
+        continue;
+      }
+      const nested = descriptor.value;
+      if (typeof nested === "object" && nested !== null) {
+        assertNoNestedAnthropicCacheJsonHooks(nested, ancestors, depth + 1);
+      }
+    }
+  } finally {
+    ancestors.delete(value);
   }
 }
 
@@ -1404,7 +1445,7 @@ function readEmittedAnthropicCacheTtl(
   ) {
     return undefined;
   }
-  assertNoAnthropicCacheJsonHook(cacheControl);
+  assertNoNestedAnthropicCacheJsonHooks(cacheControl);
 
   let keys: string[];
   try {

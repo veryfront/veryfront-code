@@ -506,6 +506,84 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     }
   });
 
+  it("rejects toJSON hooks nested inside cache-control values", () => {
+    let hookCalls = 0;
+    const toJSON = () => {
+      hookCalls += 1;
+      return "ephemeral";
+    };
+
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+            providerOptions: {
+              anthropic: {
+                messages: [{
+                  role: "user",
+                  content: [{
+                    type: "text",
+                    text: "Cached",
+                    cache_control: { type: { toJSON } },
+                  }],
+                }],
+              },
+            },
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic cache inputs must not define toJSON hooks",
+    );
+    assertEquals(hookCalls, 0);
+  });
+
+  it("rejects Proxy cache inputs without invoking synthesized hooks", () => {
+    let hookCalls = 0;
+    const toJSON = () => {
+      hookCalls += 1;
+      return undefined;
+    };
+    const block = new Proxy(
+      {
+        type: "text",
+        text: "Cached",
+        cache_control: { type: "ephemeral" },
+      },
+      {
+        get(target, property, receiver) {
+          if (property === "toJSON") return toJSON;
+          return Reflect.get(target, property, receiver);
+        },
+      },
+    );
+
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+            providerOptions: {
+              anthropic: {
+                messages: [{ role: "user", content: [block] }],
+              },
+            },
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic cache inputs must not contain Proxy values",
+    );
+    assertEquals(hookCalls, 0);
+  });
+
   it("rejects malformed raw request collections before cache processing", () => {
     for (
       const [field, value, message] of [

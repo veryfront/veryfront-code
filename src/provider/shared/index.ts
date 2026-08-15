@@ -85,3 +85,6 @@ export type {
   RuntimeReasoningOption,
   RuntimeResponseFormat,
 } from "../types.ts";
+
+// No-hook runtime inspection used by provider extensions at JSON boundaries.
+export { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
