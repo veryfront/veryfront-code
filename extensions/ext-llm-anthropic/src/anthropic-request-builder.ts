@@ -1361,10 +1361,23 @@ function hasEmittedAnthropicCacheBreakpoint(value: Record<string, unknown>): boo
       "Anthropic cache_control must be an own enumerable data property",
     );
   }
-  if (typeof descriptor.value === "function") {
+  if (
+    typeof descriptor.value === "function" ||
+    (typeof descriptor.value === "object" && descriptor.value !== null)
+  ) {
     assertNoAnthropicCacheJsonHook(descriptor.value);
   }
   return !isOmittedJsonObjectPropertyValue(descriptor.value);
+}
+
+function isAnthropicMessageCacheBlock(
+  value: unknown,
+): value is Record<string, unknown> {
+  if (typeof value === "function" || Array.isArray(value)) {
+    assertNoAnthropicCacheJsonHook(value);
+    return false;
+  }
+  return typeof value === "object" && value !== null;
 }
 
 function readEmittedAnthropicMessageContent(message: AnthropicCompatibleMessage): unknown[] {
@@ -1441,8 +1454,8 @@ function retainLatestAnthropicMessageCacheBreakpoints(
         "Anthropic message content",
       );
       if (
-        typeof block === "object" && block !== null && !Array.isArray(block) &&
-        hasEmittedAnthropicCacheBreakpoint(block as Record<string, unknown>)
+        isAnthropicMessageCacheBlock(block) &&
+        hasEmittedAnthropicCacheBreakpoint(block)
       ) {
         breakpointPositions.push({ messageIndex, contentIndex });
       }
@@ -1519,8 +1532,8 @@ function countAnthropicMessageCacheBreakpoints(messages: AnthropicCompatibleMess
         "Anthropic message content",
       );
       if (
-        typeof block === "object" && block !== null && !Array.isArray(block) &&
-        hasEmittedAnthropicCacheBreakpoint(block as Record<string, unknown>)
+        isAnthropicMessageCacheBlock(block) &&
+        hasEmittedAnthropicCacheBreakpoint(block)
       ) {
         count += 1;
       }
@@ -1672,8 +1685,8 @@ function normalizeAnthropicMessageCacheTtls(
     for (let contentIndex = content.length - 1; contentIndex >= 0; contentIndex -= 1) {
       const block = content[contentIndex];
       if (
-        typeof block !== "object" || block === null || Array.isArray(block) ||
-        !hasEmittedAnthropicCacheBreakpoint(block as Record<string, unknown>)
+        !isAnthropicMessageCacheBlock(block) ||
+        !hasEmittedAnthropicCacheBreakpoint(block)
       ) {
         continue;
       }
@@ -1684,9 +1697,7 @@ function normalizeAnthropicMessageCacheTtls(
         if (normalizedContent === content) {
           normalizedContent = [...content];
         }
-        normalizedContent[contentIndex] = upgradeEmittedAnthropicCacheTtl(
-          block as Record<string, unknown>,
-        );
+        normalizedContent[contentIndex] = upgradeEmittedAnthropicCacheTtl(block);
       }
     }
     if (normalizedContent !== content) {

@@ -798,31 +798,56 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     }
   });
 
-  it("rejects function-valued cache toJSON hooks without invoking them", () => {
-    for (const placement of ["cache-control", "type"] as const) {
+  it("rejects function and array cache toJSON hooks without invoking them", () => {
+    for (
+      const placement of [
+        "block",
+        "array-block",
+        "cache-control",
+        "array-cache-control",
+        "type",
+      ] as const
+    ) {
       for (const inherited of [false, true]) {
         let hookCalls = 0;
         const toJSON = () => {
           hookCalls += 1;
-          return placement === "cache-control" ? { type: "ephemeral" } : "ephemeral";
+          if (placement === "block" || placement === "array-block") {
+            return {
+              type: "text",
+              text: "Cached",
+              cache_control: { type: "ephemeral" },
+            };
+          }
+          return placement === "cache-control" || placement === "array-cache-control"
+            ? { type: "ephemeral" }
+            : "ephemeral";
         };
-        const hookedFunction = () => undefined;
+        const hookedValue = placement.startsWith("array-") ? [] : () => undefined;
         if (inherited) {
           Object.setPrototypeOf(
-            hookedFunction,
-            Object.create(Function.prototype, {
-              toJSON: { configurable: true, value: toJSON },
-            }),
+            hookedValue,
+            Object.create(
+              Array.isArray(hookedValue) ? Array.prototype : Function.prototype,
+              {
+                toJSON: { configurable: true, value: toJSON },
+              },
+            ),
           );
         } else {
-          Object.defineProperty(hookedFunction, "toJSON", {
+          Object.defineProperty(hookedValue, "toJSON", {
             configurable: true,
             value: toJSON,
           });
         }
-        const cacheControl = placement === "cache-control"
-          ? hookedFunction
-          : { type: hookedFunction };
+        const cacheControl = placement === "cache-control" || placement === "array-cache-control"
+          ? hookedValue
+          : { type: hookedValue };
+        const block = placement === "block" || placement === "array-block" ? hookedValue : {
+          type: "text",
+          text: "Cached",
+          cache_control: cacheControl,
+        };
 
         assertThrows(
           () =>
@@ -835,11 +860,7 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
                   anthropic: {
                     messages: [{
                       role: "user",
-                      content: [{
-                        type: "text",
-                        text: "Cached",
-                        cache_control: cacheControl,
-                      }],
+                      content: [block],
                     }],
                   },
                 },
