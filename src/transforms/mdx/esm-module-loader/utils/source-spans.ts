@@ -533,6 +533,7 @@ function canStartRegexLiteral(
 
   return [
     "case",
+    "default",
     "delete",
     "do",
     "else",

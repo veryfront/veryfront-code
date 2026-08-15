@@ -309,6 +309,13 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("ignores import-looking regex text after export default", () => {
+      assertEquals(
+        vfModuleSpecifiers('export default /import("\\/_vf_modules\\/a.js")/;'),
+        [],
+      );
+    });
+
     it("ignores import-looking regex text after plain and labeled blocks", () => {
       assertEquals(
         vfModuleSpecifiers('{} /import("\\/_vf_modules\\/plain.js")/.test(value);'),
