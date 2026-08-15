@@ -345,14 +345,18 @@ template, define it explicitly, and **fail closed**:
   messages, and telemetry/logs, or raw PII leaks around the redaction step.
 
 The first redaction boundary is the hosted tool-result boundary, not the
-`case-ingest` handoff. `get_case` and `list_case_activity` can return raw
-`Subject`, `Description`, and `CommentBody`; if the agent runtime persists those
-tool results before `case-ingest` builds the sanitized child payload, durable run
-history already contains customer text. V1 must either redact those fields in the
-hosted Salesforce result adapter before persistence or suppress persistence of
-the raw tool result and persist only the sanitized projection. Do not reveal the
-template until tests prove raw case and comment text cannot appear in stored run
-messages, streaming tool-result history, errors, logs, or telemetry.
+`case-ingest` handoff. `get_case` and `list_case_activity` can return raw Case and
+CaseComment payloads, including standard customer fields such as `SuppliedEmail`
+and `SuppliedPhone`, free text, and custom `__c` fields; if the agent runtime
+persists those tool results before `case-ingest` builds the sanitized child
+payload, durable run history already contains customer text. V1 must either
+return a hosted allowlisted projection before persistence or suppress persistence
+of the raw tool result and persist only the sanitized projection. Redacting only
+`Subject`, `Description`, and `CommentBody` is insufficient because unprojected
+sObject responses can contain other customer data. Do not reveal the template
+until tests prove every non-allowlisted field is dropped or redacted before stored
+run messages, streaming tool-result history, errors, logs, or telemetry can
+observe it.
 
 `case-ingest` must construct a new downstream object rather than spread or rename
 the Salesforce response. The only free-text fields accepted by `case-classify`
@@ -483,6 +487,7 @@ dependencies, not static-schema details:
 | Fixed object/operation authorization for curated writes | Hosted integration executor, using the Configure permission policy | Shipping `update_case_reason`, `add_internal_case_comment`, retained `create_case`, retained `create_lead`, or any temporary retained `update_case` |
 | Fixed owner lookup adapters for `User`, Case queues, and Lead queues | Hosted integration executor / tools API, using server-owned SOQL and typed filters | Discovering owner candidates for Case and Lead while arbitrary `run_soql_query` and `q` remain hidden. Opportunity uses `User` candidates only. Lead and Opportunity assignment writes remain gated until scoped write tools or generic CRUD enforcement exist |
 | Pre-persistence PII redaction or raw-result persistence suppression | Hosted integration executor plus agent runtime persistence/streaming boundary | Revealing `get_case`, `list_case_activity`, or the case-ingest template against customer text |
+| Fixed metadata-helper authorization | Hosted integration executor, using the Configure permission policy | Retaining `describe_object` or `get_picklist_values_for_record_type` for an object while per-CRUD arrays are not generally enforced |
 | Referenced-object parser/enforcer for arbitrary SOQL/SOSL | Hosted integration executor and authorization layer | Re-enabling `run_soql_query`, SOSL `search`, or any arbitrary curated `q` override |
 | Per-CRUD enforcement against runtime `sobjectType` | Configure policy storage plus hosted authorization enforcement | Shipping any generic CRUD tool |
 | Server-side path validators for API names, Salesforce IDs, and encoded path segments | Hosted integration executor before URL interpolation | Shipping generic CRUD, picklist helpers, or any future path-composed static endpoint |
@@ -491,12 +496,13 @@ dependencies, not static-schema details:
 Sequence v1 conservatively: first land the hosted curated-query adapter, fixed
 direct-read authorization, fixed owner lookup adapters, fixed curated-write
 authorization, pre-persistence PII redaction or raw-result persistence
-suppression, path validators, and write-status plus Knowledge/picklist adapter
-contracts with fail-closed tests; then reveal the curated v1 tool surface. Keep
-generic CRUD and arbitrary SOQL/SOSL hidden until the per-CRUD matrix and
-referenced-object query parser are enforced. The companion template and Studio
-project must not advertise a tool or assignment workflow before the hosted
-dependency that makes its contract fail-closed is live.
+suppression, fixed metadata-helper authorization, path validators, and
+write-status plus Knowledge/picklist adapter contracts with fail-closed tests;
+then reveal the curated v1 tool surface. Keep generic CRUD and arbitrary
+SOQL/SOSL hidden until the per-CRUD matrix and referenced-object query parser are
+enforced. The companion template and Studio project must not advertise a tool or
+assignment workflow before the hosted dependency that makes its contract
+fail-closed is live.
 
 ## 6. Proposed comprehensive tool surface
 
@@ -574,7 +580,8 @@ when the field is omitted (or make `get_picklist_values_for_record_type` preflig
 mandatory before create), and add a restricted-picklist fixture proving create
 succeeds without assumed values.
 
-**Tier 2 - Universal escape hatches (partly gated):** keep `describe_object` and
+**Tier 2 - Universal escape hatches (partly gated):** keep `describe_object` only
+with fixed metadata-helper authorization for the requested object, and keep
 fixed-object curated read defaults in v1. Add fixed lookup helpers
 `list_active_users`, `list_case_queues`, and `list_lead_queues` for owner
 candidate discovery; these helpers use server-owned SOQL and typed filters, not
@@ -588,7 +595,8 @@ authorize every referenced object, relationship target, and subquery fail-closed
 (§16). Keep `salesforce__search_knowledge_articles` only if it uses a fixed
 Knowledge query and degrades gracefully when Knowledge is disabled (§8). Add
 **`get_picklist_values_for_record_type`** so `case-dispose` can validate `Reason`
-before writing.
+before writing; it must deny without the same object Read grant required by the
+target object's metadata lookup.
 
 **Tier 3 - Generic sObject CRUD (specified, held until §16 enforcement):**
 `get_record`, `create_record`, `update_record`, `upsert_record`, and
@@ -638,9 +646,12 @@ and the exact fixed object, field list, predicates, ordering, and limit reach
 Salesforce. Retained direct reads must prove the hosted executor denies `get_case`
 without Case Read, `get_contact` without Contact Read, and `get_account` without
 Account Read, even when the project has a write grant or legacy
-`dataAccess.objects` includes the object. Static Contact query defaults must also
-prove they either omit Account relationship fields or deny the query when Account
-Read is absent. Each generic CRUD tool must be denied for an un-granted
+`dataAccess.objects` includes the object. Metadata helpers must prove
+`describe_object` and `get_picklist_values_for_record_type` deny without Read for
+the target object, even if the project has a write grant or legacy
+`dataAccess.objects` includes that object. Static Contact query defaults must
+also prove they either omit Account relationship fields or deny the query when
+Account Read is absent. Each generic CRUD tool must be denied for an un-granted
 `sobjectType` (§16). `list_cases`
 needs a closed-case exclusion test: seed at least one recently modified closed
 Case and assert the v1 open-case listing cannot return it, and assert any missing
@@ -658,16 +669,17 @@ and must reject queue Group IDs. Lead and Opportunity owner write acceptance
 criteria stay unmet in v1 unless the implementation adds scoped owner-write
 helpers with fixed `Lead` Update and `Opportunity` Update authorization.
 
-The PII gate needs fixture coverage too: raw `Subject`, `Description`, and
-`CommentBody` values containing email, phone, and customer identifiers must not
-appear in persisted tool results, stored run memory, streaming tool-result
-history, child-run payloads, errors, logs, or telemetry; the corresponding
-bounded `sanitizedSubject`, `sanitizedDescription`, and `sanitizedComments`
-values must remain available to `case-classify`, and `RecordTypeId` must remain
-available to `case-dispose` for record-type-scoped picklist validation. Unknown
-fields, over-limit text, and redactor or post-redaction validation failures must
-prevent persistence of raw tool output and prevent the child run. Add a
-non-default Case record-type fixture that proves `case-dispose` calls
+The PII gate needs fixture coverage too: raw `Subject`, `Description`,
+`CommentBody`, `SuppliedEmail`, `SuppliedPhone`, and a representative custom
+field containing email, phone, and customer identifiers must not appear in
+persisted tool results, stored run memory, streaming tool-result history,
+child-run payloads, errors, logs, or telemetry; the corresponding bounded
+`sanitizedSubject`, `sanitizedDescription`, and `sanitizedComments` values must
+remain available to `case-classify`, and `RecordTypeId` must remain available to
+`case-dispose` for record-type-scoped picklist validation. Unknown fields,
+over-limit text, and redactor or post-redaction validation failures must prevent
+persistence of raw tool output and prevent the child run. Add a non-default Case
+record-type fixture that proves `case-dispose` calls
 `get_picklist_values_for_record_type` with the Case's actual `RecordTypeId` and
 does not use the connected profile default.
 
@@ -1152,10 +1164,10 @@ is satisfied. Additional non-CRUD tools complete the future surface:
     or "all picklist fields", implement it as hosted server behavior behind a
     dedicated static endpoint. Do not describe that behavior as plain
     `connector.json` interpolation.
-  - **Path safety:** validate `sobjectType` and `fieldApiName` as Salesforce API
-    names and `recordTypeId` as a Salesforce ID; authorize the canonical
-    `sobjectType`; reject traversal plus query/fragment delimiters; and encode each
-    path segment exactly once before composing the UI API endpoint.
+  - **Path safety and authorization:** validate `sobjectType` and `fieldApiName` as
+    Salesforce API names and `recordTypeId` as a Salesforce ID; require Read on the
+    canonical target `sobjectType`; reject traversal plus query/fragment delimiters;
+    and encode each path segment exactly once before composing the UI API endpoint.
   - **Response:** a plain static endpoint returns the raw Salesforce UI API
     picklist-values response. If the public tool contract must return a normalized
     shape such as `{ sobjectType, fieldApiName, recordTypeId, values: [...] }`, add
@@ -1164,7 +1176,8 @@ is satisfied. Additional non-CRUD tools complete the future surface:
     shapes, `value` (the API name) is what a write must send.
   - **Test:** a record type whose allowed `Reason`/`Status` set is a strict subset of
     the object-wide set, asserting the tool returns the record-type set, not the
-    superset (§4.1, §5.3, §A.5).
+    superset (§4.1, §5.3, §A.5), plus a denial case proving Case Update without
+    Case Read cannot call the Case picklist helper.
 - **`list_active_users`**, **`list_case_queues`**, and **`list_lead_queues`** -
   fixed hosted lookup helpers for owner candidate discovery. They are not generic
   query tools and their published schemas must not expose `q` or `sobjectType`.
