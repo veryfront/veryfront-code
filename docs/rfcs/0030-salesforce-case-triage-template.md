@@ -535,6 +535,21 @@ concrete operation (`CaseComment` Create, `Case` Create/Update, `Lead` Create).
 Do not infer those writes from `dataAccess.objects` or from a Read grant while the
 per-CRUD arrays are not enforced.
 
+`case-dispose` writes `Case.Reason` and one internal `CaseComment` as a single
+logical disposal. V1 must make that logical disposal either atomic at the hosted
+integration boundary, for example through a Salesforce Composite request with
+`allOrNone: true`, or deterministically reconciled after any partial success. If
+the implementation cannot use an atomic composite write, it must assign each
+disposal a stable idempotency key derived from the case ID, taxonomy version,
+selected reason, and comment content, record or derive the key in a way retries
+can observe, deduplicate already-created comments, and converge every retry to
+exactly one visible terminal state: both `Reason` and the matching internal
+comment are present, or the run reports that reconciliation is required without
+creating another comment. A retry after `Reason` succeeds but `CaseComment`
+fails, or after `CaseComment` succeeds but the client times out before observing
+the result, must not create duplicate comments or leave the agent to infer state
+from an empty write response.
+
 Retained direct reads need the same concrete-operation treatment for Read:
 `get_case`, `get_contact`, and `get_account` stay in v1 only if the hosted
 executor denies each call without the matching object Read grant. A project with
@@ -640,7 +655,13 @@ generic `add_case_comment` tool, and the internal helper still needs an independ
 fixed object/operation denial tests. Successful `204 No Content` writes, including
 `update_case_reason`, must return an explicit `{ success: true }` adapter result
 instead of an empty string, and tests must prove the agent-visible result cannot be
-misread as failure. Every immutable-query adapter entry must prove that `q` is
+misread as failure. Dispose write consistency needs explicit retry and
+partial-failure coverage: one test must prove the atomic composite path rolls back
+both `Reason` and `CaseComment` when either subrequest fails, or, for the
+reconciled path, retries after each half-succeeded order and after a post-comment
+timeout must converge without duplicate comments and with a deterministic
+operator-visible failure when convergence is impossible. Every immutable-query
+adapter entry must prove that `q` is
 absent from the published schema, a supplied `q` and unknown filters are rejected,
 and the exact fixed object, field list, predicates, ordering, and limit reach
 Salesforce. Retained direct reads must prove the hosted executor denies `get_case`
@@ -733,6 +754,7 @@ is promptable in the agents.
 | Condition | Today | Proposed |
 | --- | --- | --- |
 | Write result | empty string (mis-read as failure in §3) | status-based: POST → `{ id, success, errors }`; PATCH/DELETE `204` → `{ success: true }`. Empty body ≠ failure |
+| Partial dispose write | two independent calls can leave `Reason` and the triage comment out of sync on retry, timeout, or one-sided failure | atomic composite write with rollback, or deterministic idempotent reconciliation that deduplicates comments and converges retries to one terminal state |
 | API disabled for edition | raw 403 | "This Salesforce edition has no API access. Use a free Developer Edition org: <link>." |
 | Restricted picklist bad value | raw `INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST` | catch → describe → retry only after the user confirms a taxonomy-to-org mapping; otherwise report the allowed set and fail closed |
 | Case listing not open-constrained | default `list_cases` can return recently modified closed cases | "The latest-open-cases tool is not open-case constrained. Add a fixed `IsClosed = false` query/filter before triage." |
@@ -769,7 +791,7 @@ fail. Until the hosted adapter and test exist, hide
 6. Run **"Triage latest open cases"** through the v1 open-case constrained listing
    tool, not a general recent-cases default.
 7. Pipeline runs green against seeded data; a `Reason` + triage comment land on
-   the case.
+   the case through the atomic or idempotently reconciled dispose write contract.
 
 The single biggest seam is step 3: package installation is an org-level admin
 prerequisite, so "fork and run" is not one-click in a Salesforce org that has
