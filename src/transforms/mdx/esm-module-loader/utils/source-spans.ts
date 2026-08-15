@@ -676,8 +676,14 @@ function isFunctionDeclarationBlockOpenBrace(
   return FUNCTION_DECLARATION_PREFIX_PATTERN.test(prefix);
 }
 
-function isClassDeclarationBlockOpenBrace(source: string, index: number): boolean {
+function isClassDeclarationBlockOpenBrace(
+  source: string,
+  index: number,
+  currentParen: OpenParenContext | undefined,
+): boolean {
   const declarationStart = declarationStatementStartBefore(source, index);
+  if (currentParen !== undefined && currentParen.index >= declarationStart) return false;
+
   const prefix = normalizedDeclarationPrefix(source, declarationStart, index);
   return CLASS_DECLARATION_PREFIX_PATTERN.test(prefix);
 }
@@ -687,6 +693,7 @@ function openBraceContext(
   index: number,
   previousTokenIndex: number,
   matchingOpenParens: ReadonlyMap<number, OpenParenContext>,
+  currentParen: OpenParenContext | undefined,
 ): OpenBraceContext {
   return {
     index,
@@ -695,7 +702,7 @@ function openBraceContext(
       source,
       previousTokenIndex,
       matchingOpenParens,
-    ) || isClassDeclarationBlockOpenBrace(source, index),
+    ) || isClassDeclarationBlockOpenBrace(source, index, currentParen),
   };
 }
 
@@ -884,6 +891,17 @@ function skipRegexLiteral(source: string, regexIndex: number): number {
   return source.length;
 }
 
+function skipRawJsxTag(source: string, index: number): number {
+  if (source[index] !== "<") return index;
+
+  const nameStart = source[index + 1] === "/" ? index + 2 : index + 1;
+  if (source[nameStart] !== ">" && !isIdentifierStartAt(source, nameStart)) return index;
+  if (source[nameStart] === ">") return nameStart + 1;
+
+  const end = source.indexOf(">", nameStart + 1);
+  return end === -1 ? index : end + 1;
+}
+
 function skipExpressionIgnored(
   source: string,
   index: number,
@@ -896,6 +914,9 @@ function skipExpressionIgnored(
 ): number {
   const char = source[index];
   const next = source[index + 1];
+
+  const jsxTagEnd = skipRawJsxTag(source, index);
+  if (jsxTagEnd !== index) return jsxTagEnd;
 
   if (char === "/" && next === "/") {
     return skipLineComment(source, index);
@@ -989,7 +1010,15 @@ function findTemplateExpressionEnd(
     }
 
     if (source[cursor] === "{") {
-      openBraces.push(openBraceContext(source, cursor, previousTokenIndex, matchingOpenParens));
+      openBraces.push(
+        openBraceContext(
+          source,
+          cursor,
+          previousTokenIndex,
+          matchingOpenParens,
+          openParens.at(-1),
+        ),
+      );
       braceDepth++;
       previousTokenIndex = cursor;
       cursor++;
@@ -1138,7 +1167,15 @@ export function findStaticImportFromSpans(
     }
 
     if (char === "{") {
-      openBraces.push(openBraceContext(source, cursor, previousTokenIndex, matchingOpenParens));
+      openBraces.push(
+        openBraceContext(
+          source,
+          cursor,
+          previousTokenIndex,
+          matchingOpenParens,
+          openParens.at(-1),
+        ),
+      );
       atStatementStart = false;
       previousTokenIndex = cursor;
       cursor++;
@@ -1278,6 +1315,13 @@ function scanDynamicImportRange(
     const char = source[cursor];
     const next = source[cursor + 1];
 
+    const jsxTagEnd = skipRawJsxTag(source, cursor);
+    if (jsxTagEnd !== cursor) {
+      previousTokenIndex = jsxTagEnd - 1;
+      cursor = jsxTagEnd;
+      continue;
+    }
+
     if (
       (char === "/" && (next === "/" || next === "*")) ||
       char === '"' ||
@@ -1326,7 +1370,15 @@ function scanDynamicImportRange(
     }
 
     if (char === "{") {
-      openBraces.push(openBraceContext(source, cursor, previousTokenIndex, matchingOpenParens));
+      openBraces.push(
+        openBraceContext(
+          source,
+          cursor,
+          previousTokenIndex,
+          matchingOpenParens,
+          openParens.at(-1),
+        ),
+      );
       previousTokenIndex = cursor;
       cursor++;
       continue;
@@ -1510,7 +1562,15 @@ export function findStaticSideEffectImportSpans(
     }
 
     if (char === "{") {
-      openBraces.push(openBraceContext(source, cursor, previousTokenIndex, matchingOpenParens));
+      openBraces.push(
+        openBraceContext(
+          source,
+          cursor,
+          previousTokenIndex,
+          matchingOpenParens,
+          openParens.at(-1),
+        ),
+      );
       atStatementStart = false;
       previousTokenIndex = cursor;
       cursor++;

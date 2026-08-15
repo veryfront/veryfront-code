@@ -252,6 +252,17 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("finds static imports after division in class extends arguments", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          'class C extends foo({} / 2) {}; import value from "./after-class-extends-arg.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-class-extends-arg.js"],
+      );
+    });
+
     it("honors line terminators inside block comments before static imports", () => {
       assertEquals(
         findStaticImportFromSpans(
@@ -475,12 +486,32 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("finds imports after raw JSX closing tags", () => {
+      assertEquals(
+        specifiers('<Component></Component>\n\n{import("./lazy.ts")}'),
+        ["./lazy.ts"],
+      );
+      assertEquals(
+        specifiers('<><Component /></>\n\n{import("./fragment-lazy.ts")}'),
+        ["./fragment-lazy.ts"],
+      );
+    });
+
     it("treats of as an identifier in a classic for-loop initializer", () => {
       assertEquals(
         vfModuleSpecifiers(
           'let of = 4; for (of / 2; shouldRun;) { import("/_vf_modules/classic-for-lazy.js") }',
         ),
         ["/_vf_modules/classic-for-lazy.js"],
+      );
+    });
+
+    it("finds imports after division in class extends arguments", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'class C extends foo({} / 2) {}; import("/_vf_modules/class-extends-arg.js")',
+        ),
+        ["/_vf_modules/class-extends-arg.js"],
       );
     });
 
@@ -1243,6 +1274,17 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           UNBOUNDED,
         ).map((span) => span.path),
         ["./after-block-comment.js"],
+      );
+    });
+
+    it("finds side-effect imports after division in class extends arguments", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'class C extends foo({} / 2) {}; import "./after-class-extends-arg.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-class-extends-arg.js"],
       );
     });
   });
