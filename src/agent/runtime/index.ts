@@ -2256,8 +2256,12 @@ export class AgentRuntime {
 
       const streamedToolCalls = Array.from(state.toolCalls.values());
       const finalToolResults = collectFinalStreamToolResults(state);
+      const hasExposedReasoning = state.reasoningParts.some((part) =>
+        part.text.length > 0 || part.signature || part.redactedData
+      );
       const canRecoverInterruptedLocalToolBatch = !recoveredInterruptedLocalToolBatch &&
-        step + 1 < maxSteps;
+        step + 1 < maxSteps &&
+        !hasExposedReasoning;
       const shouldContinue = shouldContinueAfterStreamStep(state, {
         recoverInterruptedToolCalls: canRecoverInterruptedLocalToolBatch,
       });

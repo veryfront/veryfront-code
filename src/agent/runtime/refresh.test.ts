@@ -3030,6 +3030,80 @@ describe("agent runtime refresh hooks", () => {
     );
   });
 
+  it("does not retry a truncated non-placeholder tool call after exposing reasoning", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        return {
+          stream: createRuntimeStream([
+            { type: "reasoning-start", id: "reasoning-before-interruption" },
+            {
+              type: "reasoning-delta",
+              id: "reasoning-before-interruption",
+              delta: "Check hidden state.",
+            },
+            { type: "reasoning-end", id: "reasoning-before-interruption" },
+            {
+              type: "tool-input-start",
+              id: "toolu_interrupted_after_reasoning",
+              toolName: "studio_suggestions",
+            },
+            {
+              type: "tool-input-delta",
+              id: "toolu_interrupted_after_reasoning",
+              delta: '{"suggestions":[',
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Reasoning recovery replay regression test",
+      tools: { studio_suggestions: studioSuggestions },
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const body = await (await assistant.stream({
+      input: "Check before acting",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse().text();
+
+    assertEquals(callCount, 1);
+    assertEquals(body.match(/Check hidden state\./g)?.length ?? 0, 1);
+    assertExists(finishedResponse);
+    assertEquals(
+      finishedResponse.messages
+        .filter((message) => message.role === "assistant")
+        .flatMap((message) => message.parts)
+        .filter((part) => part.type === "reasoning")
+        .flatMap((part) => "text" in part && typeof part.text === "string" ? [part.text] : []),
+      ["Check hidden state."],
+    );
+  });
+
   it("streams provider events before recovery replay text begins", async () => {
     let finishedResponse: AgentResponse | undefined;
     let callCount = 0;
