@@ -15,6 +15,35 @@ import {
 } from "../shared/constants.ts";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../shared/json-output.ts";
 import { isInteractive } from "../shared/interactive.ts";
+import { getEnvSource } from "#veryfront/utils/env-loader.ts";
+import { relative } from "#veryfront/compat/path";
+import { cwd } from "veryfront/platform";
+
+/**
+ * Describe where an API-token credential actually came from.
+ *
+ * `.env` files in the working directory are loaded into the environment, so a
+ * token can arrive under `VERYFRONT_API_TOKEN` while that variable is unset in
+ * the developer's shell. Reporting only the variable name sends them to check
+ * something they can see is empty; naming the file ends the search. Identity is
+ * directory-dependent for every command that infers a project from config, so
+ * this is worth the extra clause.
+ */
+function describeApiTokenSource(): string {
+  const origin = getEnvSource("VERYFRONT_API_TOKEN");
+  if (origin.source !== "env-file") return "(via VERYFRONT_API_TOKEN)";
+
+  // Repo-relative only: AGENTS.md forbids local absolute paths in user-facing
+  // output. A file outside the working directory degrades to its name rather
+  // than exposing the layout above it.
+  const rel = relative(cwd(), origin.file);
+  const shown = !rel || rel.startsWith("..")
+    ? origin.file.split("/").pop() ?? origin.file
+    : rel.startsWith(".")
+    ? rel
+    : `./${rel}`;
+  return `(via VERYFRONT_API_TOKEN from ${shown})`;
+}
 
 export type AuthMethod = "google" | "github" | "microsoft" | "token";
 
@@ -412,7 +441,7 @@ async function reportCredential(
 
   console.log(
     "  " + dim(
-      source === "env" ? "(via VERYFRONT_API_TOKEN)" : `Token stored at: ${getTokenLocation(env)}`,
+      source === "env" ? describeApiTokenSource() : `Token stored at: ${getTokenLocation(env)}`,
     ),
   );
   return credential;

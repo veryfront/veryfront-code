@@ -452,6 +452,94 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         globalThis.fetch = originalFetch;
       }
     });
+
+    it("names the .env file when the token came from one, not just the variable", async () => {
+      // A token loaded from a `.env` in the working directory silently overrides
+      // the stored login. Reporting only "via VERYFRONT_API_TOKEN" sends the
+      // developer to check an environment variable that is genuinely unset.
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const output: string[] = [];
+      const { __resetEnvLoaderForTests, loadEnv } = await import(
+        "#veryfront/utils/env-loader.ts"
+      );
+      const envDir = await Deno.makeTempDir({ prefix: "whoami-env-source-" });
+
+      try {
+        deleteEnv("VERYFRONT_API_TOKEN");
+        __resetEnvLoaderForTests();
+        await Deno.writeTextFile(`${envDir}/.env`, "VERYFRONT_API_TOKEN=vf_from_dotenv\n");
+        await loadEnv({ cwd: envDir });
+
+        globalThis.fetch = (() =>
+          Promise.resolve(
+            new Response(JSON.stringify({ data: [], page_info: {} }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          )) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+
+        const { whoami } = await import("./login.ts");
+        await whoami({
+          ...testEnv,
+          apiBaseUrl: "https://auth.example.test",
+          apiUrl: undefined,
+          apiToken: "vf_from_dotenv",
+        });
+
+        const printed = output.join("\n");
+        assertStringIncludes(printed, "VERYFRONT_API_TOKEN");
+        assertStringIncludes(printed, ".env");
+        // Never leak the token itself, and never print an absolute machine path.
+        assertEquals(printed.includes("vf_from_dotenv"), false);
+        assertEquals(printed.includes(envDir), false);
+      } finally {
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        __resetEnvLoaderForTests();
+        deleteEnv("VERYFRONT_API_TOKEN");
+        await Deno.remove(envDir, { recursive: true });
+      }
+    });
+
+    it("still reports a real environment variable without inventing a file", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const output: string[] = [];
+      const { __resetEnvLoaderForTests } = await import("#veryfront/utils/env-loader.ts");
+
+      try {
+        __resetEnvLoaderForTests();
+        setEnv("VERYFRONT_API_TOKEN", "vf_from_process");
+
+        globalThis.fetch = (() =>
+          Promise.resolve(
+            new Response(JSON.stringify({ data: [], page_info: {} }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          )) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+
+        const { whoami } = await import("./login.ts");
+        await whoami({
+          ...testEnv,
+          apiBaseUrl: "https://auth.example.test",
+          apiUrl: undefined,
+          apiToken: "vf_from_process",
+        });
+
+        const printed = output.join("\n");
+        assertStringIncludes(printed, "VERYFRONT_API_TOKEN");
+        assertEquals(printed.includes(".env"), false);
+      } finally {
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        __resetEnvLoaderForTests();
+        deleteEnv("VERYFRONT_API_TOKEN");
+      }
+    });
   });
 
   describe("UserInfo type", { sanitizeOps: false, sanitizeResources: false }, () => {
