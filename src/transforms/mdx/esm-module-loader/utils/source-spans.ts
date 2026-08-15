@@ -56,6 +56,7 @@ interface RawJsxTagOptions {
 }
 
 const MAX_TEMPLATE_LITERAL_DEPTH = 512;
+const MAX_RAW_JSX_TEXT_CLOSING_LOOKAHEAD = 64 * 1024;
 const StringFromCodePoint = String.fromCodePoint;
 const IDENTIFIER_START_PATTERN = /^[$_\p{ID_Start}]$/u;
 const IDENTIFIER_PART_PATTERN = /^[$_\p{ID_Continue}\u200C\u200D]$/u;
@@ -81,6 +82,33 @@ const TYPESCRIPT_TYPE_ALIAS_PREFIX_PATTERN = new RegExp(
   String.raw`^(?:export\s+)?type\s+${IDENTIFIER_NAME_SOURCE}(?:\s*<[\s\S]*>)?\s*=\s*[\s\S]*\S\s*$`,
   "u",
 );
+const JSX_TEXT_BREAK_STATEMENT_KEYWORDS = new Set([
+  "async",
+  "await",
+  "break",
+  "case",
+  "class",
+  "const",
+  "continue",
+  "debugger",
+  "default",
+  "do",
+  "else",
+  "export",
+  "for",
+  "function",
+  "if",
+  "import",
+  "let",
+  "return",
+  "switch",
+  "throw",
+  "try",
+  "var",
+  "while",
+  "with",
+  "yield",
+]);
 
 function assertTemplateLiteralDepth(depth: number): void {
   if (depth > MAX_TEMPLATE_LITERAL_DEPTH) {
@@ -986,6 +1014,15 @@ function isTypeAliasDeclarationBeforeRegex(
     return false;
   }
 
+  const separatorStart = Math.max(
+    source.lastIndexOf(";", regexIndex - 1),
+    source.lastIndexOf("{", regexIndex - 1),
+    source.lastIndexOf("}", regexIndex - 1),
+  ) + 1;
+  if (!hasDeclarationKeywordBefore(source, separatorStart, regexIndex, ["export", "type"])) {
+    return false;
+  }
+
   const declarationStart = balancedDeclarationStatementStartBefore(source, regexIndex, [
     "export",
     "type",
@@ -1527,8 +1564,8 @@ function hasRawJsxClosingTagBeforeStatementEnd(
   }
 
   const positions = index.tags.get(name);
-  if (positions === undefined) return false;
-  return hasPositionAtOrAfter(positions, start);
+  if (positions !== undefined && hasPositionAtOrAfter(positions, start)) return true;
+  return hasRawJsxClosingTagAcrossText(source, name, start, statementEnd);
 }
 
 function indexRawJsxClosingTags(
@@ -1557,6 +1594,61 @@ function indexRawJsxClosingTags(
     closing = source.indexOf("<", closing + 1);
   }
   return { start, tags };
+}
+
+function identifierAt(source: string, index: number): string | null {
+  if (!isIdentifierStartAt(source, index)) return null;
+  let cursor = index + 1;
+  while (cursor < source.length && isIdentifierPartAt(source, cursor)) cursor++;
+  return source.slice(index, cursor);
+}
+
+function looksLikeStatementAfterJsxTextBreak(source: string, index: number): boolean {
+  const start = skipWhitespace(source, index);
+  const keyword = identifierAt(source, start);
+  return keyword !== null && JSX_TEXT_BREAK_STATEMENT_KEYWORDS.has(keyword);
+}
+
+function hasRawJsxClosingTagAcrossText(
+  source: string,
+  name: string,
+  start: number,
+  statementEnd: number,
+): boolean {
+  const limit = Math.min(source.length, start + MAX_RAW_JSX_TEXT_CLOSING_LOOKAHEAD);
+  let cursor = start;
+
+  while (cursor < limit) {
+    const char = source[cursor];
+    if (char === "<") {
+      if (source[cursor + 1] !== "/") return false;
+
+      const tag = rawJsxTagName(source, cursor + 2);
+      const afterName = source[tag.end];
+      return tag.name === name &&
+        (afterName === ">" || afterName === "/" || /\s/.test(afterName ?? ""));
+    }
+
+    if (char === "{") {
+      const expressionEnd = findTemplateExpressionEnd(source, cursor + 1);
+      if (expressionEnd === null) return false;
+      cursor = expressionEnd + 1;
+      continue;
+    }
+
+    if (char === "}" || char === ")" || char === "]") return false;
+    if (
+      cursor >= statementEnd &&
+      (char === ";" || (char !== undefined && isLineTerminator(char))) &&
+      looksLikeStatementAfterJsxTextBreak(source, cursor + 1)
+    ) {
+      return false;
+    }
+
+    cursor++;
+  }
+
+  return false;
 }
 
 function hasPositionAtOrAfter(positions: readonly number[], start: number): boolean {

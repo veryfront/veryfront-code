@@ -164,6 +164,14 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         ).map((span) => span.path),
         ["./after-jsx-text.js"],
       );
+      assertEquals(
+        findStaticImportFromSpans(
+          '<Component>Hello; world</Component>; import value from "./after-jsx-semicolon-text.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-jsx-semicolon-text.js"],
+      );
     });
 
     it("finds static imports after JSX text inside template substitutions", () => {
@@ -636,6 +644,12 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       assertEquals(
         specifiers('<Component>Hello</Component>\n\n{import("./text-child-lazy.ts")}'),
         ["./text-child-lazy.ts"],
+      );
+      assertEquals(
+        specifiers(
+          'const x = <Component>Hello\nworld</Component>; import("./multiline-text-lazy.ts")',
+        ),
+        ["./multiline-text-lazy.ts"],
       );
       assertEquals(
         specifiers(
@@ -1627,6 +1641,14 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           UNBOUNDED,
         ).map((span) => span.path),
         ["./after-jsx-text-side-effect.js"],
+      );
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          '<Component>Hello; world</Component>; import "./after-jsx-semicolon-text-side-effect.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-jsx-semicolon-text-side-effect.js"],
       );
     });
 
