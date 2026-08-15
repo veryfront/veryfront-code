@@ -14,6 +14,7 @@ import {
 } from "#veryfront/tool";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
+import type { AgentSystem } from "#veryfront/agent/types.ts";
 import { buildExecuteToolTraceAttributes } from "./trace-attributes.ts";
 import type {
   ChildRunExecutionResult,
@@ -106,7 +107,7 @@ export type DefaultHostedInvokeAgentConfig = {
 
 /** Resolved project-agent settings applied to a fixed hosted child run. */
 export type DefaultHostedChildAgentExecutionConfig = {
-  system: string;
+  system: AgentSystem;
   model?: string;
   temperature?: number;
   maxSteps?: number;
@@ -516,9 +517,17 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
             ...scopedOptions.context,
             availableSkillIds: runtimeOptions.childConfig?.availableSkillIds,
           });
-          return runtimeOptions.childConfig?.system
-            ? `${runtimeOptions.childConfig.system}\n\n${baseInstructions}`
-            : baseInstructions;
+          const childSystem = runtimeOptions.childConfig?.system;
+          if (childSystem === undefined) {
+            return baseInstructions;
+          }
+          if (typeof childSystem === "string") {
+            return childSystem ? `${childSystem}\n\n${baseInstructions}` : baseInstructions;
+          }
+          return [
+            ...childSystem,
+            { role: "system", content: baseInstructions },
+          ];
         },
       }
       : {}),

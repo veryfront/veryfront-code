@@ -1,4 +1,5 @@
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
+import type { AgentSystem } from "../types.ts";
 import { applySourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import {
   listProjectScopedRemoteToolNames,
@@ -214,7 +215,7 @@ function resolveRefreshedSkillSnapshot(input: {
 /** Create default hosted project steering refresh. */
 export function createDefaultHostedProjectSteeringRefresh(
   options: CreateDefaultHostedProjectSteeringRefreshOptions,
-): (input: DefaultHostedChatRuntimeSystemRefreshInput) => Promise<string> {
+): (input: DefaultHostedChatRuntimeSystemRefreshInput) => Promise<AgentSystem> {
   return async (input) => {
     const projectId = getActiveProjectId(input.taskContext);
     const branchId = getActiveBranchId(input.taskContext);
@@ -295,8 +296,12 @@ export function createDefaultHostedProjectSteeringRefresh(
       availableToolNames: modelVisibleToolNames,
     });
 
-    return flattenSystemInstructions(
-      withRuntimeToolInventory(refreshedInstructions, modelVisibleToolNames),
+    const instructionsWithToolInventory = withRuntimeToolInventory(
+      refreshedInstructions,
+      modelVisibleToolNames,
     );
+    return typeof refreshedInstructions === "string"
+      ? flattenSystemInstructions(instructionsWithToolInventory)
+      : instructionsWithToolInventory;
   };
 }

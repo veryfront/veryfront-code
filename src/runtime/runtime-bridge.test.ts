@@ -21,6 +21,136 @@ function readableStreamFrom<T>(values: Iterable<T>): ReadableStream<T> {
 }
 
 describe("runtime-bridge", () => {
+  it("preserves structured system messages and cache metadata at model dispatch", async () => {
+    let capturedPrompt: unknown;
+    const model = createGenerateModel("test", "test/layered-system", async (options) => {
+      capturedPrompt = options.prompt;
+      return {
+        content: [{ type: "text", text: "done" }],
+        finishReason: "stop",
+        usage: {},
+      };
+    });
+
+    await generateText({
+      model,
+      system: [
+        {
+          role: "system",
+          content: "Shared prompt",
+          providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+        },
+        { role: "system", content: "Dynamic tail" },
+      ],
+      messages: [{ role: "user", content: "Hello" }],
+    });
+
+    assertEquals(capturedPrompt, [
+      {
+        role: "system",
+        content: "Shared prompt",
+        providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+      },
+      { role: "system", content: "Dynamic tail" },
+      { role: "user", content: [{ type: "text", text: "Hello" }] },
+    ]);
+  });
+
+  it("persists only replay-safe cache metadata from structured system messages", async () => {
+    const sensitiveValue = "CUSTOMER_PROVIDER_SECRET_123";
+    let capturedPrompt: unknown;
+    let recorded: AgentRunEvent | undefined;
+    const model = createGenerateModel("test", "test/sanitized-context", async (options) => {
+      capturedPrompt = options.prompt;
+      return {
+        content: [{ type: "text", text: "done" }],
+        finishReason: "stop",
+        usage: {},
+      };
+    });
+    const providerOptions = {
+      anthropic: {
+        cacheControl: { type: "ephemeral" },
+        apiKey: sensitiveValue,
+      },
+      "veryfront-cloud": {
+        cacheControl: { type: "ephemeral", ttl: "1h" },
+        headers: { authorization: sensitiveValue },
+      },
+      openai: { apiKey: sensitiveValue },
+      privatePayload: sensitiveValue,
+    };
+
+    await runWithRunEventSink(
+      (event) => {
+        recorded = event;
+      },
+      () =>
+        generateText({
+          model,
+          system: [{ role: "system", content: "Shared prompt", providerOptions }],
+          messages: [{ role: "user", content: "Hello" }],
+        }),
+    );
+
+    assertEquals(capturedPrompt, [
+      { role: "system", content: "Shared prompt", providerOptions },
+      { role: "user", content: [{ type: "text", text: "Hello" }] },
+    ]);
+    assertEquals(recorded, {
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      messages: [
+        {
+          role: "system",
+          content: "Shared prompt",
+          providerOptions: {
+            anthropic: { cacheControl: { type: "ephemeral" } },
+            "veryfront-cloud": {
+              cacheControl: { type: "ephemeral", ttl: "1h" },
+            },
+          },
+        },
+        { role: "user", content: [{ type: "text", text: "Hello" }] },
+      ],
+    });
+    assertEquals(JSON.stringify(recorded).includes(sensitiveValue), false);
+  });
+
+  it("rejects accessor-backed system cache metadata without invoking it", async () => {
+    let accessorCalls = 0;
+    let dispatches = 0;
+    const system = { role: "system" as const, content: "Shared prompt" };
+    Object.defineProperty(system, "providerOptions", {
+      enumerable: true,
+      get() {
+        accessorCalls += 1;
+        return { anthropic: { cacheControl: { type: "ephemeral" } } };
+      },
+    });
+    const model = createGenerateModel("test", "test/layered-system", async () => {
+      dispatches += 1;
+      return {
+        content: [{ type: "text", text: "done" }],
+        finishReason: "stop",
+        usage: {},
+      };
+    });
+
+    await assertRejects(
+      async () =>
+        await generateText({
+          model,
+          system,
+          messages: [{ role: "user", content: "Hello" }],
+        }),
+      TypeError,
+      "providerOptions must be an own enumerable data property",
+    );
+
+    assertEquals(accessorCalls, 0);
+    assertEquals(dispatches, 0);
+  });
+
   it("skips non-cloneable model context without failing model dispatch", async () => {
     const sensitiveValue = "CUSTOMER_SECRET_123";
     for (
@@ -186,6 +316,56 @@ describe("runtime-bridge", () => {
           id: "anthropic.web_search_20250305",
           args: { maxUses: 2 },
         },
+      ],
+    });
+  });
+
+  it("redacts non-cache provider options from persisted model call context", async () => {
+    let recorded: AgentRunEvent | undefined;
+    const model = createGenerateModel("test", "test/model-call-provider-redaction", async () => ({
+      content: [{ type: "text", text: "done" }],
+      finishReason: "stop",
+      usage: {},
+    }));
+
+    await runWithRunEventSink(
+      (event) => {
+        recorded = event;
+      },
+      () =>
+        generateText({
+          model,
+          system: [{
+            role: "system",
+            content: "Cached instructions",
+            providerOptions: {
+              anthropic: {
+                cacheControl: { type: "ephemeral", ttl: "1h" },
+                apiKey: "secret-anthropic-key",
+              },
+              "veryfront-cloud": {
+                cacheControl: { type: "ephemeral" },
+                headers: { authorization: "Bearer secret" },
+              },
+              openai: { store: false },
+            },
+          }],
+          messages: [{ role: "user", content: "Hello" }],
+        }),
+    );
+
+    assertEquals(recorded, {
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      messages: [
+        {
+          role: "system",
+          content: "Cached instructions",
+          providerOptions: {
+            anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+            "veryfront-cloud": { cacheControl: { type: "ephemeral" } },
+          },
+        },
+        { role: "user", content: [{ type: "text", text: "Hello" }] },
       ],
     });
   });

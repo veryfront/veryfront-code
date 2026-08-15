@@ -1,8 +1,9 @@
 import { extract } from "#std/front-matter/yaml.ts";
-import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import { defineSchema, getJsonValueSchema, lazySchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { buildAgentCallContext } from "./call-context.ts";
+import { resolveModelProviderOptionKey } from "./model-resolution.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
 import { normalizeAgentDelegateIds } from "./agent-delegation-names.ts";
 import { CONFIG_INVALID } from "#veryfront/errors";
@@ -47,6 +48,16 @@ export type RuntimeAgentMcpServerConfig = InferSchema<
   ReturnType<typeof getRuntimeAgentMcpServerConfigSchema>
 >;
 
+/** Schema for a structured system message carried over the hosted boundary. */
+const getRuntimeAgentSystemMessageSchema = defineSchema<ChatSystemMessage>(
+  (v): Schema<ChatSystemMessage> =>
+    v.object({
+      role: v.literal("system"),
+      content: v.string(),
+      providerOptions: v.record(v.string(), getJsonValueSchema()).optional(),
+    }).strict() as Schema<ChatSystemMessage>,
+);
+
 /** Zod schema for get runtime agent markdown definition. */
 export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
   v.object({
@@ -55,6 +66,7 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
     description: v.string(),
     avatarUrl: v.string().url().optional(),
     instructions: v.string(),
+    system: v.array(getRuntimeAgentSystemMessageSchema()).optional(),
     thinking: getRuntimeAgentThinkingConfigSchema().optional(),
     model: v.string().min(1).optional(),
     temperature: v.number().min(0).max(2).optional(),
@@ -244,8 +256,13 @@ export function parseRuntimeAgentMarkdownDefinition(
 export function createRuntimeAgentSystemMessages(
   input: CreateRuntimeAgentSystemMessagesInput,
 ): ChatSystemMessage[] {
+  const anthropicProviderAlias = resolveModelProviderOptionKey(input.agent.model);
+  const instructions = Array.isArray(input.agent.system) && input.agent.system.length === 0
+    ? input.agent.instructions
+    : input.agent.system ?? input.agent.instructions;
   return buildAgentCallContext({
-    instructions: input.agent.instructions,
+    instructions,
+    ...(anthropicProviderAlias ? { anthropicProviderAlias } : {}),
     ...(input.runtimeContextMarker === undefined
       ? {}
       : { runtimeContextMarker: input.runtimeContextMarker }),

@@ -19,6 +19,7 @@ import {
   mapAgUiRuntimeEventToForkParts,
   resolveForkRuntimeContinuationState,
   resolveForkStepResponse,
+  runAgentRuntimeForkStep,
   type RunAgentRuntimeForkStepInput,
   shouldContinueForkRuntimeStep,
   startAgentRuntimeFork,
@@ -397,6 +398,71 @@ describe("agent/fork-runtime-stream", () => {
       inputTokens: 3,
       outputTokens: 4,
     });
+  });
+
+  it("preserves structured provider options in the default fork step runner", async () => {
+    const providerId = "fork-structured-system";
+    let observedSystem: unknown;
+    const model: ModelRuntime = {
+      provider: providerId,
+      modelId: `${providerId}/demo`,
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "Done." }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream(options: unknown) {
+        observedSystem = (options as { prompt?: unknown[] }).prompt?.filter((message) =>
+          (message as { role?: unknown }).role === "system"
+        );
+        return {
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              controller.enqueue({ type: "text-delta", text: "Done." });
+              controller.enqueue({ type: "finish", finishReason: "stop" });
+              controller.close();
+            },
+          }),
+        };
+      },
+    };
+    const unregister = registerModelProvider(providerId, () => model);
+    try {
+      const result = await runAgentRuntimeForkStep({
+        apiUrl: "https://api.example.com",
+        authToken: "test-token",
+        projectId: "project-1",
+        model: `${providerId}/demo`,
+        messages: [{
+          id: "user-1",
+          role: "user",
+          parts: [{ type: "text", text: "Do the work." }],
+        }],
+        system: [{
+          role: "system",
+          content: "Cached fork instructions.",
+          providerOptions: {
+            anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+          },
+        }],
+        forkToolNames: [],
+        runtimeTools: {},
+      });
+
+      await new Response(result.stream).text();
+      await result.responsePromise;
+      assertEquals((observedSystem as unknown[] | undefined)?.[0], {
+        role: "system",
+        content: "Cached fork instructions.",
+        providerOptions: {
+          anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+        },
+      });
+    } finally {
+      unregister();
+    }
   });
 
   it("does not leak unhandled rejections from side promises when the fork stream fails", async () => {

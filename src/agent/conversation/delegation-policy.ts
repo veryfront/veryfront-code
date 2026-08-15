@@ -222,12 +222,37 @@ export function evaluateStarterIntentTurnPolicy(
 }
 
 /** Add first turn starter intent root ownership reminder helper. */
-export function addFirstTurnStarterIntentRootOwnershipReminder(system: string): string {
-  if (system.includes(FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_REMINDER)) {
+export function addFirstTurnStarterIntentRootOwnershipReminder(system: string): string;
+export function addFirstTurnStarterIntentRootOwnershipReminder(
+  system: ChatSystemMessage[],
+): ChatSystemMessage[];
+export function addFirstTurnStarterIntentRootOwnershipReminder(
+  system: string | ChatSystemMessage[],
+): string | ChatSystemMessage[];
+export function addFirstTurnStarterIntentRootOwnershipReminder(
+  system: string | ChatSystemMessage[],
+): string | ChatSystemMessage[] {
+  if (typeof system === "string") {
+    return system.includes(FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_REMINDER)
+      ? system
+      : `${system}\n\n${FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_REMINDER}`;
+  }
+
+  if (
+    system.some((message) =>
+      message.content.includes(FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_REMINDER)
+    )
+  ) {
     return system;
   }
 
-  return `${system}\n\n${FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_REMINDER}`;
+  return [
+    ...system,
+    {
+      role: "system",
+      content: FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_REMINDER,
+    },
+  ];
 }
 
 /** Check whether starter intent root ownership is required. */

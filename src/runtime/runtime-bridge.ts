@@ -21,6 +21,7 @@ import type {
   ModelRuntimeGenerateResult,
 } from "#veryfront/provider/types.ts";
 import type { RuntimeReasoningOption } from "#veryfront/agent/types.ts";
+import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import type {
   AgentRunModelCallContextEvent,
   ModelCallMessage,
@@ -29,6 +30,11 @@ import type {
 import { getActiveRunEventSinks } from "./run-event-sink-context.ts";
 
 const cloneStructuredValue = globalThis.structuredClone;
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectHasOwn = Object.hasOwn;
+const ReflectApply = Reflect.apply;
+const ReflectOwnKeys = Reflect.ownKeys;
 const logger = serverLogger.component("runtime-bridge");
 
 type GenerateTextOptions = {
@@ -136,30 +142,68 @@ type DirectModelOptions = Record<string, unknown> & {
   tools?: ModelCallTool[];
 };
 
-function normalizeSystemPrompt(system: GenerateTextOptions["system"]): string | undefined {
+function readSystemProviderOptions(
+  system: object,
+): Record<string, unknown> | undefined {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(system, "providerOptions");
+  } catch {
+    throw new TypeError(
+      "System message providerOptions must be an own enumerable data property",
+    );
+  }
+
+  if (descriptor === undefined) return undefined;
+  if (!Object.hasOwn(descriptor, "value") || descriptor.enumerable !== true) {
+    throw new TypeError(
+      "System message providerOptions must be an own enumerable data property",
+    );
+  }
+
+  const providerOptions = descriptor.value;
+  return providerOptions && typeof providerOptions === "object" &&
+      !Array.isArray(providerOptions)
+    ? providerOptions as Record<string, unknown>
+    : undefined;
+}
+
+function normalizeSystemMessages(system: GenerateTextOptions["system"]): ChatSystemMessage[] {
   if (typeof system === "string") {
-    return system;
+    return system.length > 0 ? [{ role: "system", content: system }] : [];
   }
 
   if (!system || typeof system !== "object") {
-    return undefined;
+    return [];
   }
 
   if ("content" in system && typeof system.content === "string") {
-    return system.content;
+    const providerOptions = readSystemProviderOptions(system);
+    return [{
+      role: "system",
+      content: system.content,
+      ...(providerOptions ? { providerOptions } : {}),
+    }];
   }
 
   if (Array.isArray(system)) {
-    const parts = system.flatMap((entry) =>
-      entry && typeof entry === "object" && "content" in entry && typeof entry.content === "string"
-        ? [entry.content]
-        : []
-    );
-
-    return parts.length > 0 ? parts.join("\n") : undefined;
+    return system.flatMap((entry): ChatSystemMessage[] => {
+      if (
+        !entry || typeof entry !== "object" || !("content" in entry) ||
+        typeof entry.content !== "string"
+      ) {
+        return [];
+      }
+      const providerOptions = readSystemProviderOptions(entry);
+      return [{
+        role: "system",
+        content: entry.content,
+        ...(providerOptions ? { providerOptions } : {}),
+      }];
+    });
   }
 
-  return undefined;
+  return [];
 }
 
 function getProviderRequestMessages(
@@ -175,14 +219,14 @@ function getProviderRequestMessages(
 }
 
 function toRuntimePrompt(
-  system: string | undefined,
+  system: readonly ChatSystemMessage[],
   messages: TextGenerationRuntimeMessage[],
 ): ModelCallMessage[] {
-  const prompt: ModelCallMessage[] = [];
-
-  if (system && system.length > 0) {
-    prompt.push({ role: "system", content: system });
-  }
+  const prompt: ModelCallMessage[] = system.map((message) => ({
+    role: "system",
+    content: message.content,
+    ...(message.providerOptions === undefined ? {} : { providerOptions: message.providerOptions }),
+  }));
 
   for (const message of messages) {
     switch (message.role) {
@@ -225,6 +269,103 @@ function toRuntimePrompt(
   }
 
   return prompt;
+}
+
+type PersistedCacheControl = {
+  type: "ephemeral";
+  ttl?: "5m" | "1h";
+};
+
+function readOwnEnumerableDataDescriptor(
+  value: object,
+  key: PropertyKey,
+): PropertyDescriptor | undefined {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      value,
+      key,
+    ]) as PropertyDescriptor | undefined;
+  } catch {
+    return undefined;
+  }
+  return descriptor?.enumerable === true && ObjectHasOwn(descriptor, "value")
+    ? descriptor
+    : undefined;
+}
+
+function sanitizePersistedCacheControl(value: unknown): PersistedCacheControl | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const type = readOwnEnumerableDataDescriptor(value, "type");
+  if (type?.value !== "ephemeral") {
+    return undefined;
+  }
+  const ttl = readOwnEnumerableDataDescriptor(value, "ttl");
+  if (ttl && ttl.value !== undefined && ttl.value !== "5m" && ttl.value !== "1h") {
+    return undefined;
+  }
+  return {
+    type: "ephemeral",
+    ...(ttl?.value === "5m" || ttl?.value === "1h" ? { ttl: ttl.value } : {}),
+  };
+}
+
+function sanitizePersistedProviderOptions(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  let keys: PropertyKey[];
+  try {
+    keys = ReflectApply(ReflectOwnKeys, undefined, [value]) as PropertyKey[];
+  } catch {
+    return undefined;
+  }
+  const sanitized: Record<string, unknown> = {};
+  let retained = false;
+  for (const key of keys) {
+    if (typeof key !== "string") {
+      continue;
+    }
+    const providerBucket = readOwnEnumerableDataDescriptor(value, key)?.value;
+    if (!providerBucket || typeof providerBucket !== "object" || Array.isArray(providerBucket)) {
+      continue;
+    }
+    const cacheControl = sanitizePersistedCacheControl(
+      readOwnEnumerableDataDescriptor(providerBucket, "cacheControl")?.value,
+    );
+    if (!cacheControl) {
+      continue;
+    }
+    ReflectApply(ObjectDefineProperty, undefined, [sanitized, key, {
+      configurable: true,
+      enumerable: true,
+      value: { cacheControl },
+      writable: true,
+    }]);
+    retained = true;
+  }
+  return retained ? sanitized : undefined;
+}
+
+function sanitizeModelCallContextMessages(
+  messages: readonly ModelCallMessage[],
+): ModelCallMessage[] {
+  return messages.map((message) => {
+    if (message.role !== "system") {
+      return message;
+    }
+    const providerOptions = sanitizePersistedProviderOptions(message.providerOptions);
+    return {
+      role: "system",
+      content: message.content,
+      ...(providerOptions ? { providerOptions } : {}),
+    };
+  });
 }
 
 function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
@@ -460,7 +601,7 @@ function buildDirectModelOptions(
 ): DirectModelOptions {
   return {
     prompt: toRuntimePrompt(
-      normalizeSystemPrompt(options.system),
+      normalizeSystemMessages(options.system),
       getProviderRequestMessages(options.messages),
     ),
     maxOutputTokens: options.maxOutputTokens,
@@ -491,7 +632,7 @@ async function emitModelCallContextEvent(directOptions: DirectModelOptions): Pro
 
   const event: AgentRunModelCallContextEvent = {
     type: "AGENT_RUN_MODEL_CALL_CONTEXT",
-    messages: directOptions.prompt,
+    messages: sanitizeModelCallContextMessages(directOptions.prompt),
     ...(directOptions.tools ? { tools: directOptions.tools } : {}),
   };
 

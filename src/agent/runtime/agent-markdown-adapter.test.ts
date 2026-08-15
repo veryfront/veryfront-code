@@ -2,11 +2,12 @@ import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import { registerSkill } from "#veryfront/skill/registry.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "./agent-markdown-adapter.ts";
 import { getEffectiveAgentSystem } from "./effective-agent-system.ts";
 
-Deno.test("createRuntimeAgentFromMarkdownDefinition preserves provider-native tools", () => {
+it("createRuntimeAgentFromMarkdownDefinition preserves provider-native tools", () => {
   const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
     id: "support",
     name: "Support",
@@ -19,7 +20,7 @@ Deno.test("createRuntimeAgentFromMarkdownDefinition preserves provider-native to
   assertEquals(runtimeAgent.config.providerTools, ["web_search", "web_fetch"]);
 });
 
-Deno.test("createRuntimeAgentFromMarkdownDefinition binds scoped delegate tools", () => {
+it("createRuntimeAgentFromMarkdownDefinition binds scoped delegate tools", () => {
   toolRegistryInternal.clearAll();
 
   const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
@@ -44,7 +45,7 @@ Deno.test("createRuntimeAgentFromMarkdownDefinition binds scoped delegate tools"
   assertEquals(runtimeAgent.config.delegates, ["writer", "researcher"]);
 });
 
-Deno.test("createRuntimeAgentFromMarkdownDefinition preserves delegates and MCP servers", () => {
+it("createRuntimeAgentFromMarkdownDefinition preserves delegates and MCP servers", () => {
   toolRegistryInternal.clearAll();
 
   const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
@@ -71,7 +72,7 @@ Deno.test("createRuntimeAgentFromMarkdownDefinition preserves delegates and MCP 
   }]);
 });
 
-Deno.test("createRuntimeAgentFromMarkdownDefinition preserves explicit empty skills and hides skill tools", async () => {
+it("createRuntimeAgentFromMarkdownDefinition preserves explicit empty skills and hides skill tools", async () => {
   skillRegistryInternal.clearAll();
   registerSkill("global-howto", {
     id: "global-howto",
@@ -90,7 +91,15 @@ Deno.test("createRuntimeAgentFromMarkdownDefinition preserves explicit empty ski
     assertEquals(runtimeAgent.config.tools, undefined);
     const system = getEffectiveAgentSystem(runtimeAgent);
     const prompt = typeof system === "function" ? await system() : system;
-    assertEquals(prompt, "Work alone.");
+    assertEquals(prompt, [{
+      role: "system",
+      content: "Work alone.",
+      providerOptions: {
+        anthropic: {
+          cacheControl: { type: "ephemeral" },
+        },
+      },
+    }]);
   } finally {
     skillRegistryInternal.clearAll();
   }

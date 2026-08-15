@@ -1,6 +1,6 @@
 /** Provider-agnostic message supplied to a model runtime. */
 export type ModelCallMessage =
-  | { role: "system"; content: string }
+  | { role: "system"; content: string; providerOptions?: Record<string, unknown> }
   | {
     role: "user";
     content: Array<
@@ -46,7 +46,11 @@ export type ModelCallTool =
     args: Record<string, unknown>;
   };
 
-/** Exact provider-agnostic input persisted before one model dispatch. */
+/**
+ * Provider-agnostic input persisted before one model dispatch. System-message
+ * provider options contain only validated prompt-cache metadata. Other
+ * provider-specific values are excluded because run events are durable.
+ */
 export interface AgentRunModelCallContextEvent {
   type: "AGENT_RUN_MODEL_CALL_CONTEXT";
   messages: ModelCallMessage[];

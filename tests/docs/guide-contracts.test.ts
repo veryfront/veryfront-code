@@ -854,7 +854,14 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/agent.md",
       "../api-reference/veryfront/skill.md",
     ],
-    snippets: ["SKILL.md", "allowed_tools", "veryfront skills validate"],
+    snippets: [
+      "SKILL.md",
+      "allowed_tools",
+      "veryfront skills validate",
+      "Hosted chat providers use nested `load_skill` input",
+      '`load_skill({ skillId: "<SKILL_ID>" })`',
+      '`load_skill_reference({ skillId: "<SKILL_ID>", reference: "<PATH>" })`',
+    ],
   },
   "guides/storybook-ui-workbench.md": {
     references: [],

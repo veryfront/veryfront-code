@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
+import type { AgentSystem } from "#veryfront/agent/types.ts";
 import { buildChildRunResultSummary } from "../child-run/result-summary.ts";
 import { UNCONFIRMED_AGENT_PROJECT_IDENTITY_MESSAGE } from "../project/context.ts";
 import {
@@ -167,7 +173,7 @@ it("default hosted invoke resolves and runs configured child against the target 
     temperature?: number;
     maxSteps?: number;
     forkToolNames?: readonly string[];
-    system?: string;
+    system?: AgentSystem;
     prompt?: string;
   } = {};
 
@@ -184,7 +190,13 @@ it("default hosted invoke resolves and runs configured child against the target 
           assertEquals(childAgentId, "extraction-agent");
           assertEquals(projectId, "target-project-id");
           return Promise.resolve({
-            system: "Follow the extraction policy.",
+            system: [{
+              role: "system",
+              content: "Follow the extraction policy.",
+              providerOptions: {
+                anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+              },
+            }],
             model: "configured-model",
             temperature: 0.35,
             maxSteps: 12,
@@ -262,8 +274,15 @@ it("default hosted invoke resolves and runs configured child against the target 
   assertEquals(captured.temperature, 0.35);
   assertEquals(captured.maxSteps, 12);
   assertEquals(captured.forkToolNames, ["lookup_job"]);
-  assertEquals(captured.system?.includes("Follow the extraction policy."), true);
-  assertEquals(captured.system?.includes("Available Skills"), true);
+  assert(Array.isArray(captured.system));
+  assertEquals(captured.system[0], {
+    role: "system",
+    content: "Follow the extraction policy.",
+    providerOptions: {
+      anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+    },
+  });
+  assertStringIncludes(captured.system.at(-1)?.content ?? "", "Available Skills");
   assertEquals(captured.prompt?.includes("Extract the application."), true);
 });
 

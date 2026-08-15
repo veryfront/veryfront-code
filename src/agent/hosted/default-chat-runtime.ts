@@ -49,7 +49,7 @@ import type {
   RuntimeAgentMarkdownDefinition,
   RuntimeAgentThinkingConfig,
 } from "../runtime/agent-definition.ts";
-import type { AgentConfig } from "../types.ts";
+import type { AgentConfig, AgentSystem } from "../types.ts";
 import type { RuntimeToolFilterConfig } from "../runtime/runtime-tool-config.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { runWithEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
@@ -144,7 +144,7 @@ export type CreateDefaultHostedChatRuntimeOptions = {
   ) => DefaultHostedChatRuntimeTaskContext;
   refreshSystem?: (
     input: DefaultHostedChatRuntimeSystemRefreshInput,
-  ) => Promise<string> | string;
+  ) => Promise<AgentSystem> | AgentSystem;
   onSteeringMutation?: (
     input: DefaultHostedChatRuntimeSteeringMutationInput,
   ) => Promise<void> | void;
@@ -281,11 +281,15 @@ function createRuntimeAgentConfig(input: {
       markRuntimeLocalTool(runtimeTool),
     ]),
   );
+  const resolveHostedRuntimeState = createHostedRuntimeStateResolver({
+    taskContext: input.taskContext,
+    refreshSystem,
+  });
 
   const runtimeConfig: RuntimeToolFilterConfig = {
     id: "veryfront-hosted-runtime",
     model: input.modelId,
-    system: input.toolAssembly.systemInstructions,
+    system: input.toolAssembly.systemMessages ?? input.toolAssembly.systemInstructions,
     tools: runtimeTools,
     __vfToolLoadingMode: input.toolAssembly.toolLoadingMode,
     providerTools: input.toolAssembly.providerToolNames,
@@ -296,7 +300,7 @@ function createRuntimeAgentConfig(input: {
     __vfPersistToolExposureCheckpoint: input.options.persistToolExposureCheckpoint,
     __vfToolExposureCheckpointPersistenceRequired:
       input.options.requireToolExposureCheckpointPersistence === true,
-    __vfPreassembledSkillContext: true,
+    ...(liveProjectSteering === undefined ? {} : { __vfPreassembledSkillContext: true }),
     temperature: input.options.temperature,
     maxSteps: input.options.maxSteps ?? 50,
     resolveModelTransport: ({ resolvedModel }) => {
@@ -309,10 +313,16 @@ function createRuntimeAgentConfig(input: {
       const reasoning = resolveVeryfrontCloudReasoningOption(resolvedModel, thinking);
       return providerOptions || reasoning ? { providerOptions, reasoning } : {};
     },
-    resolveRuntimeState: createHostedRuntimeStateResolver({
-      taskContext: input.taskContext,
-      refreshSystem,
-    }),
+    resolveRuntimeState: async ({ structuredSystem, system, ...request }) => {
+      const result = await resolveHostedRuntimeState({
+        ...request,
+        system,
+        ...(structuredSystem === undefined ? {} : { structuredSystem }),
+      });
+      return typeof result.system === "string"
+        ? { system: result.system, context: result.context }
+        : { structuredSystem: result.structuredSystem, context: result.context };
+    },
     onToolResult: createDefaultResearchRunArtifactMirrorHandler({
       taskContext: input.taskContext,
       remoteToolSource: input.toolAssembly.remoteToolSources[0],

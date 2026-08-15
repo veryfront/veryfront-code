@@ -7,7 +7,9 @@ import {
   refreshLoggerConfig,
 } from "#veryfront/utils/logger/index.ts";
 import { createEmptyDiscoveryResult } from "#veryfront/discovery";
-import type { AgentMessage } from "#veryfront/agent";
+import type { Agent, AgentMessage } from "#veryfront/agent";
+import type { AgentSystem } from "#veryfront/agent/types.ts";
+import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { getRuntimeSourceIntegrationPolicy } from "#veryfront/agent/runtime/runtime-tool-config.ts";
@@ -45,6 +47,8 @@ import {
   runWithRequestContext,
 } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { EnvironmentVariableCache } from "../../project-env/cache.ts";
+import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-inventory.ts";
+import { resolveAgentSystem } from "#veryfront/agent/runtime/effective-agent-system.ts";
 
 // Literal public addresses exercise guarded egress deterministically without
 // depending on external DNS answers for production or reserved test hosts.
@@ -404,7 +408,15 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(discoveryCalls, 1);
     assertEquals(streamContext?.runId, "run_1");
     assertEquals(streamContext?.threadId, "10000000-1000-4000-8000-100000000001");
-    assertEquals(typeof runtimeSystem, "string");
+    const resolvedRuntimeSystem = await resolveAgentSystem(
+      runtimeSystem as Agent["config"]["system"],
+      undefined,
+    );
+    assertEquals(Array.isArray(resolvedRuntimeSystem), true);
+    assertStringIncludes(
+      flattenSystemInstructions(resolvedRuntimeSystem as ChatSystemMessage[]),
+      "You are helpful.",
+    );
     assertEquals(
       runtimeMessages?.[0]?.parts as unknown,
       [
@@ -428,7 +440,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         },
       ],
     );
-    const prompt = runtimeSystem as string;
+    const prompt = flattenSystemInstructions(resolvedRuntimeSystem as ChatSystemMessage[]);
     assertStringIncludes(
       prompt,
       'branch_id: "10000000-1000-4000-8000-100000000006"',
@@ -885,9 +897,14 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertExists(result.response);
       assertEquals(result.response.status, 200);
       const resolvedSystem = typeof capturedSystem === "function"
-        ? await (capturedSystem as () => Promise<string>)()
-        : capturedSystem;
-      assertStringIncludes(String(resolvedSystem), "Use project-scoped instructions.");
+        ? await (capturedSystem as () => Promise<AgentSystem>)()
+        : capturedSystem as AgentSystem;
+      assertStringIncludes(
+        typeof resolvedSystem === "string"
+          ? resolvedSystem
+          : flattenSystemInstructions(resolvedSystem),
+        "Use project-scoped instructions.",
+      );
       assertEquals(capturedSkills, []);
       assertEquals((capturedTools as Record<string, unknown>).search_knowledge, true);
       assertEquals((capturedTools as Record<string, unknown>).get_file, true);
@@ -1885,9 +1902,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
             OTEL_EXPORTER_OTLP_ENDPOINT: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT"),
             OTEL_RESOURCE_ATTRIBUTES: getEnv("OTEL_RESOURCE_ATTRIBUTES"),
           };
-          capturedSystem = typeof runtimeAgent.config.system === "function"
+          const resolvedSystem = typeof runtimeAgent.config.system === "function"
             ? await runtimeAgent.config.system()
             : runtimeAgent.config.system;
+          capturedSystem = typeof resolvedSystem === "string"
+            ? resolvedSystem
+            : flattenSystemInstructions(resolvedSystem);
           const runtimeConfig = runtimeAgent.config as
             & typeof runtimeAgent.config
             & RuntimeRemoteToolConfig;
@@ -2125,9 +2145,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
       sessionManager: new AgentRunSessionManager(),
       createRuntime: (runtimeAgent) => ({
         stream: async (_messages, _context, callbacks) => {
-          capturedProjectEnv = typeof runtimeAgent.config.system === "function"
+          const resolvedSystem = typeof runtimeAgent.config.system === "function"
             ? await runtimeAgent.config.system()
             : runtimeAgent.config.system;
+          capturedProjectEnv = typeof resolvedSystem === "string"
+            ? resolvedSystem
+            : flattenSystemInstructions(resolvedSystem);
           callbacks?.onFinish?.({
             text: "ok",
             messages: [],
@@ -2217,9 +2240,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
             VERYFRONT_PROJECT_SLUG: getEnv("VERYFRONT_PROJECT_SLUG"),
             CUSTOM_PROJECT_ENV: getEnv("CUSTOM_PROJECT_ENV"),
           };
-          capturedSystem = typeof runtimeAgent.config.system === "function"
+          const resolvedSystem = typeof runtimeAgent.config.system === "function"
             ? await runtimeAgent.config.system()
             : runtimeAgent.config.system;
+          capturedSystem = typeof resolvedSystem === "string"
+            ? resolvedSystem
+            : flattenSystemInstructions(resolvedSystem);
           callbacks?.onFinish?.({
             text: "ok",
             messages: [],

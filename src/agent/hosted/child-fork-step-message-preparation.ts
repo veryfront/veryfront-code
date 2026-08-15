@@ -1,5 +1,7 @@
 import { compactForStep, estimateOverhead } from "../../chat/message-prep.ts";
 import { AGENT_ERROR } from "#veryfront/errors";
+import type { AgentSystem } from "#veryfront/agent/types.ts";
+import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import type { ProviderModelMessage } from "../../chat/types.ts";
 import {
   type AgentRuntimeMessagePart,
@@ -10,19 +12,27 @@ import {
   getAgentRuntimeToolCallPart,
   getAgentRuntimeToolResultPart,
 } from "../runtime/message-adapter.ts";
+import { flattenSystemInstructions } from "../runtime/tool-inventory.ts";
+import { cloneRuntimeStateMutableData } from "../runtime/index.ts";
+import { canIdentifyProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import type { Message as AgentMessage, MessagePart } from "../schemas/index.ts";
 
 /** Public API contract for hosted child fork runtime step system resolver. */
 export type HostedChildForkRuntimeStepSystemResolver = (input: {
+  /** Flattened system text retained for compatibility with existing resolvers. */
   system: string;
+  /** Structured system messages when provider metadata is available. */
+  structuredSystem?: readonly ChatSystemMessage[];
   compactedMessages: readonly ProviderModelMessage[];
-}) => string | null | undefined;
+}) => AgentSystem | null | undefined;
 
 /** Input payload for prepare hosted child fork runtime step messages. */
 export type PrepareHostedChildForkRuntimeStepMessagesInput = {
   messages: AgentMessage[];
-  buildInstructions: () => string;
+  buildInstructions: () => AgentSystem;
   forkToolNames: readonly string[];
+  /** Provider-options key used by the child model runtime. */
+  providerOptionKey?: string;
   resolveSystem?: HostedChildForkRuntimeStepSystemResolver;
   /**
    * Tool names that are always present. Required when `getActivatedToolNames`
@@ -46,7 +56,7 @@ export type PrepareHostedChildForkRuntimeStepMessagesInput = {
 /** Public API contract for hosted child fork runtime step messages. */
 export type HostedChildForkRuntimeStepMessages = {
   messages: AgentMessage[];
-  system: string;
+  system: AgentSystem;
   /**
    * The live `pinned + activated` set for this step. Present only when
    * `getActivatedToolNames` was supplied; callers otherwise keep their own
@@ -54,6 +64,15 @@ export type HostedChildForkRuntimeStepMessages = {
    */
   forkToolNames?: readonly string[];
 };
+
+/** Clone structured child instructions before exposing them to a resolver. */
+export function cloneHostedChildForkRuntimeStepSystem(
+  system: ChatSystemMessage[],
+  providerOptionKey: string | undefined,
+  proxyDetectionAvailable = canIdentifyProxyWithoutHooks,
+): ChatSystemMessage[] {
+  return cloneRuntimeStateMutableData(system, proxyDetectionAvailable, providerOptionKey);
+}
 
 function convertAgentRuntimePartToChildForkMessagePart(
   part: AgentRuntimeMessagePart,
@@ -119,6 +138,9 @@ export function prepareHostedChildForkRuntimeStepMessages(
   input: PrepareHostedChildForkRuntimeStepMessagesInput,
 ): HostedChildForkRuntimeStepMessages {
   const currentInstructions = input.buildInstructions();
+  const flattenedInstructions = typeof currentInstructions === "string"
+    ? currentInstructions
+    : flattenSystemInstructions(currentInstructions);
   // `convertAgentRuntimeMessagesToProviderMessages` reads each part defensively
   // (via `"result" in part` / accessor helpers), so an AgentMessage is a valid
   // runtime input. The only gap is a schema-inference nuance: the `tool-result`
@@ -132,10 +154,16 @@ export function prepareHostedChildForkRuntimeStepMessages(
     convertAgentRuntimeMessagesToProviderMessages(
       input.messages as readonly ConvertibleMessage[],
     ),
-    estimateOverhead(currentInstructions, input.forkToolNames.length),
+    estimateOverhead(flattenedInstructions, input.forkToolNames.length),
   );
   const resolvedSystem = input.resolveSystem?.({
-    system: currentInstructions,
+    system: flattenedInstructions,
+    ...(typeof currentInstructions === "string" ? {} : {
+      structuredSystem: cloneHostedChildForkRuntimeStepSystem(
+        currentInstructions,
+        input.providerOptionKey,
+      ),
+    }),
     compactedMessages,
   });
 
@@ -150,7 +178,7 @@ export function prepareHostedChildForkRuntimeStepMessages(
 
   return {
     messages: convertCompactedProviderMessagesToChildForkRuntimeMessages(compactedMessages),
-    system: typeof resolvedSystem === "string" ? resolvedSystem : currentInstructions,
+    system: resolvedSystem ?? currentInstructions,
     ...(liveForkToolNames !== undefined ? { forkToolNames: liveForkToolNames } : {}),
   };
 }

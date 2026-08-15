@@ -412,6 +412,11 @@ export default agent({
 For step-boundary refresh during a long-lived run, use `resolveRuntimeState`
 instead of relying on `system()` to run again mid-turn.
 
+`request.system` is always a string, so existing text transformations remain
+compatible. When the runtime has structured system messages, use
+`request.structuredSystem` to read their provider metadata and return
+`structuredSystem` to replace them without flattening that metadata.
+
 ```ts
 import { agent } from "veryfront/agent";
 
@@ -436,7 +441,7 @@ export default agent({
 | `name`                | `string`                                                                                               | Human-readable display name for listings                                                              |
 | `description`         | `string`                                                                                               | Optional summary for listings                                                                         |
 | `model`               | `string`                                                                                               | Optional provider/model override. Omit for `openai/gpt-5.4-nano`; use `"auto"` for runtime selection. |
-| `system`              | `string \| () => string \| Promise<string>`                                                            | System prompt                                                                                         |
+| `system`              | `AgentSystem \| () => AgentSystem \| Promise<AgentSystem>`                                             | Text or structured system instructions                                                                |
 | `resolveRuntimeState` | `(request: RuntimeStateRequest) => ResolvedRuntimeState \| Promise<ResolvedRuntimeState \| undefined>` | Refresh system/context before later model steps in the same run                                       |
 | `tools`               | `true \| Record<string, boolean \| Tool>`                                                              | Omit for no project tools, use `true` for deferred scoped discovery, or select eager tools explicitly |
 | `delegates`           | `string[]`                                                                                             | Exact agent ids exposed as scoped `agent_<id>` tools                                                  |

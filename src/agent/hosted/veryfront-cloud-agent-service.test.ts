@@ -50,11 +50,18 @@ import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
 import { initializeNodeAgentServiceSentryApplicationErrors } from "../service/node-sentry.ts";
 import { getRemoteToolSourceFactory } from "./cloud-agent-config.ts";
+import type { AgentSystem } from "#veryfront/agent/types.ts";
 
 type CaptureRecord = {
   error: unknown;
   context: ApplicationErrorContext;
 };
+
+function systemIncludes(system: AgentSystem | undefined, text: string): boolean {
+  return typeof system === "string"
+    ? system.includes(text)
+    : system?.some((message) => message.content.includes(text)) ?? false;
+}
 
 Deno.test("public agent service options do not expose the internal eager rollback", () => {
   type HasOperationalToolLoadingOverride = "operationalToolLoadingOverride" extends
@@ -1608,6 +1615,13 @@ Deno.test("hosted child execution config resolves steering against the target pr
     name: "Extraction agent",
     description: "Extract job applications",
     instructions: "Extract the application.",
+    system: [{
+      role: "system" as const,
+      content: "Extract the application.",
+      providerOptions: {
+        anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+      },
+    }],
     model: "openai/gpt-5.4",
     temperature: 0.35,
   };
@@ -1645,7 +1659,15 @@ Deno.test("hosted child execution config resolves steering against the target pr
 
   assertEquals(config?.model, "openai/gpt-5.4");
   assertEquals(config?.temperature, 0.35);
-  assert(config?.system.includes("Use the target project's extraction policy."));
+  assert(Array.isArray(config?.system));
+  assertEquals(config.system[0]?.providerOptions, {
+    anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+  });
+  assert(
+    config.system.some((message) =>
+      message.content.includes("Use the target project's extraction policy.")
+    ),
+  );
   assertEquals(steeringLookups, [
     { projectId: "target-project", authToken: "token-1", branchId: null },
     { projectId: "target-project", authToken: "token-1", branchId: null },
@@ -1719,10 +1741,10 @@ Deno.test("hosted child execution config hides skill infrastructure for skills e
 
       assertEquals(config?.availableSkillIds, []);
       assertEquals(config?.toolNames, ["get_file"]);
-      assertEquals(config?.system.includes("global-skill"), false);
-      assertEquals(config?.system.includes("load_skill"), false);
-      assertEquals(config?.system.includes("load_skill_reference"), false);
-      assertEquals(config?.system.includes("execute_skill_script"), false);
+      assertEquals(systemIncludes(config?.system, "global-skill"), false);
+      assertEquals(systemIncludes(config?.system, "load_skill"), false);
+      assertEquals(systemIncludes(config?.system, "load_skill_reference"), false);
+      assertEquals(systemIncludes(config?.system, "execute_skill_script"), false);
       const childToolContext = veryfrontCloudAgentServiceInternals.buildHostedChildToolContext(
         {
           authToken: "token-1",
@@ -1819,8 +1841,8 @@ Deno.test("hosted child execution config keeps exact non-empty skill authorizati
 
     assertEquals(config?.availableSkillIds, ["extraction-agent--extract"]);
     assertEquals(config?.toolNames, ["get_file", "load_skill"]);
-    assert(config?.system.includes("extraction-agent--extract"));
-    assertEquals(config?.system.includes("global-skill"), false);
+    assert(systemIncludes(config?.system, "extraction-agent--extract"));
+    assertEquals(systemIncludes(config?.system, "global-skill"), false);
 
     const childToolContext = veryfrontCloudAgentServiceInternals.buildHostedChildToolContext(
       {
