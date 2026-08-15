@@ -1307,7 +1307,10 @@ function assertNoNestedAnthropicCacheJsonHooks(
         continue;
       }
       const nested = descriptor.value;
-      if (typeof nested === "object" && nested !== null) {
+      if (
+        nested !== null &&
+        (typeof nested === "object" || typeof nested === "function")
+      ) {
         assertNoNestedAnthropicCacheJsonHooks(nested, ancestors, depth + 1);
       }
     }
@@ -1357,6 +1360,9 @@ function hasEmittedAnthropicCacheBreakpoint(value: Record<string, unknown>): boo
     throw new TypeError(
       "Anthropic cache_control must be an own enumerable data property",
     );
+  }
+  if (typeof descriptor.value === "function") {
+    assertNoAnthropicCacheJsonHook(descriptor.value);
   }
   return !isOmittedJsonObjectPropertyValue(descriptor.value);
 }

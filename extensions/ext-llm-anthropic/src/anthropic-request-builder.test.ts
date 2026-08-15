@@ -798,6 +798,63 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     }
   });
 
+  it("rejects function-valued cache toJSON hooks without invoking them", () => {
+    for (const placement of ["cache-control", "type"] as const) {
+      for (const inherited of [false, true]) {
+        let hookCalls = 0;
+        const toJSON = () => {
+          hookCalls += 1;
+          return placement === "cache-control" ? { type: "ephemeral" } : "ephemeral";
+        };
+        const hookedFunction = () => undefined;
+        if (inherited) {
+          Object.setPrototypeOf(
+            hookedFunction,
+            Object.create(Function.prototype, {
+              toJSON: { configurable: true, value: toJSON },
+            }),
+          );
+        } else {
+          Object.defineProperty(hookedFunction, "toJSON", {
+            configurable: true,
+            value: toJSON,
+          });
+        }
+        const cacheControl = placement === "cache-control"
+          ? hookedFunction
+          : { type: hookedFunction };
+
+        assertThrows(
+          () =>
+            buildAnthropicMessagesRequest(
+              "claude-sonnet-4-6",
+              "anthropic",
+              {
+                prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+                providerOptions: {
+                  anthropic: {
+                    messages: [{
+                      role: "user",
+                      content: [{
+                        type: "text",
+                        text: "Cached",
+                        cache_control: cacheControl,
+                      }],
+                    }],
+                  },
+                },
+              },
+              false,
+              createWarningCollector(),
+            ),
+          TypeError,
+          "Anthropic cache inputs must not define toJSON hooks",
+        );
+        assertEquals(hookCalls, 0);
+      }
+    }
+  });
+
   it("rejects non-array message content hooks without invoking them", () => {
     for (const contentType of ["object", "function"] as const) {
       let hookCalls = 0;
