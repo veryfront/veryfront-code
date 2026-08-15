@@ -29,6 +29,7 @@ interface OpenParenContext {
 }
 
 const MAX_TEMPLATE_LITERAL_DEPTH = 512;
+const StringFromCodePoint = String.fromCodePoint;
 
 function assertTemplateLiteralDepth(depth: number): void {
   if (depth > MAX_TEMPLATE_LITERAL_DEPTH) {
@@ -156,6 +157,109 @@ function nextStatementCursor(source: string, index: number): number {
   return Math.min(...candidates) + 1;
 }
 
+function hexDigitValue(char: string | undefined): number {
+  if (char === undefined) return -1;
+  const code = char.charCodeAt(0);
+  if (code >= 48 && code <= 57) return code - 48;
+  if (code >= 65 && code <= 70) return code - 55;
+  if (code >= 97 && code <= 102) return code - 87;
+  return -1;
+}
+
+function decodeHexEscape(source: string, start: number, length: number): number | null {
+  let value = 0;
+  for (let offset = 0; offset < length; offset++) {
+    const digit = hexDigitValue(source[start + offset]);
+    if (digit === -1) return null;
+    value = value * 16 + digit;
+  }
+  return value;
+}
+
+function decodeLiteralContents(source: string, start: number, end: number): string | null {
+  let result = "";
+  let cursor = start;
+
+  while (cursor < end) {
+    const char = source[cursor]!;
+    if (char !== "\\") {
+      result += char;
+      cursor++;
+      continue;
+    }
+
+    const escaped = source[cursor + 1];
+    if (escaped === undefined || cursor + 1 >= end) return null;
+
+    if (escaped === "\r" || escaped === "\n" || escaped === "\u2028" || escaped === "\u2029") {
+      cursor += escaped === "\r" && source[cursor + 2] === "\n" ? 3 : 2;
+      continue;
+    }
+
+    const simpleEscape = {
+      b: "\b",
+      f: "\f",
+      n: "\n",
+      r: "\r",
+      t: "\t",
+      v: "\v",
+    }[escaped];
+    if (simpleEscape !== undefined) {
+      result += simpleEscape;
+      cursor += 2;
+      continue;
+    }
+
+    if (escaped === "0") {
+      if (/[0-9]/.test(source[cursor + 2] ?? "")) return null;
+      result += "\0";
+      cursor += 2;
+      continue;
+    }
+    if (/[1-9]/.test(escaped)) return null;
+
+    if (escaped === "x") {
+      const value = decodeHexEscape(source, cursor + 2, 2);
+      if (value === null || cursor + 4 > end) return null;
+      result += StringFromCodePoint(value);
+      cursor += 4;
+      continue;
+    }
+
+    if (escaped === "u") {
+      if (source[cursor + 2] === "{") {
+        let escapeEnd = cursor + 3;
+        let value = 0;
+        let digitCount = 0;
+        while (escapeEnd < end && source[escapeEnd] !== "}") {
+          const digit = hexDigitValue(source[escapeEnd]);
+          if (digit === -1) return null;
+          value = value * 16 + digit;
+          digitCount++;
+          escapeEnd++;
+        }
+        if (
+          digitCount === 0 || source[escapeEnd] !== "}" || value > 0x10ffff
+        ) return null;
+        result += StringFromCodePoint(value);
+        cursor = escapeEnd + 1;
+        continue;
+      }
+
+      const value = decodeHexEscape(source, cursor + 2, 4);
+      if (value === null || cursor + 6 > end) return null;
+      result += StringFromCodePoint(value);
+      cursor += 6;
+      continue;
+    }
+
+    result += escaped;
+    cursor += 2;
+  }
+
+  return result;
+}
+
 function readQuotedSpecifier(
   source: string,
   quoteIndex: number,
@@ -170,9 +274,11 @@ function readQuotedSpecifier(
       continue;
     }
     if (source[cursor] === quote) {
+      const specifier = decodeLiteralContents(source, quoteIndex + 1, cursor);
+      if (specifier === null) return null;
       return {
         end: cursor + 1,
-        specifier: source.slice(quoteIndex + 1, cursor),
+        specifier,
       };
     }
     cursor++;
@@ -197,9 +303,11 @@ function readLiteralSpecifier(
     }
     if (source[cursor] === "$" && source[cursor + 1] === "{") return null;
     if (source[cursor] === "`") {
+      const specifier = decodeLiteralContents(source, literalIndex + 1, cursor);
+      if (specifier === null) return null;
       return {
         end: cursor + 1,
-        specifier: source.slice(literalIndex + 1, cursor),
+        specifier,
       };
     }
     cursor++;
@@ -387,6 +495,7 @@ function canStartRegexLiteral(
     "else",
     "in",
     "instanceof",
+    "new",
     "await",
     "return",
     "throw",
@@ -628,7 +737,7 @@ export function findStaticImportFromSpans(
       continue;
     }
 
-    if (char === ";" || char === "\n") {
+    if (char === ";" || char === "\n" || char === "}") {
       atStatementStart = true;
       cursor++;
       continue;
@@ -908,7 +1017,7 @@ export function findStaticSideEffectImportSpans(
       continue;
     }
 
-    if (char === ";" || char === "\n") {
+    if (char === ";" || char === "\n" || char === "}") {
       atStatementStart = true;
       cursor++;
       continue;

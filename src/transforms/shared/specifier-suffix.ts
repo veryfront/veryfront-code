@@ -5,6 +5,7 @@
  */
 
 const ReflectApply = Reflect.apply;
+const MathMin = Math.min;
 const StringIndexOf = String.prototype.indexOf;
 const StringSlice = String.prototype.slice;
 
@@ -42,7 +43,7 @@ export function splitSpecifierSuffix(specifier: string): SplitSpecifier {
     ? hashStart
     : hashStart === -1
     ? queryStart
-    : Math.min(queryStart, hashStart);
+    : MathMin(queryStart, hashStart);
 
   if (suffixStart === -1) return { path: specifier, suffix: "" };
   return {

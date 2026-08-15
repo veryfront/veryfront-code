@@ -31,4 +31,21 @@ describe("transforms/shared/specifier-suffix", () => {
       assertEquals(`${path}${suffix}`, specifier);
     }
   });
+
+  it("uses the captured minimum function after project code replaces Math.min", () => {
+    const mathMin = Math.min;
+
+    try {
+      Math.min = () => {
+        throw new Error("poisoned Math.min");
+      };
+
+      assertEquals(splitSpecifierSuffix("@/Card.tsx?raw#hero"), {
+        path: "@/Card.tsx",
+        suffix: "?raw#hero",
+      });
+    } finally {
+      Math.min = mathMin;
+    }
+  });
 });

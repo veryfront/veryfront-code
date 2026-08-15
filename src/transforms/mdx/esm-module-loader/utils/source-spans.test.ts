@@ -143,6 +143,17 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         ["./value.js"],
       );
     });
+
+    it("finds static imports after top-level block declarations", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          'function f(){}import value from "./after-function.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-function.js"],
+      );
+    });
   });
 
   describe("findDynamicImportSpans", () => {
@@ -188,6 +199,18 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
 
     it("finds a literal specifier", () => {
       assertEquals(specifiers(`const m = await import("./foo.js");`), ["./foo.js"]);
+    });
+
+    it("matches cooked quoted and template-literal specifiers while preserving source spans", () => {
+      const quotedSource = 'import("./lazy\\x2ejs");';
+      const templateSource = "import(`./lazy\\u002ejs`);";
+      const [quoted] = findDynamicImportSpans(quotedSource, matchRelative, UNBOUNDED);
+      const [template] = findDynamicImportSpans(templateSource, matchRelative, UNBOUNDED);
+
+      assertEquals(quoted?.path, "./lazy.js");
+      assertEquals(quoted?.original, '"./lazy\\x2ejs"');
+      assertEquals(template?.path, "./lazy.js");
+      assertEquals(template?.original, "`./lazy\\u002ejs`");
     });
 
     it("finds a literal specifier with import attributes", () => {
@@ -259,6 +282,15 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           'const html = `${await /}/.test(x) ? import("./after-await-regex.js") : null}`;',
         ),
         ["./after-await-regex.js"],
+      );
+    });
+
+    it("finds executable imports after regex literals following new", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'const html = `${new /}/.constructor() && import("/_vf_modules/lazy.js")}`;',
+        ),
+        ["/_vf_modules/lazy.js"],
       );
     });
 
@@ -666,6 +698,25 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         UNBOUNDED,
       );
       assertEquals(spans.map((span) => span.path), ["./a.js", "./b.js"]);
+    });
+
+    it("finds side-effect imports after top-level block declarations", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'function f(){}import "./after-function.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-function.js"],
+      );
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'class C {}import "./after-class.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-class.js"],
+      );
     });
   });
 });
