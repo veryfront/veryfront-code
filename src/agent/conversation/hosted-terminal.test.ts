@@ -296,6 +296,25 @@ describe("agent/conversation-hosted-terminal", () => {
     });
   });
 
+  it("preserves structured insufficient-credit stream errors", () => {
+    const error = Object.assign(
+      new Error("veryfront-cloud request failed: Provider request failed with status 402"),
+      {
+        responseBody: JSON.stringify({
+          slug: "insufficient-credits",
+          error: "AI credit limit exceeded",
+          suggestion: "Purchase additional credits or select a lower-cost model.",
+        }),
+      },
+    );
+
+    assertEquals(resolveConversationHostedStreamErrorState(error), {
+      status: "failed",
+      terminalErrorCode: "INSUFFICIENT_CREDITS",
+      terminalErrorMessage: "Purchase additional credits or select a lower-cost model.",
+    });
+  });
+
   it("dispatches reusable terminal runtime adapters", async () => {
     const calls: string[] = [];
     const adapter: ConversationHostedTerminalRuntimeAdapter = {
