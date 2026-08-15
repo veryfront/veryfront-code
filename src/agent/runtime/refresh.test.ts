@@ -3102,6 +3102,140 @@ describe("agent runtime refresh hooks", () => {
         .flatMap((part) => "text" in part && typeof part.text === "string" ? [part.text] : []),
       ["Check hidden state."],
     );
+
+    // Terminal state. Declining recovery ends the run here, so the truncated
+    // call has to reach the client as a failed tool card: its tool-input-start
+    // was buffered awaiting a commit that never came, and without flushing it
+    // the stream would stop after the reasoning block with nothing rendered.
+    assertEquals(body.match(/"type":"message-finish"/g)?.length ?? 0, 1);
+    assertEquals(body.includes('"finishReason":"tool-calls"'), true);
+    assertEquals(body.match(/"type":"tool-input-start"/g)?.length ?? 0, 1);
+    assertEquals(body.match(/"type":"tool-input-available"/g)?.length ?? 0, 0);
+    assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 1);
+    assertEquals(
+      body.includes(
+        'Stream terminated before tool-call event fired for \\"studio_suggestions\\"',
+      ),
+      true,
+    );
+    assertEquals(
+      finishedResponse.toolCalls.map((toolCall) => [toolCall.name, toolCall.status]),
+      [["studio_suggestions", "error"]],
+    );
+  });
+
+  it("preserves a bare placeholder tool call when reasoning blocks recovery", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount > 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Unexpected recovery." },
+              { type: "finish", finishReason: "stop" },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "reasoning-start", id: "reasoning-before-placeholder" },
+            {
+              type: "reasoning-delta",
+              id: "reasoning-before-placeholder",
+              delta: "Plan the suggestions.",
+            },
+            { type: "reasoning-end", id: "reasoning-before-placeholder" },
+            { type: "text-delta", text: "Created the Outlook assistant." },
+            {
+              type: "tool-input-start",
+              id: "toolu_placeholder_after_reasoning",
+              toolName: "studio_suggestions",
+            },
+            { type: "tool-input-delta", id: "toolu_placeholder_after_reasoning", delta: "{}" },
+            {
+              type: "finish",
+              finishReason: "tool-calls",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Reasoning recovery placeholder regression test",
+      tools: { studio_suggestions: studioSuggestions },
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const body = await (await assistant.stream({
+      input: "Create an Outlook assistant",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse().text();
+
+    assertEquals(callCount, 1);
+    assertEquals(body.includes("Unexpected recovery."), false);
+    assertExists(finishedResponse);
+
+    // A bare `{}` placeholder is normally dropped from the assistant message
+    // when substantive text accompanies it. Terminalizing the step passes
+    // `preserveRecoverablePlaceholderToolCalls`, so the call and its error are
+    // kept in history and go back to the model on the next turn — the same
+    // outcome as maxSteps exhaustion.
+    const assistantParts = finishedResponse.messages
+      .filter((message) => message.role === "assistant")
+      .flatMap((message) => message.parts);
+    assertEquals(
+      assistantParts.filter((part) => part.type === "reasoning")
+        .flatMap((part) => "text" in part && typeof part.text === "string" ? [part.text] : []),
+      ["Plan the suggestions."],
+    );
+    assertEquals(
+      assistantParts.flatMap((part) => part.type === "text" && "text" in part ? [part.text] : []),
+      ["Created the Outlook assistant."],
+    );
+    assertExists(
+      assistantParts.find((part) =>
+        "toolCallId" in part && part.toolCallId === "toolu_placeholder_after_reasoning"
+      ),
+    );
+    assertEquals(
+      finishedResponse.toolCalls.map((toolCall) => [toolCall.name, toolCall.status]),
+      [["studio_suggestions", "error"]],
+    );
+    assertEquals(
+      finishedResponse.messages
+        .flatMap((message) => message.parts)
+        .filter((part) =>
+          part.type === "tool-result" && "toolCallId" in part &&
+          part.toolCallId === "toolu_placeholder_after_reasoning"
+        ).length,
+      1,
+    );
+    assertEquals(body.match(/"type":"tool-input-start"/g)?.length ?? 0, 1);
+    assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 1);
   });
 
   it("streams provider events before recovery replay text begins", async () => {

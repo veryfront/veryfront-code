@@ -88,6 +88,42 @@ export interface StreamingToolResult {
   preliminary?: boolean;
 }
 
+/**
+ * Flush a tool call's buffered `tool-input-start` and input deltas to the
+ * client. The start event is withheld until the call's name is final, so a
+ * delegated remote tool is never announced under its unresolved namespace
+ * (#3123). Idempotent: `inputAnnounced` records that the buffer was drained,
+ * and it is also what gates the terminal `tool-output-error`, so a call that
+ * was never announced must be announced here before its failure can render.
+ */
+export function announceStreamedToolCallInput(
+  controller: ReadableStreamDefaultController,
+  encoder: TextEncoder,
+  toolCall: StreamingToolCall,
+): void {
+  if (toolCall.inputAnnounced === true) {
+    return;
+  }
+
+  const dynamic = toolCall.dynamic ?? isDynamicTool(toolCall.name);
+  sendSSE(controller, encoder, {
+    type: "tool-input-start",
+    toolCallId: toolCall.id,
+    toolName: toolCall.name,
+    ...(dynamic ? { dynamic: true } : {}),
+  });
+
+  for (const delta of toolCall.inputDeltas ?? []) {
+    sendSSE(controller, encoder, {
+      type: "tool-input-delta",
+      toolCallId: toolCall.id,
+      inputTextDelta: delta,
+    });
+  }
+
+  toolCall.inputAnnounced = true;
+}
+
 export interface StreamingReasoningPart {
   id: string;
   text: string;
@@ -772,27 +808,7 @@ export function processStreamInternal(
     };
 
     const announceToolInputStart = (toolCall: StreamingToolCall) => {
-      if (toolCall.inputAnnounced === true) {
-        return;
-      }
-
-      const dynamic = toolCall.dynamic ?? isDynamicTool(toolCall.name);
-      sendSSE(controller, encoder, {
-        type: "tool-input-start",
-        toolCallId: toolCall.id,
-        toolName: toolCall.name,
-        ...(dynamic ? { dynamic: true } : {}),
-      });
-
-      for (const delta of toolCall.inputDeltas ?? []) {
-        sendSSE(controller, encoder, {
-          type: "tool-input-delta",
-          toolCallId: toolCall.id,
-          inputTextDelta: delta,
-        });
-      }
-
-      toolCall.inputAnnounced = true;
+      announceStreamedToolCallInput(controller, encoder, toolCall);
     };
 
     const ensureToolLifecycle = (part: {
