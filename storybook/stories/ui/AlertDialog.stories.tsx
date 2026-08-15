@@ -86,7 +86,7 @@ function AlertDialogDocsPage() {
         <DocsComposition>{compositionTree}</DocsComposition>
       </DocsSection>
 
-      <DocsSection title="API Reference">
+      <DocsSection title="API reference">
         <DocsPropsTable
           component="AlertDialog"
           description="Confirmation modal root - owns open state"

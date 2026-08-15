@@ -70,7 +70,7 @@ function HoverCardDocsPage() {
         <DocsComposition>HoverCard</DocsComposition>
       </DocsSection>
 
-      <DocsSection title="API Reference">
+      <DocsSection title="API reference">
         <DocsPropsTable
           component="HoverCard"
           description="Root - owns open state on hover/focus"

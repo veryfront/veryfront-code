@@ -61,7 +61,7 @@ function ComboboxDocsPage() {
         </DocsComposition>
       </DocsSection>
 
-      <DocsSection title="API Reference">
+      <DocsSection title="API reference">
         <DocsPropsTable
           component="Combobox"
           description="Filterable select with a text input"

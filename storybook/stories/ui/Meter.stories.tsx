@@ -56,7 +56,7 @@ function MeterDocsPage() {
         <DocsComposition>Meter</DocsComposition>
       </DocsSection>
 
-      <DocsSection title="API Reference">
+      <DocsSection title="API reference">
         <DocsPropsTable
           component="Meter"
           description="Semantic gauge for a bounded reading"

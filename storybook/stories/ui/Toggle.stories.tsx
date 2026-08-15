@@ -45,7 +45,7 @@ function ToggleDocsPage() {
         <DocsComposition>Toggle</DocsComposition>
       </DocsSection>
 
-      <DocsSection title="API Reference">
+      <DocsSection title="API reference">
         <DocsPropsTable
           component="Toggle"
           description="Two-state pressed button"

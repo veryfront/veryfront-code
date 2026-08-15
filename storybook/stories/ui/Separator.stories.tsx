@@ -46,7 +46,7 @@ function SeparatorDocsPage() {
         <DocsComposition>Separator</DocsComposition>
       </DocsSection>
 
-      <DocsSection title="API Reference">
+      <DocsSection title="API reference">
         <DocsPropsTable
           component="Separator"
           description="Thin divider rule"

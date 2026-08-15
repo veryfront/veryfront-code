@@ -56,7 +56,7 @@ function FieldDocsPage() {
         <DocsComposition>{compositionTree}</DocsComposition>
       </DocsSection>
 
-      <DocsSection title="API Reference">
+      <DocsSection title="API reference">
         <DocsPropsTable
           component="Field"
           description="Form-field wrapper: provides derived ids to its sub-parts"

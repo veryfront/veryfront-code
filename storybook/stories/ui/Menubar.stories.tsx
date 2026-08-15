@@ -65,7 +65,7 @@ function MenubarDocsPage() {
         </DocsComposition>
       </DocsSection>
 
-      <DocsSection title="API Reference">
+      <DocsSection title="API reference">
         <DocsPropsTable
           component="Menubar"
           description="Horizontal bar container; owns which menu is open and roving focus"

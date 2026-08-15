@@ -52,7 +52,7 @@ function PaginationDocsPage() {
         <DocsComposition>{compositionTree}</DocsComposition>
       </DocsSection>
 
-      <DocsSection title="API Reference">
+      <DocsSection title="API reference">
         <DocsPropsTable
           component="PaginationLink"
           description="A page link; the rest of the compound (Pagination, PaginationContent, PaginationItem, PaginationPrevious, PaginationNext, PaginationEllipsis) takes only className + native attributes."

@@ -74,7 +74,7 @@ function BreadcrumbDocsPage() {
         <DocsComposition>{compositionTree}</DocsComposition>
       </DocsSection>
 
-      <DocsSection title="API Reference">
+      <DocsSection title="API reference">
         <DocsPropsTable
           component="Breadcrumb"
           description="The landmark nav wrapping the trail"

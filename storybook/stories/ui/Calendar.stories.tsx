@@ -55,7 +55,7 @@ function CalendarDocsPage() {
         <DocsComposition>{compositionTree}</DocsComposition>
       </DocsSection>
 
-      <DocsSection title="API Reference">
+      <DocsSection title="API reference">
         <DocsPropsTable
           component="Calendar"
           description="Single-month date grid"

@@ -53,7 +53,7 @@ function AutocompleteDocsPage() {
         </DocsComposition>
       </DocsSection>
 
-      <DocsSection title="API Reference">
+      <DocsSection title="API reference">
         <DocsPropsTable
           component="Autocomplete"
           description="Free-text input with suggestions"

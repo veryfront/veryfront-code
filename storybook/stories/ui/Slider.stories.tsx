@@ -45,7 +45,7 @@ function SliderDocsPage() {
         <DocsComposition>Slider</DocsComposition>
       </DocsSection>
 
-      <DocsSection title="API Reference">
+      <DocsSection title="API reference">
         <DocsPropsTable
           component="Slider"
           description="Range slider (native input, restyled)"

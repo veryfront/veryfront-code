@@ -62,7 +62,7 @@ function InputOTPDocsPage() {
         <DocsComposition>InputOTP</DocsComposition>
       </DocsSection>
 
-      <DocsSection title="API Reference">
+      <DocsSection title="API reference">
         <DocsPropsTable
           component="InputOTP"
           description="Segmented one-time-code input"

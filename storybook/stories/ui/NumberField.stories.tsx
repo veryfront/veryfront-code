@@ -49,7 +49,7 @@ function NumberFieldDocsPage() {
         <DocsComposition>NumberField</DocsComposition>
       </DocsSection>
 
-      <DocsSection title="API Reference">
+      <DocsSection title="API reference">
         <DocsPropsTable
           component="NumberField"
           description="Numeric input with clamping and keyboard stepping"

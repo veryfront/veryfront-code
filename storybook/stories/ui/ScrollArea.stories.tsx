@@ -49,7 +49,7 @@ function ScrollAreaDocsPage() {
         <DocsComposition>ScrollArea</DocsComposition>
       </DocsSection>
 
-      <DocsSection title="API Reference">
+      <DocsSection title="API reference">
         <DocsPropsTable
           component="ScrollArea"
           description="Styled native-overflow scroll container"

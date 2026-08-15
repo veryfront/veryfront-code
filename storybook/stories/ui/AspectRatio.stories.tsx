@@ -40,7 +40,7 @@ function AspectRatioDocsPage() {
         <DocsComposition>AspectRatio</DocsComposition>
       </DocsSection>
 
-      <DocsSection title="API Reference">
+      <DocsSection title="API reference">
         <DocsPropsTable
           component="AspectRatio"
           description="Fixed-ratio content box"

@@ -56,7 +56,7 @@ function DatePickerDocsPage() {
         <DocsComposition>{compositionTree}</DocsComposition>
       </DocsSection>
 
-      <DocsSection title="API Reference">
+      <DocsSection title="API reference">
         <DocsPropsTable
           component="DatePicker"
           description="Root: owns value + open state, provides context, renders the Popover."
