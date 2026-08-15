@@ -254,11 +254,11 @@ describe("agent/runtime/call-context", () => {
         message?.content ?? "",
         "Base\n\n<available_skills>\n- authored: An authored catalog\n</available_skills>",
       );
+      assertEquals((message?.content ?? "").includes("Deployment guidance"), false);
       assertStringIncludes(
         message?.content ?? "",
-        '<available_skill_ids>\nAuthoritative skill IDs: ["deploy","review"]\n</available_skill_ids>',
+        '<authorized_skill_ids>\n["deploy","review"]\n</authorized_skill_ids>',
       );
-      assertEquals((message?.content ?? "").includes("Deployment guidance"), false);
     });
 
     it("replaces an earlier generated skill-ID fallback during recomposition", () => {
@@ -277,12 +277,12 @@ describe("agent/runtime/call-context", () => {
         }],
       });
 
-      assertEquals((second?.content ?? "").match(/<available_skill_ids>/g)?.length, 1);
+      assertEquals((second?.content ?? "").match(/<authorized_skill_ids>/g)?.length, 1);
       assertStringIncludes(
         second?.content ?? "",
-        '<available_skill_ids>\nAuthoritative skill IDs: ["audit"]\n</available_skill_ids>',
+        '<authorized_skill_ids>\n["audit"]\n</authorized_skill_ids>',
       );
-      assertEquals((second?.content ?? "").includes('Authoritative skill IDs: ["deploy"'), false);
+      assertEquals((second?.content ?? "").includes('["deploy"'), false);
     });
 
     it("still emits the skills block when the instructions only name the tag in prose", () => {

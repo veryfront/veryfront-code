@@ -16,7 +16,7 @@
  * 1. One cached system message holding, in order, the instructions before the
  *    runtime-context marker, `<project_instructions>`, `<project_context>`,
  *    any caller-supplied extra blocks, the instructions after the marker, and
- *    `<available_skills>`, or an authoritative `<available_skill_ids>` fallback
+ *    `<available_skills>`, or an `<authorized_skill_ids>` fallback
  *    when the instructions already carry an authored skill catalog.
  * 2. An uncached `<environment_context>` message.
  *
@@ -33,7 +33,7 @@
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { createRuntimePromptBlock } from "./prompt-block.ts";
 import {
-  buildRuntimeAvailableSkillIdsPromptBlock,
+  buildRuntimeAuthorizedSkillIdsPromptBlock,
   buildRuntimeAvailableSkillsPromptBlock,
 } from "./skill-prompt.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
@@ -43,7 +43,7 @@ export const DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER = "<!-- veryfront-runtime-cont
 
 const ENVIRONMENT_CONTEXT_BLOCK_NAME = "environment_context";
 const AVAILABLE_SKILLS_BLOCK_NAME = "available_skills";
-const AVAILABLE_SKILL_IDS_BLOCK_NAME = "available_skill_ids";
+const AUTHORIZED_SKILL_IDS_BLOCK_NAME = "authorized_skill_ids";
 
 /** Project the call runs against, rendered as the `<project_context>` block. */
 export type AgentCallProjectContext = {
@@ -153,7 +153,7 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
   const runtimeContextMarker = input.runtimeContextMarker ?? DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER;
   const sourceInstructions = input.skills === undefined
     ? input.instructions
-    : removeCompleteBlocks(input.instructions, AVAILABLE_SKILL_IDS_BLOCK_NAME);
+    : removeCompleteBlocks(input.instructions, AUTHORIZED_SKILL_IDS_BLOCK_NAME);
   const instructions = splitInstructionsAtMarker({
     instructions: sourceInstructions,
     runtimeContextMarker,
@@ -192,7 +192,7 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
   if (input.skills?.length) {
     staticParts.push(
       hasBlock(sourceInstructions, AVAILABLE_SKILLS_BLOCK_NAME)
-        ? buildRuntimeAvailableSkillIdsPromptBlock(input.skills)
+        ? buildRuntimeAuthorizedSkillIdsPromptBlock(input.skills)
         : buildRuntimeAvailableSkillsPromptBlock(input.skills),
     );
   }

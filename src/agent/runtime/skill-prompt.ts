@@ -418,8 +418,8 @@ export function buildRuntimeAvailableSkillsPromptBlock(
   return buildStrictRuntimeAvailableSkillsPromptBlock(skills);
 }
 
-/** Builds the authoritative skill-ID fallback used beside authored catalogs. */
-export function buildRuntimeAvailableSkillIdsPromptBlock(
+/** Builds the authorized skill-ID fallback used beside authored catalogs. */
+export function buildRuntimeAuthorizedSkillIdsPromptBlock(
   skills: readonly RuntimeSkillDefinition[],
 ): string {
   const { displaySkills, omittedSkillIds } = snapshotRuntimeSkillPromptCatalog(skills);
@@ -446,9 +446,7 @@ export function buildRuntimeAvailableSkillIdsPromptBlock(
     );
   }
 
-  return `<available_skill_ids>\nAuthoritative skill IDs: [${
-    joinStrings(encodedSkillIds, ",")
-  }]\n</available_skill_ids>`;
+  return `<authorized_skill_ids>\n[${joinStrings(encodedSkillIds, ",")}]\n</authorized_skill_ids>`;
 }
 
 type CompatibilitySkillMapIterator = ReturnType<Map<string, Skill>["entries"]>;

@@ -53,7 +53,7 @@ const STATIC_LOAD_SKILL_INPUT_SCHEMA = {
       maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
       pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
       description:
-        'The skill ID to load. Use an ID from <available_skills> or <available_skill_ids>. A lowercase ".md" suffix is accepted when shown there.',
+        'The skill ID to load. Use an ID from <available_skills> or <authorized_skill_ids>. A lowercase ".md" suffix is accepted when shown there.',
     },
     file: {
       type: "string",
@@ -2505,7 +2505,7 @@ Deno.test("createRuntimeLoadSkillTool bounds and sanitizes schema input strings"
   );
 });
 
-it("createRuntimeLoadSkillTool keeps skill IDs out of the description and points to <available_skills>", () => {
+it("createRuntimeLoadSkillTool keeps IDs out of the description and points to runtime context", () => {
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext({
       availableSkillIds: ["daily-briefing"],
@@ -2520,7 +2520,7 @@ it("createRuntimeLoadSkillTool keeps skill IDs out of the description and points
   // definition, so the description is byte-identical across projects (RFC 0001).
   assertEquals(tool.description.includes("daily-briefing"), false);
   assertStringIncludes(tool.description, "<available_skills>");
-  assertStringIncludes(tool.description, "<available_skill_ids>");
+  assertStringIncludes(tool.description, "<authorized_skill_ids>");
   assertStringIncludes(tool.description, "You must not invent IDs");
 });
 
