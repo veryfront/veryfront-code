@@ -488,6 +488,15 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("keeps nested import parentheses aligned with outer control conditions", () => {
+      assertEquals(
+        specifiers(
+          'if (f(import("./inside.js"))) {} /}/.test(x); import("./after-block-regex.js");',
+        ),
+        ["./inside.js", "./after-block-regex.js"],
+      );
+    });
+
     it("finds imports after regex literals following noisy control blocks", () => {
       assertEquals(
         specifiers(
