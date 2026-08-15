@@ -25,7 +25,6 @@ import {
   SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES,
   SKILL_RUNTIME_LOADED_REFERENCE_CACHE_MAX_ENTRIES,
   SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES,
-  SKILL_VISIBLE_ERROR_MAX_IDS,
 } from "#veryfront/skill/limits.ts";
 import type {
   RuntimeLoadedProjectSkill,
@@ -51,6 +50,10 @@ const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ReflectApply = Reflect.apply;
+
+// A 60-ID page stays below the prompt inventory budget for maximum-length IDs
+// and discovers the 1,000-entry selector limit in at most 17 tool calls.
+const RUNTIME_SKILL_INVENTORY_PAGE_MAX_IDS = 60;
 
 function isRuntimeLoadSkillArray(value: unknown): boolean {
   try {
@@ -1243,7 +1246,7 @@ function buildRuntimeSkillInventoryPage(
     };
   }
 
-  const skillIds = knownSkillIds.slice(cursor, cursor + SKILL_VISIBLE_ERROR_MAX_IDS);
+  const skillIds = knownSkillIds.slice(cursor, cursor + RUNTIME_SKILL_INVENTORY_PAGE_MAX_IDS);
   const nextCursor = cursor + skillIds.length;
   return nextCursor < knownSkillIds.length ? { skillIds, nextCursor } : { skillIds };
 }

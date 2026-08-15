@@ -2546,17 +2546,42 @@ it("createRuntimeLoadSkillTool pages authorized IDs for standalone consumers", a
 
   const first = await tool.execute({});
   assertEquals(first, {
-    skillIds: availableSkillIds.slice(0, 30),
-    nextCursor: 30,
-  });
-  const second = await tool.execute({ cursor: 30 });
-  assertEquals(second, {
-    skillIds: availableSkillIds.slice(30, 60),
+    skillIds: availableSkillIds.slice(0, 60),
     nextCursor: 60,
   });
-  assertEquals(await tool.execute({ cursor: 60 }), {
+  const second = await tool.execute({ cursor: 60 });
+  assertEquals(second, {
     skillIds: availableSkillIds.slice(60),
   });
+});
+
+it("createRuntimeLoadSkillTool discovers the maximum catalog within the default step budget", async () => {
+  const availableSkillIds = Array.from(
+    { length: 1_000 },
+    (_, index) => `skill-${index.toString().padStart(8, "0")}`,
+  );
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  const discoveredSkillIds: string[] = [];
+  let cursor: number | undefined;
+  let calls = 0;
+  do {
+    const page = await tool.execute(cursor === undefined ? {} : { cursor }) as {
+      skillIds: string[];
+      nextCursor?: number;
+    };
+    discoveredSkillIds.push(...page.skillIds);
+    cursor = page.nextCursor;
+    calls += 1;
+  } while (cursor !== undefined);
+
+  assertEquals(discoveredSkillIds, availableSkillIds);
+  assertEquals(calls <= 17, true);
 });
 
 it("createRuntimeLoadSkillTool rejects mixed load and inventory inputs", async () => {
