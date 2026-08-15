@@ -1261,6 +1261,39 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     });
   });
 
+  it("does not classify a missing dependency of an existing bare package as tenant source", async () => {
+    const packageUrl = "https://esm.sh/package-with-missing-dependency";
+    const dependencyUrl = "https://esm.sh/missing-package-dependency.js";
+    const mockFetch = ((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.startsWith(packageUrl)) {
+        return Promise.resolve(
+          new Response(`import "${dependencyUrl}"; export const loaded = true;`, {
+            headers: { "content-type": "application/javascript" },
+          }),
+        );
+      }
+      return Promise.resolve(new Response("not found", { status: 404 }));
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache(
+      "vf-esm-missing-package-dependency-",
+      mockFetch,
+      async (tempDir) => {
+        const error = await assertRejects(
+          () =>
+            cacheHttpImportsToLocal('import "package-with-missing-dependency";', {
+              cacheDir: tempDir,
+              importMap: { imports: {}, scopes: {} },
+            }),
+          Error,
+        );
+
+        assertEquals(isTenantSourceBuildError(error), false);
+      },
+    );
+  });
+
   it("retries failures while reading an HTTP module body", async () => {
     let fetchCount = 0;
 

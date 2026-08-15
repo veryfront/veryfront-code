@@ -12,6 +12,7 @@ import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 import { BUILD_FAILED } from "#veryfront/errors";
 import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
+import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import {
   appendSameOriginSSRDependencyPinningKey,
   normalizeExtension,
@@ -23,12 +24,14 @@ import { parseImports, replaceSpecifiers } from "./lexer.ts";
 
 import {
   type CacheOptions,
+  getEffectiveHttpCacheRequest,
   isCanonicalReactEsmUrl,
   isExternalScheme,
   isHttpUrl,
   isInternalBare,
   isParentHttpModule,
   isRelative,
+  normalizeHttpUrl,
   resolveBareSpecifier,
 } from "./http-cache-helpers.ts";
 
@@ -44,13 +47,18 @@ function stringStartsWith(value: string, search: string): boolean {
   return ReflectApply(StringStartsWith, value, [search]) as boolean;
 }
 
-function classifyAuthoredPackageFetchError(error: unknown): unknown {
+function classifyAuthoredPackageFetchError(
+  error: unknown,
+  requestedPackageUrl: string | undefined,
+): unknown {
   const snapshot = snapshotVeryfrontError(error);
   const context = snapshot?.context;
   if (
     snapshot?.slug !== BUILD_FAILED.slug ||
     typeof context !== "object" || context === null ||
-    (context as { httpStatus?: unknown }).httpStatus !== 404
+    typeof requestedPackageUrl !== "string" ||
+    (context as { httpStatus?: unknown }).httpStatus !== 404 ||
+    (context as { httpModuleUrl?: unknown }).httpModuleUrl !== requestedPackageUrl
   ) {
     return error;
   }
@@ -59,7 +67,7 @@ function classifyAuthoredPackageFetchError(error: unknown): unknown {
     message: snapshot.message,
     detail: snapshot.detail,
     cause: error,
-    context: { httpStatus: 404, tenantBuildFailure: true },
+    context: { httpStatus: 404, httpModuleUrl: requestedPackageUrl, tenantBuildFailure: true },
   });
 }
 
@@ -221,10 +229,17 @@ async function resolveSpecifier(
   if (mapped === specifier) return null;
   if (isLocalMappedSpecifier(mapped)) return mapped;
 
+  let requestedPackageUrl: string | undefined;
+  const cacheAuthoredPackage: CacheHttpModuleFn = async (url, cacheOptions) => {
+    const effective = getEffectiveHttpCacheRequest(url, cacheOptions);
+    requestedPackageUrl = sanitizeUrlForSpan(normalizeHttpUrl(effective.url));
+    return await cacheHttpModule(url, cacheOptions);
+  };
+
   try {
-    return await resolveSpecifier(mapped, baseUrl, options, cacheHttpModule);
+    return await resolveSpecifier(mapped, baseUrl, options, cacheAuthoredPackage);
   } catch (error) {
-    throw classifyAuthoredPackageFetchError(error);
+    throw classifyAuthoredPackageFetchError(error, requestedPackageUrl);
   }
 }
 

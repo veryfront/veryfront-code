@@ -183,7 +183,7 @@ interface HttpModuleFetchResult {
 
 function terminalHttpModuleFetchError(
   detail: string,
-  context: { httpStatus?: number } = {},
+  context: { httpStatus?: number; httpModuleUrl?: string } = {},
 ): VeryfrontError {
   return BUILD_FAILED.create({
     detail,
@@ -321,7 +321,7 @@ async function fetchHttpModule(
     if (error instanceof HttpModuleResponseError) {
       throw terminalHttpModuleFetchError(
         `Failed to fetch ${safeUrl}: ${error.status}`,
-        { httpStatus: error.status },
+        { httpStatus: error.status, httpModuleUrl: safeUrl },
       );
     }
     if (error instanceof HttpModuleRequestError) {
