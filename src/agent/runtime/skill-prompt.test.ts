@@ -135,6 +135,30 @@ it("bounds worst-case omitted skill-ID inventories without rejecting the catalog
   assertEquals((authorized.match(/"skill-/g)?.length ?? 0) < 1_000, true);
 });
 
+it("derives discovery cursors from the deduplicated skill inventory", () => {
+  const duplicateId = `skill-duplicate-${"x".repeat(220)}`;
+  const skills = [
+    ...Array.from({ length: 10 }, () => createSkill({ id: duplicateId })),
+    ...Array.from(
+      { length: 990 },
+      (_, index) =>
+        createSkill({
+          id: `skill-${String(index).padStart(4, "0")}-${"x".repeat(220)}`,
+        }),
+    ),
+  ];
+
+  const block = buildRuntimeAvailableSkillsPromptBlock(skills);
+  const cursorMatch = /Call load_skill\(\{ inventory: \{ cursor: (\d+) \} \}\)/.exec(block);
+  const embeddedSkillIds = new Set(
+    Array.from(block.matchAll(/"(skill-[^"]+)"/g), (match) => match[1]),
+  );
+
+  assertEquals(cursorMatch === null, false);
+  assertEquals(Number(cursorMatch?.[1]), embeddedSkillIds.size);
+  assertEquals(block.match(new RegExp(`"${duplicateId}"`, "g"))?.length, 1);
+});
+
 it("bounds authored-catalog skill IDs and provides a continuation cursor", () => {
   const skills = Array.from(
     { length: 1_000 },

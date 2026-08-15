@@ -115,9 +115,11 @@ function readPromptOwnDataProperty(
 
 function snapshotRuntimeSkillPromptDefinition(
   skill: RuntimeSkillDefinition,
+  knownSkillId?: string,
 ): RuntimeSkillDefinition {
   return freeze({
-    id: readPromptOwnDataProperty(skill, "id", "Runtime skill catalog entry", true) as string,
+    id: knownSkillId ??
+      (readPromptOwnDataProperty(skill, "id", "Runtime skill catalog entry", true) as string),
     name: readPromptOwnDataProperty(skill, "name", "Runtime skill catalog entry", true) as string,
     displayName: readPromptOwnDataProperty(
       skill,
@@ -182,25 +184,39 @@ function snapshotRuntimeSkillPromptCatalog(
 
   const displaySkills: RuntimeSkillDefinition[] = [];
   const omittedSkillIds: string[] = [];
+  const seenSkillIds = createObject(null) as Record<string, true>;
   for (let index = 0; index < length; index += 1) {
     const descriptor = getOwnPropertyDescriptor(skills, index);
     if (!descriptor || !hasOwn(descriptor, "value")) {
       throw new NativeTypeError(`Runtime skill catalog entry ${index} must be a data property`);
     }
-    if (index < MAX_RUNTIME_SKILL_PROMPT_ENTRIES) {
-      appendOwnArrayElement(displaySkills, descriptor.value);
+    const skillId = requireBoundedPromptString(
+      readPromptOwnDataProperty(
+        descriptor.value,
+        "id",
+        `Runtime skill catalog entry ${index}`,
+        true,
+      ),
+      "id",
+      SKILL_ID_MAX_LENGTH,
+    );
+    if (hasOwn(seenSkillIds, skillId)) {
       continue;
     }
-    const skillId = readPromptOwnDataProperty(
-      descriptor.value,
-      "id",
-      `Runtime skill catalog entry ${index}`,
-      true,
-    );
-    appendOwnArrayElement(
-      omittedSkillIds,
-      requireBoundedPromptString(skillId, "id", SKILL_ID_MAX_LENGTH),
-    );
+    defineOwnProperty(seenSkillIds, skillId, {
+      configurable: false,
+      enumerable: true,
+      value: true,
+      writable: false,
+    });
+    if (displaySkills.length < MAX_RUNTIME_SKILL_PROMPT_ENTRIES) {
+      appendOwnArrayElement(
+        displaySkills,
+        snapshotRuntimeSkillPromptDefinition(descriptor.value, skillId),
+      );
+      continue;
+    }
+    appendOwnArrayElement(omittedSkillIds, skillId);
   }
   return {
     displaySkills: freeze(displaySkills),
