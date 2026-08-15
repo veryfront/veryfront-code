@@ -789,6 +789,13 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
       assertEquals(
         vfModuleSpecifiers(
+          '@sealed class C {} /import("\\/_vf_modules\\/fake-decorated-class.js")/.test(value); ' +
+            'import("/_vf_modules/after-decorated-class.js")',
+        ),
+        ["/_vf_modules/after-decorated-class.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
           'interface I<T> extends Base {} /import("\\/_vf_modules\\/fake-ts-interface.js")/.test(value); ' +
             'import("/_vf_modules/after-ts-interface.js")',
         ),
@@ -1250,6 +1257,22 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         durationMs < 750,
         `Expected a ${Math.round(source.length / 1024)} KB TypeScript assertion scan to finish ` +
           `within 750 ms, got ${durationMs.toFixed(1)} ms`,
+      );
+    });
+
+    it("keeps distinct TypeScript assertion lookahead within a bounded runtime", () => {
+      const source = "type Value = unknown;\nconst values = [" +
+        Array.from({ length: 8_000 }, (_, index) => `<T${index}>value`).join(",") +
+        "];";
+      const startedAt = performance.now();
+
+      assertEquals(specifiers(source), []);
+
+      const durationMs = performance.now() - startedAt;
+      assert(
+        durationMs < 200,
+        `Expected a ${Math.round(source.length / 1024)} KB distinct TypeScript assertion scan ` +
+          `to finish within 200 ms, got ${durationMs.toFixed(1)} ms`,
       );
     });
 

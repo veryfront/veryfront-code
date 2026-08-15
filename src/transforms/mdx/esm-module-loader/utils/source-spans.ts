@@ -45,7 +45,7 @@ interface RawJsxTagSkip {
 }
 
 interface RawJsxLookaheadCache {
-  closingTags: Map<string, boolean>;
+  closingTagsByStatementEnd: Map<number, { start: number; tags: Map<string, number[]> }>;
   statementEnds: Array<{ start: number; end: number }>;
   statementEndCursor: number;
 }
@@ -69,7 +69,7 @@ const FUNCTION_DECLARATION_PREFIX_PATTERN = new RegExp(
 );
 const CLASS_DECLARATION_PREFIX_PATTERN = new RegExp(
   String
-    .raw`^(?:export\s+(?:default\s+)?)?(?:abstract\s+)?class(?:\s+${IDENTIFIER_NAME_SOURCE})?(?:\s*<[\s\S]*>)?(?:\s+extends\s+[\s\S]+?)?(?:\s+implements\s+[\s\S]+)?\s*$`,
+    .raw`^(?:@[\s\S]+?\s+)*(?:export\s+(?:default\s+)?)?(?:abstract\s+)?class(?:\s+${IDENTIFIER_NAME_SOURCE})?(?:\s*<[\s\S]*>)?(?:\s+extends\s+[\s\S]+?)?(?:\s+implements\s+[\s\S]+)?\s*$`,
   "u",
 );
 const TYPESCRIPT_DECLARATION_PREFIX_PATTERN = new RegExp(
@@ -1437,7 +1437,7 @@ function findParenEnd(source: string, index: number): number | null {
 }
 
 function createRawJsxLookaheadCache(): RawJsxLookaheadCache {
-  return { closingTags: new Map(), statementEnds: [], statementEndCursor: 0 };
+  return { closingTagsByStatementEnd: new Map(), statementEnds: [], statementEndCursor: 0 };
 }
 
 function statementEndAfter(
@@ -1490,26 +1490,56 @@ function hasRawJsxClosingTagBeforeStatementEnd(
   cache?: RawJsxLookaheadCache,
 ): boolean {
   const statementEnd = statementEndAfter(source, start, cache);
-  const cacheKey = `${name}\0${statementEnd}`;
-  const cached = cache?.closingTags.get(cacheKey);
-  if (cached !== undefined) return cached;
+  const cached = cache?.closingTagsByStatementEnd.get(statementEnd);
+  const index = cached !== undefined && start >= cached.start
+    ? cached
+    : indexRawJsxClosingTags(source, start, statementEnd);
+  if (cache !== undefined && index !== cached) {
+    cache.closingTagsByStatementEnd.set(statementEnd, index);
+  }
 
+  const positions = index.tags.get(name);
+  if (positions === undefined) return false;
+  return hasPositionAtOrAfter(positions, start);
+}
+
+function indexRawJsxClosingTags(
+  source: string,
+  start: number,
+  statementEnd: number,
+): { start: number; tags: Map<string, number[]> } {
+  const tags = new Map<string, number[]>();
   let closing = source.indexOf("<", start);
   while (closing >= 0 && closing < statementEnd) {
-    const nameStart = closing + 2;
-    const afterName = source[nameStart + name.length];
-    if (
-      source[closing + 1] === "/" &&
-      source.startsWith(name, nameStart) &&
-      (afterName === ">" || afterName === "/" || /\s/.test(afterName ?? ""))
-    ) {
-      cache?.closingTags.set(cacheKey, true);
-      return true;
+    if (source[closing + 1] === "/") {
+      const tag = rawJsxTagName(source, closing + 2);
+      const afterName = source[tag.end];
+      if (
+        tag.name !== null && tag.name !== "" &&
+        (afterName === ">" || afterName === "/" || /\s/.test(afterName ?? ""))
+      ) {
+        let positions = tags.get(tag.name);
+        if (positions === undefined) {
+          positions = [];
+          tags.set(tag.name, positions);
+        }
+        positions.push(closing);
+      }
     }
     closing = source.indexOf("<", closing + 1);
   }
-  cache?.closingTags.set(cacheKey, false);
-  return false;
+  return { start, tags };
+}
+
+function hasPositionAtOrAfter(positions: readonly number[], start: number): boolean {
+  let low = 0;
+  let high = positions.length;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (positions[mid]! < start) low = mid + 1;
+    else high = mid;
+  }
+  return low < positions.length;
 }
 
 function looksLikeTypeScriptAngleConstruct(
