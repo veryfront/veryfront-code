@@ -106,6 +106,22 @@ function isCredentialRejectionStatus(status: number): boolean {
   return status === 401 || status === 403;
 }
 
+function isUserInfo(value: unknown): value is UserInfo {
+  if (value === null || typeof value !== "object") return false;
+  const candidate = value as Partial<UserInfo>;
+  return typeof candidate.id === "string" && candidate.id.trim() !== "" &&
+    typeof candidate.email === "string" && candidate.email.trim() !== "";
+}
+
+async function outputLoginExplicitMethodJson(): Promise<void> {
+  await outputJson(createErrorEnvelope("login", {
+    code: "USAGE_ERROR",
+    slug: "invalid-arguments",
+    registrySlug: "invalid-argument",
+    message: "Explicit login methods are not supported with --json.",
+  }));
+}
+
 async function outputLoginValidationUnavailableJson(
   failure: CredentialValidationUnavailableError,
 ): Promise<void> {
@@ -214,9 +230,23 @@ export async function validateToken(
     }
 
     try {
-      return (await response.json()) as UserInfo;
+      const userInfo = await response.json();
+      if (isUserInfo(userInfo)) return userInfo;
+      if (options.throwOnCredentialValidationUnavailable) {
+        throw new CredentialValidationUnavailableError("service", response.status);
+      }
+      return null;
     } catch (error) {
       if (options.throwOnCredentialValidationUnavailable) {
+        if (error instanceof CredentialValidationUnavailableError) {
+          throw error;
+        }
+        if (isCredentialTimeoutFailure(error)) {
+          throw new CredentialValidationUnavailableError("timeout");
+        }
+        if (error instanceof TypeError) {
+          throw new CredentialValidationUnavailableError("network");
+        }
         throw new CredentialValidationUnavailableError("service", response.status);
       }
       throw error;
@@ -525,6 +555,11 @@ export async function login(
   method?: AuthMethod,
   env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<AuthIdentity | null> {
+  if (isJsonMode() && method !== undefined) {
+    await outputLoginExplicitMethodJson();
+    return null;
+  }
+
   // A bare `veryfront login` is the documented first step of the deploy
   // journey, and an already-authenticated developer ran it only to be asked for
   // a token they do not need. Report the session instead. An explicit method is

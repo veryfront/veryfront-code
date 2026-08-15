@@ -826,6 +826,161 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("preserves a structurally invalid environment validation response over a valid stored login in JSON mode", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const originalError = console.error;
+      const output: string[] = [];
+      const errors: string[] = [];
+      const requestedAuth: string[] = [];
+      await saveToken("stored-valid-token", testEnv);
+
+      try {
+        globalThis.fetch = ((_: string | URL | Request, init?: RequestInit) => {
+          const auth = String(new Headers(init?.headers).get("authorization") ?? "");
+          requestedAuth.push(auth);
+          if (auth === "Bearer env-token") {
+            return Promise.resolve(
+              Response.json({ error: "upstream unavailable" }),
+            );
+          }
+          return Promise.resolve(
+            Response.json({ id: "user-123", email: "stored@example.com" }),
+          );
+        }) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+        console.error = (message?: unknown) => errors.push(String(message));
+
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        const { login } = await import("./login.ts");
+        setJsonMode(true);
+
+        const result = await login(undefined, { ...testEnv, apiToken: "env-token" });
+        const envelope = JSON.parse(output.join("\n"));
+
+        assertEquals(result, null);
+        assertEquals(envelope.error, {
+          code: "API_CLIENT_ERROR",
+          slug: "api-client-error",
+          registrySlug: "api-client-error",
+          message: "Veryfront API could not validate existing login credentials.",
+          context: { status: 200 },
+        });
+        assertEquals(requestedAuth, ["Bearer env-token"]);
+        assertEquals(output.join("\n").includes("stored@example.com"), false);
+        assertEquals(output.join("\n").includes("stored-valid-token"), false);
+        assertEquals(errors, []);
+      } finally {
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        setJsonMode(false);
+        console.log = originalLog;
+        console.error = originalError;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
+    it("preserves network failures while decoding an existing login response in JSON mode", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const originalError = console.error;
+      const output: string[] = [];
+      const errors: string[] = [];
+      await saveToken("stored-valid-token", testEnv);
+
+      try {
+        globalThis.fetch = (() =>
+          Promise.resolve(
+            new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.error(new TypeError("body reset"));
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          )) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+        console.error = (message?: unknown) => errors.push(String(message));
+
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        const { login } = await import("./login.ts");
+        setJsonMode(true);
+
+        const result = await login(undefined, testEnv);
+        const envelope = JSON.parse(output.join("\n"));
+
+        assertEquals(result, null);
+        assertEquals(envelope.error, {
+          code: "NETWORK_ERROR",
+          slug: "network-error",
+          registrySlug: "network-error",
+          message: "Could not reach the Veryfront API while checking existing login credentials.",
+        });
+        assertEquals(output.join("\n").includes("Enter your API token"), false);
+        assertEquals(errors, []);
+      } finally {
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        setJsonMode(false);
+        console.log = originalLog;
+        console.error = originalError;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
+    it("preserves timeout failures while decoding an existing login response in JSON mode", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const originalError = console.error;
+      const output: string[] = [];
+      const errors: string[] = [];
+      await saveToken("stored-valid-token", testEnv);
+
+      try {
+        globalThis.fetch = (() =>
+          Promise.resolve(
+            new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.error(new DOMException("deadline exceeded", "TimeoutError"));
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          )) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+        console.error = (message?: unknown) => errors.push(String(message));
+
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        const { login } = await import("./login.ts");
+        setJsonMode(true);
+
+        const result = await login(undefined, testEnv);
+        const envelope = JSON.parse(output.join("\n"));
+
+        assertEquals(result, null);
+        assertEquals(envelope.error, {
+          code: "TIMEOUT_ERROR",
+          slug: "timeout-error",
+          registrySlug: "timeout-error",
+          message: "Timed out while checking existing login credentials. Try again.",
+        });
+        assertEquals(output.join("\n").includes("Enter your API token"), false);
+        assertEquals(errors, []);
+      } finally {
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        setJsonMode(false);
+        console.log = originalLog;
+        console.error = originalError;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
     it("falls back to a valid stored session when the env token is invalid", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;
@@ -1104,6 +1259,46 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         const { __setExistingSessionTimeoutForTests } = await import("./login.ts");
         __setExistingSessionTimeoutForTests();
         globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
+    it("rejects explicit login methods as login JSON without prompting", async () => {
+      const originalLog = console.log;
+      const originalError = console.error;
+      const output: string[] = [];
+      const errors: string[] = [];
+
+      try {
+        console.log = (message?: unknown) => output.push(String(message));
+        console.error = (message?: unknown) => errors.push(String(message));
+
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        const { login } = await import("./login.ts");
+        setJsonMode(true);
+
+        const result = await login("token", testEnv);
+        const envelope = JSON.parse(output.join("\n"));
+
+        assertEquals(result, null);
+        assertEquals(envelope, {
+          success: false,
+          command: "login",
+          error: {
+            code: "USAGE_ERROR",
+            slug: "invalid-arguments",
+            registrySlug: "invalid-argument",
+            message: "Explicit login methods are not supported with --json.",
+          },
+        });
+        assertEquals(output.join("\n").includes("Enter your API token"), false);
+        assertEquals(errors, []);
+      } finally {
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        setJsonMode(false);
+        console.log = originalLog;
+        console.error = originalError;
         resetInteractiveMode();
         await safeDeleteToken();
       }
