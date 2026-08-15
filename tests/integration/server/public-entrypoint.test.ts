@@ -1,6 +1,6 @@
-import { assert, assertEquals, assertNotEquals } from "#veryfront/testing/assert";
+import { assert, assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { join } from "#veryfront/compat/path";
-import { describe, it } from "#veryfront/testing/bdd";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { writeTextFile } from "#veryfront/compat/fs.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
