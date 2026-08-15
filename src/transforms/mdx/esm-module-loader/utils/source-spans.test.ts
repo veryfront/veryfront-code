@@ -13,6 +13,39 @@ import {
 const UNBOUNDED = Number.MAX_SAFE_INTEGER;
 
 describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
+  it("keeps static imports inside regexes hidden after local type export lists", () => {
+    const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
+    const source = "export type { T as U }\n" +
+      '/import fake from "\\.\\/fake.js"/.test(value); import real from "./real.js";';
+
+    assertEquals(
+      findStaticImportFromSpans(source, matchRelative, UNBOUNDED).map((span) => span.path),
+      ["./real.js"],
+    );
+  });
+
+  it("keeps side-effect imports inside regexes hidden after commented type exports", () => {
+    const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
+    const source = "export /* keep */ type { T, U as V }\n" +
+      '/;import "\\.\\/fake.js"/.test(value); import "./real.js";';
+
+    assertEquals(
+      findStaticSideEffectImportSpans(source, matchRelative, UNBOUNDED).map((span) => span.path),
+      ["./real.js"],
+    );
+  });
+
+  it("keeps dynamic imports inside regexes hidden after multiline type exports", () => {
+    const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
+    const source = "export type {\n  T,\n  U as V,\n}\n" +
+      '/import("\\.\\/fake.js")/.test(value); import("./real.js");';
+
+    assertEquals(
+      findDynamicImportSpans(source, matchRelative, UNBOUNDED).map((span) => span.path),
+      ["./real.js"],
+    );
+  });
+
   it("keeps repeated regex ASI checks bounded across import scanners", () => {
     const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
     const repeatedRegexBlocks = "/x/\n{}\n".repeat(800);

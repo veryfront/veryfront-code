@@ -1415,7 +1415,23 @@ function isCompletedModuleDeclarationBeforeRegex(
     ) && !/^import\s*[.(]/.test(declarationSource);
   }
   return /^export\b[\s\S]*\bfrom\s*["'`][\s\S]*["'`]$/.test(declarationSource) ||
-    /^export\s*\{[\s\S]*\}$/.test(declarationSource);
+    /^export\s+(?:type\s+)?\{[\s\S]*\}$/.test(declarationSource);
+}
+
+function isCompletedLocalExportListBeforeRegex(
+  source: string,
+  index: number,
+  previousTokenIndex: number,
+  statementStart: number,
+): boolean {
+  if (!hasLineTerminatorBetween(source, previousTokenIndex + 1, index)) return false;
+
+  const declarationSource = normalizedDeclarationPrefix(
+    source,
+    statementStart,
+    previousTokenIndex + 1,
+  ).trim();
+  return /^(?:type\s+)?\{[\s\S]*\}$/.test(declarationSource);
 }
 
 function isPostfixNonNullAssertionBefore(
@@ -2165,6 +2181,7 @@ function findFromSpan(
   source: string,
   statementStart: number,
   matcher: SpecifierMatcher,
+  isExportDeclaration: boolean,
 ): StaticImportSpan | null {
   let cursor = statementStart;
   let previousTokenIndex = previousSignificantIndexBeforeIgnored(source, statementStart);
@@ -2181,6 +2198,19 @@ function findFromSpan(
     }
 
     if (source[cursor] === ";") return null;
+
+    if (
+      isExportDeclaration &&
+      source[cursor] === "/" &&
+      isCompletedLocalExportListBeforeRegex(
+        source,
+        cursor,
+        previousTokenIndex,
+        statementStart,
+      )
+    ) {
+      return null;
+    }
 
     if (
       source[cursor] === "/" &&
@@ -2413,7 +2443,7 @@ export function findStaticImportFromSpans(
       continue;
     }
 
-    const span = findFromSpan(source, afterKeyword, matcher);
+    const span = findFromSpan(source, afterKeyword, matcher, isExport);
     if (span) {
       spans.push(span);
       if (spans.length >= maxMatches) return spans;

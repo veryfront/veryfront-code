@@ -1393,8 +1393,11 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
         `must name the URL: ${error.message}`,
       );
       assert(
-        error.message.includes("unresolved import"),
-        `must point at an unresolved import falling through to the site origin: ${error.message}`,
+        error.message.includes(
+          "Verify that the import resolves to a JavaScript module and does not fall through " +
+            "to the site origin.",
+        ),
+        `must direct the reader to verify import resolution: ${error.message}`,
       );
     });
   });
@@ -1417,8 +1420,11 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       assertInstanceOf(error, Error);
       assert(!error.message.includes("esm.sh"), `must not blame esm.sh: ${error.message}`);
       assert(
-        error.message.includes('"@/" alias import'),
-        `must hint that an alias import failed to resolve: ${error.message}`,
+        error.message.includes(
+          'Verify that the "@/" alias import resolves to a project module and does not fall ' +
+            "through to the site origin.",
+        ),
+        `must direct the reader to verify alias resolution: ${error.message}`,
       );
     });
   });
