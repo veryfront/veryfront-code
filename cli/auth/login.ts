@@ -584,11 +584,12 @@ function writeAuthoritativeCredentialUnavailableMessage(
  */
 async function describeExistingSession(
   env: EnvironmentConfig,
+  projectDir: string = cwd(),
 ): Promise<AuthIdentity | "failure-output" | null> {
-  const candidates = await resolveApiCredentialCandidatesForAuth(env);
+  const candidates = await resolveApiCredentialCandidatesForAuth(env, projectDir);
   if (candidates.length === 0) return null;
   const hasConfigToken = candidates.some((candidate) => candidate.apiTokenSource === "config-file");
-  const hasStoredToken = candidates.some((candidate) => candidate.apiTokenSource === "token-store");
+  let hasStoredToken = candidates.some((candidate) => candidate.apiTokenSource === "token-store");
   const signal = AbortSignal.timeout(existingSessionTimeoutMs);
   let unavailable: CredentialValidationUnavailableError | null = null;
 
@@ -627,6 +628,10 @@ async function describeExistingSession(
       throw error;
     }
     if (!identity) {
+      if (apiTokenSource === "token-store") {
+        await deleteToken(env);
+        hasStoredToken = false;
+      }
       if (authoritative) {
         if (!isJsonMode()) {
           if (source !== "stored") {
@@ -706,6 +711,7 @@ async function describeExistingSession(
 export async function login(
   method?: AuthMethod,
   env: EnvironmentConfig = getEnvironmentConfig(),
+  projectDir: string = cwd(),
 ): Promise<AuthIdentity | null> {
   if (isJsonMode() && method !== undefined) {
     await outputLoginExplicitMethodJson();
@@ -718,7 +724,7 @@ export async function login(
   // intent to sign in again, so account switching still works — and a session
   // that no longer validates falls through to the normal flow.
   if (method === undefined) {
-    const existing = await describeExistingSession(env);
+    const existing = await describeExistingSession(env, projectDir);
     if (existing === "failure-output") return null;
     if (existing) return existing;
     if (isJsonMode()) {
@@ -836,7 +842,7 @@ export async function ensureAuthenticated(
     return null;
   }
 
-  return login(undefined, env);
+  return login(undefined, env, projectDir);
 }
 
 export async function logout(env: EnvironmentConfig = getEnvironmentConfig()): Promise<void> {
@@ -850,8 +856,19 @@ async function reportCredential(
   source: ApiTokenSource,
   env: EnvironmentConfig,
 ): Promise<AuthIdentity | null> {
-  const credential = await validateCredential(token, env);
-  if (!credential) return null;
+  let credential: AuthIdentity | null;
+  try {
+    credential = await validateCredential(token, env, {
+      throwOnCredentialValidationUnavailable: true,
+    });
+  } catch (error) {
+    if (error instanceof CredentialValidationUnavailableError) return null;
+    throw error;
+  }
+  if (!credential) {
+    if (source === "token-store") await deleteToken(env);
+    return null;
+  }
   const displayedSource = source === "env-file" ? "env" : source;
 
   if (!isApiKeyIdentity(credential)) {

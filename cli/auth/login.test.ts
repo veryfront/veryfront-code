@@ -468,6 +468,56 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("keeps an existing-session login scoped to the requested project directory", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const cwdDir = await makeTempDir({ prefix: "ensure-login-cwd-config-" });
+      const targetDir = await makeTempDir({ prefix: "ensure-login-target-" });
+      const output: string[] = [];
+      let requests = 0;
+
+      try {
+        await Deno.writeTextFile(
+          `${cwdDir}/veryfront.json`,
+          JSON.stringify({
+            apiToken: "vf_cwd_config",
+            apiUrl: "https://cwd-config.example.test",
+            projectSlug: "cwd-project",
+          }) + "\n",
+        );
+        globalThis.fetch = (() => {
+          requests++;
+          return Promise.resolve(
+            Response.json({ data: [], page_info: {} }),
+          );
+        }) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        const { login } = await import("./login.ts");
+        const { withCwd } = await import("#veryfront/testing/cwd.ts");
+        setJsonMode(true);
+
+        const result = await withCwd(
+          cwdDir,
+          () => login(undefined, testEnv, targetDir),
+        );
+        const envelope = JSON.parse(output.join("\n"));
+
+        assertEquals(result, null);
+        assertEquals(requests, 0);
+        assertEquals(envelope.error.slug, "authentication-required");
+      } finally {
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        setJsonMode(false);
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await remove(cwdDir, { recursive: true });
+        await remove(targetDir, { recursive: true });
+      }
+    });
+
     it("does not prompt for an auth method or token in non-interactive mode", async () => {
       const { login } = await import("./login.ts");
 
@@ -1136,6 +1186,14 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         assertEquals(output.join("\n").includes("env-file-valid-token"), false);
         assertEquals(output.join("\n").includes("stored-invalid-token"), false);
         assertEquals(errors, []);
+        const { resolveConfigWithAuth } = await import("../shared/config.ts");
+        const config = await resolveConfigWithAuth(envDir, {
+          ...testEnv,
+          apiToken: "env-file-valid-token",
+          projectSlug: "fallback-project",
+        });
+        assertEquals(config.apiToken, "env-file-valid-token");
+        assertEquals(await readToken(testEnv), null);
       } finally {
         const { __resetEnvLoaderForTests } = await import("veryfront/utils/env-loader");
         const { setJsonMode } = await import("../shared/json-output.ts");
@@ -1679,6 +1737,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         });
         assertEquals(output.join("\n").includes("Enter your API token"), false);
         assertEquals(errors, []);
+        assertEquals(await readToken(testEnv), "stored-valid-token");
       } finally {
         const { setJsonMode } = await import("../shared/json-output.ts");
         setJsonMode(false);
@@ -2598,6 +2657,14 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         assertStringIncludes(printed, ".env");
         assertEquals(printed.includes("env-file-valid-token"), false);
         assertEquals(printed.includes("stored-invalid-token"), false);
+        const { resolveConfigWithAuth } = await import("../shared/config.ts");
+        const config = await resolveConfigWithAuth(envDir, {
+          ...testEnv,
+          apiToken: "env-file-valid-token",
+          projectSlug: "fallback-project",
+        });
+        assertEquals(config.apiToken, "env-file-valid-token");
+        assertEquals(await readToken(testEnv), null);
       } finally {
         const { __resetEnvLoaderForTests } = await import("veryfront/utils/env-loader");
         __resetEnvLoaderForTests();
@@ -2607,6 +2674,27 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         globalThis.fetch = originalFetch;
         await safeDeleteToken();
         await remove(envDir, { recursive: true });
+      }
+    });
+
+    it("retains a stored session when credential validation is unavailable", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const output: string[] = [];
+      await saveToken("stored-unavailable-token", testEnv);
+
+      try {
+        globalThis.fetch = (() =>
+          Promise.reject(new TypeError("network unavailable"))) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+
+        const { whoami } = await import("./login.ts");
+        assertEquals(await whoami(testEnv), null);
+        assertEquals(await readToken(testEnv), "stored-unavailable-token");
+      } finally {
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        await safeDeleteToken();
       }
     });
 
