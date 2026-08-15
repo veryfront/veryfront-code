@@ -34,9 +34,9 @@ export interface AgentTriggerTarget extends TriggerTarget {
   /** Canonical slash-separated definition identifier. */
   id: string;
   /** Hosted conversation behavior; defaults to `none`. */
-  conversationMode?: AgentConversationMode;
+  conversationMode?: AgentConversationMode | undefined;
   /** Existing conversation UUID; required only with `conversationMode: "existing"`. */
-  conversationId?: string | null;
+  conversationId?: string | null | undefined;
 }
 
 /** Canonical reference to a runnable project definition. */
