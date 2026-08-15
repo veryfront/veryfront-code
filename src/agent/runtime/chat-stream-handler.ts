@@ -90,11 +90,20 @@ export interface StreamingToolResult {
 
 /**
  * Flush a tool call's buffered `tool-input-start` and input deltas to the
- * client. The start event is withheld until the call's name is final, so a
- * delegated remote tool is never announced under its unresolved namespace
- * (#3123). Idempotent: `inputAnnounced` records that the buffer was drained,
- * and it is also what gates the terminal `tool-output-error`, so a call that
- * was never announced must be announced here before its failure can render.
+ * client.
+ *
+ * The start event is withheld until the call commits — `tool-input-end`,
+ * `tool-input-available` or `tool-call`. `tool-call` rebuilds the entry from
+ * its own `toolName` and announces from there, so a name that supersedes the
+ * one seen at `tool-input-start` is the one the client is given, and the
+ * superseded name never reaches the wire.
+ *
+ * Idempotent via `inputAnnounced`, which is also what gates the terminal
+ * `tool-output-error`. A call whose stream ended before any commit event was
+ * never announced, so it must be announced here before its failure can
+ * render. Such a call has no superseding name to wait for: the event that
+ * would carry one never arrived, and `inputAvailable` stays false, which is
+ * what makes that terminal path reachable at all.
  */
 export function announceStreamedToolCallInput(
   controller: ReadableStreamDefaultController,

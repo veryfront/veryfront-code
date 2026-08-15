@@ -2406,11 +2406,15 @@ export class AgentRuntime {
           // `tool-input-start` is still buffered and `inputAnnounced` is false
           // — which would suppress the `tool-output-error` below. On the
           // declined-recovery path that leaves the client with a reasoning
-          // block and then nothing at all. The run is terminating and the tool
-          // name is final, so flush the buffer and let the failure render as a
-          // tool card matching what the persisted message already records.
-          // Announcing is idempotent, so a call surfaced upstream is not
-          // reported twice.
+          // block and then nothing at all.
+          //
+          // The name is safe to publish here. `tool-call` is what can supersede
+          // a name, and it also sets `inputAvailable`, which fails the guard
+          // above — so reaching this line means no such event arrived and the
+          // buffered name is the only one this call will ever have. It is the
+          // same name recorded below and in the persisted assistant message,
+          // so the card matches a reload. Announcing is idempotent, so a call
+          // surfaced upstream is not reported twice.
           announceStreamedToolCallInput(controller, encoder, toolCall);
         }
         const incompleteToolCall: ToolCall = {
