@@ -124,11 +124,12 @@ export class SSRDependencyValidator {
 
     for (let i = 0; i < parseResult.crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
       const batch = parseResult.crossProjectImports.slice(i, i + TRANSFORM_BATCH_SIZE);
-      await Promise.all(
+      const results = await Promise.allSettled(
         batch.map(async (crossImport) => {
           try {
             await this.transformCrossProjectImport(crossImport);
           } catch (error) {
+            if (isTerminalHttpModuleFetchFailure(error)) throw error;
             this.missingDependencies.push({
               specifier: crossImport.specifier,
               fromFile: filePath,
@@ -139,6 +140,8 @@ export class SSRDependencyValidator {
           }
         }),
       );
+      const terminalFailure = results.find((result) => result.status === "rejected");
+      if (terminalFailure?.status === "rejected") throw terminalFailure.reason;
     }
   }
 
