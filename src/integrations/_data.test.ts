@@ -426,6 +426,25 @@ describe("integration endpoint specs", () => {
     );
   });
 
+  it("opts every curated Salesforce SOQL default into model-facing schemas", () => {
+    const connector = getConnector("salesforce");
+    let exposedDefaults = 0;
+
+    for (const tool of connector.tools) {
+      const query = tool.endpoint?.params?.q;
+      if (query?.default === undefined) continue;
+
+      assertEquals(
+        query.exposeDefault,
+        true,
+        `Expected ${tool.id} to expose its safe SOQL default`,
+      );
+      exposedDefaults += 1;
+    }
+
+    assertEquals(exposedDefaults, 7);
+  });
+
   it("declares Service Cloud support tools", () => {
     const expected = [
       "find_customer",
