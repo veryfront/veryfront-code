@@ -251,6 +251,18 @@ export async function formatDuplicatedBinaryHint(
       : positionalProjectDeleteTarget
       ? 2
       : undefined;
+  const positionalStudioProject = correctedCommand === "studio" &&
+    typeof args._[2] === "string" && !args._[2].startsWith("-");
+  const positionalStudioProjectRawIndex = positionalStudioProject
+    ? args.__rawPositionals?.[2]
+    : undefined;
+  const positionalStudioProjectHintIndex = positionalStudioProjectRawIndex !== undefined &&
+      duplicatedBinaryIndex !== undefined
+    ? positionalStudioProjectRawIndex -
+      (duplicatedBinaryIndex < positionalStudioProjectRawIndex ? 1 : 0)
+    : positionalStudioProject
+    ? 1
+    : undefined;
   const formatted: string[] = [];
   const opaquePayloadOptions = new Set(["--config", "--input"]);
   const opaqueIssueOptions = new Set([
@@ -320,7 +332,7 @@ export async function formatDuplicatedBinaryHint(
     const argument = hintArguments[index]!;
     if (
       index === positionalIssueTitleHintIndex || index === positionalPullProjectHintIndex ||
-      index === positionalProjectDeleteTargetHintIndex
+      index === positionalProjectDeleteTargetHintIndex || index === positionalStudioProjectHintIndex
     ) {
       formatted.push("'<REDACTED>'");
       continue;

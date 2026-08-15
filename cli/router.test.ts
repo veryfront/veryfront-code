@@ -742,6 +742,28 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("preserves the accepted schema category alias in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        for (const categoryArguments of [["-c", "ai"], ["-c=ai"]]) {
+          infoMessages.length = 0;
+          const code = await runAndCaptureExit(parseCliArgs([
+            "veryfront",
+            "schema",
+            ...categoryArguments,
+          ]));
+          assertEquals(code, 2);
+          assertEquals(infoMessages, [
+            '  You already included "veryfront". Use:',
+            `    veryfront schema ${categoryArguments.join(" ")}`,
+          ]);
+        }
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("redacts invalid short port alias values in the correction", async () => {
       stubExit();
       stubLogger();
@@ -945,6 +967,25 @@ describe("cli/router helpers", () => {
             `    veryfront studio ${option} '<REDACTED>'`,
           ]);
         }
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("redacts a positional Studio project identifier in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(parseCliArgs([
+          "veryfront",
+          "studio",
+          "private-studio-project",
+        ]));
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [
+          '  You already included "veryfront". Use:',
+          "    veryfront studio '<REDACTED>'",
+        ]);
       } finally {
         restoreAll();
       }

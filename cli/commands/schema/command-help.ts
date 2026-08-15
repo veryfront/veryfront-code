@@ -7,7 +7,7 @@ export const schemaHelp: CommandHelp = {
   usage: "veryfront schema [command] [options]",
   options: [
     { flag: "--json", description: "Output as JSON (default for this command)" },
-    { flag: "--category <cat>", description: "Filter commands by category" },
+    { flag: "-c, --category <cat>", description: "Filter commands by category" },
   ],
   examples: [
     "veryfront schema --json",
