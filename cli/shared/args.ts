@@ -72,8 +72,7 @@ function validateKnownOptions<T>(
     .flatMap((spec) => spec?.keys ?? []);
   const allowedKeys = new Set([...commandKeys, ...ROUTER_ARG_KEYS]);
   const unknownKey = Object.keys(args).find((key) =>
-    key !== "_" && key !== "__explicit" && key !== "__raw" &&
-    key !== "__rawPositionals" && !allowedKeys.has(key)
+    key !== "_" && key !== "__explicit" && !allowedKeys.has(key)
   );
   if (!unknownKey) return { success: true, data: undefined };
 
@@ -349,8 +348,7 @@ function parseBooleanValue(value: unknown): boolean | undefined {
   }
 }
 
-/** Return whether a raw argv token is consumed as an option value. */
-export function isCliOptionValue(arg: string | undefined): arg is string {
+function isValue(arg: string | undefined): boolean {
   return arg !== undefined && (!arg.startsWith("-") || /^-\d/.test(arg));
 }
 
@@ -361,7 +359,6 @@ function parse(
   const result: Record<string, unknown> = { _: [] as string[], ...options.default };
   const aliasMap = new Map(Object.entries(options.alias ?? {}));
   const explicit: Record<string, true> = {};
-  const rawPositionals: number[] = [];
 
   function setValue(key: string, value: unknown): void {
     explicit[key] = true;
@@ -384,7 +381,6 @@ function parse(
 
     if (arg === "--") {
       (result._ as string[]).push(...args.slice(i + 1));
-      rawPositionals.push(...args.slice(i + 1).map((_, offset) => i + 1 + offset));
       break;
     }
 
@@ -399,7 +395,7 @@ function parse(
       const key = arg.slice(2);
       const next = args[i + 1];
 
-      if (!isBooleanFlag(key, result._ as string[]) && isCliOptionValue(next)) {
+      if (!isBooleanFlag(key, result._ as string[]) && isValue(next)) {
         setValue(key, next);
         i++;
         continue;
@@ -416,7 +412,7 @@ function parse(
 
       const isBoolean = isBooleanFlag(key, result._ as string[]) ||
         isBooleanFlag(short, result._ as string[]);
-      if (!isBoolean && isCliOptionValue(next)) {
+      if (!isBoolean && isValue(next)) {
         setValue(key, next);
         if (key !== short) setValue(short, next);
         i++;
@@ -429,17 +425,15 @@ function parse(
     }
 
     (result._ as string[]).push(arg);
-    rawPositionals.push(i);
   }
 
   result.__explicit = explicit;
-  result.__rawPositionals = rawPositionals;
   return result;
 }
 
 /** Parse raw CLI arguments into a structured `ParsedArgs` object with aliases. */
 export function parseCliArgs(args: string[]): ParsedArgs {
-  const parsed = parse(args, {
+  return parse(args, {
     alias: {
       h: "help",
       v: "version",
@@ -452,6 +446,4 @@ export function parseCliArgs(args: string[]): ParsedArgs {
       m: "mode",
     },
   }) as ParsedArgs;
-  parsed.__raw = [...args];
-  return parsed;
 }
