@@ -47,11 +47,24 @@ export interface TriggerTarget {
   id: string;
 }
 
-/** Author-facing target shape accepting stored base values and kind-specific literals. */
+/**
+ * Author-facing target shape accepting stored base values and kind-specific literals.
+ *
+ * The compatibility arm keeps {@link TriggerTarget} assignable so a consumer can
+ * store a target behind the exported interface, but it spells the hosted
+ * conversation pair as absent. Excess-property checking only inspects object
+ * literals, so without that guard a stored task or workflow target carrying
+ * `conversationMode` or `conversationId` would typecheck here and then be
+ * rejected by {@link resolveTriggerTarget} at runtime. Only the agent arm
+ * carries the pair, which is the same rule runtime validation enforces.
+ */
 export type TriggerTargetConfig =
-  | TriggerTarget
-  | TaskTriggerTarget
-  | WorkflowTriggerTarget
+  | (TriggerTarget & {
+    /** Only agent targets carry hosted conversation behavior. */
+    conversationMode?: never;
+    /** Only agent targets carry hosted conversation identifiers. */
+    conversationId?: never;
+  })
   | AgentTriggerTarget;
 
 /** Validated target value that narrows conversation fields by `kind`. */

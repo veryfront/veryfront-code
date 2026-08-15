@@ -80,6 +80,8 @@ Agent targets require `agentMessage.promptTemplate`. Use `{{payload}}` for the
 pretty-printed complete payload or `{{payload.dot.path}}` for one nested value:
 
 ```ts
+import { webhook } from "veryfront/webhook";
+
 export default webhook({
   id: "support-escalation",
   target: { kind: "agent", id: "support-agent", conversationMode: "create_new" },
@@ -116,6 +118,8 @@ target-level addressing reads `agentMessage`, a platform that reads the target
 reads the target, and both find the value you wrote.
 
 ```ts
+import { webhook } from "veryfront/webhook";
+
 export default webhook({
   id: "support-escalation",
   target: { kind: "agent", id: "support-agent", conversationMode: "create_new" },

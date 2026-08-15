@@ -171,6 +171,75 @@ describe("trigger target public type contracts", () => {
     assertEquals(invalidTaskRun.target.kind, "task");
   });
 
+  it("rejects stored non-agent targets that carry conversation fields", () => {
+    // Excess-property checking inspects only object literals, so a stored value
+    // is the shape that can reach runtime validation while still typechecking.
+    const storedWorkflowTarget = {
+      kind: "workflow" as const,
+      id: "billing/sync",
+      conversationMode: "create_new" as const,
+    };
+
+    const storedTaskTarget = {
+      kind: "task" as const,
+      id: "sync-helpdesk",
+      conversationId: null,
+    };
+
+    const storedAgentTarget = {
+      kind: "agent" as const,
+      id: "case-triage",
+      conversationMode: "existing" as const,
+      conversationId: "11111111-1111-4111-8111-111111111111",
+    };
+
+    const invalidStoredWorkflowSchedule = acceptScheduleConfig({
+      id: "stored-bad-workflow-target",
+      schedule: "0 * * * *",
+      // @ts-expect-error Stored workflow schedule targets cannot carry conversation fields.
+      target: storedWorkflowTarget,
+    });
+
+    const invalidStoredTaskWebhook = acceptWebhookConfig({
+      id: "stored-bad-task-target",
+      // @ts-expect-error Stored task webhook targets cannot carry conversation fields.
+      target: storedTaskTarget,
+    });
+
+    const invalidStoredWorkflowRun = acceptRunTriggerTargetOptions({
+      projectDir: "project",
+      adapter,
+      // @ts-expect-error Stored workflow runtime targets cannot carry conversation fields.
+      target: storedWorkflowTarget,
+    });
+
+    const storedAgentSchedule = acceptScheduleConfig({
+      id: "stored-agent-target",
+      schedule: "0 * * * *",
+      target: storedAgentTarget,
+      agentMessage: { prompt: "Triage open cases." },
+    });
+
+    const storedAgentWebhook = acceptWebhookConfig({
+      id: "stored-agent-webhook",
+      target: storedAgentTarget,
+      agentMessage: { promptTemplate: "Triage {{payload.summary}}." },
+    });
+
+    const storedAgentRun = acceptRunTriggerTargetOptions({
+      projectDir: "project",
+      adapter,
+      target: storedAgentTarget,
+    });
+
+    assertEquals(invalidStoredWorkflowSchedule.target.kind, "workflow");
+    assertEquals(invalidStoredTaskWebhook.target.kind, "task");
+    assertEquals(invalidStoredWorkflowRun.target.kind, "workflow");
+    assertEquals(storedAgentSchedule.target, storedAgentTarget);
+    assertEquals(storedAgentWebhook.target, storedAgentTarget);
+    assertEquals(storedAgentRun.target, storedAgentTarget);
+  });
+
   it("narrows canonical output targets by kind", () => {
     const target = {
       kind: "agent" as const,
