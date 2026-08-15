@@ -1314,6 +1314,54 @@ function isPostfixNonNullAssertionBefore(
     canEndStatementBeforeLineTerminator(source, beforeBang);
 }
 
+function isCompletedTypeArgumentListBefore(
+  source: string,
+  closeIndex: number,
+  rangeStart: number,
+): boolean {
+  let cursor = closeIndex - 1;
+  let angleDepth = 1;
+  let parenDepth = 0;
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let sawTypeContent = false;
+
+  while (cursor >= rangeStart) {
+    const char = source[cursor];
+
+    if (char === ")") parenDepth++;
+    else if (char === "(" && parenDepth > 0) parenDepth--;
+    else if (char === "}") braceDepth++;
+    else if (char === "{" && braceDepth > 0) braceDepth--;
+    else if (char === "]") bracketDepth++;
+    else if (char === "[" && bracketDepth > 0) bracketDepth--;
+    else if (parenDepth === 0 && braceDepth === 0 && bracketDepth === 0) {
+      if (char === ">") {
+        angleDepth++;
+      } else if (char === "<") {
+        angleDepth--;
+        if (angleDepth === 0) {
+          const beforeOpen = previousSignificantIndexBeforeIgnored(source, cursor);
+          const beforeOpenChar = source[beforeOpen];
+          return sawTypeContent && beforeOpen >= rangeStart &&
+            (isIdentifierPartAt(source, beforeOpen) ||
+              isIdentifierEscapeEndingAt(source, beforeOpen + 1) ||
+              beforeOpenChar === ")" ||
+              beforeOpenChar === "]");
+        }
+      } else if (!/\s/.test(char ?? "")) {
+        sawTypeContent = true;
+      }
+    } else if (!/\s/.test(char ?? "")) {
+      sawTypeContent = true;
+    }
+
+    cursor--;
+  }
+
+  return false;
+}
+
 function canStartRegexLiteral(
   source: string,
   index: number,
@@ -1371,6 +1419,9 @@ function canStartRegexLiteral(
     return true;
   }
   if (char === "!") return !isPostfixNonNullAssertionBefore(source, previous, rangeStart);
+  if (char === ">" && isCompletedTypeArgumentListBefore(source, previous, rangeStart)) {
+    return false;
+  }
   if (char !== undefined && "([{=,:;~?&|+-*%^<>".includes(char)) return true;
 
   const keyword = keywordBefore(source, index, previous);

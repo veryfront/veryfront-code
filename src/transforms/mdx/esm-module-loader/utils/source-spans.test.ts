@@ -174,6 +174,17 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("finds static imports after TypeScript instantiation expressions before division", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          'const ratio = factory<Config> / divisor; import value from "./after-instantiation.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-instantiation.js"],
+      );
+    });
+
     it("finds static imports after JSX text inside template substitutions", () => {
       assertEquals(
         findStaticImportFromSpans(
@@ -699,6 +710,13 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       assertEquals(
         specifiers('const value = <Foo>input; import("./assertion-lazy.js");'),
         ["./assertion-lazy.js"],
+      );
+    });
+
+    it("finds imports after TypeScript instantiation expressions before division", () => {
+      assertEquals(
+        specifiers('const ratio = factory<Config> / divisor; import("./after-instantiation.js");'),
+        ["./after-instantiation.js"],
       );
     });
 
@@ -1649,6 +1667,17 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           UNBOUNDED,
         ).map((span) => span.path),
         ["./after-jsx-semicolon-text-side-effect.js"],
+      );
+    });
+
+    it("finds side-effect imports after TypeScript instantiation expressions before division", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'const ratio = factory<Config> / divisor; import "./after-instantiation.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-instantiation.js"],
       );
     });
 
