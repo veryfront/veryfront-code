@@ -70,7 +70,14 @@ export const getResolvedConfigSchema = defineSchema((v) =>
 );
 export const ResolvedConfigSchema = lazySchema(getResolvedConfigSchema);
 export type ResolvedConfig = InferSchema<ReturnType<typeof getResolvedConfigSchema>>;
-type ApiTokenSource = NonNullable<ResolvedConfig["apiTokenSource"]>;
+export type ApiTokenSource = NonNullable<ResolvedConfig["apiTokenSource"]>;
+
+export interface ApiCredentialCandidate {
+  apiToken: string;
+  apiTokenSource: ApiTokenSource;
+  validationEnv: EnvironmentConfig;
+  authoritative: boolean;
+}
 
 interface ConfigFileResolution {
   config: VeryfrontConfig | null;
@@ -217,37 +224,92 @@ async function resolveApiTokenForMode(
   configFile: VeryfrontConfig | null,
   interactive: boolean,
 ): Promise<{ apiToken: string | null; apiTokenSource?: ApiTokenSource }> {
-  const envToken = env.apiToken;
-  const envSource = envToken ? getEnvSource("VERYFRONT_API_TOKEN") : { source: "unset" as const };
-  const storedToken = await readToken(env);
-
-  if (envToken && envSource.source !== "env-file") {
+  const [candidate] = await resolveApiCredentialCandidates(env, configFile, interactive, env);
+  if (candidate) {
     return {
-      apiToken: envToken,
-      apiTokenSource: "env",
+      apiToken: candidate.apiToken,
+      apiTokenSource: candidate.apiTokenSource,
     };
-  }
-
-  if (configFile?.apiToken) {
-    return { apiToken: configFile.apiToken, apiTokenSource: "config-file" };
-  }
-
-  if (interactive && envToken && envSource.source === "env-file" && storedToken) {
-    return { apiToken: storedToken, apiTokenSource: "token-store" };
-  }
-
-  if (envToken) {
-    return {
-      apiToken: envToken,
-      apiTokenSource: envSource.source === "env-file" ? "env-file" : "env",
-    };
-  }
-
-  if (storedToken) {
-    return { apiToken: storedToken, apiTokenSource: "token-store" };
   }
 
   return { apiToken: null };
+}
+
+async function resolveApiCredentialCandidates(
+  env: EnvironmentConfig,
+  configFile: VeryfrontConfig | null,
+  interactive: boolean,
+  validationEnv: EnvironmentConfig,
+): Promise<ApiCredentialCandidate[]> {
+  const envToken = env.apiToken;
+  const envSource = envToken ? getEnvSource("VERYFRONT_API_TOKEN") : { source: "unset" as const };
+  const storedToken = await readToken(env);
+  const candidates: ApiCredentialCandidate[] = [];
+
+  const shellEnvToken = envToken && envSource.source !== "env-file";
+  const projectEnvTokenAfterStored = interactive && envToken && envSource.source === "env-file" &&
+    storedToken;
+
+  if (shellEnvToken) {
+    candidates.push({
+      apiToken: envToken,
+      apiTokenSource: "env",
+      validationEnv,
+      authoritative: true,
+    });
+  }
+
+  if (configFile?.apiToken) {
+    candidates.push({
+      apiToken: configFile.apiToken,
+      apiTokenSource: "config-file",
+      validationEnv,
+      authoritative: true,
+    });
+  }
+
+  if (projectEnvTokenAfterStored) {
+    candidates.push({
+      apiToken: storedToken,
+      apiTokenSource: "token-store",
+      validationEnv,
+      authoritative: false,
+    });
+  }
+
+  if (envToken && !shellEnvToken && !projectEnvTokenAfterStored) {
+    candidates.push({
+      apiToken: envToken,
+      apiTokenSource: envSource.source === "env-file" ? "env-file" : "env",
+      validationEnv,
+      authoritative: envSource.source !== "env-file",
+    });
+  }
+
+  if (storedToken && !projectEnvTokenAfterStored) {
+    candidates.push({
+      apiToken: storedToken,
+      apiTokenSource: "token-store",
+      validationEnv,
+      authoritative: false,
+    });
+  }
+
+  return candidates;
+}
+
+export async function resolveApiCredentialCandidatesForAuth(
+  env: EnvironmentConfig = getEnvironmentConfig(),
+  projectDir: string = cwd(),
+  interactive = true,
+): Promise<ApiCredentialCandidate[]> {
+  const configFile = await readConfigJsonFile(projectDir);
+  const validationEnv = {
+    ...env,
+    apiUrl: resolveCliApiUrl(env, configFile?.apiUrl),
+  };
+
+  return resolveApiCredentialCandidates(env, configFile, interactive, validationEnv);
 }
 
 async function resolveConfigBase(

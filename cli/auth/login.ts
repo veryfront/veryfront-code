@@ -12,9 +12,8 @@ import {
   DEFAULT_CALLBACK_PORT,
   DEFAULT_LOGIN_TIMEOUT_MS,
   getApiUrl,
-  resolveCliApiUrl,
 } from "../shared/constants.ts";
-import { readConfigJsonFile } from "../shared/config.ts";
+import { type ApiTokenSource, resolveApiCredentialCandidatesForAuth } from "../shared/config.ts";
 import {
   createErrorEnvelope,
   createSuccessEnvelope,
@@ -63,20 +62,6 @@ function describeApiTokenSource(token: string): string {
   return `(via VERYFRONT_API_TOKEN from ${formatEnvSourcePathForDisplay(origin.file)})`;
 }
 
-async function readProjectConfigPreflight(
-  env: EnvironmentConfig,
-): Promise<{ token?: string; env: EnvironmentConfig }> {
-  const config = await readConfigJsonFile(cwd());
-
-  return {
-    token: config?.apiToken,
-    env: {
-      ...env,
-      apiUrl: resolveCliApiUrl(env, config?.apiUrl),
-    },
-  };
-}
-
 export type AuthMethod = "google" | "github" | "microsoft" | "token";
 
 export interface UserInfo {
@@ -118,17 +103,18 @@ let existingSessionTimeoutMs = DEFAULT_EXISTING_SESSION_TIMEOUT_MS;
 
 function loginIdentityData(
   identity: AuthIdentity,
-  source: "config-file" | "env" | "token-store",
+  source: ApiTokenSource,
 ): Record<string, unknown> {
+  const displayedSource = source === "env-file" ? "env" : source;
   if (isApiKeyIdentity(identity)) {
     return {
       authenticated: true,
       credential_type: "api_key",
-      source,
+      source: displayedSource,
     };
   }
 
-  return { ...identity, source };
+  return { ...identity, source: displayedSource };
 }
 
 async function outputLoginAuthenticationRequiredJson(): Promise<void> {
@@ -599,46 +585,26 @@ function writeAuthoritativeCredentialUnavailableMessage(
 async function describeExistingSession(
   env: EnvironmentConfig,
 ): Promise<AuthIdentity | "failure-output" | null> {
-  const envTokenSource = env.apiToken ? getEnvSource("VERYFRONT_API_TOKEN").source : "unset";
-  const environmentTokenIsAuthoritative = envTokenSource !== "env-file";
-  const candidates: {
-    token: string;
-    source: "config-file" | "environment" | "stored";
-    authoritative?: boolean;
-    env?: EnvironmentConfig;
-  }[] = [];
-  const configPreflight = await readProjectConfigPreflight(env);
-  const defaultValidationEnv = configPreflight.env;
-  if (env.apiToken && environmentTokenIsAuthoritative) {
-    candidates.push({ token: env.apiToken, source: "environment", authoritative: true });
-  }
-  if (configPreflight.token) {
-    candidates.push({
-      token: configPreflight.token,
-      source: "config-file",
-      authoritative: true,
-      env: configPreflight.env,
-    });
-  }
-  const storedToken = await readToken(env);
-  if (storedToken) candidates.push({ token: storedToken, source: "stored" });
-  if (env.apiToken && !environmentTokenIsAuthoritative && !storedToken) {
-    candidates.push({ token: env.apiToken, source: "environment", authoritative: false });
-  }
+  const candidates = await resolveApiCredentialCandidatesForAuth(env);
   if (candidates.length === 0) return null;
+  const hasConfigToken = candidates.some((candidate) => candidate.apiTokenSource === "config-file");
+  const hasStoredToken = candidates.some((candidate) => candidate.apiTokenSource === "token-store");
   const signal = AbortSignal.timeout(existingSessionTimeoutMs);
   let unavailable: CredentialValidationUnavailableError | null = null;
 
-  for (
-    const { token, source, authoritative, env: validationEnv = defaultValidationEnv } of candidates
-  ) {
+  for (const { apiToken, apiTokenSource, authoritative, validationEnv } of candidates) {
+    const source = apiTokenSource === "config-file"
+      ? "config-file"
+      : apiTokenSource === "token-store"
+      ? "stored"
+      : "environment";
     let identity: AuthIdentity | null;
     try {
       // Bounded: this preflight only decides whether to say "already logged in"
       // instead of prompting. An authoritative credential that cannot be
       // checked must still stop, because later commands will resolve it ahead
       // of any replacement login.
-      identity = await validateCredential(token, validationEnv, {
+      identity = await validateCredential(apiToken, validationEnv, {
         signal,
         throwOnCredentialValidationUnavailable: true,
       });
@@ -650,7 +616,7 @@ async function describeExistingSession(
             writeAuthoritativeCredentialUnavailableMessage(
               source,
               error,
-              Boolean(configPreflight.token),
+              hasConfigToken,
             );
             return "failure-output";
           }
@@ -664,7 +630,7 @@ async function describeExistingSession(
       if (authoritative) {
         if (!isJsonMode()) {
           if (source !== "stored") {
-            writeAuthoritativeCredentialRejectedMessage(source, Boolean(configPreflight.token));
+            writeAuthoritativeCredentialRejectedMessage(source, hasConfigToken);
             return "failure-output";
           }
         }
@@ -676,14 +642,7 @@ async function describeExistingSession(
     if (isJsonMode()) {
       await outputJson(createSuccessEnvelope(
         "login",
-        loginIdentityData(
-          identity,
-          source === "environment"
-            ? "env"
-            : source === "config-file"
-            ? "config-file"
-            : "token-store",
-        ),
+        loginIdentityData(identity, apiTokenSource),
       ));
       return identity;
     }
@@ -701,7 +660,7 @@ async function describeExistingSession(
     // the case `whoami` now names, so the session ends at the directory
     // boundary. Say so rather than let them discover it elsewhere.
     if (source === "environment") {
-      if (storedToken) {
+      if (hasStoredToken) {
         console.log(
           "  " + dim("Using VERYFRONT_API_TOKEN; it takes precedence over a stored credential."),
         );
@@ -720,7 +679,7 @@ async function describeExistingSession(
             ),
         );
       }
-      if (configPreflight.token) writeEnvironmentConfigFileSwitchingGuidance();
+      if (hasConfigToken) writeEnvironmentConfigFileSwitchingGuidance();
     } else if (source === "config-file") {
       console.log(
         "  " +
@@ -849,21 +808,23 @@ export async function ensureAuthenticated(
 ): Promise<AuthIdentity | null> {
   const humanOutput = !isJsonMode();
 
-  if (env.apiToken) {
-    const credential = await validateCredential(env.apiToken, env);
+  const candidates = await resolveApiCredentialCandidatesForAuth(env);
+  for (const candidate of candidates) {
+    const credential = await validateCredential(candidate.apiToken, candidate.validationEnv);
     if (credential) return credential;
-    if (humanOutput) {
+
+    if (candidate.apiTokenSource === "env" && humanOutput) {
       console.log("  " + warning("Warning: VERYFRONT_API_TOKEN is invalid"));
     }
-  }
-
-  const storedToken = await readToken(env);
-  if (storedToken) {
-    const credential = await validateCredential(storedToken, env);
-    if (credential) return credential;
-    await deleteToken(env);
-    if (humanOutput) {
-      console.log("  " + warning("Session expired. Please log in again."));
+    if (candidate.apiTokenSource === "config-file" && humanOutput) {
+      console.log("  " + warning("Warning: apiToken from veryfront.json is invalid"));
+    }
+    if (candidate.authoritative) return null;
+    if (candidate.apiTokenSource === "token-store") {
+      await deleteToken(env);
+      if (humanOutput) {
+        console.log("  " + warning("Session expired. Please log in again."));
+      }
     }
   }
 
@@ -885,16 +846,17 @@ export async function logout(env: EnvironmentConfig = getEnvironmentConfig()): P
 
 async function reportCredential(
   token: string,
-  source: "env" | "token-store",
+  source: ApiTokenSource,
   env: EnvironmentConfig,
 ): Promise<AuthIdentity | null> {
   const credential = await validateCredential(token, env);
   if (!credential) return null;
+  const displayedSource = source === "env-file" ? "env" : source;
 
   if (!isApiKeyIdentity(credential)) {
     const userInfo = credential;
     if (isJsonMode()) {
-      await outputJson(createSuccessEnvelope("whoami", { ...userInfo, source }));
+      await outputJson(createSuccessEnvelope("whoami", { ...userInfo, source: displayedSource }));
       return userInfo;
     }
 
@@ -905,7 +867,7 @@ async function reportCredential(
       await outputJson(createSuccessEnvelope("whoami", {
         authenticated: true,
         credential_type: "api_key",
-        source,
+        source: displayedSource,
       }));
       return { authenticated: true, type: "apiKey" };
     }
@@ -916,8 +878,10 @@ async function reportCredential(
 
   console.log(
     "  " + dim(
-      source === "env"
+      source === "env" || source === "env-file"
         ? describeApiTokenSource(token)
+        : source === "config-file"
+        ? "apiToken from veryfront.json"
         : `Token stored at: ${getTokenLocation(env)}`,
     ),
   );
@@ -927,15 +891,15 @@ async function reportCredential(
 export async function whoami(
   env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<AuthIdentity | null> {
-  if (env.apiToken) {
-    const result = await reportCredential(env.apiToken, "env", env);
+  const candidates = await resolveApiCredentialCandidatesForAuth(env);
+  for (const candidate of candidates) {
+    const result = await reportCredential(
+      candidate.apiToken,
+      candidate.apiTokenSource,
+      candidate.validationEnv,
+    );
     if (result) return result;
-  }
-
-  const storedToken = await readToken(env);
-  if (storedToken) {
-    const result = await reportCredential(storedToken, "token-store", env);
-    if (result) return result;
+    if (candidate.authoritative) break;
   }
 
   if (isJsonMode()) {

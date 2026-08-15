@@ -366,6 +366,53 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("uses a valid veryfront.json API key without executing module config", async () => {
+      const originalFetch = globalThis.fetch;
+      const projectDir = await makeTempDir({ prefix: "ensure-config-token-" });
+      const markerPath = `${projectDir}/executed-module-config`;
+      let requestedUrl = "";
+      let requestedAuth = "";
+
+      try {
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.config.ts`,
+          `await Deno.writeTextFile(${
+            JSON.stringify(markerPath)
+          }, "executed");\nexport default { projectSlug: "module-project" };\n`,
+        );
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.json`,
+          JSON.stringify({
+            apiToken: "vf_config_secret",
+            apiUrl: "https://config-auth.example.test",
+            projectSlug: "json-project",
+          }) + "\n",
+        );
+        globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+          requestedUrl = String(input);
+          requestedAuth = String(new Headers(init?.headers).get("Authorization"));
+          return Promise.resolve(
+            new Response(JSON.stringify({ data: [], page_info: {} }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        }) as typeof fetch;
+
+        const { ensureAuthenticated } = await import("./login.ts");
+        const { withCwd } = await import("#veryfront/testing/cwd.ts");
+        const credential = await withCwd(projectDir, () => ensureAuthenticated(testEnv));
+
+        assertEquals(credential, { authenticated: true, type: "apiKey" });
+        assertEquals(requestedUrl, "https://config-auth.example.test/projects?limit=1");
+        assertEquals(requestedAuth, "Bearer vf_config_secret");
+        assertEquals(await Deno.stat(markerPath).then(() => true).catch(() => false), false);
+      } finally {
+        globalThis.fetch = originalFetch;
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
     it("does not prompt for an auth method or token in non-interactive mode", async () => {
       const { login } = await import("./login.ts");
 
@@ -1785,6 +1832,8 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       const requestedAuth: string[] = [];
 
       try {
+        const { __resetEnvLoaderForTests } = await import("veryfront/utils/env-loader");
+        __resetEnvLoaderForTests();
         setEnv("VERYFRONT_API_TOKEN", "env-timeout-token");
         globalThis.fetch = ((_: string | URL | Request, init?: RequestInit) => {
           requestedAuth.push(String(new Headers(init?.headers).get("authorization") ?? ""));
@@ -1815,6 +1864,8 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         assertEquals(printed.includes("replacement-token"), false);
         assertEquals(await readToken(testEnv), null);
       } finally {
+        const { __resetEnvLoaderForTests } = await import("veryfront/utils/env-loader");
+        __resetEnvLoaderForTests();
         if (originalEnvToken) setEnv("VERYFRONT_API_TOKEN", originalEnvToken);
         else deleteEnv("VERYFRONT_API_TOKEN");
         globalThis.prompt = originalPrompt;
@@ -1834,6 +1885,8 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       const requestedAuth: string[] = [];
 
       try {
+        const { __resetEnvLoaderForTests } = await import("veryfront/utils/env-loader");
+        __resetEnvLoaderForTests();
         setEnv("VERYFRONT_API_TOKEN", "env-network-token");
         globalThis.fetch = ((_: string | URL | Request, init?: RequestInit) => {
           requestedAuth.push(String(new Headers(init?.headers).get("authorization") ?? ""));
@@ -1864,6 +1917,8 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         assertEquals(printed.includes("replacement-token"), false);
         assertEquals(await readToken(testEnv), null);
       } finally {
+        const { __resetEnvLoaderForTests } = await import("veryfront/utils/env-loader");
+        __resetEnvLoaderForTests();
         if (originalEnvToken) setEnv("VERYFRONT_API_TOKEN", originalEnvToken);
         else deleteEnv("VERYFRONT_API_TOKEN");
         globalThis.prompt = originalPrompt;
@@ -2435,6 +2490,157 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         assertEquals(requestedUrl, "https://auth.example.test/me");
       } finally {
         globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("reports a veryfront.json API key in human mode without exposing it", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const output: string[] = [];
+      const projectDir = await makeTempDir({ prefix: "whoami-config-human-" });
+      const markerPath = `${projectDir}/executed-module-config`;
+      let requestedUrl = "";
+      let requestedAuth = "";
+
+      try {
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.config.ts`,
+          `await Deno.writeTextFile(${
+            JSON.stringify(markerPath)
+          }, "executed");\nexport default { projectSlug: "module-project" };\n`,
+        );
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.json`,
+          JSON.stringify({
+            apiToken: "vf_config_human_secret",
+            apiUrl: "https://config-whoami.example.test",
+            projectSlug: "json-project",
+          }) + "\n",
+        );
+        globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+          requestedUrl = String(input);
+          requestedAuth = String(new Headers(init?.headers).get("Authorization"));
+          return Promise.resolve(
+            new Response(JSON.stringify({ data: [], page_info: {} }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        }) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+
+        const { whoami } = await import("./login.ts");
+        const { withCwd } = await import("#veryfront/testing/cwd.ts");
+        const result = await withCwd(projectDir, () => whoami(testEnv));
+
+        assertEquals(result, { authenticated: true, type: "apiKey" });
+        assertEquals(requestedUrl, "https://config-whoami.example.test/projects?limit=1");
+        assertEquals(requestedAuth, "Bearer vf_config_human_secret");
+        const printed = output.join("\n");
+        assertStringIncludes(printed, "Authenticated with an API key");
+        assertStringIncludes(printed, "apiToken from veryfront.json");
+        assertEquals(printed.includes("vf_config_human_secret"), false);
+        assertEquals(await Deno.stat(markerPath).then(() => true).catch(() => false), false);
+      } finally {
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("reports a veryfront.json API key in JSON mode with config-file source", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const output: string[] = [];
+      const projectDir = await makeTempDir({ prefix: "whoami-config-json-" });
+      let requestedAuth = "";
+
+      try {
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.json`,
+          JSON.stringify({
+            apiToken: "vf_config_json_secret",
+            apiUrl: "https://config-whoami-json.example.test",
+            projectSlug: "json-project",
+          }) + "\n",
+        );
+        globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+          requestedAuth = String(new Headers(init?.headers).get("Authorization"));
+          return Promise.resolve(
+            new Response(JSON.stringify({ data: [], page_info: {} }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        }) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        const { whoami } = await import("./login.ts");
+        const { withCwd } = await import("#veryfront/testing/cwd.ts");
+        setJsonMode(true);
+        const result = await withCwd(projectDir, () => whoami(testEnv));
+
+        assertEquals(result, { authenticated: true, type: "apiKey" });
+        assertEquals(requestedAuth, "Bearer vf_config_json_secret");
+        const envelope = JSON.parse(output.join("\n"));
+        assertEquals(envelope.command, "whoami");
+        assertEquals(envelope.data, {
+          authenticated: true,
+          credential_type: "api_key",
+          source: "config-file",
+        });
+        assertEquals(output.join("\n").includes("vf_config_json_secret"), false);
+      } finally {
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        setJsonMode(false);
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("uses veryfront.json before a stored credential and does not fall through when rejected", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const output: string[] = [];
+      const projectDir = await makeTempDir({ prefix: "whoami-config-precedence-" });
+      const requestedAuth: string[] = [];
+
+      try {
+        await saveToken("stored-valid-token", testEnv);
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.json`,
+          JSON.stringify({ apiToken: "config-invalid-token", projectSlug: "json-project" }) +
+            "\n",
+        );
+        globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+          const auth = String(new Headers(init?.headers).get("Authorization"));
+          requestedAuth.push(auth);
+          if (auth === "Bearer stored-valid-token") {
+            return Promise.resolve(Response.json({ id: "stored-user", email: "stored@test" }));
+          }
+          return Promise.resolve(new Response(null, { status: 401 }));
+        }) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        const { whoami } = await import("./login.ts");
+        const { withCwd } = await import("#veryfront/testing/cwd.ts");
+        setJsonMode(true);
+        const result = await withCwd(projectDir, () => whoami(testEnv));
+
+        assertEquals(result, null);
+        assertEquals(requestedAuth, ["Bearer config-invalid-token"]);
+        assertEquals(JSON.parse(output.join("\n")).data, { authenticated: false });
+        assertEquals(output.join("\n").includes("config-invalid-token"), false);
+      } finally {
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        setJsonMode(false);
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        await Deno.remove(projectDir, { recursive: true });
+        await safeDeleteToken();
       }
     });
 
