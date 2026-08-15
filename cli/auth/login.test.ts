@@ -892,6 +892,80 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("does not accept a project dotenv token after a rejected stored login in JSON mode", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const originalError = console.error;
+      const originalToken = getEnv("VERYFRONT_API_TOKEN");
+      const output: string[] = [];
+      const errors: string[] = [];
+      const requestedAuth: string[] = [];
+      const envDir = await makeTempDir({ prefix: "login-dotenv-token-" });
+      await saveToken("stored-invalid-token", testEnv);
+
+      try {
+        deleteEnv("VERYFRONT_API_TOKEN");
+        await Deno.writeTextFile(
+          `${envDir}/.env`,
+          "VERYFRONT_API_TOKEN=env-file-valid-token\n",
+        );
+        const { __resetEnvLoaderForTests, loadEnv } = await import(
+          "veryfront/utils/env-loader"
+        );
+        __resetEnvLoaderForTests();
+        await loadEnv({ cwd: envDir });
+
+        globalThis.fetch = ((_: string | URL | Request, init?: RequestInit) => {
+          const auth = String(new Headers(init?.headers).get("authorization") ?? "");
+          requestedAuth.push(auth);
+          if (auth === "Bearer stored-invalid-token") {
+            return Promise.resolve(new Response(null, { status: 401 }));
+          }
+          return Promise.resolve(
+            Response.json({ id: "env-user", email: "env@example.com" }),
+          );
+        }) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+        console.error = (message?: unknown) => errors.push(String(message));
+
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        const { login } = await import("./login.ts");
+        setJsonMode(true);
+
+        const result = await login(undefined, {
+          ...testEnv,
+          apiToken: "env-file-valid-token",
+        });
+        const envelope = JSON.parse(output.join("\n"));
+
+        assertEquals(result, null);
+        assertEquals(envelope.error, {
+          code: "AUTHENTICATION_ERROR",
+          slug: "authentication-required",
+          registrySlug: "authentication-required",
+          message: "Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.",
+        });
+        assertEquals(requestedAuth, ["Bearer stored-invalid-token"]);
+        assertEquals(output.join("\n").includes("env@example.com"), false);
+        assertEquals(output.join("\n").includes("env-file-valid-token"), false);
+        assertEquals(output.join("\n").includes("stored-invalid-token"), false);
+        assertEquals(errors, []);
+      } finally {
+        const { __resetEnvLoaderForTests } = await import("veryfront/utils/env-loader");
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        __resetEnvLoaderForTests();
+        setJsonMode(false);
+        if (originalToken) setEnv("VERYFRONT_API_TOKEN", originalToken);
+        else deleteEnv("VERYFRONT_API_TOKEN");
+        console.log = originalLog;
+        console.error = originalError;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+        await remove(envDir, { recursive: true });
+      }
+    });
+
     it("preserves a malformed environment validation response over a valid stored login in JSON mode", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;

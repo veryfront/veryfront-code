@@ -480,7 +480,7 @@ async function describeExistingSession(
   }
   const storedToken = await readToken(env);
   if (storedToken) candidates.push({ token: storedToken, source: "stored" });
-  if (env.apiToken && !environmentTokenIsAuthoritative) {
+  if (env.apiToken && !environmentTokenIsAuthoritative && !storedToken) {
     candidates.push({ token: env.apiToken, source: "environment", authoritative: false });
   }
   if (candidates.length === 0) return null;
