@@ -132,6 +132,16 @@ describe("trigger target public type contracts", () => {
       agentMessage: { prompt: "This target is not an agent." },
     });
 
+    const storedTaskMessage = {
+      id: "stored-bad-task-message",
+      schedule: "0 * * * *",
+      target: { kind: "task" as const, id: "sync-helpdesk" },
+      agentMessage: { prompt: "This target is not an agent." },
+    };
+
+    // @ts-expect-error Stored task schedules cannot define an agent message.
+    const invalidStoredTaskMessage = acceptScheduleConfig(storedTaskMessage);
+
     // @ts-expect-error Task schedule targets cannot carry conversation fields.
     const invalidTaskSchedule = acceptScheduleConfig({
       id: "bad-task",
@@ -155,6 +165,7 @@ describe("trigger target public type contracts", () => {
     assertEquals(agentSchedule.target.kind, "agent");
     assertEquals(invalidTaskMessage.target.kind, "task");
     assertEquals(invalidWorkflowMessage.target.kind, "workflow");
+    assertEquals(invalidStoredTaskMessage.target.kind, "task");
     assertEquals(invalidTaskSchedule.target.kind, "task");
     assertEquals(invalidWorkflowWebhook.target.kind, "workflow");
     assertEquals(invalidTaskRun.target.kind, "task");

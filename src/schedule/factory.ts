@@ -14,7 +14,9 @@ import { normalizeScheduleConfig } from "./validation.ts";
  * workflow targets.
  */
 export function schedule(config: AgentScheduleConfig): ScheduleDefinition;
-export function schedule(config: ScheduleConfig): ScheduleDefinition;
+export function schedule(
+  config: ScheduleConfig & { agentMessage?: never },
+): ScheduleDefinition;
 export function schedule(
   config: AgentScheduleConfig | ScheduleConfig,
 ): ScheduleDefinition {
