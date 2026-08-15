@@ -1390,7 +1390,10 @@ function readEmittedAnthropicCacheTtl(
   if (ttl.present && ttl.value === "1h") {
     return "1h";
   }
-  return !ttl.present || ttl.value === undefined || ttl.value === "5m" ? "5m" : undefined;
+  return !ttl.present || ttl.value === undefined || typeof ttl.value === "function" ||
+      typeof ttl.value === "symbol" || ttl.value === "5m"
+    ? "5m"
+    : undefined;
 }
 
 function upgradeEmittedAnthropicCacheTtl(
