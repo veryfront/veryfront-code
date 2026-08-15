@@ -239,7 +239,7 @@ export async function formatDuplicatedBinaryHint(
     : undefined;
   const positionalProjectDeleteTarget =
     (correctedCommand === "project" || correctedCommand === "projects") &&
-    args._[2] === "delete" &&
+    (args._[2] === "delete" || args._[2] === "rm") &&
     typeof args._[3] === "string" && !args._[3].startsWith("-");
   const positionalProjectDeleteTargetRawIndex = positionalProjectDeleteTarget
     ? args.__rawPositionals?.[3]
