@@ -21,8 +21,11 @@ export type CreateVeryfrontCloudRuntimeSystemMessagesInput = {
 export function createVeryfrontCloudRuntimeSystemMessages(
   input: CreateVeryfrontCloudRuntimeSystemMessagesInput,
 ): ChatSystemMessage[] {
+  const instructions = Array.isArray(input.agent.system) && input.agent.system.length === 0
+    ? input.agent.instructions
+    : input.agent.system ?? input.agent.instructions;
   return buildAgentCallContext({
-    instructions: input.agent.system ?? input.agent.instructions,
+    instructions,
     anthropicProviderAlias: "veryfront-cloud",
     ...(input.instructions ? { projectInstructions: input.instructions } : {}),
     ...(input.projectId

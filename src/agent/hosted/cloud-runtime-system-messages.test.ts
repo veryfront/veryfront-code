@@ -84,6 +84,17 @@ describe("cloud runtime system messages", () => {
     assertEquals(messages[2]?.providerOptions, undefined);
   });
 
+  it("falls back to authored instructions when structured system messages are empty", () => {
+    const messages = createVeryfrontCloudRuntimeSystemMessages({
+      agent: createAgent({
+        instructions: "Use the authored fallback instructions.",
+        system: [],
+      }),
+    });
+
+    assertEquals(messages[0]?.content, "Use the authored fallback instructions.");
+  });
+
   it("createVeryfrontCloudRuntimeSystemMessages uses main branch guidance when branch id is absent", () => {
     const [, dynamicMsg] = createVeryfrontCloudRuntimeSystemMessages({
       agent: createAgent(),
