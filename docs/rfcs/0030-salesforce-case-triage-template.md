@@ -345,18 +345,18 @@ template, define it explicitly, and **fail closed**:
   messages, and telemetry/logs, or raw PII leaks around the redaction step.
 
 The first redaction boundary is the hosted tool-result boundary, not the
-`case-ingest` handoff. `get_case` and `list_case_activity` can return raw Case and
-CaseComment payloads, including standard customer fields such as `SuppliedEmail`
-and `SuppliedPhone`, free text, and custom `__c` fields; if the agent runtime
-persists those tool results before `case-ingest` builds the sanitized child
-payload, durable run history already contains customer text. V1 must either
-return a hosted allowlisted projection before persistence or suppress persistence
-of the raw tool result and persist only the sanitized projection. Redacting only
-`Subject`, `Description`, and `CommentBody` is insufficient because unprojected
-sObject responses can contain other customer data. Do not reveal the template
-until tests prove every non-allowlisted field is dropped or redacted before stored
-run messages, streaming tool-result history, errors, logs, or telemetry can
-observe it.
+`case-ingest` handoff. `get_case`, `list_cases`, and `list_case_activity` can
+return raw Case and CaseComment payloads, including standard customer fields such
+as `Subject`, `SuppliedEmail`, and `SuppliedPhone`, free text, and custom `__c`
+fields; if the agent runtime persists those tool results before `case-ingest`
+builds the sanitized child payload, durable run history already contains customer
+text. V1 must either return a hosted allowlisted projection before persistence or
+suppress persistence of the raw tool result and persist only the sanitized
+projection. Redacting only `Subject`, `Description`, and `CommentBody` is
+insufficient because unprojected sObject responses can contain other customer
+data. Do not reveal the template until tests prove every non-allowlisted field is
+dropped or redacted before stored run messages, streaming tool-result history,
+errors, logs, or telemetry can observe it.
 
 `case-ingest` must construct a new downstream object rather than spread or rename
 the Salesforce response. The only free-text fields accepted by `case-classify`
@@ -486,7 +486,7 @@ dependencies, not static-schema details:
 | Fixed object/Read authorization for retained direct reads | Hosted integration executor, using the Configure permission policy | Retaining direct sObject tools such as `get_case`, `get_contact`, and `get_account` while per-CRUD arrays are not generally enforced |
 | Fixed object/operation authorization for curated writes | Hosted integration executor, using the Configure permission policy | Shipping `update_case_reason`, `add_internal_case_comment`, retained `create_case`, retained `create_lead`, or any temporary retained `update_case` |
 | Fixed owner lookup adapters for `User`, Case queues, and Lead queues | Hosted integration executor / tools API, using server-owned SOQL and typed filters | Discovering owner candidates for Case and Lead while arbitrary `run_soql_query` and `q` remain hidden. Opportunity uses `User` candidates only. Lead and Opportunity assignment writes remain gated until scoped write tools or generic CRUD enforcement exist |
-| Pre-persistence PII redaction or raw-result persistence suppression | Hosted integration executor plus agent runtime persistence/streaming boundary | Revealing `get_case`, `list_case_activity`, or the case-ingest template against customer text |
+| Pre-persistence PII redaction or raw-result persistence suppression | Hosted integration executor plus agent runtime persistence/streaming boundary | Revealing `get_case`, `list_cases`, `list_case_activity`, or the case-ingest template against customer text |
 | Fixed metadata-helper authorization | Hosted integration executor, using the Configure permission policy | Retaining `describe_object` or `get_picklist_values_for_record_type` for an object while per-CRUD arrays are not generally enforced |
 | Referenced-object parser/enforcer for arbitrary SOQL/SOSL | Hosted integration executor and authorization layer | Re-enabling `run_soql_query`, SOSL `search`, or any arbitrary curated `q` override |
 | Per-CRUD enforcement against runtime `sobjectType` | Configure policy storage plus hosted authorization enforcement | Shipping any generic CRUD tool |
@@ -700,15 +700,16 @@ helpers with fixed `Lead` Update and `Opportunity` Update authorization.
 
 The PII gate needs fixture coverage too: raw `Subject`, `Description`,
 `CommentBody`, `SuppliedEmail`, `SuppliedPhone`, and a representative custom
-field containing email, phone, and customer identifiers must not appear in
-persisted tool results, stored run memory, streaming tool-result history,
-child-run payloads, errors, logs, or telemetry; the corresponding bounded
-`sanitizedSubject`, `sanitizedDescription`, and `sanitizedComments` values must
-remain available to `case-classify`, and `RecordTypeId` must remain available to
-`case-dispose` for record-type-scoped picklist validation. Unknown fields,
-over-limit text, and redactor or post-redaction validation failures must prevent
-persistence of raw tool output and prevent the child run. Add a non-default Case
-record-type fixture that proves `case-dispose` calls
+field containing email, phone, and customer identifiers must not appear from
+`get_case`, `list_cases`, or `list_case_activity` in persisted tool results,
+stored run memory, streaming tool-result history, child-run payloads, errors,
+logs, or telemetry; the corresponding bounded `sanitizedSubject`,
+`sanitizedDescription`, and `sanitizedComments` values must remain available to
+`case-classify`, and `RecordTypeId` must remain available to `case-dispose` for
+record-type-scoped picklist validation. Unknown fields, over-limit text, and
+redactor or post-redaction validation failures must prevent persistence of raw
+tool output and prevent the child run. Add a non-default Case record-type fixture
+that proves `case-dispose` calls
 `get_picklist_values_for_record_type` with the Case's actual `RecordTypeId` and
 does not use the connected profile default.
 
