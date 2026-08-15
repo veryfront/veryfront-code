@@ -440,6 +440,23 @@ function keywordBefore(
   return source.slice(start, end);
 }
 
+/** Whether the word before a slash is a member name rather than a keyword. */
+function isMemberNameBefore(
+  source: string,
+  previousTokenIndex: number,
+): boolean {
+  const end = previousTokenIndex + 1;
+  let start = end;
+  while (start > 0 && /[A-Za-z_$]/.test(source[start - 1] ?? "")) start--;
+  if (start === end) return false;
+
+  const before = previousSignificantIndex(source, start);
+  if (before < 0) return false;
+
+  const char = source[before];
+  return char === "." || char === "#";
+}
+
 /**
  * Whether `index` sits inside a `//` line comment.
  *
@@ -726,6 +743,7 @@ function canStartRegexLiteral(
   if (char !== undefined && "([{=,:;!~?&|+-*%^<>".includes(char)) return true;
 
   const keyword = keywordBefore(source, index, previous);
+  if (keyword !== null && isMemberNameBefore(source, previous)) return false;
   if (keyword === "of") {
     return isForOfKeywordBefore(source, rangeStart, currentParen, previous);
   }

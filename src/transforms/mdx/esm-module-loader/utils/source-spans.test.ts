@@ -613,6 +613,93 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("finds the tenant alias import after division by a default property", () => {
+      const spans = findDynamicImportSpans(
+        'const half = mod.default / 2; const L = lazy(() => import("@/components/Chart"));',
+        (specifier) => specifier.startsWith("@/") ? specifier : null,
+        UNBOUNDED,
+      );
+
+      assertEquals(spans.map((span) => span.path), ["@/components/Chart"]);
+    });
+
+    const REGEX_PREFIX_KEYWORDS = [
+      "of",
+      "case",
+      "default",
+      "delete",
+      "do",
+      "else",
+      "extends",
+      "in",
+      "instanceof",
+      "new",
+      "await",
+      "break",
+      "continue",
+      "debugger",
+      "return",
+      "throw",
+      "typeof",
+      "void",
+      "yield",
+    ];
+
+    for (const keyword of REGEX_PREFIX_KEYWORDS) {
+      it(`divides after a \`.${keyword}\` property instead of opening a regex`, () => {
+        assertEquals(
+          specifiers(
+            `const ratio = metrics.${keyword} / 2; import("./after-${keyword}-property.js");`,
+          ),
+          [`./after-${keyword}-property.js`],
+        );
+      });
+
+      it(`divides after an optionally chained \`?.${keyword}\` property`, () => {
+        assertEquals(
+          specifiers(
+            `const ratio = metrics?.${keyword} / 2; import("./after-${keyword}-optional.js");`,
+          ),
+          [`./after-${keyword}-optional.js`],
+        );
+      });
+
+      it(`divides after a \`#${keyword}\` private field`, () => {
+        assertEquals(
+          specifiers(
+            `class C { #${keyword} = 1; m() { const r = this.#${keyword} / 2; ` +
+              `return import("./after-${keyword}-private.js"); } }`,
+          ),
+          [`./after-${keyword}-private.js`],
+        );
+      });
+    }
+
+    it("still treats genuine keyword positions as regex prefixes", () => {
+      assertEquals(
+        specifiers('const t = typeof /re/; import("./after-typeof-keyword.js");'),
+        ["./after-typeof-keyword.js"],
+      );
+      assertEquals(
+        specifiers(
+          'function f() { return /re/.test(x); } import("./after-return-keyword.js");',
+        ),
+        ["./after-return-keyword.js"],
+      );
+      assertEquals(
+        specifiers(
+          'switch (v) { case /re/.source: break; } import("./after-case-keyword.js");',
+        ),
+        ["./after-case-keyword.js"],
+      );
+      assertEquals(
+        specifiers(
+          'for (const x of /re/.exec(s) ?? []) {} import("./after-for-of-regex.js");',
+        ),
+        ["./after-for-of-regex.js"],
+      );
+    });
+
     // The for-await search runs over raw text, so it also finds a `for` that is
     // not code. A block comment cannot fool it because the `*/` terminator
     // stops the adjacency scan. A line comment ends at a newline, which the scan
