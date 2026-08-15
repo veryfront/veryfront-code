@@ -96,7 +96,14 @@ export const getScheduleReferenceListSchema = defineSchema((v) =>
         target: v.object({
           kind: v.enum(["task", "workflow", "agent"] as const),
           id: v.string(),
-        }),
+          conversation_mode: v.enum(["create_new", "existing", "none"] as const).optional(),
+          conversation_id: v.string().nullable().optional(),
+        }).transform(({ kind, id, conversation_mode, conversation_id }) => ({
+          kind,
+          id,
+          ...(conversation_mode === undefined ? {} : { conversationMode: conversation_mode }),
+          ...(conversation_id === undefined ? {} : { conversationId: conversation_id }),
+        })),
         definition_source: v.enum(["manual", "source"] as const),
         source_trigger_id: v.string().nullable(),
         timeout_seconds: v.number().int(),

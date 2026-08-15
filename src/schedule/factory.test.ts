@@ -1090,6 +1090,18 @@ describe("schedule/factory agent targets", () => {
     for (
       const [legacyTarget, message] of [
         [
+          null,
+          "Schedule input._schedule_target must be an object.",
+        ],
+        [
+          "create_new",
+          "Schedule input._schedule_target must be an object.",
+        ],
+        [
+          ["create_new"],
+          "Schedule input._schedule_target must be an object.",
+        ],
+        [
           { conversationMode: "bogus" },
           "Schedule input._schedule_target.conversationMode must be create_new, existing, or none.",
         ],
@@ -1117,7 +1129,7 @@ describe("schedule/factory agent targets", () => {
             id: "triage-new-cases",
             schedule: "*/10 * * * *",
             target: { kind: "agent", id: "case-triage" },
-            input: { _schedule_target: { ...legacyTarget } },
+            input: { _schedule_target: legacyTarget },
           }),
         VeryfrontError,
         message,

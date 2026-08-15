@@ -60,7 +60,7 @@ describe("runs/schemas", () => {
   // the one place a target crosses the wire from the platform, so this pins the
   // coupling: the response schema strips keys the SDK does not model, and a
   // platform that starts sending a new one must not fail local resolution.
-  it("strips unknown schedule target fields so the target still resolves", () => {
+  it("maps known schedule target fields and strips unknown fields", () => {
     const parsed = getScheduleReferenceListSchema().parse({
       schedules: [
         {
@@ -71,6 +71,8 @@ describe("runs/schemas", () => {
             kind: "agent",
             id: "case-triage",
             conversation_mode: "create_new",
+            conversation_id: null,
+            ignored_field: "ignored",
           },
           definition_source: "source",
           source_trigger_id: "triage-new-cases",
@@ -80,7 +82,12 @@ describe("runs/schemas", () => {
     });
 
     const target = parsed.schedules[0]?.target;
-    assertEquals(target, { kind: "agent", id: "case-triage" });
+    assertEquals(target, {
+      kind: "agent",
+      id: "case-triage",
+      conversationMode: "create_new",
+      conversationId: null,
+    });
     assertEquals(isTriggerTarget(target), true);
   });
 });

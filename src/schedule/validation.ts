@@ -402,12 +402,14 @@ export function legacyScheduleTargetDiagnostic(
   conversation: { conversationMode: unknown; conversationId: unknown },
 ): string | null {
   const legacyTarget = input?._schedule_target;
-  if (
-    !legacyTarget || typeof legacyTarget !== "object" || Array.isArray(legacyTarget)
-  ) {
-    return null;
-  }
   const label = "Schedule input._schedule_target";
+  if (legacyTarget === undefined) return null;
+  if (
+    legacyTarget === null || typeof legacyTarget !== "object" ||
+    Array.isArray(legacyTarget)
+  ) {
+    return `${label} must be an object.`;
+  }
   for (const key of Object.keys(legacyTarget)) {
     if (!LEGACY_TARGET_KEYS.has(key)) {
       return `${formatDiagnosticProperty(label, key)} is not supported.`;

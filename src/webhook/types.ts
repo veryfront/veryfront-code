@@ -40,17 +40,17 @@ export interface WebhookAgentMessageMapping {
   /**
    * Hosted conversation behavior; defaults to `none`.
    *
-   * @deprecated Set `conversationMode` on the target instead. Setting both
-   * locations is rejected as an authoring error, and this field is removed in
-   * the next major.
+   * @deprecated Set `conversationMode` on the target instead. Matching values
+   * in both locations are accepted during the upgrade period. Different values
+   * are rejected, and this field is removed in the next major.
    */
   conversationMode?: WebhookAgentConversationMode;
   /**
    * Existing conversation UUID, required only with `conversationMode: "existing"`.
    *
-   * @deprecated Set `conversationId` on the target instead. Setting both
-   * locations is rejected as an authoring error, and this field is removed in
-   * the next major.
+   * @deprecated Set `conversationId` on the target instead. Matching values in
+   * both locations are accepted during the upgrade period. Different values are
+   * rejected, and this field is removed in the next major.
    */
   conversationId?: string | null;
 }
