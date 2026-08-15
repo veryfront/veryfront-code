@@ -390,6 +390,29 @@ describe("module-loader/loadModule build-failure tagging", () => {
     );
   });
 
+  it("tags a missing project alias import as a tenant build failure", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import { label } from "@/components/Missing";`,
+          `export default function Page() { return label; }`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const error = await assertRejects(
+            () => loadModule(join(projectDir, "app/page.tsx"), config),
+            Error,
+          );
+
+          assertEquals(isMissingModuleError(error), true);
+          assertEquals(isBuildFailure(error), true);
+          assertEquals(isTenantBuildFailure(error), true);
+        });
+      },
+    );
+  });
+
   it("tags missing side-effect imports in every legal declaration position", async () => {
     for (
       const source of [
@@ -703,6 +726,18 @@ describe("module-loader/isUnresolvedTenantImport", () => {
 
   it("classifies a dropped tenant specifier as tenant source", () => {
     assertEquals(isUnresolvedTenantImport(missing(), new Set(["./missing"])), true);
+  });
+
+  it("classifies a dropped project alias after the runtime reports its rewritten target", () => {
+    const aliasMissing = Object.assign(
+      new TypeError(
+        'Module not found "file:///tmp/out/veryfront-modules/proj-a/_vf_modules/components/Missing.js".\n' +
+          `    at file://${REBUILT}:1:23`,
+      ),
+      { code: "ERR_MODULE_NOT_FOUND" },
+    );
+
+    assertEquals(isUnresolvedTenantImport(aliasMissing, new Set(["@/components/Missing"])), true);
   });
 
   it("does not classify an unrelated missing target alongside a dropped specifier", () => {

@@ -428,10 +428,23 @@ function normalizeUnresolvedSpecifier(specifier: string): string {
     .replace(/^\/+/, "");
 }
 
-function missingTargetMatchesSpecifier(target: string, specifier: string): boolean {
+function unresolvedSpecifierRuntimeTargets(specifier: string): string[] {
   const normalizedSpecifier = normalizeUnresolvedSpecifier(specifier);
-  if (!normalizedSpecifier) return false;
-  return target === normalizedSpecifier || target.endsWith(`/${normalizedSpecifier}`);
+  const targets = normalizedSpecifier ? [normalizedSpecifier] : [];
+
+  if (specifier.startsWith("@/")) {
+    const aliasPath = specifier.replace(/[?#].*$/, "").slice(2);
+    const jsPath = aliasPath.endsWith(".js") ? aliasPath : `${aliasPath}.js`;
+    targets.push(`_vf_modules/${jsPath}`);
+  }
+
+  return [...new Set(targets)];
+}
+
+function missingTargetMatchesSpecifier(target: string, specifier: string): boolean {
+  return unresolvedSpecifierRuntimeTargets(specifier).some((candidate) =>
+    target === candidate || target.endsWith(`/${candidate}`)
+  );
 }
 
 export function isUnresolvedTenantImport(
