@@ -155,6 +155,18 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("finds static imports after ambient TypeScript declarations", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          'declare const value: number\n/import(".\\/fake-static.js")/.test(source); ' +
+            'import real from "./after-ambient-declaration.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-ambient-declaration.js"],
+      );
+    });
+
     it("finds static imports after raw JSX text children", () => {
       assertEquals(
         findStaticImportFromSpans(
@@ -867,6 +879,13 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
             'import("/_vf_modules/after-ts-type-alias.js")',
         ),
         ["/_vf_modules/after-ts-type-alias.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'declare const value: number\n/import("\\/_vf_modules\\/fake-ambient.js")/.test(value); ' +
+            'import("/_vf_modules/after-ambient-declaration.js")',
+        ),
+        ["/_vf_modules/after-ambient-declaration.js"],
       );
       assertEquals(
         vfModuleSpecifiers(
@@ -1734,6 +1753,18 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           UNBOUNDED,
         ).map((span) => span.path),
         ["./after-class.js"],
+      );
+    });
+
+    it("finds side-effect imports after ambient TypeScript declarations", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'declare const value: number\n/import(".\\/fake-side-effect.js")/.test(source); ' +
+            'import "./after-ambient-declaration.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-ambient-declaration.js"],
       );
     });
 
