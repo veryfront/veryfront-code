@@ -25,6 +25,7 @@ import {
   SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES,
   SKILL_RUNTIME_LOADED_REFERENCE_CACHE_MAX_ENTRIES,
   SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES,
+  SKILL_VISIBLE_ERROR_MAX_IDS,
 } from "#veryfront/skill/limits.ts";
 import type {
   RuntimeLoadedProjectSkill,
@@ -61,7 +62,7 @@ function isRuntimeLoadSkillArray(value: unknown): boolean {
 
 /** Shared runtime load skill description value. */
 export const RUNTIME_LOAD_SKILL_DESCRIPTION =
-  `Load the full instructions for a skill. Use this when you need detailed guidance for a specific task type. load_skill does not perform the task by itself. ${LOAD_SKILL_POLICY_CLAUSES} ${LOAD_SKILL_OVERRIDE_FORWARDING} First call load_skill with only skillId. Use the optional \`file\` parameter only after the skill is loaded and only for a reference file listed by that loaded skill.`;
+  `Load the full instructions for a skill. Use this when you need detailed guidance for a specific task type. load_skill does not perform the task by itself. ${LOAD_SKILL_POLICY_CLAUSES} ${LOAD_SKILL_OVERRIDE_FORWARDING} To discover authorized skill IDs, omit skillId and follow each nextCursor value. To load a skill, first call load_skill with only skillId. Use the optional \`file\` parameter only after the skill is loaded and only for a reference file listed by that loaded skill.`;
 
 function rememberBoundedRecordValue<T>(
   record: Record<string, T>,
@@ -330,11 +331,15 @@ export const getRuntimeLoadSkillToolInputSchema = defineSchema((v) =>
         'skillId must contain only letters, numbers, "_" or "-", with an optional lowercase ".md" suffix',
       )
       .describe(
-        'The skill ID to load. A lowercase ".md" suffix is accepted when it is the canonical ID or an unambiguous alias (e.g., "react-components" or "react-components.md").',
-      ),
+        'The skill ID to load. Omit skillId to list authorized IDs. A lowercase ".md" suffix is accepted when it is the canonical ID or an unambiguous alias (e.g., "react-components" or "react-components.md").',
+      ).optional(),
     file: getRuntimeLoadSkillReferenceFileInputSchema().optional().describe(
       "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
     ),
+    cursor: v.number().int().min(0).max(SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES).optional()
+      .describe(
+        "Pagination cursor from a previous skill inventory response. Use only when skillId is omitted.",
+      ),
   })
 );
 
@@ -349,11 +354,15 @@ const getStaticRuntimeLoadSkillToolInputSchema = defineSchema((v) =>
         'skillId must contain only letters, numbers, "_" or "-", with an optional lowercase ".md" suffix',
       )
       .describe(
-        'The skill ID to load. Use an ID from <available_skills> or <authorized_skill_ids>. A lowercase ".md" suffix is accepted when shown there.',
-      ),
+        'The skill ID to load. Omit skillId to list authorized IDs. A lowercase ".md" suffix is accepted for a listed ID.',
+      ).optional(),
     file: getRuntimeLoadSkillReferenceFileInputSchema().optional().describe(
       "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
     ),
+    cursor: v.number().int().min(0).max(SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES).optional()
+      .describe(
+        "Pagination cursor from a previous skill inventory response. Use only when skillId is omitted.",
+      ),
   })
 );
 
@@ -361,7 +370,12 @@ const staticRuntimeLoadSkillToolInputSchema = lazySchema(
   getStaticRuntimeLoadSkillToolInputSchema,
 );
 
-/** Input payload for runtime load skill tool. */
+/**
+ * Input payload for runtime load skill tool.
+ *
+ * Omit `skillId` to list the first authorized-ID page. Pass a returned
+ * `nextCursor` as `cursor` to continue the inventory.
+ */
 export type RuntimeLoadSkillToolInput = InferSchema<
   ReturnType<typeof getRuntimeLoadSkillToolInputSchema>
 >;
@@ -378,10 +392,17 @@ export type RuntimeLoadSkillErrorOutput = {
   error: string;
 };
 
+/** One bounded page of authorized skill IDs returned by runtime load skill. */
+export type RuntimeLoadSkillInventoryOutput = {
+  skillIds: string[];
+  nextCursor?: number;
+};
+
 /** Output from runtime load skill tool. */
 export type RuntimeLoadSkillToolOutput =
   | RuntimeLoadedSkillResponse
   | RuntimeLoadSkillReferenceFileOutput
+  | RuntimeLoadSkillInventoryOutput
   | RuntimeLoadSkillErrorOutput;
 
 function getBuiltinStore(options: RuntimeLoadSkillToolOptions): RuntimeLoadSkillBuiltinStore {
@@ -1155,7 +1176,7 @@ function buildRuntimeLoadSkillDescription(options: RuntimeLoadSkillToolOptions):
   // generated skill context, not in the tool definition. Keeping skill IDs out
   // of the description (and the advertised input schema) lets the tools array
   // join the shared cache prefix. See RFC 0001 (layered context).
-  return `${RUNTIME_LOAD_SKILL_DESCRIPTION} Skill IDs are listed in the <available_skills> or <authorized_skill_ids> context block. You must not invent IDs.`;
+  return `${RUNTIME_LOAD_SKILL_DESCRIPTION} Skill IDs may be listed in the <available_skills> or <authorized_skill_ids> context block. You must not invent IDs.`;
 }
 
 function snapshotRuntimeSkillIdInventory(
@@ -1208,6 +1229,22 @@ function getKnownRuntimeSkillIds(options: RuntimeLoadSkillToolOptions): string[]
     return null;
   }
   return snapshotRuntimeSkillIdInventory(builtinSkillIds.value, "builtinSkillIds");
+}
+
+function buildRuntimeSkillInventoryPage(
+  options: RuntimeLoadSkillToolOptions,
+  cursor: number,
+): RuntimeLoadSkillInventoryOutput | RuntimeLoadSkillErrorOutput {
+  const knownSkillIds = getKnownRuntimeSkillIds(options);
+  if (knownSkillIds === null) {
+    return {
+      error: "The authorized skill inventory is unavailable. Call load_skill with a known skillId.",
+    };
+  }
+
+  const skillIds = knownSkillIds.slice(cursor, cursor + SKILL_VISIBLE_ERROR_MAX_IDS);
+  const nextCursor = cursor + skillIds.length;
+  return nextCursor < knownSkillIds.length ? { skillIds, nextCursor } : { skillIds };
 }
 
 function getLoadedRuntimeSkillIds(
@@ -1872,10 +1909,37 @@ export function createRuntimeLoadSkillTool(
   }
 
   async function execute(
-    { skillId, file }: RuntimeLoadSkillToolInput,
+    input: RuntimeLoadSkillToolInput,
     executionContext?: ToolExecutionContext,
   ) {
     assertRuntimeBoundaryCollections(options);
+    let request: RuntimeLoadSkillToolInput;
+    try {
+      request = runtimeLoadSkillToolInputSchema.parse(input);
+    } catch (error) {
+      throw INPUT_VALIDATION_FAILED.create({
+        detail: `Tool "load_skill" input validation failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      });
+    }
+    if (request.skillId === undefined) {
+      if (request.file !== undefined) {
+        throw INPUT_VALIDATION_FAILED.create({
+          detail: 'Tool "load_skill" input validation failed: file requires skillId.',
+        });
+      }
+      return buildRuntimeSkillInventoryPage(options, request.cursor ?? 0);
+    }
+    if (request.cursor !== undefined) {
+      throw INPUT_VALIDATION_FAILED.create({
+        detail:
+          'Tool "load_skill" input validation failed: cursor is only valid when skillId is omitted.',
+      });
+    }
+
+    let skillId = request.skillId;
+    let file = request.file;
     const budget = createSkillOperationBudget({
       abortSignal: executionContext?.abortSignal,
       timeoutMs: SKILL_FILE_OPERATION_TIMEOUT_MS,
@@ -1902,6 +1966,11 @@ export function createRuntimeLoadSkillTool(
         detail: `Tool "load_skill" input validation failed: ${
           error instanceof Error ? error.message : String(error)
         }`,
+      });
+    }
+    if (parsed.skillId === undefined) {
+      throw INPUT_VALIDATION_FAILED.create({
+        detail: 'Tool "load_skill" input validation failed: skillId is required.',
       });
     }
     skillId = normalizeRuntimeLoadSkillInputSkillId(options, parsed.skillId);

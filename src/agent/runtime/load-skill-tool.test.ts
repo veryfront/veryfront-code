@@ -53,7 +53,7 @@ const STATIC_LOAD_SKILL_INPUT_SCHEMA = {
       maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
       pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
       description:
-        'The skill ID to load. Use an ID from <available_skills> or <authorized_skill_ids>. A lowercase ".md" suffix is accepted when shown there.',
+        'The skill ID to load. Omit skillId to list authorized IDs. A lowercase ".md" suffix is accepted for a listed ID.',
     },
     file: {
       type: "string",
@@ -62,8 +62,14 @@ const STATIC_LOAD_SKILL_INPUT_SCHEMA = {
       description:
         "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
     },
+    cursor: {
+      type: "integer",
+      minimum: 0,
+      maximum: 1_000,
+      description:
+        "Pagination cursor from a previous skill inventory response. Use only when skillId is omitted.",
+    },
   },
-  required: ["skillId"],
 } as const;
 
 const PROJECT_CONTEXT: RuntimeProjectSkillContext = {
@@ -2522,6 +2528,54 @@ it("createRuntimeLoadSkillTool keeps IDs out of the description and points to ru
   assertStringIncludes(tool.description, "<available_skills>");
   assertStringIncludes(tool.description, "<authorized_skill_ids>");
   assertStringIncludes(tool.description, "You must not invent IDs");
+  assertStringIncludes(tool.description, "omit skillId");
+});
+
+it("createRuntimeLoadSkillTool pages authorized IDs for standalone consumers", async () => {
+  const availableSkillIds = Array.from(
+    { length: 65 },
+    (_, index) => `skill-${index.toString().padStart(3, "0")}`,
+  );
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  const first = await tool.execute({});
+  assertEquals(first, {
+    skillIds: availableSkillIds.slice(0, 30),
+    nextCursor: 30,
+  });
+  const second = await tool.execute({ cursor: 30 });
+  assertEquals(second, {
+    skillIds: availableSkillIds.slice(30, 60),
+    nextCursor: 60,
+  });
+  assertEquals(await tool.execute({ cursor: 60 }), {
+    skillIds: availableSkillIds.slice(60),
+  });
+});
+
+it("createRuntimeLoadSkillTool rejects mixed load and inventory inputs", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["plan"] }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  await assertRejects(
+    () => tool.execute({ skillId: "plan", cursor: 0 }),
+    Error,
+    "input validation failed",
+  );
+  await assertRejects(
+    () => tool.execute({ file: "references/guide.md" }),
+    Error,
+    "input validation failed",
+  );
 });
 
 Deno.test("createRuntimeLoadSkillTool snapshots skill inventories without invoking iterators", () => {

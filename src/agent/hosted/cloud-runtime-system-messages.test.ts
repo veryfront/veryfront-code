@@ -139,3 +139,22 @@ Deno.test("buildVeryfrontCloudRuntimeInstructions adapts hosted preparation inpu
   assertEquals(environmentMessage?.role, "system");
   assertStringIncludes(environmentMessage?.content ?? "", "Runtime facts");
 });
+
+Deno.test("buildVeryfrontCloudRuntimeInstructions preserves an authoritative empty skill set", () => {
+  const [message] = buildVeryfrontCloudRuntimeInstructions({
+    agentConfig: createAgent({
+      instructions:
+        "Base\n\n<available_skills>\n- stale: Stale authored skill\n</available_skills>",
+    }),
+    projectId: "project-123",
+    branchId: null,
+    environmentContext: "",
+    instructions: "",
+    skills: [],
+  });
+
+  assertStringIncludes(
+    message?.content ?? "",
+    "<authorized_skill_ids>\n[]\n</authorized_skill_ids>",
+  );
+});

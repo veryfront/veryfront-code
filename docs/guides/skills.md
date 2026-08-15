@@ -96,12 +96,18 @@ supporting skill tools:
 
 | Tool                   | Availability               | Description                                                |
 | ---------------------- | -------------------------- | ---------------------------------------------------------- |
-| `load_skill`           | Every runtime              | Load a skill's full instructions by ID                     |
+| `load_skill`           | Every runtime              | List authorized IDs or load full instructions by ID        |
 | `load_skill_reference` | Local and project runtimes | Read a file from `references/`, `resources/`, or `assets/` |
 | `execute_skill_script` | Local and project runtimes | Execute a script from a skill (5-minute timeout)           |
 
 Hosted chat reads an advertised reference through
 `load_skill({ skillId, file })`. It does not execute skill scripts directly.
+
+Call `load_skill({})` when the prompt does not show the complete authorized
+skill inventory. The result contains a bounded `skillIds` page. If it also
+contains `nextCursor`, call `load_skill({ cursor: nextCursor })` until the
+response omits `nextCursor`. Then call `load_skill({ skillId })` with a listed
+ID.
 
 Discovered skills visible to the agent are advertised by default:
 

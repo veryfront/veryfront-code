@@ -99,33 +99,31 @@ it("buildRuntimeAvailableSkillsPromptBlock keeps omitted skill IDs discoverable"
   assertEquals(block.includes("load_skill tool schema"), false);
 });
 
-it("keeps a complete short-ID inventory within the prompt budget", () => {
+it("keeps ordinary selector-valid catalogs usable within the prompt budget", () => {
   const skills = Array.from(
     { length: 1_000 },
-    (_, index) => createSkill({ id: `skill-${index}` }),
+    (_, index) => createSkill({ id: `skill-${index.toString().padStart(8, "0")}` }),
   );
 
   const block = buildRuntimeAvailableSkillsPromptBlock(skills);
 
-  assertStringIncludes(block, '"skill-999"');
+  assertStringIncludes(block, "additional authorized skill IDs are omitted");
+  assertStringIncludes(block, "Call load_skill without skillId");
 });
 
-it("rejects an omitted skill-ID inventory that exceeds the prompt budget", () => {
+it("bounds worst-case omitted skill-ID inventories without rejecting the catalog", () => {
   const skills = Array.from(
     { length: 1_000 },
     (_, index) => createSkill({ id: `skill-${index}-${"x".repeat(240)}` }),
   );
 
-  assertThrows(
-    () => buildRuntimeAvailableSkillsPromptBlock(skills),
-    RangeError,
-    "skill ID inventory exceeds",
-  );
-  assertThrows(
-    () => buildRuntimeAuthorizedSkillIdsPromptBlock(skills),
-    RangeError,
-    "skill ID inventory exceeds",
-  );
+  const available = buildRuntimeAvailableSkillsPromptBlock(skills);
+  const authorized = buildRuntimeAuthorizedSkillIdsPromptBlock(skills);
+
+  assertStringIncludes(available, "additional authorized skill IDs are omitted");
+  assertStringIncludes(authorized, "additional authorized skill IDs are omitted");
+  assertEquals(available.length < 150_000, true);
+  assertEquals(authorized.length < 20_000, true);
 });
 
 it("buildRuntimeAuthorizedSkillIdsPromptBlock encodes every authorized ID as data", () => {

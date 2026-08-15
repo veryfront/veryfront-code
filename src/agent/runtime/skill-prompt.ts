@@ -240,19 +240,21 @@ function appendEncodedRuntimeSkillId(
   encodedSkillIds: string[],
   skillId: unknown,
   encodedCharacters: number,
-): number {
+): number | null {
   const encodedSkillId = encodePromptJson(
     requireBoundedPromptString(skillId, "id", SKILL_ID_MAX_LENGTH),
   );
   const nextEncodedCharacters = encodedCharacters + encodedSkillId.length +
     (encodedSkillIds.length > 0 ? 1 : 0);
   if (nextEncodedCharacters > RUNTIME_SKILL_PROMPT_ID_INVENTORY_MAX_CHARACTERS) {
-    throw new NativeRangeError(
-      `Runtime skill ID inventory exceeds ${RUNTIME_SKILL_PROMPT_ID_INVENTORY_MAX_CHARACTERS} encoded characters`,
-    );
+    return null;
   }
   appendOwnArrayElement(encodedSkillIds, encodedSkillId);
   return nextEncodedCharacters;
+}
+
+function buildRuntimeSkillDiscoveryNote(hiddenSkillIdCount: number): string {
+  return `\n\n(${hiddenSkillIdCount} additional authorized skill IDs are omitted from this prompt. Call load_skill without skillId, then follow each nextCursor value to discover them.)`;
 }
 
 function requireRuntimeSkillModel(value: unknown): string {
@@ -386,20 +388,24 @@ export function buildStrictRuntimeAvailableSkillsPromptBlock(
   const encodedOmittedSkillIds: string[] = [];
   let encodedCharacters = 0;
   for (let index = 0; index < omittedSkillIds.length; index += 1) {
-    encodedCharacters = appendEncodedRuntimeSkillId(
+    const nextEncodedCharacters = appendEncodedRuntimeSkillId(
       encodedOmittedSkillIds,
       omittedSkillIds[index],
       encodedCharacters,
     );
+    if (nextEncodedCharacters === null) break;
+    encodedCharacters = nextEncodedCharacters;
   }
+  const hiddenSkillIdCount = omittedSkillIds.length - encodedOmittedSkillIds.length;
   const truncationNote = omittedSkillIds.length > 0
     ? `\n\n(${omittedSkillIds.length} more skill summaries omitted.)\nOmitted skill IDs: ${`[${
       joinStrings(encodedOmittedSkillIds, ",")
-    }]`}`
+    }]`}${hiddenSkillIdCount > 0 ? buildRuntimeSkillDiscoveryNote(hiddenSkillIdCount) : ""}`
     : "";
-  // This block lists skills and nothing else. How `load_skill` behaves is
-  // stated once, in the tool's own description; delegation and output-style
-  // policy belong to the agent's instructions, not to a catalogue.
+  // This block lists skills and, only when the ID inventory reaches its
+  // encoded-size limit, points to the tool's bounded discovery path.
+  // Delegation and output-style policy belong to the agent's instructions,
+  // not to a catalogue.
   //
   // The one sentence that stays is a boundary marker, not orchestration:
   // skill names and descriptions are author-supplied and are interpolated
@@ -432,21 +438,29 @@ export function buildRuntimeAuthorizedSkillIdsPromptBlock(
       `Runtime skill catalog entry ${index}`,
       true,
     );
-    encodedCharacters = appendEncodedRuntimeSkillId(
+    const nextEncodedCharacters = appendEncodedRuntimeSkillId(
       encodedSkillIds,
       skillId,
       encodedCharacters,
     );
+    if (nextEncodedCharacters === null) break;
+    encodedCharacters = nextEncodedCharacters;
   }
   for (let index = 0; index < omittedSkillIds.length; index += 1) {
-    encodedCharacters = appendEncodedRuntimeSkillId(
+    const nextEncodedCharacters = appendEncodedRuntimeSkillId(
       encodedSkillIds,
       omittedSkillIds[index],
       encodedCharacters,
     );
+    if (nextEncodedCharacters === null) break;
+    encodedCharacters = nextEncodedCharacters;
   }
 
-  return `<authorized_skill_ids>\n[${joinStrings(encodedSkillIds, ",")}]\n</authorized_skill_ids>`;
+  const totalSkillIds = displaySkills.length + omittedSkillIds.length;
+  const hiddenSkillIdCount = totalSkillIds - encodedSkillIds.length;
+  return `<authorized_skill_ids>\n[${joinStrings(encodedSkillIds, ",")}]\n</authorized_skill_ids>${
+    hiddenSkillIdCount > 0 ? buildRuntimeSkillDiscoveryNote(hiddenSkillIdCount) : ""
+  }`;
 }
 
 type CompatibilitySkillMapIterator = ReturnType<Map<string, Skill>["entries"]>;
