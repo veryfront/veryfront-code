@@ -130,8 +130,7 @@ When `schedule()` evaluates a definition, it holds `input._schedule_target` to
 the same conversation rules as the canonical target: its `conversationMode`
 must be `create_new`, `existing`, or `none`, `existing` requires a
 `conversationId`, and any other key is rejected. Use the canonical target
-fields for new source schedules so hosted discovery applies the same strict
-validation.
+fields for new source schedules.
 
 `veryfront schedule run --input <file>` replaces the authored input without
 passing back through `schedule()`, so it applies the same agreement rules
