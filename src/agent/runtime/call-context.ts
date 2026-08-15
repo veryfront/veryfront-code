@@ -152,12 +152,10 @@ function removeCompleteBlocks(instructions: string, blockName: string): string {
 /** Builds the complete system-message set for one provider call. */
 export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSystemMessage[] {
   const runtimeContextMarker = input.runtimeContextMarker ?? DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER;
-  const sourceInstructions = input.skills === undefined
-    ? input.instructions
-    : removeCompleteBlocks(
-      removeCompleteBlocks(input.instructions, AUTHORIZED_SKILL_IDS_BLOCK_NAME),
-      AUTHORIZED_SKILL_ID_DISCOVERY_BLOCK_NAME,
-    );
+  const sourceInstructions = input.skills === undefined ? input.instructions : removeCompleteBlocks(
+    removeCompleteBlocks(input.instructions, AUTHORIZED_SKILL_IDS_BLOCK_NAME),
+    AUTHORIZED_SKILL_ID_DISCOVERY_BLOCK_NAME,
+  );
   const instructions = splitInstructionsAtMarker({
     instructions: sourceInstructions,
     runtimeContextMarker,
