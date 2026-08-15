@@ -14,7 +14,7 @@ import {
   getApiUrl,
   resolveCliApiUrl,
 } from "../shared/constants.ts";
-import { readConfigFile } from "../shared/config.ts";
+import { readConfigJsonFile } from "../shared/config.ts";
 import {
   createErrorEnvelope,
   createSuccessEnvelope,
@@ -66,7 +66,7 @@ function describeApiTokenSource(token: string): string {
 async function readProjectConfigPreflight(
   env: EnvironmentConfig,
 ): Promise<{ token?: string; env: EnvironmentConfig }> {
-  const config = await readConfigFile(cwd());
+  const config = await readConfigJsonFile(cwd());
 
   return {
     token: config?.apiToken,
@@ -625,6 +625,17 @@ async function describeExistingSession(
             ),
         );
       }
+    } else if (source === "config-file") {
+      console.log(
+        "  " +
+          dim("Using apiToken from veryfront.json; it takes precedence over stored credentials."),
+      );
+      console.log(
+        "  " +
+          dim(
+            "Remove or replace apiToken in veryfront.json before signing in with another method.",
+          ),
+      );
     }
     console.log(
       "  " +

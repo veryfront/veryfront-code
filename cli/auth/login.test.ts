@@ -412,6 +412,47 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("explains account switching for an existing config-file login in human mode", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const output: string[] = [];
+      const projectDir = await makeTempDir({ prefix: "login-config-human-" });
+
+      try {
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.json`,
+          JSON.stringify({ apiToken: "config-valid-token", projectSlug: "test-project" }) + "\n",
+        );
+
+        globalThis.fetch = (() =>
+          Promise.resolve(
+            Response.json({ id: "config-user", email: "config@example.com" }),
+          )) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+
+        const { withCwd } = await import("#veryfront/testing/cwd.ts");
+        const { login } = await import("./login.ts");
+
+        const result = await withCwd(projectDir, () => login(undefined, testEnv));
+        const printed = output.join("\n");
+
+        assertEquals(result, { id: "config-user", email: "config@example.com" });
+        assertStringIncludes(printed, "Already logged in as config@example.com");
+        assertStringIncludes(printed, "Using apiToken from veryfront.json");
+        assertStringIncludes(
+          printed,
+          "Remove or replace apiToken in veryfront.json before signing in with another method.",
+        );
+        assertEquals(printed.includes("config-valid-token"), false);
+      } finally {
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
     it("reports missing credentials as login JSON without prompting", async () => {
       const originalLog = console.log;
       const originalError = console.error;
@@ -1077,6 +1118,69 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         });
         assertEquals(requestedUrls, ["https://control.example.test/api/me"]);
         assertEquals(requestedAuth, ["Bearer config-valid-token"]);
+        assertEquals(output.join("\n").includes("config-valid-token"), false);
+        assertEquals(errors, []);
+      } finally {
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        setJsonMode(false);
+        console.log = originalLog;
+        console.error = originalError;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("does not execute module config while reading veryfront.json preflight settings", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const originalError = console.error;
+      const output: string[] = [];
+      const errors: string[] = [];
+      const projectDir = await makeTempDir({ prefix: "login-json-only-config-" });
+      const sideEffectPath = `${projectDir}/module-executed.txt`;
+
+      try {
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.config.ts`,
+          [
+            'await Deno.writeTextFile(new URL("./module-executed.txt", import.meta.url), "yes");',
+            'export default { projectSlug: "module-project" };',
+          ].join("\n"),
+        );
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.json`,
+          JSON.stringify({
+            apiToken: "config-valid-token",
+            apiUrl: "https://control.example.test/api",
+            projectSlug: "json-project",
+          }) + "\n",
+        );
+
+        globalThis.fetch = (() =>
+          Promise.resolve(
+            Response.json({ id: "config-user", email: "config@example.com" }),
+          )) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+        console.error = (message?: unknown) => errors.push(String(message));
+
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        const { withCwd } = await import("#veryfront/testing/cwd.ts");
+        const { login } = await import("./login.ts");
+        setJsonMode(true);
+
+        const result = await withCwd(projectDir, () => login(undefined, testEnv));
+        const envelope = JSON.parse(output.join("\n"));
+        const moduleWasExecuted = await Deno.stat(sideEffectPath).then(() => true, () => false);
+
+        assertEquals(result, { id: "config-user", email: "config@example.com" });
+        assertEquals(envelope.data, {
+          id: "config-user",
+          email: "config@example.com",
+          source: "config-file",
+        });
+        assertEquals(moduleWasExecuted, false);
         assertEquals(output.join("\n").includes("config-valid-token"), false);
         assertEquals(errors, []);
       } finally {

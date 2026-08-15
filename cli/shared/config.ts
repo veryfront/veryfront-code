@@ -129,18 +129,7 @@ async function readConfigFileResolution(projectDir: string): Promise<ConfigFileR
   // veryfront.json is always merged in: veryfront.config.ts owns the
   // projectSlug when both define one, but apiUrl/apiToken only live in
   // veryfront.json and must not be dropped because a TS config exists.
-  const configJsonPath = join(projectDir, "veryfront.json");
-  let jsonConfig: VeryfrontConfig | null = null;
-
-  try {
-    if (await fs.exists(configJsonPath)) {
-      const content = await fs.readTextFile(configJsonPath);
-      const parsed = VeryfrontConfigSchema.safeParse(JSON.parse(content));
-      jsonConfig = parsed.success ? parsed.data : null;
-    }
-  } catch (error) {
-    cliLogger.debug(`Failed to read veryfront.json:`, error);
-  }
+  const jsonConfig = await readConfigJsonFile(projectDir);
 
   const config = !moduleProjectSlug && !jsonConfig ? null : {
     ...jsonConfig,
@@ -156,6 +145,23 @@ async function readConfigFileResolution(projectDir: string): Promise<ConfigFileR
 
 export async function readConfigFile(projectDir: string): Promise<VeryfrontConfig | null> {
   return (await readConfigFileResolution(projectDir)).config;
+}
+
+export async function readConfigJsonFile(projectDir: string): Promise<VeryfrontConfig | null> {
+  const fs = createFileSystem();
+  const configJsonPath = join(projectDir, "veryfront.json");
+
+  try {
+    if (await fs.exists(configJsonPath)) {
+      const content = await fs.readTextFile(configJsonPath);
+      const parsed = VeryfrontConfigSchema.safeParse(JSON.parse(content));
+      return parsed.success ? parsed.data : null;
+    }
+  } catch (error) {
+    cliLogger.debug(`Failed to read veryfront.json:`, error);
+  }
+
+  return null;
 }
 
 export async function writeProjectSlug(projectDir: string, slug: string): Promise<void> {
