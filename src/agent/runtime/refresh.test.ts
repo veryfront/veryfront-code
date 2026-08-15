@@ -3112,6 +3112,10 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(body.match(/"type":"tool-input-start"/g)?.length ?? 0, 1);
     assertEquals(body.match(/"type":"tool-input-available"/g)?.length ?? 0, 0);
     assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 1);
+    // Both terminal error events key off `inputAnnounced`, and only statement
+    // order keeps the incomplete-tool loop from firing before the announce.
+    // Exactly one failure event must reach the client, never two.
+    assertEquals(body.match(/"type":"tool-input-error"/g)?.length ?? 0, 0);
     assertEquals(
       body.includes(
         'Stream terminated before tool-call event fired for \\"studio_suggestions\\"',
@@ -3236,6 +3240,7 @@ describe("agent runtime refresh hooks", () => {
     );
     assertEquals(body.match(/"type":"tool-input-start"/g)?.length ?? 0, 1);
     assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 1);
+    assertEquals(body.match(/"type":"tool-input-error"/g)?.length ?? 0, 0);
   });
 
   it("streams provider events before recovery replay text begins", async () => {

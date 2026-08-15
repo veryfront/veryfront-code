@@ -16,6 +16,11 @@ export interface StreamedAssistantMessageIdentity {
  * no text, no signature and no redacted data is an id-only shell from a
  * `reasoning-start` that never received deltas; it is dropped.
  *
+ * Empty counts as absent for every field. `reasoning-end` accepts a signature
+ * or redacted payload on `typeof … === "string"`, so `""` is reachable, and
+ * the matching SSE emission already treats it as absent. Keeping the same rule
+ * here is what stops the persisted message from disagreeing with the wire.
+ *
  * This is the single definition of "persisted reasoning". The runtime reuses
  * it to decide whether an interrupted local tool batch may be replayed — a
  * replay re-emits the step's reasoning, which duplicates whatever this
@@ -24,8 +29,8 @@ export interface StreamedAssistantMessageIdentity {
  */
 export function isPersistedReasoningPart(part: StreamingReasoningPart): boolean {
   return part.text.length > 0 ||
-    part.signature !== undefined ||
-    part.redactedData !== undefined;
+    (part.signature?.length ?? 0) > 0 ||
+    (part.redactedData?.length ?? 0) > 0;
 }
 
 export function buildStreamedAssistantMessage(
@@ -42,10 +47,8 @@ export function buildStreamedAssistantMessage(
     parts.push({
       type: "reasoning",
       ...(reasoningPart.text.length > 0 ? { text: reasoningPart.text } : {}),
-      ...(reasoningPart.signature !== undefined ? { signature: reasoningPart.signature } : {}),
-      ...(reasoningPart.redactedData !== undefined
-        ? { redactedData: reasoningPart.redactedData }
-        : {}),
+      ...(reasoningPart.signature ? { signature: reasoningPart.signature } : {}),
+      ...(reasoningPart.redactedData ? { redactedData: reasoningPart.redactedData } : {}),
     });
   }
 
