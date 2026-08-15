@@ -475,7 +475,7 @@ function isDeclarationBlockCloseBrace(
     source.lastIndexOf("}", openBrace.index - 1),
   ) + 1;
   const prefix = source.slice(declarationStart, openBrace.index).trimStart().replace(
-    /\/\*[\s\S]*?\*\/|\/\/[^\r\n]*/g,
+    /\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g,
     " ",
   );
   return /^(?:async\s+)?function(?:\s*\*)?(?:\s+[$A-Za-z_][$\w]*)?\s*\(/.test(prefix) ||

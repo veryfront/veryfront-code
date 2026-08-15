@@ -484,6 +484,18 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("recognizes Unicode line terminators in declaration comments", () => {
+      for (const lineTerminator of ["\u2028", "\u2029"]) {
+        assertEquals(
+          vfModuleSpecifiers(
+            "const html = `${(() => { function // note" + lineTerminator +
+              ' f() {} /}/.test(x); })() && import("/_vf_modules/commented-function-lazy.js")}`;',
+          ),
+          ["/_vf_modules/commented-function-lazy.js"],
+        );
+      }
+    });
+
     it("finds imports after regex literals following try statement blocks", () => {
       assertEquals(
         vfModuleSpecifiers(
