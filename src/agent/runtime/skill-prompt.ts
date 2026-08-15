@@ -1,4 +1,4 @@
-import { SKILL_ID_MAX_LENGTH, SKILL_SUBDIR_MAX_ENTRIES } from "#veryfront/skill/limits.ts";
+import { SKILL_ID_MAX_LENGTH, SKILL_SELECTOR_MAX_DEFINITIONS } from "#veryfront/skill/limits.ts";
 import { type Skill, SKILL_DESCRIPTION_MAX_LENGTH } from "#veryfront/skill/types.ts";
 import {
   isValidRuntimeSkillModel,
@@ -157,7 +157,6 @@ function snapshotRuntimeSkillPromptCatalog(
 ): {
   displaySkills: readonly RuntimeSkillDefinition[];
   omittedSkillIds: readonly string[];
-  total: number;
 } {
   if (!arrayIsArray(skills)) {
     throw new NativeTypeError("Runtime skill catalog must be an array");
@@ -169,9 +168,9 @@ function snapshotRuntimeSkillPromptCatalog(
   if (!numberIsSafeInteger(length) || length < 0) {
     throw new NativeTypeError("Runtime skill catalog length must be a data property");
   }
-  if (length > SKILL_SUBDIR_MAX_ENTRIES) {
+  if (length > SKILL_SELECTOR_MAX_DEFINITIONS) {
     throw new NativeRangeError(
-      `Runtime skill catalog may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
+      `Runtime skill catalog may contain at most ${SKILL_SELECTOR_MAX_DEFINITIONS} entries`,
     );
   }
 
@@ -186,7 +185,7 @@ function snapshotRuntimeSkillPromptCatalog(
       appendOwnArrayElement(displaySkills, descriptor.value);
       continue;
     }
-    const id = readPromptOwnDataProperty(
+    const skillId = readPromptOwnDataProperty(
       descriptor.value,
       "id",
       `Runtime skill catalog entry ${index}`,
@@ -194,13 +193,12 @@ function snapshotRuntimeSkillPromptCatalog(
     );
     appendOwnArrayElement(
       omittedSkillIds,
-      requireBoundedPromptString(id, "id", SKILL_ID_MAX_LENGTH),
+      requireBoundedPromptString(skillId, "id", SKILL_ID_MAX_LENGTH),
     );
   }
   return {
     displaySkills: freeze(displaySkills),
     omittedSkillIds: freeze(omittedSkillIds),
-    total: length,
   };
 }
 
@@ -354,7 +352,7 @@ function encodeRuntimeSkillCatalogRecord(skill: RuntimeSkillDefinition): string 
 export function buildStrictRuntimeAvailableSkillsPromptBlock(
   skills: readonly RuntimeSkillDefinition[],
 ): string {
-  const { displaySkills, omittedSkillIds, total } = snapshotRuntimeSkillPromptCatalog(skills);
+  const { displaySkills, omittedSkillIds } = snapshotRuntimeSkillPromptCatalog(skills);
   const skillLines: string[] = [];
   for (let index = 0; index < displaySkills.length; index += 1) {
     appendOwnArrayElement(
@@ -369,11 +367,9 @@ export function buildStrictRuntimeAvailableSkillsPromptBlock(
     appendOwnArrayElement(encodedOmittedSkillIds, encodePromptJson(omittedSkillIds[index]!));
   }
   const truncationNote = omittedSkillIds.length > 0
-    ? `\n\n${
-      total - MAX_RUNTIME_SKILL_PROMPT_ENTRIES
-    } skill summaries omitted. Exact omitted skill IDs: [${
+    ? `\n\n(${omittedSkillIds.length} more skill summaries omitted.)\nOmitted skill IDs: ${`[${
       joinStrings(encodedOmittedSkillIds, ",")
-    }]`
+    }]`}`
     : "";
   // This block lists skills and nothing else. How `load_skill` behaves is
   // stated once, in the tool's own description; delegation and output-style
@@ -502,9 +498,9 @@ function projectCompatibilitySkillCatalog(
   skills: Map<string, Skill>,
 ): { definitions: readonly RuntimeSkillDefinition[]; total: number } {
   const total = getCompatibilitySkillMapSize(skills);
-  if (total > SKILL_SUBDIR_MAX_ENTRIES) {
+  if (total > SKILL_SELECTOR_MAX_DEFINITIONS) {
     throw new NativeRangeError(
-      `Skill catalog may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
+      `Skill catalog Map may contain at most ${SKILL_SELECTOR_MAX_DEFINITIONS} entries`,
     );
   }
   const definitions: RuntimeSkillDefinition[] = [];
