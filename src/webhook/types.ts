@@ -1,4 +1,4 @@
-import type { TriggerTarget } from "#veryfront/trigger/target.ts";
+import type { AgentConversationMode, TriggerTarget } from "#veryfront/trigger/target.ts";
 import { isValidWebhookDefinition } from "./validation.ts";
 
 /** Whether every filter condition or at least one condition must match. */
@@ -31,18 +31,27 @@ export interface WebhookEventFilter {
 }
 
 /** Hosted conversation behavior for an agent-target webhook. */
-export type WebhookAgentConversationMode =
-  | "create_new"
-  | "existing"
-  | "none";
+export type WebhookAgentConversationMode = AgentConversationMode;
 
 /** Prompt and optional hosted conversation mapping for an agent target. */
 export interface WebhookAgentMessageMapping {
   /** Agent prompt supporting `{{payload}}` and `{{payload.dot.path}}` placeholders. */
   promptTemplate: string;
-  /** Hosted conversation behavior; defaults to `none`. */
+  /**
+   * Hosted conversation behavior; defaults to `none`.
+   *
+   * @deprecated Set `conversationMode` on the target instead. Setting both
+   * locations is rejected as an authoring error, and this field is removed in
+   * the next major.
+   */
   conversationMode?: WebhookAgentConversationMode;
-  /** Existing conversation UUID, required only with `conversationMode: "existing"`. */
+  /**
+   * Existing conversation UUID, required only with `conversationMode: "existing"`.
+   *
+   * @deprecated Set `conversationId` on the target instead. Setting both
+   * locations is rejected as an authoring error, and this field is removed in
+   * the next major.
+   */
   conversationId?: string | null;
 }
 

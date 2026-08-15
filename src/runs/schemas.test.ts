@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { getRunKindSchema, RunSchema } from "./schemas.ts";
+import { isTriggerTarget } from "#veryfront/trigger/target.ts";
+import { getRunKindSchema, getScheduleReferenceListSchema, RunSchema } from "./schemas.ts";
 
 function makeRun(overrides: Record<string, unknown> = {}) {
   return {
@@ -53,5 +54,33 @@ describe("runs/schemas", () => {
     });
 
     assertEquals(RunSchema.parse(run), run);
+  });
+
+  // `isTriggerTarget` rejects unknown target keys. A schedules-list response is
+  // the one place a target crosses the wire from the platform, so this pins the
+  // coupling: the response schema strips keys the SDK does not model, and a
+  // platform that starts sending a new one must not fail local resolution.
+  it("strips unknown schedule target fields so the target still resolves", () => {
+    const parsed = getScheduleReferenceListSchema().parse({
+      schedules: [
+        {
+          id: "schedule_1",
+          name: "Triage new cases",
+          status: "active",
+          target: {
+            kind: "agent",
+            id: "case-triage",
+            conversation_mode: "create_new",
+          },
+          definition_source: "source",
+          source_trigger_id: "triage-new-cases",
+          timeout_seconds: 900,
+        },
+      ],
+    });
+
+    const target = parsed.schedules[0]?.target;
+    assertEquals(target, { kind: "agent", id: "case-triage" });
+    assertEquals(isTriggerTarget(target), true);
   });
 });

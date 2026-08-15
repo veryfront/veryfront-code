@@ -44,6 +44,12 @@ export interface ScheduleIntegrationRequirementConfig {
   resources?: ScheduleIntegrationResource[];
 }
 
+/** Prompt content sent to an agent target on each occurrence. */
+export interface ScheduleAgentMessage {
+  /** Agent prompt; the platform generates a default when omitted. */
+  prompt?: string;
+}
+
 /** Validated, canonical source definition for one recurring schedule. */
 export interface ScheduleDefinition {
   /** Canonical slash-separated source trigger identifier. */
@@ -58,6 +64,8 @@ export interface ScheduleDefinition {
   timezone?: string;
   /** Task, workflow, or agent invoked by each occurrence. */
   target: TriggerTarget;
+  /** Prompt content for an agent target; unsupported for other targets. */
+  agentMessage?: ScheduleAgentMessage;
   /** Bounded JSON object copied into each target run. */
   input?: Record<string, unknown>;
   /** Positive execution timeout in seconds. */

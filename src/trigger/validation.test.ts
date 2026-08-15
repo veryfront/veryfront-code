@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isTriggerTarget } from "./target.ts";
+import { isTriggerTarget, snapshotTriggerTarget } from "./target.ts";
 import { assertSerializable, isTriggerId, snapshotSerializable } from "./validation.ts";
 
 describe("trigger validation", () => {
@@ -52,6 +52,63 @@ describe("trigger validation", () => {
         hostileProxy,
         { kind: "queue", id: "daily-triage" },
         { kind: "task", id: "daily/../triage" },
+      ]
+    ) {
+      assertEquals(isTriggerTarget(target), false);
+    }
+  });
+
+  it("carries agent conversation addressing on canonical targets", () => {
+    assertEquals(
+      snapshotTriggerTarget({
+        kind: "agent",
+        id: "support-agent",
+        conversationMode: "create_new",
+      }),
+      { kind: "agent", id: "support-agent", conversationMode: "create_new" },
+    );
+    assertEquals(
+      snapshotTriggerTarget({
+        kind: "agent",
+        id: "support-agent",
+        conversationMode: "existing",
+        conversationId: "11111111-1111-4111-8111-111111111111",
+      }),
+      {
+        kind: "agent",
+        id: "support-agent",
+        conversationMode: "existing",
+        conversationId: "11111111-1111-4111-8111-111111111111",
+      },
+    );
+    assertEquals(snapshotTriggerTarget({ kind: "task", id: "sync-helpdesk" }), {
+      kind: "task",
+      id: "sync-helpdesk",
+    });
+  });
+
+  it("rejects unknown keys and broken agent conversation invariants", () => {
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const accessorMode = Object.defineProperties(
+      { kind: "agent", id: "support-agent" },
+      { conversationMode: { enumerable: true, get: () => "create_new" } },
+    );
+
+    for (
+      const target of [
+        { kind: "agent", id: "support-agent", unsupported: true },
+        { kind: "task", id: "sync-helpdesk", conversationMode: "create_new" },
+        { kind: "workflow", id: "billing/sync", conversationId },
+        { kind: "agent", id: "support-agent", conversationMode: "resume" },
+        { kind: "agent", id: "support-agent", conversationMode: "existing" },
+        { kind: "agent", id: "support-agent", conversationMode: "create_new", conversationId },
+        {
+          kind: "agent",
+          id: "support-agent",
+          conversationMode: "existing",
+          conversationId: "not-a-uuid",
+        },
+        accessorMode,
       ]
     ) {
       assertEquals(isTriggerTarget(target), false);

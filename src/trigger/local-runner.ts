@@ -16,7 +16,7 @@ import {
 } from "#veryfront/task/project-runtime.ts";
 import { runTask } from "#veryfront/task/runner.ts";
 import { sleep } from "#veryfront/utils/sleep.ts";
-import { snapshotTriggerTarget, type TriggerTarget } from "./target.ts";
+import { resolveTriggerTarget, type TriggerTarget } from "./target.ts";
 import { snapshotSerializable } from "./validation.ts";
 
 const WORKFLOW_STATUS_POLL_INTERVAL_MS = 1_000;
@@ -364,10 +364,17 @@ export async function runTriggerTarget(
 ): Promise<TriggerTargetRunResult> {
   const start = performance.now();
   options.signal?.throwIfAborted();
-  const target = snapshotTriggerTarget(options.target);
-  if (target === null) {
+  const resolution = resolveTriggerTarget("Trigger target", options.target);
+  if (resolution.target === undefined) {
+    invalidTriggerConfiguration(resolution.detail);
+  }
+  const target = resolution.target;
+  // A local run never reaches the hosted conversation store, so only
+  // `existing` is refusable: `create_new` and `none` both mean "run
+  // standalone here" and need no local handling.
+  if (target.kind === "agent" && target.conversationMode === "existing") {
     invalidTriggerConfiguration(
-      "Trigger target must specify a canonical task, workflow, or agent id.",
+      "Local agent trigger runs cannot attach to an existing cloud conversation.",
     );
   }
   const normalizedOptions: NormalizedRunTriggerTargetOptions = {

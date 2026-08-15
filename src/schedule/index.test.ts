@@ -10,6 +10,12 @@ import * as typesModule from "./types.ts";
 const expectedRuntimeExports = [
   "discoverSchedules",
   "isScheduleDefinition",
+  // Deliberate public addition: `veryfront schedule run --input <file>` replaces
+  // the authored input without passing back through `schedule()`, so the CLI is
+  // the only caller that can apply this rule to an operator-supplied file.
+  // Exporting the one implementation keeps both entry points rejecting the same
+  // shapes instead of the CLI re-deriving them.
+  "legacyScheduleTargetDiagnostic",
   "schedule",
 ];
 

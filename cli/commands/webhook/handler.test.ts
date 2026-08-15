@@ -262,4 +262,32 @@ describe("webhook command", () => {
     assertInstanceOf(missingPromptError, VeryfrontError);
     assertEquals(missingPromptError.slug, "invalid-argument");
   });
+
+  it("rejects an existing conversation declared on the canonical target", () => {
+    const error = assertThrows(
+      () =>
+        toWebhookAgentOptions(
+          {
+            definition: {
+              id: "pull-request",
+              target: {
+                kind: "agent",
+                id: "capture-agent",
+                conversationMode: "existing",
+                conversationId: "11111111-1111-4111-8111-111111111111",
+              },
+              agentMessage: { promptTemplate: "Review the payload." },
+            },
+            payload: {},
+            matched: true,
+            targetInput: {},
+            agentInput: "Review the payload.",
+          } as unknown as Parameters<typeof toWebhookAgentOptions>[0],
+        ),
+      VeryfrontError,
+      "Local agent webhook runs cannot attach to an existing cloud conversation.",
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "invalid-argument");
+  });
 });

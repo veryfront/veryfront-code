@@ -1,26 +1,214 @@
 import { isTriggerId } from "./validation.ts";
 
-/** Supported local trigger target kinds. */
-export type TriggerTargetKind = "task" | "workflow" | "agent";
+/** Hosted conversation behavior for an agent trigger target. */
+export type AgentConversationMode = "create_new" | "existing" | "none";
 
-/** Canonical reference to a runnable project definition. */
-export interface TriggerTarget {
+/** Trigger target addressing a task definition. */
+export interface TaskTriggerTarget {
   /** Definition kind resolved by project runtime discovery. */
-  kind: TriggerTargetKind;
+  kind: "task";
   /** Canonical slash-separated definition identifier. */
   id: string;
 }
+
+/** Trigger target addressing a workflow definition. */
+export interface WorkflowTriggerTarget {
+  /** Definition kind resolved by project runtime discovery. */
+  kind: "workflow";
+  /** Canonical slash-separated definition identifier. */
+  id: string;
+}
+
+/** Trigger target addressing an agent definition and its hosted conversation. */
+export interface AgentTriggerTarget {
+  /** Definition kind resolved by project runtime discovery. */
+  kind: "agent";
+  /** Canonical slash-separated definition identifier. */
+  id: string;
+  /** Hosted conversation behavior; defaults to `none`. */
+  conversationMode?: AgentConversationMode;
+  /** Existing conversation UUID; required only with `conversationMode: "existing"`. */
+  conversationId?: string | null;
+}
+
+/** Canonical reference to a runnable project definition. */
+export type TriggerTarget =
+  | TaskTriggerTarget
+  | WorkflowTriggerTarget
+  | AgentTriggerTarget;
+
+/** Supported local trigger target kinds. */
+export type TriggerTargetKind = TriggerTarget["kind"];
+
+const AGENT_CONVERSATION_MODES = new Set<AgentConversationMode>([
+  "create_new",
+  "existing",
+  "none",
+]);
+const CONVERSATION_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MAX_DIAGNOSTIC_KEY_LENGTH = 80;
+const SIMPLE_DIAGNOSTIC_KEY_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$-]*$/;
+const TARGET_KEYS = ["kind", "id"] as const;
+const AGENT_TARGET_KEYS = [
+  "kind",
+  "id",
+  "conversationMode",
+  "conversationId",
+] as const;
 
 function readOwnDataProperty(value: object, key: PropertyKey): unknown {
   const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
   return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }
 
+function readOwnKind(value: unknown): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
+  try {
+    return readOwnDataProperty(value, "kind");
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * Validate and copy a trigger target without retaining caller-owned state.
+ * Own keys a trigger target may declare, widened for agent targets.
+ *
+ * The kind is read as an own data property so an author-defined accessor never
+ * runs while the allowed key set is selected.
  */
-export function snapshotTriggerTarget(value: unknown): TriggerTarget | null {
-  if (typeof value !== "object" || value === null) return null;
+export function triggerTargetKeys(value: unknown): readonly string[] {
+  return readOwnKind(value) === "agent" ? AGENT_TARGET_KEYS : TARGET_KEYS;
+}
+
+/**
+ * Describe why agent conversation addressing is invalid, or return `null`.
+ *
+ * `label` prefixes the diagnostic so schedules, webhooks, and targets report
+ * the same invariant with their own field path.
+ */
+export function agentConversationDiagnostic(
+  label: string,
+  conversationMode: unknown,
+  conversationId: unknown,
+): string | null {
+  if (
+    conversationMode !== undefined &&
+    !AGENT_CONVERSATION_MODES.has(conversationMode as AgentConversationMode)
+  ) {
+    return `${label}.conversationMode must be create_new, existing, or none.`;
+  }
+  if (
+    conversationId !== undefined && conversationId !== null &&
+    (typeof conversationId !== "string" ||
+      !CONVERSATION_ID_PATTERN.test(conversationId))
+  ) {
+    return `${label}.conversationId must be a UUID or null.`;
+  }
+
+  const effectiveMode = conversationMode ?? "none";
+  if (effectiveMode === "existing" && typeof conversationId !== "string") {
+    return `${label}.conversationId is required when conversationMode is existing.`;
+  }
+  if (effectiveMode !== "existing" && typeof conversationId === "string") {
+    return `${label}.conversationId is allowed only when conversationMode is existing.`;
+  }
+  return null;
+}
+
+/**
+ * Describe one value declared in two places with disagreeing content.
+ *
+ * Repeating a value is redundant, not wrong: an author spanning a platform
+ * upgrade must be able to write a single definition that both the old and the
+ * new platform read correctly. Only a disagreement is unresolvable, because
+ * honoring one copy would detach the deployed trigger from what the other copy
+ * names.
+ */
+export function declarationConflictDiagnostic(
+  label: string,
+  path: string,
+  legacyPath: string,
+  value: unknown,
+  legacyValue: unknown,
+): string | null {
+  if (value === undefined || legacyValue === undefined) return null;
+  if (value === legacyValue) return null;
+  return `${label} ${path} and ${legacyPath} are both set to different values. Declare it in one place.`;
+}
+
+/**
+ * Describe a conversation pair that disagrees across two locations.
+ *
+ * `legacyLabel` names the other location so the message spells out both real
+ * field paths without ranking them: which one a given platform reads depends
+ * on its version, so neither can be called authoritative here.
+ */
+export function conversationConflictDiagnostic(
+  label: string,
+  legacyLabel: string,
+  target: TriggerTarget,
+  legacyConversationMode: unknown,
+  legacyConversationId: unknown,
+): string | null {
+  if (target.kind !== "agent") return null;
+  for (
+    const [field, targetValue, legacyValue] of [
+      ["conversationMode", target.conversationMode, legacyConversationMode],
+      ["conversationId", target.conversationId, legacyConversationId],
+    ] as const
+  ) {
+    const detail = declarationConflictDiagnostic(
+      label,
+      `target.${field}`,
+      `${legacyLabel}.${field}`,
+      targetValue,
+      legacyValue,
+    );
+    if (detail !== null) return detail;
+  }
+  return null;
+}
+
+function truncateDiagnosticKey(key: string): string {
+  if (key.length <= MAX_DIAGNOSTIC_KEY_LENGTH) return key;
+  let prefix = key.slice(0, MAX_DIAGNOSTIC_KEY_LENGTH);
+  const finalCodeUnit = prefix.charCodeAt(prefix.length - 1);
+  if (finalCodeUnit >= 0xd800 && finalCodeUnit <= 0xdbff) {
+    prefix = prefix.slice(0, -1);
+  }
+  return `${prefix}…`;
+}
+
+function formatDiagnosticProperty(label: string, key: string): string {
+  const boundedKey = truncateDiagnosticKey(key);
+  return SIMPLE_DIAGNOSTIC_KEY_PATTERN.test(boundedKey)
+    ? `${label}.${boundedKey}`
+    : `${label}[${JSON.stringify(boundedKey)}]`;
+}
+
+/** A canonical target, or the reason the value is not one. */
+export type TriggerTargetResolution =
+  | { readonly target: TriggerTarget; readonly detail?: undefined }
+  | { readonly target?: undefined; readonly detail: string };
+
+/**
+ * Validate and copy a trigger target, reporting why a rejected value failed.
+ *
+ * Unsupported keys are rejected rather than dropped, so addressing an agent
+ * conversation with a misspelled field fails instead of silently disappearing.
+ * `label` prefixes the diagnostic so a caller names its own field path, and
+ * the reason is returned rather than collapsed so the misspelled key is named
+ * instead of the id being blamed.
+ */
+export function resolveTriggerTarget(
+  label: string,
+  value: unknown,
+): TriggerTargetResolution {
+  const notATarget = {
+    detail: `${label} must specify a canonical task, workflow, or agent id.`,
+  } as const;
+  if (typeof value !== "object" || value === null) return notATarget;
 
   try {
     const kind = readOwnDataProperty(value, "kind");
@@ -29,12 +217,59 @@ export function snapshotTriggerTarget(value: unknown): TriggerTarget | null {
       (kind !== "task" && kind !== "workflow" && kind !== "agent") ||
       !isTriggerId(id)
     ) {
-      return null;
+      return notATarget;
     }
-    return { kind, id };
+
+    const allowedKeys = new Set<PropertyKey>(triggerTargetKeys(value));
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key === "symbol") {
+        return { detail: `${label} must not define symbol properties.` };
+      }
+      if (!allowedKeys.has(key)) {
+        return { detail: `${formatDiagnosticProperty(label, key)} is not supported.` };
+      }
+      const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+      if (descriptor === undefined || !("value" in descriptor)) {
+        return {
+          detail: `${formatDiagnosticProperty(label, key)} must be an own data property.`,
+        };
+      }
+    }
+    if (kind !== "agent") return { target: { kind, id } };
+
+    const conversationMode = readOwnDataProperty(value, "conversationMode");
+    const conversationId = readOwnDataProperty(value, "conversationId");
+    const conversationDetail = agentConversationDiagnostic(
+      label,
+      conversationMode,
+      conversationId,
+    );
+    if (conversationDetail !== null) return { detail: conversationDetail };
+    return {
+      target: {
+        kind,
+        id,
+        ...(conversationMode === undefined
+          ? {}
+          : { conversationMode: conversationMode as AgentConversationMode }),
+        ...(conversationId === undefined
+          ? {}
+          : { conversationId: conversationId as string | null }),
+      },
+    };
   } catch {
-    return null;
+    return notATarget;
   }
+}
+
+/**
+ * Validate and copy a trigger target without retaining caller-owned state.
+ *
+ * Unsupported keys are rejected rather than dropped, so addressing an agent
+ * conversation with a misspelled field fails instead of silently disappearing.
+ */
+export function snapshotTriggerTarget(value: unknown): TriggerTarget | null {
+  return resolveTriggerTarget("Trigger target", value).target ?? null;
 }
 
 /** Return true only for canonical targets stored in own data properties. */

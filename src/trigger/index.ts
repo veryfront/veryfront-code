@@ -24,7 +24,11 @@
 
 export { discoverSourceTriggers } from "./discovery.ts";
 export { runTriggerTarget } from "./local-runner.ts";
-export { isTriggerTarget } from "./target.ts";
+export {
+  conversationConflictDiagnostic,
+  declarationConflictDiagnostic,
+  isTriggerTarget,
+} from "./target.ts";
 export { isTriggerId } from "./validation.ts";
 export type {
   SourceTriggerDiscoveryError,
@@ -36,4 +40,11 @@ export type {
   TriggerDiscoveryOptions,
 } from "./discovery.ts";
 export type { RunTriggerTargetOptions, TriggerTargetRunResult } from "./local-runner.ts";
-export type { TriggerTarget, TriggerTargetKind } from "./target.ts";
+export type {
+  AgentConversationMode,
+  AgentTriggerTarget,
+  TaskTriggerTarget,
+  TriggerTarget,
+  TriggerTargetKind,
+  WorkflowTriggerTarget,
+} from "./target.ts";

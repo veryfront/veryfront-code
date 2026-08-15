@@ -8,6 +8,10 @@ import { normalizeScheduleConfig } from "./validation.ts";
  * weekday names are accepted, timezones must be recognized IANA names, and
  * the `cron` alias is converted to the canonical `schedule` field. Invalid
  * top-level or nested fields fail with `schedule-config-invalid`.
+ *
+ * An agent target carries its own `conversationMode` and `conversationId`, and
+ * `agentMessage.prompt` supplies the prompt. Both are rejected for task and
+ * workflow targets.
  */
 export function schedule(config: ScheduleConfig): ScheduleDefinition {
   return normalizeScheduleConfig(config);

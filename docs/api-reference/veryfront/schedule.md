@@ -7,7 +7,12 @@ order: 31
 ## Import
 
 ```ts
-import { discoverSchedules, isScheduleDefinition, schedule } from "veryfront/schedule";
+import {
+  discoverSchedules,
+  isScheduleDefinition,
+  legacyScheduleTargetDiagnostic,
+  schedule,
+} from "veryfront/schedule";
 ```
 
 ## Examples
@@ -31,19 +36,21 @@ export default schedule({
 
 ### Functions
 
-| Name                   | Description                                                                    | Source                                                                                        |
-| ---------------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| `discoverSchedules`    | Discover and validate canonical schedule definitions from a project directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/discovery.ts#L29) |
-| `isScheduleDefinition` | Return true only when every schedule field and nested invariant is valid.      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L92)     |
-| `schedule`             | Validate and normalize a source-defined schedule configuration.                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/factory.ts#L12)   |
+| Name                             | Description                                                                            | Source                                                                                          |
+| -------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `discoverSchedules`              | Discover and validate canonical schedule definitions from a project directory.         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/discovery.ts#L29)   |
+| `isScheduleDefinition`           | Return true only when every schedule field and nested invariant is valid.              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L100)      |
+| `legacyScheduleTargetDiagnostic` | Describe why the legacy `input._schedule_target` channel is invalid, or return `null`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/validation.ts#L400) |
+| `schedule`                       | Validate and normalize a source-defined schedule configuration.                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/factory.ts#L16)     |
 
 ### Types
 
 | Name                                   | Description                                                                   | Source                                                                                        |
 | -------------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `ScheduleAgentMessage`                 | Prompt content sent to an agent target on each occurrence.                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L48)     |
 | `ScheduleConcurrencyPolicy`            | Behavior when a scheduled occurrence overlaps an active run.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L5)      |
-| `ScheduleConfig`                       | Author-facing recurring schedule configuration.                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L82)     |
-| `ScheduleDefinition`                   | Validated, canonical source definition for one recurring schedule.            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L48)     |
+| `ScheduleConfig`                       | Author-facing recurring schedule configuration.                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L90)     |
+| `ScheduleDefinition`                   | Validated, canonical source definition for one recurring schedule.            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L54)     |
 | `ScheduleDiscoveryOptions`             | Inputs for deterministic source schedule discovery.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/discovery.ts#L12) |
 | `ScheduleDiscoveryResult`              | Valid schedules and bounded per-file discovery diagnostics.                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/discovery.ts#L26) |
 | `ScheduleHealth`                       | Marks a schedule unhealthy when it has not succeeded within the given budget. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L8)      |
