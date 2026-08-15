@@ -730,6 +730,21 @@ function isStatementBlockCloseBrace(
     keyword === "do" || keyword === "else";
 }
 
+function isSwitchClauseBlockOpenBrace(
+  source: string,
+  colonIndex: number,
+  rangeStart: number,
+): boolean {
+  const clauseStart = Math.max(
+    rangeStart,
+    source.lastIndexOf(";", colonIndex - 1) + 1,
+    source.lastIndexOf("{", colonIndex - 1) + 1,
+    source.lastIndexOf("}", colonIndex - 1) + 1,
+  );
+  const clausePrefix = normalizedDeclarationPrefix(source, clauseStart, colonIndex).trim();
+  return clausePrefix === "default" || /^case\b[\s\S]*\S$/.test(clausePrefix);
+}
+
 function isPlainStatementBlockCloseBrace(
   source: string,
   index: number,
@@ -747,10 +762,15 @@ function isPlainStatementBlockCloseBrace(
   const labelEnd = previousSignificantIndex(source, beforeOpenBrace) + 1;
   let labelStart = labelEnd;
   while (labelStart > rangeStart && isIdentifierPartAt(source, labelStart - 1)) labelStart--;
-  if (labelStart === labelEnd || !isIdentifierStartAt(source, labelStart)) return false;
+  if (labelStart === labelEnd || !isIdentifierStartAt(source, labelStart)) {
+    return isSwitchClauseBlockOpenBrace(source, beforeOpenBrace, rangeStart);
+  }
 
   const beforeLabel = previousSignificantIndex(source, labelStart);
-  return beforeLabel < rangeStart || source[beforeLabel] === ";" || source[beforeLabel] === "}";
+  if (beforeLabel < rangeStart || source[beforeLabel] === ";" || source[beforeLabel] === "}") {
+    return true;
+  }
+  return isSwitchClauseBlockOpenBrace(source, beforeOpenBrace, rangeStart);
 }
 
 function isForOfKeywordBefore(

@@ -468,6 +468,21 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("ignores import-looking regex text after switch clause blocks", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'switch (value) { case 1: {} /import("\\/_vf_modules\\/case.js")/.test(value) }',
+        ),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'switch (value) { default: {} /import("\\/_vf_modules\\/default.js")/.test(value) }',
+        ),
+        [],
+      );
+    });
+
     it("finds executable imports after regex literals following closed blocks", () => {
       assertEquals(
         vfModuleSpecifiers(
