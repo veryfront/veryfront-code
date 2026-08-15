@@ -467,11 +467,13 @@ and path validation. The design gets dynamic-*enough* behaviour from three lever
    `description` and a describe preflight. These tools must remain unshipped until
    the fail-closed per-CRUD matrix in §16 is enforced for every generic call.
 3. **Describe-driven preflight.** Before a write, the agent learns *this org's*
-   real picklist values / required fields via `describe_object`. For a
-   classification field such as `Reason`, the agent writes only through a
+   real picklist values / required fields via fixed metadata helpers. For a
+   classification field such as `Reason`, `case-dispose` must call
+   `get_picklist_values_for_record_type` (or a hosted equivalent) with the source
+   Case's actual `RecordTypeId` before writing `Reason`, then write only through a
    user-confirmed taxonomy-to-org mapping. If no mapping exists, report the
-   allowed values and fail closed. It can be a prompt rule in `case-dispose`, or the
-   curated `get_picklist_values_for_record_type` helper.
+   allowed values and fail closed. Prompts may orchestrate the helper call, but
+   prompts cannot enforce the record-type-scoped gate.
 
 **Recommendation: hybrid.** Keep a comprehensive, ergonomic **static core** of
 curated tools (they make the demo legible and the agent fast, and stay
