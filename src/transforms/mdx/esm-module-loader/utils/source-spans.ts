@@ -1206,6 +1206,19 @@ function findFromSpan(
   return null;
 }
 
+function canExportHaveFromClause(source: string, statementStart: number): boolean {
+  let cursor = skipWhitespaceAndComments(source, statementStart);
+  if (
+    source.startsWith("type", cursor) &&
+    !isIdentifierPartAt(source, cursor - 1) &&
+    !isIdentifierPartAt(source, cursor + "type".length)
+  ) {
+    cursor = skipWhitespaceAndComments(source, cursor + "type".length);
+  }
+
+  return source[cursor] === "*" || source[cursor] === "{";
+}
+
 /**
  * Validate the match bound every scanner requires.
  *
@@ -1238,9 +1251,49 @@ export function findStaticImportFromSpans(
   const openParens: OpenParenContext[] = [];
   const matchingOpenParens = new Map<number, OpenParenContext>();
   let previousTokenIndex = -1;
+  let jsxDepth = 0;
+  let inJsxText = false;
+  const jsxExpressionStack: Array<{ braceDepth: number; parentDepth: number }> = [];
 
   while (cursor < source.length) {
     const char = source[cursor];
+
+    if (inJsxText) {
+      if (char === "<") {
+        const tag = skipJsxTag(source, cursor);
+        if (tag !== null) {
+          const closing = source[cursor + 1] === "/";
+          if (closing) jsxDepth = Math.max(0, jsxDepth - 1);
+          else if (!tag.selfClosing) jsxDepth++;
+          const expressionParentDepth = jsxExpressionStack.at(-1)?.parentDepth ?? 0;
+          inJsxText = jsxDepth > expressionParentDepth;
+          atStatementStart = false;
+          previousTokenIndex = tag.end - 1;
+          cursor = tag.end;
+          continue;
+        }
+      }
+      if (char === "{") {
+        jsxExpressionStack.push({ braceDepth: 0, parentDepth: jsxDepth });
+        inJsxText = false;
+      } else {
+        cursor++;
+        continue;
+      }
+    } else if (char === "<" && canStartJsxElement(source, cursor, previousTokenIndex)) {
+      const tag = skipJsxTag(source, cursor);
+      if (tag !== null && (tag.selfClosing || hasClosingJsxTag(source, tag.end, tag.name))) {
+        if (!tag.selfClosing) {
+          jsxDepth++;
+          inJsxText = true;
+        }
+        atStatementStart = false;
+        previousTokenIndex = tag.end - 1;
+        cursor = tag.end;
+        continue;
+      }
+    }
+
     const skipped = skipExpressionIgnored(
       source,
       cursor,
@@ -1267,6 +1320,8 @@ export function findStaticImportFromSpans(
     }
 
     if (char === "{") {
+      const expression = jsxExpressionStack.at(-1);
+      if (expression !== undefined) expression.braceDepth++;
       openBraces.push({ index: cursor, previousTokenIndex });
       atStatementStart = false;
       previousTokenIndex = cursor;
@@ -1274,6 +1329,14 @@ export function findStaticImportFromSpans(
       continue;
     }
     if (char === "}") {
+      const expression = jsxExpressionStack.at(-1);
+      if (expression !== undefined) {
+        expression.braceDepth--;
+        if (expression.braceDepth === 0) {
+          jsxExpressionStack.pop();
+          inJsxText = jsxDepth > 0;
+        }
+      }
       const openBrace = openBraces.pop();
       if (openBrace !== undefined) matchingOpenBraces.set(cursor, openBrace);
       atStatementStart = true;
@@ -1331,6 +1394,13 @@ export function findStaticImportFromSpans(
       });
       previousTokenIndex = afterKeyword;
       cursor = afterKeyword + 1;
+      continue;
+    }
+
+    if (isExport && !canExportHaveFromClause(source, afterKeyword)) {
+      atStatementStart = false;
+      previousTokenIndex = cursor + keywordLength - 1;
+      cursor = afterKeyword;
       continue;
     }
 

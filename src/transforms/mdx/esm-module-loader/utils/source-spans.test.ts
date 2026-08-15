@@ -144,6 +144,17 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("keeps value and type re-export forms eligible for from clauses", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          'export * from "./all.js"; export type { Value } from "./types.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./all.js", "./types.js"],
+      );
+    });
+
     it("finds static imports after top-level block declarations", () => {
       assertEquals(
         findStaticImportFromSpans(
@@ -152,6 +163,20 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           UNBOUNDED,
         ).map((span) => span.path),
         ["./after-function.js"],
+      );
+    });
+
+    it("ignores import-from examples in JSX text after an expression", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          `export function Example() {
+  return <code>{label}import value from /* note */ "./example.js";</code>;
+}
+import real from "./real.js";`,
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./real.js"],
       );
     });
 
