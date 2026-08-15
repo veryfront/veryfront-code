@@ -336,6 +336,12 @@ async function describeExistingSession(
     // boundary. Say so rather than let them discover it elsewhere.
     if (source === "environment") {
       console.log("  " + dim("Using VERYFRONT_API_TOKEN; no stored login was created."));
+      console.log(
+        "  " +
+          dim(
+            "Unset VERYFRONT_API_TOKEN before using another login method, or replace the variable to switch tokens.",
+          ),
+      );
     }
     console.log(
       "  " +

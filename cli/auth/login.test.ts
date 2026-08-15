@@ -476,6 +476,10 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         const printed = output.join("\n");
         assertStringIncludes(printed, "VERYFRONT_API_TOKEN");
         assertStringIncludes(printed, "no stored login");
+        assertStringIncludes(
+          printed,
+          "Unset VERYFRONT_API_TOKEN before using another login method",
+        );
         // Nothing was persisted, and the credential is never echoed.
         assertEquals(await readToken(testEnv), null);
         assertEquals(printed.includes("vf_env_only"), false);
@@ -507,6 +511,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         const printed = output.join("\n");
         assertEquals(printed.includes("no stored login"), false);
         assertEquals(printed.includes("VERYFRONT_API_TOKEN"), false);
+        assertEquals(printed.includes("Unset VERYFRONT_API_TOKEN"), false);
       } finally {
         console.log = originalLog;
         globalThis.fetch = originalFetch;
