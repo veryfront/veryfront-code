@@ -942,6 +942,8 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           'function importα(value) { return value; } importα("/_vf_modules/fake.js");',
           'function 𝒜import(value) { return value; } 𝒜import("/_vf_modules/fake.js");',
           'function import𝒜(value) { return value; } import𝒜("/_vf_modules/fake.js");',
+          'function \\u0061import(value) { return value; } \\u0061import("/_vf_modules/fake.js");',
+          'function \\u{61}import(value) { return value; } \\u{61}import("/_vf_modules/fake.js");',
         ]
       ) {
         assertEquals(vfModuleSpecifiers(source), []);

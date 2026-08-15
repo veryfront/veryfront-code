@@ -107,6 +107,71 @@ function isIdentifierPartAt(source: string, index: number): boolean {
   return isIdentifierChar(identifierCharacterAt(source, index));
 }
 
+function isHexDigit(char: string | undefined): boolean {
+  return char !== undefined && /[0-9A-Fa-f]/.test(char);
+}
+
+function identifierEscapeCodePoint(source: string, start: number): {
+  codePoint: number;
+  end: number;
+} | undefined {
+  if (source[start] !== "\\" || source[start + 1] !== "u") return undefined;
+
+  if (source[start + 2] === "{") {
+    let cursor = start + 3;
+    while (isHexDigit(source[cursor])) cursor++;
+    if (cursor === start + 3 || source[cursor] !== "}") return undefined;
+
+    const codePoint = Number.parseInt(source.slice(start + 3, cursor), 16);
+    if (!Number.isSafeInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {
+      return undefined;
+    }
+    return { codePoint, end: cursor + 1 };
+  }
+
+  for (let offset = 2; offset < 6; offset++) {
+    if (!isHexDigit(source[start + offset])) return undefined;
+  }
+  return {
+    codePoint: Number.parseInt(source.slice(start + 2, start + 6), 16),
+    end: start + 6,
+  };
+}
+
+function isIdentifierEscapeStartingAt(source: string, index: number): boolean {
+  const escape = identifierEscapeCodePoint(source, index);
+  return escape !== undefined && isIdentifierChar(StringFromCodePoint(escape.codePoint));
+}
+
+function isIdentifierEscapeEndingAt(source: string, end: number): boolean {
+  const fixedStart = end - "\\u0000".length;
+  const fixed = identifierEscapeCodePoint(source, fixedStart);
+  if (
+    fixed?.end === end &&
+    isIdentifierChar(StringFromCodePoint(fixed.codePoint))
+  ) {
+    return true;
+  }
+
+  if (source[end - 1] !== "}") return false;
+  let cursor = end - 2;
+  while (cursor >= 0 && isHexDigit(source[cursor])) cursor--;
+  if (source[cursor] !== "{" || source[cursor - 1] !== "u" || source[cursor - 2] !== "\\") {
+    return false;
+  }
+
+  const braced = identifierEscapeCodePoint(source, cursor - 2);
+  return braced?.end === end && isIdentifierChar(StringFromCodePoint(braced.codePoint));
+}
+
+function isIdentifierBoundaryBefore(source: string, index: number): boolean {
+  return isIdentifierPartAt(source, index - 1) || isIdentifierEscapeEndingAt(source, index);
+}
+
+function isIdentifierBoundaryAfter(source: string, index: number): boolean {
+  return isIdentifierPartAt(source, index) || isIdentifierEscapeStartingAt(source, index);
+}
+
 function skipLineComment(source: string, index: number): number {
   let cursor = index + 2;
   while (cursor < source.length && !isLineTerminator(source[cursor]!)) cursor++;
@@ -122,8 +187,8 @@ function isStatementKeywordAt(
 ): boolean {
   if (!atStatementStart) return false;
   if (!source.startsWith(keyword, index)) return false;
-  if (isIdentifierPartAt(source, index - 1) || source[index - 1] === ".") return false;
-  if (isIdentifierPartAt(source, index + keyword.length)) return false;
+  if (isIdentifierBoundaryBefore(source, index) || source[index - 1] === ".") return false;
+  if (isIdentifierBoundaryAfter(source, index + keyword.length)) return false;
   return true;
 }
 
@@ -1226,9 +1291,9 @@ function scanDynamicImportRange(
     // dot (which would make it `foo.import` or part of a longer word).
     if (
       !source.startsWith("import", cursor) ||
-      isIdentifierPartAt(source, cursor - 1) ||
+      isIdentifierBoundaryBefore(source, cursor) ||
       isPropertyAccessBeforeImport(source, previousTokenIndex, rangeStart) ||
-      isIdentifierPartAt(source, cursor + "import".length)
+      isIdentifierBoundaryAfter(source, cursor + "import".length)
     ) {
       previousTokenIndex = cursor;
       cursor++;

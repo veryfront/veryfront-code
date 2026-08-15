@@ -247,6 +247,28 @@ describe("transforms/esm/specifier-resolver", () => {
       );
     });
 
+    it("materializes escaped @/ alias imports when a module-server origin is available", async () => {
+      const code = `import ResponsiveImage from "@/components/ResponsiveImage";`;
+      const cacheCalls: string[] = [];
+      const result = await buildReplacements(
+        code,
+        undefined,
+        { ...defaultOptions, moduleServerOrigin: "https://preview.example" },
+        async (url) => {
+          cacheCalls.push(url);
+          return "/tmp/cache/http-alias.mjs";
+        },
+      );
+
+      assertEquals(cacheCalls, [
+        "https://preview.example/_vf_modules/components/ResponsiveImage.js",
+      ]);
+      assertEquals(
+        result.replacements.get("@/components/ResponsiveImage"),
+        "file:///tmp/cache/http-alias.mjs",
+      );
+    });
+
     it("normalizes explicit source extensions in escaped @/ alias imports", async () => {
       const code = `import Card from "@/components/Card.tsx";`;
       const cacheCalls: string[] = [];

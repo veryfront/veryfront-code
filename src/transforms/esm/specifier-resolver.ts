@@ -122,7 +122,16 @@ async function resolveSpecifier(
     const jsPath = /\.(js|mjs|cjs|css)$/.test(normalizedPath)
       ? normalizedPath
       : `${normalizedPath}.js`;
-    return `/_vf_modules/${jsPath}${suffix}`;
+    const projectModulePath = `/_vf_modules/${jsPath}${suffix}`;
+    const moduleServerOrigin = parseHttpBase(options.moduleServerOrigin);
+    if (!moduleServerOrigin) return projectModulePath;
+
+    return resolveSpecifier(
+      new URL(projectModulePath, moduleServerOrigin).toString(),
+      baseUrl,
+      options,
+      cacheHttpModule,
+    );
   }
 
   // Server-only packages (`redis`, `pg`, …), including their explicit `npm:`
