@@ -643,6 +643,17 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("keeps TypeScript angle constructs distinct from raw JSX tags", () => {
+      assertEquals(
+        specifiers('const f = <T>(x: T) => import("./generic-arrow-lazy.js");'),
+        ["./generic-arrow-lazy.js"],
+      );
+      assertEquals(
+        specifiers('const value = <Foo>input; import("./assertion-lazy.js");'),
+        ["./assertion-lazy.js"],
+      );
+    });
+
     it("finds imports after quoted greater-than signs in raw JSX tags", () => {
       assertEquals(
         specifiers('<Comp title=">">{import("./quoted-lazy.ts")}</Comp>'),
@@ -1097,6 +1108,20 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         durationMs < 750,
         `Expected a ${Math.round(source.length / 1024)} KB line-broken division scan to ` +
           `finish within 750 ms, got ${durationMs.toFixed(1)} ms`,
+      );
+    });
+
+    it("keeps shift-expression tag lookahead within a bounded runtime", () => {
+      const source = "x<<y;\n".repeat(12_000);
+      const startedAt = performance.now();
+
+      assertEquals(specifiers(source), []);
+
+      const durationMs = performance.now() - startedAt;
+      assert(
+        durationMs < 750,
+        `Expected a ${Math.round(source.length / 1024)} KB shift-expression scan to finish ` +
+          `within 750 ms, got ${durationMs.toFixed(1)} ms`,
       );
     });
 

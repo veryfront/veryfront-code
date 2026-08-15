@@ -38,6 +38,7 @@ interface OpenBraceContext {
 
 interface RawJsxTagSkip {
   end: number;
+  name: string | null;
   isClosingTag: boolean;
   isSelfClosingTag: boolean;
   expressionRanges: Array<{ start: number; end: number }>;
@@ -1287,6 +1288,8 @@ function skipRegexLiteral(source: string, regexIndex: number): number {
 }
 
 function canStartRawJsxOpeningTag(source: string, index: number): boolean {
+  if (source[index - 1] === "<") return false;
+
   const previous = previousSignificantIndex(source, index);
   if (previous < 0) return true;
 
@@ -1296,6 +1299,95 @@ function canStartRawJsxOpeningTag(source: string, index: number): boolean {
 
   const keyword = keywordBefore(source, index, previous);
   return ["case", "default", "return", "throw", "yield"].includes(keyword ?? "");
+}
+
+function rawJsxTagName(source: string, index: number): { name: string | null; end: number } {
+  if (source[index] === ">") return { name: null, end: index };
+
+  let cursor = index;
+  while (cursor < source.length) {
+    const char = source[cursor];
+    if (
+      char === "." ||
+      char === ":" ||
+      char === "-" ||
+      isIdentifierStartAt(source, cursor) ||
+      IDENTIFIER_PART_PATTERN.test(char ?? "")
+    ) {
+      cursor++;
+      continue;
+    }
+    break;
+  }
+
+  return { name: source.slice(index, cursor), end: cursor };
+}
+
+function findParenEnd(source: string, index: number): number | null {
+  let cursor = index + 1;
+  let depth = 1;
+
+  while (cursor < source.length) {
+    const skipped = skipIgnored(source, cursor);
+    if (skipped !== cursor) {
+      cursor = skipped;
+      continue;
+    }
+
+    if (source[cursor] === "(") depth++;
+    else if (source[cursor] === ")") {
+      depth--;
+      if (depth === 0) return cursor + 1;
+    }
+    cursor++;
+  }
+
+  return null;
+}
+
+function hasRawJsxClosingTagBeforeStatementEnd(
+  source: string,
+  name: string,
+  start: number,
+): boolean {
+  const statementEnd = nextStatementCursor(source, start);
+  const closingPrefix = `</${name}`;
+  let closing = source.indexOf(closingPrefix, start);
+  while (closing >= 0 && closing < statementEnd) {
+    const afterName = source[closing + closingPrefix.length];
+    if (afterName === ">" || afterName === "/" || /\s/.test(afterName ?? "")) return true;
+    closing = source.indexOf(closingPrefix, closing + closingPrefix.length);
+  }
+  return false;
+}
+
+function looksLikeTypeScriptAngleConstruct(
+  source: string,
+  tagStart: number,
+  tagEnd: number,
+  name: string | null,
+): boolean {
+  if (name === null) return false;
+
+  const next = skipWhitespaceAndComments(source, tagEnd);
+  if (source[next] === "(") {
+    const parenEnd = findParenEnd(source, next);
+    const afterParen = parenEnd === null ? -1 : skipWhitespaceAndComments(source, parenEnd);
+    if (afterParen >= 0 && source.slice(afterParen, afterParen + 2) === "=>") {
+      return true;
+    }
+  }
+
+  if (
+    source[next] !== undefined &&
+    (isIdentifierStartAt(source, next) || source[next] === "(") &&
+    !hasRawJsxClosingTagBeforeStatementEnd(source, name, tagEnd)
+  ) {
+    const before = previousSignificantIndex(source, tagStart);
+    return before >= 0 && "=(:,[!~?&|+-*%^<>".includes(source[before] ?? "");
+  }
+
+  return false;
 }
 
 function readRawJsxTag(
@@ -1315,6 +1407,7 @@ function readRawJsxTag(
 
   const nameStart = isClosingTag ? index + 2 : index + 1;
   if (source[nameStart] !== ">" && !isIdentifierStartAt(source, nameStart)) return null;
+  const name = rawJsxTagName(source, nameStart).name;
 
   let cursor = nameStart;
   let quote: string | null = null;
@@ -1348,11 +1441,20 @@ function readRawJsxTag(
 
     if (char === ">") {
       const beforeClose = previousSignificantIndex(source, cursor);
+      const isSelfClosingTag = !isClosingTag && source[beforeClose] === "/";
+      if (
+        !isClosingTag &&
+        !isSelfClosingTag &&
+        looksLikeTypeScriptAngleConstruct(source, index, cursor + 1, name)
+      ) {
+        return null;
+      }
       return {
         end: cursor + 1,
         expressionRanges,
+        name,
         isClosingTag,
-        isSelfClosingTag: !isClosingTag && source[beforeClose] === "/",
+        isSelfClosingTag,
       };
     }
 
