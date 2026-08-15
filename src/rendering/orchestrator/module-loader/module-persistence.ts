@@ -18,6 +18,7 @@ import {
   buildMdxEsmPathCacheKey,
   UNRESOLVED_IMPORTS_SIDECAR_SUFFIX,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import { isMemberNameBefore } from "#veryfront/transforms/mdx/esm-module-loader/utils/source-spans.ts";
 import { buildModuleTransformCacheVariant } from "./module-cache-lookup.ts";
 
 const logger = rendererLogger.component("module-loader");
@@ -316,6 +317,7 @@ function skipRegexToken(
       // condition, for example `if (ready) /pattern/.test(value)`.
     } else if (!"([{=,:;!~?&|+-*%^<>".includes(char)) {
       const keyword = identifierBefore(source, previous);
+      if (keyword !== null && isMemberNameBefore(source, previous)) return index;
       if (
         ![
           "case",

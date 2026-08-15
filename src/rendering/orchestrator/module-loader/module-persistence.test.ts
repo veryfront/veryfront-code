@@ -220,6 +220,11 @@ describe("module-loader/module-persistence", () => {
         exposesDefault: true,
       },
       {
+        path: "app/member-keyword-division-before-default.ts",
+        transformedCode: `const ratio = mod.typeof / 2; export { default } from "./component.js";`,
+        exposesDefault: true,
+      },
+      {
         path: "app/named-as-default.ts",
         transformedCode: `const Page = () => null;\nexport { Page as default };`,
         exposesDefault: true,

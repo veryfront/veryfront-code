@@ -636,6 +636,18 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         ),
         ["./after-optional.js"],
       );
+      assertEquals(
+        specifiers(
+          'const direct = mod.// note\ntypeof / 2; import("./after-line-direct.js");',
+        ),
+        ["./after-line-direct.js"],
+      );
+      assertEquals(
+        specifiers(
+          'const optional = mod?.// note\ntypeof / 2; import("./after-line-optional.js");',
+        ),
+        ["./after-line-optional.js"],
+      );
     });
 
     const REGEX_PREFIX_KEYWORDS = [
@@ -1227,6 +1239,28 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           UNBOUNDED,
         ),
         [],
+      );
+    });
+
+    it("ignores semicolon-terminated side-effect import text in JSX children", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'export function Example() { return <code>{label}import "./example.js";</code>; } import "./real.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./real.js"],
+      );
+    });
+
+    it("keeps scanning after a TypeScript angle-bracket assertion", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'const value = <Value>"</Value>"; import "./after-assertion.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-assertion.js"],
       );
     });
 

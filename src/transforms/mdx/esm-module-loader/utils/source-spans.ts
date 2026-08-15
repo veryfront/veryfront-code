@@ -233,6 +233,90 @@ function isSideEffectImportTerminated(source: string, index: number): boolean {
   return true;
 }
 
+interface JsxTagEnd {
+  end: number;
+  name: string;
+  selfClosing: boolean;
+}
+
+function skipJsxTag(source: string, index: number): JsxTagEnd | null {
+  let nameStart = index + 1;
+  if (source[nameStart] === "/") nameStart++;
+  let nameEnd = nameStart;
+  while (/[A-Za-z0-9_$.-]/.test(source[nameEnd] ?? "")) nameEnd++;
+
+  let cursor = index + 1;
+  let expressionDepth = 0;
+
+  while (cursor < source.length) {
+    const char = source[cursor]!;
+    if (char === '"' || char === "'") {
+      cursor = skipIgnored(source, cursor);
+      continue;
+    }
+    if (char === "`") {
+      cursor = skipFullTemplateLiteral(source, cursor);
+      continue;
+    }
+    if (char === "{") {
+      expressionDepth++;
+      cursor++;
+      continue;
+    }
+    if (char === "}" && expressionDepth > 0) {
+      expressionDepth--;
+      cursor++;
+      continue;
+    }
+    if (char === ">" && expressionDepth === 0) {
+      const before = previousSignificantIndex(source, cursor);
+      return {
+        end: cursor + 1,
+        name: source.slice(nameStart, nameEnd),
+        selfClosing: source[before] === "/",
+      };
+    }
+    cursor++;
+  }
+
+  return null;
+}
+
+function hasClosingJsxTag(source: string, index: number, name: string): boolean {
+  const prefix = name === "" ? "</>" : `</${name}`;
+  for (let cursor = index; cursor < source.length;) {
+    const skipped = skipIgnored(source, cursor);
+    if (skipped !== cursor) {
+      cursor = skipped;
+      continue;
+    }
+    if (
+      source.startsWith(prefix, cursor) &&
+      (name === "" || /[\s>]/.test(source[cursor + prefix.length] ?? ""))
+    ) return true;
+    cursor++;
+  }
+
+  return false;
+}
+
+function canStartJsxElement(
+  source: string,
+  index: number,
+  previousTokenIndex: number,
+): boolean {
+  const next = source[index + 1];
+  if (next !== ">" && !/[A-Za-z_$]/.test(next ?? "")) return false;
+  if (previousTokenIndex < 0) return true;
+
+  const previous = source[previousTokenIndex]!;
+  if ("([{=,:;!?&|+-*%^<>".includes(previous)) return true;
+
+  const keyword = keywordBefore(source, index, previousTokenIndex);
+  return keyword === "case" || keyword === "default" || keyword === "return" ||
+    keyword === "yield";
+}
+
 function hexDigitValue(char: string | undefined): number {
   if (char === undefined) return -1;
   const code = char.charCodeAt(0);
@@ -455,15 +539,48 @@ function previousSignificantIndex(source: string, index: number): number {
 }
 
 function previousSignificantIndexAcrossComments(source: string, index: number): number {
+  let scanEnd = index;
   let cursor = previousSignificantIndex(source, index);
 
-  while (cursor >= 1 && source[cursor] === "/" && source[cursor - 1] === "*") {
-    const commentStart = source.lastIndexOf("/*", cursor - 1);
-    if (commentStart < 0) break;
+  while (cursor >= 0) {
+    if (cursor >= 1 && source[cursor] === "/" && source[cursor - 1] === "*") {
+      const commentStart = source.lastIndexOf("/*", cursor - 1);
+      if (commentStart < 0) break;
+      scanEnd = commentStart;
+      cursor = previousSignificantIndex(source, commentStart);
+      continue;
+    }
+
+    if (!containsLineTerminator(source, cursor + 1, scanEnd)) break;
+    const commentStart = lineCommentStart(source, cursor);
+    if (commentStart === null) break;
+    scanEnd = commentStart;
     cursor = previousSignificantIndex(source, commentStart);
   }
 
   return cursor;
+}
+
+function lineCommentStart(source: string, index: number): number | null {
+  let cursor = index;
+  while (cursor > 0 && !isLineTerminator(source[cursor - 1] ?? "")) cursor--;
+
+  let quote: string | null = null;
+  for (; cursor <= index; cursor++) {
+    const char = source[cursor]!;
+    if (quote !== null) {
+      if (char === "\\") cursor++;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+      continue;
+    }
+    if (char === "/" && source[cursor + 1] === "/") return cursor;
+  }
+
+  return null;
 }
 
 function keywordBefore(
@@ -479,7 +596,7 @@ function keywordBefore(
 }
 
 /** Whether the word before a slash is a member name rather than a keyword. */
-function isMemberNameBefore(
+export function isMemberNameBefore(
   source: string,
   previousTokenIndex: number,
 ): boolean {
@@ -1444,9 +1561,49 @@ export function findStaticSideEffectImportSpans(
   const openParens: OpenParenContext[] = [];
   const matchingOpenParens = new Map<number, OpenParenContext>();
   let previousTokenIndex = -1;
+  let jsxDepth = 0;
+  let inJsxText = false;
+  const jsxExpressionStack: Array<{ braceDepth: number; parentDepth: number }> = [];
 
   while (cursor < source.length) {
     const char = source[cursor];
+
+    if (inJsxText) {
+      if (char === "<") {
+        const tag = skipJsxTag(source, cursor);
+        if (tag !== null) {
+          const closing = source[cursor + 1] === "/";
+          if (closing) jsxDepth = Math.max(0, jsxDepth - 1);
+          else if (!tag.selfClosing) jsxDepth++;
+          const expressionParentDepth = jsxExpressionStack.at(-1)?.parentDepth ?? 0;
+          inJsxText = jsxDepth > expressionParentDepth;
+          atStatementStart = false;
+          previousTokenIndex = tag.end - 1;
+          cursor = tag.end;
+          continue;
+        }
+      }
+      if (char === "{") {
+        jsxExpressionStack.push({ braceDepth: 0, parentDepth: jsxDepth });
+        inJsxText = false;
+      } else {
+        cursor++;
+        continue;
+      }
+    } else if (char === "<" && canStartJsxElement(source, cursor, previousTokenIndex)) {
+      const tag = skipJsxTag(source, cursor);
+      if (tag !== null && (tag.selfClosing || hasClosingJsxTag(source, tag.end, tag.name))) {
+        if (!tag.selfClosing) {
+          jsxDepth++;
+          inJsxText = true;
+        }
+        atStatementStart = false;
+        previousTokenIndex = tag.end - 1;
+        cursor = tag.end;
+        continue;
+      }
+    }
+
     const skipped = skipExpressionIgnored(
       source,
       cursor,
@@ -1473,6 +1630,8 @@ export function findStaticSideEffectImportSpans(
     }
 
     if (char === "{") {
+      const expression = jsxExpressionStack.at(-1);
+      if (expression !== undefined) expression.braceDepth++;
       openBraces.push({ index: cursor, previousTokenIndex });
       atStatementStart = false;
       previousTokenIndex = cursor;
@@ -1480,6 +1639,14 @@ export function findStaticSideEffectImportSpans(
       continue;
     }
     if (char === "}") {
+      const expression = jsxExpressionStack.at(-1);
+      if (expression !== undefined) {
+        expression.braceDepth--;
+        if (expression.braceDepth === 0) {
+          jsxExpressionStack.pop();
+          inJsxText = jsxDepth > 0;
+        }
+      }
       const openBrace = openBraces.pop();
       if (openBrace !== undefined) matchingOpenBraces.set(cursor, openBrace);
       atStatementStart = true;
