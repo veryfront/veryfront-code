@@ -19,7 +19,7 @@ import {
   TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS,
 } from "./constants.ts";
 import { verifiedHttpBundlePaths } from "./http-bundle-helpers.ts";
-import { buildSSRModuleCacheKey } from "../../../cache/keys.ts";
+import { buildSSRModuleCacheKey, isKeyForProject } from "../../../cache/keys.ts";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 import { computeConfigHashSync } from "../../../cache/config-hash.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
@@ -1335,9 +1335,12 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       `}`,
     ].join("\n");
 
-    // The failure http-cache.ts raises once its retries are exhausted. The
-    // registry fetch is the only network boundary the loader crosses on this
-    // path, so raising it there reproduces a cold cross-project fetch failure.
+    // The failure `http-cache.ts` raises once its retries are exhausted. In
+    // production it originates deeper — inside `transformToESM` on the fetched
+    // cross-project source — but that call is not injectable from here, so it
+    // is injected synthetically at the registry fetch, the nearest stubbable
+    // boundary. What matters for this test is that a terminal failure escapes
+    // `transformCrossProjectImportFlow`, which rethrows untouched either way.
     const fetchError = BUILD_FAILED.create({
       detail: "Failed to fetch https://esm.sh/marked: AbortError",
       context: { phase: "http-module-fetch" },
@@ -1369,8 +1372,16 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       // The cold path used to swallow this into `missingDependencies`, finish
       // the transform, and publish a module whose cross-project specifier was
       // never rewritten. Nothing may reach the cache when the fetch is terminal.
-      assertEquals(globalModuleCache.size, 0);
-      assertEquals(globalCrossProjectCache.size, 0);
+      // Scoped to this project's keys rather than asserting on total cache size,
+      // so a late write from an earlier test cannot turn this into a flake.
+      assertEquals(
+        [...globalModuleCache.keys()].filter((key) => isKeyForProject(key, projectId)),
+        [],
+      );
+      assertEquals(
+        [...globalCrossProjectCache.keys()].filter((key) => key.includes(projectId)),
+        [],
+      );
     } finally {
       globalThis.fetch = originalFetch;
       clearSSRModuleCache();

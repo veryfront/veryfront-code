@@ -31,6 +31,25 @@ function isTerminalHttpModuleFetchFailure(error: unknown): error is VeryfrontErr
 }
 
 /**
+ * Pick the rejection a settled dependency batch should propagate.
+ *
+ * Both batch loops catch everything except a terminal HTTP module fetch
+ * failure, so today every rejection is that failure. Select on the predicate
+ * rather than on "first rejection" so a throw added outside either try block
+ * later cannot be mistaken for the terminal failure — and fall back to the
+ * first rejection so such a throw is still propagated rather than dropped.
+ */
+function selectPropagatedFailure(
+  results: PromiseSettledResult<unknown>[],
+): PromiseRejectedResult | undefined {
+  const rejections = results.filter((result): result is PromiseRejectedResult =>
+    result.status === "rejected"
+  );
+  return rejections.find((rejection) => isTerminalHttpModuleFetchFailure(rejection.reason)) ??
+    rejections[0];
+}
+
+/**
  * Manages dependency validation for SSR module loading:
  * - Pre-flight checks for local file existence
  * - Recursive dependency resolution
@@ -160,17 +179,7 @@ export class SSRDependencyValidator {
           }
         }),
       );
-      // Only the guarded rethrow above can reject today, but select on the
-      // predicate rather than on "first rejection" so a throw added outside the
-      // try block later cannot be mistaken for the terminal failure. Any other
-      // rejection is still propagated rather than dropped.
-      const rejections = results.filter((result): result is PromiseRejectedResult =>
-        result.status === "rejected"
-      );
-      const terminalFailure = rejections.find((rejection) =>
-        isTerminalHttpModuleFetchFailure(rejection.reason)
-      );
-      const failure = terminalFailure ?? rejections[0];
+      const failure = selectPropagatedFailure(results);
       if (failure) throw failure.reason;
     }
 
@@ -218,8 +227,8 @@ export class SSRDependencyValidator {
           }
         }),
       );
-      const terminalFailure = results.find((result) => result.status === "rejected");
-      if (terminalFailure?.status === "rejected") throw terminalFailure.reason;
+      const failure = selectPropagatedFailure(results);
+      if (failure) throw failure.reason;
     }
 
     return importPathMap;
