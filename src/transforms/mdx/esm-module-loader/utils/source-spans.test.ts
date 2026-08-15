@@ -817,6 +817,13 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
       assertEquals(
         vfModuleSpecifiers(
+          'type T = string\n/import("\\/_vf_modules\\/fake-ts-type-alias.js")/.test(value); ' +
+            'import("/_vf_modules/after-ts-type-alias.js")',
+        ),
+        ["/_vf_modules/after-ts-type-alias.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
           'const enum Mode { On } /import("\\/_vf_modules\\/fake-ts-enum.js")/.test(value); ' +
             'import("/_vf_modules/after-ts-enum.js")',
         ),

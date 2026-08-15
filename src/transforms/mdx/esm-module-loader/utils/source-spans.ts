@@ -77,6 +77,10 @@ const TYPESCRIPT_DECLARATION_PREFIX_PATTERN = new RegExp(
     .raw`^(?:export\s+(?:default\s+)?)?(?:declare\s+)?(?:(?:interface\s+${IDENTIFIER_NAME_SOURCE}(?:\s*<[\s\S]*>)?(?:\s+extends\s+[\s\S]+)?)|(?:(?:const\s+)?enum\s+${IDENTIFIER_NAME_SOURCE})|(?:global)|(?:(?:namespace|module)\s+(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|${IDENTIFIER_NAME_SOURCE}(?:\s*\.\s*${IDENTIFIER_NAME_SOURCE})*)))\s*$`,
   "u",
 );
+const TYPESCRIPT_TYPE_ALIAS_PREFIX_PATTERN = new RegExp(
+  String.raw`^(?:export\s+)?type\s+${IDENTIFIER_NAME_SOURCE}(?:\s*<[\s\S]*>)?\s*=\s*[\s\S]*\S\s*$`,
+  "u",
+);
 
 function assertTemplateLiteralDepth(depth: number): void {
   if (depth > MAX_TEMPLATE_LITERAL_DEPTH) {
@@ -969,6 +973,29 @@ function canEndStatementBeforeLineTerminator(
     isIdentifierEscapeEndingAt(source, previousTokenIndex + 1);
 }
 
+function isTypeAliasDeclarationBeforeRegex(
+  source: string,
+  regexIndex: number,
+  previousTokenIndex: number,
+  rangeStart: number,
+): boolean {
+  if (
+    !hasLineTerminatorBetween(source, previousTokenIndex + 1, regexIndex) ||
+    !canEndStatementBeforeLineTerminator(source, previousTokenIndex)
+  ) {
+    return false;
+  }
+
+  const declarationStart = balancedDeclarationStatementStartBefore(source, regexIndex, [
+    "export",
+    "type",
+  ]);
+  if (declarationStart < rangeStart) return false;
+
+  const prefix = normalizedDeclarationPrefix(source, declarationStart, regexIndex);
+  return TYPESCRIPT_TYPE_ALIAS_PREFIX_PATTERN.test(prefix);
+}
+
 function isCompletedRegexLiteralEnd(source: string, endIndex: number): boolean {
   for (let start = endIndex - 1; start >= 0; start--) {
     if (source[start] !== "/") continue;
@@ -1338,6 +1365,7 @@ function canStartRegexLiteral(
     "yield",
   ].includes(keyword ?? "");
   if (isKeywordRegexPrefix) return true;
+  if (isTypeAliasDeclarationBeforeRegex(source, index, previous, rangeStart)) return true;
 
   return restrictedStatementKeywordBeforeLabel(source, index, previous, rangeStart) !== null;
 }
