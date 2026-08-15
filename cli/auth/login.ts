@@ -17,7 +17,7 @@ import { createSuccessEnvelope, isJsonMode, outputJson } from "../shared/json-ou
 import { isInteractive } from "../shared/interactive.ts";
 import { getEnvSource } from "veryfront/utils/env-loader";
 import { basename, isAbsolute, relative } from "veryfront/platform/path";
-import { cwd } from "veryfront/platform";
+import { cwd, getEnv } from "veryfront/platform";
 
 /**
  * Describe where an API-token credential actually came from.
@@ -29,9 +29,11 @@ import { cwd } from "veryfront/platform";
  * directory-dependent for every command that infers a project from config, so
  * this is worth the extra clause.
  */
-function describeApiTokenSource(): string {
+function describeApiTokenSource(token: string): string {
   const origin = getEnvSource("VERYFRONT_API_TOKEN");
-  if (origin.source !== "env-file") return "(via VERYFRONT_API_TOKEN)";
+  if (origin.source !== "env-file" || getEnv("VERYFRONT_API_TOKEN") !== token) {
+    return "(via VERYFRONT_API_TOKEN)";
+  }
 
   // Repo-relative only: AGENTS.md forbids local absolute paths in user-facing
   // output. A file outside the working directory, including a Windows
@@ -446,7 +448,9 @@ async function reportCredential(
 
   console.log(
     "  " + dim(
-      source === "env" ? describeApiTokenSource() : `Token stored at: ${getTokenLocation(env)}`,
+      source === "env"
+        ? describeApiTokenSource(token)
+        : `Token stored at: ${getTokenLocation(env)}`,
     ),
   );
   return credential;

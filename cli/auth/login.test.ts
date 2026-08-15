@@ -606,6 +606,51 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("does not attribute an injected API token to a different loaded .env token", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const output: string[] = [];
+      const { __resetEnvLoaderForTests, loadEnv } = await import("veryfront/utils/env-loader");
+      const envDir = await Deno.makeTempDir({ prefix: "whoami-env-mismatch-" });
+
+      try {
+        deleteEnv("VERYFRONT_API_TOKEN");
+        __resetEnvLoaderForTests();
+        await Deno.writeTextFile(`${envDir}/.env`, "VERYFRONT_API_TOKEN=vf_from_dotenv\n");
+        await loadEnv({ cwd: envDir });
+
+        globalThis.fetch = (() =>
+          Promise.resolve(
+            new Response(JSON.stringify({ data: [], page_info: {} }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          )) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+
+        const { whoami } = await import("./login.ts");
+        await whoami({
+          ...testEnv,
+          apiBaseUrl: "https://auth.example.test",
+          apiUrl: undefined,
+          apiToken: "vf_injected",
+        });
+
+        const printed = output.join("\n");
+        assertStringIncludes(printed, "(via VERYFRONT_API_TOKEN)");
+        assertEquals(printed.includes(".env"), false);
+        assertEquals(printed.includes(envDir), false);
+        assertEquals(printed.includes("vf_from_dotenv"), false);
+        assertEquals(printed.includes("vf_injected"), false);
+      } finally {
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        __resetEnvLoaderForTests();
+        deleteEnv("VERYFRONT_API_TOKEN");
+        await Deno.remove(envDir, { recursive: true });
+      }
+    });
+
     it("still reports a real environment variable without inventing a file", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;
