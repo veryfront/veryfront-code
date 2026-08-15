@@ -55,3 +55,8 @@ export function buildMissingModuleError(ctx: MissingModuleContext): Error {
 
   return error;
 }
+
+/** Return true only for missing-module errors produced by this loader. */
+export function isMdxMissingModuleError(error: unknown): boolean {
+  return error instanceof Error && error.name === "MissingModuleError";
+}

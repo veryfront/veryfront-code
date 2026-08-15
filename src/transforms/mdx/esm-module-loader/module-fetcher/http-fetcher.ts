@@ -22,10 +22,14 @@ import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/constants/limits.ts";
 import { parallelMap } from "#veryfront/utils/parallel.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 import { assertMdxModuleImportCount, MAX_MDX_MODULE_TRANSFORM_CONCURRENCY } from "./limits.ts";
+import { createStubModule } from "../utils/stub-module.ts";
+import { isMdxMissingModuleError } from "../missing-module.ts";
 
 export interface FetchModuleViaHttpOptions {
+  esmCacheDir?: string;
   fetchFn?: typeof fetch;
   moduleServerOrigin?: string;
+  strictMissingModules?: boolean;
   timeoutMs?: number;
 }
 
@@ -263,7 +267,24 @@ export async function fetchModuleViaHTTP(
     const results = await parallelMap(
       allImports,
       async ({ original, path, suffix, start, end, isDynamic, isSideEffect, key }) => {
-        const nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
+        let nestedFilePath: string | null;
+        try {
+          nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
+        } catch (error) {
+          if (!isDynamic || !options.esmCacheDir || !isMdxMissingModuleError(error)) throw error;
+          nestedFilePath = null;
+        }
+
+        if (!nestedFilePath && isDynamic && options.esmCacheDir) {
+          nestedFilePath = await createStubModule(
+            path,
+            moduleCode,
+            original,
+            options.esmCacheDir,
+            { failOnImport: options.strictMissingModules ?? true },
+          );
+        }
+
         return {
           original,
           start,

@@ -48,7 +48,11 @@ export async function resolveUnresolvedModuleViaHttpFallback(
     input.projectSlug,
     input.isLocalProject,
     input.dependencyPinningCacheKey,
-    { moduleServerOrigin: input.moduleServerOrigin },
+    {
+      esmCacheDir: input.esmCacheDir,
+      moduleServerOrigin: input.moduleServerOrigin,
+      strictMissingModules: input.strictMissingModules ?? true,
+    },
   );
 
   if (moduleCode) {

@@ -16,6 +16,7 @@ import {
   type StaticImportSpan,
 } from "../utils/source-spans.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
+import { isMdxMissingModuleError } from "../missing-module.ts";
 import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 import type { Logger } from "#veryfront/utils";
 import { parallelMap } from "#veryfront/utils/parallel.ts";
@@ -55,10 +56,6 @@ function scanImportSpans(
     if (!isMalformedSpecifierSyntaxError(error)) throw error;
     return { spans: [], malformed: true };
   }
-}
-
-function isMissingModuleError(error: unknown): boolean {
-  return error instanceof Error && error.name === "MissingModuleError";
 }
 
 /**
@@ -445,7 +442,7 @@ export async function resolveNestedModuleImports(
           input.parentBasePath ?? input.normalizedPath,
         );
       } catch (error) {
-        if (!isDynamic || !isMissingModuleError(error)) throw error;
+        if (!isDynamic || !isMdxMissingModuleError(error)) throw error;
         nestedFilePath = null;
       }
 

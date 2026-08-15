@@ -6,6 +6,9 @@ import type { Logger } from "#veryfront/utils/logger/logger.ts";
 import { fetchModuleViaHTTP } from "./http-fetcher.ts";
 import { MAX_MDX_MODULE_CODE_BYTES, MAX_MDX_MODULE_TRANSFORM_CONCURRENCY } from "./limits.ts";
 import { HttpModuleBodyTooLargeError } from "../../../shared/http-module-response.ts";
+import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
+import { join, toFileUrl } from "#veryfront/compat/path/index.ts";
+import { buildMissingModuleError } from "../missing-module.ts";
 
 describe("module-fetcher/http-fetcher", () => {
   it("falls back to bare localhost, carrying the project slug, when the subdomain will not resolve", async () => {
@@ -185,6 +188,51 @@ describe("module-fetcher/http-fetcher", () => {
         `export const lazy = () => import("file:///cache/.__Lazy.js.mjs?client");`,
       ].join("\n"),
     );
+  });
+
+  it("defers a missing dynamic import fetched through the HTTP fallback", async () => {
+    const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-http-dynamic-cache-" });
+    const source =
+      `export const load = (enabled) => enabled ? import("./optional.js") : Promise.resolve("skipped");`;
+
+    try {
+      const result = await fetchModuleViaHTTP(
+        "_vf_modules/pages/index.js",
+        { env: { get: () => undefined } } as unknown as RuntimeAdapter,
+        (path) => {
+          throw buildMissingModuleError({
+            modulePath: path,
+            importer: "_vf_modules/pages/index.js",
+            importStatement: `import("./optional.js")`,
+            code: source,
+            projectSlug: "docs",
+          });
+        },
+        { debug: () => {}, warn: () => {} } as unknown as Logger,
+        "docs",
+        true,
+        undefined,
+        {
+          esmCacheDir,
+          fetchFn: (() => Promise.resolve(new Response(source))) as typeof fetch,
+          strictMissingModules: true,
+        },
+      );
+      const parentPath = join(esmCacheDir, "http-parent.mjs");
+      await Deno.writeTextFile(parentPath, result!);
+      const loaded = await import(
+        `${toFileUrl(parentPath).href}?test=${crypto.randomUUID()}`
+      ) as { load(enabled: boolean): Promise<unknown> };
+
+      assertEquals(await loaded.load(false), "skipped");
+      await assertRejects(
+        () => loaded.load(true),
+        Error,
+        "Missing module: ./optional.js",
+      );
+    } finally {
+      await remove(esmCacheDir, { recursive: true });
+    }
   });
 
   // A single-quoted specifier may legally contain a double quote, and a cache
