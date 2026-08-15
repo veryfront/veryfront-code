@@ -618,6 +618,55 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     assertEquals(getterCalls, 0);
   });
 
+  it("rejects nested cache-control accessors without invoking them", () => {
+    for (const [placement, field] of [["tool", "type"], ["message", "ttl"]] as const) {
+      let getterCalls = 0;
+      const cacheControl = Object.defineProperty(
+        { type: "ephemeral" },
+        field,
+        {
+          configurable: true,
+          enumerable: true,
+          get() {
+            getterCalls += 1;
+            return field === "type" ? "ephemeral" : "5m";
+          },
+        },
+      );
+      const anthropic = placement === "tool"
+        ? {
+          tools: [{
+            name: "lookup",
+            input_schema: { type: "object", properties: {} },
+            cache_control: cacheControl,
+          }],
+        }
+        : {
+          messages: [{
+            role: "user",
+            content: [{ type: "text", text: "Cached", cache_control: cacheControl }],
+          }],
+        };
+
+      assertThrows(
+        () =>
+          buildAnthropicMessagesRequest(
+            "claude-sonnet-4-6",
+            "anthropic",
+            {
+              prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+              providerOptions: { anthropic },
+            },
+            false,
+            createWarningCollector(),
+          ),
+        TypeError,
+        "Anthropic cache_control must contain only enumerable data properties",
+      );
+      assertEquals(getterCalls, 0);
+    }
+  });
+
   it("rejects system cache metadata accessors without invoking them", () => {
     let accessed = false;
     const cacheControl = Object.defineProperty({}, "type", {

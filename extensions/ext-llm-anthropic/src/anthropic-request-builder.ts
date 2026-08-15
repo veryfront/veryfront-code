@@ -1373,10 +1373,12 @@ function readEmittedAnthropicCacheTtl(
   }
   for (const key of keys) {
     const property = readOwnEnumerableDataProperty(cacheControl, key);
-    if (
-      !property ||
-      (property.value !== undefined && key !== "type" && key !== "ttl")
-    ) {
+    if (!property) {
+      throw new TypeError(
+        "Anthropic cache_control must contain only enumerable data properties",
+      );
+    }
+    if (property.value !== undefined && key !== "type" && key !== "ttl") {
       return undefined;
     }
   }
