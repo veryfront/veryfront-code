@@ -476,6 +476,12 @@ export async function loadModule(
         ),
       );
 
+      // Classification at the retry seam must describe the rebuilt graph, not
+      // the artifact that just failed. A dependency may appear between the two
+      // transforms, so retaining its earlier dropped-specifier evidence can
+      // misattribute an unrelated retry failure to the tenant.
+      unresolvedSpecifiers.clear();
+
       let rebuiltPath: string;
       try {
         rebuiltPath = await transformModuleWithDeps(

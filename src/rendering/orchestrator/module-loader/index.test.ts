@@ -397,6 +397,53 @@ describe("module-loader/loadModule build-failure tagging", () => {
     );
   });
 
+  it("classifies retry failures from only the rebuilt dependency graph", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import { label } from "./late";`,
+          `export default function Page() { return label; }`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        let createdLateDependency = false;
+        await runWithCacheDir(tmpDir, async () => {
+          const error = await assertRejects(
+            () =>
+              loadModule(join(projectDir, "app/page.tsx"), {
+                ...config,
+                onProgress: ({ phase, filePath }) => {
+                  if (
+                    createdLateDependency ||
+                    phase !== "module:persisted" ||
+                    filePath !== join(projectDir, "app/page.tsx")
+                  ) return;
+
+                  createdLateDependency = true;
+                  Deno.writeTextFileSync(
+                    join(projectDir, "app/late.ts"),
+                    [
+                      `import "./framework-missing";`,
+                      `export const label = "late";`,
+                    ].join("\n"),
+                  );
+                },
+              }),
+            Error,
+          );
+
+          assertEquals(createdLateDependency, true);
+          assertEquals(isMissingModuleError(error), true);
+          assertEquals(isBuildFailure(error), true);
+          // The first transform dropped `./late`, but the rebuild resolved it.
+          // Its separate bare side-effect failure is not resolver evidence and
+          // must not inherit the stale tenant classification from build one.
+          assertEquals(isTenantBuildFailure(error), false);
+        });
+      },
+    );
+  });
+
   // The same seam must not launder a framework fault. A module whose imports
   // all resolve, and which then throws while executing, is an application
   // error: it must come back out of `loadModule` untagged on both predicates.
