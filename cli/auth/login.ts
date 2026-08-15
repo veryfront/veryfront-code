@@ -331,17 +331,29 @@ async function describeExistingSession(
     );
     // An environment credential is a valid session for every command, but this
     // path stores nothing, and `login` implies it did. The variable is often set
-    // by a `.env` in the working directory the developer has forgotten about —
-    // the case `whoami` now names — so the session ends at the directory
+    // by a `.env` in the working directory the developer has forgotten about,
+    // the case `whoami` now names, so the session ends at the directory
     // boundary. Say so rather than let them discover it elsewhere.
     if (source === "environment") {
-      console.log("  " + dim("Using VERYFRONT_API_TOKEN; no stored login was created."));
-      console.log(
-        "  " +
-          dim(
-            "Unset VERYFRONT_API_TOKEN before using another login method, or replace the variable to switch tokens.",
-          ),
-      );
+      if (storedToken) {
+        console.log(
+          "  " + dim("Using VERYFRONT_API_TOKEN; it takes precedence over the stored login."),
+        );
+        console.log(
+          "  " +
+            dim(
+              "Unset VERYFRONT_API_TOKEN to use the stored login, or replace the variable to switch tokens.",
+            ),
+        );
+      } else {
+        console.log("  " + dim("Using VERYFRONT_API_TOKEN; no stored login was created."));
+        console.log(
+          "  " +
+            dim(
+              "Unset VERYFRONT_API_TOKEN before using another login method, or replace the variable to switch tokens.",
+            ),
+        );
+      }
     }
     console.log(
       "  " +
