@@ -63,10 +63,12 @@ Two artefacts that must stay 1:1:
     but that Case-update scoping is **prompt-driven today**: the granted
     `update_case` can write every writable Case field, so the boundary is
     instructed, not enforced. §5.2/§6 replace the Case update grant with a
-    field-scoped `update_case_reason` tool plus explicit fixed `Case` Update
-    authorization that makes it structural. The hardened template also replaces
-    the generic `add_case_comment` grant with `add_internal_case_comment`, whose
-    schema omits `IsPublished` and whose server-owned request body always sets
+    field-scoped `update_case_reason` tool, grant
+    `get_picklist_values_for_record_type` for the mandatory `Reason` preflight,
+    and require explicit fixed `Case` Update authorization that makes the write
+    structural. The hardened template also replaces the generic
+    `add_case_comment` grant with `add_internal_case_comment`, whose schema omits
+    `IsPublished` and whose server-owned request body always sets
     `IsPublished: false`. It keeps a separate fixed `CaseComment` Create
     authorization check.
 - **Companion example repository** (currently private). Mirrors the four agents
@@ -128,7 +130,7 @@ children):
    └──────┬───────┘           └──────┬───────┘          └──────┬───────┘
    get_case                   search_knowledge          update_case_reason
    list_case_activity         get_file (taxonomy)       add_internal_case_comment
-   list_cases (open-constrained)     │                         │
+   list_cases (open-constrained)     │                   get_picklist_values_for_record_type
           │                          ▼                         │
           ▼                  project taxonomy .md              ▼
       Salesforce            (NOT Salesforce Knowledge)     Salesforce
