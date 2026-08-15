@@ -1,5 +1,5 @@
 import { serverLogger } from "#veryfront/utils";
-import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import { recordNodeIncomingRequestPeer } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 /** Convert a Web API request handler into a Node.js HTTP listener. */
 export function toNodeHandler(
@@ -25,14 +25,7 @@ export function toNodeHandler(
       if (body) init.duplex = "half";
 
       const request = new Request(url.toString(), init);
-      const remoteAddress = req.socket.remoteAddress;
-      if (typeof remoteAddress === "string") {
-        recordRequestPeerFromTransport(request, {
-          runtime: "node",
-          transport: "tcp",
-          hostname: remoteAddress,
-        });
-      }
+      recordNodeIncomingRequestPeer(request, req);
 
       const response = await handler(request);
 

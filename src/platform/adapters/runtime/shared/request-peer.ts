@@ -118,6 +118,40 @@ export function recordDenoServeRequestPeer(
   }
 }
 
+/** @internal Record the native peer supplied by a Node IncomingMessage. */
+export function recordNodeIncomingRequestPeer(
+  request: Request,
+  incoming: unknown,
+): boolean {
+  if (typeof incoming !== "object" || incoming === null) return false;
+
+  try {
+    const socket = (incoming as {
+      readonly socket?: { readonly remoteAddress?: unknown };
+    }).socket;
+    if (typeof socket?.remoteAddress !== "string") return false;
+    return recordRequestPeerFromTransport(request, {
+      runtime: "node",
+      transport: "tcp",
+      hostname: socket.remoteAddress,
+    });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * @internal Record native peer context passed through a public handler bridge.
+ * Supports Deno.serve handler info and Node IncomingMessage values.
+ */
+export function recordHandlerRequestPeer(
+  request: Request,
+  context: unknown,
+): boolean {
+  return recordDenoServeRequestPeer(request, context) ||
+    recordNodeIncomingRequestPeer(request, context);
+}
+
 /** @internal Read immutable transport provenance without consulting headers. */
 export function getRequestPeerProvenance(
   request: Request,

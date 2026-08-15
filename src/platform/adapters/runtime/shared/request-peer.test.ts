@@ -5,6 +5,7 @@ import {
   inheritRequestPeerProvenance,
   isRequestFromLoopbackPeer,
   recordDenoServeRequestPeer,
+  recordHandlerRequestPeer,
   recordRequestPeerFromTransport,
   type RequestPeerRuntime,
 } from "./request-peer.ts";
@@ -35,6 +36,23 @@ describe("runtime request peer provenance", () => {
       runtime: "deno",
       transport: "tcp",
       hostname: "::1",
+    });
+    assertEquals(isRequestFromLoopbackPeer(request), true);
+  });
+
+  it("records a framework-hosted Node request from its native transport", () => {
+    const request = new Request("http://localhost/_projects");
+
+    assertEquals(
+      recordHandlerRequestPeer(request, {
+        socket: { remoteAddress: "127.0.0.1" },
+      }),
+      true,
+    );
+    assertEquals(getRequestPeerProvenance(request), {
+      runtime: "node",
+      transport: "tcp",
+      hostname: "127.0.0.1",
     });
     assertEquals(isRequestFromLoopbackPeer(request), true);
   });
