@@ -239,11 +239,20 @@ interface JsxTagEnd {
   selfClosing: boolean;
 }
 
+function jsxTagNameCharacterLength(source: string, index: number): number {
+  const character = identifierCharacterAt(source, index);
+  if (character !== undefined && isIdentifierChar(character)) return character.length;
+  return ".:-".includes(source[index] ?? "") ? 1 : 0;
+}
+
 function skipJsxTag(source: string, index: number): JsxTagEnd | null {
   let nameStart = index + 1;
   if (source[nameStart] === "/") nameStart++;
   let nameEnd = nameStart;
-  while (/[A-Za-z0-9_$.:.-]/.test(source[nameEnd] ?? "")) nameEnd++;
+  for (let length = jsxTagNameCharacterLength(source, nameEnd); length > 0;) {
+    nameEnd += length;
+    length = jsxTagNameCharacterLength(source, nameEnd);
+  }
 
   let cursor = index + 1;
   let expressionDepth = 0;
@@ -325,7 +334,7 @@ function isRegexClosingTagLookalike(source: string, index: number): boolean {
 
   const afterRegex = skipWhitespaceAndComments(source, regexEnd);
   const next = source[afterRegex];
-  return next === undefined || ".([?;,)]}:".includes(next);
+  return next === undefined || ".([?;,)]}:+-*/%<>=!&|^~".includes(next);
 }
 
 function canStartJsxElement(
