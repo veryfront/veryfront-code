@@ -184,6 +184,28 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("ignores static import-from text in regex literals after comments", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          'function f() { return /* note */ /;import value from "\\/_vf_modules\\/fake.js"/; }',
+          (specifier) => specifier.startsWith("/_vf_modules/") ? specifier : null,
+          UNBOUNDED,
+        ),
+        [],
+      );
+    });
+
+    it("keeps control-condition context across comments", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          'if /* note */ (ready) /;import value from "\\/_vf_modules\\/fake.js"/;',
+          (specifier) => specifier.startsWith("/_vf_modules/") ? specifier : null,
+          UNBOUNDED,
+        ),
+        [],
+      );
+    });
+
     it("keeps division distinct from regex literals", () => {
       assertEquals(
         findStaticImportFromSpans(
@@ -643,6 +665,61 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("ignores property methods named import across trivia", () => {
+      assertEquals(
+        vfModuleSpecifiers('const first = object./* note */import("/_vf_modules/fake.js");'),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers('const second = object.\nimport("/_vf_modules/fake.js");'),
+        [],
+      );
+    });
+
+    it("finds real dynamic imports after spread syntax", () => {
+      assertEquals(
+        vfModuleSpecifiers('const values = [...import("/_vf_modules/real.js")];'),
+        ["/_vf_modules/real.js"],
+      );
+    });
+
+    it("ignores import-looking regex text after commented prefixes", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'function load() { return /* note */ /import("\\/_vf_modules\\/fake.js")/; }',
+        ),
+        [],
+      );
+    });
+
+    it("keeps parenthesis context across comments", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'for /* note */ (const value of /import("\\/_vf_modules\\/fake.js")/) {}',
+        ),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'if /* note */ (ready) /import("\\/_vf_modules\\/fake.js")/.test(value);',
+        ),
+        [],
+      );
+    });
+
+    it("keeps block context across comments", () => {
+      for (
+        const source of [
+          'if (ready) /* note */ {} /import("\\/_vf_modules\\/fake.js")/.test(value);',
+          'try /* note */ {} finally /* note */ {} /import("\\/_vf_modules\\/fake.js")/.test(value);',
+          'function /* note */ load() {} /import("\\/_vf_modules\\/fake.js")/.test(value);',
+          'class /* note */ Loader {} /import("\\/_vf_modules\\/fake.js")/.test(value);',
+        ]
+      ) {
+        assertEquals(vfModuleSpecifiers(source), []);
+      }
+    });
+
     it("ignores an import-looking string or comment", () => {
       assertEquals(specifiers(`const s = 'import("./foo.js")';`), []);
       assertEquals(specifiers(`// import("./foo.js")\nconst x = 1;`), []);
@@ -823,6 +900,28 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       assertEquals(
         findStaticSideEffectImportSpans(
           'const r = /;import "\\/_vf_modules\\/a.js"/;',
+          (specifier) => specifier.startsWith("/_vf_modules/") ? specifier : null,
+          UNBOUNDED,
+        ),
+        [],
+      );
+    });
+
+    it("ignores side-effect import text in regex literals after comments", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'function f() { return /* note */ /;import "\\/_vf_modules\\/a.js"/; }',
+          (specifier) => specifier.startsWith("/_vf_modules/") ? specifier : null,
+          UNBOUNDED,
+        ),
+        [],
+      );
+    });
+
+    it("keeps control-condition context across comments", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'if /* note */ (ready) /;import "\\/_vf_modules\\/fake.js"/;',
           (specifier) => specifier.startsWith("/_vf_modules/") ? specifier : null,
           UNBOUNDED,
         ),
