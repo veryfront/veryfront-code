@@ -439,7 +439,7 @@ export function buildRuntimeAvailableSkillsPromptBlock(
   return buildStrictRuntimeAvailableSkillsPromptBlock(skills);
 }
 
-/** Builds the authorized skill-ID fallback used beside authored catalogs. */
+/** Builds the bounded authorized skill-ID fallback used beside authored catalogs. */
 export function buildRuntimeAuthorizedSkillIdsPromptBlock(
   skills: readonly RuntimeSkillDefinition[],
 ): string {

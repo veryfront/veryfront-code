@@ -133,17 +133,37 @@ it("bounds worst-case omitted skill-ID inventories without rejecting the catalog
   assertEquals((authorized.match(/"skill-/g)?.length ?? 0) < 1_000, true);
 });
 
-it("keeps every selector-valid authorized skill ID discoverable", () => {
+it("bounds authored-catalog skill IDs and provides a continuation cursor", () => {
+  const skills = Array.from(
+    { length: 1_000 },
+    (_, index) => createSkill({ id: `skill-${index}-${"x".repeat(240)}` }),
+  );
+
+  const block = buildRuntimeAuthorizedSkillIdsPromptBlock(skills);
+  const cursorMatch = /Call load_skill\(\{ cursor: (\d+) \}\)/.exec(block);
+
+  assertEquals(cursorMatch === null, false);
+  const embeddedIdCount = block.match(/"skill-/g)?.length ?? 0;
+  assertEquals(Number(cursorMatch?.[1]), embeddedIdCount);
+  assertEquals(embeddedIdCount < skills.length, true);
+  assertEquals(block.length < 20_000, true);
+  assertStringIncludes(block, "additional authorized skill IDs are omitted");
+});
+
+it("keeps every selector-valid authorized skill ID discoverable through paging", () => {
   const skills = Array.from(
     { length: 1_000 },
     (_, index) => createSkill({ id: `skill-${String(index).padStart(8, "0")}` }),
   );
 
   const block = buildRuntimeAuthorizedSkillIdsPromptBlock(skills);
+  const cursorMatch = /Call load_skill\(\{ cursor: (\d+) \}\)/.exec(block);
 
   assertStringIncludes(block, '"skill-00000000"');
   assertStringIncludes(block, "Call load_skill({ cursor: ");
   assertStringIncludes(block, "<authorized_skill_id_discovery>");
+  assertEquals(cursorMatch === null, false);
+  assertEquals(Number(cursorMatch?.[1]), block.match(/"skill-/g)?.length);
   assertEquals((block.match(/"skill-/g)?.length ?? 0) < 1_000, true);
 });
 
