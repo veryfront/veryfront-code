@@ -227,6 +227,7 @@ export async function persistTransformedModule(
   // Publish the path cache only after its tenant-attribution evidence is
   // durable. A new worker can otherwise reuse the transformed artifact from
   // _index.json without knowing which authored imports remained unresolved.
+  let shouldPublishReusableCache = true;
   if (unresolvedSpecifiers.length > 0) {
     try {
       await input.localAdapter.fs.writeFile(
@@ -234,6 +235,7 @@ export async function persistTransformedModule(
         serializedUnresolvedSpecifiers,
       );
     } catch (error) {
+      shouldPublishReusableCache = false;
       logger.warn("Failed to persist unresolved-import evidence", {
         filePath: input.filePath.slice(-40),
         error: error instanceof Error ? error.message : String(error),
@@ -241,7 +243,7 @@ export async function persistTransformedModule(
     }
   }
 
-  if (input.contentSourceId) {
+  if (shouldPublishReusableCache && input.contentSourceId) {
     const normalizedPath = `_vf_modules/${relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js")}`;
     const mdxCacheKey = buildMdxEsmPathCacheKey(
       normalizedPath,
@@ -265,9 +267,11 @@ export async function persistTransformedModule(
     });
   }
 
-  input.moduleCache.set(input.cacheKey, tempFilePath);
+  if (shouldPublishReusableCache) {
+    input.moduleCache.set(input.cacheKey, tempFilePath);
+  }
 
-  if (input.isCycleTarget) {
+  if (shouldPublishReusableCache && input.isCycleTarget) {
     const hashedFileName = jsPath.slice(jsPath.lastIndexOf("/") + 1);
     await writeCycleTargetAlias(input, outputRelativePath, hashedFileName);
   }

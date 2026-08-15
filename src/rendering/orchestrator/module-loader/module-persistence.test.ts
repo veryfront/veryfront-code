@@ -295,7 +295,7 @@ describe("module-loader/module-persistence", () => {
     }
   });
 
-  it("does not fail persistence when unresolved-import evidence cannot be written", async () => {
+  it("keeps the artifact available without caching when unresolved-import evidence cannot be written", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
     const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
     const localAdapter = await getLocalAdapter();
@@ -324,12 +324,18 @@ describe("module-loader/module-persistence", () => {
         localAdapter: stubAdapter,
         moduleCache,
         cacheKey: "evidence",
+        contentSourceId: "preview-main",
+        reactVersion: "19.1.1",
         unresolvedSpecifiers: ["./missing"],
       });
 
       assertEquals(await Deno.readTextFile(result), transformedCode);
-      assertEquals(moduleCache.get("evidence"), result);
+      assertEquals(moduleCache.has("evidence"), false);
       assertEquals(await readPersistedUnresolvedSpecifiers(result, stubAdapter), []);
+
+      const pathCache = await getModulePathCache(tmpDir);
+      const mdxCacheKey = buildMdxEsmPathCacheKey("_vf_modules/lib/evidence.js", "19.1.1");
+      assertEquals(pathCache.has(mdxCacheKey), false);
     } finally {
       await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
       await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
