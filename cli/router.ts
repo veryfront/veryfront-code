@@ -237,6 +237,20 @@ export async function formatDuplicatedBinaryHint(
     : positionalPullProject
     ? 1
     : undefined;
+  const positionalProjectDeleteTarget =
+    (correctedCommand === "project" || correctedCommand === "projects") &&
+    args._[2] === "delete" &&
+    typeof args._[3] === "string" && !args._[3].startsWith("-");
+  const positionalProjectDeleteTargetRawIndex = positionalProjectDeleteTarget
+    ? args.__rawPositionals?.[3]
+    : undefined;
+  const positionalProjectDeleteTargetHintIndex =
+    positionalProjectDeleteTargetRawIndex !== undefined && duplicatedBinaryIndex !== undefined
+      ? positionalProjectDeleteTargetRawIndex -
+        (duplicatedBinaryIndex < positionalProjectDeleteTargetRawIndex ? 1 : 0)
+      : positionalProjectDeleteTarget
+      ? 2
+      : undefined;
   const formatted: string[] = [];
   const opaquePayloadOptions = new Set(["--config", "--input"]);
   const opaqueIssueOptions = new Set([
@@ -273,6 +287,7 @@ export async function formatDuplicatedBinaryHint(
     "projects",
     "pull",
     "push",
+    "studio",
     "uploads",
   ]);
   const knownUndocumentedLoginOptions = new Set(["--provider"]);
@@ -303,7 +318,8 @@ export async function formatDuplicatedBinaryHint(
   for (let index = 0; index < hintArguments.length; index++) {
     const argument = hintArguments[index]!;
     if (
-      index === positionalIssueTitleHintIndex || index === positionalPullProjectHintIndex
+      index === positionalIssueTitleHintIndex || index === positionalPullProjectHintIndex ||
+      index === positionalProjectDeleteTargetHintIndex
     ) {
       formatted.push("'<REDACTED>'");
       continue;

@@ -858,6 +858,52 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("redacts positional project delete targets in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        for (const command of ["project", "projects"]) {
+          infoMessages.length = 0;
+          const code = await runAndCaptureExit(parseCliArgs([
+            "veryfront",
+            command,
+            "delete",
+            "private-project-target",
+          ]));
+          assertEquals(code, 2);
+          assertEquals(infoMessages, [
+            '  You already included "veryfront". Use:',
+            `    veryfront ${command} delete '<REDACTED>'`,
+          ]);
+        }
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("redacts Studio branch targets in the correction", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        for (const option of ["--branch", "-b"]) {
+          infoMessages.length = 0;
+          const code = await runAndCaptureExit(parseCliArgs([
+            "veryfront",
+            "studio",
+            option,
+            "private-studio-branch",
+          ]));
+          assertEquals(code, 2);
+          assertEquals(infoMessages, [
+            '  You already included "veryfront". Use:',
+            `    veryfront studio ${option} '<REDACTED>'`,
+          ]);
+        }
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("redacts a positional pull project identifier in the correction", async () => {
       stubExit();
       stubLogger();
