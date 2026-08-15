@@ -343,6 +343,31 @@ describe("module-loader/loadModule build-failure tagging", () => {
     }
   });
 
+  it("ignores poisoned Reflect descriptor lookups when reading build-failure tags", () => {
+    const previousDescriptor = Object.getOwnPropertyDescriptor(
+      Reflect,
+      "getOwnPropertyDescriptor",
+    );
+    assert(previousDescriptor);
+    Object.defineProperty(Reflect, "getOwnPropertyDescriptor", {
+      ...previousDescriptor,
+      value: () => ({
+        configurable: true,
+        enumerable: false,
+        value: true,
+        writable: false,
+      }),
+    });
+
+    try {
+      const frameworkError = new Error("framework failed");
+      assertEquals(isBuildFailure(frameworkError), false);
+      assertEquals(isTenantBuildFailure(frameworkError), false);
+    } finally {
+      Object.defineProperty(Reflect, "getOwnPropertyDescriptor", previousDescriptor);
+    }
+  });
+
   // Compiling a real page module starts esbuild's child process; stop it so the
   // test does not leak the handle rather than opting out of the sanitizer.
   afterAll(async () => {

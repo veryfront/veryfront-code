@@ -16,6 +16,8 @@
 
 import { isTenantSourceBuildError } from "#veryfront/errors/tenant-classification.ts";
 
+const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+
 const BUILD_FAILURE = Symbol.for("veryfront.module-loader.build-failure");
 const TENANT_BUILD_FAILURE = Symbol.for("veryfront.module-loader.tenant-build-failure");
 
@@ -34,7 +36,7 @@ function defineTag(error: Error, tag: symbol): void {
 }
 
 function hasOwnTrueTag(error: Error, tag: symbol): boolean {
-  const descriptor = Reflect.getOwnPropertyDescriptor(error, tag);
+  const descriptor = ReflectGetOwnPropertyDescriptor(error, tag);
   return descriptor !== undefined && !descriptor.get && !descriptor.set &&
     "value" in descriptor && descriptor.value === true;
 }

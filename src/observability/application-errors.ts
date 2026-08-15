@@ -34,6 +34,7 @@ export type ApplicationErrorReporterLifecycle = {
 };
 
 const MAX_APPLICATION_ERROR_SERVICE_NAME_LENGTH = 255;
+const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 
 let reporter: ApplicationErrorReporter | undefined;
 let reporterOwner: symbol | undefined;
@@ -234,7 +235,7 @@ const TENANT_BUILD_ERROR_CLASS = "tenant-build";
 const TENANT_BUILD_FAILURE_TAG = Symbol.for("veryfront.module-loader.tenant-build-failure");
 
 function hasOwnTrueSymbol(value: object, key: symbol): boolean {
-  const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+  const descriptor = ReflectGetOwnPropertyDescriptor(value, key);
   return descriptor !== undefined && !descriptor.get && !descriptor.set &&
     "value" in descriptor && descriptor.value === true;
 }

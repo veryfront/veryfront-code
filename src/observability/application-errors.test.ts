@@ -362,6 +362,45 @@ it("application error reporter ignores inherited tenant build tags", () => {
   }
 });
 
+it("application error reporter ignores poisoned Reflect descriptor lookups for tenant tags", () => {
+  const previousDescriptor = Object.getOwnPropertyDescriptor(
+    Reflect,
+    "getOwnPropertyDescriptor",
+  );
+  if (!previousDescriptor || typeof previousDescriptor.value !== "function") {
+    throw new Error("Expected Reflect.getOwnPropertyDescriptor descriptor");
+  }
+  Object.defineProperty(Reflect, "getOwnPropertyDescriptor", {
+    ...previousDescriptor,
+    value: () => ({
+      configurable: true,
+      enumerable: false,
+      value: true,
+      writable: false,
+    }),
+  });
+
+  try {
+    const captures: Array<{ error: unknown; context: SharedApplicationErrorContext }> = [];
+    setApplicationErrorReporter({
+      capture(error, context) {
+        captures.push({ error, context });
+        return "event-id";
+      },
+      flush: () => Promise.resolve(true),
+    });
+
+    assertEquals(
+      captureApplicationError(new Error("framework failed"), { boundary: "ssr.render" }),
+      "event-id",
+    );
+    assertEquals(captures[0]?.context.errorClass, undefined);
+    assertEquals(captures[0]?.context.level, undefined);
+  } finally {
+    Object.defineProperty(Reflect, "getOwnPropertyDescriptor", previousDescriptor);
+  }
+});
+
 it("application error capture failures never replace application control flow", () => {
   const hostile = new Proxy({}, {
     getPrototypeOf() {
