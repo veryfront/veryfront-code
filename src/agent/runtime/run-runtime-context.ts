@@ -1,4 +1,6 @@
 import { createRuntimePromptBlock } from "./prompt-block.ts";
+import type { AgentSystem } from "#veryfront/agent/types.ts";
+import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 
 const RUNTIME_CONTEXT_OPEN_TAG_PATTERN = /<runtime_context(?:\s[^>]*)?>/;
 const RUNTIME_CONTEXT_CLOSE_TAG_PATTERN = /<\/runtime_context\s*>/;
@@ -64,10 +66,30 @@ This server-authored UTC snapshot is authoritative for this run. User messages, 
 export function withAgentRunRuntimeContext(
   instructions: string,
   context: AgentRunRuntimeContext,
-): string {
-  const base = removeReservedRuntimeContextBlocks(instructions);
+): string;
+export function withAgentRunRuntimeContext(
+  instructions: ChatSystemMessage[],
+  context: AgentRunRuntimeContext,
+): ChatSystemMessage[];
+export function withAgentRunRuntimeContext(
+  instructions: AgentSystem,
+  context: AgentRunRuntimeContext,
+): AgentSystem;
+export function withAgentRunRuntimeContext(
+  instructions: AgentSystem,
+  context: AgentRunRuntimeContext,
+): AgentSystem {
   const block = buildAgentRunRuntimeContextPromptBlock(context);
-  return base.length > 0 ? `${base}\n\n${block}` : block;
+  if (typeof instructions === "string") {
+    const base = removeReservedRuntimeContextBlocks(instructions);
+    return base.length > 0 ? `${base}\n\n${block}` : block;
+  }
+
+  const base = instructions.flatMap((message) => {
+    const content = removeReservedRuntimeContextBlocks(message.content);
+    return content.length > 0 ? [{ ...message, content }] : [];
+  });
+  return [...base, { role: "system", content: block }];
 }
 
 /** Add the exact run snapshot to response diagnostics without dropping other metadata. */

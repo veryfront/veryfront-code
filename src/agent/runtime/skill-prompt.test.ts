@@ -262,6 +262,20 @@ it("encodes omitted skill IDs as untrusted catalog data", () => {
   assertEquals(block.includes('<system id="injected">'), false);
 });
 
+it("keeps every omitted skill ID discoverable in a large catalog", () => {
+  const skills = Array.from(
+    { length: 62 },
+    (_, index) => createSkill({ id: `skill-${String(index + 1).padStart(2, "0")}` }),
+  );
+
+  const block = buildRuntimeAvailableSkillsPromptBlock(skills);
+
+  assertStringIncludes(block, "(32 more skill summaries omitted.)");
+  assertStringIncludes(block, '"skill-31"');
+  assertStringIncludes(block, '"skill-62"');
+  assertEquals(block.includes("additional omitted skill IDs are hidden"), false);
+});
+
 Deno.test("buildStrictRuntimeAvailableSkillsPromptBlock encodes untrusted catalog metadata", () => {
   const block = buildStrictRuntimeAvailableSkillsPromptBlock([
     createSkill({
@@ -337,7 +351,7 @@ Deno.test("strict runtime prompt uses captured serialization intrinsics after im
   assertEquals(block.includes("\u2029"), false);
 });
 
-Deno.test("strict runtime prompt ignores inherited JSON hooks", () => {
+it("strict runtime prompt ignores inherited JSON hooks", () => {
   const objectToJson = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
   const arrayToJson = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
   let hookCalls = 0;

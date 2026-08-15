@@ -36,7 +36,6 @@ import type { ResolvedSkillSelectorSnapshot } from "#veryfront/skill/selector.ts
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import { buildAgentDelegateTools } from "../runtime/agent-delegation.ts";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
-import { flattenSystemInstructions } from "../runtime/tool-inventory.ts";
 import { createDefaultHostedInvokeAgentTool } from "./default-invoke-agent-tool.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
 import type {
@@ -363,14 +362,14 @@ export async function resolveHostedChildAgentExecutionConfig(
   const thinking = agentConfig.thinking?.enabled === false ? 0 : agentConfig.thinking?.budgetTokens;
 
   return {
-    system: flattenSystemInstructions(buildVeryfrontCloudRuntimeInstructions({
+    system: buildVeryfrontCloudRuntimeInstructions({
       agentConfig,
       projectId: projectId || null,
       branchId,
       instructions: steering.instructions,
       skills: skillSelectorSnapshot.definitions,
       availableToolNames: toolNames,
-    })),
+    }),
     ...(agentConfig.model ? { model: agentConfig.model } : {}),
     ...(agentConfig.temperature === undefined ? {} : { temperature: agentConfig.temperature }),
     ...(agentConfig.maxSteps === undefined ? {} : { maxSteps: agentConfig.maxSteps }),

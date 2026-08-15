@@ -10,6 +10,8 @@ import {
   getDefaultVeryfrontCloudModel,
   isVeryfrontCloudEnabled,
 } from "#veryfront/platform/cloud/resolver.ts";
+import type { ModelRuntime } from "#veryfront/provider/types.ts";
+import { getModelRuntimeProvider } from "#veryfront/provider/runtime-inspection.ts";
 
 export const AUTO_AGENT_MODEL = "auto";
 export const DEFAULT_AGENT_MODEL = "openai/gpt-5.4-nano";
@@ -80,6 +82,23 @@ export function resolveConfiguredAgentModel(model?: string): string {
   }
 
   return LEGACY_MODEL_ALIASES.get(normalized) ?? normalized;
+}
+
+/** Resolve the provider-options key used by the effective model runtime. */
+export function resolveModelProviderOptionKey(
+  model?: string,
+  runtime?: ModelRuntime,
+): string | undefined {
+  const runtimeProvider = runtime === undefined ? undefined : getModelRuntimeProvider(runtime);
+  if (runtimeProvider) {
+    return runtimeProvider;
+  }
+  const resolvedModel = resolveConfiguredAgentModel(model);
+  const slashIndex = resolvedModel.indexOf("/");
+  if (slashIndex <= 0) {
+    return undefined;
+  }
+  return resolvedModel.slice(0, slashIndex) || undefined;
 }
 
 function hasDirectProviderCredentials(provider: string): boolean {

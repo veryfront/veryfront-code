@@ -184,8 +184,16 @@ describe("agent provider transport hooks", () => {
       messages: [
         {
           role: "system",
-          content:
-            "Follow the same instructions.\n\n<runtime_context>\nserver-authored UTC snapshot\n</runtime_context>",
+          content: "Follow the same instructions.",
+          providerOptions: {
+            anthropic: {
+              cacheControl: { type: "ephemeral" },
+            },
+          },
+        },
+        {
+          role: "system",
+          content: "<runtime_context>\nserver-authored UTC snapshot\n</runtime_context>",
         },
         {
           role: "user",

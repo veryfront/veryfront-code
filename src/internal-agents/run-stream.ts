@@ -3,8 +3,16 @@ import {
   type AgentMessage as Message,
   type AgentResponse,
   AgentRuntime,
+  type AgentSystem,
 } from "#veryfront/agent";
 import { normalizeAgUiRuntimeMessages } from "#veryfront/agent/ag-ui/runtime-support.ts";
+import {
+  createProviderAwareAgentSystemResolver,
+  getEffectiveAgentSystem,
+  resolveAgentSystem,
+  resolveAgentSystemFromResolvedBase,
+} from "#veryfront/agent/runtime/effective-agent-system.ts";
+import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-inventory.ts";
 import { compactForStep, estimateOverhead } from "#veryfront/chat/message-prep.ts";
 import {
   getRuntimeRemoteToolSources,
@@ -635,13 +643,16 @@ async function getDeclaredRemoteSourceToolNames(input: {
 
 function compactRuntimeMessagesForStream(
   messages: Message[],
-  systemPrompt: string,
+  systemPrompt: AgentSystem,
   toolCount: number,
 ): Message[] {
+  const systemText = typeof systemPrompt === "string"
+    ? systemPrompt
+    : flattenSystemInstructions(systemPrompt);
   return convertProviderMessagesToAgentRuntimeMessages(
     compactForStep(
       convertAgentRuntimeMessagesToProviderMessages(messages),
-      estimateOverhead(systemPrompt, toolCount),
+      estimateOverhead(systemText, toolCount),
     ),
   ) as Message[];
 }
@@ -792,18 +803,45 @@ export async function createRuntimeAgentStreamResponse(
         requiredToolNames: localToolNames,
       },
     );
-    const systemPrompt = await composeInternalAgentRunSystemPrompt({
-      agent,
-      runInput: input,
-      projectId: deps.projectAgentSandbox?.projectId ?? null,
-      branchId: deps.projectAgentSandbox?.branchId,
-      toolNames: runtimeToolNames,
-    });
+    const runtimeContext = {
+      threadId: input.threadId,
+      runId: input.runId,
+      ...(deps.projectAgentSandbox?.authToken
+        ? { authToken: deps.projectAgentSandbox.authToken }
+        : {}),
+      ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
+      ...(input.state !== undefined ? { state: input.state } : {}),
+      context: input.context,
+      forwardedProps: input.forwardedProps,
+    };
+    const authoredSystemPromise = Promise.resolve(
+      resolveAgentSystem(agent.config.system, undefined),
+    );
+    const effectiveAgentSystem = getEffectiveAgentSystem(agent);
+    const resolveSystemPrompt = async (providerOptionKey?: string) => {
+      const authoredSystem = await authoredSystemPromise;
+      const resolvedBaseSystem = await resolveAgentSystemFromResolvedBase(
+        effectiveAgentSystem,
+        authoredSystem,
+        providerOptionKey,
+        { preserveRuntimeContextMarker: true },
+      );
+      return composeInternalAgentRunSystemPrompt({
+        agent,
+        resolvedBaseSystem,
+        runInput: input,
+        projectId: deps.projectAgentSandbox?.projectId ?? null,
+        branchId: deps.projectAgentSandbox?.branchId,
+        toolNames: runtimeToolNames,
+        ...(providerOptionKey ? { providerOptionKey } : {}),
+      });
+    };
+    const systemPrompt = await resolveSystemPrompt();
     const runtimeAgent: RuntimeFilteredAgent = {
       ...agent,
       config: {
         ...agent.config,
-        system: systemPrompt,
+        system: createProviderAwareAgentSystemResolver(resolveSystemPrompt),
         tools: mergedTools,
         ...(cappedProviderTools !== undefined ? { providerTools: cappedProviderTools } : {}),
         ...(allowedRemoteToolNames !== undefined
@@ -830,17 +868,7 @@ export async function createRuntimeAgentStreamResponse(
       () =>
         runtime.stream(
           runtimeMessages,
-          {
-            threadId: input.threadId,
-            runId: input.runId,
-            ...(deps.projectAgentSandbox?.authToken
-              ? { authToken: deps.projectAgentSandbox.authToken }
-              : {}),
-            ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
-            ...(input.state !== undefined ? { state: input.state } : {}),
-            context: input.context,
-            forwardedProps: input.forwardedProps,
-          },
+          runtimeContext,
           {
             onFinish: (response) => {
               completedResponse = response;

@@ -15,7 +15,6 @@
   "src/agent/conversation/hosted-lifecycle.test.ts",
   "src/agent/conversation/root-run-context.test.ts",
   "src/agent/conversation/run-context.test.ts",
-  "src/agent/hosted/child-fork-step-message-preparation.test.ts",
   "src/agent/hosted/child-stream-watchdog.test.ts",
   "src/agent/hosted/form-input-tool.test.ts",
   "src/agent/hosted/response-stream.test.ts",

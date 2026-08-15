@@ -805,6 +805,88 @@ function resolveAnthropicCacheControlBlock(
   return { type: "ephemeral" };
 }
 
+function resolveAnthropicSystemMessageCacheControl(
+  message: Extract<ModelRuntimePromptMessage, { readonly role: "system" }>,
+  providerName: string,
+): { type: "ephemeral"; ttl?: "1h" } | undefined {
+  const providerOptions = readOwnEnumerableDataProperty(message, "providerOptions");
+  if (!providerOptions) {
+    throw new TypeError(
+      "Anthropic system message providerOptions must be an own enumerable data property",
+    );
+  }
+  if (!providerOptions.present || providerOptions.value === undefined) {
+    return undefined;
+  }
+  if (
+    !providerOptions.value || typeof providerOptions.value !== "object" ||
+    Array.isArray(providerOptions.value)
+  ) {
+    throw new TypeError("Anthropic system message providerOptions must be an object");
+  }
+
+  let rawCacheControl: unknown;
+  let hasCacheControl = false;
+  for (const key of ["anthropic", providerName]) {
+    const providerBucket = readOwnEnumerableDataProperty(providerOptions.value, key);
+    if (!providerBucket) {
+      throw new TypeError(
+        "Anthropic system message provider bucket must be an own enumerable data property",
+      );
+    }
+    if (
+      !providerBucket.present || !providerBucket.value ||
+      typeof providerBucket.value !== "object" || Array.isArray(providerBucket.value)
+    ) {
+      continue;
+    }
+    const cacheControl = readOwnEnumerableDataProperty(providerBucket.value, "cacheControl");
+    if (!cacheControl) {
+      throw new TypeError(
+        "Anthropic system message cacheControl must be an own enumerable data property",
+      );
+    }
+    if (cacheControl.present && cacheControl.value !== undefined) {
+      hasCacheControl = true;
+      rawCacheControl = cacheControl.value;
+    }
+  }
+  if (!hasCacheControl || rawCacheControl === undefined) {
+    return undefined;
+  }
+  if (!rawCacheControl || typeof rawCacheControl !== "object" || Array.isArray(rawCacheControl)) {
+    throw new TypeError("Anthropic system message cacheControl must be an object");
+  }
+  let unsupportedFields: string[];
+  try {
+    unsupportedFields = Object.keys(rawCacheControl).filter((key) =>
+      key !== "type" && key !== "ttl"
+    );
+  } catch {
+    throw new TypeError("Anthropic system message cacheControl could not be inspected");
+  }
+  if (unsupportedFields.length > 0) {
+    throw new TypeError("Anthropic system message cacheControl contains unsupported fields");
+  }
+  const type = readOwnEnumerableDataProperty(rawCacheControl, "type");
+  const ttl = readOwnEnumerableDataProperty(rawCacheControl, "ttl");
+  if (!type || !ttl) {
+    throw new TypeError(
+      "Anthropic system message cacheControl must contain only enumerable data properties",
+    );
+  }
+  if (!type.present || type.value !== "ephemeral") {
+    throw new TypeError('Anthropic system message cacheControl.type must be "ephemeral"');
+  }
+  if (
+    ttl.present && ttl.value !== undefined && ttl.value !== "5m" &&
+    ttl.value !== "1h"
+  ) {
+    throw new TypeError('Anthropic system message cacheControl.ttl must be "5m" or "1h"');
+  }
+  return ttl.value === "1h" ? { type: "ephemeral", ttl: "1h" } : { type: "ephemeral" };
+}
+
 function createValidatedAnthropicProviderToolCorrelationState(
   canonicalProviderToolNamesById: ReadonlyMap<string, string>,
   rawProviderToolNamesById: ReadonlyMap<string, string>,
@@ -823,12 +905,16 @@ function createValidatedAnthropicProviderToolCorrelationState(
 function toAnthropicMessages(
   prompt: readonly ModelRuntimePromptMessage[],
   systemCacheControl?: { type: "ephemeral"; ttl?: "1h" },
+  providerName = "anthropic",
 ): {
   system?: string | Array<Record<string, unknown>>;
   messages: AnthropicCompatibleMessage[];
   providerToolNamesById: AnthropicProviderToolNameRegistry;
 } {
-  const systemParts: string[] = [];
+  const systemParts: Array<{
+    text: string;
+    cacheControl?: { type: "ephemeral"; ttl?: "1h" };
+  }> = [];
   const messages: AnthropicCompatibleMessage[] = [];
   const lastUserIndex = prompt.findLastIndex((message) => message.role === "user");
   const lastHistoricalAssistantTextIndex = prompt.findLastIndex((message, index) =>
@@ -863,7 +949,11 @@ function toAnthropicMessages(
         rawProviderToolNamesById = new Map();
         canonicalProviderToolNamesById = new Map();
         if (message.content.length > 0) {
-          systemParts.push(message.content);
+          const cacheControl = resolveAnthropicSystemMessageCacheControl(message, providerName);
+          systemParts.push({
+            text: message.content,
+            ...(cacheControl === undefined ? {} : { cacheControl }),
+          });
         }
         break;
       case "user":
@@ -990,7 +1080,27 @@ function toAnthropicMessages(
     };
   }
 
-  const joined = systemParts.join("\n\n");
+  if (systemParts.some((part) => part.cacheControl !== undefined)) {
+    const system = systemParts.map((part) => ({
+      type: "text",
+      text: part.text,
+      ...(part.cacheControl === undefined ? {} : { cache_control: part.cacheControl }),
+    }));
+    const lastSystemBlock = system.at(-1);
+    if (systemCacheControl && lastSystemBlock) {
+      lastSystemBlock.cache_control = systemCacheControl;
+    }
+    return {
+      system,
+      messages,
+      providerToolNamesById: createValidatedAnthropicProviderToolCorrelationState(
+        canonicalProviderToolNamesById,
+        rawProviderToolNamesById,
+      ),
+    };
+  }
+
+  const joined = systemParts.map((part) => part.text).join("\n\n");
   if (systemCacheControl) {
     return {
       system: [{
@@ -1260,6 +1370,7 @@ export function buildAnthropicMessagesRequestWithCorrelationState(
   const { system, messages, providerToolNamesById } = toAnthropicMessages(
     options.prompt,
     systemCacheControl,
+    providerName,
   );
   const mcpConfiguration = normalizeAnthropicMcpServers(options.mcpServers);
   const callerTools = toAnthropicTools(options.tools);

@@ -1236,8 +1236,8 @@ function buildRuntimeLoadSkillDescription(options: RuntimeLoadSkillToolOptions):
   }
 
   // Validate the skill inventory (bounds + data-property/proxy safety) at
-  // construction, as before — the IDs are no longer listed in the description,
-  // but the guardrails this call enforces must still run.
+  // construction. IDs stay in the dynamic context so the description remains
+  // byte-identical across projects.
   getKnownRuntimeSkillIds(options);
 
   // Static, project-independent: the per-project ID list lives in the
@@ -1286,6 +1286,10 @@ function getKnownRuntimeSkillIds(options: RuntimeLoadSkillToolOptions): string[]
     );
   }
 
+  return getRuntimeBuiltinSkillIds(options);
+}
+
+function getRuntimeBuiltinSkillIds(options: RuntimeLoadSkillToolOptions): string[] | null {
   const builtinSkillIds = snapshotRuntimeSkillPrivateScalarScope(
     options,
     "builtinSkillIds",
@@ -2190,8 +2194,8 @@ export function createRuntimeLoadSkillTool(
     get inputSchemaJson() {
       // Keep refreshing the private reference-authorization scope on schema
       // access (its side effect is relied upon), but advertise the STATIC
-      // schema so the tool definition is byte-identical across projects
-      // (shared cache prefix — RFC 0001). The per-project dynamic schema is
+      // generic schema so the tool definition is byte-identical across projects
+      // (shared cache prefix, RFC 0001). The runtime validation schema is
       // still used for `.parse()` validation at execution, so all runtime
       // enforcement (valid IDs, reload/body rules) is preserved; the model
       // just no longer sees the per-project enum.

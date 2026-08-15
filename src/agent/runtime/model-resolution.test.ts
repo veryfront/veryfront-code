@@ -8,6 +8,7 @@ import {
   DEFAULT_AGENT_MODEL,
   normalizeAgentModelConfig,
   resolveConfiguredAgentModel,
+  resolveModelProviderOptionKey,
   resolveRuntimeModel,
 } from "./model-resolution.ts";
 
@@ -65,6 +66,13 @@ describe("agent/runtime/model-resolution", () => {
     assertEquals(
       resolveConfiguredAgentModel("openai/gpt-4o"),
       "openai/gpt-4o",
+    );
+  });
+
+  it("preserves case-sensitive provider-options keys", () => {
+    assertEquals(
+      resolveModelProviderOptionKey("AWS-Anthropic/claude-sonnet"),
+      "AWS-Anthropic",
     );
   });
 
