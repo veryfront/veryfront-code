@@ -309,7 +309,10 @@ async function fetchHttpModule(
     );
   } catch (error) {
     if (error instanceof HttpModuleResponseError) {
-      throw BUILD_FAILED.create({ detail: `Failed to fetch ${safeUrl}: ${error.status}` });
+      throw BUILD_FAILED.create({
+        detail: `Failed to fetch ${safeUrl}: ${error.status}`,
+        context: { httpStatus: error.status },
+      });
     }
     if (error instanceof HttpModuleRequestError) {
       throw BUILD_FAILED.create({

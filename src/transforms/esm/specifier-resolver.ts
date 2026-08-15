@@ -10,6 +10,8 @@
 import { basename } from "#veryfront/compat/path/index.ts";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
+import { BUILD_FAILED } from "#veryfront/errors";
+import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 import {
   appendSameOriginSSRDependencyPinningKey,
   normalizeExtension,
@@ -40,6 +42,25 @@ function stringSlice(value: string, start: number, end?: number): string {
 
 function stringStartsWith(value: string, search: string): boolean {
   return ReflectApply(StringStartsWith, value, [search]) as boolean;
+}
+
+function classifyAuthoredPackageFetchError(error: unknown): unknown {
+  const snapshot = snapshotVeryfrontError(error);
+  const context = snapshot?.context;
+  if (
+    snapshot?.slug !== BUILD_FAILED.slug ||
+    typeof context !== "object" || context === null ||
+    (context as { httpStatus?: unknown }).httpStatus !== 404
+  ) {
+    return error;
+  }
+
+  return BUILD_FAILED.create({
+    message: snapshot.message,
+    detail: snapshot.detail,
+    cause: error,
+    context: { httpStatus: 404, tenantBuildFailure: true },
+  });
 }
 
 /** Function signature for caching an HTTP module and returning its local path. */
@@ -200,7 +221,11 @@ async function resolveSpecifier(
   if (mapped === specifier) return null;
   if (isLocalMappedSpecifier(mapped)) return mapped;
 
-  return resolveSpecifier(mapped, baseUrl, options, cacheHttpModule);
+  try {
+    return await resolveSpecifier(mapped, baseUrl, options, cacheHttpModule);
+  } catch (error) {
+    throw classifyAuthoredPackageFetchError(error);
+  }
 }
 
 /** Complete specifier replacements for one module. */

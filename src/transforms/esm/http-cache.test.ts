@@ -37,6 +37,7 @@ import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.
 import { HTTP_MODULE_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 import { MODULE_LOAD_TIMEOUT_MS } from "#veryfront/rendering/orchestrator/module-collection.ts";
+import { isTenantSourceBuildError } from "#veryfront/errors/tenant-classification.ts";
 import { FakeTime } from "#std/testing/time";
 import {
   __getMaxInFlightHttpFetchWaiterCountForTests,
@@ -1236,6 +1237,26 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(bodyCancelled, true);
       assertInstanceOf(error, Error);
       assert(!error.message.includes("super-secret"));
+    });
+  });
+
+  it("classifies an authored missing bare package without classifying direct HTTP failures", async () => {
+    const mockFetch = (() =>
+      Promise.resolve(new Response("not found", { status: 404 }))) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-missing-package-", mockFetch, async (tempDir) => {
+      const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+      const packageError = await assertRejects(
+        () => cacheHttpImportsToLocal('import "missing-tenant-package";', options),
+        Error,
+      );
+      const directHttpError = await assertRejects(
+        () => cacheModuleToLocal("https://esm.sh/missing-framework-module", tempDir),
+        Error,
+      );
+
+      assertEquals(isTenantSourceBuildError(packageError), true);
+      assertEquals(isTenantSourceBuildError(directHttpError), false);
     });
   });
 
