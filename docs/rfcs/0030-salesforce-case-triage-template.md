@@ -490,9 +490,10 @@ dependencies, not static-schema details:
 
 | Dependency | Owner boundary | Needed before |
 | --- | --- | --- |
-| Curated-query adapter that maps tool IDs to server-owned SOQL plus typed filters | Hosted integration executor / tools API | Retaining `find_customer`, `list_cases`, `list_case_activity`, `search_accounts`, `search_contacts`, `list_opportunities`, or Knowledge search after agent-facing `q` is hidden |
+| Curated-query adapter that maps tool IDs to server-owned SOQL plus typed filters and fixed Read authorization for every base or referenced object in that immutable query | Hosted integration executor / tools API, using the Configure permission policy | Retaining `find_customer`, `list_cases`, `list_case_activity`, `search_accounts`, `search_contacts`, `list_opportunities`, or Knowledge search after agent-facing `q` is hidden |
 | Fixed object/Read authorization for retained direct reads | Hosted integration executor, using the Configure permission policy | Retaining direct sObject tools such as `get_case`, `get_contact`, and `get_account` while per-CRUD arrays are not generally enforced |
 | Fixed object/operation authorization for curated writes | Hosted integration executor, using the Configure permission policy | Shipping `update_case_reason`, `add_internal_case_comment`, retained `create_case`, retained `create_lead`, or any temporary retained `update_case` |
+| Disposal coordinator with atomic write-time open-state enforcement, idempotency, and reconciliation | Hosted integration executor / tools API, using stable logical-disposal identity and fixed reconciliation reads | Revealing `case-dispose`, `update_case_reason`, or `add_internal_case_comment` as a v1 disposal path |
 | Fixed owner lookup adapters and owner-eligibility validators for `User`, Case queues, and Lead queues | Hosted integration executor / tools API, using server-owned SOQL, typed filters, and a fixed target-object capability check | Discovering owner candidates for Case and Lead while arbitrary `run_soql_query` and `q` remain hidden, and rejecting an active user who cannot own the target object before any path writes `OwnerId`, including retained `update_case` and future generic `update_record`. Opportunity uses `User` candidates only. Lead and Opportunity assignment writes remain gated until scoped write tools or generic CRUD enforcement exists |
 | Pre-persistence PII projection or raw-result suppression before any agent-visible message | Hosted integration executor plus agent runtime persistence/streaming boundary | Revealing `get_case`, `list_cases`, `list_case_activity`, or the case-ingest template against customer text |
 | Fixed metadata-helper authorization | Hosted integration executor, using the Configure permission policy | Retaining `describe_object` or `get_picklist_values_for_record_type` for an object while per-CRUD arrays are not generally enforced |
@@ -501,13 +502,15 @@ dependencies, not static-schema details:
 | Server-side path validators for API names, Salesforce IDs, and encoded path segments | Hosted integration executor before URL interpolation | Shipping generic CRUD, picklist helpers, or any future path-composed static endpoint |
 | Write-status, Knowledge-disabled, and normalized-result adapters | Hosted integration executor response/error adapter layer | Returning `{ success: true }` for successful 204 writes, the RFC's Knowledge fallback shape, or normalized picklist result shape instead of raw Salesforce responses |
 
-Sequence v1 conservatively: first land the hosted curated-query adapter, fixed
-direct-read authorization, fixed owner lookup adapters, fixed curated-write
-authorization, pre-persistence PII projection or raw-result suppression before
-any agent-visible message, fixed metadata-helper authorization, path validators,
-and
-write-status plus Knowledge/picklist adapter contracts with fail-closed tests;
-then reveal the curated v1 tool surface. Keep generic CRUD and arbitrary
+Sequence v1 conservatively: first land the hosted curated-query adapter with
+fixed Read authorization for every immutable-query object, fixed direct-read
+authorization, fixed owner lookup adapters, fixed curated-write authorization,
+the disposal coordinator with write-time open-state enforcement,
+idempotency/reconciliation, pre-persistence PII projection or raw-result
+suppression before any agent-visible message, fixed metadata-helper
+authorization, path validators, and write-status plus Knowledge/picklist adapter
+contracts with fail-closed tests; then reveal the curated v1 tool surface. Keep
+generic CRUD and arbitrary
 SOQL/SOSL hidden until the per-CRUD matrix and referenced-object query parser are
 enforced. The companion template and Studio project must not advertise a tool or
 assignment workflow before the hosted dependency that makes its contract
@@ -692,25 +695,31 @@ partial-failure coverage: one test must prove the atomic composite path rolls ba
 both `Reason` and `CaseComment` when either subrequest fails, another must close
 the Case after the last read or open-state check but before Salesforce accepts the
 first disposal write and prove the disposal fails without writing either `Reason`
-or `CaseComment`, and another must prove a retry after a committed composite
-response timeout uses stable request identity or read-after-timeout
-reconciliation without creating a duplicate `CaseComment`. Every implementation
-branch must prove its write-time version or open-state condition, transactional
-lock, or equivalent atomic guard rejects the same stale-closure race. For the
-reconciled path,
-retries after each half-succeeded order and after a post-comment timeout must
-converge without duplicate comments, must query only the matching case's internal
-comments through the fixed `CaseComment` Read adapter, and must produce a
-deterministic operator-visible failure when convergence is impossible or the read
-grant is absent.
-Every immutable-query
-adapter entry must prove that `q` is
-absent from the published schema, a supplied `q` and unknown filters are rejected,
-and the exact fixed object, field list, predicates, ordering, and limit reach
-Salesforce. Retained direct reads must prove the hosted executor denies `get_case`
-without Case Read, `get_contact` without Contact Read, and `get_account` without
-Account Read, even when the project has a write grant or legacy
-`dataAccess.objects` includes the object. Metadata helpers must prove
+or `CaseComment`, another must close the Case after Salesforce accepts `Reason`
+but before `add_internal_case_comment` reaches Salesforce and prove the
+write-time guard rejects the comment, and another must prove a retry after a
+committed composite response timeout uses stable request identity or
+read-after-timeout reconciliation without creating a duplicate `CaseComment`.
+Every implementation branch must prove its write-time version or open-state
+condition, transactional lock, or equivalent atomic guard rejects the same
+stale-closure races. For the reconciled path, retries after each half-succeeded
+order and after a post-comment timeout must converge without duplicate comments,
+must query only the matching case's internal comments through the fixed
+`CaseComment` Read adapter, and must produce a deterministic operator-visible
+failure when convergence is impossible or the read grant is absent. Every
+immutable-query adapter entry must prove that `q` is absent from the published
+schema, a supplied `q` and unknown filters are rejected, and the exact fixed
+object, field list, predicates, ordering, and limit reach Salesforce. Each
+retained immutable query must also prove the hosted executor checks Read for
+every fixed base object and every referenced object, and must include denial
+fixtures for missing grants: `list_cases` without Case Read, `find_customer` and
+`search_contacts` without Contact Read, `search_accounts` without Account Read,
+`list_case_activity` without CaseComment Read, `list_opportunities` without
+Opportunity Read, and Knowledge search without Knowledge Read or its fixed
+Knowledge-disabled adapter gate. Retained direct reads must prove the hosted
+executor denies `get_case` without Case Read, `get_contact` without Contact Read,
+and `get_account` without Account Read, even when the project has a write grant
+or legacy `dataAccess.objects` includes the object. Metadata helpers must prove
 `describe_object` and `get_picklist_values_for_record_type` deny without Read for
 the target object, even if the project has a write grant or legacy
 `dataAccess.objects` includes that object. Static Contact query defaults must
