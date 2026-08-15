@@ -479,6 +479,46 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("does not hang when the API accepts the connection but never answers", async () => {
+      // The existing-session preflight is best-effort. Without a deadline a
+      // stalled API blocks bare `login` forever, so it never reaches the normal
+      // sign-in flow this change promises as the fallback.
+      const originalFetch = globalThis.fetch;
+      await saveToken("stored-valid-token", testEnv);
+
+      try {
+        setNonInteractive(true);
+        const { __setExistingSessionTimeoutForTests } = await import("./login.ts");
+        __setExistingSessionTimeoutForTests(50);
+
+        // Models a genuinely stalled request: the connection is accepted and the
+        // promise settles only once the abort signal fires. If the signal is not
+        // threaded through, this never resolves and the race below reports it.
+        globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              reject(new DOMException("The signal has been aborted", "AbortError"));
+            });
+          })) as typeof fetch;
+
+        const { login } = await import("./login.ts");
+        const outcome = await Promise.race([
+          login(undefined, testEnv),
+          new Promise((resolve) =>
+            setTimeout(() => resolve("TIMED_OUT"), 3000)
+          ),
+        ]);
+
+        assertEquals(outcome, null);
+      } finally {
+        const { __setExistingSessionTimeoutForTests } = await import("./login.ts");
+        __setExistingSessionTimeoutForTests();
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
     it("still re-authenticates when a method is explicitly requested", async () => {
       // Switching accounts must stay possible: an explicit method is intent to
       // sign in again, so the existing session must not short-circuit it.

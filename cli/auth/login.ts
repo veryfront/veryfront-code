@@ -33,6 +33,32 @@ export type AuthIdentity = UserInfo | ApiKeyIdentity;
 
 export interface CredentialValidationOptions {
   throwOnNetworkError?: boolean;
+  /**
+   * Abort the request after this many milliseconds. Callers that must stay
+   * responsive pass a deadline; omitting it keeps the previous unbounded
+   * behaviour for callers that are already the user's main action.
+   */
+  timeoutMs?: number;
+}
+
+/**
+ * How long the bare-`login` preflight will wait on a credential check.
+ *
+ * That check is best-effort: it exists only to say "already logged in" instead
+ * of prompting. A connection the API accepts but never answers would otherwise
+ * block sign-in forever, so the check is bounded and a timeout simply falls
+ * through to the normal flow.
+ */
+const DEFAULT_EXISTING_SESSION_TIMEOUT_MS = 5_000;
+let existingSessionTimeoutMs = DEFAULT_EXISTING_SESSION_TIMEOUT_MS;
+
+/** Test seam: shrink the preflight deadline so a stall is observable quickly. */
+export function __setExistingSessionTimeoutForTests(ms?: number): void {
+  existingSessionTimeoutMs = ms ?? DEFAULT_EXISTING_SESSION_TIMEOUT_MS;
+}
+
+function requestSignal(options: CredentialValidationOptions): AbortSignal | undefined {
+  return options.timeoutMs ? AbortSignal.timeout(options.timeoutMs) : undefined;
 }
 
 const AUTH_OPTIONS: { id: AuthMethod; label: string }[] = [
@@ -77,6 +103,7 @@ export async function validateToken(
   try {
     const response = await fetch(`${getApiUrl(env).replace(/\/$/, "")}/me`, {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      signal: requestSignal(options),
     });
 
     if (!response.ok) {
@@ -114,6 +141,7 @@ async function validateApiKey(
     url.searchParams.set("limit", "1");
     const response = await fetch(url, {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      signal: requestSignal(options),
     });
     await response.body?.cancel();
     return response.ok;
@@ -278,7 +306,13 @@ async function describeExistingSession(
   for (const { token, source } of candidates) {
     let identity: AuthIdentity | null;
     try {
-      identity = await validateCredential(token, env);
+      // Bounded: this preflight only decides whether to say "already logged in"
+      // instead of prompting. An API that accepts the connection and never
+      // answers would otherwise block sign-in entirely, so a stall falls
+      // through to the normal flow rather than holding the command open.
+      identity = await validateCredential(token, env, {
+        timeoutMs: existingSessionTimeoutMs,
+      });
     } catch {
       continue;
     }
