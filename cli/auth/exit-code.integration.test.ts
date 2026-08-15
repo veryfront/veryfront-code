@@ -70,10 +70,45 @@ describe("cli/auth exit codes", () => {
     assertEquals(result.code, 1);
   });
 
-  // `login --provider anthropic|openai` also exits 1 on failure (see cli/router.ts),
-  // but it cannot be driven from here: `promptPassword` calls `Deno.stdin.setRaw()`,
-  // which throws ENODEV on a non-TTY stdin. A subprocess test would exit 1 from that
-  // crash rather than from the failure path, and would pass with the fix reverted.
+  it("login --json --token exits as a structured usage error", async () => {
+    const result = await runUnauthenticated(["login", "--json", "--token"]);
+
+    assertEquals(result.code, 2);
+    assertEquals(JSON.parse(result.stdout), {
+      success: false,
+      command: "login",
+      error: {
+        code: "USAGE_ERROR",
+        slug: "invalid-arguments",
+        registrySlug: "invalid-argument",
+        message: "Explicit login methods are not supported with --json.",
+      },
+    });
+    assertEquals(result.stderr, "");
+  });
+
+  it("login --json --provider exits as a structured usage error without prompting", async () => {
+    const result = await runUnauthenticated([
+      "login",
+      "--json",
+      "--provider",
+      "anthropic",
+    ]);
+
+    assertEquals(result.code, 2);
+    assertEquals(JSON.parse(result.stdout), {
+      success: false,
+      command: "login",
+      error: {
+        code: "USAGE_ERROR",
+        slug: "invalid-arguments",
+        registrySlug: "invalid-argument",
+        message: "Explicit login methods are not supported with --json.",
+      },
+    });
+    assertEquals(result.stdout.includes("API key"), false);
+    assertEquals(result.stderr, "");
+  });
 
   it("whoami still exits zero when a credential validates", async () => {
     const server = Deno.serve(
