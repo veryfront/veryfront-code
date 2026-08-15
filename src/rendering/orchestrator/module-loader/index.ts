@@ -19,7 +19,10 @@ import {
   rewriteResolvedDependencyImports,
   type TransformedModuleDependency,
 } from "./dependency-resolver.ts";
-import { persistTransformedModule } from "./module-persistence.ts";
+import {
+  persistTransformedModule,
+  readPersistedUnresolvedSpecifiers,
+} from "./module-persistence.ts";
 import { transformModuleCodeWithCache } from "./module-transform-cache.ts";
 import {
   buildModuleTransformCacheVariant,
@@ -30,6 +33,7 @@ import { markBuildFailure, markTenantBuildFailure } from "./build-failure.ts";
 import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import { MODULE_CACHE_MAX_ENTRIES } from "#veryfront/utils/constants/cache.ts";
+import { isTenantSourceBuildError } from "#veryfront/errors/tenant-classification.ts";
 
 export { isBuildFailure } from "./build-failure.ts";
 
@@ -149,10 +153,10 @@ export async function transformModuleWithDeps(
     // cache hit skips `resolveModuleDependencies`, so without this a dependency
     // that was already transformed contributes nothing and its tenant-authored
     // dangling import silently loses attribution.
-    const cachedUnresolvedSpecifiers = unresolvedSpecifiersByCacheKey.get(cacheKey) ?? [];
-    if (cachedUnresolvedSpecifiers.length > 0) {
-      cacheUnresolvedSpecifiers(cacheKey, cachedUnresolvedSpecifiers);
-    }
+    const memoizedUnresolvedSpecifiers = unresolvedSpecifiersByCacheKey.get(cacheKey);
+    const cachedUnresolvedSpecifiers = memoizedUnresolvedSpecifiers ??
+      await readPersistedUnresolvedSpecifiers(cachedPath, localAdapter);
+    cacheUnresolvedSpecifiers(cacheKey, cachedUnresolvedSpecifiers);
     for (const specifier of cachedUnresolvedSpecifiers) {
       unresolvedSpecifiers.add(specifier);
     }
@@ -231,6 +235,14 @@ export async function transformModuleWithDeps(
         // branch must not fail the page that merely mentions it.
         if (!dep.isDynamic) throw error;
 
+        // A tenant-source compile failure is deliberately non-fatal until this
+        // dynamic edge executes. The importer remains authored, so retain that
+        // provenance for the retry classification seam. Infrastructure errors
+        // stay framework-owned even if the resulting edge is later missing.
+        if (isTenantSourceBuildError(error)) {
+          moduleUnresolvedSpecifiers.add(dep.path);
+        }
+
         logger.warn("Leaving an unresolvable dynamic dependency as authored:", {
           path: dep.path,
           depFilePath: dep.depFilePath,
@@ -290,6 +302,7 @@ export async function transformModuleWithDeps(
     moduleServerOrigin: config.moduleServerOrigin,
     dependencyPinningCacheKey: config.dependencyPinningCacheKey,
     isCycleTarget: cycleTargets.has(filePath),
+    unresolvedSpecifiers: [...moduleUnresolvedSpecifiers],
   });
   cacheUnresolvedSpecifiers(cacheKey, [...moduleUnresolvedSpecifiers]);
   for (const specifier of moduleUnresolvedSpecifiers) unresolvedSpecifiers.add(specifier);

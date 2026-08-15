@@ -6,7 +6,10 @@ import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { getModulePathCache } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import { buildMdxEsmPathCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
-import { persistTransformedModule } from "./module-persistence.ts";
+import {
+  persistTransformedModule,
+  readPersistedUnresolvedSpecifiers,
+} from "./module-persistence.ts";
 
 describe("module-loader/module-persistence", () => {
   it("writes transformed code, registers MDX path-cache, and updates module cache", async () => {
@@ -22,6 +25,8 @@ describe("module-loader/module-persistence", () => {
       await Deno.mkdir(dirname(filePath), { recursive: true });
       await Deno.writeTextFile(filePath, "export const page = 1;");
 
+      const unresolvedSpecifiers = ["./missing", "./nested-missing"];
+
       const result = await persistTransformedModule({
         filePath,
         projectDir,
@@ -32,12 +37,19 @@ describe("module-loader/module-persistence", () => {
         cacheKey,
         contentSourceId: "preview-main",
         reactVersion: "19.1.1",
+        unresolvedSpecifiers,
       });
 
-      const expectedHash = hashCodeHex(transformedCode).slice(0, 8);
+      const expectedHash = hashCodeHex(
+        `${transformedCode}\0${JSON.stringify(unresolvedSpecifiers)}`,
+      ).slice(0, 8);
       assertEquals(result, join(tmpDir, `app/page.${expectedHash}.js`));
       assertEquals(await Deno.readTextFile(result), transformedCode);
       assertEquals(moduleCache.get(cacheKey), result);
+      assertEquals(
+        await readPersistedUnresolvedSpecifiers(result, localAdapter),
+        unresolvedSpecifiers,
+      );
 
       const pathCache = await getModulePathCache(tmpDir);
       const mdxCacheKey = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");

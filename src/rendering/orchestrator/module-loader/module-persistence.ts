@@ -8,6 +8,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { isCacheWriteRaceError } from "#veryfront/utils/cache-file-ops.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import {
   getModulePathCache,
@@ -17,6 +18,7 @@ import { buildMdxEsmPathCacheKey } from "#veryfront/transforms/mdx/esm-module-lo
 import { buildModuleTransformCacheVariant } from "./module-cache-lookup.ts";
 
 const logger = rendererLogger.component("module-loader");
+const UNRESOLVED_IMPORTS_SIDECAR_SUFFIX = ".unresolved-imports.json";
 
 /** Maximum number of directories to track to prevent memory leaks. */
 const MAX_CREATED_DIRS = 5_000;
@@ -72,12 +74,39 @@ export interface PersistTransformedModuleInput {
   reactVersion?: string;
   dependencyPinningCacheKey?: string;
   moduleServerOrigin?: string;
+  /** Tenant-authored imports left unresolved in this module subtree. */
+  unresolvedSpecifiers?: readonly string[];
   /**
    * True when a dynamic import elsewhere closes a cycle back onto this module.
    * Such an edge is left as authored (`import("../app/page.js")`), so it needs a
    * stable, non-hashed alias next to the content-hashed artifact to resolve to.
    */
   isCycleTarget?: boolean;
+}
+
+/** Read unresolved-import evidence stored beside a transformed artifact. */
+export async function readPersistedUnresolvedSpecifiers(
+  modulePath: string,
+  localAdapter: RuntimeAdapter,
+): Promise<readonly string[]> {
+  try {
+    const content = await localAdapter.fs.readFile(
+      `${modulePath}${UNRESOLVED_IMPORTS_SIDECAR_SUFFIX}`,
+    );
+    const decoded = typeof content === "string" ? content : new TextDecoder().decode(content);
+    const parsed: unknown = JSON.parse(decoded);
+    if (!Array.isArray(parsed) || !parsed.every((value) => typeof value === "string")) {
+      return [];
+    }
+    return parsed;
+  } catch (error) {
+    if (isNotFoundError(error)) return [];
+    logger.debug("Unresolved-import cache evidence unavailable", {
+      modulePath: modulePath.slice(-60),
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
 }
 
 /**
@@ -135,7 +164,15 @@ async function writeCycleTargetAlias(
 export async function persistTransformedModule(
   input: PersistTransformedModuleInput,
 ): Promise<string> {
-  const transformedHash = hashCodeHex(input.transformedCode).slice(0, 8);
+  const unresolvedSpecifiers = [...new Set(input.unresolvedSpecifiers ?? [])].sort();
+  const serializedUnresolvedSpecifiers = JSON.stringify(unresolvedSpecifiers);
+  // Evidence changes the artifact identity only when evidence exists. This
+  // keeps the common no-evidence path stable and prevents concurrent writers
+  // with different classification data from sharing one mutable sidecar.
+  const transformedIdentity = unresolvedSpecifiers.length === 0
+    ? input.transformedCode
+    : `${input.transformedCode}\0${serializedUnresolvedSpecifiers}`;
+  const transformedHash = hashCodeHex(transformedIdentity).slice(0, 8);
 
   const relativePath = input.filePath.startsWith(input.projectDir)
     ? input.filePath.slice(input.projectDir.length).replace(/^\/+/, "")
@@ -183,6 +220,16 @@ export async function persistTransformedModule(
       });
       throw retryError;
     }
+  }
+
+  // Publish the path cache only after its tenant-attribution evidence is
+  // durable. A new worker can otherwise reuse the transformed artifact from
+  // _index.json without knowing which authored imports remained unresolved.
+  if (unresolvedSpecifiers.length > 0) {
+    await input.localAdapter.fs.writeFile(
+      `${tempFilePath}${UNRESOLVED_IMPORTS_SIDECAR_SUFFIX}`,
+      serializedUnresolvedSpecifiers,
+    );
   }
 
   if (input.contentSourceId) {

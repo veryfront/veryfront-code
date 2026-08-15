@@ -514,6 +514,70 @@ describe("module-loader/loadModule build-failure tagging", () => {
     );
   });
 
+  it("attributes a typo replayed from a disk-cached dependency", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import { label } from "./dep";`,
+          `export default function Page() { return label; }`,
+        ].join("\n"),
+        "app/dep.tsx": [
+          `import { gone } from "./gone";`,
+          `export const label = gone;`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const pagePath = join(projectDir, "app/page.tsx");
+          const diskConfig = {
+            ...config,
+            projectId: "disk-cache-project",
+            contentSourceId: "main",
+          };
+
+          const first = await assertRejects(() => loadModule(pagePath, diskConfig), Error);
+          assertEquals(isTenantBuildFailure(first), true);
+
+          // Mode is part of the process-local cache key but not the persisted
+          // MDX path-cache key. Switching it gives this simulated new worker an
+          // empty evidence memo while reusing the dependency from _index.json.
+          const restartedConfig = {
+            ...diskConfig,
+            mode: "production" as const,
+            moduleCache: new Map<string, string>(),
+          };
+          const second = await assertRejects(() => loadModule(pagePath, restartedConfig), Error);
+          assertEquals(isBuildFailure(second), true);
+          assertEquals(isTenantBuildFailure(second), true);
+        });
+      },
+    );
+  });
+
+  it("attributes an executed dynamic dependency that failed to transform", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": [
+          `const dependency = await import("./broken");`,
+          `export const value = dependency.value;`,
+        ].join("\n"),
+        "app/broken.ts": `export const value: = "broken";`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const error = await assertRejects(
+            () => loadModule(join(projectDir, "app/page.ts"), config),
+            Error,
+          );
+
+          assertEquals(isMissingModuleError(error), true);
+          assertEquals(isBuildFailure(error), true);
+          assertEquals(isTenantBuildFailure(error), true);
+        });
+      },
+    );
+  });
+
   // The same seam must not launder a framework fault. A module whose imports
   // all resolve, and which then throws while executing, is an application
   // error: it must come back out of `loadModule` untagged on both predicates.
