@@ -357,6 +357,46 @@ describe("agent/runtime/call-context", () => {
       );
     });
 
+    it("replaces an earlier generated skill catalog during recomposition", () => {
+      const largeCatalog = Array.from(
+        { length: 1_000 },
+        (_, index) => ({
+          id: `skill-${index}-${"x".repeat(240)}`,
+          name: `skill-${index}`,
+          description: `Description ${index}`,
+          instructions: `Instructions ${index}`,
+        }),
+      );
+      const [first] = buildAgentCallContext({
+        instructions: "Base",
+        skills: largeCatalog,
+      });
+      assertStringIncludes(first?.content ?? "", "<available_skills>");
+      assertStringIncludes(
+        first?.content ?? "",
+        "additional authorized skill IDs are omitted from this prompt",
+      );
+
+      const [second] = buildAgentCallContext({
+        instructions: first?.content ?? "",
+        skills: [{
+          id: "audit",
+          name: "Audit",
+          description: "Audit guidance",
+          instructions: "Audit the change",
+        }],
+      });
+      const recomposedContent = second?.content ?? "";
+
+      assertEquals(recomposedContent.match(/<available_skills>/g)?.length, 1);
+      assertStringIncludes(recomposedContent, '"skillId":"audit"');
+      assertEquals(
+        recomposedContent.includes("additional authorized skill IDs are omitted from this prompt"),
+        false,
+      );
+      assertEquals(recomposedContent.includes('"skillId":"skill-0-'), false);
+    });
+
     it("still emits the skills block when the instructions only name the tag in prose", () => {
       const [message] = buildAgentCallContext({
         instructions: "Your catalog arrives in an <available_skills> block.",

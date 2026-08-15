@@ -35,6 +35,7 @@ import { createRuntimePromptBlock } from "./prompt-block.ts";
 import {
   buildRuntimeAuthorizedSkillIdsPromptBlock,
   buildRuntimeAvailableSkillsPromptBlock,
+  RUNTIME_SKILL_CATALOG_PREAMBLE,
 } from "./skill-prompt.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
 
@@ -149,11 +150,43 @@ function removeCompleteBlocks(instructions: string, blockName: string): string {
   return result;
 }
 
+function removeGeneratedSkillCatalogBlocks(instructions: string): string {
+  const openTag = `<${AVAILABLE_SKILLS_BLOCK_NAME}>`;
+  const closeTag = `</${AVAILABLE_SKILLS_BLOCK_NAME}>`;
+  let result = instructions;
+  let searchIndex = 0;
+
+  while (searchIndex < result.length) {
+    const openIndex = result.indexOf(openTag, searchIndex);
+    if (openIndex < 0) {
+      break;
+    }
+    const closeIndex = result.indexOf(closeTag, openIndex + openTag.length);
+    if (closeIndex < 0) {
+      break;
+    }
+    const content = result.slice(openIndex + openTag.length, closeIndex).trimStart();
+    if (!content.startsWith(RUNTIME_SKILL_CATALOG_PREAMBLE)) {
+      searchIndex = closeIndex + closeTag.length;
+      continue;
+    }
+    const before = result.slice(0, openIndex).trimEnd();
+    const after = result.slice(closeIndex + closeTag.length).trimStart();
+    result = before.length > 0 && after.length > 0 ? `${before}\n\n${after}` : `${before}${after}`;
+    searchIndex = 0;
+  }
+
+  return result;
+}
+
 /** Builds the complete system-message set for one provider call. */
 export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSystemMessage[] {
   const runtimeContextMarker = input.runtimeContextMarker ?? DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER;
   const sourceInstructions = input.skills === undefined ? input.instructions : removeCompleteBlocks(
-    removeCompleteBlocks(input.instructions, AUTHORIZED_SKILL_IDS_BLOCK_NAME),
+    removeCompleteBlocks(
+      removeGeneratedSkillCatalogBlocks(input.instructions),
+      AUTHORIZED_SKILL_IDS_BLOCK_NAME,
+    ),
     AUTHORIZED_SKILL_ID_DISCOVERY_BLOCK_NAME,
   );
   const instructions = splitInstructionsAtMarker({
