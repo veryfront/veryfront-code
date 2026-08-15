@@ -185,12 +185,13 @@ export function normalizeFailedQueryValue(value: string): string {
   if (!/^\s*\n/.test(remainder)) return value;
   const paramsDelimiterIndex = remainder.indexOf(FAILED_QUERY_PARAMS_DELIMITER);
   const query = paramsDelimiterIndex === -1 ? remainder : remainder.slice(0, paramsDelimiterIndex);
-  const titleQuery = redactSqlLiteralsForTitle(query);
-  const head = titleQuery
-    .slice(0, FAILED_QUERY_HEAD_MAX_LENGTH)
+  const titleQuery = redactSqlLiteralsForTitle(query)
     .replace(/\s+/g, " ")
     .trim();
-  const truncated = titleQuery.trimEnd().length > FAILED_QUERY_HEAD_MAX_LENGTH;
+  const head = titleQuery
+    .slice(0, FAILED_QUERY_HEAD_MAX_LENGTH)
+    .trimEnd();
+  const truncated = titleQuery.length > FAILED_QUERY_HEAD_MAX_LENGTH;
   return `${FAILED_QUERY_PREFIX}${head}${truncated ? "…" : ""}`;
 }
 
@@ -200,6 +201,27 @@ function redactSqlLiteralsForTitle(query: string): string {
 
   while (index < query.length) {
     const character = query.charAt(index);
+
+    if (
+      (character === "E" || character === "e") &&
+      query[index + 1] === "'" &&
+      isSqlStringPrefixBoundary(query, index)
+    ) {
+      index = findQuotedSqlTokenEnd(query, index + 1, "'", { allowBackslashEscapes: true });
+      redacted += "?";
+      continue;
+    }
+
+    if (
+      (character === "U" || character === "u") &&
+      query[index + 1] === "&" &&
+      query[index + 2] === "'" &&
+      isSqlStringPrefixBoundary(query, index)
+    ) {
+      index = findQuotedSqlTokenEnd(query, index + 2, "'");
+      redacted += "?";
+      continue;
+    }
 
     if (character === '"') {
       const end = findQuotedSqlTokenEnd(query, index, '"');
@@ -284,13 +306,22 @@ function findDollarQuotedSqlTokenEnd(query: string, start: number): number | und
 
   const delimiter = query.slice(start, delimiterEnd + 1);
   const closingDelimiter = query.indexOf(delimiter, delimiterEnd + 1);
-  return closingDelimiter === -1 ? undefined : closingDelimiter + delimiter.length;
+  return closingDelimiter === -1 ? query.length : closingDelimiter + delimiter.length;
 }
 
-function findQuotedSqlTokenEnd(query: string, start: number, quote: string): number {
+function isSqlStringPrefixBoundary(query: string, start: number): boolean {
+  return !SQL_IDENTIFIER_CHAR_PATTERN.test(query[start - 1] ?? "");
+}
+
+function findQuotedSqlTokenEnd(
+  query: string,
+  start: number,
+  quote: string,
+  options: { allowBackslashEscapes?: boolean } = {},
+): number {
   let index = start + 1;
   while (index < query.length) {
-    if (quote === "'" && query[index] === "\\" && index + 1 < query.length) {
+    if (options.allowBackslashEscapes && query[index] === "\\" && index + 1 < query.length) {
       index += 2;
       continue;
     }

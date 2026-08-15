@@ -314,6 +314,25 @@ it("policy collapses leading sql whitespace in Failed query titles", () => {
   );
 });
 
+it("policy collapses Failed query titles before applying the title limit", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value: `Failed query: \n${" ".repeat(220)}select "id" from "users"`,
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  assertEquals(
+    event.exception?.values?.[0]?.value,
+    'Failed query: select "id" from "users"',
+  );
+});
+
 it("policy excludes query parameters from Failed query titles", () => {
   const event = prepareSentryEvent(
     {
@@ -350,6 +369,26 @@ it("policy redacts quoted SQL literals from Failed query titles", () => {
   assertEquals(
     event.exception?.values?.[0]?.value,
     'Failed query: select "id" from "orders" where "email" = ? and "note" = ?',
+  );
+});
+
+it("policy parses SQL backslash escapes only for escape string literals", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value:
+            "Failed query: \n  select 'public\\\\' 'customer@example.test', E'private\\'still private' from \"orders\"",
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  assertEquals(
+    event.exception?.values?.[0]?.value,
+    'Failed query: select ? ?, ? from "orders"',
   );
 });
 
@@ -390,6 +429,25 @@ it("policy redacts unrecognized dollar-quoted SQL literal tags", () => {
   assertEquals(
     event.exception?.values?.[0]?.value,
     'Failed query: select ?, $1 from "orders" where "id" = $2',
+  );
+});
+
+it("policy redacts unterminated unrecognized dollar-quoted SQL literal tags", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value: 'Failed query: \n  select $😀$customer@example.test from "orders" where "id" = $1',
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  assertEquals(
+    event.exception?.values?.[0]?.value,
+    "Failed query: select ?",
   );
 });
 
