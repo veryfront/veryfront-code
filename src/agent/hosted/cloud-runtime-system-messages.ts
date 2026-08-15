@@ -43,7 +43,7 @@ export function buildVeryfrontCloudRuntimeInstructions(
   return createVeryfrontCloudRuntimeSystemMessages({
     agent: input.agentConfig,
     instructions: input.instructions || undefined,
-    skills: input.skills.length > 0 ? input.skills : undefined,
+    skills: input.skills,
     projectId: input.projectId,
     branchId: input.branchId,
     environmentContext: input.environmentContext,

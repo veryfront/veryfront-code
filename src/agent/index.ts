@@ -1362,6 +1362,7 @@ export {
   RUNTIME_LOAD_SKILL_DESCRIPTION,
   type RuntimeLoadSkillBuiltinStore,
   type RuntimeLoadSkillErrorOutput,
+  type RuntimeLoadSkillInventoryOutput,
   type RuntimeLoadSkillReferenceFileOutput,
   type RuntimeLoadSkillToolContext,
   type RuntimeLoadSkillToolInput,

@@ -296,6 +296,7 @@ function createRuntimeAgentConfig(input: {
     __vfPersistToolExposureCheckpoint: input.options.persistToolExposureCheckpoint,
     __vfToolExposureCheckpointPersistenceRequired:
       input.options.requireToolExposureCheckpointPersistence === true,
+    __vfPreassembledSkillContext: true,
     temperature: input.options.temperature,
     maxSteps: input.options.maxSteps ?? 50,
     resolveModelTransport: ({ resolvedModel }) => {

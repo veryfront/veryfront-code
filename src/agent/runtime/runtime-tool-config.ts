@@ -25,6 +25,7 @@ export type RuntimeToolFilterConfig = AgentConfig & {
   __vfToolExposureCheckpointPersistenceRequired?: boolean;
   __vfToolLoadingMode?: RuntimeToolLoadingMode;
   __vfOperationalToolLoadingOverride?: "eager";
+  __vfPreassembledSkillContext?: boolean;
 } & RuntimeRemoteToolConfig;
 
 /** Effective runtime loading mode and the trusted source that selected it. */

@@ -16,7 +16,8 @@
  * 1. One cached system message holding, in order, the instructions before the
  *    runtime-context marker, `<project_instructions>`, `<project_context>`,
  *    any caller-supplied extra blocks, the instructions after the marker, and
- *    `<available_skills>`.
+ *    `<available_skills>`, or an `<authorized_skill_ids>` fallback
+ *    when the instructions already carry an authored skill catalog.
  * 2. An uncached `<environment_context>` message.
  *
  * Only the instructions are unconditional: each block appears only when the
@@ -31,7 +32,11 @@
 
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { createRuntimePromptBlock } from "./prompt-block.ts";
-import { buildRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
+import {
+  buildRuntimeAuthorizedSkillIdsPromptBlock,
+  buildRuntimeAvailableSkillsPromptBlock,
+  RUNTIME_GENERATED_SKILL_CATALOG_MARKER,
+} from "./skill-prompt.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
 
 /** Marker authored instructions use to place runtime blocks mid-prompt. */
@@ -39,6 +44,8 @@ export const DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER = "<!-- veryfront-runtime-cont
 
 const ENVIRONMENT_CONTEXT_BLOCK_NAME = "environment_context";
 const AVAILABLE_SKILLS_BLOCK_NAME = "available_skills";
+const AUTHORIZED_SKILL_IDS_BLOCK_NAME = "authorized_skill_ids";
+const AUTHORIZED_SKILL_ID_DISCOVERY_BLOCK_NAME = "authorized_skill_id_discovery";
 
 /** Project the call runs against, rendered as the `<project_context>` block. */
 export type AgentCallProjectContext = {
@@ -123,11 +130,67 @@ function hasBlock(instructions: string, blockName: string): boolean {
   return instructions.indexOf(`</${blockName}>`, openIndex) > openIndex;
 }
 
+function removeCompleteBlocks(instructions: string, blockName: string): string {
+  const openTag = `<${blockName}>`;
+  const closeTag = `</${blockName}>`;
+  let result = instructions;
+  let openIndex = result.indexOf(openTag);
+
+  while (openIndex >= 0) {
+    const closeIndex = result.indexOf(closeTag, openIndex + openTag.length);
+    if (closeIndex < 0) {
+      break;
+    }
+    const before = result.slice(0, openIndex).trimEnd();
+    const after = result.slice(closeIndex + closeTag.length).trimStart();
+    result = before.length > 0 && after.length > 0 ? `${before}\n\n${after}` : `${before}${after}`;
+    openIndex = result.indexOf(openTag);
+  }
+
+  return result;
+}
+
+function removeGeneratedSkillCatalogBlocks(instructions: string): string {
+  const openTag = `<${AVAILABLE_SKILLS_BLOCK_NAME}>`;
+  const closeTag = `</${AVAILABLE_SKILLS_BLOCK_NAME}>`;
+  let result = instructions;
+  let searchIndex = 0;
+
+  while (searchIndex < result.length) {
+    const openIndex = result.indexOf(openTag, searchIndex);
+    if (openIndex < 0) {
+      break;
+    }
+    const closeIndex = result.indexOf(closeTag, openIndex + openTag.length);
+    if (closeIndex < 0) {
+      break;
+    }
+    const content = result.slice(openIndex + openTag.length, closeIndex).trimStart();
+    if (!content.startsWith(RUNTIME_GENERATED_SKILL_CATALOG_MARKER)) {
+      searchIndex = closeIndex + closeTag.length;
+      continue;
+    }
+    const before = result.slice(0, openIndex).trimEnd();
+    const after = result.slice(closeIndex + closeTag.length).trimStart();
+    result = before.length > 0 && after.length > 0 ? `${before}\n\n${after}` : `${before}${after}`;
+    searchIndex = 0;
+  }
+
+  return result;
+}
+
 /** Builds the complete system-message set for one provider call. */
 export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSystemMessage[] {
   const runtimeContextMarker = input.runtimeContextMarker ?? DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER;
+  const sourceInstructions = input.skills === undefined ? input.instructions : removeCompleteBlocks(
+    removeCompleteBlocks(
+      removeGeneratedSkillCatalogBlocks(input.instructions),
+      AUTHORIZED_SKILL_IDS_BLOCK_NAME,
+    ),
+    AUTHORIZED_SKILL_ID_DISCOVERY_BLOCK_NAME,
+  );
   const instructions = splitInstructionsAtMarker({
-    instructions: input.instructions,
+    instructions: sourceInstructions,
     runtimeContextMarker,
   });
 
@@ -151,7 +214,7 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
       continue;
     }
     const blockName = getBlockName(block);
-    if (blockName !== null && hasBlock(input.instructions, blockName)) {
+    if (blockName !== null && hasBlock(sourceInstructions, blockName)) {
       continue;
     }
     staticParts.push(block);
@@ -161,10 +224,15 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
     staticParts.push(instructions.after);
   }
 
-  if (input.skills?.length && !hasBlock(input.instructions, AVAILABLE_SKILLS_BLOCK_NAME)) {
-    staticParts.push(
-      buildRuntimeAvailableSkillsPromptBlock(input.skills),
-    );
+  if (input.skills !== undefined) {
+    const hasAuthoredSkillCatalog = hasBlock(sourceInstructions, AVAILABLE_SKILLS_BLOCK_NAME);
+    if (input.skills.length > 0 || hasAuthoredSkillCatalog) {
+      staticParts.push(
+        hasAuthoredSkillCatalog
+          ? buildRuntimeAuthorizedSkillIdsPromptBlock(input.skills)
+          : buildRuntimeAvailableSkillsPromptBlock(input.skills),
+      );
+    }
   }
 
   const messages: ChatSystemMessage[] = [
@@ -177,7 +245,7 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
     },
   ];
 
-  if (input.environmentContext && !hasBlock(input.instructions, ENVIRONMENT_CONTEXT_BLOCK_NAME)) {
+  if (input.environmentContext && !hasBlock(sourceInstructions, ENVIRONMENT_CONTEXT_BLOCK_NAME)) {
     messages.push({
       role: "system",
       content: createRuntimePromptBlock({
