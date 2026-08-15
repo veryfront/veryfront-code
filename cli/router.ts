@@ -269,6 +269,8 @@ export async function formatDuplicatedBinaryHint(
     "files",
     "knowledge",
     "open",
+    "project",
+    "projects",
     "pull",
     "push",
     "uploads",

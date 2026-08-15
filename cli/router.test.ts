@@ -835,20 +835,21 @@ describe("cli/router helpers", () => {
       stubExit();
       stubLogger();
       try {
-        for (const command of ["files", "uploads", "knowledge"]) {
+        for (const command of ["files", "knowledge", "project", "projects", "uploads"]) {
           for (const option of ["--project", "-p"]) {
             infoMessages.length = 0;
             const code = await runAndCaptureExit(parseCliArgs([
               "veryfront",
               command,
-              "list",
+              command === "project" || command === "projects" ? "delete" : "list",
               option,
               "private-file-project",
             ]));
             assertEquals(code, 2);
+            const subcommand = command === "project" || command === "projects" ? "delete" : "list";
             assertEquals(infoMessages, [
               '  You already included "veryfront". Use:',
-              `    veryfront ${command} list ${option} '<REDACTED>'`,
+              `    veryfront ${command} ${subcommand} ${option} '<REDACTED>'`,
             ]);
           }
         }
