@@ -58,19 +58,19 @@ Two artefacts that must stay 1:1:
     open-case constraint. Fetches + PII-redacts.
   - `case-classify` - **no Salesforce access**. Tools: `search_knowledge`,
     `get_file`. Classifies against the checked-in `knowledge/case-triage-taxonomy.md`.
-  - `case-dispose` - write. Tools: `salesforce__add_internal_case_comment`,
-    `salesforce__update_case`. Sets **only** `Case.Reason` and posts a comment -
-    but that Case-update scoping is **prompt-driven today**: the granted
-    `update_case` can write every writable Case field, so the boundary is
-    instructed, not enforced. §5.2/§6 replace the Case update grant with a
-    field-scoped `update_case_reason` tool, grant
-    `get_picklist_values_for_record_type` for the mandatory `Reason` preflight,
-    and require explicit fixed `Case` Update authorization that makes the write
-    structural. The hardened template also replaces the generic
-    `add_case_comment` grant with `add_internal_case_comment`, whose schema omits
-    `IsPublished` and whose server-owned request body always sets
-    `IsPublished: false`. It keeps a separate fixed `CaseComment` Create
-    authorization check.
+  - `case-dispose` - write. Current connector grant:
+    `salesforce__add_case_comment` plus `salesforce__update_case`. That pair
+    posts the triage comment and updates `Case.Reason`, but the Case-update
+    scoping is **prompt-driven today**: the granted `update_case` can write every
+    writable Case field, so the boundary is instructed, not enforced. §5.2/§6
+    replace that grant with the hardened target grant:
+    `salesforce__update_case_reason`, `salesforce__add_internal_case_comment`,
+    and `salesforce__get_picklist_values_for_record_type`. `update_case_reason`
+    admits only `caseId` and `Reason`; `get_picklist_values_for_record_type`
+    performs the mandatory `Reason` preflight; `add_internal_case_comment` omits
+    `IsPublished` and its server-owned request body always sets
+    `IsPublished: false`. The target grant keeps separate fixed `Case` Update
+    and `CaseComment` Create authorization checks.
 - **Companion example repository** (currently private). Mirrors the four agents
   as `agents/*.ts`, ships the taxonomy in `knowledge/`, ships
   **evals** (`evals/*.eval.ts` + `evals/mock-tools.ts`), and runs locally via
@@ -876,10 +876,12 @@ closed.
 
 ### A.5 What "standard" deliberately excludes (v1)
 
-Person Accounts (Contact fields move onto Account), record-type-scoped picklists,
-multi-currency (`CurrencyIsoCode`), localised picklist labels, and Knowledge
-(`KnowledgeArticleVersion`). Examples that need these are out of the baseline and
-must be labelled as requiring org setup.
+The baseline seed excludes Person Accounts (Contact fields move onto Account),
+custom record-type or picklist metadata beyond the Case `Reason` record-type
+preflight required for existing Case disposal, multi-currency (`CurrencyIsoCode`),
+localised picklist labels, and Knowledge (`KnowledgeArticleVersion`). Examples
+that need these are out of the baseline and must be labelled as requiring org
+setup.
 
 ## 15. Customization path - the baseline is a floor, not a ceiling
 
