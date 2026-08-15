@@ -426,13 +426,22 @@ describe("integration endpoint specs", () => {
     );
   });
 
-  it("opts every curated Salesforce SOQL default into model-facing schemas", () => {
+  it("opts only scoped Salesforce SOQL defaults into model-facing schemas", () => {
     const connector = getConnector("salesforce");
     let exposedDefaults = 0;
 
     for (const tool of connector.tools) {
       const query = tool.endpoint?.params?.q;
       if (query?.default === undefined) continue;
+
+      if (tool.id === "salesforce__list_case_activity") {
+        assertEquals(
+          query.exposeDefault,
+          undefined,
+          "Expected unscoped CaseComment query to stay out of model-facing schemas",
+        );
+        continue;
+      }
 
       assertEquals(
         query.exposeDefault,
@@ -442,7 +451,7 @@ describe("integration endpoint specs", () => {
       exposedDefaults += 1;
     }
 
-    assertEquals(exposedDefaults, 7);
+    assertEquals(exposedDefaults, 6);
   });
 
   it("declares Service Cloud support tools", () => {
