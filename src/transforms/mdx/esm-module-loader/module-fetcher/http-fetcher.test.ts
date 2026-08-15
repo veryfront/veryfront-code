@@ -235,6 +235,47 @@ describe("module-fetcher/http-fetcher", () => {
     }
   });
 
+  it("defers a typed dynamic child failure fetched through the HTTP fallback", async () => {
+    const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-http-dynamic-failure-cache-" });
+    const source =
+      `export const load = (enabled) => enabled ? import("./oversized.js") : Promise.resolve("skipped");`;
+
+    try {
+      const result = await fetchModuleViaHTTP(
+        "_vf_modules/pages/index.js",
+        { env: { get: () => undefined } } as unknown as RuntimeAdapter,
+        () => {
+          const error = new Error("private source detail");
+          error.name = "ModuleSourceLimitError";
+          throw error;
+        },
+        { debug: () => {}, warn: () => {} } as unknown as Logger,
+        "docs",
+        true,
+        undefined,
+        {
+          esmCacheDir,
+          fetchFn: (() => Promise.resolve(new Response(source))) as typeof fetch,
+          strictMissingModules: true,
+        },
+      );
+      const parentPath = join(esmCacheDir, "http-typed-failure-parent.mjs");
+      await Deno.writeTextFile(parentPath, result!);
+      const loaded = await import(
+        `${toFileUrl(parentPath).href}?test=${crypto.randomUUID()}`
+      ) as { load(enabled: boolean): Promise<unknown> };
+
+      assertEquals(await loaded.load(false), "skipped");
+      await assertRejects(
+        () => loaded.load(true),
+        Error,
+        "Dynamic import failed for ./oversized.js: module source exceeds the allowed size",
+      );
+    } finally {
+      await remove(esmCacheDir, { recursive: true });
+    }
+  });
+
   // A single-quoted specifier may legally contain a double quote, and a cache
   // path may contain a backslash. Interpolating either into a hand-written
   // double-quoted literal emits a module that fails to parse, which takes down

@@ -511,6 +511,21 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("ignores import-looking regex text after export lists at ASI boundaries", () => {
+      assertEquals(
+        specifiers(
+          'const value = 1; export { value }\n/import("\\.\\/fake-export-list.js")/.test(input);',
+        ),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'const value = 1; export { value }\n/import("\\/_vf_modules\\/fake-export-list.js")/.test(input);',
+        ),
+        [],
+      );
+    });
+
     it("ignores import-looking regex text after Unicode declaration names", () => {
       assertEquals(
         specifiers('function λ() {}\n/import("\\.\\/fake-function.js")/.test(value);'),

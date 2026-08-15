@@ -614,10 +614,29 @@ function isArrowFunctionBodyCloseBraceAtAsiBoundary(
   const beforeArrow = previousSignificantIndex(source, openBrace.previousTokenIndex);
   if (source[beforeArrow] !== "=") return false;
 
-  for (let cursor = index + 1; cursor < nextTokenIndex; cursor++) {
+  return hasLineTerminator(source, index + 1, nextTokenIndex);
+}
+
+function hasLineTerminator(source: string, start: number, end: number): boolean {
+  for (let cursor = start; cursor < end; cursor++) {
     if (isLineTerminator(source[cursor]!)) return true;
   }
   return false;
+}
+
+function isExportListCloseBraceAtAsiBoundary(
+  source: string,
+  index: number,
+  nextTokenIndex: number,
+  matchingOpenBraces: ReadonlyMap<number, OpenBraceContext>,
+): boolean {
+  const openBrace = matchingOpenBraces.get(index);
+  if (
+    openBrace === undefined ||
+    keywordBefore(source, openBrace.index, openBrace.previousTokenIndex) !== "export"
+  ) return false;
+
+  return hasLineTerminator(source, index + 1, nextTokenIndex);
 }
 
 function isForOfKeywordBefore(
@@ -677,6 +696,12 @@ function canStartRegexLiteral(
       isStatementBlockCloseBrace(source, previous, matchingOpenBraces) ||
       isPlainStatementBlockCloseBrace(source, previous, rangeStart, matchingOpenBraces) ||
       isArrowFunctionBodyCloseBraceAtAsiBoundary(
+        source,
+        previous,
+        index,
+        matchingOpenBraces,
+      ) ||
+      isExportListCloseBraceAtAsiBoundary(
         source,
         previous,
         index,

@@ -80,6 +80,19 @@ import { bar } from "./local.js";
       assertEquals(result.vfModules.map((module) => module.path), []);
       assertEquals(result.relative.map((module) => module.path), []);
     });
+
+    it("does not resolve import-looking regex text after an export list", () => {
+      const code = [
+        `const value = 1;`,
+        `export { value }`,
+        `/import("\\.\\/optional.js")/.test(input);`,
+      ].join("\n");
+
+      const result = findNestedImports(code);
+
+      assertEquals(result.vfModules, []);
+      assertEquals(result.relative, []);
+    });
   });
 
   describe("hasUnresolvedImports", () => {

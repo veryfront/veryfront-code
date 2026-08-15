@@ -48,7 +48,8 @@ function isMalformedSpecifierSyntaxError(error: unknown): boolean {
   return error instanceof SyntaxError && error.message.includes("module specifier");
 }
 
-function dynamicDependencyFailure(
+/** Return the sanitized runtime failure for a dependency error that can stay lazy. */
+export function dynamicDependencyFailure(
   modulePath: string,
   error: unknown,
 ): DeferredImportErrorDescriptor | null {
