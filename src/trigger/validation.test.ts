@@ -2,10 +2,25 @@ import "#veryfront/schemas/_test-setup.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { TriggerTarget } from "./target.ts";
 import { isTriggerTarget, snapshotTriggerTarget } from "./target.ts";
 import { assertSerializable, isTriggerId, snapshotSerializable } from "./validation.ts";
 
 describe("trigger validation", () => {
+  it("keeps the public TriggerTarget contract extendable", () => {
+    interface CustomTarget extends TriggerTarget {
+      metadata: string;
+    }
+
+    const target: CustomTarget = {
+      kind: "agent",
+      id: "support-agent",
+      metadata: "owned-by-consumer",
+    };
+
+    assertEquals(target.metadata, "owned-by-consumer");
+  });
+
   it("recognizes only canonical trigger identifiers", () => {
     for (const id of ["daily-triage", "billing.sync/v2", "0_internal"]) {
       assertEquals(isTriggerId(id), true);

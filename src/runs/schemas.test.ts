@@ -2,9 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isTriggerTarget } from "#veryfront/trigger/target.ts";
+import type { Run } from "./schemas.ts";
 import { getRunKindSchema, getScheduleReferenceListSchema, RunSchema } from "./schemas.ts";
 
-function makeRun(overrides: Record<string, unknown> = {}) {
+function makeRun(overrides: Partial<Run> = {}): Run {
   return {
     run_id: "run_11111111-1111-4111-8111-111111111111",
     kind: "task",
@@ -89,5 +90,27 @@ describe("runs/schemas", () => {
       conversationId: null,
     });
     assertEquals(isTriggerTarget(target), true);
+  });
+
+  it("rejects conversation fields on non-agent schedule targets", () => {
+    const result = getScheduleReferenceListSchema().safeParse({
+      schedules: [
+        {
+          id: "schedule_1",
+          name: "Sync helpdesk",
+          status: "active",
+          target: {
+            kind: "task",
+            id: "sync-helpdesk",
+            conversation_mode: "create_new",
+          },
+          definition_source: "source",
+          source_trigger_id: "sync-helpdesk",
+          timeout_seconds: 900,
+        },
+      ],
+    });
+
+    assertEquals(result.success, false);
   });
 });

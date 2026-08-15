@@ -4,23 +4,31 @@ import { isTriggerId } from "./validation.ts";
 export type AgentConversationMode = "create_new" | "existing" | "none";
 
 /** Trigger target addressing a task definition. */
-export interface TaskTriggerTarget {
+export interface TaskTriggerTarget extends TriggerTarget {
   /** Definition kind resolved by project runtime discovery. */
   kind: "task";
   /** Canonical slash-separated definition identifier. */
   id: string;
+  /** Task targets do not carry hosted conversation behavior. */
+  conversationMode?: never;
+  /** Task targets do not carry hosted conversation identifiers. */
+  conversationId?: never;
 }
 
 /** Trigger target addressing a workflow definition. */
-export interface WorkflowTriggerTarget {
+export interface WorkflowTriggerTarget extends TriggerTarget {
   /** Definition kind resolved by project runtime discovery. */
   kind: "workflow";
   /** Canonical slash-separated definition identifier. */
   id: string;
+  /** Workflow targets do not carry hosted conversation behavior. */
+  conversationMode?: never;
+  /** Workflow targets do not carry hosted conversation identifiers. */
+  conversationId?: never;
 }
 
 /** Trigger target addressing an agent definition and its hosted conversation. */
-export interface AgentTriggerTarget {
+export interface AgentTriggerTarget extends TriggerTarget {
   /** Definition kind resolved by project runtime discovery. */
   kind: "agent";
   /** Canonical slash-separated definition identifier. */
@@ -32,10 +40,16 @@ export interface AgentTriggerTarget {
 }
 
 /** Canonical reference to a runnable project definition. */
-export type TriggerTarget =
-  | TaskTriggerTarget
-  | WorkflowTriggerTarget
-  | AgentTriggerTarget;
+export interface TriggerTarget {
+  /** Definition kind resolved by project runtime discovery. */
+  kind: "task" | "workflow" | "agent";
+  /** Canonical slash-separated definition identifier. */
+  id: string;
+  /** Hosted conversation behavior; valid only for agent targets. */
+  conversationMode?: AgentConversationMode;
+  /** Existing conversation UUID; valid only for agent targets. */
+  conversationId?: string | null;
+}
 
 /** Supported local trigger target kinds. */
 export type TriggerTargetKind = TriggerTarget["kind"];

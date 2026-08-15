@@ -344,7 +344,16 @@ export function resolveRemoteScheduleTarget(run: Run, fallback: TriggerTarget): 
   const kind = run.target.slice(0, separator);
   const id = run.target.slice(separator + 1).trim();
   const candidate = { kind, id };
-  if (isTriggerTarget(candidate)) return candidate;
+  if (isTriggerTarget(candidate)) {
+    if (
+      fallbackTarget !== null &&
+      fallbackTarget.kind === candidate.kind &&
+      fallbackTarget.id === candidate.id
+    ) {
+      return fallbackTarget;
+    }
+    return candidate;
+  }
   if (fallbackTarget !== null) return fallbackTarget;
   throw new Error("Remote schedule returned an invalid target.");
 }

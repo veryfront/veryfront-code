@@ -98,12 +98,25 @@ export const getScheduleReferenceListSchema = defineSchema((v) =>
           id: v.string(),
           conversation_mode: v.enum(["create_new", "existing", "none"] as const).optional(),
           conversation_id: v.string().nullable().optional(),
-        }).transform(({ kind, id, conversation_mode, conversation_id }) => ({
-          kind,
-          id,
-          ...(conversation_mode === undefined ? {} : { conversationMode: conversation_mode }),
-          ...(conversation_id === undefined ? {} : { conversationId: conversation_id }),
-        })),
+        }).superRefine(({ kind, conversation_mode, conversation_id }, context) => {
+          if (
+            kind !== "agent" &&
+            (conversation_mode !== undefined || conversation_id !== undefined)
+          ) {
+            context.addIssue({
+              code: "custom",
+              message: "Schedule target conversation fields are valid only for agent targets.",
+            });
+          }
+        }).transform(({ kind, id, conversation_mode, conversation_id }) => {
+          if (kind !== "agent") return { kind, id };
+          return {
+            kind,
+            id,
+            ...(conversation_mode === undefined ? {} : { conversationMode: conversation_mode }),
+            ...(conversation_id === undefined ? {} : { conversationId: conversation_id }),
+          };
+        }),
         definition_source: v.enum(["manual", "source"] as const),
         source_trigger_id: v.string().nullable(),
         timeout_seconds: v.number().int(),

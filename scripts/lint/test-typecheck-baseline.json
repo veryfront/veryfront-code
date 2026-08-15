@@ -42,7 +42,6 @@
   "src/rendering/orchestrator/compiler-service.test.ts",
   "src/rendering/orchestrator/config.test.ts",
   "src/rendering/utils/react-helpers.test.ts",
-  "src/runs/schemas.test.ts",
   "src/server/build-service-worker.test.ts",
   "src/transforms/import-rewriter/strategies/import-map-strategy.test.ts",
   "src/transforms/md/compiler/md-compiler.test.ts",

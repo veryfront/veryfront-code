@@ -380,6 +380,26 @@ describe("remote schedule polling", () => {
     );
   });
 
+  it("preserves fallback conversation addressing when the run target matches", () => {
+    const fallback = {
+      kind: "agent" as const,
+      id: "job-submission-orchestrator",
+      conversationMode: "create_new" as const,
+    };
+
+    assertEquals(
+      resolveRemoteScheduleTarget(
+        makeRun({ target: "agent:job-submission-orchestrator" }),
+        fallback,
+      ),
+      fallback,
+    );
+    assertEquals(
+      resolveRemoteScheduleTarget(makeRun({ target: "agent:different-orchestrator" }), fallback),
+      { kind: "agent", id: "different-orchestrator" },
+    );
+  });
+
   it("preserves the waiting reason in caller-visible output", () => {
     assertEquals(
       formatRemoteScheduleRunOutput(
