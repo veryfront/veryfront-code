@@ -436,9 +436,18 @@ describe("module-loader/loadModule build-failure tagging", () => {
 // only downgrade one of them. `isMissingModuleError` cannot tell them apart, so
 // the discrimination is driven by the specifiers the resolver recorded dropping.
 describe("module-loader/isUnresolvedTenantImport", () => {
+  const REBUILT = "/tmp/out/veryfront-modules/proj-a/app/page.7f3c1d92.js";
+
+  // The runtime names the missing target first and then appends the importer's
+  // own location. At this seam the importer is always the rebuilt artifact, so
+  // every real message mentions REBUILT somewhere — which is exactly why the
+  // predicate may only inspect the first quoted token.
   const missing = () =>
     Object.assign(
-      new TypeError('Module not found "file:///tmp/out/veryfront-modules/proj-a/app/missing".'),
+      new TypeError(
+        'Module not found "file:///tmp/out/veryfront-modules/proj-a/app/missing".\n' +
+          `    at file://${REBUILT}:1:23`,
+      ),
       { code: "ERR_MODULE_NOT_FOUND" },
     );
 
@@ -466,6 +475,33 @@ describe("module-loader/isUnresolvedTenantImport", () => {
     );
 
     assertEquals(isUnresolvedTenantImport(bundleError, new Set(["./missing"])), false);
+  });
+
+  // The missing module can be the rebuilt artifact itself rather than one of
+  // its dependencies: a racing cache sweep or a failing cache volume can evict
+  // it between persist and import. That is repeated cache eviction — framework
+  // infrastructure — and must stay at error severity even when the tenant
+  // separately has an unresolved import.
+  it("does not classify an evicted rebuilt artifact, even alongside a dropped specifier", () => {
+    const evicted = Object.assign(
+      new TypeError(`Module not found "file://${REBUILT}?t=1&rebuilt=1".`),
+      { code: "ERR_MODULE_NOT_FOUND" },
+    );
+
+    assertEquals(isUnresolvedTenantImport(evicted, new Set(["./missing"]), REBUILT), false);
+    // Without the artifact path the predicate cannot tell the two apart, which
+    // is why the call site passes it.
+    assertEquals(isUnresolvedTenantImport(evicted, new Set(["./missing"])), true);
+  });
+
+  // The regression this pins: the importer line also names the rebuilt
+  // artifact, so a whole-message `includes` would classify a tenant typo as
+  // framework and silently undo the fix.
+  it("still classifies a dropped specifier whose importer is the rebuilt artifact", () => {
+    const error = missing();
+
+    assertEquals(error.message.includes(REBUILT), true);
+    assertEquals(isUnresolvedTenantImport(error, new Set(["./missing"]), REBUILT), true);
   });
 
   it("does not classify a failure that is not a resolution failure", () => {

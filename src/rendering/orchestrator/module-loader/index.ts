@@ -328,17 +328,42 @@ export function isMissingModuleError(error: unknown): boolean {
  * specifier lands inside the build's own temp directory — so a "is this path
  * ours?" test on the message would reject exactly the case this identifies.
  */
+/**
+ * The specifier a module-not-found error names as missing.
+ *
+ * Runtimes report it as the first quoted token (`Module not found "file://…"`)
+ * and then append the importer's own location, so only the first quote pair
+ * identifies what is actually absent.
+ */
+function missingModuleTarget(message: string): string {
+  return message.match(/"([^"]+)"/)?.[1] ?? "";
+}
+
 export function isUnresolvedTenantImport(
   error: unknown,
   unresolvedSpecifiers: ReadonlySet<string>,
+  rebuiltArtifactPath?: string,
 ): boolean {
   if (!isMissingModuleError(error)) return false;
   if (unresolvedSpecifiers.size === 0) return false;
+  const message = error instanceof Error ? error.message : String(error);
   // An HTTP bundle is framework infrastructure with dedicated recovery on the
   // outer branch. A miss on one is not the tenant's doing even when the tenant
   // separately has an unresolved import.
-  const message = error instanceof Error ? error.message : String(error);
-  return !/veryfront-http-bundle\/http-[a-f0-9]+\.mjs/.test(message);
+  if (/veryfront-http-bundle\/http-[a-f0-9]+\.mjs/.test(message)) return false;
+  // The missing module can be the rebuilt artifact *itself* rather than one of
+  // its dependencies — a racing cache sweep or a failing cache volume can evict
+  // it between persist and import. That is repeated cache eviction, which must
+  // stay at error severity however the tenant's own imports look.
+  //
+  // Only the *missing target* may be compared, never the whole message: the
+  // runtime appends the importer's location, and at this seam the importer is
+  // always the rebuilt artifact, so scanning the full message would exclude
+  // every case including the tenant typo this predicate exists to catch.
+  if (rebuiltArtifactPath && missingModuleTarget(message).includes(rebuiltArtifactPath)) {
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -480,7 +505,7 @@ export async function loadModule(
         // that points at nothing. Classify it explicitly, because
         // `ERR_MODULE_NOT_FOUND` is not a VeryfrontError and slug-based
         // classification cannot see it.
-        if (isUnresolvedTenantImport(retryError, unresolvedSpecifiers)) {
+        if (isUnresolvedTenantImport(retryError, unresolvedSpecifiers, rebuiltPath)) {
           throw markTenantBuildFailure(retryError);
         }
 
