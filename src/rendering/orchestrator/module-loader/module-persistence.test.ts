@@ -120,7 +120,6 @@ describe("module-loader/module-persistence", () => {
     const localAdapter = await getLocalAdapter();
     const filePath = join(projectDir, "app/page.js");
     const transformedCode = "export const page = 1;";
-
     try {
       const result = await persistTransformedModule({
         filePath,
@@ -135,6 +134,84 @@ describe("module-loader/module-persistence", () => {
 
       assertEquals(result, join(tmpDir, "app/page.js"));
       assertEquals(await Deno.readTextFile(result), transformedCode);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("does not infer a default cycle alias from string contents", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const filePath = join(projectDir, "app/page.ts");
+    const moduleCache = new Map<string, string>();
+
+    try {
+      const result = await persistTransformedModule({
+        filePath,
+        projectDir,
+        tmpDir,
+        transformedCode: `export const label = "Set as default";`,
+        localAdapter,
+        moduleCache,
+        cacheKey: "string-default",
+        isCycleTarget: true,
+      });
+
+      const aliasCode = await Deno.readTextFile(join(dirname(result), "page.js"));
+      assertEquals(aliasCode, `export * from "./${basename(result)}";`);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("writes default cycle aliases only when an export exposes default", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const moduleCache = new Map<string, string>();
+
+    const cases = [
+      {
+        path: "app/default-declaration.ts",
+        transformedCode: `export default function Page() { return null; }`,
+        exposesDefault: true,
+      },
+      {
+        path: "app/named-as-default.ts",
+        transformedCode: `const Page = () => null;\nexport { Page as default };`,
+        exposesDefault: true,
+      },
+      {
+        path: "app/default-as-named.ts",
+        transformedCode: `export { default as Page } from "./component.js";`,
+        exposesDefault: false,
+      },
+    ] as const;
+
+    try {
+      for (const testCase of cases) {
+        const result = await persistTransformedModule({
+          filePath: join(projectDir, testCase.path),
+          projectDir,
+          tmpDir,
+          transformedCode: testCase.transformedCode,
+          localAdapter,
+          moduleCache,
+          cacheKey: testCase.path,
+          isCycleTarget: true,
+        });
+
+        const aliasCode = await Deno.readTextFile(
+          join(dirname(result), basename(testCase.path).replace(/\.ts$/, ".js")),
+        );
+        assertEquals(
+          aliasCode.includes(`export { default } from "./${basename(result)}";`),
+          testCase.exposesDefault,
+        );
+      }
     } finally {
       await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
       await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
