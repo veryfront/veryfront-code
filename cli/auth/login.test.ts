@@ -506,7 +506,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) =>
           new Promise((_resolve, reject) => {
             init?.signal?.addEventListener("abort", () => {
-              reject(new DOMException("The signal has been aborted", "AbortError"));
+              reject(init.signal?.reason);
             });
           })) as typeof fetch;
         console.log = (message?: unknown) =>
@@ -618,6 +618,91 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         });
         assertEquals(output.join("\n").includes("Enter your API token"), false);
         assertEquals(output.join("\n").includes("stored-valid-token"), false);
+        assertEquals(errors, []);
+      } finally {
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        setJsonMode(false);
+        console.log = originalLog;
+        console.error = originalError;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
+    it("reports non-auth token validation statuses as login JSON service failures", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const originalError = console.error;
+      const output: string[] = [];
+      const errors: string[] = [];
+      await saveToken("stored-valid-token", testEnv);
+
+      try {
+        globalThis.fetch = (() =>
+          Promise.resolve(new Response(null, { status: 429 }))) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+        console.error = (message?: unknown) => errors.push(String(message));
+
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        const { login } = await import("./login.ts");
+        setJsonMode(true);
+
+        const result = await login(undefined, testEnv);
+        const envelope = JSON.parse(output.join("\n"));
+
+        assertEquals(result, null);
+        assertEquals(envelope.error, {
+          code: "API_CLIENT_ERROR",
+          slug: "api-client-error",
+          registrySlug: "api-client-error",
+          message: "Veryfront API could not validate existing login credentials.",
+          context: { status: 429 },
+        });
+        assertEquals(output.join("\n").includes("Enter your API token"), false);
+        assertEquals(output.join("\n").includes("stored-valid-token"), false);
+        assertEquals(errors, []);
+      } finally {
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        setJsonMode(false);
+        console.log = originalLog;
+        console.error = originalError;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
+    it("reports non-auth API key validation statuses as login JSON service failures", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const originalError = console.error;
+      const output: string[] = [];
+      const errors: string[] = [];
+
+      try {
+        globalThis.fetch = (() =>
+          Promise.resolve(new Response(null, { status: 408 }))) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+        console.error = (message?: unknown) => errors.push(String(message));
+
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        const { login } = await import("./login.ts");
+        setJsonMode(true);
+
+        const result = await login(undefined, { ...testEnv, apiToken: "vf_env_only" });
+        const envelope = JSON.parse(output.join("\n"));
+
+        assertEquals(result, null);
+        assertEquals(envelope.error, {
+          code: "API_CLIENT_ERROR",
+          slug: "api-client-error",
+          registrySlug: "api-client-error",
+          message: "Veryfront API could not validate existing login credentials.",
+          context: { status: 408 },
+        });
+        assertEquals(output.join("\n").includes("VERYFRONT_API_TOKEN"), false);
+        assertEquals(output.join("\n").includes("vf_env_only"), false);
         assertEquals(errors, []);
       } finally {
         const { setJsonMode } = await import("../shared/json-output.ts");

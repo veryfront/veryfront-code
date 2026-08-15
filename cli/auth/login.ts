@@ -97,8 +97,13 @@ class CredentialValidationUnavailableError extends Error {
   }
 }
 
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
+function isCredentialTimeoutFailure(error: unknown): boolean {
+  return error instanceof DOMException &&
+    (error.name === "AbortError" || error.name === "TimeoutError");
+}
+
+function isCredentialRejectionStatus(status: number): boolean {
+  return status === 401 || status === 403;
 }
 
 async function outputLoginValidationUnavailableJson(
@@ -154,8 +159,7 @@ class NetworkError extends Error {
 }
 
 function isCredentialNetworkFailure(error: unknown): boolean {
-  return error instanceof TypeError ||
-    error instanceof DOMException && error.name === "AbortError";
+  return error instanceof TypeError || isCredentialTimeoutFailure(error);
 }
 
 function throwNetworkError(): never {
@@ -199,7 +203,10 @@ export async function validateToken(
     if (!response.ok) {
       // Consume response body to prevent resource leak
       await response.body?.cancel();
-      if (options.throwOnCredentialValidationUnavailable && response.status >= 500) {
+      if (
+        options.throwOnCredentialValidationUnavailable &&
+        !isCredentialRejectionStatus(response.status)
+      ) {
         throw new CredentialValidationUnavailableError("service", response.status);
       }
       if (options.throwOnNetworkError && response.status >= 500) throwNetworkError();
@@ -212,7 +219,7 @@ export async function validateToken(
       if (e instanceof CredentialValidationUnavailableError) {
         throw e;
       }
-      if (isAbortError(e)) {
+      if (isCredentialTimeoutFailure(e)) {
         throw new CredentialValidationUnavailableError("timeout");
       }
       if (e instanceof TypeError) {
@@ -248,17 +255,23 @@ async function validateApiKey(
       signal: requestSignal(options),
     });
     await response.body?.cancel();
-    if (options.throwOnCredentialValidationUnavailable && response.status >= 500) {
-      throw new CredentialValidationUnavailableError("service", response.status);
+    if (!response.ok) {
+      if (
+        options.throwOnCredentialValidationUnavailable &&
+        !isCredentialRejectionStatus(response.status)
+      ) {
+        throw new CredentialValidationUnavailableError("service", response.status);
+      }
+      if (options.throwOnNetworkError && response.status >= 500) throwNetworkError();
+      return false;
     }
-    if (options.throwOnNetworkError && response.status >= 500) throwNetworkError();
-    return response.ok;
+    return true;
   } catch (e) {
     if (options.throwOnCredentialValidationUnavailable) {
       if (e instanceof CredentialValidationUnavailableError) {
         throw e;
       }
-      if (isAbortError(e)) {
+      if (isCredentialTimeoutFailure(e)) {
         throw new CredentialValidationUnavailableError("timeout");
       }
       if (e instanceof TypeError) {
