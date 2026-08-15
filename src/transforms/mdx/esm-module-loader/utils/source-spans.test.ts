@@ -995,6 +995,27 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("ignores import-looking regex text after an ambient class body", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'declare class C {} /import("\\/_vf_modules\\/fake-ambient-class.js")/.test(value); ' +
+            'import("/_vf_modules/after-ambient-class.js")',
+        ),
+        ["/_vf_modules/after-ambient-class.js"],
+      );
+    });
+
+    it("recognizes an exported abstract ambient class after an ASI boundary", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          "const ready = true\nexport declare abstract class C {} " +
+            '/import("\\/_vf_modules\\/fake-asi-ambient-class.js")/.test(value); ' +
+            'import("/_vf_modules/after-asi-ambient-class.js")',
+        ),
+        ["/_vf_modules/after-asi-ambient-class.js"],
+      );
+    });
+
     it("ignores import-looking regex text after exported declarations across ASI", () => {
       assertEquals(
         vfModuleSpecifiers(

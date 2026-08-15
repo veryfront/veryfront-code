@@ -75,7 +75,7 @@ const TYPESCRIPT_FUNCTION_DECLARATION_PREFIX_PATTERN = new RegExp(
 );
 const CLASS_DECLARATION_PREFIX_PATTERN = new RegExp(
   String
-    .raw`^(?:@[\s\S]+?\s+)*(?:export\s+(?:default\s+)?)?(?:abstract\s+)?class(?:\s+${IDENTIFIER_NAME_SOURCE})?(?:\s*<[\s\S]*>)?(?:\s+extends\s+[\s\S]+?)?(?:\s+implements\s+[\s\S]+)?\s*$`,
+    .raw`^(?:@[\s\S]+?\s+)*(?:export\s+(?:default\s+)?)?(?:declare\s+)?(?:abstract\s+)?class(?:\s+${IDENTIFIER_NAME_SOURCE})?(?:\s*<[\s\S]*>)?(?:\s+extends\s+[\s\S]+?)?(?:\s+implements\s+[\s\S]+)?\s*$`,
   "u",
 );
 const TYPESCRIPT_DECLARATION_PREFIX_PATTERN = new RegExp(
@@ -780,6 +780,7 @@ function balancedDeclarationStatementStartBefore(
 function classDeclarationStatementStartBefore(source: string, index: number): number {
   return balancedDeclarationStatementStartBefore(source, index, [
     "class",
+    "declare",
     "export",
   ]);
 }
