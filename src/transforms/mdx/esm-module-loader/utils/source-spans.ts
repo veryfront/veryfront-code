@@ -22,6 +22,12 @@ export interface StaticImportSpan {
 
 type SpecifierMatcher = (specifier: string) => string | null | undefined;
 
+interface OpenParenContext {
+  index: number;
+  isForHeader: boolean;
+  hasSemicolon: boolean;
+}
+
 const MAX_TEMPLATE_LITERAL_DEPTH = 512;
 
 function assertTemplateLiteralDepth(depth: number): void {
@@ -246,67 +252,17 @@ function keywordBefore(source: string, index: number): string | null {
   return source.slice(start, end);
 }
 
-function isControlConditionCloseParen(source: string, index: number, rangeStart: number): boolean {
-  let depth = 1;
-  let cursor = index - 1;
-
-  while (cursor >= rangeStart) {
-    const char = source[cursor];
-
-    if (char === '"' || char === "'" || char === "`") {
-      cursor = previousStringLiteralStart(source, cursor, rangeStart) - 1;
-      continue;
-    }
-
-    if (char === "/" && source[cursor - 1] === "*") {
-      const commentStart = source.lastIndexOf("/*", cursor - 2);
-      cursor = commentStart >= rangeStart ? commentStart - 1 : rangeStart - 1;
-      continue;
-    }
-
-    if (char === ")") {
-      depth++;
-      cursor--;
-      continue;
-    }
-
-    if (char === "(") {
-      depth--;
-      if (depth === 0) {
-        const keyword = keywordBefore(source, cursor);
-        return keyword === "if" || keyword === "while" || keyword === "for" ||
-          keyword === "with" || keyword === "switch";
-      }
-      cursor--;
-      continue;
-    }
-
-    cursor--;
-  }
-
-  return false;
-}
-
-function previousStringLiteralStart(source: string, index: number, rangeStart: number): number {
-  const quote = source[index];
-  let cursor = index - 1;
-
-  while (cursor >= rangeStart) {
-    if (source[cursor] === quote && !isEscapedByBackslash(source, cursor)) return cursor;
-    cursor--;
-  }
-
-  return rangeStart;
-}
-
-function isEscapedByBackslash(source: string, index: number): boolean {
-  let cursor = index - 1;
-  let count = 0;
-  while (cursor >= 0 && source[cursor] === "\\") {
-    count++;
-    cursor--;
-  }
-  return count % 2 === 1;
+function isControlConditionCloseParen(
+  source: string,
+  index: number,
+  rangeStart: number,
+  matchingOpenParens: ReadonlyMap<number, number>,
+): boolean {
+  const openParen = matchingOpenParens.get(index);
+  if (openParen === undefined || openParen < rangeStart) return false;
+  const keyword = keywordBefore(source, openParen);
+  return keyword === "if" || keyword === "while" || keyword === "for" ||
+    keyword === "with" || keyword === "switch" || keyword === "catch";
 }
 
 function isControlBlockCloseBrace(
@@ -314,6 +270,7 @@ function isControlBlockCloseBrace(
   index: number,
   rangeStart: number,
   matchingOpenBraces: ReadonlyMap<number, number>,
+  matchingOpenParens: ReadonlyMap<number, number>,
 ): boolean {
   const openBrace = matchingOpenBraces.get(index);
   if (openBrace === undefined) return false;
@@ -321,7 +278,7 @@ function isControlBlockCloseBrace(
   const beforeOpenBrace = previousSignificantIndex(source, openBrace);
   return beforeOpenBrace >= rangeStart &&
     source[beforeOpenBrace] === ")" &&
-    isControlConditionCloseParen(source, beforeOpenBrace, rangeStart);
+    isControlConditionCloseParen(source, beforeOpenBrace, rangeStart, matchingOpenParens);
 }
 
 function isDeclarationBlockCloseBrace(
@@ -342,7 +299,24 @@ function isDeclarationBlockCloseBrace(
     /^class(?:\s+[$A-Za-z_][$\w]*)?(?:\s+extends\s+[\s\S]+)?\s*$/.test(prefix);
 }
 
-function isForOfKeywordBefore(source: string, index: number, rangeStart: number): boolean {
+function isStatementBlockCloseBrace(
+  source: string,
+  index: number,
+  matchingOpenBraces: ReadonlyMap<number, number>,
+): boolean {
+  const openBrace = matchingOpenBraces.get(index);
+  if (openBrace === undefined) return false;
+  const keyword = keywordBefore(source, openBrace);
+  return keyword === "try" || keyword === "catch" || keyword === "finally" ||
+    keyword === "do" || keyword === "else";
+}
+
+function isForOfKeywordBefore(
+  source: string,
+  index: number,
+  rangeStart: number,
+  currentParen: OpenParenContext | undefined,
+): boolean {
   const keywordEnd = previousSignificantIndex(source, index) + 1;
   let keywordStart = keywordEnd;
   while (keywordStart > rangeStart && /[A-Za-z_$]/.test(source[keywordStart - 1] ?? "")) {
@@ -361,56 +335,7 @@ function isForOfKeywordBefore(source: string, index: number, rangeStart: number)
   ) {
     return false;
   }
-
-  let parenDepth = 0;
-  let braceDepth = 0;
-  let bracketDepth = 0;
-  let cursor = keywordStart - 1;
-
-  while (cursor >= rangeStart) {
-    const char = source[cursor];
-
-    if (char === '"' || char === "'" || char === "`") {
-      cursor = previousStringLiteralStart(source, cursor, rangeStart) - 1;
-      continue;
-    }
-
-    if (char === "/" && source[cursor - 1] === "*") {
-      const commentStart = source.lastIndexOf("/*", cursor - 2);
-      cursor = commentStart >= rangeStart ? commentStart - 1 : rangeStart - 1;
-      continue;
-    }
-
-    if (char === ")") {
-      parenDepth++;
-    } else if (char === "(") {
-      if (parenDepth > 0) {
-        parenDepth--;
-      } else if (braceDepth === 0 && bracketDepth === 0) {
-        return keywordBefore(source, cursor) === "for";
-      }
-    } else if (char === "}") {
-      braceDepth++;
-    } else if (char === "{") {
-      if (braceDepth > 0) braceDepth--;
-      else if (parenDepth === 0 && bracketDepth === 0) return false;
-    } else if (char === "]") {
-      bracketDepth++;
-    } else if (char === "[") {
-      if (bracketDepth > 0) bracketDepth--;
-    } else if (
-      char === ";" &&
-      parenDepth === 0 &&
-      braceDepth === 0 &&
-      bracketDepth === 0
-    ) {
-      return false;
-    }
-
-    cursor--;
-  }
-
-  return false;
+  return currentParen?.isForHeader === true && !currentParen.hasSemicolon;
 }
 
 function canStartRegexLiteral(
@@ -418,16 +343,28 @@ function canStartRegexLiteral(
   index: number,
   rangeStart: number,
   matchingOpenBraces: ReadonlyMap<number, number>,
+  matchingOpenParens: ReadonlyMap<number, number>,
+  currentParen: OpenParenContext | undefined,
 ): boolean {
   const previous = previousSignificantIndex(source, index);
   if (previous < rangeStart) return true;
 
   const char = source[previous];
-  if (char === ")" && isControlConditionCloseParen(source, previous, rangeStart)) return true;
+  if (
+    char === ")" &&
+    isControlConditionCloseParen(source, previous, rangeStart, matchingOpenParens)
+  ) return true;
   if (
     char === "}" &&
-    (isControlBlockCloseBrace(source, previous, rangeStart, matchingOpenBraces) ||
-      isDeclarationBlockCloseBrace(source, previous, matchingOpenBraces))
+    (isControlBlockCloseBrace(
+      source,
+      previous,
+      rangeStart,
+      matchingOpenBraces,
+      matchingOpenParens,
+    ) ||
+      isDeclarationBlockCloseBrace(source, previous, matchingOpenBraces) ||
+      isStatementBlockCloseBrace(source, previous, matchingOpenBraces))
   ) return true;
   if (
     (char === "+" || char === "-") &&
@@ -439,7 +376,9 @@ function canStartRegexLiteral(
   if (char !== undefined && "([{=,:;!~?&|+-*%^<>".includes(char)) return true;
 
   const keyword = keywordBefore(source, index);
-  if (keyword === "of") return isForOfKeywordBefore(source, index, rangeStart);
+  if (keyword === "of") {
+    return isForOfKeywordBefore(source, index, rangeStart, currentParen);
+  }
 
   return [
     "case",
@@ -499,6 +438,8 @@ function skipExpressionIgnored(
   rangeStart: number,
   depth: number,
   matchingOpenBraces: ReadonlyMap<number, number>,
+  matchingOpenParens: ReadonlyMap<number, number>,
+  currentParen: OpenParenContext | undefined,
 ): number {
   const char = source[index];
   const next = source[index + 1];
@@ -515,7 +456,17 @@ function skipExpressionIgnored(
 
   if (char === '"' || char === "'") return skipIgnored(source, index);
   if (char === "`") return skipFullTemplateLiteral(source, index, depth + 1);
-  if (char === "/" && canStartRegexLiteral(source, index, rangeStart, matchingOpenBraces)) {
+  if (
+    char === "/" &&
+    canStartRegexLiteral(
+      source,
+      index,
+      rangeStart,
+      matchingOpenBraces,
+      matchingOpenParens,
+      currentParen,
+    )
+  ) {
     return skipRegexLiteral(source, index);
   }
 
@@ -533,6 +484,8 @@ function findTemplateExpressionEnd(
   let braceDepth = 1;
   const openBraces: number[] = [];
   const matchingOpenBraces = new Map<number, number>();
+  const openParens: OpenParenContext[] = [];
+  const matchingOpenParens = new Map<number, number>();
 
   while (cursor < source.length) {
     const skipped = skipExpressionIgnored(
@@ -541,6 +494,8 @@ function findTemplateExpressionEnd(
       expressionIndex,
       depth,
       matchingOpenBraces,
+      matchingOpenParens,
+      openParens.at(-1),
     );
     if (skipped !== cursor) {
       cursor = skipped;
@@ -561,6 +516,27 @@ function findTemplateExpressionEnd(
       if (openBrace !== undefined) matchingOpenBraces.set(cursor, openBrace);
       cursor++;
       continue;
+    }
+
+    if (source[cursor] === "(") {
+      openParens.push({
+        index: cursor,
+        isForHeader: keywordBefore(source, cursor) === "for",
+        hasSemicolon: false,
+      });
+      cursor++;
+      continue;
+    }
+
+    if (source[cursor] === ")") {
+      const openParen = openParens.pop();
+      if (openParen !== undefined) matchingOpenParens.set(cursor, openParen.index);
+      cursor++;
+      continue;
+    }
+
+    if (source[cursor] === ";" && openParens.at(-1)?.isForHeader) {
+      openParens.at(-1)!.hasSemicolon = true;
     }
 
     cursor++;
@@ -741,6 +717,8 @@ function scanDynamicImportRange(
   let cursor = rangeStart;
   const openBraces: number[] = [];
   const matchingOpenBraces = new Map<number, number>();
+  const openParens: OpenParenContext[] = [];
+  const matchingOpenParens = new Map<number, number>();
 
   while (cursor < rangeEnd) {
     const char = source[cursor];
@@ -755,7 +733,17 @@ function scanDynamicImportRange(
       continue;
     }
 
-    if (char === "/" && canStartRegexLiteral(source, cursor, rangeStart, matchingOpenBraces)) {
+    if (
+      char === "/" &&
+      canStartRegexLiteral(
+        source,
+        cursor,
+        rangeStart,
+        matchingOpenBraces,
+        matchingOpenParens,
+        openParens.at(-1),
+      )
+    ) {
       cursor = skipRegexLiteral(source, cursor);
       continue;
     }
@@ -786,6 +774,27 @@ function scanDynamicImportRange(
       continue;
     }
 
+    if (char === "(") {
+      openParens.push({
+        index: cursor,
+        isForHeader: keywordBefore(source, cursor) === "for",
+        hasSemicolon: false,
+      });
+      cursor++;
+      continue;
+    }
+
+    if (char === ")") {
+      const openParen = openParens.pop();
+      if (openParen !== undefined) matchingOpenParens.set(cursor, openParen.index);
+      cursor++;
+      continue;
+    }
+
+    if (char === ";" && openParens.at(-1)?.isForHeader) {
+      openParens.at(-1)!.hasSemicolon = true;
+    }
+
     // `import` used as an expression: not preceded by an identifier char or a
     // dot (which would make it `foo.import` or part of a longer word).
     if (
@@ -803,6 +812,9 @@ function scanDynamicImportRange(
       cursor++;
       continue;
     }
+    // The scanner jumps directly from `import` to its argument, so record the
+    // opening parenthesis that the ordinary character walk does not visit.
+    openParens.push({ index: parenIndex, isForHeader: false, hasSemicolon: false });
 
     const literalIndex = skipWhitespaceAndComments(source, parenIndex + 1);
     if (literalIndex >= rangeEnd) {

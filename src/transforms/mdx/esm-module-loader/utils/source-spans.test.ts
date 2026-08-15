@@ -304,6 +304,30 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("finds imports after regex literals following try statement blocks", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'const html = `${(() => { try {} finally {} /}/.test(x); return true; })() && import("/_vf_modules/finally-lazy.js")}`;',
+        ),
+        ["/_vf_modules/finally-lazy.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'const html = `${(() => { try { throw x; } catch (error) {} /}/.test(x); return true; })() && import("/_vf_modules/catch-lazy.js")}`;',
+        ),
+        ["/_vf_modules/catch-lazy.js"],
+      );
+    });
+
+    it("ignores line-comment parentheses when matching control conditions", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'const html = `${(() => { if (ok // fake (\n) /}/.test(x); return true; })() && import("/_vf_modules/comment-condition-lazy.js")}`;',
+        ),
+        ["/_vf_modules/comment-condition-lazy.js"],
+      );
+    });
+
     it("finds executable imports after regex braces following control conditions", () => {
       assertEquals(
         specifiers(
@@ -413,6 +437,20 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         durationMs < 750,
         `Expected a ${Math.round(source.length / 1024)} KB of-identifier scan to finish within ` +
           `750 ms, got ${durationMs.toFixed(1)} ms`,
+      );
+    });
+
+    it("keeps unmatched closing-delimiter division scans within a bounded runtime", () => {
+      const source = ") / 2;\n".repeat(12_000) + "} / 2;\n".repeat(12_000);
+      const startedAt = performance.now();
+
+      assertEquals(specifiers(source), []);
+
+      const durationMs = performance.now() - startedAt;
+      assert(
+        durationMs < 750,
+        `Expected a ${Math.round(source.length / 1024)} KB closing-delimiter scan to finish ` +
+          `within 750 ms, got ${durationMs.toFixed(1)} ms`,
       );
     });
 
