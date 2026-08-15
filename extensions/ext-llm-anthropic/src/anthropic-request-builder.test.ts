@@ -581,6 +581,91 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     }
   });
 
+  it("rejects non-array message content hooks without invoking them", () => {
+    for (const contentType of ["object", "function"] as const) {
+      let hookCalls = 0;
+      const toJSON = () => {
+        hookCalls += 1;
+        return Array.from({ length: 5 }, (_, index) => ({
+          type: "text",
+          text: `Cached ${index}`,
+          cache_control: { type: "ephemeral" },
+        }));
+      };
+      const content = contentType === "object"
+        ? { toJSON }
+        : Object.assign(() => undefined, { toJSON });
+
+      assertThrows(
+        () =>
+          buildAnthropicMessagesRequest(
+            "claude-sonnet-4-6",
+            "anthropic",
+            {
+              prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+              providerOptions: {
+                anthropic: { messages: [{ role: "user", content }] },
+              },
+            },
+            false,
+            createWarningCollector(),
+          ),
+        TypeError,
+        "Anthropic cache inputs must not define toJSON hooks",
+      );
+      assertEquals(hookCalls, 0);
+    }
+  });
+
+  it("rejects non-array message content proxies without invoking them", () => {
+    let trapCalls = 0;
+    const content = new Proxy({}, {
+      get() {
+        trapCalls += 1;
+        return undefined;
+      },
+    });
+
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+            providerOptions: {
+              anthropic: { messages: [{ role: "user", content }] },
+            },
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic cache inputs must not contain Proxy values",
+    );
+    assertEquals(trapCalls, 0);
+  });
+
+  it("preserves primitive raw message content", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+        providerOptions: {
+          anthropic: { messages: [{ role: "user", content: "Raw message" }] },
+        },
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(
+      (body.messages[0] as unknown as { content: unknown }).content,
+      "Raw message",
+    );
+  });
+
   it("rejects toJSON hooks nested inside cache-control values", () => {
     let hookCalls = 0;
     const toJSON = () => {

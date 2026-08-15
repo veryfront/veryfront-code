@@ -1372,11 +1372,18 @@ function readEmittedAnthropicMessageContent(message: AnthropicCompatibleMessage)
       "Anthropic message content must be an own enumerable data property",
     );
   }
-  if (!Array.isArray(descriptor.value)) {
+  const content = descriptor.value;
+  if (!Array.isArray(content)) {
+    if (
+      (typeof content === "object" && content !== null) ||
+      typeof content === "function"
+    ) {
+      assertNoAnthropicCacheJsonHook(content);
+    }
     return [];
   }
   return snapshotAnthropicCacheArray(
-    descriptor.value,
+    content,
     "Anthropic message content",
   );
 }
