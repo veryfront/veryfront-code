@@ -371,7 +371,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
-    it("keeps existing-session output human-readable without a login JSON contract", async () => {
+    it("reports an existing stored session as login JSON when JSON mode is enabled", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;
       const output: string[] = [];
@@ -390,13 +390,18 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         setJsonMode(true);
 
         const result = await login(undefined, testEnv);
+        const envelope = JSON.parse(output.join("\n"));
 
-        // Login does not advertise structured output. Keep this result on the
-        // same human path as missing, invalid, and timed-out credentials instead
-        // of exposing JSON for only the already-authenticated outcome.
         assertEquals(result, { id: "user-123", email: "test@example.com" });
-        assertStringIncludes(output.join("\n"), "Already logged in as test@example.com");
-        assertEquals(output.join("\n").includes('"command": "login"'), false);
+        assertEquals(envelope.success, true);
+        assertEquals(envelope.command, "login");
+        assertEquals(envelope.data, {
+          id: "user-123",
+          email: "test@example.com",
+          source: "token-store",
+        });
+        assertEquals(output.join("\n").includes("Already logged in as test@example.com"), false);
+        assertEquals(output.join("\n").includes("stored-valid-token"), false);
       } finally {
         const { setJsonMode } = await import("../shared/json-output.ts");
         setJsonMode(false);
@@ -484,6 +489,49 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         assertEquals(await readToken(testEnv), null);
         assertEquals(printed.includes("vf_env_only"), false);
       } finally {
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
+    it("reports an existing environment API key as login JSON when JSON mode is enabled", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const output: string[] = [];
+
+      try {
+        setNonInteractive(true);
+        globalThis.fetch = (() =>
+          Promise.resolve(
+            new Response(JSON.stringify({ data: [], page_info: {} }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          )) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        const { login } = await import("./login.ts");
+        setJsonMode(true);
+
+        const result = await login(undefined, { ...testEnv, apiToken: "vf_env_only" });
+        const envelope = JSON.parse(output.join("\n"));
+
+        assertEquals(result, { authenticated: true, type: "apiKey" });
+        assertEquals(envelope.success, true);
+        assertEquals(envelope.command, "login");
+        assertEquals(envelope.data, {
+          authenticated: true,
+          credential_type: "api_key",
+          source: "env",
+        });
+        assertEquals(output.join("\n").includes("VERYFRONT_API_TOKEN"), false);
+        assertEquals(output.join("\n").includes("vf_env_only"), false);
+      } finally {
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        setJsonMode(false);
         console.log = originalLog;
         globalThis.fetch = originalFetch;
         resetInteractiveMode();

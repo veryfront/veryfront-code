@@ -54,6 +54,21 @@ export interface CredentialValidationOptions {
 const DEFAULT_EXISTING_SESSION_TIMEOUT_MS = 5_000;
 let existingSessionTimeoutMs = DEFAULT_EXISTING_SESSION_TIMEOUT_MS;
 
+function loginIdentityData(
+  identity: AuthIdentity,
+  source: "env" | "token-store",
+): Record<string, unknown> {
+  if (isApiKeyIdentity(identity)) {
+    return {
+      authenticated: true,
+      credential_type: "api_key",
+      source,
+    };
+  }
+
+  return { ...identity, source };
+}
+
 /** Test seam: shrink the preflight deadline so a stall is observable quickly. */
 export function __setExistingSessionTimeoutForTests(ms?: number): void {
   existingSessionTimeoutMs = ms ?? DEFAULT_EXISTING_SESSION_TIMEOUT_MS;
@@ -321,6 +336,14 @@ async function describeExistingSession(
       continue;
     }
     if (!identity) continue;
+
+    if (isJsonMode()) {
+      await outputJson(createSuccessEnvelope(
+        "login",
+        loginIdentityData(identity, source === "environment" ? "env" : "token-store"),
+      ));
+      return identity;
+    }
 
     console.log();
     console.log(
