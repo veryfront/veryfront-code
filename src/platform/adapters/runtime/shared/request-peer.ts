@@ -210,7 +210,11 @@ export async function runRequestInterceptor(
   request: Request,
   interceptor: (request: Request) => Request | Promise<Request>,
 ): Promise<Request> {
-  return inheritRequestPeerProvenance(request, await interceptor(request));
+  const intercepted = await interceptor(request);
+  if (intercepted === request) return request;
+
+  const requestLocalReplacement = Request.prototype.clone.call(intercepted);
+  return inheritRequestPeerProvenance(request, requestLocalReplacement);
 }
 
 /** @internal True for IPv4 127/8, IPv6 ::1, or mapped IPv4 127/8. */

@@ -23,4 +23,40 @@ describe("runRequestInterceptor", () => {
     assert(intercepted !== request);
     assertEquals(isRequestFromLoopbackPeer(intercepted), true);
   });
+
+  it("isolates provenance when overlapping calls reuse one replacement request", async () => {
+    const remoteRequest = new Request("http://localhost/");
+    recordRequestPeerFromTransport(remoteRequest, {
+      runtime: "deno",
+      transport: "tcp",
+      hostname: "192.0.2.10",
+    });
+    const localRequest = new Request("http://localhost/");
+    recordRequestPeerFromTransport(localRequest, {
+      runtime: "deno",
+      transport: "tcp",
+      hostname: "127.0.0.1",
+    });
+    const sharedReplacement = new Request("http://localhost/", {
+      method: "POST",
+      body: "payload",
+    });
+    const interceptor = () => sharedReplacement;
+
+    const remoteIntercepted = await runRequestInterceptor(remoteRequest, interceptor);
+    const localIntercepted = await runRequestInterceptor(localRequest, interceptor);
+
+    assert(remoteIntercepted !== localIntercepted);
+    assertEquals(isRequestFromLoopbackPeer(remoteIntercepted), false);
+    assertEquals(isRequestFromLoopbackPeer(localIntercepted), true);
+    assertEquals(isRequestFromLoopbackPeer(sharedReplacement), false);
+    assertEquals(
+      await Promise.all([
+        remoteIntercepted.text(),
+        localIntercepted.text(),
+        sharedReplacement.text(),
+      ]),
+      ["payload", "payload", "payload"],
+    );
+  });
 });
