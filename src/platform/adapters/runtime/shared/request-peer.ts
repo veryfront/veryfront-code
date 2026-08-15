@@ -112,6 +112,14 @@ export function inheritRequestPeerProvenance<T extends Request>(
   return target;
 }
 
+/** @internal Run an interceptor without discarding transport peer authority. */
+export async function runRequestInterceptor(
+  request: Request,
+  interceptor: (request: Request) => Request | Promise<Request>,
+): Promise<Request> {
+  return inheritRequestPeerProvenance(request, await interceptor(request));
+}
+
 /** @internal True for IPv4 127/8, IPv6 ::1, or mapped IPv4 127/8. */
 export function isLoopbackAddress(hostname: string): boolean {
   const ipv4 = parseCanonicalIpv4(hostname);

@@ -27,6 +27,7 @@ import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import { initializeDistributedCaches } from "#veryfront/cache/distributed-cache-init.ts";
 import { defaultDistributedCacheInitializers } from "#veryfront/server/distributed-cache-initializers.ts";
+import { runRequestInterceptor } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { isDiskCacheConfigured } from "#veryfront/cache/backend.ts";
 import { clearTranspileCache, discoverAll } from "#veryfront/discovery";
 import type { DiscoveryConfig } from "#veryfront/discovery";
@@ -276,7 +277,7 @@ export class DevServer {
         const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
         if (isWebSocketUpgrade) return baseHandler(req);
 
-        const interceptedReq = await interceptor(req);
+        const interceptedReq = await runRequestInterceptor(req, interceptor);
         return baseHandler(interceptedReq);
       }
       : baseHandler;
