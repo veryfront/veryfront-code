@@ -13,6 +13,7 @@ import { basename, dirname, join } from "#veryfront/compat/path/index.ts";
 import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
 import {
   isMissingModuleError,
+  isUnresolvedTenantImport,
   loadModule,
   type ModuleLoaderConfig,
   transformModuleWithDeps,
@@ -346,8 +347,8 @@ describe("module-loader/loadModule build-failure tagging", () => {
     await withModuleLoaderFixture(
       {
         "app/page.tsx": [
-          `import "./missing";`,
-          `export default function Page() { return null; }`,
+          `import { label } from "./missing";`,
+          `export default function Page() { return label; }`,
         ].join("\n"),
       },
       async ({ projectDir, tmpDir, config }) => {
@@ -365,13 +366,125 @@ describe("module-loader/loadModule build-failure tagging", () => {
     );
   });
 
-  // The same seam must not launder a framework fault: a module that was found
-  // and threw while executing is an application error, not a build failure.
-  it("leaves a non-resolution import failure untagged", () => {
-    const runtimeError = new TypeError("x is not a function");
+  // `findStaticImportFromSpans` only matches imports with a `from` clause, so a
+  // bare side-effect import is never resolved and therefore never recorded as
+  // dropped. Such a typo consequently stays at error level rather than being
+  // downgraded. That is the safe direction — over-reporting severity, never
+  // hiding a framework fault — but it is a real gap, so it is pinned here
+  // rather than left to be discovered as a surprise.
+  it("leaves a missing bare side-effect import at framework severity", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import "./missing";`,
+          `export default function Page() { return null; }`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const error = await assertRejects(
+            () => loadModule(join(projectDir, "app/page.tsx"), config),
+            Error,
+          );
 
-    assertEquals(isBuildFailure(runtimeError), false);
-    assertEquals(isTenantBuildFailure(runtimeError), false);
+          assertEquals(isMissingModuleError(error), true);
+          // Still a build failure — the signal must not be dropped ...
+          assertEquals(isBuildFailure(error), true);
+          // ... but not attributed to the tenant without evidence.
+          assertEquals(isTenantBuildFailure(error), false);
+        });
+      },
+    );
+  });
+
+  // The same seam must not launder a framework fault. A module whose imports
+  // all resolve, and which then throws while executing, is an application
+  // error: it must come back out of `loadModule` untagged on both predicates.
+  // Asserting this through the real fixture rather than on a hand-built error
+  // is the point — a constructed Error never enters `loadModule`, so it would
+  // pass identically if the classification branch were deleted or inverted.
+  it("leaves a resolvable import that throws at module scope untagged", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import { boom } from "./dep";`,
+          `export default function Page() { return boom; }`,
+        ].join("\n"),
+        "app/dep.tsx": [
+          `throw new Error("dependency exploded at module scope");`,
+          `export const boom = "unreachable";`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const error = await assertRejects(
+            () => loadModule(join(projectDir, "app/page.tsx"), config),
+            Error,
+            "dependency exploded at module scope",
+          );
+
+          assertEquals(isMissingModuleError(error), false);
+          assertEquals(isBuildFailure(error), false);
+          assertEquals(isTenantBuildFailure(error), false);
+        });
+      },
+    );
+  });
+});
+
+// The retry seam sees `ERR_MODULE_NOT_FOUND` for four different causes and may
+// only downgrade one of them. `isMissingModuleError` cannot tell them apart, so
+// the discrimination is driven by the specifiers the resolver recorded dropping.
+describe("module-loader/isUnresolvedTenantImport", () => {
+  const missing = () =>
+    Object.assign(
+      new TypeError('Module not found "file:///tmp/out/veryfront-modules/proj-a/app/missing".'),
+      { code: "ERR_MODULE_NOT_FOUND" },
+    );
+
+  it("classifies a dropped tenant specifier as tenant source", () => {
+    assertEquals(isUnresolvedTenantImport(missing(), new Set(["./missing"])), true);
+  });
+
+  // The cycle-breaking branch leaves a resolved target's specifier as authored
+  // and relies on an alias the code itself marks as not runtime-verified. That
+  // target resolved, so it is never recorded as dropped — and a framework path
+  // the repo openly marks unverified must not page as a tenant warning.
+  it("does not classify a failure when the resolver dropped nothing", () => {
+    assertEquals(isUnresolvedTenantImport(missing(), new Set()), false);
+  });
+
+  // Bundle misses are framework infrastructure with dedicated recovery on the
+  // outer branch, which the inner catch does not re-check. Exclude them even
+  // when the tenant separately has an unresolved import.
+  it("does not classify an HTTP-bundle miss even alongside a dropped specifier", () => {
+    const bundleError = Object.assign(
+      new TypeError(
+        'Module not found "file:///tmp/veryfront-http-bundle/http-2b1f9c4e.mjs".',
+      ),
+      { code: "ERR_MODULE_NOT_FOUND" },
+    );
+
+    assertEquals(isUnresolvedTenantImport(bundleError, new Set(["./missing"])), false);
+  });
+
+  it("does not classify a failure that is not a resolution failure", () => {
+    assertEquals(
+      isUnresolvedTenantImport(new TypeError("x is not a function"), new Set(["./missing"])),
+      false,
+    );
+  });
+
+  // The runtime reports the *resolved* path, which for a dropped relative
+  // specifier lands inside the build's own temp directory. A "does the message
+  // mention our temp dir?" heuristic would therefore reject the one case this
+  // predicate exists to catch. Pinned so nobody reintroduces it.
+  it("classifies a dropped specifier whose resolved path is inside the build temp dir", () => {
+    const tmpDir = "/tmp/out";
+    const error = missing();
+
+    assertEquals(error.message.includes(tmpDir), true);
+    assertEquals(isUnresolvedTenantImport(error, new Set(["./missing"])), true);
   });
 });
 

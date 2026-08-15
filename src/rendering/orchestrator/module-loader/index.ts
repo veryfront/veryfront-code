@@ -82,6 +82,12 @@ export async function transformModuleWithDeps(
   // ancestor that eventually persists that target reads it to write a stable
   // alias the left-as-authored cycle edge can resolve to.
   cycleTargets: Set<string> = new Set(),
+  // Also shared by reference across the whole transform tree: every specifier
+  // the dependency resolver could not resolve and therefore left as authored.
+  // Those are the only specifiers that can survive into the built module and
+  // fail at `import()` time, so this is the evidence that tells a tenant typo
+  // apart from a framework artifact going missing. See `loadModule`.
+  unresolvedSpecifiers: Set<string> = new Set(),
 ): Promise<string> {
   throwIfModuleLoadAborted(config);
   const { moduleCache, projectDir, projectId, contentSourceId, adapter, mode } = config;
@@ -168,6 +174,7 @@ export async function transformModuleWithDeps(
           dep.isLocalLib,
           nextLineage,
           cycleTargets,
+          unresolvedSpecifiers,
         );
 
         return { ...dep, depTempPath };
@@ -198,6 +205,7 @@ export async function transformModuleWithDeps(
 
   for (const dep of resolvedDeps) {
     if (dep.depFilePath) continue;
+    unresolvedSpecifiers.add(dep.path);
     logger.warn("Could not find dependency:", {
       path: dep.path,
       relativePath: dep.relativePath,
@@ -301,6 +309,39 @@ export function isMissingModuleError(error: unknown): boolean {
 }
 
 /**
+ * Whether a module-not-found failure is a specifier the project authored that
+ * points at nothing, as opposed to framework infrastructure going missing.
+ *
+ * `isMissingModuleError` alone cannot answer this: an `ERR_MODULE_NOT_FOUND`
+ * is raised the same way for a tenant typo, an HTTP bundle miss, a cycle-break
+ * alias that did not resolve, and a rebuilt artifact the runtime failed to
+ * persist. Only the first is the tenant's fault, and only the first may be
+ * downgraded to a warning in observability.
+ *
+ * The discriminator is evidence rather than a guess: `resolveModuleDependencies`
+ * resolves only `@/` aliases and relative imports, and `transformModuleWithDeps`
+ * records every specifier it had to leave as authored. If it left none anywhere
+ * in this module's transform tree, then nothing tenant-authored survived
+ * unrewritten and whatever is missing here is framework-owned.
+ *
+ * Note the runtime reports the *resolved* path, which for a dropped relative
+ * specifier lands inside the build's own temp directory — so a "is this path
+ * ours?" test on the message would reject exactly the case this identifies.
+ */
+export function isUnresolvedTenantImport(
+  error: unknown,
+  unresolvedSpecifiers: ReadonlySet<string>,
+): boolean {
+  if (!isMissingModuleError(error)) return false;
+  if (unresolvedSpecifiers.size === 0) return false;
+  // An HTTP bundle is framework infrastructure with dedicated recovery on the
+  // outer branch. A miss on one is not the tenant's doing even when the tenant
+  // separately has an unresolved import.
+  const message = error instanceof Error ? error.message : String(error);
+  return !/veryfront-http-bundle\/http-[a-f0-9]+\.mjs/.test(message);
+}
+
+/**
  * Load a module by path, transforming it and its dependencies.
  *
  * @param filePath - Path to the module to load
@@ -318,9 +359,23 @@ export async function loadModule(
 
   // Everything up to here compiles and resolves source, so a failure is a build
   // failure. Everything after it is the module running.
+  // Every specifier the resolver had to leave as authored, across this module's
+  // whole transform tree. Read back at the retry seam below to tell a tenant
+  // typo apart from framework infrastructure going missing.
+  const unresolvedSpecifiers = new Set<string>();
+
   let tempFilePath: string;
   try {
-    tempFilePath = await transformModuleWithDeps(filePath, tmpDir, localAdapter, config);
+    tempFilePath = await transformModuleWithDeps(
+      filePath,
+      tmpDir,
+      localAdapter,
+      config,
+      false,
+      undefined,
+      undefined,
+      unresolvedSpecifiers,
+    );
   } catch (error) {
     throw markBuildFailure(error);
   }
@@ -398,7 +453,16 @@ export async function loadModule(
 
       let rebuiltPath: string;
       try {
-        rebuiltPath = await transformModuleWithDeps(filePath, tmpDir, localAdapter, config);
+        rebuiltPath = await transformModuleWithDeps(
+          filePath,
+          tmpDir,
+          localAdapter,
+          config,
+          false,
+          undefined,
+          undefined,
+          unresolvedSpecifiers,
+        );
       } catch (rebuildError) {
         throw markBuildFailure(rebuildError);
       }
@@ -406,18 +470,25 @@ export async function loadModule(
       try {
         return await import(`${toFileUrl(rebuiltPath).href}?t=${Date.now()}&rebuilt=1`);
       } catch (retryError) {
-        // A specifier that still does not resolve after a full rebuild from
-        // source is not an evicted cache artifact — it is a path the project
-        // authored that points at nothing. `resolveModuleDependencies` only
-        // resolves `@/` aliases and relative imports, and silently drops the
-        // ones it cannot find, so the unresolvable specifier survives into the
-        // built module and fails here. That is a tenant build failure, and it
-        // has to be classified explicitly: `ERR_MODULE_NOT_FOUND` is not a
-        // VeryfrontError, so slug-based classification cannot see it.
-        if (isMissingModuleError(retryError)) throw markTenantBuildFailure(retryError);
-        // Anything else means the module was found and ran, which is an
-        // ordinary application error the project's own error page presents.
-        throw retryError;
+        // The module was found and ran, so it threw at module scope. That is an
+        // ordinary application error the project's own error page should
+        // present, not a build failure — leave it untagged.
+        if (!isMissingModuleError(retryError)) throw retryError;
+
+        // Still unresolved after a full rebuild from source, and the resolver
+        // recorded leaving a specifier as authored: a path the project wrote
+        // that points at nothing. Classify it explicitly, because
+        // `ERR_MODULE_NOT_FOUND` is not a VeryfrontError and slug-based
+        // classification cannot see it.
+        if (isUnresolvedTenantImport(retryError, unresolvedSpecifiers)) {
+          throw markTenantBuildFailure(retryError);
+        }
+
+        // A resolution failure the tenant did not cause: an HTTP bundle miss, a
+        // cycle-break alias that did not resolve, or an artifact the rebuild
+        // failed to persist. Still a build failure, but a framework-owned one,
+        // so it keeps error-level severity.
+        throw markBuildFailure(retryError);
       }
     }
 
