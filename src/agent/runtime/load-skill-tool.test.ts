@@ -50,9 +50,10 @@ const STATIC_LOAD_SKILL_INPUT_SCHEMA = {
   properties: {
     skillId: {
       type: "string",
-      maxLength: 256,
-      pattern: "^[a-zA-Z0-9_-]+$",
-      description: "The skill ID to load. Use an ID from <available_skills>.",
+      maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
+      pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
+      description:
+        'The skill ID to load. Use an ID from <available_skills>. A lowercase ".md" suffix is accepted when shown there.',
     },
     file: {
       type: "string",
@@ -429,6 +430,21 @@ Deno.test("createRuntimeLoadSkillTool preserves canonical .md skill IDs", async 
     Error,
     "input validation failed",
   );
+});
+
+it("keeps supported .md IDs valid in the static provider schema", () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["plan.md"] }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  const parameters = toolToProviderDefinition(tool).parameters as {
+    properties?: { skillId?: { maxLength?: number; pattern?: string } };
+  };
+  assertEquals(parameters.properties?.skillId?.maxLength, SKILL_ID_MAX_LENGTH + ".md".length);
+  assertEquals(parameters.properties?.skillId?.pattern, "^[a-zA-Z0-9_-]+(?:\\.md)?$");
 });
 
 it("keeps legacy .md alias execution behind the static slug schema when no manifest is available", async () => {

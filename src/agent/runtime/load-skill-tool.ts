@@ -343,12 +343,14 @@ const runtimeLoadSkillToolInputSchema = lazySchema(getRuntimeLoadSkillToolInputS
 
 const getStaticRuntimeLoadSkillToolInputSchema = defineSchema((v) =>
   v.object({
-    skillId: v.string().max(SKILL_ID_MAX_LENGTH)
+    skillId: v.string().max(SKILL_ID_MAX_LENGTH + ".md".length)
       .regex(
-        /^[a-zA-Z0-9_-]+$/,
-        'skillId must contain only letters, numbers, "_" or "-"',
+        /^[a-zA-Z0-9_-]+(?:\.md)?$/,
+        'skillId must contain only letters, numbers, "_" or "-", with an optional lowercase ".md" suffix',
       )
-      .describe("The skill ID to load. Use an ID from <available_skills>."),
+      .describe(
+        'The skill ID to load. Use an ID from <available_skills>. A lowercase ".md" suffix is accepted when shown there.',
+      ),
     file: getRuntimeLoadSkillReferenceFileInputSchema().optional().describe(
       "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
     ),
