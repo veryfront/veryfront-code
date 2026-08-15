@@ -60,7 +60,7 @@ describe("trigger target public type contracts", () => {
     });
 
     const run = acceptRunTriggerTargetOptions({
-      projectDir: "/project",
+      projectDir: "project",
       adapter,
       target: exportedTriggerTarget,
     });
@@ -97,7 +97,7 @@ describe("trigger target public type contracts", () => {
     });
 
     const invalidTaskRun = acceptRunTriggerTargetOptions({
-      projectDir: "/project",
+      projectDir: "project",
       adapter,
       // @ts-expect-error Task runtime targets cannot carry conversation fields.
       target: { kind: "task", id: "sync-helpdesk", conversationMode: "none" },
