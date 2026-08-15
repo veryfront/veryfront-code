@@ -120,6 +120,10 @@ function runDialogConformance(
           panel.className.includes("rounded-xl"),
           "default panel classes preserved",
         );
+        assert(
+          panel.className.includes("w-[calc(100%_-_3rem)]"),
+          "viewport width uses Tailwind's escaped calc spacing",
+        );
       } finally {
         cleanup();
       }

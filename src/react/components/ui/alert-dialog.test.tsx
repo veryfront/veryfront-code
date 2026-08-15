@@ -169,6 +169,10 @@ describe("AlertDialog", () => {
         "alert dialog did not open",
       );
       const panel = doc.querySelector<HTMLElement>('[role="alertdialog"]')!;
+      assert(
+        panel.className.includes("w-[calc(100%_-_3rem)]"),
+        "viewport width uses Tailwind's escaped calc spacing",
+      );
       assertEquals(
         trigger.getAttribute("aria-controls"),
         panel.id,

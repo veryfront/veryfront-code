@@ -289,6 +289,8 @@ export {
   ContextMenuLabel,
   type ContextMenuProps,
   ContextMenuSeparator,
+  type ContextMenuSlottedItemProps,
+  type ContextMenuSlottedTriggerProps,
   ContextMenuTrigger,
   type ContextMenuTriggerProps,
 } from "./context-menu.tsx";

@@ -35,7 +35,7 @@
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
-import { composeRefs, Slot } from "./slot.tsx";
+import { composeRefs, type PolymorphicButtonAttributes, Slot } from "./slot.tsx";
 import { Floating } from "./floating.tsx";
 import { focusWithoutScroll } from "./focus-management.ts";
 import { useMenuContentKeyboard } from "./menu-keyboard.ts";
@@ -111,13 +111,26 @@ export interface ContextMenuTriggerProps extends React.HTMLAttributes<HTMLDivEle
   ref?: React.Ref<HTMLDivElement>;
 }
 
+/** Literal slotted trigger contract with an element-specific ref and events. */
+export type ContextMenuSlottedTriggerProps<T extends HTMLElement = HTMLElement> =
+  & Omit<React.HTMLAttributes<T>, "children" | "ref">
+  & {
+    asChild: true;
+    children: React.ReactElement;
+    ref?: React.Ref<T>;
+  };
+
 /**
  * Trigger - the region a right-click opens the menu over. Captures
  * `onContextMenu`, calls `preventDefault()` (suppressing the browser's native
  * menu), and opens the surface at the pointer coordinates. `asChild` merges onto
  * the child element, which must forward `ref` to its DOM node.
  */
-export function ContextMenuTrigger(
+export function ContextMenuTrigger<T extends HTMLElement = HTMLElement>(
+  props: ContextMenuSlottedTriggerProps<T>,
+): React.ReactElement;
+export function ContextMenuTrigger(props: ContextMenuTriggerProps): React.ReactElement;
+export function ContextMenuTrigger<T extends HTMLElement = HTMLElement>(
   {
     asChild,
     onContextMenu,
@@ -128,10 +141,9 @@ export function ContextMenuTrigger(
     tabIndex,
     "aria-haspopup": ariaHasPopup,
     ...props
-  }: ContextMenuTriggerProps,
+  }: ContextMenuTriggerProps | ContextMenuSlottedTriggerProps<T>,
 ): React.ReactElement {
   const ctx = React.useContext(ContextMenuContext);
-  const Comp = asChild ? Slot : "div";
   const triggerProps = asChild
     ? { role, tabIndex, "aria-haspopup": ariaHasPopup }
     : { role: role ?? "button", tabIndex: tabIndex ?? 0, "aria-haspopup": ariaHasPopup ?? "menu" };
@@ -142,29 +154,44 @@ export function ContextMenuTrigger(
     () => composeRefs<HTMLElement>(setTriggerRef, ref as React.Ref<HTMLElement> | undefined),
     [ref, setTriggerRef],
   );
+  const stateProps = {
+    "data-state": ctx?.open ? "open" : "closed",
+    onContextMenu: (event: React.MouseEvent<HTMLElement>) => {
+      (onContextMenu as React.MouseEventHandler<HTMLElement> | undefined)?.(event);
+      if (event.defaultPrevented) return;
+      event.preventDefault();
+      ctx?.openAt(event.clientX, event.clientY);
+    },
+    onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => {
+      (onKeyDown as React.KeyboardEventHandler<HTMLElement> | undefined)?.(event);
+      if (event.defaultPrevented || !ctx) return;
+      if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
+      event.preventDefault();
+      const rect = event.currentTarget.getBoundingClientRect();
+      ctx.openAt(rect.left, rect.bottom);
+    },
+  };
+  if (asChild) {
+    return (
+      <Slot
+        ref={composedRef}
+        {...triggerProps}
+        {...stateProps}
+        {...(props as React.HTMLAttributes<HTMLElement>)}
+      >
+        {children}
+      </Slot>
+    );
+  }
   return (
-    <Comp
-      ref={composedRef}
+    <div
+      ref={composedRef as React.Ref<HTMLDivElement>}
       {...triggerProps}
-      data-state={ctx?.open ? "open" : "closed"}
-      onContextMenu={(e: React.MouseEvent<HTMLDivElement>) => {
-        onContextMenu?.(e);
-        if (e.defaultPrevented) return;
-        e.preventDefault();
-        ctx?.openAt(e.clientX, e.clientY);
-      }}
-      onKeyDown={(e: React.KeyboardEvent<HTMLDivElement>) => {
-        onKeyDown?.(e);
-        if (e.defaultPrevented || !ctx) return;
-        if (e.key !== "ContextMenu" && !(e.key === "F10" && e.shiftKey)) return;
-        e.preventDefault();
-        const rect = e.currentTarget.getBoundingClientRect();
-        ctx.openAt(rect.left, rect.bottom);
-      }}
-      {...props}
+      {...stateProps}
+      {...(props as React.HTMLAttributes<HTMLDivElement>)}
     >
       {children}
-    </Comp>
+    </div>
   );
 }
 
@@ -236,8 +263,24 @@ export interface ContextMenuItemProps extends React.ButtonHTMLAttributes<HTMLBut
   ref?: React.Ref<HTMLButtonElement>;
 }
 
+/** Literal slotted item contract with element-specific refs and events. */
+export type ContextMenuSlottedItemProps<T extends HTMLElement = HTMLElement> =
+  & Omit<PolymorphicButtonAttributes<T>, "children" | "ref" | "onSelect">
+  & {
+    /** Called when the item is chosen (also closes the menu). */
+    onSelect?: () => void;
+    asChild: true;
+    children: React.ReactElement;
+    disabled?: boolean;
+    ref?: React.Ref<T>;
+  };
+
 /** A selectable menu item. Icons render at `size-3.5` (14px). Closes on select. */
-export function ContextMenuItem({
+export function ContextMenuItem<T extends HTMLElement = HTMLElement>(
+  props: ContextMenuSlottedItemProps<T>,
+): React.ReactElement;
+export function ContextMenuItem(props: ContextMenuItemProps): React.ReactElement;
+export function ContextMenuItem<T extends HTMLElement = HTMLElement>({
   children,
   className,
   onSelect,
@@ -247,9 +290,8 @@ export function ContextMenuItem({
   asChild,
   ref,
   ...props
-}: ContextMenuItemProps): React.ReactElement {
+}: ContextMenuItemProps | ContextMenuSlottedItemProps<T>): React.ReactElement {
   const ctx = React.useContext(ContextMenuContext);
-  const Comp = asChild ? Slot : "button";
   const closeAndRestoreFocus = React.useCallback(() => {
     ctx?.setOpen(false);
     const trigger = ctx?.triggerRef.current;
@@ -257,37 +299,51 @@ export function ContextMenuItem({
       if (trigger?.isConnected) focusWithoutScroll(trigger);
     });
   }, [ctx]);
+  const itemProps = {
+    role: "menuitem",
+    "aria-disabled": disabled || undefined,
+    disabled,
+    className: cn(
+      "relative flex w-full cursor-pointer select-none items-center gap-2.5 rounded-md px-3 h-[36px] text-base font-normal text-left text-[var(--foreground)] outline-none transition-colors",
+      "hover:bg-[var(--tertiary)] focus:bg-[var(--tertiary)] dark:hover:bg-[var(--accent)] dark:focus:bg-[var(--accent)]",
+      "disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-3.5 [&_svg]:shrink-0",
+      className,
+    ),
+    onClick: (event: React.MouseEvent<HTMLElement>) => {
+      if (disabled) return;
+      (onClick as React.MouseEventHandler<HTMLElement> | undefined)?.(event);
+      if (event.defaultPrevented) return;
+      onSelect?.();
+      closeAndRestoreFocus();
+    },
+    onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => {
+      (onKeyDown as React.KeyboardEventHandler<HTMLElement> | undefined)?.(event);
+      if (event.defaultPrevented) return;
+      if (disabled || (event.key !== "Enter" && event.key !== " ")) return;
+      event.preventDefault();
+      event.currentTarget.click();
+    },
+  };
+  if (asChild) {
+    return (
+      <Slot
+        ref={ref as React.Ref<HTMLElement>}
+        {...itemProps}
+        {...(props as React.HTMLAttributes<HTMLElement>)}
+      >
+        {children}
+      </Slot>
+    );
+  }
   return (
-    <Comp
-      {...(asChild ? {} : { type: "button" as const })}
-      ref={ref}
-      role="menuitem"
-      aria-disabled={disabled || undefined}
-      disabled={disabled}
-      className={cn(
-        "relative flex w-full cursor-pointer select-none items-center gap-2.5 rounded-md px-3 h-[36px] text-base font-normal text-left text-[var(--foreground)] outline-none transition-colors",
-        "hover:bg-[var(--tertiary)] focus:bg-[var(--tertiary)] dark:hover:bg-[var(--accent)] dark:focus:bg-[var(--accent)]",
-        "disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-3.5 [&_svg]:shrink-0",
-        className,
-      )}
-      onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-        if (disabled) return;
-        onClick?.(e);
-        if (e.defaultPrevented) return;
-        onSelect?.();
-        closeAndRestoreFocus();
-      }}
-      onKeyDown={(e: React.KeyboardEvent<HTMLButtonElement>) => {
-        onKeyDown?.(e);
-        if (e.defaultPrevented) return;
-        if (disabled || (e.key !== "Enter" && e.key !== " ")) return;
-        e.preventDefault();
-        e.currentTarget.click();
-      }}
-      {...props}
+    <button
+      type="button"
+      ref={ref as React.Ref<HTMLButtonElement>}
+      {...itemProps}
+      {...(props as React.ButtonHTMLAttributes<HTMLButtonElement>)}
     >
       {children}
-    </Comp>
+    </button>
   );
 }
 

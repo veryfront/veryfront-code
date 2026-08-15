@@ -208,7 +208,7 @@ export function AlertDialogContent({
           data-state="open"
           tabIndex={-1}
           className={cn(
-            "fixed left-1/2 top-1/2 z-50 w-[calc(100%-3rem)] max-w-md -translate-x-1/2 -translate-y-1/2",
+            "fixed left-1/2 top-1/2 z-50 w-[calc(100%_-_3rem)] max-w-md -translate-x-1/2 -translate-y-1/2",
             "rounded-xl bg-[var(--dialog)] text-[var(--foreground)] shadow-lg outline-none",
             "flex flex-col gap-4 p-6",
             className,

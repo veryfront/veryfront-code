@@ -30,7 +30,7 @@ const compositionTree = `NavigationMenu           nav[aria-label]  (owns open pa
 └─ NavigationMenuList    ul
    ├─ NavigationMenuItem  li  value="products"
    │  ├─ NavigationMenuTrigger  button[aria-expanded]
-   │  └─ NavigationMenuContent  div[role=menu]  (absolute panel)
+   │  └─ NavigationMenuContent  div[data-slot=navigation-menu-content]  (disclosure/link panel)
    │     └─ NavigationMenuLink  a
    └─ NavigationMenuItem  li  value="docs"
       └─ NavigationMenuLink  a   (plain top-level link)`;

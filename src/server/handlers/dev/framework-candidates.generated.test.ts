@@ -18,5 +18,7 @@ describe("server/handlers/dev/framework-candidates.generated", () => {
     assertEquals(candidates.has("data-[state=on]:bg-[var(--secondary)]"), true);
     assertEquals(candidates.has("pointer-events-none"), true);
     assertEquals(candidates.has("divide-[var(--separator)]"), true);
+    assertEquals(candidates.has("w-[calc(100%_-_3rem)]"), true);
+    assertEquals(candidates.has("w-[calc(100%-3rem)]"), false);
   });
 });

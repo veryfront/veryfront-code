@@ -81,7 +81,7 @@ export function DialogContent({
     <dialog.Content
       aria-describedby={describedBy ?? (modal.descriptionPresent ? modal.descriptionId : undefined)}
       className={cn(
-        "fixed left-1/2 top-1/2 z-50 w-[calc(100%-3rem)] max-w-xl max-h-[85vh] -translate-x-1/2 -translate-y-1/2",
+        "fixed left-1/2 top-1/2 z-50 w-[calc(100%_-_3rem)] max-w-xl max-h-[85vh] -translate-x-1/2 -translate-y-1/2",
         "rounded-xl bg-[var(--dialog)] text-[var(--foreground)] shadow-lg outline-none overflow-hidden flex flex-col",
         className,
       )}
