@@ -76,11 +76,10 @@ const CONVERSATION_ID_PATTERN =
 const MAX_DIAGNOSTIC_KEY_LENGTH = 80;
 const SIMPLE_DIAGNOSTIC_KEY_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$-]*$/;
 const TARGET_KEYS = ["kind", "id"] as const;
+const CONVERSATION_TARGET_KEYS = ["conversationMode", "conversationId"] as const;
 const AGENT_TARGET_KEYS = [
-  "kind",
-  "id",
-  "conversationMode",
-  "conversationId",
+  ...TARGET_KEYS,
+  ...CONVERSATION_TARGET_KEYS,
 ] as const;
 
 function readOwnDataProperty(value: object, key: PropertyKey): unknown {
@@ -88,23 +87,30 @@ function readOwnDataProperty(value: object, key: PropertyKey): unknown {
   return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }
 
-function readOwnKind(value: unknown): unknown {
-  if (typeof value !== "object" || value === null) return undefined;
-  try {
-    return readOwnDataProperty(value, "kind");
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * Own keys a trigger target may declare, widened for agent targets.
  *
- * The kind is read as an own data property so an author-defined accessor never
- * runs while the allowed key set is selected.
+ * TypeScript without `exactOptionalPropertyTypes` accepts an explicitly
+ * undefined value for an optional `never` property. Keep that authoring shape
+ * aligned with runtime normalization while still rejecting accessors and every
+ * defined conversation value on non-agent targets.
  */
 export function triggerTargetKeys(value: unknown): readonly string[] {
-  return readOwnKind(value) === "agent" ? AGENT_TARGET_KEYS : TARGET_KEYS;
+  if (typeof value !== "object" || value === null) return TARGET_KEYS;
+  try {
+    if (readOwnDataProperty(value, "kind") === "agent") return AGENT_TARGET_KEYS;
+
+    const keys: string[] = [...TARGET_KEYS];
+    for (const key of CONVERSATION_TARGET_KEYS) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+      if (descriptor !== undefined && "value" in descriptor && descriptor.value === undefined) {
+        keys.push(key);
+      }
+    }
+    return keys;
+  } catch {
+    return TARGET_KEYS;
+  }
 }
 
 /**

@@ -139,6 +139,27 @@ describe("trigger target public type contracts", () => {
       target: explicitlyUndefinedAgent,
     });
 
+    const explicitlyUndefinedWorkflow = {
+      kind: "workflow" as const,
+      id: "conditional-workflow",
+      conversationMode: undefined,
+      conversationId: undefined,
+    };
+    const undefinedWorkflowSchedule = acceptScheduleConfig({
+      id: "conditional-workflow-schedule",
+      schedule: "*/10 * * * *",
+      target: explicitlyUndefinedWorkflow,
+    });
+    const undefinedWorkflowWebhook = acceptWebhookConfig({
+      id: "conditional-workflow-webhook",
+      target: explicitlyUndefinedWorkflow,
+    });
+    const undefinedWorkflowRun = acceptRunTriggerTargetOptions({
+      projectDir: "project",
+      adapter,
+      target: explicitlyUndefinedWorkflow,
+    });
+
     // @ts-expect-error Task schedules cannot define an agent message.
     const invalidTaskMessage = acceptScheduleConfig({
       id: "bad-task-message",
@@ -284,6 +305,9 @@ describe("trigger target public type contracts", () => {
     assertEquals(undefinedAgentSchedule.target.kind, "agent");
     assertEquals(undefinedAgentWebhook.target.kind, "agent");
     assertEquals(undefinedAgentRun.target.kind, "agent");
+    assertEquals(undefinedWorkflowSchedule.target.kind, "workflow");
+    assertEquals(undefinedWorkflowWebhook.target.kind, "workflow");
+    assertEquals(undefinedWorkflowRun.target.kind, "workflow");
     assertEquals(invalidTaskMessage.target.kind, "task");
     assertEquals(invalidWorkflowMessage.target.kind, "workflow");
     assertEquals(invalidStoredTaskMessage.target.kind, "task");

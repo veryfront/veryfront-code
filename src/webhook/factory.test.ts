@@ -33,6 +33,28 @@ describe("webhook/factory", () => {
     assertEquals(isWebhookDefinition(definition), true);
   });
 
+  it("treats undefined non-agent conversation fields as omitted", () => {
+    const taskDefinition = webhook({
+      id: "conditional-task",
+      target: {
+        kind: "task",
+        id: "sync-helpdesk",
+        conversationMode: undefined,
+      },
+    });
+    const workflowDefinition = webhook({
+      id: "conditional-workflow",
+      target: {
+        kind: "workflow",
+        id: "billing/sync",
+        conversationId: undefined,
+      },
+    });
+
+    assertEquals(taskDefinition.target, { kind: "task", id: "sync-helpdesk" });
+    assertEquals(workflowDefinition.target, { kind: "workflow", id: "billing/sync" });
+  });
+
   it("copies caller-owned filter values before retaining a webhook definition", () => {
     const filterValue = { project: { id: "project-1" } };
     const definition = webhook({
