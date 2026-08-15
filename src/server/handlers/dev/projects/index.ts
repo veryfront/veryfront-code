@@ -21,6 +21,7 @@ import {
   omitHeadResponseBody,
 } from "../shared/dev-ui-bundle-response.ts";
 import type { DevUiAssetProvider } from "#veryfront/extensions/dev-ui";
+import { isTrustedLocalControlRequest } from "#veryfront/security/http/local-control-request.ts";
 
 const PROJECTS_ALLOWED_METHODS = "GET, HEAD";
 
@@ -60,6 +61,7 @@ export class ProjectsHandler extends BaseHandler {
 
   protected override shouldHandle(req: Request, ctx: HandlerContext): boolean {
     if (!this.metadata.enabled?.(ctx)) return false;
+    if (!isTrustedLocalControlRequest(req)) return false;
 
     const { pathname } = new URL(req.url);
     return pathname === "/" || pathname.startsWith("/_projects");

@@ -10,6 +10,7 @@
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { serverLogger } from "#veryfront/utils";
+import { isTrustedLocalControlRequest } from "#veryfront/security/http/local-control-request.ts";
 import type { HandlerContext } from "../handlers/types.ts";
 import { defaultDiscoveryCache, standardProjectDirs } from "./local-project-discovery.ts";
 import type { ParsedDomain } from "../utils/domain-parser.ts";
@@ -20,6 +21,7 @@ const logger = serverLogger.component("projects-handler");
  * Check if the request should be handled by the projects discovery UI.
  */
 export function shouldHandleProjectsUI(
+  req: Request,
   pathname: string,
   projectSlug: string | undefined,
   parsedDomain: ParsedDomain,
@@ -29,6 +31,7 @@ export function shouldHandleProjectsUI(
     pathname === "/_vf/api/projects";
 
   return (
+    isTrustedLocalControlRequest(req) &&
     !projectSlug &&
     !parsedDomain.slug &&
     parsedDomain.isVeryfrontDomain &&

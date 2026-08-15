@@ -13,7 +13,7 @@ import { bootstrapDev } from "../bootstrap.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
 import { broadcastUpdate } from "../handlers/preview/hmr-message-router.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
-import type { DevServerOptions } from "./types.ts";
+import type { DevServerHandler, DevServerOptions } from "./types.ts";
 import { RequestHandler } from "./request-handler.ts";
 import { setupMiddleware } from "./middleware.ts";
 import { RouteDiscovery } from "./route-discovery.ts";
@@ -27,6 +27,10 @@ import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import { initializeDistributedCaches } from "#veryfront/cache/distributed-cache-init.ts";
 import { defaultDistributedCacheInitializers } from "#veryfront/server/distributed-cache-initializers.ts";
+import {
+  recordHandlerRequestPeer,
+  runRequestInterceptor,
+} from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { isDiskCacheConfigured } from "#veryfront/cache/backend.ts";
 import { clearTranspileCache, discoverAll } from "#veryfront/discovery";
 import type { DiscoveryConfig } from "#veryfront/discovery";
@@ -77,7 +81,7 @@ export class DevServer {
   private appConfig: VeryfrontConfig | undefined;
   private _nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
   private requestHandler?: RequestHandler;
-  private _handler?: (req: Request) => Promise<Response>;
+  private _handler?: DevServerHandler;
   readonly ready: Promise<void>;
   private _resolveReady!: () => void;
   private _isReady = false;
@@ -271,15 +275,19 @@ export class DevServer {
     // the original request to maintain the connection.
     const baseHandler = (req: Request) => this.pipeline.execute(req, this.adapter.env.toObject());
     const interceptor = this.options.requestInterceptor;
-    const handler = interceptor
+    const interceptedHandler = interceptor
       ? async (req: Request) => {
         const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
         if (isWebSocketUpgrade) return baseHandler(req);
 
-        const interceptedReq = await interceptor(req);
+        const interceptedReq = await runRequestInterceptor(req, interceptor);
         return baseHandler(interceptedReq);
       }
       : baseHandler;
+    const handler = async (req: Request, nativeContext?: unknown) => {
+      recordHandlerRequestPeer(req, nativeContext);
+      return await interceptedHandler(req);
+    };
 
     this._handler = handler;
 
@@ -312,8 +320,12 @@ export class DevServer {
     });
   }
 
-  /** Return the request handler for use with external HTTP servers. */
-  get handler(): (req: Request) => Promise<Response> {
+  /**
+   * Return the request handler for use with external HTTP servers.
+   * Pass the native Deno, Node, or Bun request context as the second argument
+   * so local-control routes can verify the transport peer.
+   */
+  get handler(): DevServerHandler {
     if (!this._handler) {
       throw INITIALIZATION_ERROR.create({ detail: "DevServer not started. Call start() first." });
     }

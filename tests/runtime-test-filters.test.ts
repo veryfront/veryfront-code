@@ -2,10 +2,9 @@
  * The Node and Bun runners must keep the Deno-only tests out, and everything
  * else in.
  *
- * Both halves matter. A filter that excludes too little lets
- * `src/testing/cwd-exclusion-*.test.ts` run on a runtime without `Deno.chdir`,
- * which is the regression this list was added for. A filter that excludes too
- * much silently shrinks the suite, which nothing else would notice.
+ * Both halves matter. A filter that excludes too little lets a Deno-only test
+ * run on an incompatible runtime. A filter that excludes too much silently
+ * shrinks the suite, which nothing else would notice.
  *
  * The list is easy to break by accident: renaming those files, or moving them
  * out of `src/testing/`, leaves a pattern matching nothing and the runner fails
@@ -22,6 +21,7 @@ import { filterTestFiles } from "./test-file-utils.mjs";
 
 /** The files the shared list exists to exclude. */
 const DENO_ONLY_FILES = [
+  "src/server/dev-server/handler-only.integration.test.ts",
   "src/testing/cwd-exclusion-a.test.ts",
   "src/testing/cwd-exclusion-b.test.ts",
 ];
@@ -38,7 +38,7 @@ describe("runtime test filters", () => {
   it("excludes the Deno-only tests from non-Deno runners", () => {
     const kept = filterTestFiles(DENO_ONLY_FILES, { exclude: DENO_ONLY_TESTS });
 
-    assertEquals(kept, [], "these cannot run without Deno.chdir");
+    assertEquals(kept, [], "these cannot run outside Deno");
   });
 
   it("keeps every other test eligible", () => {
