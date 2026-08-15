@@ -292,6 +292,14 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         ).map((span) => span.path),
         ["./after-division.js"],
       );
+      assertEquals(
+        findStaticImportFromSpans(
+          'const ratio = value! / 2; import value from "./after-non-null-division.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-non-null-division.js"],
+      );
     });
 
     it("finds static imports after division in class extends arguments", () => {
@@ -947,6 +955,23 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       assertEquals(
         specifiers('const html = `${x-- / 2} ${import("./inside-minus-minus.js")}`;'),
         ["./inside-minus-minus.js"],
+      );
+      assertEquals(
+        specifiers('const ratio = value! / 2; import("./after-non-null-division.js");'),
+        ["./after-non-null-division.js"],
+      );
+      assertEquals(
+        specifiers('const html = `${value! / 2} ${import("./inside-non-null.js")}`;'),
+        ["./inside-non-null.js"],
+      );
+    });
+
+    it("preserves prefix not before regex literals", () => {
+      assertEquals(
+        specifiers(
+          'const ok = ! /import\\("\\.\\/fake\\.js"\\)/.test(source); import("./after-not-regex.js");',
+        ),
+        ["./after-not-regex.js"],
       );
     });
 
@@ -1682,6 +1707,17 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           UNBOUNDED,
         ),
         [],
+      );
+    });
+
+    it("finds side-effect imports after postfix non-null assertion division", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'const ratio = value! / 2; import "./after-non-null-division.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-non-null-division.js"],
       );
     });
 

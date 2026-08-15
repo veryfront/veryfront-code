@@ -1239,6 +1239,17 @@ function isCompletedModuleDeclarationBeforeRegex(
     /^export\s*\{[\s\S]*\}$/.test(declarationSource);
 }
 
+function isPostfixNonNullAssertionBefore(
+  source: string,
+  index: number,
+  rangeStart: number,
+): boolean {
+  const beforeBang = previousSignificantIndexBeforeIgnored(source, index);
+  return beforeBang >= rangeStart &&
+    !hasLineTerminatorBetween(source, beforeBang + 1, index) &&
+    canEndStatementBeforeLineTerminator(source, beforeBang);
+}
+
 function canStartRegexLiteral(
   source: string,
   index: number,
@@ -1295,7 +1306,8 @@ function canStartRegexLiteral(
   ) {
     return true;
   }
-  if (char !== undefined && "([{=,:;!~?&|+-*%^<>".includes(char)) return true;
+  if (char === "!") return !isPostfixNonNullAssertionBefore(source, previous, rangeStart);
+  if (char !== undefined && "([{=,:;~?&|+-*%^<>".includes(char)) return true;
 
   const keyword = keywordBefore(source, index, previous);
   // One gate for every keyword in the list below, rather than a guard per
