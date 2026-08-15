@@ -39,7 +39,7 @@ function describeApiTokenSource(): string {
   // A bare filename stays bare (`.env`); anything nested is prefixed so it
   // reads unambiguously as a path (`./config/.env`). The test is for a
   // separator rather than a leading ".", because a dot-*directory* also starts
-  // with one — `.config/.env` would otherwise be the only nested path printed
+  // with one, so `.config/.env` would otherwise be the only nested path printed
   // without the prefix.
   const rel = relative(cwd(), origin.file);
   const shown = !rel || rel.startsWith("..")

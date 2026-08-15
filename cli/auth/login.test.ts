@@ -502,7 +502,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
     });
 
     // The case above loads its `.env` from a temp directory outside the working
-    // directory, so it exercises the degradation branch — the bare name — and
+    // directory, so it exercises the degradation branch, the bare name, and
     // renders ".env" either way. That cannot distinguish a cwd-relative path
     // from a leaked absolute one, so the headline behaviour needs its own case:
     // a file *under* the working directory must render relative to it.
@@ -515,7 +515,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       // The working directory moves to a temp tree rather than the repository,
       // and `withCwd` serializes that against every other test in the process.
       // `realPath` first: a macOS temp dir is reached through /var, a symlink to
-      // /private/var, and `cwd()` reports the resolved form — comparing the
+      // /private/var, and `cwd()` reports the resolved form. Comparing the
       // unresolved path would make the fixture look like it sits outside cwd.
       const root = await Deno.realPath(
         await Deno.makeTempDir({ prefix: "whoami-env-relative-" }),
@@ -549,7 +549,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
 
         const printed = output.join("\n");
         // Relative to the working directory, and therefore never the absolute
-        // path — which is what the bare-name fallback cannot prove.
+        // path, which is what the bare-name fallback cannot prove.
         assertStringIncludes(printed, "./config/.env");
         assertEquals(printed.includes(root), false);
         assertEquals(printed.includes("vf_nested"), false);
