@@ -117,6 +117,9 @@ describe("command-definitions", () => {
 
       assertStringIncludes(text, "valid session returns immediately");
       assertStringIncludes(text, "explicit method");
+      assertStringIncludes(text, "veryfront.json");
+      assertStringIncludes(text, "apiToken");
+      assertStringIncludes(text, "remove or replace");
     });
   });
 
