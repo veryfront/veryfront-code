@@ -909,8 +909,9 @@ code. Four extension points, in the order a user hits them:
    taxonomy mapping. This turns §4.1 (picklist mismatch) from a silent failure into
    a guided setup - and is the mechanism that makes "customize" self-serve.
 4. **Swap objects entirely.** Once the §16 enforcement gate is satisfied, the
-   generic `get/create/update_record` + `run_soql` + `describe` tier means a user
-   can retarget the pipeline at a *custom* object (e.g. `Ticket__c`) or a different
+   generic `get_record`, `create_record`, and `update_record` tier, plus the
+   existing `run_soql_query` and `describe_object` surfaces, lets a user
+   retarget the pipeline at a *custom* object (e.g. `Ticket__c`) or a different
    standard object without waiting for Veryfront to add a curated tool.
 
 Design implication: keep org-specific values (picklist mappings, field lists,
