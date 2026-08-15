@@ -8,6 +8,7 @@ import {
 import * as runtimeSkillPrompt from "./skill-prompt.ts";
 import type { Skill } from "#veryfront/skill/types.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 
 function createSkill(
   input: Partial<RuntimeSkillDefinition> & Pick<RuntimeSkillDefinition, "id">,
@@ -79,7 +80,7 @@ Deno.test("buildRuntimeAvailableSkillsPromptBlock keeps canonical name out of di
   assertEquals(block.includes('"name":"process-email"'), false);
 });
 
-Deno.test("buildRuntimeAvailableSkillsPromptBlock keeps omitted skill IDs discoverable", () => {
+it("buildRuntimeAvailableSkillsPromptBlock keeps omitted skill IDs discoverable", () => {
   const skills = Array.from(
     { length: 32 },
     (_, index) =>
@@ -97,7 +98,7 @@ Deno.test("buildRuntimeAvailableSkillsPromptBlock keeps omitted skill IDs discov
   assertEquals(block.includes("load_skill tool schema"), false);
 });
 
-Deno.test("rejects omitted skill ID accessors without invoking them", () => {
+it("rejects omitted skill ID accessors without invoking them", () => {
   const skills = Array.from(
     { length: 31 },
     (_, index) => createSkill({ id: `skill-${index + 1}` }),
@@ -119,7 +120,7 @@ Deno.test("rejects omitted skill ID accessors without invoking them", () => {
   assertEquals(getterReads, 0);
 });
 
-Deno.test("encodes omitted skill IDs as untrusted catalog data", () => {
+it("encodes omitted skill IDs as untrusted catalog data", () => {
   const skills = Array.from(
     { length: 30 },
     (_, index) => createSkill({ id: `safe-${index + 1}` }),
@@ -291,7 +292,7 @@ Deno.test("public skill manifest compatibility delegates to the canonical runtim
   assertEquals(buildSkillManifestPrompt(new Map()), "");
 });
 
-Deno.test("keeps omitted compatibility skill IDs discoverable", () => {
+it("keeps omitted compatibility skill IDs discoverable", () => {
   const buildSkillManifestPrompt = Reflect.get(runtimeSkillPrompt, "buildSkillManifestPrompt");
   assertEquals(typeof buildSkillManifestPrompt, "function");
   if (typeof buildSkillManifestPrompt !== "function") return;

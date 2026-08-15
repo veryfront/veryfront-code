@@ -360,7 +360,7 @@ Deno.test("a claimed project reference never falls through to a builtin referenc
   );
 });
 
-Deno.test("createRuntimeLoadSkillTool accepts a lowercase .md skill alias at the boundary", async () => {
+it("createRuntimeLoadSkillTool accepts a lowercase .md skill alias at the boundary", async () => {
   const loaderCalls: string[] = [];
   const context = createProjectContext({
     availableSkillIds: ["plan"],
@@ -395,7 +395,7 @@ Deno.test("createRuntimeLoadSkillTool accepts a lowercase .md skill alias at the
   assertStringIncludes(reload.instructions, 'Skill "plan" is already loaded');
 });
 
-Deno.test("createRuntimeLoadSkillTool preserves canonical .md skill IDs", async () => {
+it("createRuntimeLoadSkillTool preserves canonical .md skill IDs", async () => {
   const loaderCalls: string[] = [];
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext({
@@ -447,7 +447,7 @@ it("keeps supported .md IDs valid in the static provider schema", () => {
   assertEquals(parameters.properties?.skillId?.pattern, "^[a-zA-Z0-9_-]+(?:\\.md)?$");
 });
 
-it("keeps legacy .md alias execution behind the static slug schema when no manifest is available", async () => {
+it("keeps legacy .md alias execution when no manifest is available", async () => {
   const loaderCalls: string[] = [];
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext(),
