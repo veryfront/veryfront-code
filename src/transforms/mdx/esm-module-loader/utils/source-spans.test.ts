@@ -535,6 +535,16 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("recognizes newline blocks after completed regex literals", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'const pattern = /done/\n{} /import("\\/_vf_modules\\/fake-regex-block.js")/.test(value); ' +
+            'import("/_vf_modules/after-regex-block.js");',
+        ),
+        ["/_vf_modules/after-regex-block.js"],
+      );
+    });
+
     it("ignores import-looking regex text after switch clause blocks", () => {
       assertEquals(
         vfModuleSpecifiers(
@@ -598,6 +608,12 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           'function f() { return <Component>Hello</Component>; }\nimport("./function-jsx-text-lazy.ts")',
         ),
         ["./function-jsx-text-lazy.ts"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          '<Outer>{<Inner>text</Inner> && import("/_vf_modules/nested-jsx-expression-lazy.js")}</Outer>',
+        ),
+        ["/_vf_modules/nested-jsx-expression-lazy.js"],
       );
     });
 
@@ -735,6 +751,23 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
             'import("/_vf_modules/after-export-class.js")',
         ),
         ["/_vf_modules/after-export-class.js"],
+      );
+    });
+
+    it("recognizes declaration blocks after semicolon-free ASI boundaries", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'const ready = true\nfunction load() {}\n/import("\\/_vf_modules\\/fake-asi-function.js")/.test(value);\n' +
+            'import("/_vf_modules/after-asi-function.js")',
+        ),
+        ["/_vf_modules/after-asi-function.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'const ready = true\nclass Loader {}\n/import("\\/_vf_modules\\/fake-asi-class.js")/.test(value);\n' +
+            'import("/_vf_modules/after-asi-class.js")',
+        ),
+        ["/_vf_modules/after-asi-class.js"],
       );
     });
 

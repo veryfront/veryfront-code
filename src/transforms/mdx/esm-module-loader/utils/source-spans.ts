@@ -670,11 +670,16 @@ function normalizedDeclarationPrefix(source: string, start: number, end: number)
 }
 
 function declarationStatementStartBefore(source: string, index: number): number {
-  return Math.max(
+  const separatorStart = Math.max(
     source.lastIndexOf(";", index - 1),
     source.lastIndexOf("{", index - 1),
     source.lastIndexOf("}", index - 1),
   ) + 1;
+  return declarationAsiBoundaryBefore(source, separatorStart, index, [
+    "async",
+    "export",
+    "function",
+  ]) ?? separatorStart;
 }
 
 function classDeclarationStatementStartBefore(source: string, index: number): number {
@@ -692,13 +697,69 @@ function classDeclarationStatementStartBefore(source: string, index: number): nu
     else if (char === "]") bracketDepth++;
     else if (char === "[" && bracketDepth > 0) bracketDepth--;
     else if (parenDepth === 0 && braceDepth === 0 && bracketDepth === 0) {
-      if (char === ";" || char === "{" || char === "}") return cursor + 1;
+      if (char === ";" || char === "{" || char === "}") {
+        const separatorStart = cursor + 1;
+        return declarationAsiBoundaryBefore(source, separatorStart, index, [
+          "class",
+          "export",
+        ]) ?? separatorStart;
+      }
     }
 
     cursor--;
   }
 
-  return 0;
+  return declarationAsiBoundaryBefore(source, 0, index, ["class", "export"]) ?? 0;
+}
+
+function startsWithDeclarationKeywordAt(
+  source: string,
+  index: number,
+  keywords: readonly string[],
+): boolean {
+  return keywords.some((keyword) =>
+    source.startsWith(keyword, index) &&
+    !isIdentifierBoundaryBefore(source, index) &&
+    !isIdentifierBoundaryAfter(source, index + keyword.length)
+  );
+}
+
+function declarationAsiBoundaryBefore(
+  source: string,
+  start: number,
+  end: number,
+  keywords: readonly string[],
+): number | null {
+  let boundary: number | null = null;
+  let cursor = start;
+
+  while (cursor < end) {
+    const char = source[cursor];
+    if (char !== undefined && isLineTerminator(char)) {
+      const afterLine = char === "\r" && source[cursor + 1] === "\n" ? cursor + 2 : cursor + 1;
+      const previousTokenIndex = previousSignificantIndexBeforeIgnored(source, cursor);
+      const declarationStart = skipWhitespaceAndComments(source, afterLine);
+      if (
+        previousTokenIndex >= start &&
+        canEndStatementBeforeLineTerminator(source, previousTokenIndex) &&
+        declarationStart < end &&
+        startsWithDeclarationKeywordAt(source, declarationStart, keywords)
+      ) {
+        boundary = declarationStart;
+      }
+      cursor = afterLine;
+      continue;
+    }
+
+    const skipped = skipIgnored(source, cursor);
+    if (skipped !== cursor) {
+      cursor = skipped;
+      continue;
+    }
+    cursor++;
+  }
+
+  return boundary;
 }
 
 function isFunctionDeclarationBlockOpenBrace(
@@ -822,10 +883,51 @@ function canEndStatementBeforeLineTerminator(
   const char = source[previousTokenIndex];
   if (char === ")" || char === "]" || char === "}") return true;
   if (char === '"' || char === "'" || char === "`") return true;
+  if (char === "/" && isCompletedRegexLiteralEnd(source, previousTokenIndex)) return true;
   if (char === "+" && source[previousTokenIndex - 1] === "+") return true;
   if (char === "-" && source[previousTokenIndex - 1] === "-") return true;
   return isIdentifierPartAt(source, previousTokenIndex) ||
     isIdentifierEscapeEndingAt(source, previousTokenIndex + 1);
+}
+
+function isCompletedRegexLiteralEnd(source: string, endIndex: number): boolean {
+  for (let start = endIndex - 1; start >= 0; start--) {
+    if (source[start] !== "/") continue;
+    const before = previousSignificantIndexBeforeIgnored(source, start);
+    const beforeChar = source[before];
+    const canStart = before < 0 ||
+      (beforeChar !== undefined && "([{=,:;!~?&|+-*%^<>".includes(beforeChar)) ||
+      [
+        "case",
+        "default",
+        "delete",
+        "do",
+        "else",
+        "extends",
+        "in",
+        "instanceof",
+        "new",
+        "await",
+        "break",
+        "continue",
+        "debugger",
+        "return",
+        "throw",
+        "typeof",
+        "void",
+        "yield",
+      ].includes(
+        keywordBefore(source, start, before) ?? "",
+      );
+    if (!canStart) continue;
+    if (skipRegexLiteral(source, start) === endIndex + 1) return true;
+  }
+
+  return false;
+}
+
+function isInRawJsxText(textDepth: number, expressionDepth: number): boolean {
+  return textDepth > expressionDepth;
 }
 
 function isPlainStatementBlockOpenBrace(
@@ -1524,7 +1626,7 @@ export function findStaticImportFromSpans(
   while (cursor < source.length) {
     const char = source[cursor];
     const jsxTag = readRawJsxTag(source, cursor, {
-      allowClosingTagAfterText: rawJsxTextDepth > 0 && rawJsxExpressionBraceDepth === 0,
+      allowClosingTagAfterText: isInRawJsxText(rawJsxTextDepth, rawJsxExpressionBraceDepth),
     });
     if (jsxTag !== null) {
       if (jsxTag.isClosingTag) {
@@ -1538,7 +1640,7 @@ export function findStaticImportFromSpans(
       continue;
     }
 
-    if (rawJsxTextDepth > 0 && rawJsxExpressionBraceDepth === 0) {
+    if (isInRawJsxText(rawJsxTextDepth, rawJsxExpressionBraceDepth)) {
       const textEnd = skipRawJsxText(source, cursor);
       if (textEnd !== cursor) {
         atStatementStart = false;
@@ -1574,7 +1676,10 @@ export function findStaticImportFromSpans(
     }
 
     if (char === "{") {
-      const isRawJsxExpressionBrace = rawJsxTextDepth > 0;
+      const isRawJsxExpressionBrace = isInRawJsxText(
+        rawJsxTextDepth,
+        rawJsxExpressionBraceDepth,
+      );
       rawJsxExpressionBraceStack.push(isRawJsxExpressionBrace);
       if (isRawJsxExpressionBrace) rawJsxExpressionBraceDepth++;
       openBraces.push(
@@ -1736,7 +1841,7 @@ function scanDynamicImportRange(
     const next = source[cursor + 1];
 
     const jsxTag = readRawJsxTag(source, cursor, {
-      allowClosingTagAfterText: rawJsxTextDepth > 0 && rawJsxExpressionBraceDepth === 0,
+      allowClosingTagAfterText: isInRawJsxText(rawJsxTextDepth, rawJsxExpressionBraceDepth),
     });
     if (jsxTag !== null) {
       for (const range of jsxTag.expressionRanges) {
@@ -1753,7 +1858,7 @@ function scanDynamicImportRange(
       continue;
     }
 
-    if (rawJsxTextDepth > 0 && rawJsxExpressionBraceDepth === 0) {
+    if (isInRawJsxText(rawJsxTextDepth, rawJsxExpressionBraceDepth)) {
       const textEnd = skipRawJsxText(source, cursor);
       if (textEnd !== cursor) {
         cursor = textEnd;
@@ -1810,7 +1915,10 @@ function scanDynamicImportRange(
     }
 
     if (char === "{") {
-      const isRawJsxExpressionBrace = rawJsxTextDepth > 0;
+      const isRawJsxExpressionBrace = isInRawJsxText(
+        rawJsxTextDepth,
+        rawJsxExpressionBraceDepth,
+      );
       rawJsxExpressionBraceStack.push(isRawJsxExpressionBrace);
       if (isRawJsxExpressionBrace) rawJsxExpressionBraceDepth++;
       openBraces.push(
@@ -1990,7 +2098,7 @@ export function findStaticSideEffectImportSpans(
   while (cursor < source.length) {
     const char = source[cursor];
     const jsxTag = readRawJsxTag(source, cursor, {
-      allowClosingTagAfterText: rawJsxTextDepth > 0 && rawJsxExpressionBraceDepth === 0,
+      allowClosingTagAfterText: isInRawJsxText(rawJsxTextDepth, rawJsxExpressionBraceDepth),
     });
     if (jsxTag !== null) {
       if (jsxTag.isClosingTag) {
@@ -2004,7 +2112,7 @@ export function findStaticSideEffectImportSpans(
       continue;
     }
 
-    if (rawJsxTextDepth > 0 && rawJsxExpressionBraceDepth === 0) {
+    if (isInRawJsxText(rawJsxTextDepth, rawJsxExpressionBraceDepth)) {
       const textEnd = skipRawJsxText(source, cursor);
       if (textEnd !== cursor) {
         atStatementStart = false;
@@ -2040,7 +2148,10 @@ export function findStaticSideEffectImportSpans(
     }
 
     if (char === "{") {
-      const isRawJsxExpressionBrace = rawJsxTextDepth > 0;
+      const isRawJsxExpressionBrace = isInRawJsxText(
+        rawJsxTextDepth,
+        rawJsxExpressionBraceDepth,
+      );
       rawJsxExpressionBraceStack.push(isRawJsxExpressionBrace);
       if (isRawJsxExpressionBrace) rawJsxExpressionBraceDepth++;
       openBraces.push(
