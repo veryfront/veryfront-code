@@ -2,7 +2,7 @@ import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createDevUiAssetProvider } from "#veryfront/extensions/dev-ui";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
-import type { HandlerContext } from "../../types.ts";
+import type { HandlerContext } from "#veryfront/types";
 import { ProjectsHandler } from "./index.ts";
 
 const BUNDLE = "globalThis.__veryfrontProjectsTest = true;";

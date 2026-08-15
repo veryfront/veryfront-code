@@ -1,7 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
-import { parseProjectDomain } from "../utils/domain-parser.ts";
+import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import { shouldHandleProjectsUI } from "./projects-handler.ts";
 
 function requestFromPeer(hostname: string): Request {
