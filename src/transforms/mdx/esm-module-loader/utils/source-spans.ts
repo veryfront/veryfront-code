@@ -36,6 +36,7 @@ interface OpenBraceContext {
 
 const MAX_TEMPLATE_LITERAL_DEPTH = 512;
 const StringFromCodePoint = String.fromCodePoint;
+const IDENTIFIER_PART_PATTERN = /^[$_\p{ID_Continue}\u200C\u200D]$/u;
 
 function assertTemplateLiteralDepth(depth: number): void {
   if (depth > MAX_TEMPLATE_LITERAL_DEPTH) {
@@ -83,7 +84,27 @@ export function replaceSourceSpans(
 }
 
 function isIdentifierChar(char: string | undefined): boolean {
-  return char !== undefined && /[A-Za-z0-9_$]/.test(char);
+  return char !== undefined && IDENTIFIER_PART_PATTERN.test(char);
+}
+
+function identifierCharacterAt(source: string, index: number): string | undefined {
+  if (index < 0 || index >= source.length) return undefined;
+
+  let characterIndex = index;
+  const codeUnit = source.charCodeAt(characterIndex);
+  if (
+    codeUnit >= 0xdc00 && codeUnit <= 0xdfff && characterIndex > 0
+  ) {
+    const previousCodeUnit = source.charCodeAt(characterIndex - 1);
+    if (previousCodeUnit >= 0xd800 && previousCodeUnit <= 0xdbff) characterIndex--;
+  }
+
+  const codePoint = source.codePointAt(characterIndex);
+  return codePoint === undefined ? undefined : StringFromCodePoint(codePoint);
+}
+
+function isIdentifierPartAt(source: string, index: number): boolean {
+  return isIdentifierChar(identifierCharacterAt(source, index));
 }
 
 function isStatementKeywordAt(
@@ -94,8 +115,8 @@ function isStatementKeywordAt(
 ): boolean {
   if (!atStatementStart) return false;
   if (!source.startsWith(keyword, index)) return false;
-  if (isIdentifierChar(source[index - 1]) || source[index - 1] === ".") return false;
-  if (isIdentifierChar(source[index + keyword.length])) return false;
+  if (isIdentifierPartAt(source, index - 1) || source[index - 1] === ".") return false;
+  if (isIdentifierPartAt(source, index + keyword.length)) return false;
   return true;
 }
 
@@ -503,7 +524,7 @@ function isForOfKeywordBefore(
   if (beforeKeyword >= rangeStart && source[beforeKeyword] === ".") return false;
   const beforeKeywordChar = source[beforeKeyword];
   if (
-    !isIdentifierChar(beforeKeywordChar) &&
+    !isIdentifierPartAt(source, beforeKeyword) &&
     beforeKeywordChar !== "]" &&
     beforeKeywordChar !== "}" &&
     beforeKeywordChar !== ")"
@@ -576,6 +597,9 @@ function canStartRegexLiteral(
     "instanceof",
     "new",
     "await",
+    "break",
+    "continue",
+    "debugger",
     "return",
     "throw",
     "typeof",
@@ -787,8 +811,8 @@ function findFromSpan(
 
     if (
       source.startsWith("from", cursor) &&
-      !isIdentifierChar(source[cursor - 1]) &&
-      !isIdentifierChar(source[cursor + 4])
+      !isIdentifierPartAt(source, cursor - 1) &&
+      !isIdentifierPartAt(source, cursor + 4)
     ) {
       const quoteIndex = skipWhitespaceAndComments(source, cursor + 4);
       const quoted = readQuotedSpecifier(source, quoteIndex);
@@ -907,7 +931,7 @@ export function findStaticImportFromSpans(
     }
     if (char === ";" || char === "\n") {
       atStatementStart = true;
-      previousTokenIndex = cursor;
+      if (char === ";") previousTokenIndex = cursor;
       cursor++;
       continue;
     }
@@ -929,6 +953,12 @@ export function findStaticImportFromSpans(
     const afterKeyword = skipWhitespaceAndComments(source, cursor + keywordLength);
     if (isImport && source[afterKeyword] === "(") {
       atStatementStart = false;
+      openParens.push({
+        index: afterKeyword,
+        isControlCondition: false,
+        isForHeader: false,
+        hasSemicolon: false,
+      });
       previousTokenIndex = afterKeyword;
       cursor = afterKeyword + 1;
       continue;
@@ -1097,9 +1127,9 @@ function scanDynamicImportRange(
     // dot (which would make it `foo.import` or part of a longer word).
     if (
       !source.startsWith("import", cursor) ||
-      isIdentifierChar(source[cursor - 1]) ||
+      isIdentifierPartAt(source, cursor - 1) ||
       isPropertyAccessBeforeImport(source, previousTokenIndex, rangeStart) ||
-      isIdentifierChar(source[cursor + "import".length])
+      isIdentifierPartAt(source, cursor + "import".length)
     ) {
       previousTokenIndex = cursor;
       cursor++;
@@ -1271,7 +1301,7 @@ export function findStaticSideEffectImportSpans(
     }
     if (char === ";" || char === "\n") {
       atStatementStart = true;
-      previousTokenIndex = cursor;
+      if (char === ";") previousTokenIndex = cursor;
       cursor++;
       continue;
     }

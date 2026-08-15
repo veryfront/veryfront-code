@@ -206,6 +206,28 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("keeps nested dynamic-import parentheses aligned", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          'if (\nimport("/_vf_modules/real.js")\n) /;import value from "\\/_vf_modules\\/fake.js"/;',
+          (specifier) => specifier.startsWith("/_vf_modules/") ? specifier : null,
+          UNBOUNDED,
+        ),
+        [],
+      );
+    });
+
+    it("recognizes regex literals after ASI-only statements", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          'while (ready) { break\n/;import value from "\\/_vf_modules\\/fake.js"/; }',
+          (specifier) => specifier.startsWith("/_vf_modules/") ? specifier : null,
+          UNBOUNDED,
+        ),
+        [],
+      );
+    });
+
     it("keeps division distinct from regex literals", () => {
       assertEquals(
         findStaticImportFromSpans(
@@ -720,6 +742,31 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       }
     });
 
+    it("treats Unicode identifier parts as import boundaries", () => {
+      for (
+        const source of [
+          'function αimport(value) { return value; } αimport("/_vf_modules/fake.js");',
+          'function importα(value) { return value; } importα("/_vf_modules/fake.js");',
+          'function 𝒜import(value) { return value; } 𝒜import("/_vf_modules/fake.js");',
+          'function import𝒜(value) { return value; } import𝒜("/_vf_modules/fake.js");',
+        ]
+      ) {
+        assertEquals(vfModuleSpecifiers(source), []);
+      }
+    });
+
+    it("recognizes regex literals after ASI-only statements", () => {
+      for (
+        const source of [
+          'while (ready) { break\n/import("\\/_vf_modules\\/fake.js")/.test(value); }',
+          'while (ready) { continue\n/import("\\/_vf_modules\\/fake.js")/.test(value); }',
+          'debugger\n/import("\\/_vf_modules\\/fake.js")/.test(value);',
+        ]
+      ) {
+        assertEquals(vfModuleSpecifiers(source), []);
+      }
+    });
+
     it("ignores an import-looking string or comment", () => {
       assertEquals(specifiers(`const s = 'import("./foo.js")';`), []);
       assertEquals(specifiers(`// import("./foo.js")\nconst x = 1;`), []);
@@ -922,6 +969,28 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       assertEquals(
         findStaticSideEffectImportSpans(
           'if /* note */ (ready) /;import "\\/_vf_modules\\/fake.js"/;',
+          (specifier) => specifier.startsWith("/_vf_modules/") ? specifier : null,
+          UNBOUNDED,
+        ),
+        [],
+      );
+    });
+
+    it("keeps nested dynamic-import parentheses aligned", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'if (\nimport("/_vf_modules/real.js")\n) /;import "\\/_vf_modules\\/fake.js"/;',
+          (specifier) => specifier.startsWith("/_vf_modules/") ? specifier : null,
+          UNBOUNDED,
+        ),
+        [],
+      );
+    });
+
+    it("recognizes regex literals after ASI-only statements", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'while (ready) { break\n/;import "\\/_vf_modules\\/fake.js"/; }',
           (specifier) => specifier.startsWith("/_vf_modules/") ? specifier : null,
           UNBOUNDED,
         ),
