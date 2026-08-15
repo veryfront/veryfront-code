@@ -13,7 +13,12 @@ import {
   DEFAULT_LOGIN_TIMEOUT_MS,
   getApiUrl,
 } from "../shared/constants.ts";
-import { createSuccessEnvelope, isJsonMode, outputJson } from "../shared/json-output.ts";
+import {
+  createErrorEnvelope,
+  createSuccessEnvelope,
+  isJsonMode,
+  outputJson,
+} from "../shared/json-output.ts";
 import { isInteractive } from "../shared/interactive.ts";
 
 export type AuthMethod = "google" | "github" | "microsoft" | "token";
@@ -67,6 +72,15 @@ function loginIdentityData(
   }
 
   return { ...identity, source };
+}
+
+async function outputLoginAuthenticationRequiredJson(): Promise<void> {
+  await outputJson(createErrorEnvelope("login", {
+    code: "AUTHENTICATION_ERROR",
+    slug: "authentication-required",
+    registrySlug: "authentication-required",
+    message: "Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.",
+  }));
 }
 
 /** Test seam: shrink the preflight deadline so a stall is observable quickly. */
@@ -402,6 +416,10 @@ export async function login(
   if (method === undefined) {
     const existing = await describeExistingSession(env);
     if (existing) return existing;
+    if (isJsonMode()) {
+      await outputLoginAuthenticationRequiredJson();
+      return null;
+    }
   }
 
   if (!isInteractive() && (method === undefined || method === "token")) {
