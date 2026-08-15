@@ -549,6 +549,44 @@ function writeAuthoritativeCredentialRejectedMessage(
   writeConfigFileSwitchingGuidance();
 }
 
+function credentialSourceForDisplay(source: "config-file" | "environment"): string {
+  return source === "environment" ? "VERYFRONT_API_TOKEN" : "apiToken from veryfront.json";
+}
+
+function writeAuthoritativeCredentialUnavailableMessage(
+  source: "config-file" | "environment",
+  failure: CredentialValidationUnavailableError,
+  hasConfigToken: boolean,
+): void {
+  const credential = credentialSourceForDisplay(source);
+  console.log();
+  if (failure.kind === "timeout") {
+    console.log(
+      "  " + error("✗") + ` Timed out while checking ${credential} with the Veryfront API.`,
+    );
+  } else if (failure.kind === "network") {
+    console.log(
+      "  " + error("✗") + ` Could not reach the Veryfront API while checking ${credential}.`,
+    );
+  } else {
+    const status = failure.status ? ` (${failure.status})` : "";
+    console.log(
+      "  " + error("✗") + ` Veryfront API could not validate ${credential}${status}.`,
+    );
+  }
+  console.log("  " + dim("Try again before signing in with another method."));
+
+  if (source === "environment") {
+    console.log(
+      "  " + dim("Unset VERYFRONT_API_TOKEN before signing in with another method."),
+    );
+    if (hasConfigToken) writeEnvironmentConfigFileSwitchingGuidance();
+    return;
+  }
+
+  writeConfigFileSwitchingGuidance();
+}
+
 /**
  * Report an already-valid session, or null when there is nothing usable.
  *
@@ -595,9 +633,9 @@ async function describeExistingSession(
     let identity: AuthIdentity | null;
     try {
       // Bounded: this preflight only decides whether to say "already logged in"
-      // instead of prompting. An API that accepts the connection and never
-      // answers would otherwise block sign-in entirely, so a stall falls
-      // through to the normal flow rather than holding the command open.
+      // instead of prompting. An authoritative credential that cannot be
+      // checked must still stop, because later commands will resolve it ahead
+      // of any replacement login.
       identity = await validateCredential(token, validationEnv, {
         signal,
         throwOnCredentialValidationUnavailable: true,
@@ -605,7 +643,17 @@ async function describeExistingSession(
     } catch (error) {
       if (error instanceof CredentialValidationUnavailableError) {
         unavailable ??= error;
-        if (authoritative) break;
+        if (authoritative) {
+          if (!isJsonMode() && source !== "stored") {
+            writeAuthoritativeCredentialUnavailableMessage(
+              source,
+              error,
+              Boolean(configPreflight.token),
+            );
+            return "failure-output";
+          }
+          break;
+        }
       }
       continue;
     }

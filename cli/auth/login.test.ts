@@ -1734,6 +1734,160 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("stops under an unavailable shell environment token in human mode", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const originalPrompt = globalThis.prompt;
+      const originalEnvToken = getEnv("VERYFRONT_API_TOKEN");
+      const output: string[] = [];
+      const requestedAuth: string[] = [];
+
+      try {
+        setEnv("VERYFRONT_API_TOKEN", "env-timeout-token");
+        globalThis.fetch = ((_: string | URL | Request, init?: RequestInit) => {
+          requestedAuth.push(String(new Headers(init?.headers).get("authorization") ?? ""));
+          return Promise.reject(new DOMException("deadline exceeded", "TimeoutError"));
+        }) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+        globalThis.prompt = (() => "replacement-token") as typeof prompt;
+
+        const { login } = await import("./login.ts");
+        const result = await login(undefined, { ...testEnv, apiToken: "env-timeout-token" });
+
+        assertEquals(result, null);
+        assertEquals(requestedAuth, ["Bearer env-timeout-token"]);
+        const printed = output.join("\n");
+        assertStringIncludes(
+          printed,
+          "Timed out while checking VERYFRONT_API_TOKEN with the Veryfront API.",
+        );
+        assertStringIncludes(
+          printed,
+          "Try again before signing in with another method.",
+        );
+        assertStringIncludes(
+          printed,
+          "Unset VERYFRONT_API_TOKEN before signing in with another method.",
+        );
+        assertEquals(printed.includes("Enter your API token"), false);
+        assertEquals(printed.includes("replacement-token"), false);
+        assertEquals(await readToken(testEnv), null);
+      } finally {
+        if (originalEnvToken) setEnv("VERYFRONT_API_TOKEN", originalEnvToken);
+        else deleteEnv("VERYFRONT_API_TOKEN");
+        globalThis.prompt = originalPrompt;
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
+    it("stops under an unreachable shell environment token in human mode", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const originalPrompt = globalThis.prompt;
+      const originalEnvToken = getEnv("VERYFRONT_API_TOKEN");
+      const output: string[] = [];
+      const requestedAuth: string[] = [];
+
+      try {
+        setEnv("VERYFRONT_API_TOKEN", "env-network-token");
+        globalThis.fetch = ((_: string | URL | Request, init?: RequestInit) => {
+          requestedAuth.push(String(new Headers(init?.headers).get("authorization") ?? ""));
+          return Promise.reject(new TypeError("network unavailable"));
+        }) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+        globalThis.prompt = (() => "replacement-token") as typeof prompt;
+
+        const { login } = await import("./login.ts");
+        const result = await login(undefined, { ...testEnv, apiToken: "env-network-token" });
+
+        assertEquals(result, null);
+        assertEquals(requestedAuth, ["Bearer env-network-token"]);
+        const printed = output.join("\n");
+        assertStringIncludes(
+          printed,
+          "Could not reach the Veryfront API while checking VERYFRONT_API_TOKEN.",
+        );
+        assertStringIncludes(
+          printed,
+          "Try again before signing in with another method.",
+        );
+        assertStringIncludes(
+          printed,
+          "Unset VERYFRONT_API_TOKEN before signing in with another method.",
+        );
+        assertEquals(printed.includes("Enter your API token"), false);
+        assertEquals(printed.includes("replacement-token"), false);
+        assertEquals(await readToken(testEnv), null);
+      } finally {
+        if (originalEnvToken) setEnv("VERYFRONT_API_TOKEN", originalEnvToken);
+        else deleteEnv("VERYFRONT_API_TOKEN");
+        globalThis.prompt = originalPrompt;
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
+    for (const status of [429, 503]) {
+      it(`stops under a ${status} config-file token validation response in human mode`, async () => {
+        const originalFetch = globalThis.fetch;
+        const originalLog = console.log;
+        const originalPrompt = globalThis.prompt;
+        const output: string[] = [];
+        const requestedAuth: string[] = [];
+        const projectDir = await makeTempDir({ prefix: "login-unavailable-config-human-" });
+
+        try {
+          await Deno.writeTextFile(
+            `${projectDir}/veryfront.json`,
+            JSON.stringify({ apiToken: "config-unavailable-token", projectSlug: "test-project" }) +
+              "\n",
+          );
+
+          globalThis.fetch = ((_: string | URL | Request, init?: RequestInit) => {
+            requestedAuth.push(String(new Headers(init?.headers).get("authorization") ?? ""));
+            return Promise.resolve(new Response(null, { status }));
+          }) as typeof fetch;
+          console.log = (message?: unknown) => output.push(String(message));
+          globalThis.prompt = (() => "replacement-token") as typeof prompt;
+
+          const { withCwd } = await import("#veryfront/testing/cwd.ts");
+          const { login } = await import("./login.ts");
+          const result = await withCwd(projectDir, () => login(undefined, testEnv));
+
+          assertEquals(result, null);
+          assertEquals(requestedAuth, ["Bearer config-unavailable-token"]);
+          const printed = output.join("\n");
+          assertStringIncludes(
+            printed,
+            `Veryfront API could not validate apiToken from veryfront.json (${status}).`,
+          );
+          assertStringIncludes(
+            printed,
+            "Try again before signing in with another method.",
+          );
+          assertStringIncludes(
+            printed,
+            "Remove or replace apiToken in veryfront.json before signing in with another method.",
+          );
+          assertEquals(printed.includes("Enter your API token"), false);
+          assertEquals(printed.includes("replacement-token"), false);
+          assertEquals(await readToken(testEnv), null);
+        } finally {
+          globalThis.prompt = originalPrompt;
+          console.log = originalLog;
+          globalThis.fetch = originalFetch;
+          resetInteractiveMode();
+          await safeDeleteToken();
+          await remove(projectDir, { recursive: true });
+        }
+      });
+    }
+
     it("says an environment session came from the environment, since nothing is stored", async () => {
       // The variable is commonly set by a `.env` in the working directory the
       // developer has forgotten about — the case `whoami` now names. Reporting a
