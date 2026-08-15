@@ -512,17 +512,53 @@ async function loginWithToken(): Promise<string | null> {
   return token;
 }
 
+function writeConfigFileSwitchingGuidance(): void {
+  console.log(
+    "  " +
+      dim("Remove or replace apiToken in veryfront.json before signing in with another method."),
+  );
+}
+
+function writeEnvironmentConfigFileSwitchingGuidance(): void {
+  console.log(
+    "  " +
+      dim("Remove or replace apiToken in veryfront.json after unsetting VERYFRONT_API_TOKEN."),
+  );
+}
+
+function writeAuthoritativeCredentialRejectedMessage(
+  source: "config-file" | "environment",
+  hasConfigToken: boolean,
+): void {
+  console.log();
+  if (source === "environment") {
+    console.log("  " + error("✗") + " VERYFRONT_API_TOKEN was rejected by the Veryfront API.");
+    console.log(
+      "  " +
+        dim(
+          "Unset VERYFRONT_API_TOKEN or replace the variable before signing in with another method.",
+        ),
+    );
+    if (hasConfigToken) writeEnvironmentConfigFileSwitchingGuidance();
+    return;
+  }
+
+  console.log(
+    "  " + error("✗") + " apiToken from veryfront.json was rejected by the Veryfront API.",
+  );
+  writeConfigFileSwitchingGuidance();
+}
+
 /**
  * Report an already-valid session, or null when there is nothing usable.
  *
- * Returns null when no active credential is usable, or when an authoritative
- * environment credential is rejected, so the caller falls through to the normal
- * sign-in flow instead of reporting a lower-priority stored token that later
- * commands will not use.
+ * Returns a sentinel when JSON or human output already explained why login
+ * must stop instead of falling through to lower-priority credentials or a new
+ * login that later commands will not use.
  */
 async function describeExistingSession(
   env: EnvironmentConfig,
-): Promise<AuthIdentity | "json-failure-output" | null> {
+): Promise<AuthIdentity | "failure-output" | null> {
   const envTokenSource = env.apiToken ? getEnvSource("VERYFRONT_API_TOKEN").source : "unset";
   const environmentTokenIsAuthoritative = envTokenSource !== "env-file";
   const candidates: {
@@ -574,7 +610,15 @@ async function describeExistingSession(
       continue;
     }
     if (!identity) {
-      if (authoritative) break;
+      if (authoritative) {
+        if (!isJsonMode()) {
+          if (source !== "stored") {
+            writeAuthoritativeCredentialRejectedMessage(source, Boolean(configPreflight.token));
+            return "failure-output";
+          }
+        }
+        break;
+      }
       continue;
     }
 
@@ -625,17 +669,13 @@ async function describeExistingSession(
             ),
         );
       }
+      if (configPreflight.token) writeEnvironmentConfigFileSwitchingGuidance();
     } else if (source === "config-file") {
       console.log(
         "  " +
           dim("Using apiToken from veryfront.json; it takes precedence over stored credentials."),
       );
-      console.log(
-        "  " +
-          dim(
-            "Remove or replace apiToken in veryfront.json before signing in with another method.",
-          ),
-      );
+      writeConfigFileSwitchingGuidance();
     }
     console.log(
       "  " +
@@ -648,7 +688,7 @@ async function describeExistingSession(
 
   if (isJsonMode() && unavailable) {
     await outputLoginValidationUnavailableJson(unavailable);
-    return "json-failure-output";
+    return "failure-output";
   }
   return null;
 }
@@ -669,7 +709,7 @@ export async function login(
   // that no longer validates falls through to the normal flow.
   if (method === undefined) {
     const existing = await describeExistingSession(env);
-    if (existing === "json-failure-output") return null;
+    if (existing === "failure-output") return null;
     if (existing) return existing;
     if (isJsonMode()) {
       await outputLoginAuthenticationRequiredJson();

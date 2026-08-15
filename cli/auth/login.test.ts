@@ -1634,6 +1634,106 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("does not sign in again under a rejected environment token in human mode", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const originalPrompt = globalThis.prompt;
+      const output: string[] = [];
+      const requestedAuth: string[] = [];
+
+      try {
+        globalThis.fetch = ((_: string | URL | Request, init?: RequestInit) => {
+          const auth = String(new Headers(init?.headers).get("authorization") ?? "");
+          requestedAuth.push(auth);
+          if (auth === "Bearer env-invalid-token") {
+            return Promise.resolve(new Response(null, { status: 401 }));
+          }
+          return Promise.resolve(
+            Response.json({ id: "replacement-user", email: "replacement@example.com" }),
+          );
+        }) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+        globalThis.prompt = (() => "replacement-token") as typeof prompt;
+
+        const { login } = await import("./login.ts");
+        const result = await login(undefined, { ...testEnv, apiToken: "env-invalid-token" });
+
+        assertEquals(result, null);
+        assertEquals(requestedAuth, ["Bearer env-invalid-token"]);
+        const printed = output.join("\n");
+        assertStringIncludes(printed, "VERYFRONT_API_TOKEN was rejected by the Veryfront API.");
+        assertStringIncludes(
+          printed,
+          "Unset VERYFRONT_API_TOKEN or replace the variable before signing in with another method.",
+        );
+        assertEquals(printed.includes("Enter your API token"), false);
+        assertEquals(printed.includes("replacement@example.com"), false);
+        assertEquals(await readToken(testEnv), null);
+      } finally {
+        globalThis.prompt = originalPrompt;
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
+    it("does not sign in again under a rejected config-file token in human mode", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const originalPrompt = globalThis.prompt;
+      const output: string[] = [];
+      const requestedAuth: string[] = [];
+      const projectDir = await makeTempDir({ prefix: "login-rejected-config-human-" });
+
+      try {
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.json`,
+          JSON.stringify({ apiToken: "config-invalid-token", projectSlug: "test-project" }) +
+            "\n",
+        );
+
+        globalThis.fetch = ((_: string | URL | Request, init?: RequestInit) => {
+          const auth = String(new Headers(init?.headers).get("authorization") ?? "");
+          requestedAuth.push(auth);
+          if (auth === "Bearer config-invalid-token") {
+            return Promise.resolve(new Response(null, { status: 401 }));
+          }
+          return Promise.resolve(
+            Response.json({ id: "replacement-user", email: "replacement@example.com" }),
+          );
+        }) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+        globalThis.prompt = (() => "replacement-token") as typeof prompt;
+
+        const { withCwd } = await import("#veryfront/testing/cwd.ts");
+        const { login } = await import("./login.ts");
+        const result = await withCwd(projectDir, () => login(undefined, testEnv));
+
+        assertEquals(result, null);
+        assertEquals(requestedAuth, ["Bearer config-invalid-token"]);
+        const printed = output.join("\n");
+        assertStringIncludes(
+          printed,
+          "apiToken from veryfront.json was rejected by the Veryfront API.",
+        );
+        assertStringIncludes(
+          printed,
+          "Remove or replace apiToken in veryfront.json before signing in with another method.",
+        );
+        assertEquals(printed.includes("Enter your API token"), false);
+        assertEquals(printed.includes("replacement@example.com"), false);
+        assertEquals(await readToken(testEnv), null);
+      } finally {
+        globalThis.prompt = originalPrompt;
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
     it("says an environment session came from the environment, since nothing is stored", async () => {
       // The variable is commonly set by a `.env` in the working directory the
       // developer has forgotten about — the case `whoami` now names. Reporting a
@@ -1673,6 +1773,60 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         globalThis.fetch = originalFetch;
         resetInteractiveMode();
         await safeDeleteToken();
+      }
+    });
+
+    it("mentions config-file credentials when explaining environment account switching", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const output: string[] = [];
+      const requestedAuth: string[] = [];
+      const projectDir = await makeTempDir({ prefix: "login-env-config-guidance-" });
+
+      try {
+        setNonInteractive(true);
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.json`,
+          JSON.stringify({ apiToken: "config-valid-token", projectSlug: "test-project" }) +
+            "\n",
+        );
+        globalThis.fetch = ((_: string | URL | Request, init?: RequestInit) => {
+          requestedAuth.push(String(new Headers(init?.headers).get("authorization") ?? ""));
+          return Promise.resolve(
+            new Response(JSON.stringify({ data: [], page_info: {} }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        }) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+
+        const { withCwd } = await import("#veryfront/testing/cwd.ts");
+        const { login } = await import("./login.ts");
+        const result = await withCwd(
+          projectDir,
+          () => login(undefined, { ...testEnv, apiToken: "vf_env_only" }),
+        );
+
+        assertEquals(result, { authenticated: true, type: "apiKey" });
+        assertEquals(requestedAuth, ["Bearer vf_env_only"]);
+        const printed = output.join("\n");
+        assertStringIncludes(
+          printed,
+          "Unset VERYFRONT_API_TOKEN before using another login method",
+        );
+        assertStringIncludes(
+          printed,
+          "Remove or replace apiToken in veryfront.json after unsetting VERYFRONT_API_TOKEN.",
+        );
+        assertEquals(printed.includes("vf_env_only"), false);
+        assertEquals(printed.includes("config-valid-token"), false);
+      } finally {
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+        await remove(projectDir, { recursive: true });
       }
     });
 
