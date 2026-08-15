@@ -367,8 +367,11 @@ only `Id` and `RecordTypeId`.
 
 ## 5. Static vs dynamic tools - the design decision
 
-Given §2.1, tools **must** be static `connector.json` entries. The design gets
-dynamic-*enough* behaviour from three levers that need no new platform machinery:
+Given §2.1, tools **must** be static `connector.json` entries. The static entries
+stay the public tool surface, but the v1 design is not executable through
+`connector.json` alone. It depends on hosted integration-executor behavior that
+owns immutable query binding, fixed-operation authorization, adapter responses,
+and path validation. The design gets dynamic-*enough* behaviour from three levers:
 
 1. **Read can be dynamic only after SOQL authorization is fail-closed.**
    `find_customer`, `list_cases`, `search_contacts`, etc. currently take an
@@ -452,6 +455,26 @@ platform scope and unnecessary. **Precondition (§16):** the generic tier ships 
 once the per-operation authorization matrix is *enforced* server-side
 (fail-closed) against the runtime `sobjectType` - not before. Until then every
 generic CRUD tool, including `get_record`, stays out of the shipped surface.
+
+**Hosted dependency inventory and sequencing.** Treat these as implementation
+dependencies, not static-schema details:
+
+| Dependency | Owner boundary | Needed before |
+| --- | --- | --- |
+| Curated-query adapter that maps tool IDs to server-owned SOQL plus typed filters | Hosted integration executor / tools API | Retaining `find_customer`, `list_cases`, `list_case_activity`, `search_accounts`, `search_contacts`, `list_opportunities`, or Knowledge search after agent-facing `q` is hidden |
+| Fixed object/operation authorization for curated writes | Hosted integration executor, using the Configure permission policy | Shipping `update_case_reason`, `add_internal_case_comment`, retained `create_case`, retained `create_lead`, or any temporary retained `update_case` |
+| Referenced-object parser/enforcer for arbitrary SOQL/SOSL | Hosted integration executor and authorization layer | Re-enabling `run_soql_query`, SOSL `search`, or any arbitrary curated `q` override |
+| Per-CRUD enforcement against runtime `sobjectType` | Configure policy storage plus hosted authorization enforcement | Shipping any generic CRUD tool |
+| Server-side path validators for API names, Salesforce IDs, and encoded path segments | Hosted integration executor before URL interpolation | Shipping generic CRUD, picklist helpers, or any future path-composed static endpoint |
+| Knowledge-disabled and normalized-result adapters | Hosted integration executor response/error adapter layer | Returning the RFC's Knowledge fallback shape or normalized picklist result shape instead of raw Salesforce responses |
+
+Sequence v1 conservatively: first land the hosted curated-query adapter, fixed
+curated-write authorization, path validators, and Knowledge/picklist adapter
+contracts with fail-closed tests; then reveal the curated v1 tool surface. Keep
+generic CRUD and arbitrary SOQL/SOSL hidden until the per-CRUD matrix and
+referenced-object query parser are enforced. The companion template and Studio
+project must not advertise a tool before the hosted dependency that makes its
+contract fail-closed is live.
 
 ## 6. Proposed comprehensive tool surface
 
