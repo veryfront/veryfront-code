@@ -32,6 +32,7 @@ interface OpenParenContext {
 interface OpenBraceContext {
   index: number;
   previousTokenIndex: number;
+  isDeclarationBlock: boolean;
 }
 
 const MAX_TEMPLATE_LITERAL_DEPTH = 512;
@@ -625,32 +626,66 @@ function isControlBlockCloseBrace(
     isControlConditionCloseParen(beforeOpenBrace, rangeStart, matchingOpenParens);
 }
 
-function isDeclarationBlockCloseBrace(
-  source: string,
-  index: number,
-  matchingOpenBraces: ReadonlyMap<number, OpenBraceContext>,
-): boolean {
-  const openBrace = matchingOpenBraces.get(index);
-  if (openBrace === undefined) return false;
-
-  const declarationStart = Math.max(
-    source.lastIndexOf(";", openBrace.index - 1),
-    source.lastIndexOf("{", openBrace.index - 1),
-    source.lastIndexOf("}", openBrace.index - 1),
-  ) + 1;
-  const prefix = source.slice(declarationStart, openBrace.index).trimStart().replace(
+function normalizedDeclarationPrefix(source: string, start: number, end: number): string {
+  return source.slice(start, end).trimStart().replace(
     /\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g,
     " ",
   );
-  const isFunctionDeclaration =
-    /^(?:export\s+(?:default\s+)?)?(?:async\s+)?function(?:\s*\*)?(?:\s+[$A-Za-z_][$\w]*)?\s*\(/
-      .test(
-        prefix,
-      );
-  const isClassDeclaration =
-    /^(?:export\s+(?:default\s+)?)?class(?:\s+[$A-Za-z_][$\w]*)?(?:\s+extends\s+[\s\S]+)?\s*$/
-      .test(prefix);
-  return isFunctionDeclaration || isClassDeclaration;
+}
+
+function declarationStatementStartBefore(source: string, index: number): number {
+  return Math.max(
+    source.lastIndexOf(";", index - 1),
+    source.lastIndexOf("{", index - 1),
+    source.lastIndexOf("}", index - 1),
+  ) + 1;
+}
+
+function isFunctionDeclarationBlockOpenBrace(
+  source: string,
+  previousTokenIndex: number,
+  matchingOpenParens: ReadonlyMap<number, OpenParenContext>,
+): boolean {
+  if (source[previousTokenIndex] !== ")") return false;
+
+  const openParen = matchingOpenParens.get(previousTokenIndex);
+  if (openParen === undefined) return false;
+
+  const declarationStart = declarationStatementStartBefore(source, openParen.index);
+  const prefix = normalizedDeclarationPrefix(source, declarationStart, openParen.index);
+  return /^(?:export\s+(?:default\s+)?)?(?:async\s+)?function(?:\s*\*)?(?:\s+[$A-Za-z_][$\w]*)?\s*$/
+    .test(prefix);
+}
+
+function isClassDeclarationBlockOpenBrace(source: string, index: number): boolean {
+  const declarationStart = declarationStatementStartBefore(source, index);
+  const prefix = normalizedDeclarationPrefix(source, declarationStart, index);
+  return /^(?:export\s+(?:default\s+)?)?class(?:\s+[$A-Za-z_][$\w]*)?(?:\s+extends\s+[\s\S]+)?\s*$/
+    .test(prefix);
+}
+
+function openBraceContext(
+  source: string,
+  index: number,
+  previousTokenIndex: number,
+  matchingOpenParens: ReadonlyMap<number, OpenParenContext>,
+): OpenBraceContext {
+  return {
+    index,
+    previousTokenIndex,
+    isDeclarationBlock: isFunctionDeclarationBlockOpenBrace(
+      source,
+      previousTokenIndex,
+      matchingOpenParens,
+    ) || isClassDeclarationBlockOpenBrace(source, index),
+  };
+}
+
+function isDeclarationBlockCloseBrace(
+  index: number,
+  matchingOpenBraces: ReadonlyMap<number, OpenBraceContext>,
+): boolean {
+  return matchingOpenBraces.get(index)?.isDeclarationBlock === true;
 }
 
 function isStatementBlockCloseBrace(
@@ -741,7 +776,7 @@ function canStartRegexLiteral(
       matchingOpenBraces,
       matchingOpenParens,
     ) ||
-      isDeclarationBlockCloseBrace(source, previous, matchingOpenBraces) ||
+      isDeclarationBlockCloseBrace(previous, matchingOpenBraces) ||
       isStatementBlockCloseBrace(source, previous, matchingOpenBraces) ||
       isPlainStatementBlockCloseBrace(source, previous, rangeStart, matchingOpenBraces))
   ) return true;
@@ -936,7 +971,7 @@ function findTemplateExpressionEnd(
     }
 
     if (source[cursor] === "{") {
-      openBraces.push({ index: cursor, previousTokenIndex });
+      openBraces.push(openBraceContext(source, cursor, previousTokenIndex, matchingOpenParens));
       braceDepth++;
       previousTokenIndex = cursor;
       cursor++;
@@ -1085,7 +1120,7 @@ export function findStaticImportFromSpans(
     }
 
     if (char === "{") {
-      openBraces.push({ index: cursor, previousTokenIndex });
+      openBraces.push(openBraceContext(source, cursor, previousTokenIndex, matchingOpenParens));
       atStatementStart = false;
       previousTokenIndex = cursor;
       cursor++;
@@ -1273,7 +1308,7 @@ function scanDynamicImportRange(
     }
 
     if (char === "{") {
-      openBraces.push({ index: cursor, previousTokenIndex });
+      openBraces.push(openBraceContext(source, cursor, previousTokenIndex, matchingOpenParens));
       previousTokenIndex = cursor;
       cursor++;
       continue;
@@ -1457,7 +1492,7 @@ export function findStaticSideEffectImportSpans(
     }
 
     if (char === "{") {
-      openBraces.push({ index: cursor, previousTokenIndex });
+      openBraces.push(openBraceContext(source, cursor, previousTokenIndex, matchingOpenParens));
       atStatementStart = false;
       previousTokenIndex = cursor;
       cursor++;
