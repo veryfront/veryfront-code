@@ -260,10 +260,60 @@ async function loginWithToken(): Promise<string | null> {
   return token;
 }
 
+/**
+ * Report an already-valid session, or null when there is nothing usable.
+ *
+ * Returns null on any failure — no credential, a rejected one, or an
+ * unreachable API — so the caller falls through to the normal sign-in flow
+ * rather than blocking on a network hiccup.
+ */
+async function describeExistingSession(
+  env: EnvironmentConfig,
+): Promise<AuthIdentity | null> {
+  const token = env.apiToken ?? await readToken(env);
+  if (!token) return null;
+
+  let identity: AuthIdentity | null;
+  try {
+    identity = await validateCredential(token, env);
+  } catch {
+    return null;
+  }
+  if (!identity) return null;
+
+  if (isJsonMode()) {
+    await outputJson(createSuccessEnvelope("login", { authenticated: true, existing: true }));
+    return identity;
+  }
+
+  console.log();
+  console.log(
+    "  ✓ " +
+      (isApiKeyIdentity(identity)
+        ? "Already authenticated with an API key"
+        : "Already logged in as " + brand(identity.email)),
+  );
+  console.log(
+    "  " +
+      dim("Run 'veryfront login --token' (or --google, --github, --microsoft) to sign in again."),
+  );
+  return identity;
+}
+
 export async function login(
   method?: AuthMethod,
   env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<AuthIdentity | null> {
+  // A bare `veryfront login` is the documented first step of the deploy
+  // journey, and an already-authenticated developer ran it only to be asked for
+  // a token they do not need. Report the session instead. An explicit method is
+  // intent to sign in again, so account switching still works — and a session
+  // that no longer validates falls through to the normal flow.
+  if (method === undefined) {
+    const existing = await describeExistingSession(env);
+    if (existing) return existing;
+  }
+
   if (!isInteractive() && (method === undefined || method === "token")) {
     cliLogger.error("Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.");
     return null;

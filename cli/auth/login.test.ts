@@ -335,6 +335,63 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         resetInteractiveMode();
       }
     });
+
+    it("reports an existing valid session instead of asking for a token again", async () => {
+      // `veryfront login` is step 1 of the documented deploy journey. Run by an
+      // already-authenticated developer it prompted for a token and exited 1,
+      // which makes the first documented step fail for the common case.
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const output: string[] = [];
+      await saveToken("stored-valid-token", testEnv);
+
+      try {
+        setNonInteractive(true);
+        globalThis.fetch = (() =>
+          Promise.resolve(
+            Response.json({ id: "user-123", email: "test@example.com" }),
+          )) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+
+        const { login } = await import("./login.ts");
+        const result = await login(undefined, testEnv);
+
+        assertEquals(result, { id: "user-123", email: "test@example.com" });
+        const printed = output.join("\n");
+        assertStringIncludes(printed, "test@example.com");
+        // Must not have fallen through to the token prompt.
+        assertEquals(printed.includes("Enter your API token"), false);
+        // Never echo the stored credential.
+        assertEquals(printed.includes("stored-valid-token"), false);
+      } finally {
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
+    it("still re-authenticates when a method is explicitly requested", async () => {
+      // Switching accounts must stay possible: an explicit method is intent to
+      // sign in again, so the existing session must not short-circuit it.
+      const originalFetch = globalThis.fetch;
+      await saveToken("stored-valid-token", testEnv);
+
+      try {
+        setNonInteractive(true);
+        globalThis.fetch = (() =>
+          Promise.resolve(
+            Response.json({ id: "user-123", email: "test@example.com" }),
+          )) as typeof fetch;
+
+        const { login } = await import("./login.ts");
+        assertEquals(await login("token", testEnv), null);
+      } finally {
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
   });
 
   describe("OAuth state", () => {
