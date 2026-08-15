@@ -31,8 +31,13 @@ import {
 } from "./http-cache-helpers.ts";
 
 const ReflectApply = Reflect.apply;
+const RegExpTest = RegExp.prototype.test;
 const StringSlice = String.prototype.slice;
 const StringStartsWith = String.prototype.startsWith;
+
+function regexpTest(pattern: RegExp, value: string): boolean {
+  return ReflectApply(RegExpTest, pattern, [value]) as boolean;
+}
 
 function stringSlice(value: string, start: number, end?: number): string {
   return ReflectApply(StringSlice, value, end === undefined ? [start] : [start, end]) as string;
@@ -46,7 +51,7 @@ function stringStartsWith(value: string, search: string): boolean {
 export type CacheHttpModuleFn = (url: string, options: CacheOptions) => Promise<string | null>;
 
 function parseHttpBase(value?: string): URL | undefined {
-  if (!value || !/^https?:\/\//i.test(value)) return undefined;
+  if (!value || !regexpTest(/^https?:\/\//i, value)) return undefined;
 
   try {
     return new URL(value);
@@ -60,7 +65,7 @@ function canonicalizeHttpSpecifier(
   baseUrl?: string,
   moduleServerOrigin?: string,
 ): string {
-  if (/^https?:\/\//i.test(specifier)) return new URL(specifier).toString();
+  if (regexpTest(/^https?:\/\//i, specifier)) return new URL(specifier).toString();
   if (!stringStartsWith(specifier, "//")) return specifier;
 
   const resolutionBase = parseHttpBase(baseUrl) ?? parseHttpBase(moduleServerOrigin);
@@ -119,7 +124,7 @@ async function resolveSpecifier(
   if (stringStartsWith(specifier, "@/")) {
     const { path: pathOnly, suffix } = splitSpecifierSuffix(stringSlice(specifier, 2));
     const normalizedPath = normalizeExtension(pathOnly);
-    const jsPath = /\.(js|mjs|cjs|css)$/.test(normalizedPath)
+    const jsPath = regexpTest(/\.(js|mjs|cjs|css)$/, normalizedPath)
       ? normalizedPath
       : `${normalizedPath}.js`;
     const projectModulePath = `/_vf_modules/${jsPath}${suffix}`;

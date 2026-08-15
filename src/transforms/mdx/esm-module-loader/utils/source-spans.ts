@@ -38,6 +38,17 @@ interface OpenBraceContext {
 const MAX_TEMPLATE_LITERAL_DEPTH = 512;
 const StringFromCodePoint = String.fromCodePoint;
 const IDENTIFIER_PART_PATTERN = /^[$_\p{ID_Continue}\u200C\u200D]$/u;
+const IDENTIFIER_NAME_SOURCE = String.raw`[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*`;
+const FUNCTION_DECLARATION_PREFIX_PATTERN = new RegExp(
+  String
+    .raw`^(?:export\s+(?:default\s+)?)?(?:async\s+)?function(?:\s*\*)?(?:\s+${IDENTIFIER_NAME_SOURCE})?\s*$`,
+  "u",
+);
+const CLASS_DECLARATION_PREFIX_PATTERN = new RegExp(
+  String
+    .raw`^(?:export\s+(?:default\s+)?)?class(?:\s+${IDENTIFIER_NAME_SOURCE})?(?:\s+extends\s+[\s\S]+)?\s*$`,
+  "u",
+);
 
 function assertTemplateLiteralDepth(depth: number): void {
   if (depth > MAX_TEMPLATE_LITERAL_DEPTH) {
@@ -653,15 +664,13 @@ function isFunctionDeclarationBlockOpenBrace(
 
   const declarationStart = declarationStatementStartBefore(source, openParen.index);
   const prefix = normalizedDeclarationPrefix(source, declarationStart, openParen.index);
-  return /^(?:export\s+(?:default\s+)?)?(?:async\s+)?function(?:\s*\*)?(?:\s+[$A-Za-z_][$\w]*)?\s*$/
-    .test(prefix);
+  return FUNCTION_DECLARATION_PREFIX_PATTERN.test(prefix);
 }
 
 function isClassDeclarationBlockOpenBrace(source: string, index: number): boolean {
   const declarationStart = declarationStatementStartBefore(source, index);
   const prefix = normalizedDeclarationPrefix(source, declarationStart, index);
-  return /^(?:export\s+(?:default\s+)?)?class(?:\s+[$A-Za-z_][$\w]*)?(?:\s+extends\s+[\s\S]+)?\s*$/
-    .test(prefix);
+  return CLASS_DECLARATION_PREFIX_PATTERN.test(prefix);
 }
 
 function openBraceContext(

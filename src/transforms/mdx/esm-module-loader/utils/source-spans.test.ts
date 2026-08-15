@@ -499,6 +499,12 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         ),
         ["/_vf_modules/default-parameter-lazy.js"],
       );
+      assertEquals(
+        vfModuleSpecifiers(
+          'const html = `${(() => { function α() {} /}/.test(x); })() && import("/_vf_modules/unicode-function-lazy.js")}`;',
+        ),
+        ["/_vf_modules/unicode-function-lazy.js"],
+      );
     });
 
     it("recognizes Unicode line terminators in declaration comments", () => {

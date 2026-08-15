@@ -152,6 +152,34 @@ describe("transforms/esm/specifier-resolver", () => {
       }
     });
 
+    it("rewrites escaped project aliases without mutable regex test hooks", async () => {
+      const regexpPrototypeDescriptors = Object.getOwnPropertyDescriptors(RegExp.prototype);
+
+      try {
+        Object.defineProperty(RegExp.prototype, "test", {
+          configurable: true,
+          value() {
+            throw new Error("poisoned RegExp.prototype.test");
+          },
+          writable: true,
+        });
+
+        const result = await buildReplacements(
+          `import Foo from "@/components/Foo.tsx?raw#hero";`,
+          undefined,
+          defaultOptions,
+          noopCache,
+        );
+
+        assertEquals(
+          result.replacements.get("@/components/Foo.tsx?raw#hero"),
+          "/_vf_modules/components/Foo.js?raw#hero",
+        );
+      } finally {
+        Object.defineProperties(RegExp.prototype, regexpPrototypeDescriptors);
+      }
+    });
+
     it("rewrites http URL when cache returns a path", async () => {
       const code = `import lodash from "https://esm.sh/lodash@4";`;
       const mockCache: CacheHttpModuleFn = async () => "/tmp/cache/http-99999.mjs";
