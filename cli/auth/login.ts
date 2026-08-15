@@ -29,12 +29,7 @@ import { cwd, getEnv } from "veryfront/platform";
  * directory-dependent for every command that infers a project from config, so
  * this is worth the extra clause.
  */
-function describeApiTokenSource(token: string): string {
-  const origin = getEnvSource("VERYFRONT_API_TOKEN");
-  if (origin.source !== "env-file" || getEnv("VERYFRONT_API_TOKEN") !== token) {
-    return "(via VERYFRONT_API_TOKEN)";
-  }
-
+export function formatEnvSourcePathForDisplay(file: string, currentCwd = cwd()): string {
   // Repo-relative only: AGENTS.md forbids local absolute paths in user-facing
   // output. A file outside the working directory, including a Windows
   // cross-drive result, degrades to its name rather than exposing the layout.
@@ -43,13 +38,22 @@ function describeApiTokenSource(token: string): string {
   // separator rather than a leading ".", because a dot-*directory* also starts
   // with one, so `.config/.env` would otherwise be the only nested path printed
   // without the prefix.
-  const rel = relative(cwd(), origin.file);
+  const rel = relative(currentCwd, file);
   const shown = rel === "." || rel.startsWith("..") || isAbsolute(rel)
-    ? basename(origin.file)
+    ? basename(file)
     : /[/\\]/.test(rel) && !rel.startsWith("./")
     ? `./${rel}`
     : rel;
-  return `(via VERYFRONT_API_TOKEN from ${shown})`;
+  return shown;
+}
+
+function describeApiTokenSource(token: string): string {
+  const origin = getEnvSource("VERYFRONT_API_TOKEN");
+  if (origin.source !== "env-file" || getEnv("VERYFRONT_API_TOKEN") !== token) {
+    return "(via VERYFRONT_API_TOKEN)";
+  }
+
+  return `(via VERYFRONT_API_TOKEN from ${formatEnvSourcePathForDisplay(origin.file)})`;
 }
 
 export type AuthMethod = "google" | "github" | "microsoft" | "token";

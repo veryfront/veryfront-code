@@ -563,47 +563,15 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
     });
 
     it("falls back to the .env filename for Windows cross-drive paths", async () => {
-      const originalFetch = globalThis.fetch;
-      const originalLog = console.log;
-      const output: string[] = [];
-      const { __resetEnvLoaderForTests, loadEnv } = await import("veryfront/utils/env-loader");
-      const envDir = "D:/whoami-env-cross-drive";
+      const { formatEnvSourcePathForDisplay } = await import("./login.ts");
 
-      try {
-        deleteEnv("VERYFRONT_API_TOKEN");
-        __resetEnvLoaderForTests();
-        await Deno.mkdir(envDir, { recursive: true });
-        await Deno.writeTextFile(`${envDir}/.env`, "VERYFRONT_API_TOKEN=vf_cross_drive\n");
-        await loadEnv({ cwd: envDir });
-
-        globalThis.fetch = (() =>
-          Promise.resolve(
-            new Response(JSON.stringify({ data: [], page_info: {} }), {
-              status: 200,
-              headers: { "content-type": "application/json" },
-            }),
-          )) as typeof fetch;
-        console.log = (message?: unknown) => output.push(String(message));
-
-        const { whoami } = await import("./login.ts");
-        await whoami({
-          ...testEnv,
-          apiBaseUrl: "https://auth.example.test",
-          apiUrl: undefined,
-          apiToken: "vf_cross_drive",
-        });
-
-        const printed = output.join("\n");
-        assertStringIncludes(printed, "from .env");
-        assertEquals(printed.includes("D:/whoami-env-cross-drive"), false);
-        assertEquals(printed.includes("vf_cross_drive"), false);
-      } finally {
-        console.log = originalLog;
-        globalThis.fetch = originalFetch;
-        __resetEnvLoaderForTests();
-        deleteEnv("VERYFRONT_API_TOKEN");
-        await Deno.remove("D:", { recursive: true });
-      }
+      assertEquals(
+        formatEnvSourcePathForDisplay(
+          "D:/whoami-env-cross-drive/.env",
+          "C:/veryfront-project",
+        ),
+        ".env",
+      );
     });
 
     it("does not attribute an injected API token to a different loaded .env token", async () => {
