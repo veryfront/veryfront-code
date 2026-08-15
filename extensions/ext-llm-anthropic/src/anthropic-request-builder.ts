@@ -1313,6 +1313,30 @@ function assertNoNestedAnthropicCacheJsonHooks(
 
 const ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4;
 
+function snapshotAnthropicCacheArray<T>(
+  value: T[],
+  label: string,
+): T[] {
+  assertNoAnthropicCacheJsonHook(value);
+  const snapshot = new Array<T>(value.length);
+  for (let index = 0; index < value.length; index += 1) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    } catch {
+      throw new TypeError(`${label} could not be inspected`);
+    }
+    if (descriptor === undefined) {
+      continue;
+    }
+    if (!Object.hasOwn(descriptor, "value")) {
+      throw new TypeError(`${label} must contain only indexed data properties`);
+    }
+    snapshot[index] = descriptor.value as T;
+  }
+  return snapshot;
+}
+
 function hasEmittedAnthropicCacheBreakpoint(value: Record<string, unknown>): boolean {
   assertNoAnthropicCacheJsonHook(value);
   let descriptor: PropertyDescriptor | undefined;
@@ -1351,8 +1375,10 @@ function readEmittedAnthropicMessageContent(message: AnthropicCompatibleMessage)
   if (!Array.isArray(descriptor.value)) {
     return [];
   }
-  assertNoAnthropicCacheJsonHook(descriptor.value);
-  return descriptor.value;
+  return snapshotAnthropicCacheArray(
+    descriptor.value,
+    "Anthropic message content",
+  );
 }
 
 function readAnthropicArrayDataElement(
@@ -1656,30 +1682,31 @@ function limitAnthropicCacheBreakpoints(
   tools: Array<Record<string, unknown>> | undefined;
   messages: AnthropicCompatibleMessage[];
 } {
-  assertNoAnthropicCacheJsonHook(messages);
-  if (Array.isArray(system)) {
-    assertNoAnthropicCacheJsonHook(system);
-  }
-  if (tools) {
-    assertNoAnthropicCacheJsonHook(tools);
-  }
-  const boundedMessages = retainLatestAnthropicMessageCacheBreakpoints(
+  const inspectedMessages = snapshotAnthropicCacheArray(
     messages,
+    "Anthropic messages",
+  );
+  const inspectedSystem = Array.isArray(system)
+    ? snapshotAnthropicCacheArray(system, "Anthropic system")
+    : system;
+  const inspectedTools = tools ? snapshotAnthropicCacheArray(tools, "Anthropic tools") : undefined;
+  const boundedMessages = retainLatestAnthropicMessageCacheBreakpoints(
+    inspectedMessages,
     ANTHROPIC_MAX_CACHE_BREAKPOINTS,
   );
   const messageBreakpointCount = countAnthropicMessageCacheBreakpoints(boundedMessages);
-  const boundedSystem = Array.isArray(system)
+  const boundedSystem = Array.isArray(inspectedSystem)
     ? retainLatestAnthropicCacheBreakpoints(
-      system,
+      inspectedSystem,
       ANTHROPIC_MAX_CACHE_BREAKPOINTS - messageBreakpointCount,
     )
-    : system;
+    : inspectedSystem;
   const systemBreakpointCount = Array.isArray(boundedSystem)
     ? boundedSystem.filter(hasEmittedAnthropicCacheBreakpoint).length
     : 0;
-  const boundedTools = tools
+  const boundedTools = inspectedTools
     ? retainLatestAnthropicCacheBreakpoints(
-      tools,
+      inspectedTools,
       ANTHROPIC_MAX_CACHE_BREAKPOINTS - messageBreakpointCount - systemBreakpointCount,
     )
     : undefined;
