@@ -404,11 +404,15 @@ and path validation. The design gets dynamic-*enough* behaviour from three lever
    filters are bound through one SOQL-literal escaper and cannot contribute field,
    object, operator, ordering, or limit syntax. Direct sObject-by-ID tools such as
    `get_case`, `get_contact`, and `get_account` keep their validated path parameter
-   and do not use this adapter. If the hosted adapter is unavailable, the affected
-   query tool stays hidden; the connector must not fall back to its current broad
-   `endpoint.params.q.default` or expose `q` to restore functionality. The same
-   referenced-object rule applies to static query defaults: a fixed `Contact`
-   query that selects
+   and do not use this adapter, but each retained direct read still needs a fixed
+   object/Read authorization check before execution (`Case` Read for `get_case`,
+   `Contact` Read for `get_contact`, and `Account` Read for `get_account`). Do not
+   infer Read from the legacy `dataAccess.objects` allow-list or from any write
+   grant while per-CRUD enforcement is not live. If the hosted adapter is
+   unavailable, the affected query tool stays hidden; the connector must not fall
+   back to its current broad `endpoint.params.q.default` or expose `q` to restore
+   functionality. The same referenced-object rule applies to static query defaults:
+   a fixed `Contact` query that selects
    `Account.Name`, `Account.Type`, or `Account.Industry` also needs `Account` Read.
    Until that check exists for static defaults, remove relationship fields from the
    v1 `find_customer` and `search_contacts` defaults instead of relying on Contact
@@ -465,20 +469,22 @@ dependencies, not static-schema details:
 | Dependency | Owner boundary | Needed before |
 | --- | --- | --- |
 | Curated-query adapter that maps tool IDs to server-owned SOQL plus typed filters | Hosted integration executor / tools API | Retaining `find_customer`, `list_cases`, `list_case_activity`, `search_accounts`, `search_contacts`, `list_opportunities`, or Knowledge search after agent-facing `q` is hidden |
+| Fixed object/Read authorization for retained direct reads | Hosted integration executor, using the Configure permission policy | Retaining direct sObject tools such as `get_case`, `get_contact`, and `get_account` while per-CRUD arrays are not generally enforced |
 | Fixed object/operation authorization for curated writes | Hosted integration executor, using the Configure permission policy | Shipping `update_case_reason`, `add_internal_case_comment`, retained `create_case`, retained `create_lead`, or any temporary retained `update_case` |
-| Fixed owner lookup adapters for `User`, Case queues, and Lead queues | Hosted integration executor / tools API, using server-owned SOQL and typed filters | Shipping owner assignment for Case, Lead, or Opportunity while arbitrary `run_soql_query` and `q` remain hidden |
+| Fixed owner lookup adapters for `User`, Case queues, and Lead queues | Hosted integration executor / tools API, using server-owned SOQL and typed filters | Discovering owner candidates for Case and Lead while arbitrary `run_soql_query` and `q` remain hidden. Opportunity uses `User` candidates only. Lead and Opportunity assignment writes remain gated until scoped write tools or generic CRUD enforcement exist |
 | Referenced-object parser/enforcer for arbitrary SOQL/SOSL | Hosted integration executor and authorization layer | Re-enabling `run_soql_query`, SOSL `search`, or any arbitrary curated `q` override |
 | Per-CRUD enforcement against runtime `sobjectType` | Configure policy storage plus hosted authorization enforcement | Shipping any generic CRUD tool |
 | Server-side path validators for API names, Salesforce IDs, and encoded path segments | Hosted integration executor before URL interpolation | Shipping generic CRUD, picklist helpers, or any future path-composed static endpoint |
 | Write-status, Knowledge-disabled, and normalized-result adapters | Hosted integration executor response/error adapter layer | Returning `{ success: true }` for successful 204 writes, the RFC's Knowledge fallback shape, or normalized picklist result shape instead of raw Salesforce responses |
 
 Sequence v1 conservatively: first land the hosted curated-query adapter, fixed
-owner lookup adapters, fixed curated-write authorization, path validators, and
-write-status plus Knowledge/picklist adapter contracts with fail-closed tests;
-then reveal the curated v1 tool surface. Keep generic CRUD and arbitrary
-SOQL/SOSL hidden until the per-CRUD matrix and referenced-object query parser are
-enforced. The companion template and Studio project must not advertise a tool
-before the hosted dependency that makes its contract fail-closed is live.
+direct-read authorization, fixed owner lookup adapters, fixed curated-write
+authorization, path validators, and write-status plus Knowledge/picklist adapter
+contracts with fail-closed tests; then reveal the curated v1 tool surface. Keep
+generic CRUD and arbitrary SOQL/SOSL hidden until the per-CRUD matrix and
+referenced-object query parser are enforced. The companion template and Studio
+project must not advertise a tool or assignment workflow before the hosted
+dependency that makes its contract fail-closed is live.
 
 ## 6. Proposed comprehensive tool surface
 
@@ -510,6 +516,11 @@ stays out of v1. Retained curated write tools also need fixed checks for their
 concrete operation (`CaseComment` Create, `Case` Create/Update, `Lead` Create).
 Do not infer those writes from `dataAccess.objects` or from a Read grant while the
 per-CRUD arrays are not enforced.
+
+Retained direct reads need the same concrete-operation treatment for Read:
+`get_case`, `get_contact`, and `get_account` stay in v1 only if the hosted
+executor denies each call without the matching object Read grant. A project with
+Case Update but no Case Read must not be able to call `get_case`.
 
 **Caveat - `list_cases` must be open-case constrained once `q` overrides are
 disabled.** The current default is `SELECT ... FROM Case ORDER BY LastModifiedDate
@@ -554,8 +565,12 @@ succeeds without assumed values.
 **Tier 2 - Universal escape hatches (partly gated):** keep `describe_object` and
 fixed-object curated read defaults in v1. Add fixed lookup helpers
 `list_active_users`, `list_case_queues`, and `list_lead_queues` for owner
-assignment; these helpers use server-owned SOQL and typed filters, not caller
-`q`. Gate or remove `run_soql_query`, SOSL
+candidate discovery; these helpers use server-owned SOQL and typed filters, not
+caller `q`. They do not by themselves make every owner assignment executable:
+Case owner assignment can use a retained, separately authorized Case update path,
+but Lead and Opportunity owner assignment stay out of v1 until scoped
+`update_lead_owner` and `update_opportunity_owner` helpers or the §16 generic CRUD
+gate exists. Gate or remove `run_soql_query`, SOSL
 `search`, and any curated arbitrary `q` override until the server can parse and
 authorize every referenced object, relationship target, and subquery fail-closed
 (§16). Keep `salesforce__search_knowledge_articles` only if it uses a fixed
@@ -588,7 +603,7 @@ arbitrary SOQL surfaces.
 | **Add - helpers (v1)** | `update_case_reason` (`Reason`-only Case update for `case-dispose`), `add_internal_case_comment` (server-fixed `IsPublished: false`), `get_picklist_values_for_record_type`, `list_active_users`, `list_case_queues`, `list_lead_queues` | +6 |
 | **Read escape hatches (deferred)** | existing `run_soql_query`, curated arbitrary `q` overrides, `search` (SOSL), pending fail-closed query parsing and authorization | - |
 | **Add - generic CRUD (deferred)** | `get_record`, `create_record`, `update_record`, `upsert_record`, `delete_record` (pending fail-closed per-CRUD enforcement) | +5 |
-| **v1 total** | after the fixed write authorization, owner lookup adapter, and static-query relationship-field gates above | **21** |
+| **v1 total** | after fixed direct-read authorization, fixed write authorization, owner lookup adapters, and static-query relationship-field gates above | **21** |
 | **Optional curated wrappers** | `create_contact`, `update_account`, `create/update_opportunity`, `create_task`, `convert_lead` - sugar, not counted in core | - |
 
 **Authorization tests (acceptance gate).** Every least-privilege grant needs an
@@ -608,9 +623,13 @@ instead of an empty string, and tests must prove the agent-visible result cannot
 misread as failure. Every immutable-query adapter entry must prove that `q` is
 absent from the published schema, a supplied `q` and unknown filters are rejected,
 and the exact fixed object, field list, predicates, ordering, and limit reach
-Salesforce. Static Contact query defaults must also prove they either omit Account
-relationship fields or deny the query when Account Read is absent. Each generic
-CRUD tool must be denied for an un-granted `sobjectType` (§16). `list_cases`
+Salesforce. Retained direct reads must prove the hosted executor denies `get_case`
+without Case Read, `get_contact` without Contact Read, and `get_account` without
+Account Read, even when the project has a write grant or legacy
+`dataAccess.objects` includes the object. Static Contact query defaults must also
+prove they either omit Account relationship fields or deny the query when Account
+Read is absent. Each generic CRUD tool must be denied for an un-granted
+`sobjectType` (§16). `list_cases`
 needs a closed-case exclusion test: seed at least one recently modified closed
 Case and assert the v1 open-case listing cannot return it, and assert any missing
 or false open-case constraint fails closed rather than falling back to the
@@ -622,8 +641,10 @@ Lead-only queue, assert each lookup excludes the queue for the other object, and
 reject a queue `OwnerId` unless the selected `Group.Id` has a matching
 `QueueSobject` row for the target object. The fixed queue lookup requires Read
 authorization for both `Group` and `QueueSobject` and fails closed when either
-grant is absent. Opportunity owner assignment must use `list_active_users` and
-must reject queue Group IDs.
+grant is absent. Opportunity owner candidate lookup must use `list_active_users`
+and must reject queue Group IDs. Lead and Opportunity owner write acceptance
+criteria stay unmet in v1 unless the implementation adds scoped owner-write
+helpers with fixed `Lead` Update and `Opportunity` Update authorization.
 
 The PII gate needs fixture coverage too: raw `Subject`, `Description`, and
 `CommentBody` values containing email, phone, and customer identifiers must not
@@ -864,10 +885,12 @@ when the Account grant is present.
 
 ### A.4 Object → owner/queue lookups
 
-Every owner assignment needs a real ID, not a name. Case and Lead can use an
-active `User.Id` or a supported queue `Group.Id`; Opportunity must use an active
-`User.Id` and must reject Group IDs. The baseline must ship `list_active_users`
-for all three objects, backed by:
+Every owner candidate lookup needs a real ID, not a name. Case and Lead can use
+an active `User.Id` or a supported queue `Group.Id`; Opportunity must use an
+active `User.Id` and must reject Group IDs. These lookup tools only identify
+eligible candidates; Lead and Opportunity owner writes stay gated until scoped
+write tools or generic CRUD enforcement exist. The baseline must ship
+`list_active_users` for all three objects, backed by:
 
 ```sql
 SELECT Id, Name
@@ -890,11 +913,11 @@ AND Id IN (
 )
 ```
 
-Build `SobjectType` from the fixed `Case`/`Lead` assignment path, never from an
-arbitrary query fragment. Before writing `OwnerId`, validate the selected
-`Group.Id` against that same object-specific result. A `Type = 'Queue'` Group
-without the matching `QueueSobject` row is not an eligible owner and must fail
-closed.
+Build `SobjectType` from the fixed `Case`/`Lead` owner lookup path, never from an
+arbitrary query fragment. Before any scoped owner-write tool writes `OwnerId`,
+validate the selected `Group.Id` against that same object-specific result. A
+`Type = 'Queue'` Group without the matching `QueueSobject` row is not an eligible
+owner and must fail closed.
 
 ### A.5 What "standard" deliberately excludes (v1)
 
@@ -1006,7 +1029,11 @@ max-rows cap, and customer mapping.
    flow-specific predicates: `list_cases` is retained for "latest open cases" only
    if the server forces `WHERE IsClosed = false` through a fixed query or required
    open-case filter. A missing open predicate must deny the call, not fall back to
-   the current broad recent-Case default.
+   the current broad recent-Case default. Retained direct sObject reads are not
+   query escape hatches, but they still need concrete Read enforcement: `get_case`,
+   `get_contact`, and `get_account` must deny without `Case`, `Contact`, and
+   `Account` Read respectively, regardless of legacy `dataAccess.objects` entries
+   or write grants.
 3. **Curated writes need their own fixed authorization before per-CRUD arrays are
    enforced.** A fixed-path curated write is safer than generic CRUD because its
    object and operation are known, but it is still a write. Do not infer
@@ -1125,8 +1152,8 @@ is satisfied. Additional non-CRUD tools complete the future surface:
     the object-wide set, asserting the tool returns the record-type set, not the
     superset (§4.1, §5.3, §A.5).
 - **`list_active_users`**, **`list_case_queues`**, and **`list_lead_queues`** -
-  fixed hosted lookup helpers for owner assignment. They are not generic query
-  tools and their published schemas must not expose `q` or `sobjectType`.
+  fixed hosted lookup helpers for owner candidate discovery. They are not generic
+  query tools and their published schemas must not expose `q` or `sobjectType`.
   `list_active_users` returns active `User` owner candidates from
   `SELECT Id, Name FROM User WHERE IsActive = true`; it may accept only typed safe
   filters such as escaped name text and a bounded limit, and it requires `User`
@@ -1135,8 +1162,8 @@ is satisfied. Additional non-CRUD tools complete the future surface:
   is encoded in the tool ID, not supplied by the caller. They require `Group` Read
   and `QueueSobject` Read. Tests must prove Case queues never appear in
   `list_lead_queues`, Lead queues never appear in `list_case_queues`, inactive
-  users are excluded, and Opportunity owner assignment rejects every queue
-  `Group.Id`.
+  users are excluded, and Opportunity owner candidate lookup rejects every queue
+  `Group.Id`. These helpers do not ship Lead or Opportunity owner writes.
 - **`search`** (SOSL, deferred) - `GET /search/?q=FIND {...} IN ALL FIELDS ...` for
   cross-object keyword lookup, distinct from the SOQL that `find_customer` uses.
   Ship only after the same fail-closed referenced-object authorization gate covers
