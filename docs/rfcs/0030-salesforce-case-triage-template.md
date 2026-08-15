@@ -548,8 +548,14 @@ per-CRUD arrays are not enforced.
 logical disposal. V1 must make that logical disposal either atomic at the hosted
 integration boundary, for example through a Salesforce Composite request with
 `allOrNone: true`, or deterministically reconciled after any partial success. The
-atomic path still needs a stable request identity for the logical disposal, or a
-read-after-timeout reconciliation step, because Salesforce can commit the
+hosted adapter must also recheck the target Case's open state immediately before
+the logical disposal writes, or bind the writes to an optimistic-concurrency
+condition that proves the Case is still open. The earlier `list_cases`
+`IsClosed = false` predicate is only selection-time evidence; if a human or
+automation closes the Case before disposal, the adapter must abort before writing
+`Reason` or the internal comment. The atomic path still needs a stable request
+identity for the logical disposal, or read-after-timeout reconciliation, because
+Salesforce can commit the
 composite request and lose the response before the client observes success. Any
 retry after an ambiguous committed timeout must find the already-created internal
 comment for the same case ID, taxonomy version, selected reason, and comment
@@ -682,14 +688,18 @@ denial tests. Successful `204 No Content` writes, including
 instead of an empty string, and tests must prove the agent-visible result cannot be
 misread as failure. Dispose write consistency needs explicit retry and
 partial-failure coverage: one test must prove the atomic composite path rolls back
-both `Reason` and `CaseComment` when either subrequest fails, and another must
-prove a retry after a committed composite response timeout uses stable request
-identity or read-after-timeout reconciliation without creating a duplicate
-`CaseComment`. For the reconciled path, retries after each half-succeeded order
-and after a post-comment timeout must converge without duplicate comments, must
-query only the matching case's internal comments through the fixed
-`CaseComment` Read adapter, and must produce a deterministic operator-visible
-failure when convergence is impossible or the read grant is absent.
+both `Reason` and `CaseComment` when either subrequest fails, another must prove a
+Case closed after selection but before disposal aborts before either write, and
+another must prove a retry after a committed composite response timeout uses
+stable request identity or read-after-timeout reconciliation without creating a
+duplicate `CaseComment`. If the implementation uses optimistic concurrency
+instead of a pre-write Case read, the stale-closure fixture must prove the version
+or open-state condition rejects the disposal write. For the reconciled path,
+retries after each half-succeeded order and after a post-comment timeout must
+converge without duplicate comments, must query only the matching case's internal
+comments through the fixed `CaseComment` Read adapter, and must produce a
+deterministic operator-visible failure when convergence is impossible or the read
+grant is absent.
 Every immutable-query
 adapter entry must prove that `q` is
 absent from the published schema, a supplied `q` and unknown filters are rejected,
