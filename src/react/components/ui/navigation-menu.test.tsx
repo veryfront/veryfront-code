@@ -47,6 +47,8 @@ function installDom(dom: JSDOM): () => void {
     "Node",
     "Element",
     "MouseEvent",
+    "KeyboardEvent",
+    "FocusEvent",
     "getComputedStyle",
     "ResizeObserver",
     "matchMedia",
@@ -63,6 +65,8 @@ function installDom(dom: JSDOM): () => void {
   g.Node = w.Node;
   g.Element = w.Element;
   g.MouseEvent = w.MouseEvent;
+  g.KeyboardEvent = w.KeyboardEvent;
+  g.FocusEvent = w.FocusEvent;
   g.getComputedStyle = (w.getComputedStyle as (e: Element) => CSSStyleDeclaration).bind(w);
   g.ResizeObserver = ResizeObserverStub;
   g.matchMedia = () => ({
@@ -88,6 +92,7 @@ function installDom(dom: JSDOM): () => void {
 function render(element: React.ReactElement): {
   host: HTMLElement;
   click: (el: Element) => void;
+  keyDown: (el: Element, key: string) => void;
   pointerEnter: (el: Element) => Promise<void>;
   pointerLeave: (el: Element) => Promise<void>;
   unmount: () => void;
@@ -102,6 +107,10 @@ function render(element: React.ReactElement): {
     host: host as unknown as HTMLElement,
     click: (el: Element) =>
       flushSync(() => el.dispatchEvent(new win.MouseEvent("click", { bubbles: true }))),
+    keyDown: (el: Element, key: string) =>
+      flushSync(() =>
+        el.dispatchEvent(new win.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key }))
+      ),
     pointerEnter: async (el: Element) => {
       el.dispatchEvent(new win.MouseEvent("pointerover", { bubbles: true }));
       await new Promise((resolve) => setTimeout(resolve, 5));
@@ -329,6 +338,55 @@ describe("NavigationMenu behaviour", () => {
         null,
         "a disabled trigger does not open its panel",
       );
+    } finally {
+      unmount();
+    }
+  });
+
+  it("dismisses an open panel when focus leaves the navigation region", async () => {
+    const { host, click, unmount } = render(
+      <>
+        <Fixture />
+        <button type="button" className="vf-test-outside">Outside</button>
+      </>,
+    );
+    try {
+      const products = triggers(host)[0]!;
+      click(products);
+      const link = host.querySelector<HTMLAnchorElement>(".vf-test-analytics")!;
+      link.focus();
+      assert(document.activeElement === link, "panel link starts focused");
+
+      host.querySelector<HTMLButtonElement>(".vf-test-outside")!.focus();
+      await Promise.resolve();
+
+      assert(
+        host.querySelector('[data-slot="navigation-menu-content"]') === null,
+        "moving focus outside the navigation menu closes the panel",
+      );
+      assertEquals(products.getAttribute("aria-expanded"), "false");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("Escape from a focused panel link closes the panel and restores focus to the trigger", async () => {
+    const { host, click, keyDown, unmount } = render(<Fixture />);
+    try {
+      const products = triggers(host)[0]!;
+      click(products);
+      const link = host.querySelector<HTMLAnchorElement>(".vf-test-analytics")!;
+      link.focus();
+      assert(document.activeElement === link, "panel link starts focused");
+
+      keyDown(link, "Escape");
+      await Promise.resolve();
+
+      assert(
+        host.querySelector('[data-slot="navigation-menu-content"]') === null,
+        "Escape closes the keyboard-open panel",
+      );
+      assert(document.activeElement === products, "Escape restores focus to the trigger");
     } finally {
       unmount();
     }

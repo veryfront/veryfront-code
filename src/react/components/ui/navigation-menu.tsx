@@ -39,6 +39,8 @@
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
+import { focusWithoutScroll } from "./focus-management.ts";
+import { composeRefs } from "./slot.tsx";
 
 const CLOSE_DELAY_MS = 100;
 
@@ -52,6 +54,10 @@ interface NavigationMenuState {
   cancelClose: () => void;
   /** Close `itemId` after the pointer has time to cross into its panel. */
   scheduleClose: (itemId: string) => void;
+  /** Track an item's trigger so Escape can restore focus after closing its panel. */
+  registerTrigger: (itemId: string, element: HTMLButtonElement | null) => void;
+  /** Return the trigger node for `itemId`, when still mounted. */
+  getTrigger: (itemId: string) => HTMLButtonElement | null;
 }
 
 /** Per-item identity. `value` is the caller's label; `itemId` is unique per instance. */
@@ -92,10 +98,13 @@ export function NavigationMenu({
   className,
   children,
   ref,
+  onBlur,
+  onKeyDown,
   ...props
 }: NavigationMenuProps): React.ReactElement {
   const [openItemId, setOpenItemIdState] = React.useState<string | null>(null);
   const closeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const triggerRefs = React.useRef(new Map<string, HTMLButtonElement>());
   const cancelClose = React.useCallback(() => {
     if (closeTimerRef.current != null) {
       clearTimeout(closeTimerRef.current);
@@ -113,10 +122,29 @@ export function NavigationMenu({
       setOpenItemIdState((current) => current === itemId ? null : current);
     }, CLOSE_DELAY_MS);
   }, [cancelClose]);
+  const registerTrigger = React.useCallback((
+    itemId: string,
+    element: HTMLButtonElement | null,
+  ) => {
+    if (element) triggerRefs.current.set(itemId, element);
+    else triggerRefs.current.delete(itemId);
+  }, []);
+  const getTrigger = React.useCallback((itemId: string) => {
+    return triggerRefs.current.get(itemId) ?? null;
+  }, []);
+  const closeAndRestoreTrigger = React.useCallback(() => {
+    const itemId = openItemId;
+    if (itemId == null) return;
+    const trigger = getTrigger(itemId);
+    setOpenItemId(null);
+    queueMicrotask(() => {
+      if (trigger?.isConnected) focusWithoutScroll(trigger);
+    });
+  }, [getTrigger, openItemId, setOpenItemId]);
   React.useEffect(() => cancelClose, [cancelClose]);
   const ctx = React.useMemo<NavigationMenuState>(
-    () => ({ openItemId, setOpenItemId, cancelClose, scheduleClose }),
-    [openItemId, setOpenItemId, cancelClose, scheduleClose],
+    () => ({ openItemId, setOpenItemId, cancelClose, scheduleClose, registerTrigger, getTrigger }),
+    [openItemId, setOpenItemId, cancelClose, scheduleClose, registerTrigger, getTrigger],
   );
   return (
     <NavigationMenuContext.Provider value={ctx}>
@@ -125,6 +153,21 @@ export function NavigationMenu({
         aria-label={label}
         data-state={openItemId == null ? "closed" : "open"}
         className={cn("relative inline-flex max-w-max items-center", className)}
+        onBlur={(event) => {
+          onBlur?.(event);
+          if (event.defaultPrevented) return;
+          const next = event.relatedTarget;
+          if (!(next instanceof HTMLElement) || !event.currentTarget.contains(next)) {
+            setOpenItemId(null);
+          }
+        }}
+        onKeyDown={(event) => {
+          onKeyDown?.(event);
+          if (event.defaultPrevented) return;
+          if (event.key !== "Escape" || openItemId == null) return;
+          event.preventDefault();
+          closeAndRestoreTrigger();
+        }}
         {...props}
       >
         {children}
@@ -222,9 +265,16 @@ export function NavigationMenuTrigger({
   const { itemId } = useNavigationMenuItem("NavigationMenuTrigger");
   const open = ctx.openItemId === itemId;
   const panelId = `${itemId}-panel`;
+  const triggerRef = React.useCallback((element: HTMLButtonElement | null) => {
+    ctx.registerTrigger(itemId, element);
+  }, [ctx, itemId]);
+  const composedRef = React.useMemo(
+    () => composeRefs<HTMLButtonElement>(triggerRef, ref),
+    [ref, triggerRef],
+  );
   return (
     <button
-      ref={ref}
+      ref={composedRef}
       type="button"
       aria-expanded={open}
       // Only reference the panel while it exists: NavigationMenuContent renders

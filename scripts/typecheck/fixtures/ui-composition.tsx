@@ -18,6 +18,8 @@ import {
   Card,
   CardContent,
   CardHeader,
+  DrawerContent,
+  type DrawerContentProps,
   useAppShell,
 } from "veryfront/ui";
 
@@ -70,4 +72,15 @@ export function CardsDemo(): React.ReactElement {
       </CardContent>
     </Card>
   );
+}
+
+/** Drawer content keeps its public prop type aligned with the component surface. */
+export function DrawerContentPublicPropsDemo(): React.ReactElement {
+  const ref = React.createRef<HTMLDivElement>();
+  const props: DrawerContentProps = {
+    ref,
+    className: "vf-consumer-drawer",
+    children: "Drawer body",
+  };
+  return <DrawerContent {...props} />;
 }

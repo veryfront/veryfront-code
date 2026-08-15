@@ -163,6 +163,7 @@ export {
   DrawerBody,
   DrawerClose,
   DrawerContent,
+  type DrawerContentProps,
   DrawerFooter,
   DrawerHeader,
   type DrawerProps,

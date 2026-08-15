@@ -257,6 +257,37 @@ describe("ContextMenu behaviour (builtin)", () => {
     }
   });
 
+  it("keyboard selection closes the menu and restores focus to the trigger", async () => {
+    let selected = 0;
+    const { scope, rightClickTrigger, cleanup } = mountInScope(
+      <Menu onSelect={() => selected++} />,
+    );
+    try {
+      const trigger = scope.querySelector<HTMLElement>('[data-testid="trigger"]')!;
+      rightClickTrigger();
+      const item = scope.querySelector<HTMLElement>('[data-testid="cut"]')!;
+      item.focus();
+      assertEquals(document.activeElement, item, "the menu item starts focused");
+
+      flushSync(() => {
+        item.dispatchEvent(
+          new globalThis.KeyboardEvent("keydown", {
+            bubbles: true,
+            cancelable: true,
+            key: "Enter",
+          }),
+        );
+      });
+      await Promise.resolve();
+
+      assertEquals(selected, 1, "keyboard activation selects the item once");
+      assertEquals(scope.querySelector('[role="menu"]'), null, "menu closed on keyboard select");
+      assertEquals(document.activeElement, trigger, "focus returns to the context menu trigger");
+    } finally {
+      cleanup();
+    }
+  });
+
   it("honors a consumer-cancelled click before selecting or closing", () => {
     let clicks = 0;
     let selections = 0;

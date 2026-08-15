@@ -37,6 +37,7 @@ import * as React from "react";
 import { cx as cn } from "./cva.ts";
 import { composeRefs, Slot } from "./slot.tsx";
 import { Floating } from "./floating.tsx";
+import { focusWithoutScroll } from "./focus-management.ts";
 import { useMenuContentKeyboard } from "./menu-keyboard.ts";
 import { type DisclosureOptions, useDisclosure } from "./disclosure.ts";
 
@@ -241,6 +242,7 @@ export function ContextMenuItem({
   className,
   onSelect,
   onClick,
+  onKeyDown,
   disabled,
   asChild,
   ref,
@@ -248,6 +250,13 @@ export function ContextMenuItem({
 }: ContextMenuItemProps): React.ReactElement {
   const ctx = React.useContext(ContextMenuContext);
   const Comp = asChild ? Slot : "button";
+  const closeAndRestoreFocus = React.useCallback(() => {
+    ctx?.setOpen(false);
+    const trigger = ctx?.triggerRef.current;
+    queueMicrotask(() => {
+      if (trigger?.isConnected) focusWithoutScroll(trigger);
+    });
+  }, [ctx]);
   return (
     <Comp
       {...(asChild ? {} : { type: "button" as const })}
@@ -266,7 +275,14 @@ export function ContextMenuItem({
         onClick?.(e);
         if (e.defaultPrevented) return;
         onSelect?.();
-        ctx?.setOpen(false);
+        closeAndRestoreFocus();
+      }}
+      onKeyDown={(e: React.KeyboardEvent<HTMLButtonElement>) => {
+        onKeyDown?.(e);
+        if (e.defaultPrevented) return;
+        if (disabled || (e.key !== "Enter" && e.key !== " ")) return;
+        e.preventDefault();
+        e.currentTarget.click();
       }}
       {...props}
     >

@@ -56,12 +56,18 @@ export function DrawerTrigger(
   return <drawer.Trigger {...props} />;
 }
 
+/** Props accepted by `<DrawerContent>`. */
+export interface DrawerContentProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** React 19: ref is a regular prop, forwarded to the drawer panel. */
+  ref?: React.Ref<HTMLDivElement>;
+}
+
 /** Bottom sheet - overlay + sliding surface with a drag handle. */
 export function DrawerContent({
   children,
   className,
   ...props
-}: React.HTMLAttributes<HTMLDivElement>): React.ReactElement | null {
+}: DrawerContentProps): React.ReactElement | null {
   const { drawer } = useAdapter();
   return (
     <drawer.Content
