@@ -189,12 +189,15 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
     staticParts.push(instructions.after);
   }
 
-  if (input.skills?.length) {
-    staticParts.push(
-      hasBlock(sourceInstructions, AVAILABLE_SKILLS_BLOCK_NAME)
-        ? buildRuntimeAuthorizedSkillIdsPromptBlock(input.skills)
-        : buildRuntimeAvailableSkillsPromptBlock(input.skills),
-    );
+  if (input.skills !== undefined) {
+    const hasAuthoredSkillCatalog = hasBlock(sourceInstructions, AVAILABLE_SKILLS_BLOCK_NAME);
+    if (input.skills.length > 0 || hasAuthoredSkillCatalog) {
+      staticParts.push(
+        hasAuthoredSkillCatalog
+          ? buildRuntimeAuthorizedSkillIdsPromptBlock(input.skills)
+          : buildRuntimeAvailableSkillsPromptBlock(input.skills),
+      );
+    }
   }
 
   const messages: ChatSystemMessage[] = [

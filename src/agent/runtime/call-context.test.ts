@@ -261,6 +261,19 @@ describe("agent/runtime/call-context", () => {
       );
     });
 
+    it("emits an empty authorized inventory for an authoritative empty skill set", () => {
+      const [message] = buildAgentCallContext({
+        instructions:
+          "Base\n\n<available_skills>\n- stale: An authored catalog\n</available_skills>",
+        skills: [],
+      });
+
+      assertStringIncludes(
+        message?.content ?? "",
+        "<authorized_skill_ids>\n[]\n</authorized_skill_ids>",
+      );
+    });
+
     it("replaces an earlier generated skill-ID fallback during recomposition", () => {
       const [first] = buildAgentCallContext({
         instructions:
