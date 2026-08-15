@@ -466,6 +466,12 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         vfModuleSpecifiers('α: {} /import("\\/_vf_modules\\/unicode-labeled.js")/.test(value);'),
         [],
       );
+      assertEquals(
+        vfModuleSpecifiers(
+          '\\u0061: {} /import("\\/_vf_modules\\/escaped-labeled.js")/.test(value);',
+        ),
+        [],
+      );
     });
 
     it("ignores import-looking regex text after switch clause blocks", () => {
@@ -480,6 +486,18 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           'switch (value) { default: {} /import("\\/_vf_modules\\/default.js")/.test(value) }',
         ),
         [],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'switch (value) { case foo({}): {} /import("\\/_vf_modules\\/nested-case.js")/.test(value) }',
+        ),
+        [],
+      );
+      assertEquals(
+        specifiers(
+          'switch (value) { case ok ? {} / divisor : fallback: import("./after-case.js") }',
+        ),
+        ["./after-case.js"],
       );
     });
 

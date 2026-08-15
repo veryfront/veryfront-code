@@ -33,6 +33,7 @@ interface OpenBraceContext {
   index: number;
   previousTokenIndex: number;
   isDeclarationBlock: boolean;
+  isPlainStatementBlock: boolean;
 }
 
 interface RawJsxTagSkip {
@@ -169,25 +170,31 @@ function isIdentifierEscapeStartingAt(source: string, index: number): boolean {
   return escape !== undefined && isIdentifierChar(StringFromCodePoint(escape.codePoint));
 }
 
-function isIdentifierEscapeEndingAt(source: string, end: number): boolean {
+function identifierEscapeStartEndingAt(source: string, end: number): number | undefined {
   const fixedStart = end - "\\u0000".length;
   const fixed = identifierEscapeCodePoint(source, fixedStart);
   if (
     fixed?.end === end &&
     isIdentifierChar(StringFromCodePoint(fixed.codePoint))
   ) {
-    return true;
+    return fixedStart;
   }
 
-  if (source[end - 1] !== "}") return false;
+  if (source[end - 1] !== "}") return undefined;
   let cursor = end - 2;
   while (cursor >= 0 && isHexDigit(source[cursor])) cursor--;
   if (source[cursor] !== "{" || source[cursor - 1] !== "u" || source[cursor - 2] !== "\\") {
-    return false;
+    return undefined;
   }
 
   const braced = identifierEscapeCodePoint(source, cursor - 2);
-  return braced?.end === end && isIdentifierChar(StringFromCodePoint(braced.codePoint));
+  return braced?.end === end && isIdentifierChar(StringFromCodePoint(braced.codePoint))
+    ? cursor - 2
+    : undefined;
+}
+
+function isIdentifierEscapeEndingAt(source: string, end: number): boolean {
+  return identifierEscapeStartEndingAt(source, end) !== undefined;
 }
 
 function isIdentifierBoundaryBefore(source: string, index: number): boolean {
@@ -693,12 +700,128 @@ function isClassDeclarationBlockOpenBrace(
   return CLASS_DECLARATION_PREFIX_PATTERN.test(prefix);
 }
 
+function identifierStartBefore(source: string, end: number, rangeStart: number): number {
+  let start = end;
+  while (start > rangeStart) {
+    const escapeStart = identifierEscapeStartEndingAt(source, start);
+    if (escapeStart !== undefined && escapeStart >= rangeStart) {
+      start = escapeStart;
+      continue;
+    }
+    if (!isIdentifierPartAt(source, start - 1)) break;
+    start--;
+  }
+  return start;
+}
+
+function isIdentifierStartOrEscapeAt(source: string, index: number): boolean {
+  const escape = identifierEscapeCodePoint(source, index);
+  if (escape !== undefined) return isIdentifierStart(StringFromCodePoint(escape.codePoint));
+  return isIdentifierStartAt(source, index);
+}
+
+function switchClauseStartBeforeColon(
+  source: string,
+  start: number,
+  colonIndex: number,
+): number | null {
+  let cursor = start;
+  let candidate: number | null = null;
+  let parenDepth = 0;
+  let braceDepth = 0;
+  let bracketDepth = 0;
+
+  while (cursor < colonIndex) {
+    const skipped = skipIgnored(source, cursor);
+    if (skipped !== cursor) {
+      cursor = skipped;
+      continue;
+    }
+
+    const char = source[cursor];
+    if (char === "(") parenDepth++;
+    else if (char === ")" && parenDepth > 0) parenDepth--;
+    else if (char === "{") braceDepth++;
+    else if (char === "}" && braceDepth > 0) braceDepth--;
+    else if (char === "[") bracketDepth++;
+    else if (char === "]" && bracketDepth > 0) bracketDepth--;
+
+    if (parenDepth === 0 && braceDepth === 0 && bracketDepth === 0) {
+      if (
+        source.startsWith("case", cursor) &&
+        !isIdentifierBoundaryBefore(source, cursor) &&
+        !isIdentifierBoundaryAfter(source, cursor + "case".length)
+      ) {
+        candidate = cursor;
+        cursor += "case".length;
+        continue;
+      }
+      if (
+        source.startsWith("default", cursor) &&
+        !isIdentifierBoundaryBefore(source, cursor) &&
+        !isIdentifierBoundaryAfter(source, cursor + "default".length)
+      ) {
+        candidate = cursor;
+        cursor += "default".length;
+        continue;
+      }
+    }
+
+    cursor++;
+  }
+
+  return candidate;
+}
+
+function isSwitchClauseBlockOpenBrace(
+  source: string,
+  colonIndex: number,
+  rangeStart: number,
+  enclosingOpenBrace: OpenBraceContext | undefined,
+): boolean {
+  const searchStart = Math.max(rangeStart, (enclosingOpenBrace?.index ?? rangeStart - 1) + 1);
+  const clauseStart = switchClauseStartBeforeColon(source, searchStart, colonIndex);
+  if (clauseStart === null) return false;
+
+  const clausePrefix = normalizedDeclarationPrefix(source, clauseStart, colonIndex).trim();
+  return clausePrefix === "default" || /^case\b[\s\S]*\S$/.test(clausePrefix);
+}
+
+function isPlainStatementBlockOpenBrace(
+  source: string,
+  rangeStart: number,
+  previousTokenIndex: number,
+  enclosingOpenBrace: OpenBraceContext | undefined,
+): boolean {
+  if (previousTokenIndex < rangeStart) return true;
+  if (source[previousTokenIndex] === ";" || source[previousTokenIndex] === "}") return true;
+  if (source[previousTokenIndex] !== ":") return false;
+
+  const labelEnd = previousSignificantIndex(source, previousTokenIndex) + 1;
+  const labelStart = identifierStartBefore(source, labelEnd, rangeStart);
+  if (
+    labelStart < labelEnd &&
+    isIdentifierStartOrEscapeAt(source, labelStart)
+  ) {
+    const beforeLabel = previousSignificantIndex(source, labelStart);
+    if (
+      beforeLabel < rangeStart || source[beforeLabel] === ";" || source[beforeLabel] === "}"
+    ) {
+      return true;
+    }
+  }
+
+  return isSwitchClauseBlockOpenBrace(source, previousTokenIndex, rangeStart, enclosingOpenBrace);
+}
+
 function openBraceContext(
   source: string,
+  rangeStart: number,
   index: number,
   previousTokenIndex: number,
   matchingOpenParens: ReadonlyMap<number, OpenParenContext>,
   currentParen: OpenParenContext | undefined,
+  enclosingOpenBrace: OpenBraceContext | undefined,
 ): OpenBraceContext {
   return {
     index,
@@ -708,6 +831,12 @@ function openBraceContext(
       previousTokenIndex,
       matchingOpenParens,
     ) || isClassDeclarationBlockOpenBrace(source, index, currentParen),
+    isPlainStatementBlock: isPlainStatementBlockOpenBrace(
+      source,
+      rangeStart,
+      previousTokenIndex,
+      enclosingOpenBrace,
+    ),
   };
 }
 
@@ -730,47 +859,11 @@ function isStatementBlockCloseBrace(
     keyword === "do" || keyword === "else";
 }
 
-function isSwitchClauseBlockOpenBrace(
-  source: string,
-  colonIndex: number,
-  rangeStart: number,
-): boolean {
-  const clauseStart = Math.max(
-    rangeStart,
-    source.lastIndexOf(";", colonIndex - 1) + 1,
-    source.lastIndexOf("{", colonIndex - 1) + 1,
-    source.lastIndexOf("}", colonIndex - 1) + 1,
-  );
-  const clausePrefix = normalizedDeclarationPrefix(source, clauseStart, colonIndex).trim();
-  return clausePrefix === "default" || /^case\b[\s\S]*\S$/.test(clausePrefix);
-}
-
 function isPlainStatementBlockCloseBrace(
-  source: string,
   index: number,
-  rangeStart: number,
   matchingOpenBraces: ReadonlyMap<number, OpenBraceContext>,
 ): boolean {
-  const openBrace = matchingOpenBraces.get(index);
-  if (openBrace === undefined) return false;
-
-  const beforeOpenBrace = openBrace.previousTokenIndex;
-  if (beforeOpenBrace < rangeStart) return true;
-  if (source[beforeOpenBrace] === ";" || source[beforeOpenBrace] === "}") return true;
-  if (source[beforeOpenBrace] !== ":") return false;
-
-  const labelEnd = previousSignificantIndex(source, beforeOpenBrace) + 1;
-  let labelStart = labelEnd;
-  while (labelStart > rangeStart && isIdentifierPartAt(source, labelStart - 1)) labelStart--;
-  if (labelStart === labelEnd || !isIdentifierStartAt(source, labelStart)) {
-    return isSwitchClauseBlockOpenBrace(source, beforeOpenBrace, rangeStart);
-  }
-
-  const beforeLabel = previousSignificantIndex(source, labelStart);
-  if (beforeLabel < rangeStart || source[beforeLabel] === ";" || source[beforeLabel] === "}") {
-    return true;
-  }
-  return isSwitchClauseBlockOpenBrace(source, beforeOpenBrace, rangeStart);
+  return matchingOpenBraces.get(index)?.isPlainStatementBlock === true;
 }
 
 function isForOfKeywordBefore(
@@ -828,7 +921,7 @@ function canStartRegexLiteral(
     ) ||
       isDeclarationBlockCloseBrace(previous, matchingOpenBraces) ||
       isStatementBlockCloseBrace(source, previous, matchingOpenBraces) ||
-      isPlainStatementBlockCloseBrace(source, previous, rangeStart, matchingOpenBraces))
+      isPlainStatementBlockCloseBrace(previous, matchingOpenBraces))
   ) return true;
   if (
     (char === "+" || char === "-") &&
@@ -1090,10 +1183,12 @@ function findTemplateExpressionEnd(
       openBraces.push(
         openBraceContext(
           source,
+          expressionIndex,
           cursor,
           previousTokenIndex,
           matchingOpenParens,
           openParens.at(-1),
+          openBraces.at(-1),
         ),
       );
       braceDepth++;
@@ -1247,10 +1342,12 @@ export function findStaticImportFromSpans(
       openBraces.push(
         openBraceContext(
           source,
+          0,
           cursor,
           previousTokenIndex,
           matchingOpenParens,
           openParens.at(-1),
+          openBraces.at(-1),
         ),
       );
       atStatementStart = false;
@@ -1454,10 +1551,12 @@ function scanDynamicImportRange(
       openBraces.push(
         openBraceContext(
           source,
+          rangeStart,
           cursor,
           previousTokenIndex,
           matchingOpenParens,
           openParens.at(-1),
+          openBraces.at(-1),
         ),
       );
       previousTokenIndex = cursor;
@@ -1646,10 +1745,12 @@ export function findStaticSideEffectImportSpans(
       openBraces.push(
         openBraceContext(
           source,
+          0,
           cursor,
           previousTokenIndex,
           matchingOpenParens,
           openParens.at(-1),
+          openBraces.at(-1),
         ),
       );
       atStatementStart = false;
