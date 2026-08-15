@@ -15,6 +15,7 @@ import * as React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
@@ -111,7 +112,7 @@ function render(element: React.ReactElement): {
   doc: Document;
   host: HTMLElement;
   click: (el: Element) => void;
-  unmount: () => void;
+  unmount: () => Promise<void>;
 } {
   const dom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`);
   const restore = installDom(dom);
@@ -124,9 +125,9 @@ function render(element: React.ReactElement): {
     host: host as unknown as HTMLElement,
     click: (el: Element) =>
       flushSync(() => el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))),
-    unmount: () => {
+    unmount: async () => {
       try {
-        root.unmount();
+        await unmountReactRoot(root);
       } finally {
         restore();
       }
@@ -175,7 +176,7 @@ describe("AlertDialog", () => {
       );
       assertEquals(doc.getElementById(panel.id), panel, "panel id must be present in the DOM");
     } finally {
-      unmount();
+      await unmount();
     }
   });
 
@@ -211,7 +212,7 @@ describe("AlertDialog", () => {
         "This action needs confirmation.",
       );
     } finally {
-      unmount();
+      await unmount();
     }
   });
 
@@ -261,7 +262,7 @@ describe("AlertDialog", () => {
       await waitFor(() => !panel.isConnected, "alert dialog did not close");
       assertEquals(doc.activeElement, trigger, "closing restores focus to the trigger");
     } finally {
-      unmount();
+      await unmount();
     }
   });
 
@@ -298,7 +299,7 @@ describe("AlertDialog", () => {
         "the portalled surface retains the Veryfront token scope",
       );
     } finally {
-      unmount();
+      await unmount();
     }
   });
 
@@ -312,7 +313,7 @@ describe("AlertDialog", () => {
       const panel = doc.querySelector('[role="alertdialog"]');
       assert(panel, "an element with role='alertdialog' must exist while open");
     } finally {
-      unmount();
+      await unmount();
     }
   });
 
@@ -373,7 +374,7 @@ describe("AlertDialog", () => {
       assert(doc.querySelector('[role="dialog"]'), "underlying dialog stays open");
       assert(doc.querySelector('[role="alertdialog"]'), "alert dialog stays open");
     } finally {
-      unmount();
+      await unmount();
     }
   });
 
@@ -405,7 +406,7 @@ describe("AlertDialog", () => {
         "described node is the description",
       );
     } finally {
-      unmount();
+      await unmount();
     }
   });
 
@@ -426,7 +427,7 @@ describe("AlertDialog", () => {
         "clicking Cancel did not close the alert dialog",
       );
     } finally {
-      unmount();
+      await unmount();
     }
   });
 });
