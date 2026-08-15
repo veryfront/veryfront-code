@@ -502,6 +502,190 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     });
   });
 
+  it("uses the captured array constructor for cache snapshots", async () => {
+    const result = await runNoBrandEval(`
+      const NativeArray = Array;
+      const { buildAnthropicMessagesRequest } = await import(
+        "./extensions/ext-llm-anthropic/src/anthropic-request-builder.ts"
+      );
+      function MutableArray() {
+        return {};
+      }
+      Object.defineProperty(MutableArray, "isArray", {
+        value: NativeArray.isArray,
+      });
+      Object.defineProperty(globalThis, "Array", {
+        configurable: true,
+        value: MutableArray,
+      });
+
+      let body;
+      try {
+        body = buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+          },
+          false,
+          { push() {}, drain() { return []; } },
+        );
+      } finally {
+        Object.defineProperty(globalThis, "Array", {
+          configurable: true,
+          value: NativeArray,
+          writable: true,
+        });
+      }
+      console.log(JSON.stringify({
+        isArray: NativeArray.isArray(body.messages),
+        messages: body.messages,
+      }));
+    `);
+
+    assertEquals(result, {
+      isArray: true,
+      messages: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+    });
+  });
+
+  it("uses captured assignment when merging raw provider options", async () => {
+    const result = await runNoBrandEval(`
+      const { buildAnthropicMessagesRequest } = await import(
+        "./extensions/ext-llm-anthropic/src/anthropic-request-builder.ts"
+      );
+      const originalAssign = Object.assign;
+      let mutableAssignCalls = 0;
+      Object.assign = function(target) {
+        mutableAssignCalls += 1;
+        return target;
+      };
+
+      let body;
+      try {
+        body = buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+            providerOptions: {
+              anthropic: {
+                tools: [{
+                  name: "cached-tool",
+                  input_schema: { type: "object", properties: {} },
+                  cache_control: { type: "ephemeral" },
+                }],
+              },
+            },
+          },
+          false,
+          { push() {}, drain() { return []; } },
+        );
+      } finally {
+        Object.assign = originalAssign;
+      }
+      console.log(JSON.stringify({
+        mutableAssignCalls,
+        tools: body.tools,
+      }));
+    `);
+
+    assertEquals(result, {
+      mutableAssignCalls: 0,
+      tools: [{
+        name: "cached-tool",
+        input_schema: { type: "object", properties: {} },
+        cache_control: { type: "ephemeral" },
+      }],
+    });
+  });
+
+  it("rejects raw provider bucket accessors before cache budgeting", () => {
+    let hookCalls = 0;
+    const tools = Array.from({ length: 5 }, (_, index) => ({
+      name: `bucket-hook-${index}`,
+      input_schema: { type: "object", properties: {} },
+      cache_control: () => "omitted",
+    })) as Array<Record<string, unknown>>;
+    const anthropic = { tools } as Record<string, unknown>;
+    Object.defineProperty(anthropic, "model", {
+      enumerable: true,
+      get() {
+        hookCalls += 1;
+        for (const tool of tools) {
+          tool.cache_control = { type: "ephemeral" };
+        }
+        return "mutated-model";
+      },
+    });
+
+    let thrown: unknown;
+    try {
+      buildAnthropicMessagesRequest(
+        "claude-sonnet-4-6",
+        "anthropic",
+        {
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+          providerOptions: { anthropic },
+        },
+        false,
+        createWarningCollector(),
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    assertEquals(hookCalls, 0);
+    assertEquals(thrown instanceof TypeError, true);
+    assertEquals(
+      (thrown as Error).message,
+      "Anthropic provider options could not be inspected",
+    );
+  });
+
+  it("rejects raw provider thinking accessors before cache budgeting", () => {
+    let hookCalls = 0;
+    const tools = Array.from({ length: 5 }, (_, index) => ({
+      name: `thinking-hook-${index}`,
+      input_schema: { type: "object", properties: {} },
+      cache_control: () => "omitted",
+    })) as Array<Record<string, unknown>>;
+    const thinking = { budget_tokens: 1024 } as Record<string, unknown>;
+    Object.defineProperty(thinking, "type", {
+      enumerable: true,
+      get() {
+        hookCalls += 1;
+        for (const tool of tools) {
+          tool.cache_control = { type: "ephemeral" };
+        }
+        return "enabled";
+      },
+    });
+
+    let thrown: unknown;
+    try {
+      buildAnthropicMessagesRequest(
+        "claude-sonnet-4-6",
+        "anthropic",
+        {
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+          providerOptions: { anthropic: { thinking, tools } },
+        },
+        false,
+        createWarningCollector(),
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    assertEquals(hookCalls, 0);
+    assertEquals(thrown instanceof TypeError, true);
+    assertEquals(
+      (thrown as Error).message,
+      "Anthropic provider thinking.type must be a non-empty string",
+    );
+  });
+
   it("uses descriptor snapshots during TTL normalization", async () => {
     const result = await runNoBrandEval(`
       const { buildAnthropicMessagesRequest } = await import(
@@ -1832,6 +2016,47 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       "Anthropic cache inputs must not define toJSON hooks",
     );
     assertEquals(hookCalls, 0);
+  });
+
+  it("rejects earlier request-field hooks before budgeting tool breakpoints", () => {
+    let hookCalls = 0;
+    const tools = Array.from({ length: 5 }, (_, index) => ({
+      name: `body-hook-${index}`,
+      input_schema: { type: "object", properties: {} },
+      cache_control: () => "omitted",
+    })) as Array<Record<string, unknown>>;
+    const model = {
+      toJSON() {
+        hookCalls += 1;
+        for (const tool of tools) {
+          tool.cache_control = { type: "ephemeral" };
+        }
+        return "mutated-model";
+      },
+    };
+
+    let thrown: unknown;
+    try {
+      buildAnthropicMessagesRequest(
+        "claude-sonnet-4-6",
+        "anthropic",
+        {
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+          providerOptions: { anthropic: { model, tools } },
+        },
+        false,
+        createWarningCollector(),
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    assertEquals(hookCalls, 0);
+    assertEquals(thrown instanceof TypeError, true);
+    assertEquals(
+      (thrown as Error).message,
+      "Anthropic cache inputs must not define toJSON hooks",
+    );
   });
 
   it("rejects boxed primitive coercion before budgeting tool breakpoints", () => {

@@ -36,16 +36,19 @@ import {
 type ProviderCacheTtl = boolean | "5m" | "1h";
 
 const apply = Reflect.apply;
+const NativeArray = Array;
 const ArrayIsArray = Array.isArray;
 const booleanValueOf = Boolean.prototype.valueOf;
 const NativeSet = Set;
 const numberValueOf = Number.prototype.valueOf;
+const objectAssign = Object.assign;
 const objectDefineProperty = Object.defineProperty;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectGetPrototypeOf = Object.getPrototypeOf;
 const objectHasOwn = Object.hasOwn;
 const objectKeys = Object.keys;
 const reflectDeleteProperty = Reflect.deleteProperty;
+const reflectOwnKeys = Reflect.ownKeys;
 const setAdd = Set.prototype.add;
 const setDelete = Set.prototype.delete;
 const setHas = Set.prototype.has;
@@ -1554,7 +1557,7 @@ function snapshotAnthropicCacheArray<T>(
   label: string,
 ): T[] {
   assertNoAnthropicCacheJsonHook(value);
-  const snapshot = new Array<T>(value.length);
+  const snapshot = new NativeArray<T>(value.length);
   for (let index = 0; index < value.length; index += 1) {
     let descriptor: PropertyDescriptor | undefined;
     try {
@@ -1671,7 +1674,7 @@ function retainLatestAnthropicMessageCacheBreakpoints(
     return messages;
   }
 
-  const normalizedMessages = new Array<AnthropicCompatibleMessage>(messages.length);
+  const normalizedMessages = new NativeArray<AnthropicCompatibleMessage>(messages.length);
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
     const message = readAnthropicArrayDataElement(
       messages,
@@ -1771,14 +1774,70 @@ function readJsonSerializedAnthropicString(value: unknown): string | undefined {
   throw new TypeError("Anthropic cache strings must use primitive string values");
 }
 
-function prepareAnthropicProviderOptions(
-  providerOptions: Record<string, unknown> | undefined,
-): Record<string, unknown> | undefined {
-  if (providerOptions === undefined || canIdentifyProxyWithoutHooks) {
-    return providerOptions;
+function snapshotAnthropicProviderBucket(
+  bucket: object,
+): Record<string, unknown> {
+  if (isProxyWithoutHooks(bucket)) {
+    throw new TypeError("Anthropic provider options could not be inspected");
   }
 
+  const snapshot: Record<string, unknown> = {};
+  let keys: PropertyKey[];
   try {
+    keys = apply(reflectOwnKeys, Reflect, [bucket]) as PropertyKey[];
+  } catch {
+    throw new TypeError("Anthropic provider options could not be inspected");
+  }
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index]!;
+    if (typeof key !== "string") continue;
+
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = objectGetOwnPropertyDescriptor(bucket, key);
+    } catch {
+      throw new TypeError("Anthropic provider options could not be inspected");
+    }
+    if (descriptor?.enumerable !== true) continue;
+    if (!objectHasOwn(descriptor, "value")) {
+      throw new TypeError("Anthropic provider options could not be inspected");
+    }
+    defineOwnEnumerableDataProperty(snapshot, key, descriptor.value);
+  }
+  return snapshot;
+}
+
+function prepareAnthropicProviderOptions(
+  providerOptions: Record<string, unknown> | undefined,
+  ...providerNames: string[]
+): Record<string, unknown> | undefined {
+  if (providerOptions === undefined) return undefined;
+
+  try {
+    if (canIdentifyProxyWithoutHooks) {
+      if (isProxyWithoutHooks(providerOptions)) {
+        throw new TypeError("Anthropic provider options could not be inspected");
+      }
+      const snapshot: Record<string, unknown> = {};
+      for (let index = 0; index < providerNames.length; index += 1) {
+        const providerName = providerNames[index]!;
+        const descriptor = objectGetOwnPropertyDescriptor(providerOptions, providerName);
+        if (descriptor === undefined) continue;
+        if (!objectHasOwn(descriptor, "value")) {
+          throw new TypeError("Anthropic provider options could not be inspected");
+        }
+        const value = descriptor.value;
+        defineOwnEnumerableDataProperty(
+          snapshot,
+          providerName,
+          value !== null && typeof value === "object" && !ArrayIsArray(value)
+            ? snapshotAnthropicProviderBucket(value)
+            : value,
+        );
+      }
+      return snapshot;
+    }
+
     const snapshot = snapshotProviderJsonValue(providerOptions, {
       dropUndefinedMembers: true,
       sortObjectKeys: false,
@@ -1955,7 +2014,7 @@ function retainLatestAnthropicCacheBreakpoints(
   values: Array<Record<string, unknown>>,
   maximum: number,
 ): Array<Record<string, unknown>> {
-  const breakpointIndexes = new Array<number>(values.length);
+  const breakpointIndexes = new NativeArray<number>(values.length);
   let breakpointCount = 0;
   for (let index = 0; index < values.length; index += 1) {
     const descriptor = objectGetOwnPropertyDescriptor(values, `${index}`);
@@ -1973,7 +2032,7 @@ function retainLatestAnthropicCacheBreakpoints(
     return values;
   }
 
-  const retained = new Array<Record<string, unknown>>(values.length);
+  const retained = new NativeArray<Record<string, unknown>>(values.length);
   for (let index = 0; index < values.length; index += 1) {
     const descriptor = objectGetOwnPropertyDescriptor(values, `${index}`);
     if (descriptor !== undefined) {
@@ -2082,6 +2141,32 @@ function assertAnthropicCacheableRequestFields(
   if (body.tools !== undefined && !ArrayIsArray(body.tools)) {
     throw new TypeError("Anthropic tools must be an array");
   }
+
+  const keys = objectKeys(body);
+  let lastCacheFieldIndex = -1;
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index];
+    if (key === "messages" || key === "system" || key === "tools") {
+      lastCacheFieldIndex = index;
+    }
+  }
+  for (let index = 0; index <= lastCacheFieldIndex; index += 1) {
+    const key = keys[index]!;
+    if (key === "messages" || key === "system" || key === "tools") {
+      continue;
+    }
+    const descriptor = objectGetOwnPropertyDescriptor(body, key);
+    if (!descriptor || !objectHasOwn(descriptor, "value")) {
+      throw new TypeError("Anthropic request fields must use enumerable data properties");
+    }
+    const value = descriptor.value;
+    if (
+      value !== null &&
+      (typeof value === "object" || typeof value === "function")
+    ) {
+      assertNoNestedAnthropicCacheJsonHooks(value, "Anthropic request fields");
+    }
+  }
 }
 
 function containsAnthropicMcpToolset(
@@ -2167,18 +2252,31 @@ function resolveAnthropicThinkingBudget(
 function resolveAnthropicProviderThinkingBudget(
   options: Record<string, unknown>,
 ): number | undefined {
-  const thinking = options.thinking;
+  const thinkingProperty = readOwnEnumerableDataProperty(options, "thinking");
+  if (!thinkingProperty) {
+    throw new TypeError("Anthropic provider thinking must be an object");
+  }
+  const thinking = thinkingProperty.present ? thinkingProperty.value : undefined;
   if (thinking === undefined) {
     return undefined;
   }
-  if (thinking === null || typeof thinking !== "object" || Array.isArray(thinking)) {
+  if (
+    thinking === null || typeof thinking !== "object" || ArrayIsArray(thinking) ||
+    isProxyWithoutHooks(thinking)
+  ) {
     throw new TypeError("Anthropic provider thinking must be an object");
   }
-  const record = thinking as Record<string, unknown>;
-  if (typeof record.type !== "string" || record.type.length === 0) {
+  const type = readOwnEnumerableDataProperty(thinking, "type");
+  if (!type?.present || typeof type.value !== "string" || type.value.length === 0) {
     throw new TypeError("Anthropic provider thinking.type must be a non-empty string");
   }
-  const budgetTokens = record.budget_tokens;
+  const budgetTokensProperty = readOwnEnumerableDataProperty(thinking, "budget_tokens");
+  if (!budgetTokensProperty) {
+    throw new TypeError(
+      "Anthropic provider thinking.budget_tokens must be a safe integer of at least 1024",
+    );
+  }
+  const budgetTokens = budgetTokensProperty.present ? budgetTokensProperty.value : undefined;
   if (
     budgetTokens !== undefined &&
     (!Number.isSafeInteger(budgetTokens) || (budgetTokens as number) < 1024)
@@ -2187,7 +2285,7 @@ function resolveAnthropicProviderThinkingBudget(
       "Anthropic provider thinking.budget_tokens must be a safe integer of at least 1024",
     );
   }
-  if (record.type !== "enabled") {
+  if (type.value !== "enabled") {
     return undefined;
   }
   if (budgetTokens === undefined) {
@@ -2227,7 +2325,7 @@ export function buildAnthropicMessagesRequestWithCorrelationState(
     toolsCacheControl,
   );
   const rawProviderOptions = readProviderOptions(
-    prepareAnthropicProviderOptions(options.providerOptions),
+    prepareAnthropicProviderOptions(options.providerOptions, "anthropic", providerName),
     "anthropic",
     providerName,
   );
@@ -2357,7 +2455,7 @@ export function buildAnthropicMessagesRequestWithCorrelationState(
     ...(options.anthropicContainer !== undefined ? { container: options.anthropicContainer } : {}),
   };
 
-  Object.assign(body, rawProviderOptions);
+  apply(objectAssign, Object, [body, rawProviderOptions]);
   if (thinkingBudget !== undefined || providerThinkingBudget !== undefined) {
     body.thinking = { type: "enabled", budget_tokens: effectiveThinkingBudget };
   }
