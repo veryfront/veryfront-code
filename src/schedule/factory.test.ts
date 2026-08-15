@@ -1021,6 +1021,33 @@ describe("schedule/factory agent targets", () => {
     assertEquals(isScheduleDefinition(definition), true);
   });
 
+  it("preserves non-agent input fields named _schedule_target as ordinary JSON", () => {
+    for (
+      const [target, legacyValue] of [
+        [{ kind: "task", id: "sync-helpdesk" }, "create_new"],
+        [{ kind: "workflow", id: "billing/sync" }, ["create_new"]],
+        [
+          { kind: "task", id: "sync-helpdesk" },
+          { conversationmode: "existing", applicationField: true },
+        ],
+      ] as const
+    ) {
+      const definition = schedule({
+        id: "sync-helpdesk",
+        schedule: "*/10 * * * *",
+        target,
+        input: { _schedule_target: legacyValue, applicationPayload: true },
+      });
+
+      assertEquals(definition.target, target);
+      assertEquals(definition.input, {
+        _schedule_target: legacyValue,
+        applicationPayload: true,
+      });
+      assertEquals(isScheduleDefinition(definition), true);
+    }
+  });
+
   it("accepts the same conversation pair declared on target and input._schedule_target", () => {
     const definition = schedule({
       id: "triage-new-cases",

@@ -1,4 +1,4 @@
-import type { TriggerTarget } from "#veryfront/trigger/target.ts";
+import type { TriggerTargetConfig } from "#veryfront/trigger/target.ts";
 import { isValidScheduleDefinition } from "./validation.ts";
 
 /** Behavior when a scheduled occurrence overlaps an active run. */
@@ -63,7 +63,7 @@ export interface ScheduleDefinition {
   /** Supported IANA timezone name; platform default when omitted. */
   timezone?: string;
   /** Task, workflow, or agent invoked by each occurrence. */
-  target: TriggerTarget;
+  target: TriggerTargetConfig;
   /** Prompt content for an agent target; unsupported for other targets. */
   agentMessage?: ScheduleAgentMessage;
   /** Bounded JSON object copied into each target run. */
@@ -87,14 +87,18 @@ export interface ScheduleDefinition {
  *
  * `cron` is an alias for `schedule`; the factory emits only `schedule`.
  */
-export type ScheduleConfig = Omit<ScheduleDefinition, "schedule" | "integrationRequirements"> & {
-  /** Alias for a five-field POSIX `schedule` expression. */
-  cron?: string;
-  /** Five-field POSIX cron expression. */
-  schedule?: string;
-  /** Integration requirements; omitted collections default to empty. */
-  integrationRequirements?: ScheduleIntegrationRequirementConfig[];
-};
+export type ScheduleConfig =
+  & Omit<ScheduleDefinition, "schedule" | "integrationRequirements" | "target">
+  & {
+    /** Task, workflow, or agent invoked by each occurrence. */
+    target: TriggerTargetConfig;
+    /** Alias for a five-field POSIX `schedule` expression. */
+    cron?: string;
+    /** Five-field POSIX cron expression. */
+    schedule?: string;
+    /** Integration requirements; omitted collections default to empty. */
+    integrationRequirements?: ScheduleIntegrationRequirementConfig[];
+  };
 
 /** Return true only when every schedule field and nested invariant is valid. */
 export function isScheduleDefinition(value: unknown): value is ScheduleDefinition {

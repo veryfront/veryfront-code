@@ -8,7 +8,7 @@ import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { discoverSourceTriggers as discoverSourceTriggersRaw } from "./discovery.ts";
 import { runTriggerTarget } from "./local-runner.ts";
-import type { TriggerTarget } from "./target.ts";
+import type { TaskTriggerTarget } from "./target.ts";
 
 interface FixtureTrigger {
   id: string;
@@ -481,7 +481,7 @@ describe("trigger runtime", () => {
   });
 
   it("runs extended trigger targets through the generic runtime helper", async () => {
-    interface OwnedTarget extends TriggerTarget {
+    interface OwnedTaskTarget extends TaskTriggerTarget {
       metadata: string;
     }
 
@@ -494,7 +494,7 @@ describe("trigger runtime", () => {
         "",
       ].join("\n"),
     });
-    const target: OwnedTarget = {
+    const target: OwnedTaskTarget = {
       kind: "task",
       id: "extended-target",
       metadata: "owned-by-consumer",

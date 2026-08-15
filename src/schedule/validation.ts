@@ -3,8 +3,9 @@ import {
   agentConversationDiagnostic,
   conversationConflictDiagnostic,
   declarationConflictDiagnostic,
-  snapshotTriggerTarget,
+  resolveTriggerTarget,
   type TriggerTarget,
+  type TriggerTargetConfig,
   triggerTargetKeys,
 } from "#veryfront/trigger/target.ts";
 import { snapshotSerializable, validateTriggerId } from "#veryfront/trigger/validation.ts";
@@ -318,7 +319,7 @@ function normalizeTimezone(
   return timezone;
 }
 
-function normalizeTarget(value: unknown): TriggerTarget {
+function normalizeTarget(value: unknown): TriggerTargetConfig {
   const target = snapshotDataRecord(
     value,
     "Schedule target",
@@ -331,11 +332,11 @@ function normalizeTarget(value: unknown): TriggerTarget {
   );
   if (conversationDetail !== null) invalid(conversationDetail);
 
-  const candidate = snapshotTriggerTarget(target);
-  if (candidate === null) {
+  const resolution = resolveTriggerTarget("Schedule target", target);
+  if (resolution.target === undefined) {
     invalid("Schedule target must specify a valid task, workflow, or agent id.");
   }
-  return candidate;
+  return resolution.target;
 }
 
 function normalizeAgentMessage(
@@ -672,7 +673,9 @@ function normalizeScheduleUnsafe(value: unknown, mode: ValidationMode): Schedule
     );
   if (conflictDetail !== null) invalid(conflictDetail);
 
-  const legacyTargetDetail = legacyScheduleTargetDiagnostic(input, legacyConversation);
+  const legacyTargetDetail = target.kind === "agent"
+    ? legacyScheduleTargetDiagnostic(input, legacyConversation)
+    : null;
   if (legacyTargetDetail !== null) invalid(legacyTargetDetail);
 
   const timeoutSeconds = optionalPositiveInteger(

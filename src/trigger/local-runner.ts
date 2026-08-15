@@ -16,7 +16,7 @@ import {
 } from "#veryfront/task/project-runtime.ts";
 import { runTask } from "#veryfront/task/runner.ts";
 import { sleep } from "#veryfront/utils/sleep.ts";
-import { resolveTriggerTarget, type TriggerTarget } from "./target.ts";
+import { resolveTriggerTarget, type TriggerTarget, type TriggerTargetConfig } from "./target.ts";
 import { snapshotSerializable } from "./validation.ts";
 
 const WORKFLOW_STATUS_POLL_INTERVAL_MS = 1_000;
@@ -34,7 +34,7 @@ export interface RunTriggerTargetOptions {
   /** Project identifier exposed to task execution context. */
   projectId?: string;
   /** Canonical task, workflow, or agent reference to execute. */
-  target: TriggerTarget;
+  target: TriggerTargetConfig;
   /** Bounded JSON input supplied to tasks and workflows. */
   input?: unknown;
   /** Required prompt input for agent targets. */

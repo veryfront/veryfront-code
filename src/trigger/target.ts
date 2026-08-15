@@ -39,6 +39,12 @@ export interface AgentTriggerTarget extends TriggerTarget {
   conversationId?: string | null;
 }
 
+/** Author-facing target shape with conversation fields narrowed by kind. */
+export type TriggerTargetConfig =
+  | TaskTriggerTarget
+  | WorkflowTriggerTarget
+  | AgentTriggerTarget;
+
 /** Canonical reference to a runnable project definition. */
 export interface TriggerTarget {
   /** Definition kind resolved by project runtime discovery. */
@@ -203,7 +209,7 @@ function formatDiagnosticProperty(label: string, key: string): string {
 
 /** A canonical target, or the reason the value is not one. */
 export type TriggerTargetResolution =
-  | { readonly target: TriggerTarget; readonly detail?: undefined }
+  | { readonly target: TriggerTargetConfig; readonly detail?: undefined }
   | { readonly target?: undefined; readonly detail: string };
 
 function requireOwnDataField(

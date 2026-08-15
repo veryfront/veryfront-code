@@ -43,8 +43,8 @@ export default webhook({
 | Name                       | Description                                                                   | Source                                                                                         |
 | -------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | `discoverWebhooks`         | Discover and validate source-defined webhooks across configured directories.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/discovery.ts#L29)   |
-| `isWebhookDefinition`      | Return true only when every webhook field and nested invariant is valid.      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L78)       |
-| `isWebhookId`              | Return true for source webhook identifiers accepted by hosted reconciliation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/validation.ts#L246) |
+| `isWebhookDefinition`      | Return true only when every webhook field and nested invariant is valid.      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L81)       |
+| `isWebhookId`              | Return true for source webhook identifiers accepted by hosted reconciliation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/validation.ts#L247) |
 | `prepareWebhookInvocation` | Revalidate and own a definition and payload before local webhook execution.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/runtime.ts#L168)    |
 | `webhook`                  | Validate and normalize a source-defined webhook configuration.                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/factory.ts#L10)     |
 

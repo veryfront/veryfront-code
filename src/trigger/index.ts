@@ -45,6 +45,7 @@ export type {
   AgentTriggerTarget,
   TaskTriggerTarget,
   TriggerTarget,
+  TriggerTargetConfig,
   TriggerTargetKind,
   WorkflowTriggerTarget,
 } from "./target.ts";

@@ -2,8 +2,9 @@ import { VeryfrontError, WEBHOOK_CONFIG_INVALID } from "#veryfront/errors";
 import {
   agentConversationDiagnostic,
   conversationConflictDiagnostic,
-  snapshotTriggerTarget,
+  resolveTriggerTarget,
   type TriggerTarget,
+  type TriggerTargetConfig,
   triggerTargetKeys,
 } from "#veryfront/trigger/target.ts";
 import { snapshotSerializable, validateTriggerId } from "#veryfront/trigger/validation.ts";
@@ -255,7 +256,7 @@ export function isWebhookId(value: unknown): value is string {
   }
 }
 
-function normalizeTarget(value: unknown): TriggerTarget {
+function normalizeTarget(value: unknown): TriggerTargetConfig {
   const target = snapshotDataRecord(
     value,
     "Webhook target",
@@ -268,13 +269,16 @@ function normalizeTarget(value: unknown): TriggerTarget {
   );
   if (conversationDetail !== null) invalid(conversationDetail);
 
-  const candidate = snapshotTriggerTarget(target);
-  if (candidate === null || candidate.id.length > MAX_TARGET_ID_LENGTH) {
+  const resolution = resolveTriggerTarget("Webhook target", target);
+  if (
+    resolution.target === undefined ||
+    resolution.target.id.length > MAX_TARGET_ID_LENGTH
+  ) {
     invalid(
       `Webhook target must specify a task, workflow, or agent id of at most ${MAX_TARGET_ID_LENGTH} characters using the canonical trigger id format.`,
     );
   }
-  return candidate;
+  return resolution.target;
 }
 
 function snapshotFilterValue(value: unknown, label: string): unknown {
