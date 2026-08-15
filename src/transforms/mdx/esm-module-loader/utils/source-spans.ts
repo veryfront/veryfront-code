@@ -107,6 +107,13 @@ function isIdentifierPartAt(source: string, index: number): boolean {
   return isIdentifierChar(identifierCharacterAt(source, index));
 }
 
+function skipLineComment(source: string, index: number): number {
+  let cursor = index + 2;
+  while (cursor < source.length && !isLineTerminator(source[cursor]!)) cursor++;
+  if (cursor >= source.length) return source.length;
+  return source[cursor] === "\r" && source[cursor + 1] === "\n" ? cursor + 2 : cursor + 1;
+}
+
 function isStatementKeywordAt(
   source: string,
   index: number,
@@ -125,8 +132,7 @@ function skipIgnored(source: string, index: number): number {
   const next = source[index + 1];
 
   if (char === "/" && next === "/") {
-    const newline = source.indexOf("\n", index + 2);
-    return newline === -1 ? source.length : newline + 1;
+    return skipLineComment(source, index);
   }
 
   if (char === "/" && next === "*") {
@@ -177,11 +183,15 @@ function skipWhitespaceAndComments(source: string, index: number): number {
 }
 
 function nextStatementCursor(source: string, index: number): number {
-  const semicolon = source.indexOf(";", index);
-  const newline = source.indexOf("\n", index);
-  const candidates = [semicolon, newline].filter((position) => position >= 0);
-  if (candidates.length === 0) return source.length;
-  return Math.min(...candidates) + 1;
+  let cursor = index;
+  while (cursor < source.length) {
+    if (source[cursor] === ";") return cursor + 1;
+    if (isLineTerminator(source[cursor]!)) {
+      return source[cursor] === "\r" && source[cursor + 1] === "\n" ? cursor + 2 : cursor + 1;
+    }
+    cursor++;
+  }
+  return source.length;
 }
 
 function hexDigitValue(char: string | undefined): number {
@@ -658,8 +668,7 @@ function skipExpressionIgnored(
   const next = source[index + 1];
 
   if (char === "/" && next === "/") {
-    const newline = source.indexOf("\n", index + 2);
-    return newline === -1 ? source.length : newline + 1;
+    return skipLineComment(source, index);
   }
 
   if (char === "/" && next === "*") {
@@ -929,7 +938,7 @@ export function findStaticImportFromSpans(
     if (char === ";" && openParens.at(-1)?.isForHeader) {
       openParens.at(-1)!.hasSemicolon = true;
     }
-    if (char === ";" || char === "\n") {
+    if (char === ";" || (char !== undefined && isLineTerminator(char))) {
       atStatementStart = true;
       if (char === ";") previousTokenIndex = cursor;
       cursor++;
@@ -1299,7 +1308,7 @@ export function findStaticSideEffectImportSpans(
     if (char === ";" && openParens.at(-1)?.isForHeader) {
       openParens.at(-1)!.hasSemicolon = true;
     }
-    if (char === ";" || char === "\n") {
+    if (char === ";" || (char !== undefined && isLineTerminator(char))) {
       atStatementStart = true;
       if (char === ";") previousTokenIndex = cursor;
       cursor++;

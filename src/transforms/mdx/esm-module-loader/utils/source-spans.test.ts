@@ -155,6 +155,19 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("recognizes every ECMAScript line terminator", () => {
+      for (const lineTerminator of ["\r", "\u2028", "\u2029"]) {
+        assertEquals(
+          findStaticImportFromSpans(
+            `const ready = true // note${lineTerminator}import value from "/_vf_modules/real.js"`,
+            (specifier) => specifier.startsWith("/_vf_modules/") ? specifier : null,
+            UNBOUNDED,
+          ).map((span) => span.path),
+          ["/_vf_modules/real.js"],
+        );
+      }
+    });
+
     it("finds static imports after regex literals containing string delimiters", () => {
       const cases = [
         [`const single = /it's/; import single from "./after-single.js";`, "./after-single.js"],
@@ -941,6 +954,19 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         ).map((span) => span.path),
         ["./after-class.js"],
       );
+    });
+
+    it("recognizes every ECMAScript line terminator", () => {
+      for (const lineTerminator of ["\r", "\u2028", "\u2029"]) {
+        assertEquals(
+          findStaticSideEffectImportSpans(
+            `const ready = true // note${lineTerminator}import "/_vf_modules/real.js"`,
+            (specifier) => specifier.startsWith("/_vf_modules/") ? specifier : null,
+            UNBOUNDED,
+          ).map((span) => span.path),
+          ["/_vf_modules/real.js"],
+        );
+      }
     });
 
     it("ignores side-effect import text inside regex literals", () => {
