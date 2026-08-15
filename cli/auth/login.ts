@@ -16,7 +16,7 @@ import {
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../shared/json-output.ts";
 import { isInteractive } from "../shared/interactive.ts";
 import { getEnvSource } from "veryfront/utils/env-loader";
-import { basename, relative } from "veryfront/platform/path";
+import { basename, isAbsolute, relative } from "veryfront/platform/path";
 import { cwd } from "veryfront/platform";
 
 /**
@@ -34,15 +34,15 @@ function describeApiTokenSource(): string {
   if (origin.source !== "env-file") return "(via VERYFRONT_API_TOKEN)";
 
   // Repo-relative only: AGENTS.md forbids local absolute paths in user-facing
-  // output. A file outside the working directory degrades to its name rather
-  // than exposing the layout above it.
+  // output. A file outside the working directory, including a Windows
+  // cross-drive result, degrades to its name rather than exposing the layout.
   // A bare filename stays bare (`.env`); anything nested is prefixed so it
   // reads unambiguously as a path (`./config/.env`). The test is for a
   // separator rather than a leading ".", because a dot-*directory* also starts
   // with one, so `.config/.env` would otherwise be the only nested path printed
   // without the prefix.
   const rel = relative(cwd(), origin.file);
-  const shown = !rel || rel.startsWith("..")
+  const shown = rel === "." || rel.startsWith("..") || isAbsolute(rel)
     ? basename(origin.file)
     : /[/\\]/.test(rel) && !rel.startsWith("./")
     ? `./${rel}`
