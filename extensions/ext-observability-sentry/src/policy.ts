@@ -29,7 +29,7 @@ const SQL_UNRECOGNIZED_DOLLAR_QUOTE_START_PATTERN = /^\$[^\s'"$]+\$/u;
 // identifier match, so `col$tag$inner$tag$` is one identifier rather than `col` followed by a
 // literal. `$` is deliberately absent from this class so that adjacent literals such as
 // `$$a$$$$b$$` still parse as two dollar-quoted strings.
-const SQL_IDENTIFIER_BEFORE_DOLLAR_PATTERN = /[A-Za-z0-9_]/;
+const SQL_IDENTIFIER_BEFORE_DOLLAR_PATTERN = /[A-Za-z0-9_]|\P{ASCII}/u;
 const SQL_NUMERIC_LITERAL_PATTERN =
   /^(?:0[xX]_?[0-9A-Fa-f](?:_?[0-9A-Fa-f])*|0[oO]_?[0-7](?:_?[0-7])*|0[bB]_?[01](?:_?[01])*|(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)(?:[eE][+-]?\d(?:_?\d)*)?)/;
 const SQL_IDENTIFIER_CHAR_PATTERN = /[A-Za-z0-9_$]/;
@@ -241,7 +241,10 @@ function redactSqlLiteralsForTitle(query: string): string {
     }
 
     if (character === "'") {
-      index = findQuotedSqlTokenEnd(query, index, "'").end;
+      // The event does not carry the server's `standard_conforming_strings`
+      // setting. Treat backslash escapes conservatively so a quote accepted as
+      // escaped by PostgreSQL cannot expose the rest of a sensitive literal.
+      index = findQuotedSqlTokenEnd(query, index, "'", { allowBackslashEscapes: true }).end;
       redacted += "?";
       continue;
     }

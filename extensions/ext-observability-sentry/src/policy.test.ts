@@ -501,7 +501,7 @@ it("policy redacts quoted SQL literals from Failed query titles", () => {
   );
 });
 
-it("policy parses SQL backslash escapes only for escape string literals", () => {
+it("policy keeps SQL string boundaries around pairs of backslashes", () => {
   const event = prepareSentryEvent(
     {
       exception: {
@@ -519,6 +519,25 @@ it("policy parses SQL backslash escapes only for escape string literals", () => 
     event.exception?.values?.[0]?.value,
     'Failed query: select ? ?, ? from "orders"',
   );
+});
+
+it("policy redacts backslash-escaped ordinary SQL strings conservatively", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value: String.raw`Failed query:
+  select 'safe\' private@example.test' from "orders"`,
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  const value = event.exception?.values?.[0]?.value ?? "";
+  assertEquals(value, 'Failed query: select ? from "orders"');
+  assertEquals(value.includes("private@example.test"), false);
 });
 
 it("policy redacts dollar-quoted and numeric SQL literals without hiding query structure", () => {
@@ -615,6 +634,25 @@ it("policy treats a dollar sign after an identifier character as part of the ide
   assertEquals(
     event.exception?.values?.[0]?.value,
     "Failed query: select col$tag$inner$tag$, other from t where id = $1",
+  );
+});
+
+it("policy treats a dollar sign after a non-Latin identifier character as part of it", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value: "Failed query: \n  select 名$tag$inner$tag$, other from t where id = $1",
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  assertEquals(
+    event.exception?.values?.[0]?.value,
+    "Failed query: select 名$tag$inner$tag$, other from t where id = $1",
   );
 });
 
