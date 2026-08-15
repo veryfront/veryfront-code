@@ -19,6 +19,7 @@ architecture or guide docs only after the corresponding code exists.
 | --------------------------------------- | ------------------------------------ | ------ |
 | [0001](./0001-ui-primitive-adapters.md) | Bring-your-own UI primitive adapters | Draft  |
 | [0029](./29-chat-api-shape.md)          | Chat API shape                       | Draft  |
+| [0030](./0030-salesforce-case-triage-template.md) | Salesforce Case Triage: a fork-and-run integration template | Draft  |
 
 ## Writing an RFC
 
