@@ -997,6 +997,15 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       }
     });
 
+    it("keeps class context across nested extends braces", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'class Loader extends mixin({}) {} /import("\\/_vf_modules\\/fake.js")/.test(value);',
+        ),
+        [],
+      );
+    });
+
     it("treats Unicode identifier parts as import boundaries", () => {
       for (
         const source of [

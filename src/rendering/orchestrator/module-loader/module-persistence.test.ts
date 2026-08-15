@@ -175,6 +175,7 @@ describe("module-loader/module-persistence", () => {
     const cases = [
       `export const pattern = /export default/;`,
       `if (enabled) /export default/.test(source); export const value = 1;`,
+      `if (enabled) {} /export default/.test(source); export const value = 1;`,
       `function read() { return /* keep the comment */ /export default/.source; }`,
       `function read() { return // keep the comment\n/export default/.source; }`,
     ] as const;

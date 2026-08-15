@@ -769,11 +769,20 @@ function isDeclarationBlockCloseBrace(
   const openBrace = matchingOpenBraces.get(index);
   if (openBrace === undefined) return false;
 
-  const declarationStart = Math.max(
-    source.lastIndexOf(";", openBrace.index - 1),
-    source.lastIndexOf("{", openBrace.index - 1),
-    source.lastIndexOf("}", openBrace.index - 1),
-  ) + 1;
+  let declarationStart = 0;
+  for (let cursor = openBrace.index - 1; cursor >= 0; cursor--) {
+    if (source[cursor] === "}") {
+      const nestedBrace = matchingOpenBraces.get(cursor);
+      if (nestedBrace !== undefined) {
+        cursor = nestedBrace.index;
+        continue;
+      }
+    }
+    if (source[cursor] === ";" || source[cursor] === "{" || source[cursor] === "}") {
+      declarationStart = cursor + 1;
+      break;
+    }
+  }
   const prefix = source.slice(declarationStart, openBrace.index).trimStart().replace(
     /\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g,
     " ",

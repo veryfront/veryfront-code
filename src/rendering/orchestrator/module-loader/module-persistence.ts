@@ -120,7 +120,9 @@ export async function readPersistedUnresolvedSpecifiers(
 function hasDefaultExport(code: string): boolean {
   let previousTokenIndex = -1;
   const controlConditionCloseParens = new Set<number>();
+  const controlBlockCloseBraces = new Set<number>();
   const openParens: boolean[] = [];
+  const openBraces: boolean[] = [];
 
   for (let index = 0; index < code.length;) {
     index = skipTrivia(code, index);
@@ -145,6 +147,7 @@ function hasDefaultExport(code: string): boolean {
     const next = skipTextToken(code, index, {
       previousTokenIndex,
       controlConditionCloseParens,
+      controlBlockCloseBraces,
     });
     if (next !== index) {
       previousTokenIndex = next - 1;
@@ -167,6 +170,13 @@ function hasDefaultExport(code: string): boolean {
       );
     } else if (code[index] === ")" && openParens.pop() === true) {
       controlConditionCloseParens.add(index);
+    } else if (code[index] === "{") {
+      openBraces.push(
+        code[previousTokenIndex] === ")" &&
+          controlConditionCloseParens.has(previousTokenIndex),
+      );
+    } else if (code[index] === "}" && openBraces.pop() === true) {
+      controlBlockCloseBraces.add(index);
     }
 
     previousTokenIndex = index;
@@ -273,6 +283,7 @@ function skipTrivia(source: string, index: number): number {
 interface RegexScanContext {
   previousTokenIndex: number;
   controlConditionCloseParens: ReadonlySet<number>;
+  controlBlockCloseBraces: ReadonlySet<number>;
 }
 
 function skipTextToken(
@@ -315,6 +326,9 @@ function skipRegexToken(
     if (char === ")" && context?.controlConditionCloseParens.has(previous)) {
       // A statement can start with a regex immediately after a control
       // condition, for example `if (ready) /pattern/.test(value)`.
+    } else if (char === "}" && context?.controlBlockCloseBraces.has(previous)) {
+      // The same is true after the braced form, for example
+      // `if (ready) {} /pattern/.test(value)`.
     } else if (!"([{=,:;!~?&|+-*%^<>".includes(char)) {
       const keyword = identifierBefore(source, previous);
       if (keyword !== null && isMemberNameBefore(source, previous)) return index;
