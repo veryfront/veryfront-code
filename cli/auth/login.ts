@@ -270,34 +270,42 @@ async function loginWithToken(): Promise<string | null> {
 async function describeExistingSession(
   env: EnvironmentConfig,
 ): Promise<AuthIdentity | null> {
-  const token = env.apiToken ?? await readToken(env);
-  if (!token) return null;
+  const tokens: string[] = [];
+  if (env.apiToken) tokens.push(env.apiToken);
+  const storedToken = await readToken(env);
+  if (storedToken) tokens.push(storedToken);
 
-  let identity: AuthIdentity | null;
-  try {
-    identity = await validateCredential(token, env);
-  } catch {
-    return null;
-  }
-  if (!identity) return null;
+  for (const token of tokens) {
+    let identity: AuthIdentity | null;
+    try {
+      identity = await validateCredential(token, env);
+    } catch {
+      continue;
+    }
+    if (!identity) continue;
 
-  if (isJsonMode()) {
-    await outputJson(createSuccessEnvelope("login", { authenticated: true, existing: true }));
+    if (isJsonMode()) {
+      await outputJson(createSuccessEnvelope("login", { authenticated: true, existing: true }));
+      return identity;
+    }
+
+    console.log();
+    console.log(
+      "  ✓ " +
+        (isApiKeyIdentity(identity)
+          ? "Already authenticated with an API key"
+          : "Already logged in as " + brand(identity.email)),
+    );
+    console.log(
+      "  " +
+        dim(
+          "Run 'veryfront login --token' (or --google, --github, --microsoft) to sign in again.",
+        ),
+    );
     return identity;
   }
 
-  console.log();
-  console.log(
-    "  ✓ " +
-      (isApiKeyIdentity(identity)
-        ? "Already authenticated with an API key"
-        : "Already logged in as " + brand(identity.email)),
-  );
-  console.log(
-    "  " +
-      dim("Run 'veryfront login --token' (or --google, --github, --microsoft) to sign in again."),
-  );
-  return identity;
+  return null;
 }
 
 export async function login(

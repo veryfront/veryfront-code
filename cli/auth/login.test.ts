@@ -371,6 +371,48 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("falls back to a valid stored session when the env token is invalid", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const output: string[] = [];
+      const requestedAuth: string[] = [];
+      await saveToken("stored-valid-token", testEnv);
+
+      try {
+        setNonInteractive(true);
+        globalThis.fetch = ((_: string | URL | Request, init?: RequestInit) => {
+          const auth = String(new Headers(init?.headers).get("authorization") ?? "");
+          requestedAuth.push(auth);
+          if (auth === "Bearer env-invalid-token") {
+            return Promise.resolve(new Response(null, { status: 401 }));
+          }
+          return Promise.resolve(
+            Response.json({ id: "user-123", email: "stored@example.com" }),
+          );
+        }) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+
+        const { login } = await import("./login.ts");
+        const env = { ...testEnv, apiToken: "env-invalid-token" };
+        const result = await login(undefined, env);
+
+        assertEquals(result, { id: "user-123", email: "stored@example.com" });
+        assertEquals(requestedAuth, [
+          "Bearer env-invalid-token",
+          "Bearer stored-valid-token",
+        ]);
+        const printed = output.join("\n");
+        assertStringIncludes(printed, "stored@example.com");
+        assertEquals(printed.includes("Enter your API token"), false);
+        assertEquals(printed.includes("stored-valid-token"), false);
+      } finally {
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
     it("still re-authenticates when a method is explicitly requested", async () => {
       // Switching accounts must stay possible: an explicit method is intent to
       // sign in again, so the existing session must not short-circuit it.
