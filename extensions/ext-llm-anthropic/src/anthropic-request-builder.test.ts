@@ -1834,6 +1834,44 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     assertEquals(hookCalls, 0);
   });
 
+  it("rejects boxed primitive coercion before budgeting tool breakpoints", () => {
+    let hookCalls = 0;
+    const tools = Array.from({ length: 5 }, (_, index) => {
+      const tool: Record<string, unknown> = {
+        name: `boxed-${index}`,
+        input_schema: { type: "object", properties: {} },
+      };
+      const metadata = new Number(index);
+      Object.defineProperty(metadata, Symbol.toPrimitive, {
+        value() {
+          hookCalls += 1;
+          tool.cache_control = { type: "ephemeral" };
+          return index;
+        },
+      });
+      tool.metadata = metadata;
+      tool.cache_control = () => "omitted";
+      return tool;
+    });
+
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+            providerOptions: { anthropic: { tools } },
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic cache records must not contain boxed primitive values",
+    );
+    assertEquals(hookCalls, 0);
+  });
+
   it("uses captured key enumeration when validating cache records", () => {
     let getterCalls = 0;
     const tool: Record<string, unknown> = {
@@ -1881,6 +1919,97 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     assertEquals(thrown instanceof TypeError, true);
     assertEquals(
       (thrown as Error).message,
+      "Anthropic cache records must contain only enumerable data properties",
+    );
+    assertEquals(getterCalls, 0);
+  });
+
+  it("uses captured descriptors when budgeting message content", () => {
+    const message = {
+      role: "user",
+      content: Array.from({ length: 5 }, (_, index) => ({
+        type: "text",
+        text: `Cached ${index}`,
+        cache_control: { type: "ephemeral" },
+      })),
+    };
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      Object,
+      "getOwnPropertyDescriptor",
+    );
+    Object.defineProperty(Object, "getOwnPropertyDescriptor", {
+      configurable: true,
+      writable: true,
+      value(value: object, key: PropertyKey) {
+        if (value === message && key === "content") {
+          return undefined;
+        }
+        return Reflect.getOwnPropertyDescriptor(value, key);
+      },
+    });
+
+    let body: ReturnType<typeof buildAnthropicMessagesRequest>;
+    try {
+      body = buildAnthropicMessagesRequest(
+        "claude-sonnet-4-6",
+        "anthropic",
+        {
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+          providerOptions: { anthropic: { messages: [message] } },
+        },
+        false,
+        createWarningCollector(),
+      );
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(Object, "getOwnPropertyDescriptor", originalDescriptor);
+      }
+    }
+
+    assertEquals(
+      body.messages[0]?.content.filter((block) => block.cache_control !== undefined).length,
+      4,
+    );
+  });
+
+  it("rejects message sibling accessors before budgeting content", () => {
+    let getterCalls = 0;
+    const firstBlock: Record<string, unknown> = {
+      type: "text",
+      text: "Initially omitted",
+      cache_control: () => "omitted",
+    };
+    const message: Record<string, unknown> = { role: "user" };
+    Object.defineProperty(message, "mutate", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        firstBlock.cache_control = { type: "ephemeral" };
+        return "mutated";
+      },
+    });
+    message.content = [
+      firstBlock,
+      ...Array.from({ length: 4 }, (_, index) => ({
+        type: "text",
+        text: `Cached ${index}`,
+        cache_control: { type: "ephemeral" },
+      })),
+    ];
+
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+            providerOptions: { anthropic: { messages: [message] } },
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
       "Anthropic cache records must contain only enumerable data properties",
     );
     assertEquals(getterCalls, 0);

@@ -36,7 +36,10 @@ import {
 type ProviderCacheTtl = boolean | "5m" | "1h";
 
 const apply = Reflect.apply;
+const ArrayIsArray = Array.isArray;
+const booleanValueOf = Boolean.prototype.valueOf;
 const NativeSet = Set;
+const numberValueOf = Number.prototype.valueOf;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectGetPrototypeOf = Object.getPrototypeOf;
 const objectHasOwn = Object.hasOwn;
@@ -56,6 +59,25 @@ function addSetValue<T>(set: Set<T>, value: T): void {
 
 function deleteSetValue<T>(set: Set<T>, value: T): void {
   apply(setDelete, set, [value]);
+}
+
+function hasBoxedPrimitiveBrand(value: object, valueOf: (this: unknown) => unknown): boolean {
+  try {
+    apply(valueOf, value, []);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isBoxedPrimitive(value: object): boolean {
+  return hasBoxedPrimitiveBrand(value, booleanValueOf) ||
+    hasBoxedPrimitiveBrand(value, numberValueOf) ||
+    hasBoxedPrimitiveBrand(value, stringValueOf);
+}
+
+function isBoxedString(value: object): boolean {
+  return hasBoxedPrimitiveBrand(value, stringValueOf);
 }
 
 type ProviderCacheControlOption = {
@@ -1308,6 +1330,9 @@ function assertNoNestedAnthropicCacheJsonHooks(
   if (depth >= 64 || hasSetValue(ancestors, value)) {
     throw new TypeError("Anthropic cache input toJSON hooks could not be inspected");
   }
+  if (isBoxedPrimitive(value)) {
+    throw new TypeError(`${label} must not contain boxed primitive values`);
+  }
   assertNoAnthropicCacheJsonHook(value);
   addSetValue(ancestors, value);
   try {
@@ -1333,7 +1358,21 @@ function assertNoNestedAnthropicCacheJsonHooks(
         nested !== null &&
         (typeof nested === "object" || typeof nested === "function")
       ) {
-        assertNoNestedAnthropicCacheJsonHooks(nested, label, ancestors, depth + 1);
+        const nestedLabel = key === "cache_control" ? "Anthropic cache_control" : label;
+        if (
+          nestedLabel === "Anthropic cache_control" &&
+          (key === "type" || key === "ttl") &&
+          isBoxedString(nested)
+        ) {
+          assertNoAnthropicCacheJsonHook(nested);
+          continue;
+        }
+        assertNoNestedAnthropicCacheJsonHooks(
+          nested,
+          nestedLabel,
+          ancestors,
+          depth + 1,
+        );
       }
     }
   } finally {
@@ -1342,6 +1381,9 @@ function assertNoNestedAnthropicCacheJsonHooks(
 }
 
 function assertNoAnthropicCacheRecordSerializationHooks(value: object): void {
+  if (isBoxedPrimitive(value)) {
+    throw new TypeError("Anthropic cache records must not contain boxed primitive values");
+  }
   assertNoAnthropicCacheJsonHook(value);
   let keys: string[];
   try {
@@ -1475,7 +1517,7 @@ function hasEmittedAnthropicCacheBreakpoint(value: Record<string, unknown>): boo
 function isAnthropicMessageCacheBlock(
   value: unknown,
 ): value is Record<string, unknown> {
-  if (typeof value === "function" || Array.isArray(value)) {
+  if (typeof value === "function" || ArrayIsArray(value)) {
     assertNoAnthropicCacheJsonHook(value);
     return false;
   }
@@ -1483,23 +1525,23 @@ function isAnthropicMessageCacheBlock(
 }
 
 function readEmittedAnthropicMessageContent(message: AnthropicCompatibleMessage): unknown[] {
-  assertNoAnthropicCacheJsonHook(message);
+  assertNoAnthropicCacheRecordSerializationHooks(message);
   let descriptor: PropertyDescriptor | undefined;
   try {
-    descriptor = Object.getOwnPropertyDescriptor(message, "content");
+    descriptor = objectGetOwnPropertyDescriptor(message, "content");
   } catch {
     throw new TypeError("Anthropic message content could not be inspected");
   }
   if (descriptor === undefined || descriptor.enumerable !== true) {
     return [];
   }
-  if (!Object.hasOwn(descriptor, "value")) {
+  if (!objectHasOwn(descriptor, "value")) {
     throw new TypeError(
       "Anthropic message content must be an own enumerable data property",
     );
   }
   const content = descriptor.value;
-  if (!Array.isArray(content)) {
+  if (!ArrayIsArray(content)) {
     if (
       (typeof content === "object" && content !== null) ||
       typeof content === "function"
@@ -1521,14 +1563,14 @@ function readAnthropicArrayDataElement(
 ): unknown {
   let descriptor: PropertyDescriptor | undefined;
   try {
-    descriptor = Object.getOwnPropertyDescriptor(value, `${index}`);
+    descriptor = objectGetOwnPropertyDescriptor(value, `${index}`);
   } catch {
     throw new TypeError(`${label} could not be inspected`);
   }
   if (descriptor === undefined) {
     return undefined;
   }
-  if (!Object.hasOwn(descriptor, "value")) {
+  if (!objectHasOwn(descriptor, "value")) {
     throw new TypeError(`${label} must contain only indexed data properties`);
   }
   return descriptor.value;
@@ -1646,7 +1688,7 @@ function prepareAnthropicProviderOptions(
       dropUndefinedMembers: true,
       sortObjectKeys: false,
     });
-    if (snapshot === null || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    if (snapshot === null || typeof snapshot !== "object" || ArrayIsArray(snapshot)) {
       throw new TypeError("Anthropic provider options could not be inspected");
     }
     return snapshot as Record<string, unknown>;
@@ -1660,20 +1702,20 @@ function readEmittedAnthropicCacheTtl(
 ): AnthropicCacheTtl | undefined {
   let descriptor: PropertyDescriptor | undefined;
   try {
-    descriptor = Object.getOwnPropertyDescriptor(value, "cache_control");
+    descriptor = objectGetOwnPropertyDescriptor(value, "cache_control");
   } catch {
     return undefined;
   }
   if (
     descriptor === undefined || descriptor.enumerable !== true ||
-    !Object.hasOwn(descriptor, "value")
+    !objectHasOwn(descriptor, "value")
   ) {
     return undefined;
   }
   const cacheControl = descriptor.value;
   if (
     typeof cacheControl !== "object" || cacheControl === null ||
-    Array.isArray(cacheControl)
+    ArrayIsArray(cacheControl)
   ) {
     return undefined;
   }
@@ -1681,7 +1723,7 @@ function readEmittedAnthropicCacheTtl(
 
   let keys: string[];
   try {
-    keys = Object.keys(cacheControl);
+    keys = objectKeys(cacheControl);
   } catch {
     return undefined;
   }
@@ -1804,7 +1846,7 @@ function retainLatestAnthropicCacheBreakpoints(
   const breakpointIndexes = new Array<number>(values.length);
   let breakpointCount = 0;
   for (let index = 0; index < values.length; index += 1) {
-    const descriptor = Object.getOwnPropertyDescriptor(values, `${index}`);
+    const descriptor = objectGetOwnPropertyDescriptor(values, `${index}`);
     if (
       descriptor !== undefined &&
       hasEmittedAnthropicCacheBreakpoint(descriptor.value)
@@ -1821,7 +1863,7 @@ function retainLatestAnthropicCacheBreakpoints(
 
   const retained = new Array<Record<string, unknown>>(values.length);
   for (let index = 0; index < values.length; index += 1) {
-    const descriptor = Object.getOwnPropertyDescriptor(values, `${index}`);
+    const descriptor = objectGetOwnPropertyDescriptor(values, `${index}`);
     if (descriptor !== undefined) {
       retained[index] = descriptor.value;
     }
@@ -1865,7 +1907,7 @@ function limitAnthropicCacheBreakpoints(
     messages,
     "Anthropic messages",
   );
-  const inspectedSystem = Array.isArray(system)
+  const inspectedSystem = ArrayIsArray(system)
     ? snapshotAnthropicCacheArray(system, "Anthropic system")
     : system;
   const inspectedTools = tools ? snapshotAnthropicCacheArray(tools, "Anthropic tools") : undefined;
@@ -1874,13 +1916,13 @@ function limitAnthropicCacheBreakpoints(
     ANTHROPIC_MAX_CACHE_BREAKPOINTS,
   );
   const messageBreakpointCount = countAnthropicMessageCacheBreakpoints(boundedMessages);
-  const boundedSystem = Array.isArray(inspectedSystem)
+  const boundedSystem = ArrayIsArray(inspectedSystem)
     ? retainLatestAnthropicCacheBreakpoints(
       inspectedSystem,
       ANTHROPIC_MAX_CACHE_BREAKPOINTS - messageBreakpointCount,
     )
     : inspectedSystem;
-  const systemBreakpointCount = Array.isArray(boundedSystem)
+  const systemBreakpointCount = ArrayIsArray(boundedSystem)
     ? countAnthropicCacheBreakpoints(boundedSystem)
     : 0;
   const boundedTools = inspectedTools
@@ -1890,7 +1932,7 @@ function limitAnthropicCacheBreakpoints(
     )
     : undefined;
   const normalizedMessages = normalizeAnthropicMessageCacheTtls(boundedMessages);
-  const normalizedSystem = Array.isArray(boundedSystem)
+  const normalizedSystem = ArrayIsArray(boundedSystem)
     ? normalizeAnthropicCacheTtls(
       boundedSystem,
       normalizedMessages.requiresOneHourPrefix,
@@ -1916,16 +1958,16 @@ function assertAnthropicCacheableRequestFields(
   body: Record<string, unknown>,
 ): asserts body is AnthropicCompatibleRequest {
   assertNoAnthropicCacheJsonHook(body);
-  if (!Array.isArray(body.messages)) {
+  if (!ArrayIsArray(body.messages)) {
     throw new TypeError("Anthropic messages must be an array");
   }
   if (
     body.system !== undefined && typeof body.system !== "string" &&
-    !Array.isArray(body.system)
+    !ArrayIsArray(body.system)
   ) {
     throw new TypeError("Anthropic system must be a string or an array");
   }
-  if (body.tools !== undefined && !Array.isArray(body.tools)) {
+  if (body.tools !== undefined && !ArrayIsArray(body.tools)) {
     throw new TypeError("Anthropic tools must be an array");
   }
 }
