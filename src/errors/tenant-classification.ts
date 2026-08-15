@@ -12,7 +12,7 @@
 import { snapshotVeryfrontError } from "./types.ts";
 
 /**
- * BUILD registry slugs that describe tenant source failing to compile, as
+ * Registry slugs that describe tenant source failing to compile or resolve, as
  * opposed to framework cache/bundle/asset infrastructure failing in the same
  * phase.
  */
@@ -20,6 +20,7 @@ const TENANT_BUILD_ERROR_SLUGS = new Set([
   "typescript-error",
   "mdx-compile-error",
   "markdown-compile-error",
+  "import-resolution-error",
 ]);
 
 /**
@@ -45,5 +46,6 @@ export function isTenantSourceBuildError(error: unknown): boolean {
   ) {
     return true;
   }
-  return snapshot.category === "BUILD" && TENANT_BUILD_ERROR_SLUGS.has(snapshot.slug);
+  return (snapshot.category === "BUILD" || snapshot.category === "MODULE") &&
+    TENANT_BUILD_ERROR_SLUGS.has(snapshot.slug);
 }
