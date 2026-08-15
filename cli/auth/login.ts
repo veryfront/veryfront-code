@@ -38,6 +38,7 @@ export type AuthIdentity = UserInfo | ApiKeyIdentity;
 
 export interface CredentialValidationOptions {
   throwOnNetworkError?: boolean;
+  throwOnCredentialValidationUnavailable?: boolean;
   /** Reuse a caller-owned cancellation or deadline across validation attempts. */
   signal?: AbortSignal;
   /**
@@ -58,7 +59,6 @@ export interface CredentialValidationOptions {
  */
 const DEFAULT_EXISTING_SESSION_TIMEOUT_MS = 5_000;
 let existingSessionTimeoutMs = DEFAULT_EXISTING_SESSION_TIMEOUT_MS;
-const SESSION_VALIDATION_UNAVAILABLE = Symbol("session-validation-unavailable");
 
 function loginIdentityData(
   identity: AuthIdentity,
@@ -84,12 +84,52 @@ async function outputLoginAuthenticationRequiredJson(): Promise<void> {
   }));
 }
 
-async function outputLoginNetworkErrorJson(): Promise<void> {
+type CredentialValidationUnavailableKind = "network" | "service" | "timeout";
+
+class CredentialValidationUnavailableError extends Error {
+  override name = "CredentialValidationUnavailableError";
+
+  constructor(
+    readonly kind: CredentialValidationUnavailableKind,
+    readonly status?: number,
+  ) {
+    super("Could not validate existing login credentials");
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+async function outputLoginValidationUnavailableJson(
+  failure: CredentialValidationUnavailableError,
+): Promise<void> {
+  if (failure.kind === "timeout") {
+    await outputJson(createErrorEnvelope("login", {
+      code: "TIMEOUT_ERROR",
+      slug: "timeout-error",
+      registrySlug: "timeout-error",
+      message: "Timed out while checking existing login credentials. Try again.",
+    }));
+    return;
+  }
+
+  if (failure.kind === "network") {
+    await outputJson(createErrorEnvelope("login", {
+      code: "NETWORK_ERROR",
+      slug: "network-error",
+      registrySlug: "network-error",
+      message: "Could not reach the Veryfront API while checking existing login credentials.",
+    }));
+    return;
+  }
+
   await outputJson(createErrorEnvelope("login", {
-    code: "NETWORK_ERROR",
-    slug: "network-error",
-    registrySlug: "network-error",
-    message: "Could not reach the Veryfront API. Check your network connection and try again.",
+    code: "API_CLIENT_ERROR",
+    slug: "api-client-error",
+    registrySlug: "api-client-error",
+    message: "Veryfront API could not validate existing login credentials.",
+    context: failure.status ? { status: failure.status } : undefined,
   }));
 }
 
@@ -159,12 +199,26 @@ export async function validateToken(
     if (!response.ok) {
       // Consume response body to prevent resource leak
       await response.body?.cancel();
+      if (options.throwOnCredentialValidationUnavailable && response.status >= 500) {
+        throw new CredentialValidationUnavailableError("service", response.status);
+      }
       if (options.throwOnNetworkError && response.status >= 500) throwNetworkError();
       return null;
     }
 
     return (await response.json()) as UserInfo;
   } catch (e) {
+    if (options.throwOnCredentialValidationUnavailable) {
+      if (e instanceof CredentialValidationUnavailableError) {
+        throw e;
+      }
+      if (isAbortError(e)) {
+        throw new CredentialValidationUnavailableError("timeout");
+      }
+      if (e instanceof TypeError) {
+        throw new CredentialValidationUnavailableError("network");
+      }
+    }
     if (e instanceof NetworkError) throw e;
     if (options.throwOnNetworkError && isCredentialNetworkFailure(e)) throwNetworkError();
     return null;
@@ -194,9 +248,23 @@ async function validateApiKey(
       signal: requestSignal(options),
     });
     await response.body?.cancel();
+    if (options.throwOnCredentialValidationUnavailable && response.status >= 500) {
+      throw new CredentialValidationUnavailableError("service", response.status);
+    }
     if (options.throwOnNetworkError && response.status >= 500) throwNetworkError();
     return response.ok;
   } catch (e) {
+    if (options.throwOnCredentialValidationUnavailable) {
+      if (e instanceof CredentialValidationUnavailableError) {
+        throw e;
+      }
+      if (isAbortError(e)) {
+        throw new CredentialValidationUnavailableError("timeout");
+      }
+      if (e instanceof TypeError) {
+        throw new CredentialValidationUnavailableError("network");
+      }
+    }
     if (e instanceof NetworkError) throw e;
     if (options.throwOnNetworkError && isCredentialNetworkFailure(e)) throwNetworkError();
     return false;
@@ -347,13 +415,14 @@ async function loginWithToken(): Promise<string | null> {
  */
 async function describeExistingSession(
   env: EnvironmentConfig,
-): Promise<AuthIdentity | typeof SESSION_VALIDATION_UNAVAILABLE | null> {
+): Promise<AuthIdentity | "json-failure-output" | null> {
   const candidates: { token: string; source: "environment" | "stored" }[] = [];
   if (env.apiToken) candidates.push({ token: env.apiToken, source: "environment" });
   const storedToken = await readToken(env);
   if (storedToken) candidates.push({ token: storedToken, source: "stored" });
   if (candidates.length === 0) return null;
   const signal = AbortSignal.timeout(existingSessionTimeoutMs);
+  let unavailable: CredentialValidationUnavailableError | null = null;
 
   for (const { token, source } of candidates) {
     let identity: AuthIdentity | null;
@@ -364,10 +433,12 @@ async function describeExistingSession(
       // through to the normal flow rather than holding the command open.
       identity = await validateCredential(token, env, {
         signal,
-        throwOnNetworkError: isJsonMode(),
+        throwOnCredentialValidationUnavailable: true,
       });
-    } catch (e) {
-      if (isJsonMode() && e instanceof NetworkError) return SESSION_VALIDATION_UNAVAILABLE;
+    } catch (error) {
+      if (error instanceof CredentialValidationUnavailableError) {
+        unavailable ??= error;
+      }
       continue;
     }
     if (!identity) continue;
@@ -422,6 +493,10 @@ async function describeExistingSession(
     return identity;
   }
 
+  if (isJsonMode() && unavailable) {
+    await outputLoginValidationUnavailableJson(unavailable);
+    return "json-failure-output";
+  }
   return null;
 }
 
@@ -436,10 +511,7 @@ export async function login(
   // that no longer validates falls through to the normal flow.
   if (method === undefined) {
     const existing = await describeExistingSession(env);
-    if (existing === SESSION_VALIDATION_UNAVAILABLE) {
-      await outputLoginNetworkErrorJson();
-      return null;
-    }
+    if (existing === "json-failure-output") return null;
     if (existing) return existing;
     if (isJsonMode()) {
       await outputLoginAuthenticationRequiredJson();
