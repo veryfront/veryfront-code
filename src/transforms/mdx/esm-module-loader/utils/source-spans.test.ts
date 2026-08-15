@@ -218,6 +218,14 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         ),
         [],
       );
+      assertEquals(
+        findStaticImportFromSpans(
+          'const x=1; export default /foo from "\\.\\/fake.js"/;',
+          matchRelative,
+          UNBOUNDED,
+        ),
+        [],
+      );
     });
 
     it("ignores static import-from text in regex literals after comments", () => {

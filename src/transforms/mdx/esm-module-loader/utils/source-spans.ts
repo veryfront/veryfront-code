@@ -1695,15 +1695,38 @@ function findFromSpan(
   matcher: SpecifierMatcher,
 ): StaticImportSpan | null {
   let cursor = statementStart;
+  let previousTokenIndex = previousSignificantIndexBeforeIgnored(source, statementStart);
+  const matchingOpenBraces = new Map<number, OpenBraceContext>();
+  const matchingOpenParens = new Map<number, OpenParenContext>();
+  const moduleDeclarationBefore = () => null;
 
   while (cursor < source.length) {
     const skipped = skipIgnored(source, cursor);
     if (skipped !== cursor) {
+      previousTokenIndex = tokenIndexAfterIgnored(source, cursor, skipped, previousTokenIndex);
       cursor = skipped;
       continue;
     }
 
     if (source[cursor] === ";") return null;
+
+    if (
+      source[cursor] === "/" &&
+      canStartRegexLiteral(
+        source,
+        cursor,
+        statementStart,
+        matchingOpenBraces,
+        matchingOpenParens,
+        undefined,
+        previousTokenIndex,
+        moduleDeclarationBefore,
+      )
+    ) {
+      cursor = skipRegexLiteral(source, cursor);
+      previousTokenIndex = cursor - 1;
+      continue;
+    }
 
     if (
       source.startsWith("from", cursor) &&
@@ -1728,6 +1751,7 @@ function findFromSpan(
       };
     }
 
+    if (!/\s/.test(source[cursor] ?? "")) previousTokenIndex = cursor;
     cursor++;
   }
 
