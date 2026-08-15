@@ -323,6 +323,40 @@ describe("agent/runtime/call-context", () => {
       assertEquals((second?.content ?? "").includes('["deploy"'), false);
     });
 
+    it("removes an earlier skill-ID discovery cursor during recomposition", () => {
+      const largeCatalog = Array.from(
+        { length: 1_000 },
+        (_, index) => ({
+          id: `skill-${index}-${"x".repeat(240)}`,
+          name: `skill-${index}`,
+          description: `Description ${index}`,
+          instructions: `Instructions ${index}`,
+        }),
+      );
+      const [first] = buildAgentCallContext({
+        instructions:
+          "Base\n\n<available_skills>\n- authored: An authored catalog\n</available_skills>",
+        skills: largeCatalog,
+      });
+      assertStringIncludes(first?.content ?? "", "<authorized_skill_id_discovery>");
+
+      const [second] = buildAgentCallContext({
+        instructions: first?.content ?? "",
+        skills: [{
+          id: "audit",
+          name: "Audit",
+          description: "Audit guidance",
+          instructions: "Audit the change",
+        }],
+      });
+
+      assertEquals((second?.content ?? "").includes("<authorized_skill_id_discovery>"), false);
+      assertStringIncludes(
+        second?.content ?? "",
+        '<authorized_skill_ids>\n["audit"]\n</authorized_skill_ids>',
+      );
+    });
+
     it("still emits the skills block when the instructions only name the tag in prose", () => {
       const [message] = buildAgentCallContext({
         instructions: "Your catalog arrives in an <available_skills> block.",

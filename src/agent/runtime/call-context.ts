@@ -44,6 +44,7 @@ export const DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER = "<!-- veryfront-runtime-cont
 const ENVIRONMENT_CONTEXT_BLOCK_NAME = "environment_context";
 const AVAILABLE_SKILLS_BLOCK_NAME = "available_skills";
 const AUTHORIZED_SKILL_IDS_BLOCK_NAME = "authorized_skill_ids";
+const AUTHORIZED_SKILL_ID_DISCOVERY_BLOCK_NAME = "authorized_skill_id_discovery";
 
 /** Project the call runs against, rendered as the `<project_context>` block. */
 export type AgentCallProjectContext = {
@@ -153,7 +154,10 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
   const runtimeContextMarker = input.runtimeContextMarker ?? DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER;
   const sourceInstructions = input.skills === undefined
     ? input.instructions
-    : removeCompleteBlocks(input.instructions, AUTHORIZED_SKILL_IDS_BLOCK_NAME);
+    : removeCompleteBlocks(
+      removeCompleteBlocks(input.instructions, AUTHORIZED_SKILL_IDS_BLOCK_NAME),
+      AUTHORIZED_SKILL_ID_DISCOVERY_BLOCK_NAME,
+    );
   const instructions = splitInstructionsAtMarker({
     instructions: sourceInstructions,
     runtimeContextMarker,

@@ -1777,12 +1777,11 @@ async function loadRuntimeSkillBody(
 }
 
 /**
- * Create runtime load skill tool for prompts that provide skill context.
+ * Create runtime load skill tool.
  *
- * Use this with {@link buildAgentCallContext} or an equivalent system prompt
- * that supplies `<available_skills>` or `<authorized_skill_ids>`. Direct tool
- * consumers that do not use that prompt context must pass `description` with
- * their own authorized skill discovery text.
+ * Prompt-composed consumers use {@link buildAgentCallContext} or equivalent
+ * skill context. Standalone consumers can use inventory paging to discover
+ * authorized IDs. Use `description` only to override the default tool copy.
  */
 export function createRuntimeLoadSkillTool(
   options: RuntimeLoadSkillToolOptions,
