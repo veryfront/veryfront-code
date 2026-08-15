@@ -1066,6 +1066,58 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     }
   });
 
+  it("rejects inherited raw array elements without reading them", () => {
+    for (
+      const [placement, label] of [
+        ["messages", "Anthropic messages"],
+        ["message-content", "Anthropic message content"],
+        ["system", "Anthropic system"],
+        ["tools", "Anthropic tools"],
+      ] as const
+    ) {
+      for (const inheritedKind of ["data", "accessor"] as const) {
+        let getterCalls = 0;
+        const inheritedValue = placement === "messages"
+          ? { role: "user", content: [] }
+          : { type: "text", text: "Inherited" };
+        const prototype = Object.create(Array.prototype);
+        Object.defineProperty(
+          prototype,
+          "0",
+          inheritedKind === "data" ? { configurable: true, value: inheritedValue } : {
+            configurable: true,
+            get() {
+              getterCalls += 1;
+              return inheritedValue;
+            },
+          },
+        );
+        const inheritedArray = new Array<unknown>(1);
+        Object.setPrototypeOf(inheritedArray, prototype);
+        const anthropic = placement === "message-content"
+          ? { messages: [{ role: "user", content: inheritedArray }] }
+          : { [placement]: inheritedArray };
+
+        assertThrows(
+          () =>
+            buildAnthropicMessagesRequest(
+              "claude-sonnet-4-6",
+              "anthropic",
+              {
+                prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+                providerOptions: { anthropic },
+              },
+              false,
+              createWarningCollector(),
+            ),
+          TypeError,
+          `${label} must not contain inherited indexed properties`,
+        );
+        assertEquals(getterCalls, 0);
+      }
+    }
+  });
+
   it("preserves a raw string system prompt supported by Anthropic", () => {
     const body = buildAnthropicMessagesRequest(
       "claude-sonnet-4-6",

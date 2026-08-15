@@ -1321,6 +1321,46 @@ function assertNoNestedAnthropicCacheJsonHooks(
 
 const ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4;
 
+function assertNoInheritedAnthropicArrayElement(
+  value: unknown[],
+  index: number,
+  label: string,
+): void {
+  const key = String(index);
+  const visited = new Set<object>();
+  let candidate: object | null;
+  try {
+    candidate = Object.getPrototypeOf(value);
+  } catch {
+    throw new TypeError(`${label} inherited indexed properties could not be inspected`);
+  }
+  let depth = 0;
+  while (candidate !== null && !visited.has(candidate) && depth < 64) {
+    if (isProxyWithoutHooks(candidate)) {
+      throw new TypeError(`${label} inherited indexed properties could not be inspected`);
+    }
+    visited.add(candidate);
+    depth += 1;
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(candidate, key);
+    } catch {
+      throw new TypeError(`${label} inherited indexed properties could not be inspected`);
+    }
+    if (descriptor !== undefined) {
+      throw new TypeError(`${label} must not contain inherited indexed properties`);
+    }
+    try {
+      candidate = Object.getPrototypeOf(candidate);
+    } catch {
+      throw new TypeError(`${label} inherited indexed properties could not be inspected`);
+    }
+  }
+  if (candidate !== null) {
+    throw new TypeError(`${label} inherited indexed properties could not be inspected`);
+  }
+}
+
 function snapshotAnthropicCacheArray<T>(
   value: T[],
   label: string,
@@ -1335,6 +1375,7 @@ function snapshotAnthropicCacheArray<T>(
       throw new TypeError(`${label} could not be inspected`);
     }
     if (descriptor === undefined) {
+      assertNoInheritedAnthropicArrayElement(value, index, label);
       continue;
     }
     if (!Object.hasOwn(descriptor, "value")) {
