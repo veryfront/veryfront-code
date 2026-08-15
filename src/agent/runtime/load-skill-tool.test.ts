@@ -21,7 +21,7 @@ import {
   LOAD_SKILL_ROOT_OWNERSHIP,
 } from "../conversation/delegation-policy.ts";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
-import { sanitizeProviderToolSchema } from "./provider-tool-compat.ts";
+import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import {
   SKILL_DOCUMENT_MAX_CHARACTERS,
   SKILL_ID_MAX_LENGTH,
@@ -51,43 +51,42 @@ import { it } from "#veryfront/testing/bdd.ts";
 const STATIC_LOAD_SKILL_INPUT_SCHEMA = {
   type: "object",
   properties: {
-    cursor: {
-      type: "integer",
-      minimum: 0,
-      maximum: 1_000,
-      description: "Pagination cursor from the prompt or a previous skill inventory response.",
-    },
-    skillId: {
-      type: "string",
-      maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
-      pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
-      description:
-        'The listed skill ID to load. A lowercase ".md" suffix is accepted for a listed ID.',
-    },
-    file: {
-      type: "string",
-      minLength: 1,
-      maxLength: SKILL_RELATIVE_PATH_MAX_LENGTH,
-      description:
-        "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
-    },
-  },
-  dependentRequired: {
-    file: ["skillId"],
-  },
-  dependentSchemas: {
-    cursor: {
+    inventory: {
+      type: "object",
       properties: {
-        skillId: false,
-        file: false,
+        cursor: {
+          type: "integer",
+          minimum: 0,
+          maximum: 1_000,
+          description: "Pagination cursor from the prompt or a previous skill inventory response.",
+        },
       },
+      additionalProperties: false,
     },
-    skillId: {
+    load: {
+      type: "object",
       properties: {
-        cursor: false,
+        skillId: {
+          type: "string",
+          maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
+          pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
+          description:
+            'The listed skill ID to load. A lowercase ".md" suffix is accepted for a listed ID.',
+        },
+        file: {
+          type: "string",
+          minLength: 1,
+          maxLength: SKILL_RELATIVE_PATH_MAX_LENGTH,
+          description:
+            "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+        },
       },
+      required: ["skillId"],
+      additionalProperties: false,
     },
   },
+  minProperties: 1,
+  maxProperties: 1,
   additionalProperties: false,
 } as const;
 
@@ -466,10 +465,18 @@ it("keeps supported .md IDs valid in the static provider schema", () => {
   });
 
   const parameters = toolToProviderDefinition(tool).parameters as {
-    properties?: { skillId?: { maxLength?: number; pattern?: string } };
+    properties?: {
+      load?: { properties?: { skillId?: { maxLength?: number; pattern?: string } } };
+    };
   };
-  assertEquals(parameters.properties?.skillId?.maxLength, SKILL_ID_MAX_LENGTH + ".md".length);
-  assertEquals(parameters.properties?.skillId?.pattern, "^[a-zA-Z0-9_-]+(?:\\.md)?$");
+  assertEquals(
+    parameters.properties?.load?.properties?.skillId?.maxLength,
+    SKILL_ID_MAX_LENGTH + ".md".length,
+  );
+  assertEquals(
+    parameters.properties?.load?.properties?.skillId?.pattern,
+    "^[a-zA-Z0-9_-]+(?:\\.md)?$",
+  );
 });
 
 it("keeps the static provider schema constraints after provider sanitization", () => {
@@ -479,38 +486,67 @@ it("keeps the static provider schema constraints after provider sanitization", (
     projectSkillLoader: createProjectSkillLoader({}),
     builtinStore: createBuiltinStore({}),
   });
-  const parameters = toolToProviderDefinition(tool).parameters;
-
   for (
     const model of [
       "veryfront-cloud/anthropic/claude-opus-4-6",
       "google-ai-studio/gemini-2.5-pro",
     ]
   ) {
-    const sanitized = sanitizeProviderToolSchema(parameters, { model }) as {
+    const runtimeTools = convertToolsToRuntimeTools([toolToProviderDefinition(tool)], { model });
+    const sanitized = (runtimeTools?.load_skill as {
+      inputSchema?: { jsonSchema?: unknown };
+    })?.inputSchema?.jsonSchema as {
       anyOf?: unknown;
       oneOf?: unknown;
       allOf?: unknown;
+      minProperties?: unknown;
+      maxProperties?: unknown;
+      properties?: Record<string, {
+        properties?: Record<string, unknown>;
+        required?: string[];
+      }>;
       dependentRequired?: unknown;
       dependentSchemas?: unknown;
     };
+    assertEquals(sanitized !== undefined, true);
     assertEquals(sanitized.anyOf, undefined);
     assertEquals(sanitized.oneOf, undefined);
     assertEquals(sanitized.allOf, undefined);
-    assertEquals(sanitized.dependentRequired, { file: ["skillId"] });
-    assertEquals(sanitized.dependentSchemas, {
-      cursor: {
-        properties: {
-          skillId: false,
-          file: false,
-        },
-      },
-      skillId: {
-        properties: {
-          cursor: false,
-        },
-      },
-    });
+    assertEquals(sanitized.dependentRequired, undefined);
+    assertEquals(sanitized.dependentSchemas, undefined);
+    assertEquals(sanitized.minProperties, 1);
+    assertEquals(sanitized.maxProperties, 1);
+    assertEquals(Object.keys(sanitized.properties ?? {}), ["inventory", "load"]);
+    assertEquals(Object.keys(sanitized.properties?.inventory?.properties ?? {}), ["cursor"]);
+    assertEquals(Object.keys(sanitized.properties?.load?.properties ?? {}), ["skillId", "file"]);
+    assertEquals(sanitized.properties?.load?.required, ["skillId"]);
+  }
+});
+
+it("returns an independent static provider schema snapshot", () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["plan"] }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+  const first = tool.inputSchemaJson as {
+    properties?: Record<string, unknown>;
+  };
+  const originalLoad = first.properties?.load;
+
+  try {
+    Reflect.deleteProperty(first.properties ?? {}, "load");
+    assertEquals(tool.inputSchemaJson, STATIC_LOAD_SKILL_INPUT_SCHEMA);
+  } finally {
+    if (originalLoad !== undefined) {
+      Object.defineProperty(first.properties ?? {}, "load", {
+        configurable: true,
+        enumerable: true,
+        value: originalLoad,
+        writable: true,
+      });
+    }
   }
 });
 
@@ -2214,11 +2250,11 @@ Deno.test("createRuntimeLoadSkillTool rejects reference files before the skill b
 
   assertEquals(await tool.execute({ skillId: "veryfront", file: "references/ROUTES.md" }), {
     error:
-      'Skill "veryfront" must be loaded before reference file "references/ROUTES.md". Call load_skill with only {"skillId":"veryfront"} first, then request one of the listed reference files.',
+      'Skill "veryfront" must be loaded before reference file "references/ROUTES.md". Call load_skill with {"load":{"skillId":"veryfront"}} first, then request one of the listed reference files.',
   });
   assertEquals(await tool.execute({ skillId: "veryfront", file: "references/does-not-exist.md" }), {
     error:
-      'Skill "veryfront" must be loaded before reference file "references/does-not-exist.md". Call load_skill with only {"skillId":"veryfront"} first, then request one of the listed reference files.',
+      'Skill "veryfront" must be loaded before reference file "references/does-not-exist.md". Call load_skill with {"load":{"skillId":"veryfront"}} first, then request one of the listed reference files.',
   });
 });
 
@@ -2283,7 +2319,7 @@ Deno.test("createRuntimeLoadSkillTool authorizes an advertised reference after a
     ),
     {
       error:
-        'Skill "research" must be loaded before reference file "assets/template.txt". Call load_skill with only {"skillId":"research"} first, then request one of the listed reference files.',
+        'Skill "research" must be loaded before reference file "assets/template.txt". Call load_skill with {"load":{"skillId":"research"}} first, then request one of the listed reference files.',
     },
   );
   assertEquals(
@@ -2293,7 +2329,7 @@ Deno.test("createRuntimeLoadSkillTool authorizes an advertised reference after a
     ),
     {
       error:
-        'Skill "research" must be loaded before reference file "assets/template.txt". Call load_skill with only {"skillId":"research"} first, then request one of the listed reference files.',
+        'Skill "research" must be loaded before reference file "assets/template.txt". Call load_skill with {"load":{"skillId":"research"}} first, then request one of the listed reference files.',
     },
   );
 });
@@ -2590,7 +2626,7 @@ it("createRuntimeLoadSkillTool keeps IDs out of the description and points to ru
   assertStringIncludes(tool.description, "<authorized_skill_ids>");
   assertStringIncludes(tool.description, "Direct consumers can omit skillId");
   assertStringIncludes(tool.description, "You must not invent IDs");
-  assertStringIncludes(tool.description, "omit skillId");
+  assertStringIncludes(tool.description, "inventory object");
 });
 
 it("createRuntimeLoadSkillTool pages authorized IDs for standalone consumers", async () => {
@@ -2614,6 +2650,28 @@ it("createRuntimeLoadSkillTool pages authorized IDs for standalone consumers", a
   assertEquals(second, {
     skillIds: availableSkillIds.slice(60),
   });
+});
+
+it("createRuntimeLoadSkillTool accepts provider-safe inventory and load requests", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["plan"] }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([["plan", { instructions: "# Plan", references: [] }]]),
+    }),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  assertEquals(await tool.execute({ inventory: {} }), { skillIds: ["plan"] });
+  assertEquals(
+    expectLoadedSkillResponse(await tool.execute({ load: { skillId: "plan" } })).skillId,
+    "plan",
+  );
+  await assertRejects(
+    () => tool.execute({ inventory: {}, load: { skillId: "plan" } }),
+    Error,
+    "input validation failed",
+  );
 });
 
 it("createRuntimeLoadSkillTool pages authorized IDs without inherited slice", async () => {
@@ -2698,7 +2756,7 @@ it("createRuntimeLoadSkillTool continues after the IDs embedded in the prompt", 
     instructions: `Instructions for ${id}`,
   }));
   const prompt = buildRuntimeAvailableSkillsPromptBlock(skills);
-  const cursorMatch = /load_skill\(\{ cursor: (\d+) \}\)/.exec(prompt);
+  const cursorMatch = /load_skill\(\{ inventory: \{ cursor: (\d+) \} \}\)/.exec(prompt);
 
   assertEquals(cursorMatch !== null, true);
   if (cursorMatch === null) return;

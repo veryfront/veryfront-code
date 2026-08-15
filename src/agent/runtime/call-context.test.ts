@@ -277,7 +277,9 @@ describe("agent/runtime/call-context", () => {
         skills,
       });
       const content = message?.content ?? "";
-      const cursorMatch = /Call load_skill\(\{ cursor: (\d+) \}\)/.exec(content);
+      const cursorMatch = /Call load_skill\(\{ inventory: \{ cursor: (\d+) \} \}\)/.exec(
+        content,
+      );
 
       assertEquals(cursorMatch === null, false);
       assertEquals(Number(cursorMatch?.[1]), content.match(/"skill-/g)?.length);

@@ -65,7 +65,7 @@ function isRuntimeLoadSkillArray(value: unknown): boolean {
 
 /** Shared runtime load skill description value. */
 export const RUNTIME_LOAD_SKILL_DESCRIPTION =
-  `Load the full instructions for a skill. Use this when you need detailed guidance for a specific task type. load_skill does not perform the task by itself. ${LOAD_SKILL_POLICY_CLAUSES} ${LOAD_SKILL_OVERRIDE_FORWARDING} To discover authorized skill IDs, omit skillId. Use a cursor listed in context when present, then follow each nextCursor value. To load a skill, first call load_skill with only skillId. Use the optional \`file\` parameter only after the skill is loaded and only for a reference file listed by that loaded skill.`;
+  `Load the full instructions for a skill. Use this when you need detailed guidance for a specific task type. load_skill does not perform the task by itself. ${LOAD_SKILL_POLICY_CLAUSES} ${LOAD_SKILL_OVERRIDE_FORWARDING} To discover authorized skill IDs, use the inventory object. Use a cursor listed in context when present, then follow each nextCursor value. To load a skill, use the load object with only skillId. Add the optional \`file\` field only after the skill is loaded and only for a reference file listed by that loaded skill.`;
 
 function rememberBoundedRecordValue<T>(
   record: Record<string, T>,
@@ -349,65 +349,104 @@ export const getRuntimeLoadSkillToolInputSchema = defineSchema((v) =>
         "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
       ),
     }).strict(),
+    v.object({
+      inventory: v.object({
+        cursor: v.number().int().min(0).max(SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES)
+          .optional()
+          .describe(
+            "Pagination cursor from the prompt or a previous skill inventory response.",
+          ),
+      }).strict(),
+    }).strict(),
+    v.object({
+      load: v.object({
+        skillId: v.string().max(SKILL_ID_MAX_LENGTH + ".md".length)
+          .regex(
+            /^[a-zA-Z0-9_-]+(?:\.md)?$/,
+            'skillId must contain only letters, numbers, "_" or "-", with an optional lowercase ".md" suffix',
+          )
+          .describe(
+            'The listed skill ID to load. A lowercase ".md" suffix is accepted when it is the canonical ID or an unambiguous alias (e.g., "react-components" or "react-components.md").',
+          ),
+        file: getRuntimeLoadSkillReferenceFileInputSchema().optional().describe(
+          "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+        ),
+      }).strict(),
+    }).strict(),
   ])
 );
 
 /** @deprecated Use getRuntimeLoadSkillToolInputSchema() */
 const runtimeLoadSkillToolInputSchema = lazySchema(getRuntimeLoadSkillToolInputSchema);
 
-const staticRuntimeLoadSkillToolInputJsonSchema: JsonSchema = {
-  type: "object",
-  properties: {
-    cursor: {
-      type: "integer",
-      minimum: 0,
-      maximum: SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES,
-      description: "Pagination cursor from the prompt or a previous skill inventory response.",
-    },
-    skillId: {
-      type: "string",
-      maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
-      pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
-      description:
-        'The listed skill ID to load. A lowercase ".md" suffix is accepted for a listed ID.',
-    },
-    file: {
-      type: "string",
-      minLength: 1,
-      maxLength: SKILL_RELATIVE_PATH_MAX_LENGTH,
-      description:
-        "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
-    },
-  },
-  dependentRequired: {
-    file: ["skillId"],
-  },
-  dependentSchemas: {
-    cursor: {
-      properties: {
-        skillId: false,
-        file: false,
+function createStaticRuntimeLoadSkillToolInputJsonSchema(): JsonSchema {
+  return {
+    type: "object",
+    properties: {
+      inventory: {
+        type: "object",
+        properties: {
+          cursor: {
+            type: "integer",
+            minimum: 0,
+            maximum: SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES,
+            description:
+              "Pagination cursor from the prompt or a previous skill inventory response.",
+          },
+        },
+        additionalProperties: false,
+      },
+      load: {
+        type: "object",
+        properties: {
+          skillId: {
+            type: "string",
+            maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
+            pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
+            description:
+              'The listed skill ID to load. A lowercase ".md" suffix is accepted for a listed ID.',
+          },
+          file: {
+            type: "string",
+            minLength: 1,
+            maxLength: SKILL_RELATIVE_PATH_MAX_LENGTH,
+            description:
+              "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+          },
+        },
+        required: ["skillId"],
+        additionalProperties: false,
       },
     },
-    skillId: {
-      properties: {
-        cursor: false,
-      },
-    },
-  },
-  additionalProperties: false,
-};
+    minProperties: 1,
+    maxProperties: 1,
+    additionalProperties: false,
+  };
+}
 
 /**
  * Input payload for runtime load skill tool.
  *
- * Omit `skillId` to list authorized IDs. Start with a prompt-provided `cursor`
- * when present, or omit `cursor` for the first page. Pass a returned
- * `nextCursor` as `cursor` to continue.
+ * Provider calls use `{ inventory: { cursor? } }` to list authorized IDs and
+ * `{ load: { skillId, file? } }` to load content. The legacy flat forms remain
+ * accepted for direct consumers. Start inventory paging with a prompt-provided
+ * `cursor` when present, or omit `cursor` for the first page.
  */
 export type RuntimeLoadSkillToolInput = InferSchema<
   ReturnType<typeof getRuntimeLoadSkillToolInputSchema>
 >;
+
+type NormalizedRuntimeLoadSkillToolInput =
+  | { cursor?: number }
+  | { skillId: string; file?: string };
+
+function normalizeRuntimeLoadSkillToolInput(
+  input: RuntimeLoadSkillToolInput,
+): NormalizedRuntimeLoadSkillToolInput {
+  if ("inventory" in input) return input.inventory;
+  if ("load" in input) return input.load;
+  return input;
+}
 
 /** Output from runtime load skill reference file. */
 export type RuntimeLoadSkillReferenceFileOutput = {
@@ -1518,7 +1557,7 @@ async function loadRuntimeSkillReferenceFile(
     ) {
       return {
         error: `Skill "${skillId}" must be loaded before reference file "${normalizedFile}". ` +
-          `Call load_skill with only {"skillId":"${skillId}"} first, then request one of the listed reference files.`,
+          `Call load_skill with {"load":{"skillId":"${skillId}"}} first, then request one of the listed reference files.`,
       };
     }
 
@@ -1958,9 +1997,9 @@ export function createRuntimeLoadSkillTool(
     executionContext?: ToolExecutionContext,
   ) {
     assertRuntimeBoundaryCollections(options);
-    let request: RuntimeLoadSkillToolInput;
+    let request: NormalizedRuntimeLoadSkillToolInput;
     try {
-      request = runtimeLoadSkillToolInputSchema.parse(input);
+      request = normalizeRuntimeLoadSkillToolInput(runtimeLoadSkillToolInputSchema.parse(input));
     } catch (error) {
       throw INPUT_VALIDATION_FAILED.create({
         detail: `Tool "load_skill" input validation failed: ${
@@ -1990,10 +2029,12 @@ export function createRuntimeLoadSkillTool(
       loadedSkillReferenceResponses,
     );
     privateAuthority.begin();
-    let parsed: RuntimeLoadSkillToolInput;
+    let parsed: NormalizedRuntimeLoadSkillToolInput;
     try {
-      parsed = buildRuntimeLoadSkillInputSchema(options, authorizationStore).parse(
-        file === undefined ? { skillId } : { skillId, file },
+      parsed = normalizeRuntimeLoadSkillToolInput(
+        buildRuntimeLoadSkillInputSchema(options, authorizationStore).parse(
+          file === undefined ? { skillId } : { skillId, file },
+        ),
       );
     } catch (error) {
       throw INPUT_VALIDATION_FAILED.create({
@@ -2156,7 +2197,7 @@ export function createRuntimeLoadSkillTool(
       // enforcement (valid IDs, reload/body rules) is preserved; the model
       // just no longer sees the per-project enum.
       refreshPrivateAuthorityScope();
-      return staticRuntimeLoadSkillToolInputJsonSchema;
+      return createStaticRuntimeLoadSkillToolInputJsonSchema();
     },
     execute,
   };

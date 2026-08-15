@@ -257,14 +257,14 @@ function buildRuntimeSkillDiscoveryNote(
   hiddenSkillIdCount: number,
   cursor: number,
 ): string {
-  return `\n\n(${hiddenSkillIdCount} additional authorized skill IDs are omitted from this prompt. Call load_skill({ cursor: ${cursor} }), then follow each nextCursor value to discover them.)`;
+  return `\n\n(${hiddenSkillIdCount} additional authorized skill IDs are omitted from this prompt. Call load_skill({ inventory: { cursor: ${cursor} } }), then follow each nextCursor value to discover them.)`;
 }
 
 function buildRuntimeAuthorizedSkillIdDiscoveryBlock(
   hiddenSkillIdCount: number,
   cursor: number,
 ): string {
-  return `<authorized_skill_id_discovery>\n${hiddenSkillIdCount} additional authorized skill IDs are omitted from this prompt. Call load_skill({ cursor: ${cursor} }), then follow each nextCursor value to discover them.\n</authorized_skill_id_discovery>`;
+  return `<authorized_skill_id_discovery>\n${hiddenSkillIdCount} additional authorized skill IDs are omitted from this prompt. Call load_skill({ inventory: { cursor: ${cursor} } }), then follow each nextCursor value to discover them.\n</authorized_skill_id_discovery>`;
 }
 
 function requireRuntimeSkillModel(value: unknown): string {
