@@ -580,6 +580,63 @@ it("policy redacts unterminated unrecognized dollar-quoted SQL literal tags", ()
   );
 });
 
+it("policy redacts dollar-quoted literals whose tag is longer than an identifier limit", () => {
+  const tag = "\u{1F600}".repeat(64);
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value: `Failed query: \n  select $${tag}$customer@example.test$${tag}$ from "orders"`,
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  const value = event.exception?.values?.[0]?.value ?? "";
+  assertEquals(value, 'Failed query: select ? from "orders"');
+  assertEquals(value.includes("customer@example.test"), false);
+});
+
+it("policy treats a dollar sign after an identifier character as part of the identifier", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value: "Failed query: \n  select col$tag$inner$tag$, other from t where id = $1",
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  assertEquals(
+    event.exception?.values?.[0]?.value,
+    "Failed query: select col$tag$inner$tag$, other from t where id = $1",
+  );
+});
+
+it("policy redacts both halves of adjacent dollar-quoted literals", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value:
+            'Failed query: \n  select $$first@example.test$$$$second@example.test$$ from "orders"',
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  const value = event.exception?.values?.[0]?.value ?? "";
+  assertEquals(value, 'Failed query: select ?? from "orders"');
+  assertEquals(value.includes("@example.test"), false);
+});
+
 it("policy keeps dollar signs inside identifiers from swallowing the rest of the query", () => {
   const event = prepareSentryEvent(
     {

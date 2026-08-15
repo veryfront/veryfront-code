@@ -19,11 +19,17 @@ const FAILED_QUERY_PREFIX = "Failed query: ";
 const FAILED_QUERY_PARAMS_DELIMITER = "\nparams:";
 const FAILED_QUERY_HEAD_MAX_LENGTH = 200;
 const SQL_DOLLAR_QUOTE_START_PATTERN = /^\$(?:[_\p{ID_Start}][_\p{ID_Continue}]*)?\$/u;
-// A tag PostgreSQL itself would reject (an emoji tag, for example) is still treated as a literal
-// so its contents cannot reach the title, but it has to look like a tag: short, and free of
-// whitespace, quotes and further dollar signs. Without that shape check a `$` inside an ordinary
-// identifier such as `col$a` swallows the rest of the query.
-const SQL_UNRECOGNIZED_DOLLAR_QUOTE_START_PATTERN = /^\$[^\s'"$]{1,63}\$/u;
+// PostgreSQL's lexer accepts any high byte in a dollar-quote tag and imposes no length limit, so
+// tags outside ECMAScript `ID_Start` (an emoji tag, for example) are still treated as literals and
+// their contents cannot reach the title. The tag must nonetheless look like a tag — free of
+// whitespace, quotes and further dollar signs — because without that shape check a `$` inside an
+// ordinary identifier such as `col$a` swallows the rest of the query.
+const SQL_UNRECOGNIZED_DOLLAR_QUOTE_START_PATTERN = /^\$[^\s'"$]+\$/u;
+// A dollar quote cannot open straight after an identifier character: PostgreSQL prefers the longer
+// identifier match, so `col$tag$inner$tag$` is one identifier rather than `col` followed by a
+// literal. `$` is deliberately absent from this class so that adjacent literals such as
+// `$$a$$$$b$$` still parse as two dollar-quoted strings.
+const SQL_IDENTIFIER_BEFORE_DOLLAR_PATTERN = /[A-Za-z0-9_]/;
 const SQL_NUMERIC_LITERAL_PATTERN =
   /^(?:0[xX]_?[0-9A-Fa-f](?:_?[0-9A-Fa-f])*|0[oO]_?[0-7](?:_?[0-7])*|0[bB]_?[01](?:_?[01])*|(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)(?:[eE][+-]?\d(?:_?\d)*)?)/;
 const SQL_IDENTIFIER_CHAR_PATTERN = /[A-Za-z0-9_$]/;
@@ -240,7 +246,10 @@ function redactSqlLiteralsForTitle(query: string): string {
       continue;
     }
 
-    if (character === "$") {
+    if (
+      character === "$" &&
+      !SQL_IDENTIFIER_BEFORE_DOLLAR_PATTERN.test(query[index - 1] ?? "")
+    ) {
       const dollarQuotedEnd = findDollarQuotedSqlTokenEnd(query, index);
       if (dollarQuotedEnd !== undefined) {
         index = dollarQuotedEnd;
