@@ -116,6 +116,54 @@ describe("Server Public Entrypoints", { sanitizeResources: false, sanitizeOps: f
     });
   });
 
+  it("records Bun serve peer provenance in the public handler path", async () => {
+    const { createHandler } = await import("veryfront");
+
+    await withTestContext("public-handler-bun-peer-provenance", async (context) => {
+      const handler = await createHandler({
+        projectDir: context.projectDir,
+        port: await context.allocatePort(),
+      });
+
+      try {
+        const localRequest = new Request("http://localhost/_metrics", {
+          headers: { host: "localhost" },
+        });
+        const localResponse = await handler(localRequest, {
+          requestIP(seenRequest: Request) {
+            assertEquals(seenRequest, localRequest);
+            return {
+              address: "127.0.0.1",
+              port: 52_000,
+              family: "IPv4",
+            };
+          },
+        });
+        assertEquals(localResponse.status, 200);
+
+        const remoteRequest = new Request("http://localhost/_metrics", {
+          headers: {
+            host: "localhost",
+            "x-forwarded-for": "127.0.0.1",
+          },
+        });
+        const remoteResponse = await handler(remoteRequest, {
+          requestIP(seenRequest: Request) {
+            assertEquals(seenRequest, remoteRequest);
+            return {
+              address: "192.168.1.25",
+              port: 52_001,
+              family: "IPv4",
+            };
+          },
+        });
+        assertNotEquals(remoteResponse.status, 200);
+      } finally {
+        await handler.dispose();
+      }
+    });
+  });
+
   it("starts production server via package server subpath", async () => {
     const { startProductionServer } = await import("veryfront/server");
 

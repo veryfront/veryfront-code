@@ -19,7 +19,7 @@ function requestFromPeer(hostname?: string, runtime: RequestPeerRuntime = "node"
 }
 
 describe("runtime request peer provenance", () => {
-  it("records a Deno.serve peer before a portable handler reads the request", () => {
+  it("records a Deno serve peer before a portable handler reads the request", () => {
     const request = new Request("http://localhost/_projects");
 
     assertEquals(
@@ -51,6 +51,30 @@ describe("runtime request peer provenance", () => {
     );
     assertEquals(getRequestPeerProvenance(request), {
       runtime: "node",
+      transport: "tcp",
+      hostname: "127.0.0.1",
+    });
+    assertEquals(isRequestFromLoopbackPeer(request), true);
+  });
+
+  it("records a framework-hosted Bun request from its native transport", () => {
+    const request = new Request("http://localhost/_projects");
+
+    assertEquals(
+      recordHandlerRequestPeer(request, {
+        requestIP(seenRequest: Request) {
+          assertStrictEquals(seenRequest, request);
+          return {
+            address: "127.0.0.1",
+            port: 52_000,
+            family: "IPv4",
+          };
+        },
+      }),
+      true,
+    );
+    assertEquals(getRequestPeerProvenance(request), {
+      runtime: "bun",
       transport: "tcp",
       hostname: "127.0.0.1",
     });

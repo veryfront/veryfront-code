@@ -140,16 +140,45 @@ export function recordNodeIncomingRequestPeer(
   }
 }
 
+/** @internal Record the native peer supplied by a Bun server context. */
+export function recordBunServerRequestPeer(
+  request: Request,
+  server: unknown,
+): boolean {
+  if (typeof server !== "object" || server === null) return false;
+
+  try {
+    const requestIP = (server as {
+      readonly requestIP?: unknown;
+    }).requestIP;
+    if (typeof requestIP !== "function") return false;
+
+    const peer = requestIP.call(server, request) as {
+      readonly address?: unknown;
+    } | null;
+    if (typeof peer?.address !== "string") return false;
+    return recordRequestPeerFromTransport(request, {
+      runtime: "bun",
+      transport: "tcp",
+      hostname: peer.address,
+    });
+  } catch {
+    return false;
+  }
+}
+
 /**
  * @internal Record native peer context passed through a public handler bridge.
- * Supports Deno.serve handler info and Node IncomingMessage values.
+ * Supports Deno.serve handler info, Node IncomingMessage values, and Bun server
+ * context values.
  */
 export function recordHandlerRequestPeer(
   request: Request,
   context: unknown,
 ): boolean {
   return recordDenoServeRequestPeer(request, context) ||
-    recordNodeIncomingRequestPeer(request, context);
+    recordNodeIncomingRequestPeer(request, context) ||
+    recordBunServerRequestPeer(request, context);
 }
 
 /** @internal Read immutable transport provenance without consulting headers. */
