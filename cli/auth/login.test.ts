@@ -413,6 +413,72 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("says an environment session came from the environment, since nothing is stored", async () => {
+      // The variable is commonly set by a `.env` in the working directory the
+      // developer has forgotten about — the case `whoami` now names. Reporting a
+      // bare "already authenticated" implies `login` stored something, when the
+      // session actually ends at the directory boundary.
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const output: string[] = [];
+
+      try {
+        setNonInteractive(true);
+        globalThis.fetch = (() =>
+          Promise.resolve(
+            new Response(JSON.stringify({ data: [], page_info: {} }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          )) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+
+        const { login } = await import("./login.ts");
+        const result = await login(undefined, { ...testEnv, apiToken: "vf_env_only" });
+
+        assertEquals(result, { authenticated: true, type: "apiKey" });
+        const printed = output.join("\n");
+        assertStringIncludes(printed, "VERYFRONT_API_TOKEN");
+        assertStringIncludes(printed, "no stored login");
+        // Nothing was persisted, and the credential is never echoed.
+        assertEquals(await readToken(testEnv), null);
+        assertEquals(printed.includes("vf_env_only"), false);
+      } finally {
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
+    it("does not claim the environment when the session is a stored login", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const output: string[] = [];
+      await saveToken("stored-valid-token", testEnv);
+
+      try {
+        setNonInteractive(true);
+        globalThis.fetch = (() =>
+          Promise.resolve(
+            Response.json({ id: "user-123", email: "test@example.com" }),
+          )) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+
+        const { login } = await import("./login.ts");
+        await login(undefined, testEnv);
+
+        const printed = output.join("\n");
+        assertEquals(printed.includes("no stored login"), false);
+        assertEquals(printed.includes("VERYFRONT_API_TOKEN"), false);
+      } finally {
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
     it("still re-authenticates when a method is explicitly requested", async () => {
       // Switching accounts must stay possible: an explicit method is intent to
       // sign in again, so the existing session must not short-circuit it.

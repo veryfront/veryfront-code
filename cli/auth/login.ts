@@ -270,12 +270,12 @@ async function loginWithToken(): Promise<string | null> {
 async function describeExistingSession(
   env: EnvironmentConfig,
 ): Promise<AuthIdentity | null> {
-  const tokens: string[] = [];
-  if (env.apiToken) tokens.push(env.apiToken);
+  const candidates: { token: string; source: "environment" | "stored" }[] = [];
+  if (env.apiToken) candidates.push({ token: env.apiToken, source: "environment" });
   const storedToken = await readToken(env);
-  if (storedToken) tokens.push(storedToken);
+  if (storedToken) candidates.push({ token: storedToken, source: "stored" });
 
-  for (const token of tokens) {
+  for (const { token, source } of candidates) {
     let identity: AuthIdentity | null;
     try {
       identity = await validateCredential(token, env);
@@ -285,7 +285,9 @@ async function describeExistingSession(
     if (!identity) continue;
 
     if (isJsonMode()) {
-      await outputJson(createSuccessEnvelope("login", { authenticated: true, existing: true }));
+      await outputJson(
+        createSuccessEnvelope("login", { authenticated: true, existing: true, source }),
+      );
       return identity;
     }
 
@@ -296,6 +298,14 @@ async function describeExistingSession(
           ? "Already authenticated with an API key"
           : "Already logged in as " + brand(identity.email)),
     );
+    // An environment credential is a valid session for every command, but this
+    // path stores nothing, and `login` implies it did. The variable is often set
+    // by a `.env` in the working directory the developer has forgotten about —
+    // the case `whoami` now names — so the session ends at the directory
+    // boundary. Say so rather than let them discover it elsewhere.
+    if (source === "environment") {
+      console.log("  " + dim("Using VERYFRONT_API_TOKEN; no stored login was created."));
+    }
     console.log(
       "  " +
         dim(
