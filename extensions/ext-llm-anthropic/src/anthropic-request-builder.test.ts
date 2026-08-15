@@ -837,6 +837,105 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     }
   });
 
+  it("counts system breakpoints after Array.prototype.filter mutation", () => {
+    const originalFilter = Object.getOwnPropertyDescriptor(Array.prototype, "filter");
+    Object.defineProperty(Array.prototype, "filter", {
+      configurable: true,
+      writable: true,
+      value() {
+        return [];
+      },
+    });
+
+    let body: ReturnType<typeof buildAnthropicMessagesRequest>;
+    try {
+      body = buildAnthropicMessagesRequest(
+        "claude-sonnet-4-6",
+        "anthropic",
+        {
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+          providerOptions: {
+            anthropic: {
+              system: Array.from({ length: 4 }, (_, index) => ({
+                type: "text",
+                text: `System ${index}`,
+                cache_control: { type: "ephemeral" },
+              })),
+              tools: Array.from({ length: 4 }, (_, index) => ({
+                name: `lookup-${index}`,
+                input_schema: { type: "object", properties: {} },
+                cache_control: { type: "ephemeral" },
+              })),
+            },
+          },
+        },
+        false,
+        createWarningCollector(),
+      );
+    } finally {
+      if (originalFilter) {
+        Object.defineProperty(Array.prototype, "filter", originalFilter);
+      } else {
+        Reflect.deleteProperty(Array.prototype, "filter");
+      }
+    }
+
+    const system = body.system as Array<Record<string, unknown>>;
+    const tools = body.tools as Array<Record<string, unknown>>;
+    assertEquals(
+      system.filter((block) => block.cache_control !== undefined).length +
+        tools.filter((tool) => tool.cache_control !== undefined).length,
+      4,
+    );
+  });
+
+  it("retains message breakpoints after Array.prototype.slice mutation", () => {
+    const originalSlice = Object.getOwnPropertyDescriptor(Array.prototype, "slice");
+    Object.defineProperty(Array.prototype, "slice", {
+      configurable: true,
+      writable: true,
+      value() {
+        return [];
+      },
+    });
+
+    let body: ReturnType<typeof buildAnthropicMessagesRequest>;
+    try {
+      body = buildAnthropicMessagesRequest(
+        "claude-sonnet-4-6",
+        "anthropic",
+        {
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+          providerOptions: {
+            anthropic: {
+              messages: [{
+                role: "user",
+                content: Array.from({ length: 5 }, (_, index) => ({
+                  type: "text",
+                  text: `Message ${index}`,
+                  cache_control: { type: "ephemeral" },
+                })),
+              }],
+            },
+          },
+        },
+        false,
+        createWarningCollector(),
+      );
+    } finally {
+      if (originalSlice) {
+        Object.defineProperty(Array.prototype, "slice", originalSlice);
+      } else {
+        Reflect.deleteProperty(Array.prototype, "slice");
+      }
+    }
+
+    assertEquals(
+      body.messages[0]?.content.filter((block) => block.cache_control !== undefined).length,
+      4,
+    );
+  });
+
   it("rejects cache-affecting toJSON hooks without invoking them", () => {
     for (
       const placement of [

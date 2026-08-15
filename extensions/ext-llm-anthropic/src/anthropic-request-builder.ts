@@ -1477,44 +1477,10 @@ function retainLatestAnthropicMessageCacheBreakpoints(
   messages: AnthropicCompatibleMessage[],
   maximum: number,
 ): AnthropicCompatibleMessage[] {
-  const breakpointPositions: Array<{ messageIndex: number; contentIndex: number }> = [];
-  for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
-    const message = readAnthropicArrayDataElement(
-      messages,
-      messageIndex,
-      "Anthropic messages",
-    ) as AnthropicCompatibleMessage | undefined;
-    if (message === undefined) {
-      continue;
-    }
-    const content = readEmittedAnthropicMessageContent(message);
-    for (let contentIndex = 0; contentIndex < content.length; contentIndex += 1) {
-      const block = readAnthropicArrayDataElement(
-        content,
-        contentIndex,
-        "Anthropic message content",
-      );
-      if (
-        isAnthropicMessageCacheBlock(block) &&
-        hasEmittedAnthropicCacheBreakpoint(block)
-      ) {
-        breakpointPositions.push({ messageIndex, contentIndex });
-      }
-    }
-  }
-
-  const positionsToRemove = breakpointPositions.slice(
-    0,
-    Math.max(0, breakpointPositions.length - maximum),
-  );
-  if (positionsToRemove.length === 0) {
+  const breakpointCount = countAnthropicMessageCacheBreakpoints(messages);
+  let remainingToRemove = breakpointCount > maximum ? breakpointCount - maximum : 0;
+  if (remainingToRemove === 0) {
     return messages;
-  }
-  const removalsByMessage = new Map<number, Set<number>>();
-  for (const { messageIndex, contentIndex } of positionsToRemove) {
-    const removals = removalsByMessage.get(messageIndex) ?? new Set<number>();
-    removals.add(contentIndex);
-    removalsByMessage.set(messageIndex, removals);
   }
 
   const normalizedMessages = new Array<AnthropicCompatibleMessage>(messages.length);
@@ -1527,29 +1493,38 @@ function retainLatestAnthropicMessageCacheBreakpoints(
     if (message === undefined) {
       continue;
     }
-    const removals = removalsByMessage.get(messageIndex);
-    if (!removals) {
-      normalizedMessages[messageIndex] = message;
-      continue;
-    }
     const originalContent = readEmittedAnthropicMessageContent(message);
-    const content = Array.from({ length: originalContent.length }, (_, contentIndex) => {
+    let content = originalContent;
+    for (
+      let contentIndex = 0;
+      remainingToRemove > 0 && contentIndex < originalContent.length;
+      contentIndex += 1
+    ) {
       const block = readAnthropicArrayDataElement(
         originalContent,
         contentIndex,
         "Anthropic message content",
       );
       if (
-        !removals.has(contentIndex) || typeof block !== "object" || block === null ||
-        Array.isArray(block)
+        !isAnthropicMessageCacheBlock(block) ||
+        !hasEmittedAnthropicCacheBreakpoint(block)
       ) {
-        return block;
+        continue;
+      }
+      if (content === originalContent) {
+        content = snapshotAnthropicCacheArray(
+          originalContent,
+          "Anthropic message content",
+        );
       }
       const next = { ...block };
       Reflect.deleteProperty(next, "cache_control");
-      return next;
-    });
-    normalizedMessages[messageIndex] = { ...message, content } as AnthropicCompatibleMessage;
+      content[contentIndex] = next;
+      remainingToRemove -= 1;
+    }
+    normalizedMessages[messageIndex] = content === originalContent
+      ? message
+      : { ...message, content } as AnthropicCompatibleMessage;
   }
   return normalizedMessages;
 }
@@ -1793,6 +1768,23 @@ function retainLatestAnthropicCacheBreakpoints(
   return retained;
 }
 
+function countAnthropicCacheBreakpoints(
+  values: Array<Record<string, unknown>>,
+): number {
+  let count = 0;
+  for (let index = 0; index < values.length; index += 1) {
+    const value = readAnthropicArrayDataElement(
+      values,
+      index,
+      "Anthropic cache blocks",
+    ) as Record<string, unknown> | undefined;
+    if (value !== undefined && hasEmittedAnthropicCacheBreakpoint(value)) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 function limitAnthropicCacheBreakpoints(
   system: string | Array<Record<string, unknown>> | undefined,
   tools: Array<Record<string, unknown>> | undefined,
@@ -1822,7 +1814,7 @@ function limitAnthropicCacheBreakpoints(
     )
     : inspectedSystem;
   const systemBreakpointCount = Array.isArray(boundedSystem)
-    ? boundedSystem.filter(hasEmittedAnthropicCacheBreakpoint).length
+    ? countAnthropicCacheBreakpoints(boundedSystem)
     : 0;
   const boundedTools = inspectedTools
     ? retainLatestAnthropicCacheBreakpoints(
