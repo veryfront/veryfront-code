@@ -909,8 +909,20 @@ function isTypeScriptFunctionDeclarationBlockOpenBrace(
 function isClassDeclarationBlockOpenBrace(
   source: string,
   index: number,
+  previousTokenIndex: number,
   currentParen: OpenParenContext | undefined,
 ): boolean {
+  const previousToken = source[previousTokenIndex];
+  if (
+    previousToken !== ")" &&
+    previousToken !== "]" &&
+    previousToken !== ">" &&
+    !isIdentifierPartAt(source, previousTokenIndex) &&
+    !isIdentifierEscapeEndingAt(source, previousTokenIndex + 1)
+  ) {
+    return false;
+  }
+
   const separatorStart = source.lastIndexOf(";", index - 1) + 1;
   if (!hasDeclarationKeywordBefore(source, separatorStart, index, ["class", "export"])) {
     return false;
@@ -926,7 +938,19 @@ function isClassDeclarationBlockOpenBrace(
 function isTypeScriptDeclarationBlockOpenBrace(
   source: string,
   index: number,
+  previousTokenIndex: number,
 ): boolean {
+  const previousToken = source[previousTokenIndex];
+  if (
+    previousToken !== ">" &&
+    previousToken !== '"' &&
+    previousToken !== "'" &&
+    !isIdentifierPartAt(source, previousTokenIndex) &&
+    !isIdentifierEscapeEndingAt(source, previousTokenIndex + 1)
+  ) {
+    return false;
+  }
+
   const keywords = [
     "const",
     "declare",
@@ -1212,8 +1236,8 @@ function openBraceContext(
       previousTokenIndex,
       matchingOpenParens,
     ) || isTypeScriptFunctionDeclarationBlockOpenBrace(source, index, previousTokenIndex) ||
-      isClassDeclarationBlockOpenBrace(source, index, currentParen) ||
-      isTypeScriptDeclarationBlockOpenBrace(source, index),
+      isClassDeclarationBlockOpenBrace(source, index, previousTokenIndex, currentParen) ||
+      isTypeScriptDeclarationBlockOpenBrace(source, index, previousTokenIndex),
     isPlainStatementBlock: isPlainStatementBlockOpenBrace(
       source,
       rangeStart,

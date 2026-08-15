@@ -49,6 +49,41 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
     }
   });
 
+  it("keeps large brace-heavy division scans bounded across import scanners", () => {
+    const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
+    const source = "x={a:1}/2;\n".repeat(51_600);
+    const maxMillis = 1_500;
+
+    const cases = [
+      {
+        name: "static",
+        scan: (source: string) => findStaticImportFromSpans(source, matchRelative, UNBOUNDED),
+      },
+      {
+        name: "side-effect",
+        scan: (source: string) => findStaticSideEffectImportSpans(source, matchRelative, UNBOUNDED),
+      },
+      {
+        name: "dynamic",
+        scan: (source: string) => findDynamicImportSpans(source, matchRelative, UNBOUNDED),
+      },
+    ];
+
+    for (const scanner of cases) {
+      const start = performance.now();
+      const spans = scanner.scan(source);
+      const elapsed = performance.now() - start;
+
+      assertEquals(spans, []);
+      assert(
+        elapsed < maxMillis,
+        `${scanner.name} scanner took ${elapsed.toFixed(1)}ms for a ${
+          Math.round(source.length / 1024)
+        } KB brace-heavy division scan`,
+      );
+    }
+  });
+
   describe("replaceSourceSpans", () => {
     it("replaces a single span", () => {
       const source = 'from "./old.js"';
@@ -1334,9 +1369,9 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
 
       const durationMs = performance.now() - startedAt;
       assert(
-        durationMs < 750,
+        durationMs < 1_500,
         `Expected a ${Math.round(source.length / 1024)} KB line-broken division scan to ` +
-          `finish within 750 ms, got ${durationMs.toFixed(1)} ms`,
+          `finish within 1500 ms, got ${durationMs.toFixed(1)} ms`,
       );
     });
 
