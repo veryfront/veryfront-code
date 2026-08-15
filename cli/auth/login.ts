@@ -21,6 +21,45 @@ import {
 } from "../shared/json-output.ts";
 import { isInteractive } from "../shared/interactive.ts";
 import { getEnvSource } from "veryfront/utils/env-loader";
+import { basename, isAbsolute, relative } from "veryfront/platform/path";
+import { cwd, getEnv } from "veryfront/platform";
+
+/**
+ * Describe where an API-token credential actually came from.
+ *
+ * `.env` files in the working directory are loaded into the environment, so a
+ * token can arrive under `VERYFRONT_API_TOKEN` while that variable is unset in
+ * the developer's shell. Reporting only the variable name sends them to check
+ * something they can see is empty; naming the file ends the search. Identity is
+ * directory-dependent for every command that infers a project from config, so
+ * this is worth the extra clause.
+ */
+export function formatEnvSourcePathForDisplay(file: string, currentCwd = cwd()): string {
+  // Repo-relative only: AGENTS.md forbids local absolute paths in user-facing
+  // output. A file outside the working directory, including a Windows
+  // cross-drive result, degrades to its name rather than exposing the layout.
+  // A bare filename stays bare (`.env`); anything nested is prefixed so it
+  // reads unambiguously as a path (`./config/.env`). The test is for a
+  // separator rather than a leading ".", because a dot-*directory* also starts
+  // with one, so `.config/.env` would otherwise be the only nested path printed
+  // without the prefix.
+  const rel = relative(currentCwd, file);
+  const shown = rel === "." || rel.startsWith("..") || isAbsolute(rel)
+    ? basename(file)
+    : /[/\\]/.test(rel) && !rel.startsWith("./")
+    ? `./${rel}`
+    : rel;
+  return shown;
+}
+
+function describeApiTokenSource(token: string): string {
+  const origin = getEnvSource("VERYFRONT_API_TOKEN");
+  if (origin.source !== "env-file" || getEnv("VERYFRONT_API_TOKEN") !== token) {
+    return "(via VERYFRONT_API_TOKEN)";
+  }
+
+  return `(via VERYFRONT_API_TOKEN from ${formatEnvSourcePathForDisplay(origin.file)})`;
+}
 
 export type AuthMethod = "google" | "github" | "microsoft" | "token";
 
@@ -739,7 +778,9 @@ async function reportCredential(
 
   console.log(
     "  " + dim(
-      source === "env" ? "(via VERYFRONT_API_TOKEN)" : `Token stored at: ${getTokenLocation(env)}`,
+      source === "env"
+        ? describeApiTokenSource(token)
+        : `Token stored at: ${getTokenLocation(env)}`,
     ),
   );
   return credential;
