@@ -230,6 +230,31 @@ describe("Field", () => {
     }
   });
 
+  it("uses custom description and error ids in aria-describedby", () => {
+    const { host, unmount } = render(
+      <Field invalid>
+        <FieldControl>
+          <input />
+        </FieldControl>
+        <FieldDescription id="custom-description">Custom help</FieldDescription>
+        <FieldError id="custom-error">Custom error</FieldError>
+      </Field>,
+    );
+    try {
+      const control = host.querySelector("input")!;
+      const describedBy = (control.getAttribute("aria-describedby") ?? "").split(" ");
+      assertEquals(host.querySelector("#custom-description")?.textContent, "Custom help");
+      assertEquals(host.querySelector("#custom-error")?.textContent, "Custom error");
+      assert(
+        describedBy.includes("custom-description"),
+        "control references the custom description",
+      );
+      assert(describedBy.includes("custom-error"), "control references the custom error");
+    } finally {
+      unmount();
+    }
+  });
+
   it("wires descriptions and errors rendered by wrapper components", async () => {
     function WrappedDescription(): React.ReactElement {
       return <FieldDescription>Wrapped help</FieldDescription>;

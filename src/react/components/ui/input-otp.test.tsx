@@ -2,7 +2,7 @@
  * InputOTP behaviour. Pins the observable contract: the root is a
  * `role="group"`; it renders exactly `maxLength` presentational slots mirroring
  * the controlled `value`; and it renders ONE visually-hidden real `<input>`
- * (`inputMode="numeric"`, `maxLength`) that captures typing/paste.
+ * (`inputMode="numeric"`) that captures typing/paste.
  *
  * NOTE: synthetic key/input events do NOT reach React handlers in this
  * deno+jsdom harness, so behaviour is proven by rendering a controlled `value`
@@ -113,7 +113,11 @@ describe("InputOTP behaviour", () => {
       const input = host.querySelector("input") as HTMLInputElement;
       assert(input, "renders one hidden real input");
       assertEquals(host.querySelectorAll("input").length, 1, "exactly one input");
-      assertEquals(input.getAttribute("maxLength"), "6", "input maxLength reflects maxLength prop");
+      assertEquals(
+        input.getAttribute("maxLength"),
+        null,
+        "the browser must not truncate pasted separators before sanitization",
+      );
       assertEquals(input.getAttribute("inputMode"), "numeric", "input is numeric");
 
       assertEquals(slots[0]?.textContent, "1", "first slot shows '1'");

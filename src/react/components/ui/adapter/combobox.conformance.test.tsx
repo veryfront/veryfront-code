@@ -91,6 +91,7 @@ export function runComboboxConformance(
       defaultValue?: string;
       defaultInputValue?: string;
       inputValue?: string;
+      includeAstro?: boolean;
     } = {},
   ) {
     const dom = new JSDOM(
@@ -102,6 +103,7 @@ export function runComboboxConformance(
     scope.setAttribute("data-vf-ui", "");
     const root = createRoot(scope);
     let controlledValue = selection.value;
+    let includeAstro = selection.includeAstro ?? true;
     const render = () =>
       root.render(
         <Wrap>
@@ -124,7 +126,7 @@ export function runComboboxConformance(
               </ComboboxItem>
               {includeDisabled && <ComboboxItem value="disabled" disabled>Disabled</ComboboxItem>}
               <ComboboxItem value="remix">Remix</ComboboxItem>
-              <ComboboxItem value="astro">Astro</ComboboxItem>
+              {includeAstro && <ComboboxItem value="astro">Astro</ComboboxItem>}
               <ComboboxItem value="opaque">
                 <svg aria-label="Opaque" />
               </ComboboxItem>
@@ -145,6 +147,10 @@ export function runComboboxConformance(
       type: (text: string) => flushSync(() => ctx!.setQuery(text)),
       setValue: (nextValue: string) => {
         controlledValue = nextValue;
+        flushSync(render);
+      },
+      setIncludeAstro: (nextValue: boolean) => {
+        includeAstro = nextValue;
         flushSync(render);
       },
       press: (key: string) => flushSync(() => ctx!.onInputKeyDown(keyEvent(key))),
@@ -193,6 +199,32 @@ export function runComboboxConformance(
         await new Promise((resolve) => setTimeout(resolve, 0));
         flushSync(() => {});
         assertEquals(h.input().value, "Remix");
+      } finally {
+        h.cleanup();
+      }
+    });
+
+    it("clears the selected option label after a controlled value is cleared", async () => {
+      const h = mount(undefined, false, { value: "astro" });
+      try {
+        assertEquals(h.input().value, "Astro");
+        h.setValue("");
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        flushSync(() => {});
+        assertEquals(h.input().value, "");
+      } finally {
+        h.cleanup();
+      }
+    });
+
+    it("clears the selected option label when the selected option disappears", async () => {
+      const h = mount(undefined, false, { value: "astro" });
+      try {
+        assertEquals(h.input().value, "Astro");
+        h.setIncludeAstro(false);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        flushSync(() => {});
+        assertEquals(h.input().value, "");
       } finally {
         h.cleanup();
       }

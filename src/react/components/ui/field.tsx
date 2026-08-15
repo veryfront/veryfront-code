@@ -58,14 +58,23 @@ interface FieldContextValue {
  */
 function findFieldParts(
   children: React.ReactNode,
-  found = { description: false, error: false },
-): { description: boolean; error: boolean } {
+  found: {
+    description: boolean;
+    error: boolean;
+    descriptionId?: string;
+    errorId?: string;
+  } = { description: false, error: false },
+): { description: boolean; error: boolean; descriptionId?: string; errorId?: string } {
   React.Children.forEach(children, (child) => {
     if (!React.isValidElement(child)) return;
-    if (child.type === FieldDescription) found.description = true;
-    else if (child.type === FieldError) {
-      const props = child.props as { children?: React.ReactNode };
+    if (child.type === FieldDescription) {
+      found.description = true;
+      const props = child.props as { id?: unknown; children?: React.ReactNode };
+      if (typeof props.id === "string") found.descriptionId ??= props.id;
+    } else if (child.type === FieldError) {
+      const props = child.props as { id?: unknown; children?: React.ReactNode };
       if (React.Children.count(props.children) > 0) found.error = true;
+      if (typeof props.id === "string") found.errorId ??= props.id;
     }
     const props = child.props as { children?: React.ReactNode };
     if (props?.children) findFieldParts(props.children, found);
@@ -101,6 +110,8 @@ export function Field({
   const staticParts = findFieldParts(children);
   const [mountedDescriptions, setMountedDescriptions] = React.useState(0);
   const [mountedErrors, setMountedErrors] = React.useState(0);
+  const descriptionId = staticParts.descriptionId ?? `${base}-description`;
+  const errorId = staticParts.errorId ?? `${base}-error`;
   const registerDescription = React.useCallback(() => {
     setMountedDescriptions((count) => count + 1);
     return () => setMountedDescriptions((count) => Math.max(0, count - 1));
@@ -114,8 +125,8 @@ export function Field({
   const ctx = React.useMemo<FieldContextValue>(
     () => ({
       id: base,
-      descriptionId: `${base}-description`,
-      errorId: `${base}-error`,
+      descriptionId,
+      errorId,
       invalid,
       descriptionPresent,
       errorPresent,
@@ -124,6 +135,8 @@ export function Field({
     }),
     [
       base,
+      descriptionId,
+      errorId,
       invalid,
       descriptionPresent,
       errorPresent,
@@ -224,6 +237,7 @@ export interface FieldDescriptionProps extends React.HTMLAttributes<HTMLParagrap
 export function FieldDescription({
   className,
   children,
+  id,
   ref,
   ...props
 }: FieldDescriptionProps): React.ReactElement {
@@ -232,7 +246,7 @@ export function FieldDescription({
   return (
     <p
       ref={ref}
-      id={ctx.descriptionId}
+      id={id ?? ctx.descriptionId}
       className={cn("text-sm text-[var(--muted-foreground)]", className)}
       {...props}
     >
@@ -251,6 +265,7 @@ export interface FieldErrorProps extends React.HTMLAttributes<HTMLParagraphEleme
 export function FieldError({
   className,
   children,
+  id,
   ref,
   ...props
 }: FieldErrorProps): React.ReactElement | null {
@@ -264,7 +279,7 @@ export function FieldError({
   return (
     <p
       ref={ref}
-      id={ctx.errorId}
+      id={id ?? ctx.errorId}
       role="alert"
       data-invalid={ctx.invalid || undefined}
       className={cn("text-sm text-[var(--destructive)]", className)}

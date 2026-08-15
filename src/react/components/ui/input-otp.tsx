@@ -71,7 +71,6 @@ export function InputOTP({
         inputMode="numeric"
         autoComplete="one-time-code"
         pattern="[0-9]*"
-        maxLength={maxLength}
         disabled={disabled}
         // The input is what receives focus, so it carries the name itself. The
         // group label alone is not announced for the focused control.

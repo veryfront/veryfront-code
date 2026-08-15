@@ -74,12 +74,19 @@ function ComboboxRoot({
   );
 
   React.useEffect(() => {
-    if (currentValue === undefined || synchronizedValueRef.current === currentValue) return;
+    if (currentValue === undefined && !isValueControlled) return;
     const label = optionLabels.find((option) => option.value === currentValue)?.text;
-    if (label === undefined) return;
+    if (label === undefined) {
+      synchronizedValueRef.current = currentValue;
+      setQueryState((previous) => previous === "" ? previous : "");
+      onInputValueChange?.("");
+      return;
+    }
+    if (synchronizedValueRef.current === currentValue) return;
     synchronizedValueRef.current = currentValue;
     setQueryState(label);
-  }, [currentValue, optionLabels]);
+    onInputValueChange?.(label);
+  }, [currentValue, isValueControlled, onInputValueChange, optionLabels]);
 
   const matches = React.useCallback(
     (text: string) => !query || text.toLowerCase().includes(query.toLowerCase()),

@@ -20,7 +20,16 @@ import type { TabsParts } from "./contract.ts";
 function installDom(dom: JSDOM): () => void {
   const w = dom.window as unknown as Record<string, unknown>;
   const g = globalThis as unknown as Record<string, unknown>;
-  const keys = ["document", "window", "navigator", "HTMLElement", "Node", "Element", "MouseEvent"];
+  const keys = [
+    "document",
+    "window",
+    "navigator",
+    "HTMLElement",
+    "Node",
+    "Element",
+    "MouseEvent",
+    "KeyboardEvent",
+  ];
   const prev: Record<string, unknown> = {};
   for (const k of keys) prev[k] = g[k];
   for (const k of keys) g[k] = w[k];
@@ -54,6 +63,16 @@ function click(node: Element): void {
   const MouseEventCtor = (globalThis as unknown as { MouseEvent: typeof MouseEvent }).MouseEvent;
   flushSync(() =>
     node.dispatchEvent(new MouseEventCtor("click", { bubbles: true, cancelable: true }))
+  );
+}
+
+function key(node: Element, value: string): void {
+  const KeyboardEventCtor =
+    (globalThis as unknown as { KeyboardEvent: typeof KeyboardEvent }).KeyboardEvent;
+  flushSync(() =>
+    node.dispatchEvent(
+      new KeyboardEventCtor("keydown", { bubbles: true, cancelable: true, key: value }),
+    )
   );
 }
 
@@ -97,6 +116,35 @@ function runTabsConformance(label: string, Wrap: React.FC<{ children: React.Reac
 // (1) builtin.
 const Identity: React.FC<{ children: React.ReactNode }> = ({ children }) => <>{children}</>;
 runTabsConformance("builtin (default)", Identity);
+
+describe("Tabs adapter conformance - builtin keyboard navigation", () => {
+  it("uses one tab stop and selects tabs with roving keyboard commands", () => {
+    const { host, unmount } = render(
+      <Identity>
+        <Harness />
+      </Identity>,
+    );
+    try {
+      const [a, b] = Array.from(host.querySelectorAll<HTMLElement>('[role="tab"]'));
+      assert(a && b, "two tabs render");
+      assert(a!.getAttribute("tabindex") === "0", "selected tab is the only tab stop");
+      assert(b!.getAttribute("tabindex") === "-1", "inactive tab is skipped by sequential tabbing");
+
+      key(a!, "ArrowRight");
+      assert(b!.getAttribute("aria-selected") === "true", "ArrowRight selects the next tab");
+      assert(b!.getAttribute("tabindex") === "0", "new selected tab becomes the tab stop");
+      assert(a!.getAttribute("tabindex") === "-1", "previous tab leaves the tab order");
+      assert(host.ownerDocument.activeElement === b, "keyboard navigation moves focus");
+
+      key(b!, "Home");
+      assert(a!.getAttribute("aria-selected") === "true", "Home selects the first tab");
+      key(a!, "End");
+      assert(b!.getAttribute("aria-selected") === "true", "End selects the last tab");
+    } finally {
+      unmount();
+    }
+  });
+});
 
 // (2) an INDEPENDENT contract-only engine - its own tablist context, same skin.
 const AltCtx = React.createContext<{ value: string; onValueChange: (v: string) => void } | null>(
