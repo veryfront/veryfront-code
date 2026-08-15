@@ -56,10 +56,8 @@ import { bar } from "./local.js";
     });
 
     it("finds bare side-effect _vf_modules imports", () => {
-      const code = [
-        `import "/_vf_modules/styles/theme.css";`,
-        `import '/_vf_modules/polyfills/runtime.js';`,
-      ].join("\n");
+      const code =
+        `/* preload; */ import "/_vf_modules/styles/theme.css"; import '/_vf_modules/polyfills/runtime.js';`;
       const result = findNestedImports(code);
       assertEquals(result.vfModules.map((module) => module.path), [
         "_vf_modules/styles/theme.css",
@@ -100,6 +98,17 @@ import { bar } from "./local.js";
       const result = hasUnresolvedImports(code);
       assertEquals(result.count, 1);
       assertEquals(result.paths, ["/_vf_modules/components/Lazy.js"]);
+    });
+
+    it("detects every unresolved same-line side-effect import", () => {
+      const result = hasUnresolvedImports(
+        `/* preload; */ import "/_vf_modules/styles/theme.css"; import "/_vf_modules/polyfills/runtime.js";`,
+      );
+      assertEquals(result.count, 2);
+      assertEquals(result.paths, [
+        "/_vf_modules/styles/theme.css",
+        "/_vf_modules/polyfills/runtime.js",
+      ]);
     });
 
     it("returns empty for normal resolved file:// imports", () => {

@@ -280,6 +280,30 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("treats of as an identifier in a classic for-loop initializer", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'let of = 4; for (of / 2; shouldRun;) { import("/_vf_modules/classic-for-lazy.js") }',
+        ),
+        ["/_vf_modules/classic-for-lazy.js"],
+      );
+    });
+
+    it("finds imports after regex literals following declaration blocks", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'const html = `${(() => { function f() {} /}/.test(x); })() && import("/_vf_modules/function-lazy.js")}`;',
+        ),
+        ["/_vf_modules/function-lazy.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'const html = `${(() => { class C {} /}/.test(x); })() && import("/_vf_modules/class-lazy.js")}`;',
+        ),
+        ["/_vf_modules/class-lazy.js"],
+      );
+    });
+
     it("finds executable imports after regex braces following control conditions", () => {
       assertEquals(
         specifiers(
@@ -372,6 +396,23 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         `Expected an 86 KB brace-heavy scan to finish within 750 ms, got ${
           durationMs.toFixed(1)
         } ms`,
+      );
+    });
+
+    it("keeps repeated of-identifier division scans within a bounded runtime", () => {
+      const source = "let " + Array.from(
+        { length: 6_000 },
+        (_, index) => `value${index} = of / 2`,
+      ).join(", ") + ";";
+      const startedAt = performance.now();
+
+      assertEquals(specifiers(source), []);
+
+      const durationMs = performance.now() - startedAt;
+      assert(
+        durationMs < 750,
+        `Expected a ${Math.round(source.length / 1024)} KB of-identifier scan to finish within ` +
+          `750 ms, got ${durationMs.toFixed(1)} ms`,
       );
     });
 
@@ -569,6 +610,15 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         UNBOUNDED,
       );
       assertEquals(span?.path, "./value.js");
+    });
+
+    it("finds same-line side-effect imports after separators and comments", () => {
+      const spans = findStaticSideEffectImportSpans(
+        '/* preload; */ import "./a.js"; /* next; */ import "./b.js";',
+        matchRelative,
+        UNBOUNDED,
+      );
+      assertEquals(spans.map((span) => span.path), ["./a.js", "./b.js"]);
     });
   });
 });

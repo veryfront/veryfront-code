@@ -77,13 +77,13 @@ function isStatementKeywordAt(
   source: string,
   index: number,
   keyword: "import" | "export",
+  atStatementStart: boolean,
 ): boolean {
+  if (!atStatementStart) return false;
   if (!source.startsWith(keyword, index)) return false;
   if (isIdentifierChar(source[index - 1]) || source[index - 1] === ".") return false;
   if (isIdentifierChar(source[index + keyword.length])) return false;
-
-  const lineStart = source.lastIndexOf("\n", index - 1) + 1;
-  return /^[\t ]*$/.test(source.slice(lineStart, index));
+  return true;
 }
 
 function skipIgnored(source: string, index: number): number {
@@ -324,6 +324,24 @@ function isControlBlockCloseBrace(
     isControlConditionCloseParen(source, beforeOpenBrace, rangeStart);
 }
 
+function isDeclarationBlockCloseBrace(
+  source: string,
+  index: number,
+  matchingOpenBraces: ReadonlyMap<number, number>,
+): boolean {
+  const openBrace = matchingOpenBraces.get(index);
+  if (openBrace === undefined) return false;
+
+  const declarationStart = Math.max(
+    source.lastIndexOf(";", openBrace - 1),
+    source.lastIndexOf("{", openBrace - 1),
+    source.lastIndexOf("}", openBrace - 1),
+  ) + 1;
+  const prefix = source.slice(declarationStart, openBrace).trimStart();
+  return /^(?:async\s+)?function(?:\s*\*)?(?:\s+[$A-Za-z_][$\w]*)?\s*\(/.test(prefix) ||
+    /^class(?:\s+[$A-Za-z_][$\w]*)?(?:\s+extends\s+[\s\S]+)?\s*$/.test(prefix);
+}
+
 function isForOfKeywordBefore(source: string, index: number, rangeStart: number): boolean {
   const keywordEnd = previousSignificantIndex(source, index) + 1;
   let keywordStart = keywordEnd;
@@ -334,6 +352,15 @@ function isForOfKeywordBefore(source: string, index: number, rangeStart: number)
 
   const beforeKeyword = previousSignificantIndex(source, keywordStart);
   if (beforeKeyword >= rangeStart && source[beforeKeyword] === ".") return false;
+  const beforeKeywordChar = source[beforeKeyword];
+  if (
+    !isIdentifierChar(beforeKeywordChar) &&
+    beforeKeywordChar !== "]" &&
+    beforeKeywordChar !== "}" &&
+    beforeKeywordChar !== ")"
+  ) {
+    return false;
+  }
 
   let parenDepth = 0;
   let braceDepth = 0;
@@ -399,7 +426,8 @@ function canStartRegexLiteral(
   if (char === ")" && isControlConditionCloseParen(source, previous, rangeStart)) return true;
   if (
     char === "}" &&
-    isControlBlockCloseBrace(source, previous, rangeStart, matchingOpenBraces)
+    (isControlBlockCloseBrace(source, previous, rangeStart, matchingOpenBraces) ||
+      isDeclarationBlockCloseBrace(source, previous, matchingOpenBraces))
   ) return true;
   if (
     (char === "+" || char === "-") &&
@@ -612,17 +640,32 @@ export function findStaticImportFromSpans(
 
   const spans: StaticImportSpan[] = [];
   let cursor = 0;
+  let atStatementStart = true;
 
   while (cursor < source.length) {
+    const char = source[cursor];
     const skipped = skipIgnored(source, cursor);
     if (skipped !== cursor) {
+      if (char === "/" && source[cursor + 1] === "/") atStatementStart = true;
+      else if (char !== "/") atStatementStart = false;
       cursor = skipped;
       continue;
     }
 
-    const isImport = isStatementKeywordAt(source, cursor, "import");
-    const isExport = isStatementKeywordAt(source, cursor, "export");
+    if (char === ";" || char === "\n") {
+      atStatementStart = true;
+      cursor++;
+      continue;
+    }
+    if (/\s/.test(char ?? "")) {
+      cursor++;
+      continue;
+    }
+
+    const isImport = isStatementKeywordAt(source, cursor, "import", atStatementStart);
+    const isExport = isStatementKeywordAt(source, cursor, "export", atStatementStart);
     if (!isImport && !isExport) {
+      atStatementStart = false;
       cursor++;
       continue;
     }
@@ -630,6 +673,7 @@ export function findStaticImportFromSpans(
     const keywordLength = isImport ? "import".length : "export".length;
     const afterKeyword = skipWhitespaceAndComments(source, cursor + keywordLength);
     if (isImport && source[afterKeyword] === "(") {
+      atStatementStart = false;
       cursor = afterKeyword + 1;
       continue;
     }
@@ -638,10 +682,12 @@ export function findStaticImportFromSpans(
     if (span) {
       spans.push(span);
       if (spans.length >= maxMatches) return spans;
+      atStatementStart = false;
       cursor = span.end;
       continue;
     }
 
+    atStatementStart = true;
     cursor = nextStatementCursor(source, afterKeyword);
   }
 
@@ -838,15 +884,30 @@ export function findStaticSideEffectImportSpans(
 
   const spans: StaticImportSpan[] = [];
   let cursor = 0;
+  let atStatementStart = true;
 
   while (cursor < source.length) {
+    const char = source[cursor];
     const skipped = skipIgnored(source, cursor);
     if (skipped !== cursor) {
+      if (char === "/" && source[cursor + 1] === "/") atStatementStart = true;
+      else if (char !== "/") atStatementStart = false;
       cursor = skipped;
       continue;
     }
 
-    if (!isStatementKeywordAt(source, cursor, "import")) {
+    if (char === ";" || char === "\n") {
+      atStatementStart = true;
+      cursor++;
+      continue;
+    }
+    if (/\s/.test(char ?? "")) {
+      cursor++;
+      continue;
+    }
+
+    if (!isStatementKeywordAt(source, cursor, "import", atStatementStart)) {
+      atStatementStart = false;
       cursor++;
       continue;
     }
@@ -854,6 +915,7 @@ export function findStaticSideEffectImportSpans(
     const literalIndex = skipWhitespaceAndComments(source, cursor + "import".length);
     const literal = readLiteralSpecifier(source, literalIndex);
     if (!literal) {
+      atStatementStart = true;
       cursor = nextStatementCursor(source, literalIndex);
       continue;
     }
@@ -869,6 +931,7 @@ export function findStaticSideEffectImportSpans(
       if (spans.length >= maxMatches) return spans;
     }
 
+    atStatementStart = false;
     cursor = literal.end;
   }
 
