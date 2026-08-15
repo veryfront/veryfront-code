@@ -1251,12 +1251,17 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
         () => cacheHttpImportsToLocal('import "missing-tenant-package";', options),
         Error,
       );
+      const explicitPackageError = await assertRejects(
+        () => cacheHttpImportsToLocal('import "npm:missing-tenant-package";', options),
+        Error,
+      );
       const directHttpError = await assertRejects(
         () => cacheModuleToLocal("https://esm.sh/missing-framework-module", tempDir),
         Error,
       );
 
       assertEquals(isTenantSourceBuildError(packageError), true);
+      assertEquals(isTenantSourceBuildError(explicitPackageError), true);
       assertEquals(isTenantSourceBuildError(directHttpError), false);
     });
   });
@@ -1276,22 +1281,29 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       return Promise.resolve(new Response("not found", { status: 404 }));
     }) as typeof fetch;
 
-    await withIsolatedHttpCache(
-      "vf-esm-missing-package-dependency-",
-      mockFetch,
-      async (tempDir) => {
-        const error = await assertRejects(
-          () =>
-            cacheHttpImportsToLocal('import "package-with-missing-dependency";', {
-              cacheDir: tempDir,
-              importMap: { imports: {}, scopes: {} },
-            }),
-          Error,
-        );
+    for (
+      const specifier of [
+        "package-with-missing-dependency",
+        "npm:package-with-missing-dependency",
+      ]
+    ) {
+      await withIsolatedHttpCache(
+        "vf-esm-missing-package-dependency-",
+        mockFetch,
+        async (tempDir) => {
+          const error = await assertRejects(
+            () =>
+              cacheHttpImportsToLocal(`import ${JSON.stringify(specifier)};`, {
+                cacheDir: tempDir,
+                importMap: { imports: {}, scopes: {} },
+              }),
+            Error,
+          );
 
-        assertEquals(isTenantSourceBuildError(error), false);
-      },
-    );
+          assertEquals(isTenantSourceBuildError(error), false, specifier);
+        },
+      );
+    }
   });
 
   it("distinguishes a package from a missing dependency at the same sanitized URL", async () => {

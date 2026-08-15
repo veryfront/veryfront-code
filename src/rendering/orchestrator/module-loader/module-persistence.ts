@@ -120,9 +120,19 @@ export async function readPersistedUnresolvedSpecifiers(
 function hasDefaultExport(code: string): boolean {
   let previousTokenIndex = -1;
   const controlConditionCloseParens = new Set<number>();
-  const controlBlockCloseBraces = new Set<number>();
+  const statementBlockCloseBraces = new Set<number>();
   const openParens: boolean[] = [];
   const openBraces: boolean[] = [];
+  let openBracketCount = 0;
+  let pendingDeclaration:
+    | {
+      kind: "class" | "function";
+      braceDepth: number;
+      parenDepth: number;
+      bracketDepth: number;
+      parameterListClosed: boolean;
+    }
+    | undefined;
 
   for (let index = 0; index < code.length;) {
     index = skipTrivia(code, index);
@@ -147,7 +157,7 @@ function hasDefaultExport(code: string): boolean {
     const next = skipTextToken(code, index, {
       previousTokenIndex,
       controlConditionCloseParens,
-      controlBlockCloseBraces,
+      statementBlockCloseBraces,
     });
     if (next !== index) {
       previousTokenIndex = next - 1;
@@ -156,8 +166,22 @@ function hasDefaultExport(code: string): boolean {
     }
 
     if (isIdentifierStart(code[index])) {
+      const identifierStart = index;
       index++;
       while (index < code.length && isIdentifierPart(code[index])) index++;
+      const identifier = code.slice(identifierStart, index);
+      if (
+        (identifier === "function" || identifier === "class") &&
+        startsDeclaration(code, previousTokenIndex, controlConditionCloseParens)
+      ) {
+        pendingDeclaration = {
+          kind: identifier,
+          braceDepth: openBraces.length,
+          parenDepth: openParens.length,
+          bracketDepth: openBracketCount,
+          parameterListClosed: false,
+        };
+      }
       previousTokenIndex = index - 1;
       continue;
     }
@@ -168,15 +192,32 @@ function hasDefaultExport(code: string): boolean {
         keyword === "if" || keyword === "while" || keyword === "for" ||
           keyword === "with" || keyword === "switch" || keyword === "catch",
       );
-    } else if (code[index] === ")" && openParens.pop() === true) {
-      controlConditionCloseParens.add(index);
+    } else if (code[index] === ")") {
+      if (openParens.pop() === true) controlConditionCloseParens.add(index);
+      if (
+        pendingDeclaration?.kind === "function" &&
+        openParens.length === pendingDeclaration.parenDepth
+      ) {
+        pendingDeclaration.parameterListClosed = true;
+      }
+    } else if (code[index] === "[") {
+      openBracketCount++;
+    } else if (code[index] === "]") {
+      openBracketCount = Math.max(0, openBracketCount - 1);
     } else if (code[index] === "{") {
+      const opensDeclarationBody = pendingDeclaration !== undefined &&
+        openBraces.length === pendingDeclaration.braceDepth &&
+        openParens.length === pendingDeclaration.parenDepth &&
+        openBracketCount === pendingDeclaration.bracketDepth &&
+        (pendingDeclaration.kind === "class" || pendingDeclaration.parameterListClosed);
       openBraces.push(
-        code[previousTokenIndex] === ")" &&
-          controlConditionCloseParens.has(previousTokenIndex),
+        opensDeclarationBody ||
+          code[previousTokenIndex] === ")" &&
+            controlConditionCloseParens.has(previousTokenIndex),
       );
+      if (opensDeclarationBody) pendingDeclaration = undefined;
     } else if (code[index] === "}" && openBraces.pop() === true) {
-      controlBlockCloseBraces.add(index);
+      statementBlockCloseBraces.add(index);
     }
 
     previousTokenIndex = index;
@@ -184,6 +225,19 @@ function hasDefaultExport(code: string): boolean {
   }
 
   return false;
+}
+
+function startsDeclaration(
+  code: string,
+  previousTokenIndex: number,
+  controlConditionCloseParens: ReadonlySet<number>,
+): boolean {
+  if (previousTokenIndex < 0) return true;
+  if (";{}:".includes(code[previousTokenIndex] ?? "")) return true;
+  if (controlConditionCloseParens.has(previousTokenIndex)) return true;
+  return ["async", "default", "export"].includes(
+    identifierBefore(code, previousTokenIndex) ?? "",
+  );
 }
 
 function exportListExposesDefault(code: string, openBraceIndex: number): boolean {
@@ -283,7 +337,7 @@ function skipTrivia(source: string, index: number): number {
 interface RegexScanContext {
   previousTokenIndex: number;
   controlConditionCloseParens: ReadonlySet<number>;
-  controlBlockCloseBraces: ReadonlySet<number>;
+  statementBlockCloseBraces: ReadonlySet<number>;
 }
 
 function skipTextToken(
@@ -326,9 +380,10 @@ function skipRegexToken(
     if (char === ")" && context?.controlConditionCloseParens.has(previous)) {
       // A statement can start with a regex immediately after a control
       // condition, for example `if (ready) /pattern/.test(value)`.
-    } else if (char === "}" && context?.controlBlockCloseBraces.has(previous)) {
+    } else if (char === "}" && context?.statementBlockCloseBraces.has(previous)) {
       // The same is true after the braced form, for example
-      // `if (ready) {} /pattern/.test(value)`.
+      // `if (ready) {} /pattern/.test(value)` or
+      // `function ready() {} /pattern/.test(value)`.
     } else if (!"([{=,:;!~?&|+-*%^<>".includes(char)) {
       const keyword = identifierBefore(source, previous);
       if (keyword !== null && isMemberNameBefore(source, previous)) return index;

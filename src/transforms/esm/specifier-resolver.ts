@@ -181,7 +181,17 @@ async function resolveSpecifier(
 
   if (stringStartsWith(specifier, "npm:")) {
     const bareSpecifier = stringSlice(specifier, 4);
-    const cached = await cacheHttpModule(`https://esm.sh/${bareSpecifier}`, options);
+    const requestedPackageUrl = `https://esm.sh/${bareSpecifier}`;
+    let cached: string | null;
+    try {
+      cached = await cacheHttpModule(requestedPackageUrl, options);
+    } catch (error) {
+      const effective = getEffectiveHttpCacheRequest(requestedPackageUrl, options);
+      const requestedPackageFingerprint = await fingerprintHttpModuleRequest(
+        normalizeHttpUrl(effective.url),
+      );
+      throw classifyAuthoredPackageFetchError(error, requestedPackageFingerprint);
+    }
     if (!cached) return bareSpecifier;
 
     if (isParentHttpModule(baseUrl)) {

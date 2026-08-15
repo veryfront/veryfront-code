@@ -211,7 +211,7 @@ describe("module-loader/dependency-resolver", () => {
         });
 
         assertEquals(deps, []);
-        assertEquals(rewriteResolvedDependencyImports(fileContent, deps), fileContent);
+        assertEquals(rewriteResolvedDependencyImports(fileContent, []), fileContent);
       },
     );
   });

@@ -176,6 +176,10 @@ describe("module-loader/module-persistence", () => {
       `export const pattern = /export default/;`,
       `if (enabled) /export default/.test(source); export const value = 1;`,
       `if (enabled) {} /export default/.test(source); export const value = 1;`,
+      `function setup() {} /export default/.test(source); export const value = 1;`,
+      `function setup({ nested: {} } = {}) {} /export default/.test(source); export const value = 1;`,
+      `class Setup {} /export default/.test(source); export const value = 1;`,
+      `class Setup extends mixin({}) {} /export default/.test(source); export const value = 1;`,
       `function read() { return /* keep the comment */ /export default/.source; }`,
       `function read() { return // keep the comment\n/export default/.source; }`,
     ] as const;
