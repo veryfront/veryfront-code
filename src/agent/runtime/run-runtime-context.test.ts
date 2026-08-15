@@ -39,4 +39,20 @@ describe("agent run runtime context", () => {
     assertEquals(result.startsWith("Base\n\n<runtime_context>"), true);
     assertEquals(result.match(/<runtime_context>/g)?.length, 1);
   });
+
+  it("keeps structured cache metadata while appending the run context uncached", () => {
+    const staticMessage = {
+      role: "system" as const,
+      content: "Shared prompt",
+      providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+    };
+    const dynamicMessage = { role: "system" as const, content: "Dynamic tail" };
+
+    const result = withAgentRunRuntimeContext([staticMessage, dynamicMessage], context);
+
+    assertEquals(result[0], staticMessage);
+    assertEquals(result[1], dynamicMessage);
+    assertEquals(result[2]?.providerOptions, undefined);
+    assertEquals(result[2]?.content.includes("<runtime_context>"), true);
+  });
 });

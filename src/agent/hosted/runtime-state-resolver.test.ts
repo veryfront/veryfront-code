@@ -62,6 +62,33 @@ describe("agent/hosted-runtime-state-resolver", () => {
     });
   });
 
+  it("returns structured system instructions separately from hook-compatible text", async () => {
+    const structuredSystem = [{
+      role: "system" as const,
+      content: "structured",
+      providerOptions: { cacheControl: { type: "ephemeral" } },
+    }];
+    const resolver = createHostedRuntimeStateResolver({
+      taskContext: {
+        projectId: "project-1",
+        branchId: null,
+      },
+    });
+
+    assertEquals(
+      await resolver({
+        system: "flattened",
+        structuredSystem,
+        messages: [],
+        step: 1,
+      }),
+      {
+        structuredSystem,
+        context: {},
+      },
+    );
+  });
+
   it("records submitted form input state in runtime context without changing the system prompt", async () => {
     const resolver = createHostedRuntimeStateResolver({
       taskContext: {
@@ -94,6 +121,9 @@ describe("agent/hosted-runtime-state-resolver", () => {
     });
 
     assertEquals(first.context[FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_CONTEXT_KEY], true);
+    if (first.system === undefined) {
+      throw new Error("Expected text system instructions");
+    }
 
     const second = await resolver({
       context: first.context,
@@ -124,6 +154,10 @@ describe("agent/hosted-runtime-state-resolver", () => {
       step: 1,
     });
 
+    assertEquals(typeof result.system, "string");
+    if (typeof result.system !== "string") {
+      throw new Error("Expected string system instructions");
+    }
     assertEquals(result.system.includes("artifact"), true);
   });
 });

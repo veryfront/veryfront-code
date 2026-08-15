@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { FakeTime } from "#std/testing/time";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { type ModelRuntime } from "#veryfront/provider";
@@ -25,10 +25,242 @@ import {
 import { hasSubmittedFormInputResult } from "./skill-policy-enforcement.ts";
 import { isRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
 import { normalizeInput } from "./input-utils.ts";
+import { cloneRuntimeStateMutableData } from "./index.ts";
 
 function eagerAgent(config: Parameters<typeof agent>[0]): ReturnType<typeof agent> {
   return agent({ ...config, __vfToolLoadingMode: "eager" } as Parameters<typeof agent>[0]);
 }
+
+describe("runtime-state mutable data cloning", () => {
+  it("keeps unknown values opaque after an unclassified clone failure", async () => {
+    const structuredCloneDescriptor = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "structuredClone",
+    );
+    let trapCalls = 0;
+    try {
+      Object.defineProperty(globalThis, "structuredClone", {
+        configurable: true,
+        value: () => {
+          throw new TypeError("Unclassified clone failure");
+        },
+        writable: true,
+      });
+      const isolatedRuntime = await import(
+        `./index.ts?unclassified-clone-failure=${crypto.randomUUID()}`
+      );
+      const proxy = new Proxy({}, {
+        getPrototypeOf() {
+          trapCalls += 1;
+          return Object.prototype;
+        },
+        getOwnPropertyDescriptor() {
+          trapCalls += 1;
+          return undefined;
+        },
+        ownKeys() {
+          trapCalls += 1;
+          return [];
+        },
+      });
+
+      assertStrictEquals(isolatedRuntime.cloneRuntimeStateMutableData(proxy, false), proxy);
+      assertEquals(trapCalls, 0);
+    } finally {
+      if (structuredCloneDescriptor) {
+        Object.defineProperty(globalThis, "structuredClone", structuredCloneDescriptor);
+      }
+    }
+  });
+
+  it("detaches ordinary records with a foreign Object.prototype chain", () => {
+    const foreignObjectPrototype = Object.create(null);
+    const foreign = Object.create(foreignObjectPrototype) as {
+      nested: { value: string };
+    };
+    foreign.nested = Object.assign(Object.create(foreignObjectPrototype), {
+      value: "original",
+    }) as { value: string };
+
+    const clone = cloneRuntimeStateMutableData(foreign);
+    clone.nested.value = "changed";
+
+    assertEquals(foreign.nested.value, "original");
+    assertEquals(clone.nested.value, "changed");
+  });
+
+  it("preserves opaque proxies when no-hook proxy branding is unavailable", () => {
+    let trapCalls = 0;
+    const proxy = new Proxy({}, {
+      getOwnPropertyDescriptor() {
+        trapCalls++;
+        return undefined;
+      },
+      ownKeys() {
+        trapCalls++;
+        return [];
+      },
+    });
+    const revocable = Proxy.revocable([], {});
+    revocable.revoke();
+
+    assertStrictEquals(cloneRuntimeStateMutableData(proxy, false), proxy);
+    assertStrictEquals(cloneRuntimeStateMutableData(revocable.proxy, false), revocable.proxy);
+    assertEquals(trapCalls, 0);
+  });
+
+  it("detaches the active provider bucket around opaque leaves when proxy branding is unavailable", () => {
+    const opaqueFunction = () => "opaque";
+    const opaqueWeakMap = new WeakMap<object, unknown>();
+    const source = [{
+      role: "system" as const,
+      content: "Original",
+      providerOptions: {
+        anthropic: { cacheControl: { type: "ephemeral" } },
+        custom: {
+          nested: { label: "original" },
+          opaqueFunction,
+          opaqueWeakMap,
+        },
+      },
+    }];
+
+    const clone = cloneRuntimeStateMutableData(source, false, "custom");
+    clone[0]!.content = "Changed";
+    clone[0]!.providerOptions.anthropic.cacheControl.type = "changed";
+    clone[0]!.providerOptions.custom.nested = { label: "changed" };
+
+    assertEquals(source[0]?.content, "Original");
+    assertEquals(source[0]?.providerOptions.anthropic.cacheControl.type, "ephemeral");
+    assertEquals(source[0]?.providerOptions.custom.nested.label, "original");
+    assertStrictEquals(source[0]?.providerOptions.custom.opaqueFunction, opaqueFunction);
+    assertStrictEquals(source[0]?.providerOptions.custom.opaqueWeakMap, opaqueWeakMap);
+  });
+
+  it("preserves nested opaque proxies without invoking traps when proxy branding is unavailable", () => {
+    let trapCalls = 0;
+    const opaqueProxy = new Proxy({}, {
+      ownKeys() {
+        trapCalls += 1;
+        return [];
+      },
+    });
+    const source = [{
+      role: "system" as const,
+      content: "Original",
+      providerOptions: { custom: opaqueProxy },
+    }];
+
+    const clone = cloneRuntimeStateMutableData(source, false);
+
+    assertStrictEquals(clone[0]?.providerOptions.custom, opaqueProxy);
+    clone[0]!.content = "Changed";
+    clone[0]!.providerOptions.custom = {};
+
+    assertEquals(source[0]?.content, "Original");
+    assertStrictEquals(source[0]?.providerOptions.custom, opaqueProxy);
+    assertEquals(trapCalls, 0);
+  });
+
+  it("detaches provider buckets around nested opaque proxies when proxy branding is unavailable", () => {
+    let trapCalls = 0;
+    const opaqueProxy = new Proxy({}, {
+      ownKeys() {
+        trapCalls += 1;
+        return [];
+      },
+    });
+    const source = [{
+      role: "system" as const,
+      content: "Original",
+      providerOptions: {
+        bedrock: {
+          cacheControl: { type: "ephemeral" },
+          opaqueProxy,
+        },
+      },
+    }];
+
+    const clone = cloneRuntimeStateMutableData(source, false, "bedrock");
+    clone[0]!.providerOptions.bedrock.cacheControl.type = "changed";
+
+    assertEquals(source[0]?.providerOptions.bedrock.cacheControl.type, "ephemeral");
+    assertStrictEquals(clone[0]?.providerOptions.bedrock.opaqueProxy, opaqueProxy);
+    assertEquals(trapCalls, 0);
+  });
+
+  it("copies active provider metadata accessors without invoking them", () => {
+    let getterCalls = 0;
+    const bedrock = {
+      cacheControl: { type: "ephemeral" },
+    } as Record<string, unknown>;
+    Object.defineProperty(bedrock, "opaqueMetadata", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return "opaque";
+      },
+    });
+    const source = [{
+      role: "system" as const,
+      content: "Original",
+      providerOptions: { bedrock },
+    }];
+
+    const clone = cloneRuntimeStateMutableData(source, false, "bedrock");
+    const clonedCacheControl = clone[0]?.providerOptions.bedrock.cacheControl as {
+      type: string;
+    };
+    clonedCacheControl.type = "changed";
+
+    assertEquals(getterCalls, 0);
+    assertEquals((bedrock.cacheControl as { type: string }).type, "ephemeral");
+    assertEquals(
+      typeof Object.getOwnPropertyDescriptor(
+        clone[0]?.providerOptions.bedrock,
+        "opaqueMetadata",
+      )?.get,
+      "function",
+    );
+  });
+
+  it("preserves nested provider metadata accessors without invoking them", () => {
+    let getterCalls = 0;
+    const transportHints = Object.defineProperty(
+      { mutable: { region: "original" } },
+      "computedRegion",
+      {
+        configurable: true,
+        enumerable: true,
+        get() {
+          getterCalls += 1;
+          return "us-east-1";
+        },
+      },
+    );
+    const source = [{
+      role: "system" as const,
+      content: "Original",
+      providerOptions: {
+        bedrock: {
+          cacheControl: { type: "ephemeral" },
+          transportHints,
+        },
+      },
+    }];
+
+    const clone = cloneRuntimeStateMutableData(source, false, "bedrock");
+    const clonedHints = clone[0]?.providerOptions.bedrock.transportHints;
+
+    assertEquals(getterCalls, 0);
+    assertStrictEquals(clonedHints, transportHints);
+    assertEquals(
+      typeof Object.getOwnPropertyDescriptor(clonedHints, "computedRegion")?.get,
+      "function",
+    );
+  });
+});
 
 function createRuntimeStream(parts: unknown[]) {
   return new ReadableStream<unknown>({
@@ -71,7 +303,7 @@ function extractSystemPrompt(options: unknown): string {
   return prompt
     .filter((entry) => entry?.role === "system" && typeof entry.content === "string")
     .map((entry) => entry.content as string)
-    .join("\n");
+    .join("\n\n");
 }
 
 function extractRuntimeToolNames(options: unknown): string[] {
@@ -4253,6 +4485,117 @@ describe("agent runtime refresh hooks", () => {
       assertEquals(system.includes("2026-07-20"), false);
     }
     assertEquals(body.includes("stream done"), true);
+  });
+
+  it("keeps the public runtime-state system hook string-compatible", async () => {
+    let observedRuntimeSystem: unknown;
+    let observedProviderSystem = "";
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/runtime-state-string-contract",
+      async doGenerate(options) {
+        observedProviderSystem = extractSystemPrompt(options);
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
+      },
+    };
+    const assistant = eagerAgent({
+      model: "hosted/runtime-state-string-contract",
+      system: "Base system prompt",
+      maxSteps: 1,
+      resolveModelTransport: async () => ({ model }),
+      resolveRuntimeState: ({ system }) => {
+        observedRuntimeSystem = system;
+        return { system: system.replace("Base", "Refreshed") };
+      },
+    });
+
+    const result = await assistant.generate({ input: "Run once." });
+
+    assertEquals(result.text, "done");
+    assertEquals(observedRuntimeSystem, "Base system prompt");
+    assertEquals(observedProviderSystem.includes("Refreshed system prompt"), true);
+  });
+
+  it("isolates configured structured system messages from runtime-state hook mutations", async () => {
+    const opaqueProviderMetadata = () => "opaque";
+    const configuredSystem = [{
+      role: "system" as const,
+      content: "Original structured prompt",
+      providerOptions: {
+        anthropic: { cacheControl: { type: "ephemeral" } },
+        custom: { opaqueProviderMetadata },
+      },
+    }];
+    let observedProviderSystem = "";
+    let observedProviderPrompt: unknown;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/runtime-state-structured-copy",
+      async doGenerate(options) {
+        observedProviderSystem = extractSystemPrompt(options);
+        observedProviderPrompt = (options as { prompt?: unknown }).prompt;
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
+      },
+    };
+    const assistant = eagerAgent({
+      model: "hosted/runtime-state-structured-copy",
+      system: configuredSystem,
+      maxSteps: 1,
+      resolveModelTransport: async () => ({ model }),
+      resolveRuntimeState: ({ structuredSystem }) => {
+        const firstMessage = structuredSystem?.[0] as {
+          content?: string;
+          providerOptions?: {
+            anthropic?: { cacheControl?: { ttl?: string } };
+          };
+        } | undefined;
+        if (firstMessage) {
+          firstMessage.content = "Replaced by hook mutation";
+          const cacheControl = firstMessage.providerOptions?.anthropic?.cacheControl;
+          if (cacheControl) cacheControl.ttl = "1h";
+        }
+        structuredSystem?.push({ role: "system", content: "Injected by hook mutation" });
+        return undefined;
+      },
+    });
+
+    const result = await assistant.generate({ input: "Run once." });
+
+    assertEquals(result.text, "done");
+    assertEquals(configuredSystem, [{
+      role: "system",
+      content: "Original structured prompt",
+      providerOptions: {
+        anthropic: { cacheControl: { type: "ephemeral" } },
+        custom: { opaqueProviderMetadata },
+      },
+    }]);
+    assertEquals(observedProviderSystem.includes("Original structured prompt"), true);
+    assertEquals(observedProviderSystem.includes("Replaced by hook mutation"), false);
+    assertEquals(observedProviderSystem.includes("Injected by hook mutation"), false);
+    const providerPrompt = observedProviderPrompt as Array<{
+      role?: string;
+      content?: unknown;
+      providerOptions?: unknown;
+    }>;
+    assertEquals(providerPrompt[0]?.providerOptions, {
+      anthropic: { cacheControl: { type: "ephemeral" } },
+      custom: { opaqueProviderMetadata },
+    });
   });
 
   it("generate and stream permit an advertised active-skill reference after form submission", async () => {

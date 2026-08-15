@@ -69,10 +69,6 @@ ${getRuntimeToolInventoryFooter(toolNames)}${deferredSection}`,
   };
 }
 
-function isRuntimeToolInventoryMessage(message: ChatSystemMessage): boolean {
-  return message.content.includes(RUNTIME_TOOL_INVENTORY_HEADER);
-}
-
 function removeFlattenedRuntimeToolInventory(instructions: string): string {
   const headerIndex = instructions.lastIndexOf(RUNTIME_TOOL_INVENTORY_HEADER);
   if (headerIndex < 0) {
@@ -93,13 +89,25 @@ function removeFlattenedRuntimeToolInventory(instructions: string): string {
   return instructions.slice(0, headerIndex).trimEnd();
 }
 
+function removeStructuredRuntimeToolInventory(
+  message: ChatSystemMessage,
+): ChatSystemMessage | undefined {
+  const content = removeFlattenedRuntimeToolInventory(message.content);
+  if (content === message.content) {
+    return message;
+  }
+  return content.length > 0 ? { ...message, content } : undefined;
+}
+
 /** Returns whether instructions already carry a hosted runtime tool inventory. */
 export function hasRuntimeToolInventory(
   instructions: string | readonly ChatSystemMessage[],
 ): boolean {
   return typeof instructions === "string"
-    ? instructions.includes(RUNTIME_TOOL_INVENTORY_HEADER)
-    : instructions.some(isRuntimeToolInventoryMessage);
+    ? removeFlattenedRuntimeToolInventory(instructions) !== instructions
+    : instructions.some((message) =>
+      removeFlattenedRuntimeToolInventory(message.content) !== message.content
+    );
 }
 
 /**
@@ -123,10 +131,10 @@ export function withRuntimeToolInventory(
       : [inventoryMessage];
   }
 
-  return [
-    ...instructions.filter((message) => !isRuntimeToolInventoryMessage(message)),
-    inventoryMessage,
-  ];
+  const baseInstructions = instructions
+    .map(removeStructuredRuntimeToolInventory)
+    .filter((message): message is ChatSystemMessage => message !== undefined);
+  return [...baseInstructions, inventoryMessage];
 }
 
 /** Flatten system instructions helper. */

@@ -4,7 +4,14 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
-import { type Agent, agent as createAgent, type AgentMessage } from "#veryfront/agent";
+import {
+  type Agent,
+  agent as createAgent,
+  type AgentMessage,
+  DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER,
+} from "#veryfront/agent";
+import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-inventory.ts";
+import { resolveAgentSystem } from "#veryfront/agent/runtime/effective-agent-system.ts";
 import {
   _resetShimForTests,
   type AttributeValue,
@@ -19,6 +26,7 @@ import type {
   CreateSandboxBashTool,
 } from "#veryfront/sandbox";
 import { registerSkill } from "#veryfront/skill/registry.ts";
+import { type ModelRuntime, registerModelProvider } from "#veryfront/provider";
 import type { RemoteToolSource, Tool } from "#veryfront/tool";
 import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
@@ -36,6 +44,24 @@ function parseSseFrames(body: string): Array<{ event: string; data: unknown }> {
     const data = /^data: (.+)$/m.exec(frame)?.[1];
     return event && data ? [{ event, data: JSON.parse(data) as unknown }] : [];
   });
+}
+
+async function resolveTestAgentSystem(system: unknown): Promise<Agent["config"]["system"]> {
+  if (typeof system === "function") {
+    return await resolveAgentSystem(system as Agent["config"]["system"], undefined);
+  }
+  return system as Agent["config"]["system"];
+}
+
+async function getAgentSystemText(system: unknown): Promise<string> {
+  const resolved = await resolveTestAgentSystem(system);
+  if (typeof resolved === "string") {
+    return resolved;
+  }
+  if (Array.isArray(resolved)) {
+    return flattenSystemInstructions(resolved);
+  }
+  throw new Error("Expected agent system instructions");
 }
 
 class RecordingSpan implements Span {
@@ -443,9 +469,15 @@ describe("internal-agents/run-stream", () => {
       },
     });
 
-    const system = capturedAgent?.config.system;
-    assertEquals(typeof system, "string");
-    const prompt = system as string;
+    const system = await resolveTestAgentSystem(capturedAgent?.config.system);
+    assertEquals(Array.isArray(system), true);
+    if (!Array.isArray(system)) {
+      throw new Error("Expected structured internal run system messages");
+    }
+    assertEquals(system[0]?.providerOptions, {
+      anthropic: { cacheControl: { type: "ephemeral" } },
+    });
+    const prompt = flattenSystemInstructions(system);
     assertStringIncludes(prompt, "You are Custom Agent.");
     assertStringIncludes(prompt, 'project_reference: "project-1"');
     assertStringIncludes(prompt, "branch_id: main (no branch_id needed for file operations)");
@@ -455,6 +487,215 @@ describe("internal-agents/run-stream", () => {
     assertStringIncludes(prompt, "Current run tool inventory:");
     assertStringIncludes(prompt, "- create_file");
     assertStringIncludes(prompt, "- outlook__send_email");
+  });
+
+  it("preserves an agent factory marker through internal runtime dispatch", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedSystem: Agent["config"]["system"] | undefined;
+    const runtimeAgent = createAgent({
+      id: "marker-agent",
+      model: "anthropic/claude-opus-4-6",
+      skills: false,
+      environmentContext: "Factory environment context.",
+      system: [{
+        role: "system",
+        content:
+          `Instructions before.\n\n${DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER}\n\nInstructions after.`,
+        providerOptions: {
+          anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+        },
+      }],
+    });
+    const input = {
+      agentId: runtimeAgent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_marker_agent",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {},
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, runtimeAgent, {
+      sessionManager,
+      projectAgentSandbox: { projectId: "project-1" },
+      createRuntime: (agent) => {
+        capturedSystem = agent.config.system;
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+        };
+      },
+    });
+
+    const resolvedSystem = await resolveTestAgentSystem(capturedSystem);
+    assertEquals(Array.isArray(resolvedSystem), true);
+    if (!Array.isArray(resolvedSystem)) {
+      throw new Error("Expected structured internal runtime system messages");
+    }
+    assertEquals(resolvedSystem[0]?.content, "Instructions before.");
+    const projectIndex = resolvedSystem.findIndex((message) =>
+      message.content.includes('project_reference: "project-1"')
+    );
+    const factoryContextIndex = resolvedSystem.findIndex((message) =>
+      message.content.includes("Factory environment context.")
+    );
+    const authoredTailIndex = resolvedSystem.findIndex((message) =>
+      message.content.includes("Instructions after.")
+    );
+    assertEquals(projectIndex > 0 && projectIndex < authoredTailIndex, true);
+    assertEquals(factoryContextIndex > 0 && factoryContextIndex < authoredTailIndex, true);
+    assertEquals(
+      flattenSystemInstructions(resolvedSystem).split("Instructions after.").length - 1,
+      1,
+    );
+  });
+
+  it("keeps structured cache metadata through internal runtime dispatch", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedSystem: Agent["config"]["system"] | undefined;
+    const agent = {
+      id: "structured-system-agent",
+      config: {
+        id: "structured-system-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: [{
+          role: "system",
+          content: "Shared internal instructions.",
+          providerOptions: {
+            anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+          },
+        }],
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_structured_system",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: (runtimeAgent) => {
+        capturedSystem = runtimeAgent.config.system;
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+        };
+      },
+    });
+
+    const resolvedSystem = await resolveTestAgentSystem(capturedSystem);
+    assertEquals(Array.isArray(resolvedSystem), true);
+    if (!Array.isArray(resolvedSystem)) {
+      throw new Error("Expected structured internal runtime system messages");
+    }
+    assertEquals(resolvedSystem[0], {
+      role: "system",
+      content: "Shared internal instructions.",
+      providerOptions: {
+        anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+      },
+    });
+  });
+
+  it("uses the effective runtime provider key during internal runtime dispatch", async () => {
+    let observedSystem: unknown;
+    let authoredSystemCalls = 0;
+    let modelTransportCalls = 0;
+    const model: ModelRuntime = {
+      provider: "AWS-Anthropic",
+      modelId: "claude-sonnet",
+      // deno-lint-ignore require-await
+      async doGenerate() {
+        throw new Error("Internal streaming must not use generate");
+      },
+      // deno-lint-ignore require-await
+      async doStream(options: unknown) {
+        observedSystem = (options as {
+          prompt?: Array<{ role?: string; content?: unknown; providerOptions?: unknown }>;
+        }).prompt?.filter((message) => message.role === "system");
+        return {
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              controller.enqueue({ type: "finish", finishReason: "stop" });
+              controller.close();
+            },
+          }),
+        };
+      },
+    } as unknown as ModelRuntime;
+    const unregister = registerModelProvider("bedrock", () => model);
+
+    try {
+      const runtimeAgent = createAgent({
+        id: "internal-runtime-provider-key",
+        model: "bedrock/claude-sonnet",
+        system: () => {
+          authoredSystemCalls += 1;
+          return Promise.resolve([{
+            role: "system" as const,
+            content: "Shared internal instructions.",
+            providerOptions: {
+              "AWS-Anthropic": { cacheControl: { type: "ephemeral" as const, ttl: "1h" as const } },
+            },
+          }, {
+            role: "system" as const,
+            content: "Authored dynamic instructions.",
+          }]);
+        },
+        resolveModelTransport: () => {
+          modelTransportCalls += 1;
+          return Promise.resolve({ model });
+        },
+        skills: false,
+      });
+      const response = await createRuntimeAgentStreamResponse(
+        {
+          agentId: runtimeAgent.id,
+          threadId: crypto.randomUUID(),
+          runId: "run_runtime_provider_key",
+          messages: [],
+          tools: [],
+          context: [],
+        } as Parameters<typeof createRuntimeAgentStreamResponse>[0],
+        runtimeAgent,
+        {
+          sessionManager: new AgentRunSessionManager(),
+        },
+      );
+      await response.text();
+
+      assertEquals(authoredSystemCalls, 1);
+      assertEquals(modelTransportCalls, 1);
+      if (!Array.isArray(observedSystem)) {
+        throw new Error("Expected the model runtime to receive system messages");
+      }
+      assertEquals(observedSystem.slice(0, 2), [{
+        role: "system",
+        content: "Shared internal instructions.",
+        providerOptions: {
+          "AWS-Anthropic": { cacheControl: { type: "ephemeral", ttl: "1h" } },
+        },
+      }, {
+        role: "system",
+        content: "Authored dynamic instructions.",
+      }]);
+      assertEquals(observedSystem[2]?.providerOptions, undefined);
+    } finally {
+      unregister();
+    }
   });
 
   it("includes the resolved system prompt in message compaction overhead", async () => {
@@ -1138,8 +1379,7 @@ describe("internal-agents/run-stream", () => {
     );
 
     assertEquals(capturedAllowedRemoteTools, undefined);
-    assertEquals(typeof runtimeSystem, "string");
-    const prompt = runtimeSystem as string;
+    const prompt = await getAgentSystemText(runtimeSystem);
     assertEquals(prompt.includes("- gmail__list_emails"), false);
   });
 
@@ -1210,8 +1450,7 @@ describe("internal-agents/run-stream", () => {
     );
 
     assertEquals(capturedAllowedRemoteTools, ["gmail__list_emails"]);
-    assertEquals(typeof runtimeSystem, "string");
-    const prompt = runtimeSystem as string;
+    const prompt = await getAgentSystemText(runtimeSystem);
     assertStringIncludes(prompt, "- gmail__list_emails");
     assertEquals(prompt.includes("- gmail__delete_email"), false);
   });
@@ -1416,8 +1655,7 @@ describe("internal-agents/run-stream", () => {
       },
     });
 
-    assertEquals(typeof runtimeSystem, "string");
-    const prompt = runtimeSystem as string;
+    const prompt = await getAgentSystemText(runtimeSystem);
     // OpenAI exposes a native web_search but no native web_fetch, so only the
     // supported half may reach the inventory.
     assertEquals(prompt.includes("- web_search"), true);
@@ -1471,8 +1709,7 @@ describe("internal-agents/run-stream", () => {
       },
     });
 
-    assertEquals(typeof runtimeSystem, "string");
-    const prompt = runtimeSystem as string;
+    const prompt = await getAgentSystemText(runtimeSystem);
     assertStringIncludes(prompt, "- zzz_local");
     assertEquals(prompt.includes("- remote_127"), false);
   });

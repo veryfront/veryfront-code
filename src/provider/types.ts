@@ -60,7 +60,11 @@ export type RuntimeAssistantContentPart =
  * view, which also includes provider-executed assistant tool results.
  */
 export type RuntimePromptMessage =
-  | { role: "system"; content: string }
+  | {
+    role: "system";
+    content: string;
+    providerOptions?: Record<string, unknown>;
+  }
   | {
     role: "user";
     content: Array<

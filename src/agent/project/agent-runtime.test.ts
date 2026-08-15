@@ -28,6 +28,7 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import { registerSkill } from "#veryfront/skill/registry.ts";
 import { createLoadSkillTool } from "#veryfront/skill/tools.ts";
 import { getEffectiveAgentSystem } from "../runtime/effective-agent-system.ts";
+import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-inventory.ts";
 import { tool } from "#veryfront/tool";
 
 const discoverProjectAgentRuntime: typeof discoverProjectAgentRuntimeRaw = (input) =>
@@ -144,7 +145,10 @@ Deno.test("project agent runtime keeps factory skill catalogs out of hosted inst
       ? await effectiveSystem()
       : effectiveSystem;
 
-    assertStringIncludes(localPrompt, "<available_skills>");
+    assertStringIncludes(
+      typeof localPrompt === "string" ? localPrompt : flattenSystemInstructions(localPrompt),
+      "<available_skills>",
+    );
     assertEquals(codeAgent.config.system, "Handle incidents carefully.");
     assertEquals(
       (await createRuntimeAgentDefinitionFromAgent(codeAgent)).instructions,
@@ -153,6 +157,32 @@ Deno.test("project agent runtime keeps factory skill catalogs out of hosted inst
   } finally {
     skillRegistryInternal.clearAll();
   }
+});
+
+Deno.test("project agent runtime preserves structured system metadata for hosted code agents", async () => {
+  const system = [{
+    role: "system" as const,
+    content: "Keep this prefix cached for one hour.",
+    providerOptions: {
+      anthropic: {
+        cacheControl: { type: "ephemeral", ttl: "1h" },
+      },
+    },
+  }, {
+    role: "system" as const,
+    content: "Keep this tail uncached.",
+  }];
+  const codeAgent = agent({
+    id: "structured-hosted-agent",
+    system,
+  });
+
+  const definition = await createRuntimeAgentDefinitionFromAgent(codeAgent);
+  assertEquals(
+    definition.instructions,
+    "Keep this prefix cached for one hour.\n\nKeep this tail uncached.",
+  );
+  assertEquals(definition.system, system);
 });
 
 Deno.test("project agent runtime serializes scoped delegates and first-party MCP presets", async () => {

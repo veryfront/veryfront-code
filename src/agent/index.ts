@@ -127,6 +127,7 @@ export type {
   AgentResponse,
   AgentStatus,
   AgentStreamResult,
+  AgentSystem,
   AgentVeryfrontMcpServerConfig,
   AgentVeryfrontMcpServerKind,
   EdgeConfig,

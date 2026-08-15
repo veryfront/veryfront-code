@@ -44,10 +44,10 @@ import { it } from "#veryfront/testing/bdd.ts";
 
 // The advertised input schema is intentionally STATIC and project-independent
 // (RFC 0001, layered context): skill IDs are surfaced in generated skill context,
-// not baked into the tool definition, so the tools array can join the shared
-// cache prefix. Per-project validation (valid IDs, reload/body rules) still runs at
+// baked into the tool definition, so the tools array can join the shared cache
+// prefix. Per-project validation (valid IDs, reload/body rules) still runs at
 // `.parse()` time and is covered by the execute() tests below. Every load state
-// must advertise this same schema — that invariance is what these assertions guard.
+// must advertise this same schema. That invariance is what these assertions guard.
 const STATIC_LOAD_SKILL_INPUT_SCHEMA = {
   type: "object",
   properties: {
@@ -2619,7 +2619,7 @@ it("createRuntimeLoadSkillTool keeps IDs out of the description and points to ru
     builtinStore: createBuiltinStore({}),
   });
 
-  // Static description — per-project IDs live in <available_skills>, not the tool
+  // Static description: per-project IDs live in generated skill context, not the tool
   // definition, so the description is byte-identical across projects (RFC 0001).
   assertEquals(tool.description.includes("daily-briefing"), false);
   assertStringIncludes(tool.description, "<available_skills>");
@@ -2837,7 +2837,7 @@ Deno.test("createRuntimeLoadSkillTool snapshots skill inventories without invoki
   });
 
   // The static description never enumerates skill IDs, so it cannot have walked
-  // the (fabricated) iterators — which is exactly what this test guards.
+  // the fabricated iterators, which is exactly what this test guards.
   assertEquals(projectTool.description.includes("daily-briefing"), false);
   assertEquals(builtinTool.description.includes("builtin-writer"), false);
   assertEquals(availableIteratorCalls, 0);

@@ -19,7 +19,8 @@ export function createVeryfrontCloudRuntimeSystemMessages(
   input: CreateVeryfrontCloudRuntimeSystemMessagesInput,
 ): ChatSystemMessage[] {
   return buildAgentCallContext({
-    instructions: input.agent.instructions,
+    instructions: input.agent.system ?? input.agent.instructions,
+    anthropicProviderAlias: "veryfront-cloud",
     ...(input.instructions ? { projectInstructions: input.instructions } : {}),
     ...(input.projectId
       ? {

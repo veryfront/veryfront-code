@@ -17,6 +17,7 @@ import {
   type AgentGenerateToolReplacements,
   type AgentResponse,
   type AgentStatus,
+  type AgentSystem,
   getTextFromParts,
   type Message,
   type MessagePart,
@@ -29,6 +30,10 @@ import {
 import { ensureModelReady, type ModelRuntime, resolveModel } from "#veryfront/provider";
 import { generateId } from "#veryfront/utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
+import {
+  canIdentifyProxyWithoutHooks,
+  isProxyWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
 import { createAgentMemory, type Memory } from "../memory/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
@@ -62,6 +67,7 @@ import {
   supportsModelRuntimeToolCalling,
 } from "#veryfront/provider/runtime-inspection.ts";
 import { generateText, streamText } from "#veryfront/runtime/runtime-bridge.ts";
+import { resolveAgentSystem } from "./effective-agent-system.ts";
 import {
   captureStreamedToolCallInput,
   collectFinalStreamToolResults,
@@ -77,6 +83,7 @@ import {
   materializeStreamedToolCall,
   shouldContinueAfterStreamStep,
 } from "./tool-result-continuation.ts";
+
 import {
   enforceSkillPolicy,
   FORM_INPUT_TOOL_ID,
@@ -214,7 +221,7 @@ import {
   type ToolConfigEntry,
 } from "./tool-helpers.ts";
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
-import { resolveRuntimeModel } from "./model-resolution.ts";
+import { resolveModelProviderOptionKey, resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateTextResult, RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 import { resolveTemperatureParameter } from "./model-capabilities.ts";
@@ -233,8 +240,231 @@ import {
   type ToolSearchResult,
 } from "./tool-exposure.ts";
 
+const ArrayIsArray = Array.isArray;
+const cloneStructuredValue = globalThis.structuredClone;
+const IntrinsicWeakMap = WeakMap;
+const ObjectCreate = Object.create;
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectPrototype = Object.prototype;
+const ReflectOwnKeys = Reflect.ownKeys;
 const logger = serverLogger.component("agent");
 const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = ["load_skill", "load_skill_reference"] as const;
+
+function getStructuredCloneFailureFingerprint(error: unknown): string | undefined {
+  if (!(error instanceof DOMException) || error.name !== "DataCloneError") {
+    return undefined;
+  }
+  return `${error.name}\u0000${error.message}`;
+}
+
+function captureOpaqueProxyCloneFailureFingerprints(): readonly string[] {
+  const revokedArrayProxy = Proxy.revocable([], {});
+  revokedArrayProxy.revoke();
+  const probes = [
+    new Proxy({}, {}),
+    new Proxy([], {}),
+    new Proxy(ObjectCreate(null), {}),
+    revokedArrayProxy.proxy,
+  ];
+  const fingerprints: string[] = [];
+  for (const probe of probes) {
+    try {
+      cloneStructuredValue(probe);
+    } catch (error) {
+      const fingerprint = getStructuredCloneFailureFingerprint(error);
+      if (fingerprint !== undefined && !fingerprints.includes(fingerprint)) {
+        fingerprints.push(fingerprint);
+      }
+    }
+  }
+  return fingerprints;
+}
+
+const OPAQUE_PROXY_CLONE_FAILURE_FINGERPRINTS = captureOpaqueProxyCloneFailureFingerprints();
+
+function isOpaqueProxyCloneFailure(error: unknown): boolean {
+  const fingerprint = getStructuredCloneFailureFingerprint(error);
+  return fingerprint !== undefined &&
+    OPAQUE_PROXY_CLONE_FAILURE_FINGERPRINTS.includes(fingerprint);
+}
+
+type RuntimeStateCloneFallback =
+  | "root"
+  | "message"
+  | "provider-options"
+  | "provider-bucket"
+  | "cache-control"
+  | "provider-metadata"
+  | "opaque";
+
+function isArrayWithoutThrowing(value: object): boolean {
+  try {
+    return ArrayIsArray(value);
+  } catch {
+    return false;
+  }
+}
+
+function shouldRecoverOpaqueProxyContainer(
+  value: object,
+  fallback: RuntimeStateCloneFallback,
+): boolean {
+  return fallback === "root"
+    ? isArrayWithoutThrowing(value)
+    : fallback !== "opaque" && fallback !== "provider-metadata";
+}
+
+function getChildRuntimeStateCloneFallback(
+  fallback: RuntimeStateCloneFallback,
+  parentIsArray: boolean,
+  key: PropertyKey,
+  providerOptionKey: string | undefined,
+): RuntimeStateCloneFallback {
+  if (fallback === "root" && parentIsArray) {
+    return "message";
+  }
+  if (fallback === "message" && key === "providerOptions") {
+    return "provider-options";
+  }
+  if (
+    fallback === "provider-options" &&
+    (key === "anthropic" || key === "veryfront-cloud" || key === providerOptionKey)
+  ) {
+    return "provider-bucket";
+  }
+  if (fallback === "provider-bucket") {
+    return key === "cacheControl" ? "cache-control" : "provider-metadata";
+  }
+  if (fallback === "cache-control") {
+    return "provider-metadata";
+  }
+  return "opaque";
+}
+
+function isOrdinaryRecordPrototype(prototype: object | null): boolean {
+  if (prototype === null || prototype === ObjectPrototype) {
+    return true;
+  }
+  if (isProxyWithoutHooks(prototype)) {
+    return false;
+  }
+  try {
+    return ObjectGetPrototypeOf(prototype) === null;
+  } catch {
+    return false;
+  }
+}
+
+function cloneRuntimeStateMutableValue(
+  value: unknown,
+  clones: WeakMap<object, unknown>,
+  proxyDetectionAvailable: boolean,
+  fallback: RuntimeStateCloneFallback,
+  providerOptionKey: string | undefined,
+): unknown {
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+  if (proxyDetectionAvailable && isProxyWithoutHooks(value)) {
+    return value;
+  }
+
+  const existing = clones.get(value);
+  if (existing !== undefined) {
+    return existing;
+  }
+
+  const inspectFrameworkContainer = shouldRecoverOpaqueProxyContainer(value, fallback);
+  if (!proxyDetectionAvailable && fallback === "provider-metadata") {
+    // Without host-level Proxy branding, unknown provider metadata cannot be
+    // reflected over safely. Keep it opaque instead of structured-cloning it,
+    // which would evaluate enumerable accessors. Known cacheControl metadata
+    // still follows the descriptor-first framework-container path.
+    return value;
+  }
+  if (!proxyDetectionAvailable && !inspectFrameworkContainer) {
+    try {
+      const clone = cloneStructuredValue(value);
+      clones.set(value, clone);
+      return clone;
+    } catch (error) {
+      // Proxy branding is unavailable on browser and edge hosts. Compare the
+      // failure with trusted, host-local Proxy failures before reflecting over
+      // the value. Unlike matching engine-specific text, this remains valid
+      // across engines and localized exception messages. Framework-owned
+      // structured-system containers are copied from descriptors before this
+      // branch so metadata accessors stay inert. Unknown values still fail
+      // closed without reflective Proxy probes.
+      if (isOpaqueProxyCloneFailure(error)) {
+        return value;
+      }
+      if (getStructuredCloneFailureFingerprint(error) === undefined) {
+        return value;
+      }
+    }
+  }
+
+  const isArray = isArrayWithoutThrowing(value);
+  let prototype: object | null;
+  try {
+    prototype = ObjectGetPrototypeOf(value);
+  } catch {
+    return value;
+  }
+  if (!isArray && !isOrdinaryRecordPrototype(prototype)) {
+    return value;
+  }
+
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = ObjectGetOwnPropertyDescriptors(value);
+  } catch {
+    return value;
+  }
+
+  const clone = isArray ? [] : ObjectCreate(prototype === null ? null : ObjectPrototype);
+  clones.set(value, clone);
+  const lengthDescriptor = isArray ? descriptors.length : undefined;
+  for (const key of ReflectOwnKeys(descriptors)) {
+    if (isArray && key === "length") {
+      continue;
+    }
+    const descriptor = descriptors[key as keyof PropertyDescriptorMap];
+    if (!descriptor) {
+      continue;
+    }
+    if ("value" in descriptor) {
+      descriptor.value = cloneRuntimeStateMutableValue(
+        descriptor.value,
+        clones,
+        proxyDetectionAvailable,
+        getChildRuntimeStateCloneFallback(fallback, isArray, key, providerOptionKey),
+        providerOptionKey,
+      );
+    }
+    ObjectDefineProperty(clone, key, descriptor);
+  }
+  if (lengthDescriptor) {
+    ObjectDefineProperty(clone, "length", lengthDescriptor);
+  }
+  return clone;
+}
+
+export function cloneRuntimeStateMutableData<T>(
+  value: T,
+  proxyDetectionAvailable = canIdentifyProxyWithoutHooks,
+  providerOptionKey?: string,
+): T {
+  return cloneRuntimeStateMutableValue(
+    value,
+    new IntrinsicWeakMap<object, unknown>(),
+    proxyDetectionAvailable,
+    "root",
+    providerOptionKey,
+  ) as T;
+}
 
 type DeferredRecoveryOutput =
   | { kind: "sse"; chunk: Uint8Array; isTextEvent: boolean }
@@ -555,20 +785,19 @@ function applyAgentWriteFinalResponseGuard(
 }
 
 function synchronizeRuntimeToolInventory(
-  systemPrompt: string,
+  systemPrompt: AgentSystem,
   runtimeTools: Record<string, unknown> | undefined,
   deferredTools: readonly DeferredToolSummary[] = [],
-): string {
+): AgentSystem {
   if (!hasRuntimeToolInventory(systemPrompt)) {
     return systemPrompt;
   }
-  return flattenSystemInstructions(
-    withRuntimeToolInventory(
-      systemPrompt,
-      Object.keys(runtimeTools ?? {}).sort(),
-      deferredTools,
-    ),
+  const instructions = withRuntimeToolInventory(
+    systemPrompt,
+    Object.keys(runtimeTools ?? {}).sort(),
+    deferredTools,
   );
+  return typeof systemPrompt === "string" ? flattenSystemInstructions(instructions) : instructions;
 }
 
 function parseToolResultJson(result: string): unknown {
@@ -836,7 +1065,7 @@ function debugRuntimeModelRemap(requestedModel: string, resolvedModelString: str
 }
 
 type RuntimeStepState = {
-  systemPrompt: string;
+  systemPrompt: AgentSystem;
   context?: Record<string, unknown>;
 };
 
@@ -891,19 +1120,30 @@ export class AgentRuntime {
     context: Record<string, unknown> | undefined,
     mode: "generate" | "stream",
     step: number,
-    systemPrompt: string,
+    systemPrompt: AgentSystem,
+    providerOptionKey: string | undefined,
   ): Promise<RuntimeStepState> {
+    const structuredSystem = Array.isArray(systemPrompt) ? systemPrompt : undefined;
     const refreshed: ResolvedRuntimeState | undefined = await this.config.resolveRuntimeState?.({
       agentId: this.id,
       mode,
       step,
-      system: systemPrompt,
+      system: typeof systemPrompt === "string"
+        ? systemPrompt
+        : flattenSystemInstructions(systemPrompt),
+      ...(structuredSystem === undefined ? {} : {
+        structuredSystem: cloneRuntimeStateMutableData(
+          structuredSystem,
+          canIdentifyProxyWithoutHooks,
+          providerOptionKey,
+        ),
+      }),
       messages: [...messages],
       context,
     });
 
     return {
-      systemPrompt: refreshed?.system ?? systemPrompt,
+      systemPrompt: refreshed?.structuredSystem ?? refreshed?.system ?? systemPrompt,
       context: refreshed?.context ?? context,
     };
   }
@@ -976,7 +1216,7 @@ export class AgentRuntime {
       const inputMessages = normalizeInput(input);
       const messages = await this.prepareTurnMessages(inputMessages);
 
-      const systemPrompt = await this.resolveSystemPrompt();
+      const systemPrompt = await this.resolveSystemPrompt(transport.providerOptionKey);
 
       const agentContext: AgentContext = {
         agentId: this.id,
@@ -1048,7 +1288,7 @@ export class AgentRuntime {
     const inputMessages = normalizeInput(messages);
     const memoryMessages = await this.prepareTurnMessages(inputMessages);
 
-    const systemPrompt = await this.resolveSystemPrompt();
+    const systemPrompt = await this.resolveSystemPrompt(transport.providerOptionKey);
 
     const encoder = new TextEncoder();
     const streamAbortController = new AbortController();
@@ -1203,7 +1443,7 @@ export class AgentRuntime {
    * Execute agent loop (with tool calling)
    */
   private async executeAgentLoop(
-    systemPrompt: string,
+    systemPrompt: AgentSystem,
     messages: Message[],
     toolContextBase: ToolExecutionContext | undefined,
     runtimeContext: Record<string, unknown> | undefined,
@@ -1311,6 +1551,8 @@ export class AgentRuntime {
           supportsToolCalling,
           messages: currentMessages,
           mode: "generate",
+          modelRuntime: languageModel,
+          providerOptionKey: resolveModelProviderOptionKey(effectiveModel, languageModel),
           providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
             ? providerTools
             : [],
@@ -1853,7 +2095,7 @@ export class AgentRuntime {
    * while consuming model-runtime `streamText()` parts internally.
    */
   private async executeAgentLoopStreaming(
-    systemPrompt: string,
+    systemPrompt: AgentSystem,
     messages: Message[],
     controller: ReadableStreamDefaultController,
     encoder: TextEncoder,
@@ -1944,6 +2186,8 @@ export class AgentRuntime {
         supportsToolCalling,
         messages: currentMessages,
         mode: "stream",
+        modelRuntime: languageModel,
+        providerOptionKey: resolveModelProviderOptionKey(effectiveModel, languageModel),
         providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
           ? providerTools
           : [],
@@ -2875,11 +3119,10 @@ export class AgentRuntime {
   /**
    * Resolve system prompt (handle string or function)
    */
-  private async resolveSystemPrompt(): Promise<string> {
+  private async resolveSystemPrompt(providerOptionKey?: string): Promise<AgentSystem> {
     const { system } = this.config;
-    if (typeof system === "string") return system;
-    if (typeof system === "function") return system();
-    return "You are a helpful assistant.";
+    if (system === undefined) return "You are a helpful assistant.";
+    return await resolveAgentSystem(system, providerOptionKey);
   }
 
   /**
