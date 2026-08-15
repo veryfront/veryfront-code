@@ -9,9 +9,8 @@ import { normalizeScheduleConfig } from "./validation.ts";
  * the `cron` alias is converted to the canonical `schedule` field. Invalid
  * top-level or nested fields fail with `schedule-config-invalid`.
  *
- * An agent target carries its own `conversationMode` and `conversationId`, and
- * `agentMessage.prompt` supplies the prompt. Both are rejected for task and
- * workflow targets.
+ * Agent targets accept `conversationMode`, `conversationId`, and
+ * `agentMessage.prompt`. Task and workflow targets reject all three fields.
  */
 export function schedule(config: AgentScheduleConfig): ScheduleDefinition;
 export function schedule(

@@ -48,9 +48,9 @@ export interface ScheduleIntegrationRequirementConfig {
   resources?: ScheduleIntegrationResource[];
 }
 
-/** Prompt content sent to an agent target on each occurrence. */
+/** Contains the prompt that a schedule sends to an agent target. */
 export interface ScheduleAgentMessage {
-  /** Agent prompt; the platform generates a default when omitted. */
+  /** The schedule sends this prompt. Veryfront generates a default when you omit it. */
   prompt?: string;
 }
 
@@ -66,9 +66,9 @@ export interface ScheduleDefinition {
   schedule: string;
   /** Supported IANA timezone name; platform default when omitted. */
   timezone?: string;
-  /** Task, workflow, or agent invoked by each occurrence. */
+  /** The schedule invokes this task, workflow, or agent on each occurrence. */
   target: ResolvedTriggerTarget;
-  /** Prompt content for an agent target; unsupported for other targets. */
+  /** The schedule sends this prompt to an agent target. Other target kinds do not support this field. */
   agentMessage?: ScheduleAgentMessage;
   /** Bounded JSON object copied into each target run. */
   input?: Record<string, unknown>;
@@ -91,11 +91,11 @@ interface ScheduleConfigFields extends
     ScheduleDefinition,
     "schedule" | "integrationRequirements" | "target" | "agentMessage"
   > {
-  /** Alias for a five-field POSIX `schedule` expression. */
+  /** Sets a five-field POSIX expression as an alias for `schedule`. */
   cron?: string;
-  /** Five-field POSIX cron expression. */
+  /** Sets the schedule to a five-field POSIX cron expression. */
   schedule?: string;
-  /** Integration requirements; omitted collections default to empty. */
+  /** Declares required integration access. Omitted collections default to empty. */
   integrationRequirements?: ScheduleIntegrationRequirementConfig[];
 }
 
@@ -105,15 +105,15 @@ interface ScheduleConfigFields extends
  * `cron` is an alias for `schedule`; the factory emits only `schedule`.
  */
 export interface ScheduleConfig extends ScheduleConfigFields {
-  /** Task, workflow, or agent invoked by each occurrence. */
+  /** The schedule invokes this task, workflow, or agent on each occurrence. */
   target: TriggerTargetConfig;
 }
 
-/** Author-facing schedule configuration with an agent prompt. */
+/** Configures an agent schedule with an optional prompt. */
 export interface AgentScheduleConfig extends ScheduleConfig {
-  /** Agent invoked by each occurrence. */
+  /** The schedule invokes this agent on each occurrence. */
   target: AgentTriggerTarget;
-  /** Prompt content sent to an agent target. */
+  /** The schedule sends this prompt to the agent. */
   agentMessage?: ScheduleAgentMessage;
 }
 

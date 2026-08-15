@@ -41,11 +41,5 @@ export type { ScheduleDiscoveryOptions, ScheduleDiscoveryResult } from "./discov
  * authored input without passing back through {@link schedule}, so the CLI is
  * the only place that can apply this rule to an operator-supplied file. Sharing
  * the one implementation keeps both entry points rejecting the same shapes.
- *
- * @example
- * ```ts
- * const detail = legacyScheduleTargetDiagnostic(input, conversation);
- * if (detail !== null) throw INVALID_ARGUMENT.create({ detail });
- * ```
  */
 export { legacyScheduleTargetDiagnostic } from "./validation.ts";
