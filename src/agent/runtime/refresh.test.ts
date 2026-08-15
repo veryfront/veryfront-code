@@ -2879,7 +2879,7 @@ describe("agent runtime refresh hooks", () => {
               }
               await new Promise((resolve) => setTimeout(resolve, 0));
               observedProviderEventBeforeReplayCompleted = providerEventObserved;
-              controller.enqueue({ type: "text-delta", text: "the requested update." });
+              controller.enqueue({ type: "text-delta", text: "the requested update. Done." });
               controller.enqueue({
                 type: "tool-result",
                 toolCallId: "provider-search-partial-replay",
@@ -2919,9 +2919,115 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(callCount, 2);
     assertEquals(observedProviderEventBeforeReplayCompleted, true);
     assertEquals(body.match(/Checking the requested update\./g)?.length ?? 0, 1);
+    assertEquals(body.match(/ Done\./g)?.length ?? 0, 1);
     assertEquals(body.includes("provider-search-partial-replay"), true);
     assertExists(finishedResponse);
-    assertEquals(finishedResponse.text, "Checking the requested update.");
+    assertEquals(finishedResponse.text, "Checking the requested update. Done.");
+    assertEquals(
+      finishedResponse.messages
+        .filter((message) => message.role === "assistant")
+        .flatMap((message) => message.parts)
+        .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : []),
+      ["Checking the requested update.", " Done."],
+    );
+  });
+
+  it("does not replay a retained prefix after a provider-tool text boundary", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    const chunks: string[] = [];
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Checking the update." },
+              {
+                type: "tool-input-start",
+                id: "toolu_interrupted_segment_replay",
+                toolName: "studio_suggestions",
+              },
+              {
+                type: "tool-input-delta",
+                id: "toolu_interrupted_segment_replay",
+                delta: "{}",
+              },
+              { type: "finish", finishReason: "tool-calls" },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "Checking " },
+            {
+              type: "tool-call",
+              toolCallId: "provider-search-segment-replay",
+              toolName: "web_search",
+              input: '{"query":"status"}',
+              providerExecuted: true,
+            },
+            {
+              type: "tool-result",
+              toolCallId: "provider-search-segment-replay",
+              toolName: "web_search",
+              output: { results: [] },
+              providerExecuted: true,
+            },
+            { type: "text-delta", text: "Done." },
+            { type: "finish", finishReason: "stop" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Text-segment recovery replay regression test",
+      tools: { studio_suggestions: studioSuggestions },
+      providerTools: ["web_search"],
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const body = await (await assistant.stream({
+      input: "Check the update",
+      onChunk: (chunk) => chunks.push(chunk),
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse().text();
+
+    assertEquals(callCount, 2);
+    assertEquals(body.match(/Checking /g)?.length ?? 0, 1);
+    assertEquals(body.match(/Done\./g)?.length ?? 0, 1);
+    assertEquals(body.indexOf("provider-search-segment-replay") < body.indexOf("Done."), true);
+    assertEquals(chunks, ["Checking the update.", "Done."]);
+    assertExists(finishedResponse);
+    assertEquals(finishedResponse.text, "Checking the update.Done.");
+    assertEquals(
+      finishedResponse.messages
+        .filter((message) => message.role === "assistant")
+        .flatMap((message) => message.parts)
+        .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : []),
+      ["Checking the update.", "Done."],
+    );
   });
 
   it("streams provider events before recovery replay text begins", async () => {

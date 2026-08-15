@@ -251,6 +251,20 @@ function isTextSseChunk(chunk: Uint8Array): boolean {
   }
 }
 
+function isTextEndSseChunk(chunk: Uint8Array): boolean {
+  const payload = new TextDecoder().decode(chunk);
+  if (!payload.startsWith("data: ")) {
+    return false;
+  }
+
+  try {
+    const event = JSON.parse(payload.slice("data: ".length)) as { type?: unknown };
+    return event.type === "text-end";
+  } catch {
+    return false;
+  }
+}
+
 function textDeltaFromSseChunk(chunk: Uint8Array): string | undefined {
   const payload = new TextDecoder().decode(chunk);
   if (!payload.startsWith("data: ")) {
@@ -2023,12 +2037,15 @@ export class AgentRuntime {
       let deferredRecoveryCallbackText = "";
       let releasedDeferredRecoveryOutput = false;
       let releasedRecoveryReplacementTextPartId: string | undefined;
+      let suppressedRecoveryReplayTextLength = 0;
       const stepTextPartId = textPartId === undefined || step === 0
         ? textPartId
         : `${textPartId}:step:${step}`;
       const replacementRecoveryTextPartId = stepTextPartId === undefined
         ? `recovery:step:${step}`
         : `${stepTextPartId}:recovery`;
+      const remainingRecoveryReplayText = () =>
+        previousRecoveryText.slice(suppressedRecoveryReplayTextLength);
       const flushDeferredRecoveryOutput = (
         interruptedRecoveryPrefixLength: number,
         repeatsInterruptedRecoveryText: boolean,
@@ -2077,21 +2094,25 @@ export class AgentRuntime {
       const releaseDeferredRecoveryOutputAfterDivergence = (): void => {
         if (deferredRecoveryOutput === undefined || releasedDeferredRecoveryOutput) return;
 
-        const sseDiverged = !previousRecoveryText.startsWith(deferredRecoverySseText);
+        const expectedReplayText = remainingRecoveryReplayText();
+        const sseDiverged = !expectedReplayText.startsWith(deferredRecoverySseText);
         const callbackDiverged = callbacks?.onChunk === undefined ||
-          !previousRecoveryText.startsWith(deferredRecoveryCallbackText);
+          !expectedReplayText.startsWith(deferredRecoveryCallbackText);
         if (!sseDiverged || !callbackDiverged) return;
 
         const observedRecoveryText = callbacks?.onChunk === undefined
           ? deferredRecoverySseText
           : deferredRecoveryCallbackText;
-        const extendsPreviousRecoveryText = observedRecoveryText.startsWith(previousRecoveryText);
+        const extendsPreviousRecoveryText = observedRecoveryText.startsWith(expectedReplayText);
         flushDeferredRecoveryOutput(
-          extendsPreviousRecoveryText ? previousRecoveryText.length : 0,
+          extendsPreviousRecoveryText ? expectedReplayText.length : 0,
           false,
-          !extendsPreviousRecoveryText,
+          !extendsPreviousRecoveryText && suppressedRecoveryReplayTextLength === 0,
         );
-        if (!extendsPreviousRecoveryText) {
+        if (extendsPreviousRecoveryText && suppressedRecoveryReplayTextLength > 0) {
+          suppressedRecoveryReplayTextLength += expectedReplayText.length;
+        }
+        if (!extendsPreviousRecoveryText && suppressedRecoveryReplayTextLength === 0) {
           releasedRecoveryReplacementTextPartId = replacementRecoveryTextPartId;
         }
         releasedDeferredRecoveryOutput = true;
@@ -2101,14 +2122,14 @@ export class AgentRuntime {
       ): void => {
         if (
           isTextEvent || deferredRecoveryOutput === undefined || releasedDeferredRecoveryOutput ||
-          deferredRecoverySseText !== previousRecoveryText ||
+          deferredRecoverySseText !== remainingRecoveryReplayText() ||
           (callbacks?.onChunk !== undefined &&
-            deferredRecoveryCallbackText !== previousRecoveryText)
+            deferredRecoveryCallbackText !== remainingRecoveryReplayText())
         ) {
           return;
         }
 
-        flushDeferredRecoveryOutput(previousRecoveryText.length, false, false);
+        flushDeferredRecoveryOutput(remainingRecoveryReplayText().length, false, false);
         releasedDeferredRecoveryOutput = true;
       };
       const releaseDeferredRecoveryNonTextOutput = (
@@ -2130,6 +2151,29 @@ export class AgentRuntime {
         }
         deferredRecoveryOutput.length = 0;
         deferredRecoveryOutput.push(...retainedOutput);
+      };
+      const reconcileDeferredRecoveryTextSegment = (
+        isTextEndEvent: boolean,
+      ): void => {
+        if (
+          !isTextEndEvent || deferredRecoveryOutput === undefined ||
+          releasedDeferredRecoveryOutput ||
+          !remainingRecoveryReplayText().startsWith(deferredRecoverySseText) ||
+          (callbacks?.onChunk !== undefined &&
+            !remainingRecoveryReplayText().startsWith(deferredRecoveryCallbackText))
+        ) {
+          return;
+        }
+
+        // A tool or reasoning event closes the current text segment. If that
+        // segment only replayed a prefix the client already received, discard
+        // it now and treat later text as a distinct segment. Otherwise retained
+        // prefix events could be released after the boundary when later text
+        // diverges, duplicating and reordering the replay.
+        suppressedRecoveryReplayTextLength += deferredRecoverySseText.length;
+        deferredRecoveryOutput.length = 0;
+        deferredRecoverySseText = "";
+        deferredRecoveryCallbackText = "";
       };
       const stepController = deferredRecoveryOutput === undefined ? controller : {
         enqueue(chunk: Uint8Array) {
@@ -2155,6 +2199,7 @@ export class AgentRuntime {
           releaseDeferredRecoveryOutputAfterDivergence();
           releaseDeferredRecoveryOutputAfterExactReplay(isTextEvent);
           releaseDeferredRecoveryNonTextOutput(isTextEvent);
+          reconcileDeferredRecoveryTextSegment(isTextEndSseChunk(chunk));
         },
       } as ReadableStreamDefaultController;
       await processStream(streamSource, state, stepController, encoder, stepTextPartId, {
@@ -2191,8 +2236,11 @@ export class AgentRuntime {
         : previousRecoveryText.startsWith(state.accumulatedText)
         ? state.accumulatedText.length
         : 0;
+      const recoveryPresentationPrefixLength = suppressedRecoveryReplayTextLength > 0
+        ? suppressedRecoveryReplayTextLength
+        : interruptedRecoveryPrefixLength;
       const recoveryPresentationText = state.accumulatedText.slice(
-        interruptedRecoveryPrefixLength,
+        recoveryPresentationPrefixLength,
       );
       const repeatsInterruptedRecoveryText = interruptedRecoveryPrefixLength > 0 &&
         recoveryPresentationText.length === 0;
@@ -2270,7 +2318,14 @@ export class AgentRuntime {
       }
 
       const stepAssistantText = getTextFromParts(assistantMessage.parts);
-      if (step === interruptedLocalToolBatchRecoveryStep && interruptedRecoveryPrefixLength > 0) {
+      if (
+        step === interruptedLocalToolBatchRecoveryStep &&
+        suppressedRecoveryReplayTextLength > 0
+      ) {
+        latestAssistantText = `${previousRecoveryText}${recoveryPresentationText}`;
+      } else if (
+        step === interruptedLocalToolBatchRecoveryStep && interruptedRecoveryPrefixLength > 0
+      ) {
         latestAssistantText = previousRecoveryText.startsWith(state.accumulatedText)
           ? previousRecoveryText
           : state.accumulatedText;
