@@ -705,6 +705,21 @@ describe("module-loader/isUnresolvedTenantImport", () => {
     assertEquals(isUnresolvedTenantImport(missing(), new Set(["./missing"])), true);
   });
 
+  it("classifies a dropped project alias after its SSR rewrite", () => {
+    const aliasMissing = Object.assign(
+      new TypeError(
+        'Module not found "file:///tmp/out/veryfront-modules/proj-a/_vf_modules/components/Foo.js".\n' +
+          `    at file://${REBUILT}:1:23`,
+      ),
+      { code: "ERR_MODULE_NOT_FOUND" },
+    );
+
+    assertEquals(
+      isUnresolvedTenantImport(aliasMissing, new Set(["@/components/Foo"]), REBUILT),
+      true,
+    );
+  });
+
   it("does not classify an unrelated missing target alongside a dropped specifier", () => {
     const unrelated = Object.assign(
       new TypeError(

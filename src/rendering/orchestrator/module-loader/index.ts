@@ -34,6 +34,7 @@ import type { TransformProgressListener } from "#veryfront/transforms/progress.t
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import { MODULE_CACHE_MAX_ENTRIES } from "#veryfront/utils/constants/cache.ts";
 import { isTenantSourceBuildError } from "#veryfront/errors/tenant-classification.ts";
+import { rewriteSsrProjectAliasSpecifier } from "#veryfront/transforms/import-rewriter/strategies/alias-strategy.ts";
 
 export { isBuildFailure } from "./build-failure.ts";
 
@@ -421,9 +422,8 @@ function normalizeMissingModuleTarget(message: string): string {
 }
 
 function normalizeUnresolvedSpecifier(specifier: string): string {
-  return specifier
-    .replace(/[?#].*$/, "")
-    .replace(/^@\//, "")
+  const withoutSuffix = specifier.replace(/[?#].*$/, "");
+  return (rewriteSsrProjectAliasSpecifier(withoutSuffix) ?? withoutSuffix)
     .replace(/^(\.\/|\.\.\/)+/, "")
     .replace(/^\/+/, "");
 }
