@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { webhook } from "./factory.ts";
@@ -527,5 +527,198 @@ describe("webhook/factory", () => {
         conversationMode: "none",
       },
     });
+  });
+});
+
+describe("webhook/factory agent targets", () => {
+  const conversationId = "11111111-1111-4111-8111-111111111111";
+
+  it("carries agent conversation addressing on the target", () => {
+    const definition = webhook({
+      id: "support-escalation",
+      target: { kind: "agent", id: "support-agent", conversationMode: "create_new" },
+      agentMessage: { promptTemplate: "Triage {{payload.summary}}" },
+    });
+
+    assertEquals(definition, {
+      id: "support-escalation",
+      target: { kind: "agent", id: "support-agent", conversationMode: "create_new" },
+      agentMessage: { promptTemplate: "Triage {{payload.summary}}" },
+    });
+    assertEquals(isWebhookDefinition(definition), true);
+  });
+
+  it("keeps the legacy agentMessage conversation mapping working", () => {
+    const definition = webhook({
+      id: "support-escalation",
+      target: { kind: "agent", id: "support-agent" },
+      agentMessage: {
+        promptTemplate: "Triage {{payload.summary}}",
+        conversationMode: "existing",
+        conversationId,
+      },
+    });
+
+    assertEquals(definition.target, { kind: "agent", id: "support-agent" });
+    assertEquals(definition.agentMessage, {
+      promptTemplate: "Triage {{payload.summary}}",
+      conversationMode: "existing",
+      conversationId,
+    });
+  });
+
+  it("accepts the same conversation pair declared on target and agentMessage", () => {
+    const definition = webhook({
+      id: "support-escalation",
+      target: {
+        kind: "agent",
+        id: "support-agent",
+        conversationMode: "existing",
+        conversationId,
+      },
+      agentMessage: {
+        promptTemplate: "Triage {{payload.summary}}",
+        conversationMode: "existing",
+        conversationId,
+      },
+    });
+
+    assertEquals(definition.target, {
+      kind: "agent",
+      id: "support-agent",
+      conversationMode: "existing",
+      conversationId,
+    });
+    assertEquals(definition.agentMessage, {
+      promptTemplate: "Triage {{payload.summary}}",
+      conversationMode: "existing",
+      conversationId,
+    });
+    assertEquals(isWebhookDefinition(definition), true);
+  });
+
+  it("rejects a conversation mode that disagrees with agentMessage", () => {
+    assertThrows(
+      () =>
+        webhook({
+          id: "support-escalation",
+          target: { kind: "agent", id: "support-agent", conversationMode: "create_new" },
+          agentMessage: {
+            promptTemplate: "Triage {{payload.summary}}",
+            conversationMode: "existing",
+            conversationId,
+          },
+        }),
+      VeryfrontError,
+      "Webhook target.conversationMode and agentMessage.conversationMode are both set to different values. Declare it in one place.",
+    );
+  });
+
+  it("rejects a conversation id that disagrees with agentMessage", () => {
+    assertThrows(
+      () =>
+        webhook({
+          id: "support-escalation",
+          target: {
+            kind: "agent",
+            id: "support-agent",
+            conversationMode: "existing",
+            conversationId,
+          },
+          agentMessage: {
+            promptTemplate: "Triage {{payload.summary}}",
+            conversationMode: "existing",
+            conversationId: "22222222-2222-4222-8222-222222222222",
+          },
+        }),
+      VeryfrontError,
+      "Webhook target.conversationId and agentMessage.conversationId are both set to different values. Declare it in one place.",
+    );
+  });
+
+  it("reports the conflict with the webhook-config-invalid slug", () => {
+    const error = assertThrows(
+      () =>
+        webhook({
+          id: "support-escalation",
+          target: { kind: "agent", id: "support-agent", conversationMode: "none" },
+          agentMessage: {
+            promptTemplate: "Triage {{payload.summary}}",
+            conversationMode: "create_new",
+          },
+        }),
+      VeryfrontError,
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "webhook-config-invalid");
+  });
+
+  it("rejects unsupported target keys instead of dropping them", () => {
+    for (
+      const [target, message] of [
+        [
+          { kind: "agent", id: "support-agent", conversationmode: "create_new" },
+          "Webhook target.conversationmode is not supported.",
+        ],
+        [
+          { kind: "workflow", id: "escalate-ticket", conversationMode: "create_new" },
+          "Webhook target.conversationMode is not supported.",
+        ],
+      ] as const
+    ) {
+      assertThrows(
+        () =>
+          webhook(
+            {
+              id: "support-escalation",
+              target,
+              agentMessage: { promptTemplate: "Triage." },
+            } as never,
+          ),
+        VeryfrontError,
+        message,
+      );
+    }
+  });
+
+  it("rejects invalid agent conversation relationships on the target", () => {
+    for (
+      const [target, message] of [
+        [
+          { kind: "agent", id: "support-agent", conversationMode: "resume" },
+          "Webhook target.conversationMode must be create_new, existing, or none.",
+        ],
+        [
+          { kind: "agent", id: "support-agent", conversationMode: "existing" },
+          "Webhook target.conversationId is required when conversationMode is existing.",
+        ],
+        [
+          { kind: "agent", id: "support-agent", conversationMode: "none", conversationId },
+          "Webhook target.conversationId is allowed only when conversationMode is existing.",
+        ],
+        [
+          {
+            kind: "agent",
+            id: "support-agent",
+            conversationMode: "existing",
+            conversationId: "not-a-uuid",
+          },
+          "Webhook target.conversationId must be a UUID or null.",
+        ],
+      ] as const
+    ) {
+      assertThrows(
+        () =>
+          webhook(
+            {
+              id: "support-escalation",
+              target,
+              agentMessage: { promptTemplate: "Triage." },
+            } as never,
+          ),
+        VeryfrontError,
+        message,
+      );
+    }
   });
 });

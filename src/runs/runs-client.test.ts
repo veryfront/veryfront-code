@@ -329,6 +329,7 @@ describe("VeryfrontRunsClient", () => {
       target: {
         kind: "agent",
         id: "job-submission-orchestrator",
+        conversationMode: "create_new",
       },
     });
     assertEquals(

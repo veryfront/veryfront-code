@@ -192,6 +192,47 @@ describe("Guide code example coverage", () => {
 });
 
 describe("Guide: concepts/schedule.md", () => {
+  it("addresses the documented scheduled agent conversation", () => {
+    const definition = schedule({
+      id: "triage-new-cases",
+      schedule: "*/10 * * * *",
+      target: { kind: "agent", id: "case-triage", conversationMode: "create_new" },
+      agentMessage: { prompt: "Triage every open case created since the last run." },
+    });
+
+    assertEquals(definition.target, {
+      kind: "agent",
+      id: "case-triage",
+      conversationMode: "create_new",
+    });
+    assertEquals(definition.agentMessage, {
+      prompt: "Triage every open case created since the last run.",
+    });
+  });
+
+  it("accepts the documented dual declaration that spans a platform upgrade", () => {
+    const definition = schedule({
+      id: "triage-new-cases",
+      schedule: "*/10 * * * *",
+      target: { kind: "agent", id: "case-triage", conversationMode: "create_new" },
+      agentMessage: { prompt: "Triage every open case created since the last run." },
+      input: {
+        _schedule_target: { conversationMode: "create_new" },
+        prompt: "Triage every open case created since the last run.",
+      },
+    });
+
+    assertEquals(definition.target, {
+      kind: "agent",
+      id: "case-triage",
+      conversationMode: "create_new",
+    });
+    assertEquals(definition.input, {
+      _schedule_target: { conversationMode: "create_new" },
+      prompt: "Triage every open case created since the last run.",
+    });
+  });
+
   it("defines the documented stale-run health budget", () => {
     const definition = schedule({
       id: "daily-support-triage",
@@ -230,18 +271,39 @@ describe("Guide: concepts/webhook.md", () => {
   it("normalizes the documented agent prompt mapping example", () => {
     const definition = webhook({
       id: "support-escalation",
-      target: { kind: "agent", id: "support-agent" },
+      target: { kind: "agent", id: "support-agent", conversationMode: "create_new" },
       agentMessage: {
         promptTemplate: "Triage {{payload.summary}} for account {{payload.account.id}}.",
-        conversationMode: "none",
       },
     });
 
-    assertEquals(definition.agentMessage?.conversationMode, "none");
+    assertEquals(definition.target, {
+      kind: "agent",
+      id: "support-agent",
+      conversationMode: "create_new",
+    });
     assertEquals(
       definition.agentMessage?.promptTemplate,
       "Triage {{payload.summary}} for account {{payload.account.id}}.",
     );
+  });
+
+  it("accepts the documented dual declaration that spans a platform upgrade", () => {
+    const definition = webhook({
+      id: "support-escalation",
+      target: { kind: "agent", id: "support-agent", conversationMode: "create_new" },
+      agentMessage: {
+        promptTemplate: "Triage {{payload.summary}} for account {{payload.account.id}}.",
+        conversationMode: "create_new",
+      },
+    });
+
+    assertEquals(definition.target, {
+      kind: "agent",
+      id: "support-agent",
+      conversationMode: "create_new",
+    });
+    assertEquals(definition.agentMessage?.conversationMode, "create_new");
   });
 });
 

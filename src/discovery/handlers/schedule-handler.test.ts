@@ -43,3 +43,28 @@ describe("discovery/schedule-handler", () => {
     });
   });
 });
+
+describe("discovery/schedule-handler agent targets", () => {
+  it("registers canonical agent conversation addressing and message content", () => {
+    const definition = schedule({
+      id: "triage-new-cases",
+      schedule: "*/10 * * * *",
+      target: { kind: "agent", id: "case-triage", conversationMode: "create_new" },
+      agentMessage: { prompt: "Triage every open case created since the last run." },
+    });
+
+    const registered = scheduleHandler.register(
+      definition.id,
+      definition,
+      "schedules/triage-new-cases.ts",
+      "schedules",
+    );
+
+    assertEquals(registered, {
+      id: "triage-new-cases",
+      schedule: "*/10 * * * *",
+      target: { kind: "agent", id: "case-triage", conversationMode: "create_new" },
+      agentMessage: { prompt: "Triage every open case created since the last run." },
+    });
+  });
+});

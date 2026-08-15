@@ -1,4 +1,8 @@
-import type { TriggerTarget } from "#veryfront/trigger/target.ts";
+import type {
+  AgentConversationMode,
+  ResolvedTriggerTarget,
+  TriggerTargetConfig,
+} from "#veryfront/trigger/target.ts";
 import { isValidWebhookDefinition } from "./validation.ts";
 
 /** Whether every filter condition or at least one condition must match. */
@@ -31,18 +35,27 @@ export interface WebhookEventFilter {
 }
 
 /** Hosted conversation behavior for an agent-target webhook. */
-export type WebhookAgentConversationMode =
-  | "create_new"
-  | "existing"
-  | "none";
+export type WebhookAgentConversationMode = AgentConversationMode;
 
 /** Prompt and optional hosted conversation mapping for an agent target. */
 export interface WebhookAgentMessageMapping {
   /** Agent prompt supporting `{{payload}}` and `{{payload.dot.path}}` placeholders. */
   promptTemplate: string;
-  /** Hosted conversation behavior; defaults to `none`. */
+  /**
+   * Hosted conversation behavior; defaults to `none`.
+   *
+   * @deprecated Set `conversationMode` on the target instead. Matching values
+   * in both locations are accepted during the upgrade period. Different values
+   * are rejected, and this field is removed in the next major.
+   */
   conversationMode?: WebhookAgentConversationMode;
-  /** Existing conversation UUID, required only with `conversationMode: "existing"`. */
+  /**
+   * Existing conversation UUID, required only with `conversationMode: "existing"`.
+   *
+   * @deprecated Set `conversationId` on the target instead. Matching values in
+   * both locations are accepted during the upgrade period. Different values are
+   * rejected, and this field is removed in the next major.
+   */
   conversationId?: string | null;
 }
 
@@ -55,7 +68,7 @@ export interface WebhookDefinition {
   /** Optional operator-facing description. */
   description?: string;
   /** Canonical task, workflow, or agent target. */
-  target: TriggerTarget;
+  target: ResolvedTriggerTarget;
   /** Optional payload filter evaluated before target execution. */
   eventFilter?: WebhookEventFilter;
   /** Required for agent targets and unsupported for other targets. */
@@ -63,7 +76,10 @@ export interface WebhookDefinition {
 }
 
 /** Author-facing webhook configuration accepted by {@link webhook}. */
-export type WebhookConfig = WebhookDefinition;
+export type WebhookConfig = Omit<WebhookDefinition, "target"> & {
+  /** Canonical task, workflow, or agent target. */
+  target: TriggerTargetConfig;
+};
 
 /** Return true only when every webhook field and nested invariant is valid. */
 export function isWebhookDefinition(

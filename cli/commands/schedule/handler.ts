@@ -17,10 +17,17 @@ import {
   type Run,
   type VeryfrontRunsClient,
 } from "veryfront/runs";
-import { discoverSchedules, type ScheduleDefinition } from "veryfront/schedule";
 import {
+  discoverSchedules,
+  legacyScheduleTargetDiagnostic,
+  type ScheduleDefinition,
+} from "veryfront/schedule";
+import {
+  conversationConflictDiagnostic,
+  declarationConflictDiagnostic,
   isTriggerId,
   isTriggerTarget,
+  type ResolvedTriggerTarget,
   runTriggerTarget,
   type TriggerTarget,
 } from "veryfront/trigger";
@@ -167,6 +174,92 @@ export function normalizeLocalScheduleInput(value: unknown): Record<string, unkn
   return value as Record<string, unknown>;
 }
 
+/** Read the conversation pair from the legacy `input._schedule_target` channel. */
+function readLegacyScheduleConversation(
+  input: Record<string, unknown>,
+): { conversationMode: unknown; conversationId: unknown } {
+  const legacyTarget = input._schedule_target;
+  if (!legacyTarget || typeof legacyTarget !== "object" || Array.isArray(legacyTarget)) {
+    return { conversationMode: undefined, conversationId: undefined };
+  }
+  const record = legacyTarget as Record<string, unknown>;
+  return {
+    conversationMode: record.conversationMode,
+    conversationId: record.conversationId,
+  };
+}
+
+/**
+ * Build the local agent run options for one scheduled occurrence.
+ *
+ * Addressing comes from the canonical target, falling back to the legacy
+ * `input._schedule_target` channel written by older SDKs. Prompt content comes
+ * from `agentMessage.prompt`, falling back to the legacy `input.prompt`.
+ *
+ * Neither fallback may drop authored content, and this function is what
+ * supplies that invariant here: `--input` replaces the authored input without
+ * passing through `schedule()`, so an operator file can disagree with the
+ * definition no matter what the definition itself was validated against. Two
+ * declarations of one value that disagree are rejected rather than resolved,
+ * leaving only the equal-or-absent case for the fallbacks to read.
+ */
+export function toScheduleAgentOptions(
+  schedule: ScheduleDefinition,
+  input: Record<string, unknown>,
+): { agentInput?: string; agentContext?: Record<string, unknown> } {
+  const target = schedule.target;
+  if (target.kind !== "agent") return {};
+
+  const legacyConversation = readLegacyScheduleConversation(input);
+  // `--input <file>` never passes through `schedule()`, so the operator file's
+  // own shape is unvalidated until here. Without this, a misspelled key or a
+  // bogus mode in that file is read as absent and the run silently proceeds
+  // standalone -- the same silent drop this contract exists to remove.
+  const legacyTargetDetail = legacyScheduleTargetDiagnostic(input, legacyConversation);
+  if (legacyTargetDetail !== null) {
+    throw INVALID_ARGUMENT.create({ detail: legacyTargetDetail });
+  }
+
+  const conflictDetail = conversationConflictDiagnostic(
+    "Schedule",
+    "input._schedule_target",
+    target,
+    legacyConversation.conversationMode,
+    legacyConversation.conversationId,
+  ) ??
+    declarationConflictDiagnostic(
+      "Schedule",
+      "agentMessage.prompt",
+      "input.prompt",
+      schedule.agentMessage?.prompt,
+      input.prompt,
+    );
+  if (conflictDetail !== null) {
+    throw INVALID_ARGUMENT.create({ detail: conflictDetail });
+  }
+
+  const conversationMode = target.conversationMode ??
+    legacyConversation.conversationMode;
+  if (conversationMode === "existing") {
+    throw INVALID_ARGUMENT.create({
+      detail: "Local scheduled agent runs cannot attach to an existing cloud conversation.",
+    });
+  }
+
+  const scheduleName = schedule.name ?? schedule.id;
+  const prompt = schedule.agentMessage?.prompt ?? input.prompt;
+  return {
+    agentInput: typeof prompt === "string" && prompt.trim().length > 0
+      ? prompt
+      : `Run scheduled agent ${target.id} for ${scheduleName}`,
+    agentContext: {
+      trigger: "schedule",
+      schedule: { id: schedule.id, name: scheduleName },
+      forwardedProps: input,
+    },
+  };
+}
+
 export async function waitForRemoteScheduleRun(
   client: Pick<VeryfrontRunsClient, "get">,
   accepted: CreateScheduleRunFromSourceResult,
@@ -238,7 +331,10 @@ export function formatRemoteScheduleRunOutput(run: Run): Record<string, unknown>
   };
 }
 
-export function resolveRemoteScheduleTarget(run: Run, fallback: TriggerTarget): TriggerTarget {
+export function resolveRemoteScheduleTarget(
+  run: Run,
+  fallback: TriggerTarget,
+): ResolvedTriggerTarget {
   const fallbackTarget = isTriggerTarget(fallback) ? { ...fallback } : null;
   if (!run.target) {
     if (fallbackTarget !== null) return fallbackTarget;
@@ -252,7 +348,16 @@ export function resolveRemoteScheduleTarget(run: Run, fallback: TriggerTarget): 
   const kind = run.target.slice(0, separator);
   const id = run.target.slice(separator + 1).trim();
   const candidate = { kind, id };
-  if (isTriggerTarget(candidate)) return candidate;
+  if (isTriggerTarget(candidate)) {
+    if (
+      fallbackTarget !== null &&
+      fallbackTarget.kind === candidate.kind &&
+      fallbackTarget.id === candidate.id
+    ) {
+      return fallbackTarget;
+    }
+    return candidate;
+  }
   if (fallbackTarget !== null) return fallbackTarget;
   throw new Error("Remote schedule returned an invalid target.");
 }
@@ -343,32 +448,7 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
     const triggerInput = normalizeLocalScheduleInput(
       opts.input === undefined ? schedule.input ?? {} : input,
     );
-    const scheduleConfig = triggerInput;
-    const scheduleName = schedule.name ?? schedule.id;
-    const scheduleTarget = scheduleConfig._schedule_target;
-    const conversationMode = scheduleTarget && typeof scheduleTarget === "object" &&
-        !Array.isArray(scheduleTarget)
-      ? (scheduleTarget as Record<string, unknown>).conversationMode
-      : undefined;
-    if (schedule.target.kind === "agent" && conversationMode === "existing") {
-      throw INVALID_ARGUMENT.create({
-        detail: "Local scheduled agent runs cannot attach to an existing cloud conversation.",
-      });
-    }
-
-    const agentRunOptions = schedule.target.kind === "agent"
-      ? {
-        agentInput:
-          typeof scheduleConfig.prompt === "string" && scheduleConfig.prompt.trim().length > 0
-            ? scheduleConfig.prompt
-            : `Run scheduled agent ${schedule.target.id} for ${scheduleName}`,
-        agentContext: {
-          trigger: "schedule",
-          schedule: { id: schedule.id, name: scheduleName },
-          forwardedProps: scheduleConfig,
-        },
-      }
-      : {};
+    const agentRunOptions = toScheduleAgentOptions(schedule, triggerInput);
 
     const timeout = createLocalScheduleTimeout(schedule.timeoutSeconds);
     const run = await (async () => {
