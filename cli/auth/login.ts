@@ -15,8 +15,8 @@ import {
 } from "../shared/constants.ts";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../shared/json-output.ts";
 import { isInteractive } from "../shared/interactive.ts";
-import { getEnvSource } from "#veryfront/utils/env-loader.ts";
-import { relative } from "#veryfront/compat/path";
+import { getEnvSource } from "veryfront/utils/env-loader";
+import { basename, relative } from "veryfront/platform/path";
 import { cwd } from "veryfront/platform";
 
 /**
@@ -38,7 +38,7 @@ function describeApiTokenSource(): string {
   // than exposing the layout above it.
   const rel = relative(cwd(), origin.file);
   const shown = !rel || rel.startsWith("..")
-    ? origin.file.split("/").pop() ?? origin.file
+    ? basename(origin.file)
     : rel.startsWith(".")
     ? rel
     : `./${rel}`;

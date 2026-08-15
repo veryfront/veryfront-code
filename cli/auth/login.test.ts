@@ -17,7 +17,7 @@ import {
   describe,
   it,
 } from "#veryfront/testing/bdd.ts";
-import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { deleteEnv, getEnv, setEnv } from "veryfront/platform";
 import { deleteToken, readToken, saveToken } from "./token-store.ts";
 import { makeTempDir, remove } from "#veryfront/platform/compat/fs.ts";
 import {
@@ -460,9 +460,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;
       const output: string[] = [];
-      const { __resetEnvLoaderForTests, loadEnv } = await import(
-        "#veryfront/utils/env-loader.ts"
-      );
+      const { __resetEnvLoaderForTests, loadEnv } = await import("veryfront/utils/env-loader");
       const envDir = await Deno.makeTempDir({ prefix: "whoami-env-source-" });
 
       try {
@@ -507,7 +505,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;
       const output: string[] = [];
-      const { __resetEnvLoaderForTests } = await import("#veryfront/utils/env-loader.ts");
+      const { __resetEnvLoaderForTests } = await import("veryfront/utils/env-loader");
 
       try {
         __resetEnvLoaderForTests();
