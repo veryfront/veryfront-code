@@ -538,17 +538,22 @@ per-CRUD arrays are not enforced.
 `case-dispose` writes `Case.Reason` and one internal `CaseComment` as a single
 logical disposal. V1 must make that logical disposal either atomic at the hosted
 integration boundary, for example through a Salesforce Composite request with
-`allOrNone: true`, or deterministically reconciled after any partial success. If
-the implementation cannot use an atomic composite write, it must assign each
-disposal a stable idempotency key derived from the case ID, taxonomy version,
-selected reason, and comment content, record or derive the key in a way retries
-can observe, deduplicate already-created comments, and converge every retry to
-exactly one visible terminal state: both `Reason` and the matching internal
-comment are present, or the run reports that reconciliation is required without
-creating another comment. A retry after `Reason` succeeds but `CaseComment`
-fails, or after `CaseComment` succeeds but the client times out before observing
-the result, must not create duplicate comments or leave the agent to infer state
-from an empty write response.
+`allOrNone: true`, or deterministically reconciled after any partial success. The
+atomic path still needs a stable request identity for the logical disposal, or a
+read-after-timeout reconciliation step, because Salesforce can commit the
+composite request and lose the response before the client observes success. Any
+retry after an ambiguous committed timeout must find the already-created internal
+comment for the same case ID, taxonomy version, selected reason, and comment
+content instead of creating another `CaseComment`. If the implementation cannot
+use an atomic composite write, it must assign the same logical disposal a stable
+idempotency key, record or derive the key in a way retries can observe,
+deduplicate already-created comments, and converge every retry to exactly one
+visible terminal state: both `Reason` and the matching internal comment are
+present, or the run reports that reconciliation is required without creating
+another comment. A retry after `Reason` succeeds but `CaseComment` fails, or
+after `CaseComment` succeeds but the client times out before observing the
+result, must not create duplicate comments or leave the agent to infer state from
+an empty write response.
 
 Retained direct reads need the same concrete-operation treatment for Read:
 `get_case`, `get_contact`, and `get_account` stay in v1 only if the hosted
@@ -657,10 +662,13 @@ fixed object/operation denial tests. Successful `204 No Content` writes, includi
 instead of an empty string, and tests must prove the agent-visible result cannot be
 misread as failure. Dispose write consistency needs explicit retry and
 partial-failure coverage: one test must prove the atomic composite path rolls back
-both `Reason` and `CaseComment` when either subrequest fails, or, for the
-reconciled path, retries after each half-succeeded order and after a post-comment
-timeout must converge without duplicate comments and with a deterministic
-operator-visible failure when convergence is impossible. Every immutable-query
+both `Reason` and `CaseComment` when either subrequest fails, and another must
+prove a retry after a committed composite response timeout uses stable request
+identity or read-after-timeout reconciliation without creating a duplicate
+`CaseComment`. For the reconciled path, retries after each half-succeeded order
+and after a post-comment timeout must converge without duplicate comments and
+with a deterministic operator-visible failure when convergence is impossible.
+Every immutable-query
 adapter entry must prove that `q` is
 absent from the published schema, a supplied `q` and unknown filters are rejected,
 and the exact fixed object, field list, predicates, ordering, and limit reach
