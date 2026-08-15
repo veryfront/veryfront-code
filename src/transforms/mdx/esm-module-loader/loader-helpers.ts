@@ -37,6 +37,7 @@ import {
   MAX_MDX_MODULE_IMPORTS_PER_FILE,
   MAX_MDX_MODULE_TRANSFORM_CONCURRENCY,
 } from "./module-fetcher/limits.ts";
+import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 
 /**
  * Check which framework bundles are missing from disk.
@@ -116,12 +117,13 @@ export function findVfModuleImports(
 ): Array<{
   original: string;
   path: string;
+  suffix: string;
   start: number;
   end: number;
   isDynamic?: boolean;
 }> {
   const matchVfModule = (specifier: string): string | null =>
-    specifier.match(/^\/?(_vf_modules\/[^?]+)(?:\?.*)?$/)?.[1] ?? null;
+    specifier.match(/^\/?(_vf_modules\/.+)$/)?.[1] ?? null;
   const staticImports = findStaticImportFromSpans(
     code,
     matchVfModule,
@@ -133,7 +135,12 @@ export function findVfModuleImports(
     MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
   ).map((importSpan) => ({ ...importSpan, isDynamic: true }));
 
-  return [...staticImports, ...dynamicImports].sort((left, right) => left.start - right.start);
+  return [...staticImports, ...dynamicImports]
+    .map((importSpan) => {
+      const { path, suffix } = splitSpecifierSuffix(importSpan.path);
+      return { ...importSpan, path, suffix };
+    })
+    .sort((left, right) => left.start - right.start);
 }
 
 /**
@@ -144,6 +151,7 @@ export async function processVfModuleImports(
   imports: Array<{
     original: string;
     path: string;
+    suffix?: string;
     start: number;
     end: number;
     isDynamic?: boolean;
@@ -206,7 +214,7 @@ export async function processVfModuleImports(
 
   const results = await parallelMap(
     imports,
-    async ({ original, path, start, end, isDynamic }, index) => {
+    async ({ original, path, suffix, start, end, isDynamic }, index) => {
       return await withSpan(
         SpanNames.MDX_FETCH_MODULE,
         async () => {
@@ -232,7 +240,7 @@ export async function processVfModuleImports(
             path,
             durationMs: (performance.now() - moduleStart).toFixed(1),
           });
-          return { original, start, end, filePath, path, isDynamic, deferredError };
+          return { original, start, end, filePath, path, suffix, isDynamic, deferredError };
         },
         {
           "mdx.module_path": path,
@@ -252,16 +260,15 @@ export async function processVfModuleImports(
 
   const replacements: SourceSpanReplacement[] = [];
   for (
-    const { original, start, end, filePath, path, isDynamic, deferredError } of results
+    const { original, start, end, filePath, path, suffix, isDynamic, deferredError } of results
   ) {
     if (filePath) {
+      const importTarget = toImportStringLiteral(`file://${filePath}${suffix ?? ""}`);
       replacements.push({
         start,
         end,
         expected: original,
-        replacement: isDynamic
-          ? toImportStringLiteral(`file://${filePath}`)
-          : `from "file://${filePath}"`,
+        replacement: isDynamic ? importTarget : `from ${importTarget}`,
       });
       continue;
     }
@@ -279,7 +286,7 @@ export async function processVfModuleImports(
           start,
           end,
           expected: original,
-          replacement: toImportStringLiteral(`file://${deferredPath}`),
+          replacement: toImportStringLiteral(`file://${deferredPath}${suffix ?? ""}`),
         });
         continue;
       }
@@ -297,13 +304,12 @@ export async function processVfModuleImports(
 
     const stubPath = await createStubModule(path, code, original, context.esmCacheDir!);
     if (stubPath) {
+      const importTarget = toImportStringLiteral(`file://${stubPath}${suffix ?? ""}`);
       replacements.push({
         start,
         end,
         expected: original,
-        replacement: isDynamic
-          ? toImportStringLiteral(`file://${stubPath}`)
-          : `from "file://${stubPath}"`,
+        replacement: isDynamic ? importTarget : `from ${importTarget}`,
       });
     }
   }
