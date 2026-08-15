@@ -559,8 +559,10 @@ helper, not separately granted to `case-dispose`), plus `search_accounts`, `get_
 `update_case` is **not** the structural least-privilege boundary today. Its current
 schema can write the standard writable Case fields listed in §3, so the present
 `case-dispose` scoping is a prompt rule. The hardened template must remove
-`update_case` from `case-dispose` and grant only `dispose_case_triage` once that
-coordinator exists. It must also replace the generic `add_case_comment` grant with
+`update_case` from `case-dispose` and grant only `dispose_case_triage` as its
+write tool once that coordinator exists. Read-only metadata helpers, including
+`get_picklist_values_for_record_type`, remain optional and non-enforcing. The
+template must also replace the generic `add_case_comment` grant with
 the coordinator's server-owned internal-comment subrequest. The coordinator
 accepts only the case ID, selected `Reason`, comment text, taxonomy version, and
 idempotency key. The hosted adapter constructs the Salesforce comment body with
