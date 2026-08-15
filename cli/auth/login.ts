@@ -337,12 +337,12 @@ async function describeExistingSession(
     if (source === "environment") {
       if (storedToken) {
         console.log(
-          "  " + dim("Using VERYFRONT_API_TOKEN; it takes precedence over the stored login."),
+          "  " + dim("Using VERYFRONT_API_TOKEN; it takes precedence over a stored credential."),
         );
         console.log(
           "  " +
             dim(
-              "Unset VERYFRONT_API_TOKEN to use the stored login, or replace the variable to switch tokens.",
+              "Unset VERYFRONT_API_TOKEN before attempting to use the stored credential, or replace the variable to switch tokens.",
             ),
         );
       } else {

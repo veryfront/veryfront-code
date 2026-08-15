@@ -491,7 +491,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
-    it("says an environment session takes precedence over an existing stored login", async () => {
+    it("does not present an unverified stored credential as a login", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;
       const output: string[] = [];
@@ -518,9 +518,12 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         assertEquals(requestedAuth, ["Bearer vf_env_existing"]);
         const printed = output.join("\n");
         assertStringIncludes(printed, "VERYFRONT_API_TOKEN");
-        assertStringIncludes(printed, "takes precedence over the stored login");
-        assertStringIncludes(printed, "Unset VERYFRONT_API_TOKEN to use the stored login");
-        assertEquals(printed.includes("no stored login"), false);
+        assertStringIncludes(printed, "takes precedence over a stored credential");
+        assertStringIncludes(
+          printed,
+          "Unset VERYFRONT_API_TOKEN before attempting to use the stored credential",
+        );
+        assertEquals(printed.includes("stored login"), false);
         assertEquals(printed.includes("vf_env_existing"), false);
         assertEquals(printed.includes("stored-valid-token"), false);
       } finally {
