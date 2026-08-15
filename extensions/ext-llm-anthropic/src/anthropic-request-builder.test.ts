@@ -325,6 +325,73 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     }]);
   });
 
+  it("rejects boxed cache strings before emitting mixed TTL requests", () => {
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+            providerOptions: {
+              anthropic: {
+                tools: [{
+                  name: "lookup",
+                  input_schema: { type: "object", properties: {} },
+                  cache_control: {
+                    type: new String("ephemeral"),
+                    ttl: new String("5m"),
+                  },
+                }],
+              },
+            },
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic cache strings must use primitive string values",
+    );
+  });
+
+  it("rejects boxed cache string coercion hooks without invoking them", () => {
+    for (const hookKey of ["toString", Symbol.toPrimitive]) {
+      let hookCalls = 0;
+      const ttl = new String("5m");
+      Object.defineProperty(ttl, hookKey, {
+        value() {
+          hookCalls += 1;
+          return "1h";
+        },
+      });
+
+      assertThrows(
+        () =>
+          buildAnthropicMessagesRequest(
+            "claude-sonnet-4-6",
+            "anthropic",
+            {
+              prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+              providerOptions: {
+                anthropic: {
+                  tools: [{
+                    name: "lookup",
+                    input_schema: { type: "object", properties: {} },
+                    cache_control: { type: "ephemeral", ttl },
+                  }],
+                },
+              },
+            },
+            false,
+            createWarningCollector(),
+          ),
+        TypeError,
+        "Anthropic cache strings must use primitive string values",
+      );
+      assertEquals(hookCalls, 0);
+    }
+  });
+
   it("ignores non-emitted cache metadata when normalizing mixed TTLs", () => {
     const metadataKey = Symbol("metadata");
     const cacheControl: Record<PropertyKey, unknown> = {

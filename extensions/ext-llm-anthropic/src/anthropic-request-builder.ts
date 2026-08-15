@@ -1520,6 +1520,19 @@ function countAnthropicMessageCacheBreakpoints(messages: AnthropicCompatibleMess
 
 type AnthropicCacheTtl = "5m" | "1h";
 
+function readJsonSerializedAnthropicString(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (typeof value !== "object" || value === null) return undefined;
+
+  assertNoAnthropicCacheJsonHook(value);
+  try {
+    String.prototype.valueOf.call(value);
+  } catch {
+    return undefined;
+  }
+  throw new TypeError("Anthropic cache strings must use primitive string values");
+}
+
 function readEmittedAnthropicCacheTtl(
   value: Record<string, unknown>,
 ): AnthropicCacheTtl | undefined {
@@ -1563,16 +1576,18 @@ function readEmittedAnthropicCacheTtl(
   }
   const type = readOwnEnumerableDataProperty(cacheControl, "type");
   const ttl = readOwnEnumerableDataProperty(cacheControl, "ttl");
+  const typeValue = type?.present ? readJsonSerializedAnthropicString(type.value) : undefined;
+  const ttlValue = ttl?.present ? readJsonSerializedAnthropicString(ttl.value) : undefined;
   if (
     !type?.present || isOmittedJsonObjectPropertyValue(type.value) ||
-    type.value !== "ephemeral" || !ttl
+    typeValue !== "ephemeral" || !ttl
   ) {
     return undefined;
   }
-  if (ttl.present && ttl.value === "1h") {
+  if (ttl.present && ttlValue === "1h") {
     return "1h";
   }
-  return !ttl.present || isOmittedJsonObjectPropertyValue(ttl.value) || ttl.value === "5m"
+  return !ttl.present || isOmittedJsonObjectPropertyValue(ttl.value) || ttlValue === "5m"
     ? "5m"
     : undefined;
 }
