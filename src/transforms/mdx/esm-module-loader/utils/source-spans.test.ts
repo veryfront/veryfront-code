@@ -808,6 +808,20 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
       assertEquals(
         vfModuleSpecifiers(
+          'function f(): void {} /import("\\/_vf_modules\\/fake-typed-function.js")/.test(value); ' +
+            'import("/_vf_modules/after-typed-function.js")',
+        ),
+        ["/_vf_modules/after-typed-function.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'function f<T extends {}>(value: T): T {} /import("\\/_vf_modules\\/fake-generic-function.js")/.test(value); ' +
+            'import("/_vf_modules/after-generic-function.js")',
+        ),
+        ["/_vf_modules/after-generic-function.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
           'class \\u0043 {} /import("\\/_vf_modules\\/fake.js")/.test(value); import("/_vf_modules/escaped-class-lazy.js")',
         ),
         ["/_vf_modules/escaped-class-lazy.js"],

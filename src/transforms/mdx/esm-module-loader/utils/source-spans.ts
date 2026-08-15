@@ -68,6 +68,11 @@ const FUNCTION_DECLARATION_PREFIX_PATTERN = new RegExp(
     .raw`^(?:export\s+(?:default\s+)?)?(?:async\s+)?function(?:\s*\*)?(?:\s+${IDENTIFIER_NAME_SOURCE})?\s*$`,
   "u",
 );
+const TYPESCRIPT_FUNCTION_DECLARATION_PREFIX_PATTERN = new RegExp(
+  String
+    .raw`^(?:export\s+(?:default\s+)?)?(?:async\s+)?function(?:\s*\*)?(?:\s+${IDENTIFIER_NAME_SOURCE})?(?:\s*<[\s\S]*>)?\s*\([\s\S]*\)\s*(?::\s*[\s\S]*\S)?\s*$`,
+  "u",
+);
 const CLASS_DECLARATION_PREFIX_PATTERN = new RegExp(
   String
     .raw`^(?:@[\s\S]+?\s+)*(?:export\s+(?:default\s+)?)?(?:abstract\s+)?class(?:\s+${IDENTIFIER_NAME_SOURCE})?(?:\s*<[\s\S]*>)?(?:\s+extends\s+[\s\S]+?)?(?:\s+implements\s+[\s\S]+)?\s*$`,
@@ -860,6 +865,42 @@ function isFunctionDeclarationBlockOpenBrace(
   return FUNCTION_DECLARATION_PREFIX_PATTERN.test(prefix);
 }
 
+function isTypeScriptFunctionDeclarationBlockOpenBrace(
+  source: string,
+  index: number,
+  previousTokenIndex: number,
+): boolean {
+  const previousToken = source[previousTokenIndex];
+  if (
+    previousToken !== ")" &&
+    previousToken !== "]" &&
+    previousToken !== "}" &&
+    !isIdentifierPartAt(source, previousTokenIndex) &&
+    !isIdentifierEscapeEndingAt(source, previousTokenIndex + 1)
+  ) {
+    return false;
+  }
+
+  const separatorStart = source.lastIndexOf(";", index - 1) + 1;
+  if (
+    !hasDeclarationKeywordBefore(source, separatorStart, index, [
+      "async",
+      "export",
+      "function",
+    ])
+  ) {
+    return false;
+  }
+
+  const declarationStart = balancedDeclarationStatementStartBefore(source, index, [
+    "async",
+    "export",
+    "function",
+  ]);
+  const prefix = normalizedDeclarationPrefix(source, declarationStart, index);
+  return TYPESCRIPT_FUNCTION_DECLARATION_PREFIX_PATTERN.test(prefix);
+}
+
 function isClassDeclarationBlockOpenBrace(
   source: string,
   index: number,
@@ -1123,7 +1164,8 @@ function openBraceContext(
       source,
       previousTokenIndex,
       matchingOpenParens,
-    ) || isClassDeclarationBlockOpenBrace(source, index, currentParen) ||
+    ) || isTypeScriptFunctionDeclarationBlockOpenBrace(source, index, previousTokenIndex) ||
+      isClassDeclarationBlockOpenBrace(source, index, currentParen) ||
       isTypeScriptDeclarationBlockOpenBrace(source, index),
     isPlainStatementBlock: isPlainStatementBlockOpenBrace(
       source,
