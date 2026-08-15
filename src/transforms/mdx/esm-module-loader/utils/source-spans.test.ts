@@ -451,6 +451,10 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         vfModuleSpecifiers('label: {} /import("\\/_vf_modules\\/labeled.js")/.test(value);'),
         [],
       );
+      assertEquals(
+        vfModuleSpecifiers('α: {} /import("\\/_vf_modules\\/unicode-labeled.js")/.test(value);'),
+        [],
+      );
     });
 
     it("finds executable imports after regex literals following closed blocks", () => {

@@ -37,6 +37,7 @@ interface OpenBraceContext {
 
 const MAX_TEMPLATE_LITERAL_DEPTH = 512;
 const StringFromCodePoint = String.fromCodePoint;
+const IDENTIFIER_START_PATTERN = /^[$_\p{ID_Start}]$/u;
 const IDENTIFIER_PART_PATTERN = /^[$_\p{ID_Continue}\u200C\u200D]$/u;
 const IDENTIFIER_NAME_SOURCE = String.raw`[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*`;
 const FUNCTION_DECLARATION_PREFIX_PATTERN = new RegExp(
@@ -99,6 +100,10 @@ function isIdentifierChar(char: string | undefined): boolean {
   return char !== undefined && IDENTIFIER_PART_PATTERN.test(char);
 }
 
+function isIdentifierStart(char: string | undefined): boolean {
+  return char !== undefined && IDENTIFIER_START_PATTERN.test(char);
+}
+
 function identifierCharacterAt(source: string, index: number): string | undefined {
   if (index < 0 || index >= source.length) return undefined;
 
@@ -117,6 +122,10 @@ function identifierCharacterAt(source: string, index: number): string | undefine
 
 function isIdentifierPartAt(source: string, index: number): boolean {
   return isIdentifierChar(identifierCharacterAt(source, index));
+}
+
+function isIdentifierStartAt(source: string, index: number): boolean {
+  return isIdentifierStart(identifierCharacterAt(source, index));
 }
 
 function isHexDigit(char: string | undefined): boolean {
@@ -725,8 +734,8 @@ function isPlainStatementBlockCloseBrace(
 
   const labelEnd = previousSignificantIndex(source, beforeOpenBrace) + 1;
   let labelStart = labelEnd;
-  while (labelStart > rangeStart && isIdentifierChar(source[labelStart - 1])) labelStart--;
-  if (labelStart === labelEnd || !/[$A-Za-z_]/.test(source[labelStart] ?? "")) return false;
+  while (labelStart > rangeStart && isIdentifierPartAt(source, labelStart - 1)) labelStart--;
+  if (labelStart === labelEnd || !isIdentifierStartAt(source, labelStart)) return false;
 
   const beforeLabel = previousSignificantIndex(source, labelStart);
   return beforeLabel < rangeStart || source[beforeLabel] === ";" || source[beforeLabel] === "}";
