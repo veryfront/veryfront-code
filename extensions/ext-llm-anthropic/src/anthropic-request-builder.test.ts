@@ -327,7 +327,10 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
 
   it("ignores non-emitted cache metadata when normalizing mixed TTLs", () => {
     const metadataKey = Symbol("metadata");
-    const cacheControl: Record<PropertyKey, unknown> = { type: "ephemeral" };
+    const cacheControl: Record<PropertyKey, unknown> = {
+      type: "ephemeral",
+      optional: undefined,
+    };
     Object.defineProperty(cacheControl, "hidden", {
       enumerable: false,
       value: "not serialized",
@@ -366,6 +369,48 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       type: "ephemeral",
       ttl: "1h",
     });
+  });
+
+  it("rejects malformed raw request collections before cache processing", () => {
+    for (
+      const [field, value, message] of [
+        ["messages", {}, "Anthropic messages must be an array"],
+        ["system", {}, "Anthropic system must be a string or an array"],
+        ["tools", {}, "Anthropic tools must be an array"],
+        ["tools", null, "Anthropic tools must be an array"],
+      ] as const
+    ) {
+      assertThrows(
+        () =>
+          buildAnthropicMessagesRequest(
+            "claude-sonnet-4-6",
+            "anthropic",
+            {
+              prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+              providerOptions: { anthropic: { [field]: value } },
+            },
+            false,
+            createWarningCollector(),
+          ),
+        TypeError,
+        message,
+      );
+    }
+  });
+
+  it("preserves a raw string system prompt supported by Anthropic", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+        providerOptions: { anthropic: { system: "Raw system prompt" } },
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.system, "Raw system prompt");
   });
 
   it("upgrades retained prefix breakpoints before a 1h message breakpoint", () => {

@@ -229,6 +229,101 @@ describe("agent/runtime/call-context", () => {
       }]);
     });
 
+    it("keeps at most four structured Anthropic cache breakpoints", () => {
+      const cachedMessage = (content: string) => ({
+        role: "system" as const,
+        content,
+        providerOptions: {
+          anthropic: {
+            beta: "prompt-caching",
+            cacheControl: { type: "ephemeral" },
+          },
+          openai: { store: false },
+        },
+      });
+      const messages = buildAgentCallContext({
+        instructions: [
+          cachedMessage("First breakpoint"),
+          cachedMessage("Second breakpoint"),
+          cachedMessage("Third breakpoint"),
+          cachedMessage("Fourth breakpoint"),
+          { role: "system", content: "Interactive final breakpoint" },
+        ],
+        cacheTtl: "1h",
+      });
+
+      assertEquals(
+        messages.filter((message) =>
+          Boolean(
+            (message.providerOptions?.anthropic as Record<string, unknown> | undefined)
+              ?.cacheControl,
+          )
+        ).length,
+        4,
+      );
+      assertEquals(messages[0]?.providerOptions, {
+        anthropic: { beta: "prompt-caching" },
+        openai: { store: false },
+      });
+      for (const message of messages.slice(1)) {
+        assertEquals(
+          (message.providerOptions?.anthropic as Record<string, unknown> | undefined)
+            ?.cacheControl,
+          { type: "ephemeral", ttl: "1h" },
+        );
+      }
+    });
+
+    it("caps canonical and active-alias cache breakpoints as one provider limit", () => {
+      const anthropicBreakpoint = (content: string) => ({
+        role: "system" as const,
+        content,
+        providerOptions: {
+          anthropic: {
+            beta: "prompt-caching",
+            cacheControl: { type: "ephemeral" },
+          },
+        },
+      });
+      const messages = buildAgentCallContext({
+        instructions: [
+          anthropicBreakpoint("First Anthropic breakpoint"),
+          anthropicBreakpoint("Second Anthropic breakpoint"),
+          anthropicBreakpoint("Third Anthropic breakpoint"),
+          anthropicBreakpoint("Fourth Anthropic breakpoint"),
+          {
+            role: "system",
+            content: "Bedrock breakpoint",
+            providerOptions: {
+              bedrock: {
+                beta: "prompt-caching",
+                cacheControl: { type: "ephemeral" },
+              },
+            },
+          },
+        ],
+        cacheTtl: "1h",
+        anthropicProviderAlias: "bedrock",
+      });
+
+      assertEquals(messages[0]?.providerOptions, {
+        anthropic: { beta: "prompt-caching" },
+      });
+      for (const message of messages.slice(1, 4)) {
+        assertEquals(
+          (message.providerOptions?.anthropic as Record<string, unknown> | undefined)
+            ?.cacheControl,
+          { type: "ephemeral", ttl: "1h" },
+        );
+      }
+      assertEquals(messages[4]?.providerOptions, {
+        bedrock: {
+          beta: "prompt-caching",
+          cacheControl: { type: "ephemeral", ttl: "1h" },
+        },
+      });
+    });
+
     it("applies the default breakpoint to a structured static prompt", () => {
       const messages = buildAgentCallContext({
         instructions: [

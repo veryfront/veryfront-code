@@ -83,8 +83,10 @@ export type BuildAgentCallContextInput = {
   /**
    * Prompt-cache TTL for the static (Layer 0) system message. `"5m"` (default)
    * keeps the standard ephemeral breakpoint; `"1h"` extends it for interactive
-   * multi-turn sessions. Gate this at the call site. Only set `"1h"` where a
-   * second read is likely (root chat run, steering refresh). See RFC 0001.
+   * multi-turn sessions. Gate this at the call site. Only set `"1h"` during
+   * interactive run rendering where a second read is likely. Structured prompts
+   * keep their latest four Anthropic breakpoints when the final breakpoint is
+   * added. See RFC 0001.
    */
   cacheTtl?: AgentCallCacheTtl;
   /**
@@ -503,6 +505,8 @@ function hasStructuredCacheControl(
   return false;
 }
 
+const ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4;
+
 function applyStructuredCacheTtl(
   messages: ChatSystemMessage[],
   cacheTtl: AgentCallCacheTtl | undefined,
@@ -516,7 +520,7 @@ function applyStructuredCacheTtl(
   }
 
   const breakpointIndex = messages.length - 1;
-  return messages.map((message, index) => {
+  const cacheMetadata = messages.map((message) => {
     const providerOptions = snapshotOwnEnumerableDataRecord(
       message.providerOptions,
       "Structured system message providerOptions",
@@ -531,10 +535,33 @@ function applyStructuredCacheTtl(
     const undefinedCacheProviderBuckets = structuredCacheProviderBuckets.filter((bucket) =>
       bucket.cacheControl === undefined
     );
-    const addCanonicalBreakpoint = index === breakpointIndex && cacheProviderBuckets.length === 0;
+    return {
+      providerOptions,
+      cacheProviderBuckets,
+      undefinedCacheProviderBuckets,
+    };
+  });
+  const breakpointIndexes: number[] = [];
+  for (const [index, { cacheProviderBuckets }] of cacheMetadata.entries()) {
+    if (cacheProviderBuckets.length > 0) {
+      breakpointIndexes.push(index);
+    }
+  }
+  const addCanonicalBreakpoint = cacheMetadata[breakpointIndex]!.cacheProviderBuckets.length === 0;
+  if (addCanonicalBreakpoint) {
+    breakpointIndexes.push(breakpointIndex);
+  }
+  const retainedBreakpointIndexes = new Set(
+    breakpointIndexes.slice(-ANTHROPIC_MAX_CACHE_BREAKPOINTS),
+  );
+
+  return messages.map((message, index) => {
+    const { providerOptions, cacheProviderBuckets, undefinedCacheProviderBuckets } =
+      cacheMetadata[index]!;
+    const shouldAddCanonicalBreakpoint = addCanonicalBreakpoint && index === breakpointIndex;
     if (
       cacheProviderBuckets.length === 0 && undefinedCacheProviderBuckets.length === 0 &&
-      !addCanonicalBreakpoint
+      !shouldAddCanonicalBreakpoint
     ) {
       return message;
     }
@@ -555,19 +582,34 @@ function applyStructuredCacheTtl(
       }
     }
     for (const bucket of cacheProviderBuckets) {
-      ReflectApply(ObjectDefineProperty, undefined, [nextProviderOptions, bucket.key, {
-        configurable: true,
-        enumerable: true,
-        value: {
-          ...bucket.value,
-          cacheControl: buildCacheControl(cacheTtl),
-        },
-        writable: true,
-      }]);
+      if (retainedBreakpointIndexes.has(index)) {
+        ReflectApply(ObjectDefineProperty, undefined, [nextProviderOptions, bucket.key, {
+          configurable: true,
+          enumerable: true,
+          value: {
+            ...bucket.value,
+            cacheControl: buildCacheControl(cacheTtl),
+          },
+          writable: true,
+        }]);
+        continue;
+      }
+      const nextBucket = { ...bucket.value };
+      ReflectApply(ReflectDeleteProperty, undefined, [nextBucket, "cacheControl"]);
+      if (ReflectOwnKeys(nextBucket).length > 0) {
+        ReflectApply(ObjectDefineProperty, undefined, [nextProviderOptions, bucket.key, {
+          configurable: true,
+          enumerable: true,
+          value: nextBucket,
+          writable: true,
+        }]);
+      } else {
+        ReflectApply(ReflectDeleteProperty, undefined, [nextProviderOptions, bucket.key]);
+      }
     }
-    if (addCanonicalBreakpoint) {
+    if (shouldAddCanonicalBreakpoint) {
       const anthropic = snapshotOwnEnumerableDataRecord(
-        providerOptions.anthropic,
+        nextProviderOptions.anthropic,
         "Structured system message providerOptions.anthropic",
         { ignoreUnsafeDataKeys: ["cacheControl"] },
       );
@@ -581,10 +623,13 @@ function applyStructuredCacheTtl(
         writable: true,
       }]);
     }
-    return {
-      ...message,
-      providerOptions: nextProviderOptions,
-    };
+    const nextMessage = { ...message };
+    if (ReflectOwnKeys(nextProviderOptions).length > 0) {
+      nextMessage.providerOptions = nextProviderOptions;
+    } else {
+      ReflectApply(ReflectDeleteProperty, undefined, [nextMessage, "providerOptions"]);
+    }
+    return nextMessage;
   });
 }
 

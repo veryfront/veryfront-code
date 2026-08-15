@@ -1371,8 +1371,14 @@ function readEmittedAnthropicCacheTtl(
   } catch {
     return undefined;
   }
-  if (keys.some((key) => key !== "type" && key !== "ttl")) {
-    return undefined;
+  for (const key of keys) {
+    const property = readOwnEnumerableDataProperty(cacheControl, key);
+    if (
+      !property ||
+      (property.value !== undefined && key !== "type" && key !== "ttl")
+    ) {
+      return undefined;
+    }
   }
   const type = readOwnEnumerableDataProperty(cacheControl, "type");
   const ttl = readOwnEnumerableDataProperty(cacheControl, "ttl");
@@ -1538,6 +1544,23 @@ function limitAnthropicCacheBreakpoints(
     tools: normalizedTools,
     messages: normalizedMessages.messages,
   };
+}
+
+function assertAnthropicCacheableRequestFields(
+  body: Record<string, unknown>,
+): asserts body is AnthropicCompatibleRequest {
+  if (!Array.isArray(body.messages)) {
+    throw new TypeError("Anthropic messages must be an array");
+  }
+  if (
+    body.system !== undefined && typeof body.system !== "string" &&
+    !Array.isArray(body.system)
+  ) {
+    throw new TypeError("Anthropic system must be a string or an array");
+  }
+  if (body.tools !== undefined && !Array.isArray(body.tools)) {
+    throw new TypeError("Anthropic tools must be an array");
+  }
 }
 
 function containsAnthropicMcpToolset(
@@ -1817,6 +1840,7 @@ export function buildAnthropicMessagesRequestWithCorrelationState(
   if (thinkingBudget !== undefined || providerThinkingBudget !== undefined) {
     body.thinking = { type: "enabled", budget_tokens: effectiveThinkingBudget };
   }
+  assertAnthropicCacheableRequestFields(body);
   const boundedCacheBreakpoints = limitAnthropicCacheBreakpoints(
     body.system,
     body.tools,
