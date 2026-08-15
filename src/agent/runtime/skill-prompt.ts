@@ -236,17 +236,6 @@ function encodePromptJson(value: unknown): string {
   return escapePromptJson(encoded);
 }
 
-function appendEncodedRuntimeSkillId(
-  encodedSkillIds: string[],
-  skillId: unknown,
-): string {
-  const encodedSkillId = encodePromptJson(
-    requireBoundedPromptString(skillId, "id", SKILL_ID_MAX_LENGTH),
-  );
-  appendOwnArrayElement(encodedSkillIds, encodedSkillId);
-  return encodedSkillId;
-}
-
 function appendBoundedEncodedRuntimeSkillId(
   encodedSkillIds: string[],
   skillId: unknown,
@@ -269,6 +258,13 @@ function buildRuntimeSkillDiscoveryNote(
   cursor: number,
 ): string {
   return `\n\n(${hiddenSkillIdCount} additional authorized skill IDs are omitted from this prompt. Call load_skill({ cursor: ${cursor} }), then follow each nextCursor value to discover them.)`;
+}
+
+function buildRuntimeAuthorizedSkillIdDiscoveryBlock(
+  hiddenSkillIdCount: number,
+  cursor: number,
+): string {
+  return `<authorized_skill_id_discovery>\n${hiddenSkillIdCount} additional authorized skill IDs are omitted from this prompt. Call load_skill({ cursor: ${cursor} }), then follow each nextCursor value to discover them.\n</authorized_skill_id_discovery>`;
 }
 
 function requireRuntimeSkillModel(value: unknown): string {
@@ -449,6 +445,8 @@ export function buildRuntimeAuthorizedSkillIdsPromptBlock(
 ): string {
   const { displaySkills, omittedSkillIds } = snapshotRuntimeSkillPromptCatalog(skills);
   const encodedSkillIds: string[] = [];
+  let encodedCharacters = 0;
+  let hiddenSkillIdCount = 0;
   for (let index = 0; index < displaySkills.length; index += 1) {
     const skillId = readPromptOwnDataProperty(
       displaySkills[index],
@@ -456,19 +454,40 @@ export function buildRuntimeAuthorizedSkillIdsPromptBlock(
       `Runtime skill catalog entry ${index}`,
       true,
     );
-    appendEncodedRuntimeSkillId(
+    const nextEncodedCharacters = appendBoundedEncodedRuntimeSkillId(
       encodedSkillIds,
       skillId,
+      encodedCharacters,
     );
+    if (nextEncodedCharacters === null) {
+      hiddenSkillIdCount = displaySkills.length - index + omittedSkillIds.length;
+      break;
+    }
+    encodedCharacters = nextEncodedCharacters;
   }
-  for (let index = 0; index < omittedSkillIds.length; index += 1) {
-    appendEncodedRuntimeSkillId(
-      encodedSkillIds,
-      omittedSkillIds[index],
-    );
+  if (hiddenSkillIdCount === 0) {
+    for (let index = 0; index < omittedSkillIds.length; index += 1) {
+      const nextEncodedCharacters = appendBoundedEncodedRuntimeSkillId(
+        encodedSkillIds,
+        omittedSkillIds[index],
+        encodedCharacters,
+      );
+      if (nextEncodedCharacters === null) {
+        hiddenSkillIdCount = omittedSkillIds.length - index;
+        break;
+      }
+      encodedCharacters = nextEncodedCharacters;
+    }
   }
 
-  return `<authorized_skill_ids>\n[${joinStrings(encodedSkillIds, ",")}]\n</authorized_skill_ids>`;
+  const skillIdsBlock = `<authorized_skill_ids>\n[${
+    joinStrings(encodedSkillIds, ",")
+  }]\n</authorized_skill_ids>`;
+  return hiddenSkillIdCount > 0
+    ? `${skillIdsBlock}\n\n${
+      buildRuntimeAuthorizedSkillIdDiscoveryBlock(hiddenSkillIdCount, encodedSkillIds.length)
+    }`
+    : skillIdsBlock;
 }
 
 type CompatibilitySkillMapIterator = ReturnType<Map<string, Skill>["entries"]>;

@@ -2571,6 +2571,47 @@ it("createRuntimeLoadSkillTool pages authorized IDs for standalone consumers", a
   });
 });
 
+it("createRuntimeLoadSkillTool pages authorized IDs without inherited slice", async () => {
+  const availableSkillIds = Array.from(
+    { length: 65 },
+    (_, index) => `skill-${index.toString().padStart(3, "0")}`,
+  );
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+  const originalSlice = Array.prototype.slice;
+  let sliceCalls = 0;
+  Object.defineProperty(Array.prototype, "slice", {
+    configurable: true,
+    value() {
+      sliceCalls += 1;
+      return ["forged"];
+    },
+    writable: true,
+  });
+  try {
+    const page = await tool.execute({ cursor: 1 }) as {
+      skillIds: string[];
+      nextCursor?: number;
+    };
+
+    assertEquals(sliceCalls, 0);
+    assertEquals(page.skillIds.length, 60);
+    assertEquals(page.skillIds[0], "skill-001");
+    assertEquals(page.skillIds[59], "skill-060");
+    assertEquals(page.nextCursor, 61);
+  } finally {
+    Object.defineProperty(Array.prototype, "slice", {
+      configurable: true,
+      value: originalSlice,
+      writable: true,
+    });
+  }
+});
+
 it("createRuntimeLoadSkillTool discovers the maximum catalog within the default step budget", async () => {
   const availableSkillIds = Array.from(
     { length: 1_000 },
