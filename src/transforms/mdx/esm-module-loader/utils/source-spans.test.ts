@@ -251,6 +251,17 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         ["./after-division.js"],
       );
     });
+
+    it("honors line terminators inside block comments before static imports", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          'const value = 1 /*\n*/ import value from "./after-block-comment.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-block-comment.js"],
+      );
+    });
   });
 
   describe("findDynamicImportSpans", () => {
@@ -695,6 +706,26 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       assertEquals(
         specifiers('const ratio = of / 2; import("./real-after-of-identifier.js");'),
         ["./real-after-of-identifier.js"],
+      );
+    });
+
+    it("opens a regex after `of` inside a for-await-of header", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'async function f() { for await (const x of /import("\\/_vf_modules\\/fake-for-await.js")/.exec(s) ?? []) {} }\n' +
+            'import("/_vf_modules/real-after-for-await.js");',
+        ),
+        ["/_vf_modules/real-after-for-await.js"],
+      );
+    });
+
+    it("opens a regex after `of` inside a commented for-await-of header", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'async function f() { for /* comment */ await (const x of /import("\\/_vf_modules\\/fake-commented-for-await.js")/.exec(s) ?? []) {} }\n' +
+            'import("/_vf_modules/real-after-commented-for-await.js");',
+        ),
+        ["/_vf_modules/real-after-commented-for-await.js"],
       );
     });
 
@@ -1166,6 +1197,17 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           UNBOUNDED,
         ),
         [],
+      );
+    });
+
+    it("honors line terminators inside block comments before side-effect imports", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'const value = 1 /*\n*/ import "./after-block-comment.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-block-comment.js"],
       );
     });
   });

@@ -162,6 +162,13 @@ function skipWhitespace(source: string, index: number): number {
   return cursor;
 }
 
+function hasLineTerminatorBetween(source: string, start: number, end: number): boolean {
+  for (let cursor = start; cursor < end; cursor++) {
+    if (isLineTerminator(source[cursor]!)) return true;
+  }
+  return false;
+}
+
 // Comments are legal wherever whitespace is, so a dynamic import can carry a
 // bundler hint between the keyword, the parentheses and the specifier. Treating
 // the comment as an unexpected character would leave the specifier unresolved.
@@ -408,6 +415,39 @@ function previousSignificantIndex(source: string, index: number): number {
   return cursor;
 }
 
+function previousSignificantIndexBeforeIgnored(source: string, index: number): number {
+  let cursor = index;
+
+  while (cursor >= 0) {
+    cursor = previousSignificantIndex(source, cursor);
+    if (cursor < 0) return cursor;
+
+    if (source[cursor] === "/" && source[cursor - 1] === "*") {
+      const start = source.lastIndexOf("/*", cursor - 1);
+      if (start >= 0) {
+        cursor = start;
+        continue;
+      }
+    }
+
+    const lineStart = Math.max(
+      source.lastIndexOf("\n", cursor),
+      source.lastIndexOf("\r", cursor),
+      source.lastIndexOf("\u2028", cursor),
+      source.lastIndexOf("\u2029", cursor),
+    ) + 1;
+    const lineCommentStart = source.lastIndexOf("//", cursor);
+    if (lineCommentStart >= lineStart) {
+      cursor = lineCommentStart;
+      continue;
+    }
+
+    return cursor;
+  }
+
+  return cursor;
+}
+
 function keywordBefore(
   source: string,
   index: number,
@@ -455,11 +495,20 @@ function openParenContext(
   previousTokenIndex: number,
 ): OpenParenContext {
   const keyword = keywordBefore(source, index, previousTokenIndex);
+  const keywordStart = previousTokenIndex - (keyword?.length ?? 0) + 1;
+  const previousKeyword = keyword === "await"
+    ? keywordBefore(
+      source,
+      keywordStart,
+      previousSignificantIndexBeforeIgnored(source, keywordStart),
+    )
+    : null;
+  const isForAwaitHeader = previousKeyword === "for";
   return {
     index,
     isControlCondition: keyword === "if" || keyword === "while" || keyword === "for" ||
-      keyword === "with" || keyword === "switch" || keyword === "catch",
-    isForHeader: keyword === "for",
+      keyword === "with" || keyword === "switch" || keyword === "catch" || isForAwaitHeader,
+    isForHeader: keyword === "for" || isForAwaitHeader,
     hasSemicolon: false,
   };
 }
@@ -926,7 +975,9 @@ export function findStaticImportFromSpans(
     );
     if (skipped !== cursor) {
       if (char === "/" && source[cursor + 1] === "/") atStatementStart = true;
-      else if (!(char === "/" && source[cursor + 1] === "*")) atStatementStart = false;
+      else if (char === "/" && source[cursor + 1] === "*") {
+        if (hasLineTerminatorBetween(source, cursor + 2, skipped - 2)) atStatementStart = true;
+      } else atStatementStart = false;
       previousTokenIndex = tokenIndexAfterIgnored(
         source,
         cursor,
@@ -1296,7 +1347,9 @@ export function findStaticSideEffectImportSpans(
     );
     if (skipped !== cursor) {
       if (char === "/" && source[cursor + 1] === "/") atStatementStart = true;
-      else if (!(char === "/" && source[cursor + 1] === "*")) atStatementStart = false;
+      else if (char === "/" && source[cursor + 1] === "*") {
+        if (hasLineTerminatorBetween(source, cursor + 2, skipped - 2)) atStatementStart = true;
+      } else atStatementStart = false;
       previousTokenIndex = tokenIndexAfterIgnored(
         source,
         cursor,
