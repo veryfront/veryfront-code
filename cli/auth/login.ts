@@ -20,6 +20,7 @@ import {
   outputJson,
 } from "../shared/json-output.ts";
 import { isInteractive } from "../shared/interactive.ts";
+import { getEnvSource } from "veryfront/utils/env-loader";
 
 export type AuthMethod = "google" | "github" | "microsoft" | "token";
 
@@ -467,15 +468,26 @@ async function loginWithToken(): Promise<string | null> {
 async function describeExistingSession(
   env: EnvironmentConfig,
 ): Promise<AuthIdentity | "json-failure-output" | null> {
-  const candidates: { token: string; source: "environment" | "stored" }[] = [];
-  if (env.apiToken) candidates.push({ token: env.apiToken, source: "environment" });
+  const envTokenSource = env.apiToken ? getEnvSource("VERYFRONT_API_TOKEN").source : "unset";
+  const environmentTokenIsAuthoritative = envTokenSource !== "env-file";
+  const candidates: {
+    token: string;
+    source: "environment" | "stored";
+    authoritative?: boolean;
+  }[] = [];
+  if (env.apiToken && environmentTokenIsAuthoritative) {
+    candidates.push({ token: env.apiToken, source: "environment", authoritative: true });
+  }
   const storedToken = await readToken(env);
   if (storedToken) candidates.push({ token: storedToken, source: "stored" });
+  if (env.apiToken && !environmentTokenIsAuthoritative) {
+    candidates.push({ token: env.apiToken, source: "environment", authoritative: false });
+  }
   if (candidates.length === 0) return null;
   const signal = AbortSignal.timeout(existingSessionTimeoutMs);
   let unavailable: CredentialValidationUnavailableError | null = null;
 
-  for (const { token, source } of candidates) {
+  for (const { token, source, authoritative } of candidates) {
     let identity: AuthIdentity | null;
     try {
       // Bounded: this preflight only decides whether to say "already logged in"
@@ -489,12 +501,12 @@ async function describeExistingSession(
     } catch (error) {
       if (error instanceof CredentialValidationUnavailableError) {
         unavailable ??= error;
-        if (source === "environment") break;
+        if (source === "environment" && authoritative) break;
       }
       continue;
     }
     if (!identity) {
-      if (source === "environment") break;
+      if (source === "environment" && authoritative) break;
       continue;
     }
 
