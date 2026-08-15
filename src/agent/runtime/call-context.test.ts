@@ -394,6 +394,74 @@ describe("agent/runtime/call-context", () => {
       assertEquals(providerOptionsReads, 0);
     });
 
+    it("ignores structured Anthropic cache-control accessors without invoking them", () => {
+      let cacheControlReads = 0;
+      const anthropic = { beta: "prompt-caching" };
+      Object.defineProperty(anthropic, "cacheControl", {
+        enumerable: true,
+        get() {
+          cacheControlReads += 1;
+          return { type: "ephemeral" };
+        },
+      });
+
+      const messages = buildAgentCallContext({
+        instructions: [{
+          role: "system",
+          content: "Structured prompt",
+          providerOptions: { anthropic },
+        }],
+      });
+
+      assertEquals(cacheControlReads, 0);
+      assertEquals(messages, [{
+        role: "system",
+        content: "Structured prompt",
+        providerOptions: {
+          anthropic: {
+            beta: "prompt-caching",
+            cacheControl: { type: "ephemeral" },
+          },
+        },
+      }]);
+    });
+
+    it("ignores inherited structured Anthropic cache-control metadata", () => {
+      const inheritedAnthropic = Object.create({
+        cacheControl: { type: "ephemeral" },
+      }) as Record<string, unknown>;
+      Object.defineProperty(inheritedAnthropic, "beta", {
+        enumerable: true,
+        value: "prompt-caching",
+      });
+
+      const messages = buildAgentCallContext({
+        instructions: [
+          {
+            role: "system",
+            content: "Structured prefix",
+            providerOptions: { anthropic: inheritedAnthropic },
+          },
+          { role: "system", content: "Structured tail" },
+        ],
+      });
+
+      assertEquals(messages, [
+        {
+          role: "system",
+          content: "Structured prefix",
+          providerOptions: { anthropic: { beta: "prompt-caching" } },
+        },
+        {
+          role: "system",
+          content: "Structured tail",
+          providerOptions: {
+            anthropic: { cacheControl: { type: "ephemeral" } },
+          },
+        },
+      ]);
+    });
+
     it("rejects structured Anthropic metadata accessors without invoking them", () => {
       let anthropicReads = 0;
       const providerOptions: Record<string, unknown> = { openai: { store: false } };

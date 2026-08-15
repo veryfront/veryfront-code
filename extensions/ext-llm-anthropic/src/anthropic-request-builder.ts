@@ -1236,6 +1236,310 @@ function applyAnthropicToolsCacheControl(
   );
 }
 
+const ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4;
+
+function hasEmittedAnthropicCacheBreakpoint(value: Record<string, unknown>): boolean {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(value, "cache_control");
+  } catch {
+    throw new TypeError("Anthropic cache_control could not be inspected");
+  }
+  if (descriptor === undefined || descriptor.enumerable !== true) {
+    return false;
+  }
+  if (!Object.hasOwn(descriptor, "value")) {
+    throw new TypeError(
+      "Anthropic cache_control must be an own enumerable data property",
+    );
+  }
+  return descriptor.value !== undefined;
+}
+
+function readEmittedAnthropicMessageContent(message: AnthropicCompatibleMessage): unknown[] {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(message, "content");
+  } catch {
+    throw new TypeError("Anthropic message content could not be inspected");
+  }
+  if (descriptor === undefined || descriptor.enumerable !== true) {
+    return [];
+  }
+  if (!Object.hasOwn(descriptor, "value")) {
+    throw new TypeError(
+      "Anthropic message content must be an own enumerable data property",
+    );
+  }
+  return Array.isArray(descriptor.value) ? descriptor.value : [];
+}
+
+function retainLatestAnthropicMessageCacheBreakpoints(
+  messages: AnthropicCompatibleMessage[],
+  maximum: number,
+): AnthropicCompatibleMessage[] {
+  const breakpointPositions: Array<{ messageIndex: number; contentIndex: number }> = [];
+  for (const [messageIndex, message] of messages.entries()) {
+    const content = readEmittedAnthropicMessageContent(message);
+    for (const [contentIndex, block] of content.entries()) {
+      if (
+        typeof block === "object" && block !== null && !Array.isArray(block) &&
+        hasEmittedAnthropicCacheBreakpoint(block as Record<string, unknown>)
+      ) {
+        breakpointPositions.push({ messageIndex, contentIndex });
+      }
+    }
+  }
+
+  const positionsToRemove = breakpointPositions.slice(
+    0,
+    Math.max(0, breakpointPositions.length - maximum),
+  );
+  if (positionsToRemove.length === 0) {
+    return messages;
+  }
+  const removalsByMessage = new Map<number, Set<number>>();
+  for (const { messageIndex, contentIndex } of positionsToRemove) {
+    const removals = removalsByMessage.get(messageIndex) ?? new Set<number>();
+    removals.add(contentIndex);
+    removalsByMessage.set(messageIndex, removals);
+  }
+
+  return messages.map((message, messageIndex) => {
+    const removals = removalsByMessage.get(messageIndex);
+    if (!removals) {
+      return message;
+    }
+    const content = readEmittedAnthropicMessageContent(message).map((block, contentIndex) => {
+      if (
+        !removals.has(contentIndex) || typeof block !== "object" || block === null ||
+        Array.isArray(block)
+      ) {
+        return block;
+      }
+      const next = { ...block };
+      Reflect.deleteProperty(next, "cache_control");
+      return next;
+    });
+    return { ...message, content } as AnthropicCompatibleMessage;
+  });
+}
+
+function countAnthropicMessageCacheBreakpoints(messages: AnthropicCompatibleMessage[]): number {
+  let count = 0;
+  for (const message of messages) {
+    for (const block of readEmittedAnthropicMessageContent(message)) {
+      if (
+        typeof block === "object" && block !== null && !Array.isArray(block) &&
+        hasEmittedAnthropicCacheBreakpoint(block as Record<string, unknown>)
+      ) {
+        count += 1;
+      }
+    }
+  }
+  return count;
+}
+
+type AnthropicCacheTtl = "5m" | "1h";
+
+function readEmittedAnthropicCacheTtl(
+  value: Record<string, unknown>,
+): AnthropicCacheTtl | undefined {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(value, "cache_control");
+  } catch {
+    return undefined;
+  }
+  if (
+    descriptor === undefined || descriptor.enumerable !== true ||
+    !Object.hasOwn(descriptor, "value")
+  ) {
+    return undefined;
+  }
+  const cacheControl = descriptor.value;
+  if (
+    typeof cacheControl !== "object" || cacheControl === null ||
+    Array.isArray(cacheControl)
+  ) {
+    return undefined;
+  }
+
+  let keys: string[];
+  try {
+    keys = Object.keys(cacheControl);
+  } catch {
+    return undefined;
+  }
+  if (keys.some((key) => key !== "type" && key !== "ttl")) {
+    return undefined;
+  }
+  const type = readOwnEnumerableDataProperty(cacheControl, "type");
+  const ttl = readOwnEnumerableDataProperty(cacheControl, "ttl");
+  if (!type?.present || type.value !== "ephemeral" || !ttl) {
+    return undefined;
+  }
+  if (ttl.present && ttl.value === "1h") {
+    return "1h";
+  }
+  return !ttl.present || ttl.value === undefined || ttl.value === "5m" ? "5m" : undefined;
+}
+
+function upgradeEmittedAnthropicCacheTtl(
+  value: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    ...value,
+    cache_control: { type: "ephemeral", ttl: "1h" },
+  };
+}
+
+function normalizeAnthropicCacheTtls(
+  values: Array<Record<string, unknown>>,
+  requiresOneHourPrefix: boolean,
+): { values: Array<Record<string, unknown>>; requiresOneHourPrefix: boolean } {
+  let normalized = values;
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    const value = values[index];
+    if (!value || !hasEmittedAnthropicCacheBreakpoint(value)) {
+      continue;
+    }
+    const ttl = readEmittedAnthropicCacheTtl(value);
+    if (ttl === "1h") {
+      requiresOneHourPrefix = true;
+    } else if (ttl === "5m" && requiresOneHourPrefix) {
+      if (normalized === values) {
+        normalized = [...values];
+      }
+      normalized[index] = upgradeEmittedAnthropicCacheTtl(value);
+    }
+  }
+  return { values: normalized, requiresOneHourPrefix };
+}
+
+function normalizeAnthropicMessageCacheTtls(
+  messages: AnthropicCompatibleMessage[],
+): { messages: AnthropicCompatibleMessage[]; requiresOneHourPrefix: boolean } {
+  let normalizedMessages = messages;
+  let requiresOneHourPrefix = false;
+
+  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
+    const message = messages[messageIndex];
+    if (!message) {
+      continue;
+    }
+    const content = readEmittedAnthropicMessageContent(message);
+    let normalizedContent = content;
+    for (let contentIndex = content.length - 1; contentIndex >= 0; contentIndex -= 1) {
+      const block = content[contentIndex];
+      if (
+        typeof block !== "object" || block === null || Array.isArray(block) ||
+        !hasEmittedAnthropicCacheBreakpoint(block as Record<string, unknown>)
+      ) {
+        continue;
+      }
+      const ttl = readEmittedAnthropicCacheTtl(block as Record<string, unknown>);
+      if (ttl === "1h") {
+        requiresOneHourPrefix = true;
+      } else if (ttl === "5m" && requiresOneHourPrefix) {
+        if (normalizedContent === content) {
+          normalizedContent = [...content];
+        }
+        normalizedContent[contentIndex] = upgradeEmittedAnthropicCacheTtl(
+          block as Record<string, unknown>,
+        );
+      }
+    }
+    if (normalizedContent !== content) {
+      if (normalizedMessages === messages) {
+        normalizedMessages = [...messages];
+      }
+      normalizedMessages[messageIndex] = {
+        ...message,
+        content: normalizedContent,
+      } as AnthropicCompatibleMessage;
+    }
+  }
+
+  return { messages: normalizedMessages, requiresOneHourPrefix };
+}
+
+function retainLatestAnthropicCacheBreakpoints(
+  values: Array<Record<string, unknown>>,
+  maximum: number,
+): Array<Record<string, unknown>> {
+  const breakpointIndexes = values.flatMap((value, index) =>
+    hasEmittedAnthropicCacheBreakpoint(value) ? [index] : []
+  );
+  const indexesToRemove = new Set(
+    breakpointIndexes.slice(0, Math.max(0, breakpointIndexes.length - maximum)),
+  );
+  if (indexesToRemove.size === 0) {
+    return values;
+  }
+
+  return values.map((value, index) => {
+    if (!indexesToRemove.has(index)) {
+      return value;
+    }
+    const next = { ...value };
+    Reflect.deleteProperty(next, "cache_control");
+    return next;
+  });
+}
+
+function limitAnthropicCacheBreakpoints(
+  system: string | Array<Record<string, unknown>> | undefined,
+  tools: Array<Record<string, unknown>> | undefined,
+  messages: AnthropicCompatibleMessage[],
+): {
+  system: string | Array<Record<string, unknown>> | undefined;
+  tools: Array<Record<string, unknown>> | undefined;
+  messages: AnthropicCompatibleMessage[];
+} {
+  const boundedMessages = retainLatestAnthropicMessageCacheBreakpoints(
+    messages,
+    ANTHROPIC_MAX_CACHE_BREAKPOINTS,
+  );
+  const messageBreakpointCount = countAnthropicMessageCacheBreakpoints(boundedMessages);
+  const boundedSystem = Array.isArray(system)
+    ? retainLatestAnthropicCacheBreakpoints(
+      system,
+      ANTHROPIC_MAX_CACHE_BREAKPOINTS - messageBreakpointCount,
+    )
+    : system;
+  const systemBreakpointCount = Array.isArray(boundedSystem)
+    ? boundedSystem.filter(hasEmittedAnthropicCacheBreakpoint).length
+    : 0;
+  const boundedTools = tools
+    ? retainLatestAnthropicCacheBreakpoints(
+      tools,
+      ANTHROPIC_MAX_CACHE_BREAKPOINTS - messageBreakpointCount - systemBreakpointCount,
+    )
+    : undefined;
+  const normalizedMessages = normalizeAnthropicMessageCacheTtls(boundedMessages);
+  const normalizedSystem = Array.isArray(boundedSystem)
+    ? normalizeAnthropicCacheTtls(
+      boundedSystem,
+      normalizedMessages.requiresOneHourPrefix,
+    )
+    : {
+      values: boundedSystem,
+      requiresOneHourPrefix: normalizedMessages.requiresOneHourPrefix,
+    };
+  const normalizedTools = boundedTools
+    ? normalizeAnthropicCacheTtls(
+      boundedTools,
+      normalizedSystem.requiresOneHourPrefix,
+    ).values
+    : undefined;
+  return {
+    system: normalizedSystem.values,
+    tools: normalizedTools,
+    messages: normalizedMessages.messages,
+  };
+}
+
 function containsAnthropicMcpToolset(
   tools: Array<Record<string, unknown>> | undefined,
 ): boolean {
@@ -1513,6 +1817,22 @@ export function buildAnthropicMessagesRequestWithCorrelationState(
   if (thinkingBudget !== undefined || providerThinkingBudget !== undefined) {
     body.thinking = { type: "enabled", budget_tokens: effectiveThinkingBudget };
   }
+  const boundedCacheBreakpoints = limitAnthropicCacheBreakpoints(
+    body.system,
+    body.tools,
+    body.messages,
+  );
+  if (boundedCacheBreakpoints.system === undefined) {
+    Reflect.deleteProperty(body, "system");
+  } else {
+    body.system = boundedCacheBreakpoints.system;
+  }
+  if (boundedCacheBreakpoints.tools === undefined) {
+    Reflect.deleteProperty(body, "tools");
+  } else {
+    body.tools = boundedCacheBreakpoints.tools;
+  }
+  body.messages = boundedCacheBreakpoints.messages;
   assertAnthropicMcpRequestContract(body);
   return {
     body,

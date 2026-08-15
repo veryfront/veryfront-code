@@ -209,6 +209,7 @@ function removeGeneratedSkillCatalogBlocks(instructions: string): string {
 function snapshotOwnEnumerableDataRecord(
   value: unknown,
   label: string,
+  options: { ignoreUnsafeDataKeys?: readonly PropertyKey[] } = {},
 ): Record<PropertyKey, unknown> {
   if (!isRecord(value)) {
     return {};
@@ -240,6 +241,9 @@ function snapshotOwnEnumerableDataRecord(
       continue;
     }
     if (!isOwnDataPropertyDescriptor(descriptor)) {
+      if (options.ignoreUnsafeDataKeys?.includes(key)) {
+        continue;
+      }
       throw new TypeError(`${label}.${String(key)} must be an own enumerable data property`);
     }
     ReflectApply(ObjectDefineProperty, undefined, [snapshot, key, {
@@ -383,7 +387,21 @@ function getStructuredCacheProviderBuckets(
     if (key !== "anthropic" && key !== anthropicProviderAlias) {
       continue;
     }
-    const value = providerOptions[key];
+    let bucketDescriptor: PropertyDescriptor | undefined;
+    try {
+      bucketDescriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+        providerOptions,
+        key,
+      ]) as PropertyDescriptor | undefined;
+    } catch {
+      throw new TypeError(
+        `Structured system message providerOptions.${String(key)} must be inspectable`,
+      );
+    }
+    if (!bucketDescriptor?.enumerable || !isOwnDataPropertyDescriptor(bucketDescriptor)) {
+      continue;
+    }
+    const value = bucketDescriptor.value;
     if (!isRecord(value)) {
       continue;
     }
@@ -404,28 +422,16 @@ function getStructuredCacheProviderBuckets(
         `Structured system message providerOptions.${String(key)}.cacheControl must be inspectable`,
       );
     }
-    if (descriptor === undefined) {
-      continue;
-    }
-    if (!descriptor.enumerable || !isOwnDataPropertyDescriptor(descriptor)) {
-      throw new TypeError(
-        `Structured system message providerOptions.${
-          String(key)
-        }.cacheControl must be an own enumerable data property`,
-      );
-    }
-    if (
-      typeof key === "string" && !isAnthropicCacheProviderKey(key) &&
-      !isAnthropicCacheControl(descriptor.value)
-    ) {
-      continue;
-    }
+    const cacheControl = descriptor?.enumerable && isOwnDataPropertyDescriptor(descriptor)
+      ? descriptor.value
+      : undefined;
     buckets.push({
       key,
-      cacheControl: descriptor.value,
+      cacheControl,
       value: snapshotOwnEnumerableDataRecord(
         value,
         `Structured system message providerOptions.${String(key)}`,
+        { ignoreUnsafeDataKeys: ["cacheControl"] },
       ),
     });
   }
@@ -557,6 +563,7 @@ function applyStructuredCacheTtl(
       const anthropic = snapshotOwnEnumerableDataRecord(
         providerOptions.anthropic,
         "Structured system message providerOptions.anthropic",
+        { ignoreUnsafeDataKeys: ["cacheControl"] },
       );
       ReflectApply(ObjectDefineProperty, undefined, [nextProviderOptions, "anthropic", {
         configurable: true,

@@ -182,6 +182,397 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     ]);
   });
 
+  it("retains later system cache breakpoints ahead of tool breakpoints", () => {
+    const cachedSystem = (content: string) => ({
+      role: "system" as const,
+      content,
+      providerOptions: {
+        anthropic: { cacheControl: { type: "ephemeral" } },
+      },
+    });
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-5-20250929",
+      "anthropic",
+      {
+        prompt: [
+          cachedSystem("First system breakpoint"),
+          cachedSystem("Second system breakpoint"),
+          cachedSystem("Third system breakpoint"),
+          cachedSystem("Interactive final breakpoint"),
+          { role: "user", content: [{ type: "text", text: "Hello" }] },
+        ],
+        tools: [{
+          type: "function",
+          name: "lookup",
+          description: "Look up a value",
+          inputSchema: { jsonSchema: { type: "object", properties: {} } },
+        }],
+        cacheControl: { tools: true },
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    const system = body.system as Array<Record<string, unknown>>;
+    const tools = body.tools as Array<Record<string, unknown>>;
+    assertEquals(
+      system.filter((block) => block.cache_control !== undefined).length +
+        tools.filter((tool) => tool.cache_control !== undefined).length,
+      4,
+    );
+    assertEquals(system[0]?.cache_control, { type: "ephemeral" });
+    assertEquals(tools[0]?.cache_control, undefined);
+  });
+
+  it("counts every emitted tool cache breakpoint in the request budget", () => {
+    const cachedSystem = (content: string) => ({
+      role: "system" as const,
+      content,
+      providerOptions: {
+        anthropic: { cacheControl: { type: "ephemeral" as const } },
+      },
+    });
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [
+          cachedSystem("First system breakpoint"),
+          cachedSystem("Second system breakpoint"),
+          cachedSystem("Interactive final breakpoint"),
+          { role: "user", content: [{ type: "text", text: "Hello" }] },
+        ],
+        mcpServers: [{
+          type: "url",
+          url: "https://mcp.example.test",
+          name: "docs",
+        }],
+        tools: [{
+          type: "provider",
+          name: "docs",
+          id: "anthropic.mcp_toolset",
+          args: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+        }, {
+          type: "function",
+          name: "lookup",
+          description: "Look up a value",
+          inputSchema: { jsonSchema: { type: "object", properties: {} } },
+        }],
+        cacheControl: { tools: true },
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    const system = body.system as Array<Record<string, unknown>>;
+    const tools = body.tools as Array<Record<string, unknown>>;
+    assertEquals(
+      system.filter((block) => block.cache_control !== undefined).length +
+        tools.filter((tool) => tool.cache_control !== undefined).length,
+      4,
+    );
+    assertEquals(system[0]?.cache_control, { type: "ephemeral" });
+    assertEquals(system[1]?.cache_control, { type: "ephemeral" });
+    assertEquals(tools.map((tool) => tool.cache_control), [
+      undefined,
+      { type: "ephemeral" },
+    ]);
+  });
+
+  it("upgrades retained tool breakpoints before a 1h system breakpoint", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [
+          {
+            role: "system",
+            content: "Interactive system prompt",
+            providerOptions: {
+              anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+            },
+          },
+          { role: "user", content: [{ type: "text", text: "Hello" }] },
+        ],
+        tools: [{
+          type: "provider",
+          name: "search",
+          id: "anthropic.web_search",
+          args: { cacheControl: { type: "ephemeral" } },
+        }, {
+          type: "function",
+          name: "lookup",
+          description: "Look up a value",
+          inputSchema: { jsonSchema: { type: "object", properties: {} } },
+        }],
+        cacheControl: { tools: true },
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(
+      (body.tools as Array<Record<string, unknown>>).map((tool) => tool.cache_control),
+      [
+        { type: "ephemeral", ttl: "1h" },
+        { type: "ephemeral", ttl: "1h" },
+      ],
+    );
+    assertEquals(body.system, [{
+      type: "text",
+      text: "Interactive system prompt",
+      cache_control: { type: "ephemeral", ttl: "1h" },
+    }]);
+  });
+
+  it("ignores non-emitted cache metadata when normalizing mixed TTLs", () => {
+    const metadataKey = Symbol("metadata");
+    const cacheControl: Record<PropertyKey, unknown> = { type: "ephemeral" };
+    Object.defineProperty(cacheControl, "hidden", {
+      enumerable: false,
+      value: "not serialized",
+    });
+    cacheControl[metadataKey] = "not serialized";
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [
+          {
+            role: "system",
+            content: "Interactive system prompt",
+            providerOptions: {
+              anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+            },
+          },
+          { role: "user", content: [{ type: "text", text: "Hello" }] },
+        ],
+        providerOptions: {
+          anthropic: {
+            tools: [{
+              name: "lookup",
+              input_schema: { type: "object", properties: {} },
+              cache_control: cacheControl,
+            }],
+          },
+        },
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals((body.tools as Array<Record<string, unknown>>)[0]?.cache_control, {
+      type: "ephemeral",
+      ttl: "1h",
+    });
+  });
+
+  it("upgrades retained prefix breakpoints before a 1h message breakpoint", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [
+          {
+            role: "system",
+            content: "Shared system prompt",
+            providerOptions: {
+              anthropic: { cacheControl: { type: "ephemeral" } },
+            },
+          },
+          { role: "user", content: [{ type: "text", text: "Hello" }] },
+        ],
+        tools: [{
+          type: "function",
+          name: "lookup",
+          description: "Look up a value",
+          inputSchema: { jsonSchema: { type: "object", properties: {} } },
+        }],
+        cacheControl: { tools: true },
+        providerOptions: {
+          anthropic: {
+            messages: [{
+              role: "user",
+              content: [{
+                type: "text",
+                text: "Cached conversation",
+                cache_control: { type: "ephemeral", ttl: "1h" },
+              }],
+            }],
+          },
+        },
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals((body.tools as Array<Record<string, unknown>>)[0]?.cache_control, {
+      type: "ephemeral",
+      ttl: "1h",
+    });
+    assertEquals((body.system as Array<Record<string, unknown>>)[0]?.cache_control, {
+      type: "ephemeral",
+      ttl: "1h",
+    });
+    assertEquals(body.messages[0]?.content[0]?.cache_control, {
+      type: "ephemeral",
+      ttl: "1h",
+    });
+  });
+
+  it("retains at most four tool cache breakpoints", () => {
+    const tools = Array.from({ length: 5 }, (_, index) => ({
+      type: "provider" as const,
+      name: `web-${index}`,
+      id: "anthropic.web_search" as const,
+      args: { cacheControl: { type: "ephemeral" as const } },
+    }));
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Search" }] }],
+        tools,
+      },
+      false,
+      createWarningCollector(),
+    );
+    const emittedTools = body.tools as Array<Record<string, unknown>>;
+
+    assertEquals(
+      emittedTools.filter((tool) => tool.cache_control !== undefined).length,
+      4,
+    );
+    assertEquals(emittedTools[0]?.cache_control, undefined);
+    assertEquals(emittedTools[4]?.cache_control, { type: "ephemeral" });
+  });
+
+  it("counts message-content cache breakpoints in the request budget", () => {
+    const cachedSystem = (content: string) => ({
+      role: "system" as const,
+      content,
+      providerOptions: {
+        anthropic: { cacheControl: { type: "ephemeral" as const } },
+      },
+    });
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [
+          cachedSystem("First system breakpoint"),
+          cachedSystem("Second system breakpoint"),
+          cachedSystem("Third system breakpoint"),
+          cachedSystem("Fourth system breakpoint"),
+          { role: "user", content: [{ type: "text", text: "Hello" }] },
+        ],
+        providerOptions: {
+          anthropic: {
+            messages: [{
+              role: "user",
+              content: [{
+                type: "text",
+                text: "Raw provider message",
+                cache_control: { type: "ephemeral" },
+              }],
+            }],
+          },
+        },
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    const system = body.system as Array<Record<string, unknown>>;
+    const messageContent = body.messages.flatMap((message) => message.content);
+    assertEquals(
+      system.filter((block) => block.cache_control !== undefined).length +
+        messageContent.filter((block) => block.cache_control !== undefined).length,
+      4,
+    );
+    assertEquals(system[0], { type: "text", text: "First system breakpoint" });
+    assertEquals(messageContent[0]?.cache_control, { type: "ephemeral" });
+  });
+
+  it("ignores inherited tool cache metadata", () => {
+    const inheritedCacheControl = {
+      cache_control: { type: "ephemeral" },
+    };
+    const inheritedTools = Array.from(
+      { length: 4 },
+      (_, index) =>
+        Object.assign(Object.create(inheritedCacheControl), {
+          name: `inherited-${index}`,
+          input_schema: { type: "object", properties: {} },
+        }) as Record<string, unknown>,
+    );
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [{
+          role: "system",
+          content: "Shared prompt",
+          providerOptions: {
+            anthropic: { cacheControl: { type: "ephemeral" } },
+          },
+        }, {
+          role: "user",
+          content: [{ type: "text", text: "Hello" }],
+        }],
+        providerOptions: {
+          anthropic: { tools: inheritedTools },
+        },
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.system, [{
+      type: "text",
+      text: "Shared prompt",
+      cache_control: { type: "ephemeral" },
+    }]);
+  });
+
+  it("rejects tool cache metadata accessors without invoking them", () => {
+    let getterCalls = 0;
+    const accessorTool = Object.defineProperty(
+      {
+        name: "accessor",
+        input_schema: { type: "object", properties: {} },
+      },
+      "cache_control",
+      {
+        enumerable: true,
+        get() {
+          getterCalls += 1;
+          return { type: "ephemeral" };
+        },
+      },
+    );
+
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+            providerOptions: {
+              anthropic: { tools: [accessorTool] },
+            },
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic cache_control must be an own enumerable data property",
+    );
+    assertEquals(getterCalls, 0);
+  });
+
   it("rejects system cache metadata accessors without invoking them", () => {
     let accessed = false;
     const cacheControl = Object.defineProperty({}, "type", {
