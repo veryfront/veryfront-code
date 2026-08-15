@@ -15,7 +15,7 @@ import type { FSAdapter } from "../types.ts";
 import { hashString } from "../utils/hash.ts";
 import { resolveFileWithExtension } from "../resolution/file-finder.ts";
 import { parseImports, replaceSpecifiers } from "../../../esm/lexer.ts";
-import { splitSpecifierSuffix } from "../../../shared/specifier-suffix.ts";
+import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 
 type ImportType = "project-alias" | "vf-modules";
 

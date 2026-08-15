@@ -324,6 +324,68 @@ function isControlBlockCloseBrace(
     isControlConditionCloseParen(source, beforeOpenBrace, rangeStart);
 }
 
+function isForOfKeywordBefore(source: string, index: number, rangeStart: number): boolean {
+  const keywordEnd = previousSignificantIndex(source, index) + 1;
+  let keywordStart = keywordEnd;
+  while (keywordStart > rangeStart && /[A-Za-z_$]/.test(source[keywordStart - 1] ?? "")) {
+    keywordStart--;
+  }
+  if (source.slice(keywordStart, keywordEnd) !== "of") return false;
+
+  const beforeKeyword = previousSignificantIndex(source, keywordStart);
+  if (beforeKeyword >= rangeStart && source[beforeKeyword] === ".") return false;
+
+  let parenDepth = 0;
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let cursor = keywordStart - 1;
+
+  while (cursor >= rangeStart) {
+    const char = source[cursor];
+
+    if (char === '"' || char === "'" || char === "`") {
+      cursor = previousStringLiteralStart(source, cursor, rangeStart) - 1;
+      continue;
+    }
+
+    if (char === "/" && source[cursor - 1] === "*") {
+      const commentStart = source.lastIndexOf("/*", cursor - 2);
+      cursor = commentStart >= rangeStart ? commentStart - 1 : rangeStart - 1;
+      continue;
+    }
+
+    if (char === ")") {
+      parenDepth++;
+    } else if (char === "(") {
+      if (parenDepth > 0) {
+        parenDepth--;
+      } else if (braceDepth === 0 && bracketDepth === 0) {
+        return keywordBefore(source, cursor) === "for";
+      }
+    } else if (char === "}") {
+      braceDepth++;
+    } else if (char === "{") {
+      if (braceDepth > 0) braceDepth--;
+      else if (parenDepth === 0 && bracketDepth === 0) return false;
+    } else if (char === "]") {
+      bracketDepth++;
+    } else if (char === "[") {
+      if (bracketDepth > 0) bracketDepth--;
+    } else if (
+      char === ";" &&
+      parenDepth === 0 &&
+      braceDepth === 0 &&
+      bracketDepth === 0
+    ) {
+      return false;
+    }
+
+    cursor--;
+  }
+
+  return false;
+}
+
 function canStartRegexLiteral(
   source: string,
   index: number,
@@ -348,6 +410,9 @@ function canStartRegexLiteral(
   }
   if (char !== undefined && "([{=,:;!~?&|+-*%^<>".includes(char)) return true;
 
+  const keyword = keywordBefore(source, index);
+  if (keyword === "of") return isForOfKeywordBefore(source, index, rangeStart);
+
   return [
     "case",
     "delete",
@@ -355,14 +420,13 @@ function canStartRegexLiteral(
     "else",
     "in",
     "instanceof",
-    "of",
     "await",
     "return",
     "throw",
     "typeof",
     "void",
     "yield",
-  ].includes(keywordBefore(source, index) ?? "");
+  ].includes(keyword ?? "");
 }
 
 function skipRegexLiteral(source: string, regexIndex: number): number {

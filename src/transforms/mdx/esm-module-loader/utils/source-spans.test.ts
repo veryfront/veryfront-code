@@ -345,6 +345,14 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         ["./after-optional-chain.js"],
       );
       assertEquals(
+        specifiers('const ratio = metrics.of / 2; import("./after-of-property.js");'),
+        ["./after-of-property.js"],
+      );
+      assertEquals(
+        specifiers('const of = 4; const ratio = of / 2; import("./after-of-identifier.js");'),
+        ["./after-of-identifier.js"],
+      );
+      assertEquals(
         specifiers(
           'const html = `${constValue = {} / 2} ${import("./after-object-division.js")}`;',
         ),
