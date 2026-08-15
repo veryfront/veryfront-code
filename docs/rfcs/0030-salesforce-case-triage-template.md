@@ -564,15 +564,18 @@ response before the client observes success. Any
 retry after an ambiguous committed timeout must find the already-created internal
 comment for the same case ID, taxonomy version, selected reason, and comment
 content instead of creating another `CaseComment`. If the implementation cannot
-use an atomic composite write, it must assign the same logical disposal a stable
-idempotency key, record or derive the key in a way retries can observe,
-deduplicate already-created comments, and converge every retry to exactly one
-visible terminal state: both `Reason` and the matching internal comment are
-present, or the run reports that reconciliation is required without creating
-another comment. A retry after `Reason` succeeds but `CaseComment` fails, or
-after `CaseComment` succeeds but the client times out before observing the
-result, must not create duplicate comments or leave the agent to infer state from
-an empty write response.
+use an atomic composite write, open-state alone is not enough. The reconciled path
+must bind both writes to one expected Case version, system-modstamp, or equivalent
+compare-and-set invariant that rejects any intervening Case mutation, including a
+non-closing `Reason` change by another actor. It must assign the same logical
+disposal a stable idempotency key, record or derive the key in a way retries can
+observe, deduplicate already-created comments, and converge every retry to
+exactly one visible terminal state: both `Reason` and the matching internal
+comment are present, or the run reports that reconciliation is required without
+creating another comment or leaving an orphan internal comment. A retry after
+`Reason` succeeds but `CaseComment` fails, or after `CaseComment` succeeds but the
+client times out before observing the result, must not create duplicate comments
+or leave the agent to infer state from an empty write response.
 
 Any reconciliation read must be a fixed hosted query, not `run_soql_query` or an
 agent-supplied `q`. It requires an explicit `CaseComment` Read grant in addition
@@ -697,16 +700,21 @@ the Case after the last read or open-state check but before Salesforce accepts t
 first disposal write and prove the disposal fails without writing either `Reason`
 or `CaseComment`, another must close the Case after Salesforce accepts `Reason`
 but before `add_internal_case_comment` reaches Salesforce and prove the
-write-time guard rejects the comment, and another must prove a retry after a
-committed composite response timeout uses stable request identity or
-read-after-timeout reconciliation without creating a duplicate `CaseComment`.
-Every implementation branch must prove its write-time version or open-state
-condition, transactional lock, or equivalent atomic guard rejects the same
-stale-closure races. For the reconciled path, retries after each half-succeeded
-order and after a post-comment timeout must converge without duplicate comments,
-must query only the matching case's internal comments through the fixed
-`CaseComment` Read adapter, and must produce a deterministic operator-visible
-failure when convergence is impossible or the read grant is absent. Every
+write-time guard rejects the comment, another must close the Case after
+Salesforce accepts the internal comment but before `Reason` reaches Salesforce
+and prove the reconciler converges without leaving an orphan comment, and another
+must prove a retry after a committed composite response timeout uses stable
+request identity or read-after-timeout reconciliation without creating a
+duplicate `CaseComment`. Every implementation branch must prove its write-time
+version or open-state condition, transactional lock, or equivalent atomic guard
+rejects the same stale-closure races. The reconciled branch must also prove its
+shared version or compare-and-set invariant rejects a concurrent non-closing
+`Reason` mutation between the two writes. For the reconciled path, retries after
+each half-succeeded order and after a post-comment timeout must converge without
+duplicate comments, must query only the matching case's internal comments through
+the fixed `CaseComment` Read adapter, and must produce a deterministic
+operator-visible failure when convergence is impossible or the read grant is
+absent. Every
 immutable-query adapter entry must prove that `q` is absent from the published
 schema, a supplied `q` and unknown filters are rejected, and the exact fixed
 object, field list, predicates, ordering, and limit reach Salesforce. Each
