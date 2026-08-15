@@ -5,7 +5,7 @@
 | Status     | Draft - request for comment                                                                             |
 | Author     | Matt Boon                                                                                               |
 | Created    | 2026-08-12                                                                                              |
-| Branch     | `mattboon/phoenix`                                                                                      |
+| Branch     | `mattboon/salesforce-triage-template-oss`                                                               |
 | Affects    | `templates/integrations/salesforce/connector.json`, `src/integrations/schema.ts`, the hosted tools API, the reference Studio project, and the companion example repository |
 | Related    | RFC 0001 (adapters); PR #3638 (merged) - expands curated `create_case`/`update_case` fields incl. `Type`; studio PR #6364 - Salesforce Configure permission matrix |
 
@@ -813,7 +813,7 @@ is promptable in the agents.
 | Condition | Today | Proposed |
 | --- | --- | --- |
 | Write result | empty string (mis-read as failure in §3) | status-based: POST → `{ id, success, errors }`; PATCH/DELETE `204` → `{ success: true }`. Empty body ≠ failure |
-| Partial dispose write | two independent calls can leave `Reason` and the triage comment out of sync on retry, timeout, or one-sided failure | atomic composite write with rollback, or deterministic idempotent reconciliation that deduplicates comments and converges retries to one terminal state |
+| Partial dispose write | two independent calls can leave `Reason` and the triage comment out of sync on retry, timeout, or one-sided failure | atomic Composite `allOrNone` write, or an explicitly named equivalent single atomic transaction, rolls back both halves. Stable request identity and read-after-timeout reconciliation apply only after an ambiguous committed atomic response |
 | API disabled for edition | raw 403 | "This Salesforce edition has no API access. Use a free Developer Edition org: <link>." |
 | Restricted picklist bad value | raw `INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST` | catch → describe → retry only after the user confirms a taxonomy-to-org mapping; otherwise report the allowed set and fail closed |
 | Case listing not open-constrained | default `list_cases` can return recently modified closed cases | "The latest-open-cases tool is not open-case constrained. Add a fixed `IsClosed = false` query/filter before triage." |
@@ -1069,11 +1069,13 @@ code. Four extension points, in the order a user hits them:
    fields into a project config/knowledge file, and lets the user confirm the
    taxonomy mapping. This turns §4.1 (picklist mismatch) from a silent failure into
    a guided setup - and is the mechanism that makes "customize" self-serve.
-4. **Swap objects entirely.** Once the §16 enforcement gate is satisfied, the
-   generic `get_record`, `create_record`, and `update_record` tier, plus the
-   existing `run_soql_query` and `describe_object` surfaces, lets a user
-   retarget the pipeline at a *custom* object (e.g. `Ticket__c`) or a different
-   standard object without waiting for Veryfront to add a curated tool.
+4. **Swap objects entirely.** After fail-closed per-CRUD enforcement is live, the
+   generic `get_record`, `create_record`, and `update_record` tier lets a user
+   retarget CRUD paths at a *custom* object (e.g. `Ticket__c`) or a different
+   standard object without waiting for Veryfront to add a curated tool. Arbitrary
+   SOQL through `run_soql_query` stays gated separately until the referenced-object
+   parser and enforcer can prove every base and traversed object is authorized.
+   `describe_object` remains a fixed metadata helper with its own Configure gate.
 
 Design implication: keep org-specific values (picklist mappings, field lists,
 target objects) in **editable project files** (taxonomy + a small config), never
@@ -1179,14 +1181,17 @@ runtime `sobjectType` (§16), including both Create and Update grants for
 `upsert_record`; and (2) server-side path validation (below).
 
 **Server-side path validation (before URL interpolation).** Validate `sobjectType`
-and `externalIdField` as Salesforce API names (`^[A-Za-z][A-Za-z0-9_]*$`, `__c`/`__r`
-allowed) and `recordId` as a 15- or 18-char Salesforce ID; **authorize the
-canonical `sobjectType` against the matrix first**, then URL-encode each path
-segment exactly once (including `externalIdValue`). Reject query/fragment
-delimiters and path-traversal. Add dedicated server-side validators that enforce
-this contract exactly. Do not reuse the generated client's `validateSalesforceId`
-(which also accepts 16- and 17-character values) or `validateFieldName` (which
-allows dots).
+as a Salesforce API name (`^[A-Za-z][A-Za-z0-9_]*$`, `__c` allowed) and
+`recordId` as a 15- or 18-char Salesforce ID; **authorize the canonical
+`sobjectType` against the matrix first**, then URL-encode each path segment
+exactly once (including `externalIdValue`). For `upsert_record`, reject
+relationship names, including `__r` fields, and require describe metadata proving
+`externalIdField` belongs to the canonical `sobjectType` and has
+`externalId: true` or an explicitly supported `idLookup` alternative before URL
+construction. Reject query/fragment delimiters and path-traversal. Add dedicated
+server-side validators that enforce this contract exactly. Do not reuse the
+generated client's `validateSalesforceId` (which also accepts 16- and
+17-character values) or `validateFieldName` (which allows dots).
 
 **`bodyMode: "passthrough"` is production-proven, not speculative.** 16 passthrough
 write tools ship across 9 live integrations today - ServiceNow
