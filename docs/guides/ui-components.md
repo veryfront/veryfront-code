@@ -142,18 +142,20 @@ publishes no adapter package.
 
 Today you **write the adapter yourself** against the exported contract (see
 below) - it's a small, typed file whose only imports are the engine package and
-`veryfront/ui`. Prebuilt reference adapters for Base UI / Radix / React Aria /
-Ariakit (and a `veryfront generate adapter <engine>` command that vendors one for
-you) are in progress and ship alongside the remaining swappable primitives.
+`veryfront/ui` plus `veryfront/ui/adapter`. Prebuilt reference adapters for Base
+UI / Radix / React Aria / Ariakit (and a `veryfront generate adapter <engine>`
+command that vendors one for you) are in progress and ship alongside the
+remaining swappable primitives.
 
 ### Writing your own adapter
 
 An adapter satisfies a typed contract - role-tagged component slots plus
-normalized `{ open, setOpen }` state. Import the contract types + `useTokenScope`
-(to keep portalled surfaces in the token scope) from `veryfront/ui`:
+normalized `{ open, setOpen }` state. Import the runtime helper from
+`veryfront/ui` and the contract types from `veryfront/ui/adapter`:
 
 ```tsx
-import { useTokenScope, type PopoverParts } from "veryfront/ui";
+import { useTokenScope } from "veryfront/ui";
+import type { PopoverParts } from "veryfront/ui/adapter";
 
 export const myPopover: PopoverParts = {
   Root: ({ open, defaultOpen, onOpenChange, children }) => /* … */,
