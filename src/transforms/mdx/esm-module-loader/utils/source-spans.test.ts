@@ -962,6 +962,20 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("keeps line-broken division scans within a bounded runtime", () => {
+      const source = "x\n/2/x;\n".repeat(4_000);
+      const startedAt = performance.now();
+
+      assertEquals(specifiers(source), []);
+
+      const durationMs = performance.now() - startedAt;
+      assert(
+        durationMs < 750,
+        `Expected a ${Math.round(source.length / 1024)} KB line-broken division scan to ` +
+          `finish within 750 ms, got ${durationMs.toFixed(1)} ms`,
+      );
+    });
+
     it("finds imports after division when literal contents look like control conditions", () => {
       assertEquals(
         specifiers('foo("if(") / 2 && import("./after-string-division.js");'),

@@ -897,11 +897,10 @@ function isForOfKeywordBefore(
   return currentParen?.isForHeader === true && !currentParen.hasSemicolon;
 }
 
-function moduleDeclarationKeywordBefore(
+function createModuleDeclarationTracker(
   source: string,
   rangeStart: number,
-  end: number,
-): { keyword: "import" | "export"; index: number } | null {
+): (end: number) => { keyword: "import" | "export"; index: number } | null {
   let cursor = rangeStart;
   let atStatementStart = true;
   let parenDepth = 0;
@@ -909,88 +908,92 @@ function moduleDeclarationKeywordBefore(
   let bracketDepth = 0;
   let candidate: { keyword: "import" | "export"; index: number } | null = null;
 
-  while (cursor <= end) {
-    const skipped = skipIgnored(source, cursor);
-    if (skipped !== cursor) {
-      if (source[cursor] === "/" && source[cursor + 1] === "/") {
-        atStatementStart = true;
-      } else if (
-        source[cursor] === "/" &&
-        source[cursor + 1] === "*" &&
-        hasLineTerminatorBetween(source, cursor + 2, skipped - 2)
-      ) {
-        atStatementStart = true;
-      } else {
-        atStatementStart = false;
-      }
-      cursor = skipped;
-      continue;
-    }
-
-    const char = source[cursor];
-    if (char === "(") parenDepth++;
-    else if (char === ")" && parenDepth > 0) parenDepth--;
-    else if (char === "{") braceDepth++;
-    else if (char === "}" && braceDepth > 0) braceDepth--;
-    else if (char === "[") bracketDepth++;
-    else if (char === "]" && bracketDepth > 0) bracketDepth--;
-
-    const atTopLevel = parenDepth === 0 && braceDepth === 0 && bracketDepth === 0;
-    if (atTopLevel && char === ";") {
-      candidate = null;
-      atStatementStart = true;
-      cursor++;
-      continue;
-    }
-    if (atTopLevel && char !== undefined && isLineTerminator(char)) {
-      atStatementStart = true;
-      cursor++;
-      continue;
-    }
-    if (/\s/.test(char ?? "")) {
-      cursor++;
-      continue;
-    }
-
-    if (atTopLevel && atStatementStart) {
-      if (
-        source.startsWith("import", cursor) &&
-        !isIdentifierBoundaryBefore(source, cursor) &&
-        !isIdentifierBoundaryAfter(source, cursor + "import".length)
-      ) {
-        candidate = { keyword: "import", index: cursor };
-        atStatementStart = false;
-        cursor += "import".length;
+  return (end: number) => {
+    while (cursor <= end) {
+      const skipped = skipIgnored(source, cursor);
+      if (skipped !== cursor) {
+        if (source[cursor] === "/" && source[cursor + 1] === "/") {
+          atStatementStart = true;
+        } else if (
+          source[cursor] === "/" &&
+          source[cursor + 1] === "*" &&
+          hasLineTerminatorBetween(source, cursor + 2, skipped - 2)
+        ) {
+          atStatementStart = true;
+        } else {
+          atStatementStart = false;
+        }
+        cursor = skipped;
         continue;
       }
-      if (
-        source.startsWith("export", cursor) &&
-        !isIdentifierBoundaryBefore(source, cursor) &&
-        !isIdentifierBoundaryAfter(source, cursor + "export".length)
-      ) {
-        candidate = { keyword: "export", index: cursor };
-        atStatementStart = false;
-        cursor += "export".length;
+
+      const char = source[cursor];
+      if (char === "(") parenDepth++;
+      else if (char === ")" && parenDepth > 0) parenDepth--;
+      else if (char === "{") braceDepth++;
+      else if (char === "}" && braceDepth > 0) braceDepth--;
+      else if (char === "[") bracketDepth++;
+      else if (char === "]" && bracketDepth > 0) bracketDepth--;
+
+      const atTopLevel = parenDepth === 0 && braceDepth === 0 && bracketDepth === 0;
+      if (atTopLevel && char === ";") {
+        candidate = null;
+        atStatementStart = true;
+        cursor++;
         continue;
       }
+      if (atTopLevel && char !== undefined && isLineTerminator(char)) {
+        atStatementStart = true;
+        cursor++;
+        continue;
+      }
+      if (/\s/.test(char ?? "")) {
+        cursor++;
+        continue;
+      }
+
+      if (atTopLevel && atStatementStart) {
+        if (
+          source.startsWith("import", cursor) &&
+          !isIdentifierBoundaryBefore(source, cursor) &&
+          !isIdentifierBoundaryAfter(source, cursor + "import".length)
+        ) {
+          candidate = { keyword: "import", index: cursor };
+          atStatementStart = false;
+          cursor += "import".length;
+          continue;
+        }
+        if (
+          source.startsWith("export", cursor) &&
+          !isIdentifierBoundaryBefore(source, cursor) &&
+          !isIdentifierBoundaryAfter(source, cursor + "export".length)
+        ) {
+          candidate = { keyword: "export", index: cursor };
+          atStatementStart = false;
+          cursor += "export".length;
+          continue;
+        }
+      }
+
+      if (atTopLevel) atStatementStart = false;
+      cursor++;
     }
 
-    if (atTopLevel) atStatementStart = false;
-    cursor++;
-  }
-
-  return candidate;
+    return candidate;
+  };
 }
 
 function isCompletedModuleDeclarationBeforeRegex(
   source: string,
   index: number,
-  rangeStart: number,
   previousTokenIndex: number,
+  moduleDeclarationBefore: (
+    end: number,
+  ) => { keyword: "import" | "export"; index: number } | null,
 ): boolean {
   if (!hasLineTerminatorBetween(source, previousTokenIndex + 1, index)) return false;
 
-  const declaration = moduleDeclarationKeywordBefore(source, rangeStart, previousTokenIndex);
+  const declaration = moduleDeclarationBefore(previousTokenIndex);
   if (declaration === null) return false;
 
   const declarationSource = normalizedDeclarationPrefix(
@@ -1016,10 +1019,20 @@ function canStartRegexLiteral(
   matchingOpenParens: ReadonlyMap<number, OpenParenContext>,
   currentParen: OpenParenContext | undefined,
   previousTokenIndex: number,
+  moduleDeclarationBefore: (
+    end: number,
+  ) => { keyword: "import" | "export"; index: number } | null,
 ): boolean {
   const previous = previousTokenIndex;
   if (previous < rangeStart) return true;
-  if (isCompletedModuleDeclarationBeforeRegex(source, index, rangeStart, previous)) return true;
+  if (
+    isCompletedModuleDeclarationBeforeRegex(
+      source,
+      index,
+      previous,
+      moduleDeclarationBefore,
+    )
+  ) return true;
 
   const char = source[previous];
   if (
@@ -1214,6 +1227,9 @@ function skipExpressionIgnored(
   matchingOpenParens: ReadonlyMap<number, OpenParenContext>,
   currentParen: OpenParenContext | undefined,
   previousTokenIndex: number,
+  moduleDeclarationBefore: (
+    end: number,
+  ) => { keyword: "import" | "export"; index: number } | null,
 ): number {
   const char = source[index];
   const next = source[index + 1];
@@ -1242,6 +1258,7 @@ function skipExpressionIgnored(
       matchingOpenParens,
       currentParen,
       previousTokenIndex,
+      moduleDeclarationBefore,
     )
   ) {
     return skipRegexLiteral(source, index);
@@ -1289,6 +1306,7 @@ function findTemplateExpressionEnd(
   const openParens: OpenParenContext[] = [];
   const matchingOpenParens = new Map<number, OpenParenContext>();
   let previousTokenIndex = expressionIndex - 1;
+  const moduleDeclarationBefore = createModuleDeclarationTracker(source, expressionIndex);
 
   while (cursor < source.length) {
     const skipped = skipExpressionIgnored(
@@ -1300,6 +1318,7 @@ function findTemplateExpressionEnd(
       matchingOpenParens,
       openParens.at(-1),
       previousTokenIndex,
+      moduleDeclarationBefore,
     );
     if (skipped !== cursor) {
       previousTokenIndex = tokenIndexAfterIgnored(
@@ -1443,6 +1462,7 @@ export function findStaticImportFromSpans(
   const openParens: OpenParenContext[] = [];
   const matchingOpenParens = new Map<number, OpenParenContext>();
   let previousTokenIndex = -1;
+  const moduleDeclarationBefore = createModuleDeclarationTracker(source, 0);
 
   while (cursor < source.length) {
     const char = source[cursor];
@@ -1455,6 +1475,7 @@ export function findStaticImportFromSpans(
       matchingOpenParens,
       openParens.at(-1),
       previousTokenIndex,
+      moduleDeclarationBefore,
     );
     if (skipped !== cursor) {
       if (char === "/" && source[cursor + 1] === "/") atStatementStart = true;
@@ -1618,6 +1639,7 @@ function scanDynamicImportRange(
   const matchingOpenParens = new Map<number, OpenParenContext>();
   let previousTokenIndex = rangeStart - 1;
   let rawJsxTextDepth = 0;
+  const moduleDeclarationBefore = createModuleDeclarationTracker(source, rangeStart);
 
   while (cursor < rangeEnd) {
     const char = source[cursor];
@@ -1667,6 +1689,7 @@ function scanDynamicImportRange(
         matchingOpenParens,
         openParens.at(-1),
         previousTokenIndex,
+        moduleDeclarationBefore,
       )
     ) {
       cursor = skipRegexLiteral(source, cursor);
@@ -1854,6 +1877,7 @@ export function findStaticSideEffectImportSpans(
   const openParens: OpenParenContext[] = [];
   const matchingOpenParens = new Map<number, OpenParenContext>();
   let previousTokenIndex = -1;
+  const moduleDeclarationBefore = createModuleDeclarationTracker(source, 0);
 
   while (cursor < source.length) {
     const char = source[cursor];
@@ -1866,6 +1890,7 @@ export function findStaticSideEffectImportSpans(
       matchingOpenParens,
       openParens.at(-1),
       previousTokenIndex,
+      moduleDeclarationBefore,
     );
     if (skipped !== cursor) {
       if (char === "/" && source[cursor + 1] === "/") atStatementStart = true;
