@@ -1,3 +1,5 @@
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform";
 import type { ScheduleConfig } from "#veryfront/schedule";
 import type {
@@ -9,75 +11,101 @@ import type { WebhookConfig } from "#veryfront/webhook";
 
 const adapter = {} as RuntimeAdapter;
 
-function acceptScheduleConfig(_config: ScheduleConfig): void {}
-function acceptWebhookConfig(_config: WebhookConfig): void {}
-function acceptRunTriggerTargetOptions(_options: RunTriggerTargetOptions): void {}
+function acceptScheduleConfig(config: ScheduleConfig): ScheduleConfig {
+  return config;
+}
+
+function acceptWebhookConfig(config: WebhookConfig): WebhookConfig {
+  return config;
+}
+
+function acceptRunTriggerTargetOptions(
+  options: RunTriggerTargetOptions,
+): RunTriggerTargetOptions {
+  return options;
+}
 
 interface OwnedWorkflowTarget extends WorkflowTriggerTarget {
   owner: "billing";
 }
 
-const ownedWorkflowTarget: OwnedWorkflowTarget = {
-  kind: "workflow",
-  id: "billing/sync",
-  owner: "billing",
-};
+describe("trigger target public type contracts", () => {
+  it("accepts extended workflow and exported TriggerTarget values on public authoring surfaces", () => {
+    const ownedWorkflowTarget: OwnedWorkflowTarget = {
+      kind: "workflow",
+      id: "billing/sync",
+      owner: "billing",
+    };
 
-const exportedTriggerTarget: TriggerTarget = {
-  kind: "workflow",
-  id: "billing/sync",
-};
+    const exportedTriggerTarget: TriggerTarget = {
+      kind: "workflow",
+      id: "billing/sync",
+    };
 
-acceptScheduleConfig({
-  id: "billing-sync",
-  schedule: "0 * * * *",
-  target: ownedWorkflowTarget,
-});
+    const ownedSchedule = acceptScheduleConfig({
+      id: "billing-sync",
+      schedule: "0 * * * *",
+      target: ownedWorkflowTarget,
+    });
 
-acceptScheduleConfig({
-  id: "exported-trigger-target-schedule",
-  schedule: "0 * * * *",
-  target: exportedTriggerTarget,
-});
+    const exportedSchedule = acceptScheduleConfig({
+      id: "exported-trigger-target-schedule",
+      schedule: "0 * * * *",
+      target: exportedTriggerTarget,
+    });
 
-acceptWebhookConfig({
-  id: "exported-trigger-target-webhook",
-  target: exportedTriggerTarget,
-});
+    const webhook = acceptWebhookConfig({
+      id: "exported-trigger-target-webhook",
+      target: exportedTriggerTarget,
+    });
 
-acceptRunTriggerTargetOptions({
-  projectDir: "/project",
-  adapter,
-  target: exportedTriggerTarget,
-});
+    const run = acceptRunTriggerTargetOptions({
+      projectDir: "/project",
+      adapter,
+      target: exportedTriggerTarget,
+    });
 
-acceptScheduleConfig({
-  id: "agent-triage",
-  schedule: "*/10 * * * *",
-  target: {
-    kind: "agent",
-    id: "case-triage",
-    conversationMode: "existing",
-    conversationId: "11111111-1111-4111-8111-111111111111",
-  },
-});
+    assertEquals(ownedSchedule.target, ownedWorkflowTarget);
+    assertEquals(exportedSchedule.target, exportedTriggerTarget);
+    assertEquals(webhook.target, exportedTriggerTarget);
+    assertEquals(run.target, exportedTriggerTarget);
+  });
 
-acceptScheduleConfig({
-  id: "bad-task",
-  schedule: "0 * * * *",
-  // @ts-expect-error Task schedule targets cannot carry conversation fields.
-  target: { kind: "task", id: "sync-helpdesk", conversationMode: "create_new" },
-});
+  it("keeps agent conversation fields valid and task/workflow conversation fields rejected", () => {
+    const agentSchedule = acceptScheduleConfig({
+      id: "agent-triage",
+      schedule: "*/10 * * * *",
+      target: {
+        kind: "agent",
+        id: "case-triage",
+        conversationMode: "existing",
+        conversationId: "11111111-1111-4111-8111-111111111111",
+      },
+    });
 
-acceptWebhookConfig({
-  id: "bad-workflow",
-  // @ts-expect-error Workflow webhook targets cannot carry conversation fields.
-  target: { kind: "workflow", id: "billing/sync", conversationId: null },
-});
+    const invalidTaskSchedule = acceptScheduleConfig({
+      id: "bad-task",
+      schedule: "0 * * * *",
+      // @ts-expect-error Task schedule targets cannot carry conversation fields.
+      target: { kind: "task", id: "sync-helpdesk", conversationMode: "create_new" },
+    });
 
-acceptRunTriggerTargetOptions({
-  projectDir: "/project",
-  adapter,
-  // @ts-expect-error Task runtime targets cannot carry conversation fields.
-  target: { kind: "task", id: "sync-helpdesk", conversationMode: "none" },
+    const invalidWorkflowWebhook = acceptWebhookConfig({
+      id: "bad-workflow",
+      // @ts-expect-error Workflow webhook targets cannot carry conversation fields.
+      target: { kind: "workflow", id: "billing/sync", conversationId: null },
+    });
+
+    const invalidTaskRun = acceptRunTriggerTargetOptions({
+      projectDir: "/project",
+      adapter,
+      // @ts-expect-error Task runtime targets cannot carry conversation fields.
+      target: { kind: "task", id: "sync-helpdesk", conversationMode: "none" },
+    });
+
+    assertEquals(agentSchedule.target.kind, "agent");
+    assertEquals(invalidTaskSchedule.target.kind, "task");
+    assertEquals(invalidWorkflowWebhook.target.kind, "workflow");
+    assertEquals(invalidTaskRun.target.kind, "task");
+  });
 });
