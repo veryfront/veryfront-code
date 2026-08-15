@@ -444,6 +444,44 @@ describe("module-loader/loadModule build-failure tagging", () => {
     );
   });
 
+  // A transform cache hit skips dependency resolution, and the retry path
+  // invalidates only the root module's cache entry — so on the rebuild the
+  // dependency holding the typo is served from cache and contributes no
+  // evidence. Combined with clearing the set before the rebuild, that would
+  // leave a dependency-level typo permanently unattributed, including on the
+  // very first load. The cache-hit branch replays each module's recorded
+  // specifiers to close it. Both loads must classify identically.
+  it("attributes a typo in a cached dependency on every load", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import { label } from "./dep";`,
+          `export default function Page() { return label; }`,
+        ].join("\n"),
+        "app/dep.tsx": [
+          `import { gone } from "./gone";`,
+          `export const label = gone;`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const pagePath = join(projectDir, "app/page.tsx");
+
+          const first = await assertRejects(() => loadModule(pagePath, config), Error);
+          assertEquals(isBuildFailure(first), true);
+          assertEquals(isTenantBuildFailure(first), true);
+
+          // Same config, so `config.moduleCache` is warm for `app/dep.tsx`.
+          const second = await assertRejects(() => loadModule(pagePath, config), Error);
+          assertEquals(isBuildFailure(second), true);
+          // Identical failure must not get weaker attribution just because a
+          // dependency happened to be cached.
+          assertEquals(isTenantBuildFailure(second), true);
+        });
+      },
+    );
+  });
+
   // The same seam must not launder a framework fault. A module whose imports
   // all resolve, and which then throws while executing, is an application
   // error: it must come back out of `loadModule` untagged on both predicates.
@@ -549,6 +587,31 @@ describe("module-loader/isUnresolvedTenantImport", () => {
 
     assertEquals(error.message.includes(REBUILT), true);
     assertEquals(isUnresolvedTenantImport(error, new Set(["./missing"]), REBUILT), true);
+  });
+
+  // Node quotes the missing target with single quotes and leaves the importer
+  // unquoted: `Cannot find module '/…/missing' imported from /…/page.js`.
+  // A double-quote-only match returns "" there, which silently disables the
+  // eviction guard on the Node runtime while every Deno test still passes.
+  it("reads a single-quoted Node target so the eviction guard still fires", () => {
+    const evictedOnNode = Object.assign(
+      new Error(`Cannot find module '${REBUILT}' imported from ${REBUILT}`),
+      { code: "ERR_MODULE_NOT_FOUND" },
+    );
+
+    assertEquals(isUnresolvedTenantImport(evictedOnNode, new Set(["./missing"]), REBUILT), false);
+  });
+
+  it("classifies a single-quoted Node target that is a dropped specifier", () => {
+    const nodeMissing = Object.assign(
+      new Error(
+        `Cannot find module '/tmp/out/veryfront-modules/proj-a/app/missing' ` +
+          `imported from ${REBUILT}`,
+      ),
+      { code: "ERR_MODULE_NOT_FOUND" },
+    );
+
+    assertEquals(isUnresolvedTenantImport(nodeMissing, new Set(["./missing"]), REBUILT), true);
   });
 
   it("does not classify a failure that is not a resolution failure", () => {

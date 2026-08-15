@@ -34,6 +34,18 @@ export { isBuildFailure } from "./build-failure.ts";
 
 const logger = rendererLogger.component("module-loader");
 
+/**
+ * Specifiers each transformed module left as authored, keyed by its transform
+ * cache key.
+ *
+ * The transform cache lets a module skip dependency resolution entirely, so the
+ * evidence has to outlive the resolution that produced it — otherwise a
+ * dependency's dangling tenant import is only ever visible on the very first
+ * transform. Bounded by the number of distinct cache keys, the same order as
+ * the transform cache it mirrors, and holding only specifier strings.
+ */
+const unresolvedSpecifiersByCacheKey = new Map<string, readonly string[]>();
+
 function throwIfModuleLoadAborted(config: ModuleLoaderConfig): void {
   config.signal?.throwIfAborted();
 }
@@ -87,6 +99,13 @@ export async function transformModuleWithDeps(
   // Those are the only specifiers that can survive into the built module and
   // fail at `import()` time, so this is the evidence that tells a tenant typo
   // apart from a framework artifact going missing. See `loadModule`.
+  //
+  // A module served from the cache below returns before
+  // `resolveModuleDependencies` runs, so it cannot re-derive its own evidence.
+  // That matters because the retry path invalidates only the *root* module's
+  // cache entry: without a memo, a typo living in a dependency would go
+  // unrecorded on every rebuild and never be attributed to the tenant. The
+  // cache-hit branch therefore replays what the first resolution found.
   unresolvedSpecifiers: Set<string> = new Set(),
 ): Promise<string> {
   throwIfModuleLoadAborted(config);
@@ -114,6 +133,13 @@ export async function transformModuleWithDeps(
     moduleServerOrigin: config.moduleServerOrigin,
   });
   if (cachedPath) {
+    // Replay the evidence this module produced when it was last resolved. A
+    // cache hit skips `resolveModuleDependencies`, so without this a dependency
+    // that was already transformed contributes nothing and its tenant-authored
+    // dangling import silently loses attribution.
+    for (const specifier of unresolvedSpecifiersByCacheKey.get(cacheKey) ?? []) {
+      unresolvedSpecifiers.add(specifier);
+    }
     markModuleLoadProgress(config, "module:cache-hit", filePath);
     return cachedPath;
   }
@@ -203,8 +229,10 @@ export async function transformModuleWithDeps(
     });
   }
 
+  const ownUnresolved: string[] = [];
   for (const dep of resolvedDeps) {
     if (dep.depFilePath) continue;
+    ownUnresolved.push(dep.path);
     unresolvedSpecifiers.add(dep.path);
     logger.warn("Could not find dependency:", {
       path: dep.path,
@@ -212,6 +240,7 @@ export async function transformModuleWithDeps(
       projectDir,
     });
   }
+  unresolvedSpecifiersByCacheKey.set(cacheKey, ownUnresolved);
 
   const effectiveProjectId = projectId ?? projectDir;
   const { code: transformedCode } = await transformModuleCodeWithCache({
@@ -331,12 +360,20 @@ export function isMissingModuleError(error: unknown): boolean {
 /**
  * The specifier a module-not-found error names as missing.
  *
- * Runtimes report it as the first quoted token (`Module not found "file://…"`)
- * and then append the importer's own location, so only the first quote pair
- * identifies what is actually absent.
+ * Runtimes report it as the first quoted token and then name the importer, so
+ * only the first quote pair identifies what is actually absent. The quote style
+ * differs by runtime and both reach this seam, since `isMissingModuleError`
+ * matches Node's phrasing as well as Deno's:
+ *
+ * - Deno:  `Module not found "file:///…/missing".`
+ * - Node:  `Cannot find module '/…/missing' imported from /…/page.js`
+ *
+ * Note Node leaves the importer unquoted, so a double-quote-only match would
+ * return `""` there and silently disable every check built on this.
  */
 function missingModuleTarget(message: string): string {
-  return message.match(/"([^"]+)"/)?.[1] ?? "";
+  const match = message.match(/"([^"]*)"|'([^']*)'/);
+  return match?.[1] ?? match?.[2] ?? "";
 }
 
 export function isUnresolvedTenantImport(
