@@ -520,7 +520,7 @@ function keywordBefore(
 ): string | null {
   const end = previousTokenIndex + 1;
   let start = end;
-  while (start > 0 && /[A-Za-z_$]/.test(source[start - 1] ?? "")) start--;
+  while (start > 0 && isIdentifierPartAt(source, start - 1)) start--;
   if (start === end) return null;
   return source.slice(start, end);
 }
@@ -544,7 +544,7 @@ function isMemberNameBefore(
 ): boolean {
   const end = previousTokenIndex + 1;
   let start = end;
-  while (start > 0 && /[A-Za-z_$]/.test(source[start - 1] ?? "")) start--;
+  while (start > 0 && isIdentifierPartAt(source, start - 1)) start--;
   if (start === end) return false;
 
   const before = previousSignificantIndex(source, start);
@@ -552,6 +552,27 @@ function isMemberNameBefore(
 
   const char = source[before];
   return char === "." || char === "#";
+}
+
+function restrictedStatementKeywordBeforeLabel(
+  source: string,
+  index: number,
+  previousTokenIndex: number,
+  rangeStart: number,
+): "break" | "continue" | null {
+  const labelEnd = previousTokenIndex + 1;
+  let labelStart = labelEnd;
+  while (labelStart > rangeStart && isIdentifierPartAt(source, labelStart - 1)) labelStart--;
+  if (labelStart === labelEnd) return null;
+
+  const beforeLabel = previousSignificantIndexBeforeIgnored(source, labelStart);
+  const keyword = keywordBefore(source, labelStart, beforeLabel);
+  if (keyword !== "break" && keyword !== "continue") return null;
+
+  const keywordEnd = beforeLabel + 1;
+  if (hasLineTerminatorBetween(source, keywordEnd, labelStart)) return null;
+  if (!hasLineTerminatorBetween(source, labelEnd, index)) return null;
+  return keyword;
 }
 
 function openParenContext(
@@ -749,7 +770,7 @@ function canStartRegexLiteral(
     return isForOfKeywordBefore(source, rangeStart, currentParen, previous);
   }
 
-  return [
+  const isKeywordRegexPrefix = [
     "case",
     "default",
     "delete",
@@ -769,6 +790,9 @@ function canStartRegexLiteral(
     "void",
     "yield",
   ].includes(keyword ?? "");
+  if (isKeywordRegexPrefix) return true;
+
+  return restrictedStatementKeywordBeforeLabel(source, index, previous, rangeStart) !== null;
 }
 
 function skipRegexLiteral(source: string, regexIndex: number): number {

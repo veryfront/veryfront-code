@@ -955,10 +955,23 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         const source of [
           'while (ready) { break\n/import("\\/_vf_modules\\/fake.js")/.test(value); }',
           'while (ready) { continue\n/import("\\/_vf_modules\\/fake.js")/.test(value); }',
+          'outer: while (ready) { break outer\n/import("\\/_vf_modules\\/fake.js")/.test(value); }',
+          'outer: while (ready) { continue outer\n/import("\\/_vf_modules\\/fake.js")/.test(value); }',
           'debugger\n/import("\\/_vf_modules\\/fake.js")/.test(value);',
         ]
       ) {
         assertEquals(vfModuleSpecifiers(source), []);
+      }
+    });
+
+    it("does not read keyword suffixes in longer identifiers as regex prefixes", () => {
+      for (
+        const source of [
+          'const x1return = 4; x1return / 2; import("/_vf_modules/real.js");',
+          'const αreturn = 4; αreturn / 2; import("/_vf_modules/real.js");',
+        ]
+      ) {
+        assertEquals(vfModuleSpecifiers(source), ["/_vf_modules/real.js"]);
       }
     });
 
