@@ -20,7 +20,11 @@ import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
-import { buildMdxEsmPathCacheKey, MDX_ESM_ALL_FILE_URL_PATTERN_SOURCE } from "../cache-format.ts";
+import {
+  buildMdxEsmPathCacheKey,
+  MDX_ESM_ALL_FILE_URL_PATTERN_SOURCE,
+  UNRESOLVED_IMPORTS_SIDECAR_SUFFIX,
+} from "../cache-format.ts";
 import { ensureMdxModuleDependencies } from "../module-fetcher/dependency-recovery.ts";
 import { findStaticImportFromSpans } from "../utils/source-spans.ts";
 import {
@@ -352,13 +356,18 @@ export function invalidateModulePaths(changedPaths: string[]): void {
       }
     }
 
-    // Delete stale .mjs files from disk
+    // Delete stale modules and their tenant-attribution evidence from disk.
     for (const mjsPath of staleMjsFiles) {
       try {
         await localFs.remove(mjsPath);
         logger.debug(`${LOG_PREFIX_MDX_LOADER} Deleted stale cached module`, { mjsPath });
       } catch (_) {
         /* expected: file may already be gone */
+      }
+      try {
+        await localFs.remove(`${mjsPath}${UNRESOLVED_IMPORTS_SIDECAR_SUFFIX}`);
+      } catch (_) {
+        /* expected: most modules have no unresolved-import evidence */
       }
     }
   };

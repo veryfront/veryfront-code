@@ -366,13 +366,7 @@ describe("module-loader/loadModule build-failure tagging", () => {
     );
   });
 
-  // `findStaticImportFromSpans` only matches imports with a `from` clause, so a
-  // bare side-effect import is never resolved and therefore never recorded as
-  // dropped. Such a typo consequently stays at error level rather than being
-  // downgraded. That is the safe direction — over-reporting severity, never
-  // hiding a framework fault — but it is a real gap, so it is pinned here
-  // rather than left to be discovered as a surprise.
-  it("leaves a missing bare side-effect import at framework severity", async () => {
+  it("tags a missing bare side-effect import as a tenant build failure", async () => {
     await withModuleLoaderFixture(
       {
         "app/page.tsx": [
@@ -388,10 +382,8 @@ describe("module-loader/loadModule build-failure tagging", () => {
           );
 
           assertEquals(isMissingModuleError(error), true);
-          // Still a build failure — the signal must not be dropped ...
           assertEquals(isBuildFailure(error), true);
-          // ... but not attributed to the tenant without evidence.
-          assertEquals(isTenantBuildFailure(error), false);
+          assertEquals(isTenantBuildFailure(error), true);
         });
       },
     );
@@ -436,9 +428,9 @@ describe("module-loader/loadModule build-failure tagging", () => {
           assertEquals(isMissingModuleError(error), true);
           assertEquals(isBuildFailure(error), true);
           // The first transform dropped `./late`, but the rebuild resolved it.
-          // Its separate bare side-effect failure is not resolver evidence and
-          // must not inherit the stale tenant classification from build one.
-          assertEquals(isTenantBuildFailure(error), false);
+          // Classification must come from the dependency's separate bare
+          // side-effect failure, not stale evidence from build one.
+          assertEquals(isTenantBuildFailure(error), true);
         });
       },
     );

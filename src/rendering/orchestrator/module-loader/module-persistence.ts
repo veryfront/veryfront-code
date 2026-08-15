@@ -14,11 +14,13 @@ import {
   getModulePathCache,
   saveModulePathCache,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
-import { buildMdxEsmPathCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import {
+  buildMdxEsmPathCacheKey,
+  UNRESOLVED_IMPORTS_SIDECAR_SUFFIX,
+} from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import { buildModuleTransformCacheVariant } from "./module-cache-lookup.ts";
 
 const logger = rendererLogger.component("module-loader");
-const UNRESOLVED_IMPORTS_SIDECAR_SUFFIX = ".unresolved-imports.json";
 
 /** Maximum number of directories to track to prevent memory leaks. */
 const MAX_CREATED_DIRS = 5_000;
