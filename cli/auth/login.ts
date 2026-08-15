@@ -322,13 +322,6 @@ async function describeExistingSession(
     }
     if (!identity) continue;
 
-    if (isJsonMode()) {
-      await outputJson(
-        createSuccessEnvelope("login", { authenticated: true, existing: true, source }),
-      );
-      return identity;
-    }
-
     console.log();
     console.log(
       "  ✓ " +

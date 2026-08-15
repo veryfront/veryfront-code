@@ -371,6 +371,42 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("keeps existing-session output human-readable without a login JSON contract", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const output: string[] = [];
+      await saveToken("stored-valid-token", testEnv);
+
+      try {
+        setNonInteractive(true);
+        globalThis.fetch = (() =>
+          Promise.resolve(
+            Response.json({ id: "user-123", email: "test@example.com" }),
+          )) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        const { login } = await import("./login.ts");
+        setJsonMode(true);
+
+        const result = await login(undefined, testEnv);
+
+        // Login does not advertise structured output. Keep this result on the
+        // same human path as missing, invalid, and timed-out credentials instead
+        // of exposing JSON for only the already-authenticated outcome.
+        assertEquals(result, { id: "user-123", email: "test@example.com" });
+        assertStringIncludes(output.join("\n"), "Already logged in as test@example.com");
+        assertEquals(output.join("\n").includes('"command": "login"'), false);
+      } finally {
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        setJsonMode(false);
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
     it("falls back to a valid stored session when the env token is invalid", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;
