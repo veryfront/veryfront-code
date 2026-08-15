@@ -4,7 +4,7 @@ import {
   finalizeConversationAgentRun,
 } from "./durable.ts";
 import type { HostedLifecycleTerminalState } from "../hosted/lifecycle.ts";
-import { resolveKnownProviderTerminalError } from "../streaming/stream-outcome.ts";
+import { resolveKnownProviderTerminalError } from "#veryfront/agent/streaming/stream-outcome.ts";
 
 /** Input payload for conversation hosted terminal state. */
 export interface ConversationHostedTerminalStateInput {
