@@ -57,6 +57,10 @@ function scanImportSpans(
   }
 }
 
+function isMissingModuleError(error: unknown): boolean {
+  return error instanceof Error && error.name === "MissingModuleError";
+}
+
 /**
  * Serialize a resolved module URL as a JavaScript string literal.
  *
@@ -296,6 +300,8 @@ export async function processNestedImports(
 
     const modulePath = nestedPath || relativePath || "";
     if (strictMissingModules) {
+      if (isDynamic) continue;
+
       throw buildMissingModuleError({
         modulePath,
         importer: parentModulePath,
@@ -414,19 +420,29 @@ export async function resolveNestedModuleImports(
 
   const nestedResults: NestedImportResult[] = await parallelMap(
     allImports,
-    async ({ original, path, suffix, start, end, isDynamic, isSideEffect, key }) => ({
-      original,
-      start,
-      end,
-      suffix,
-      isDynamic,
-      isSideEffect,
-      nestedFilePath: await input.fetchAndCacheModule(
-        path,
-        input.parentBasePath ?? input.normalizedPath,
-      ),
-      [key]: path,
-    }),
+    async ({ original, path, suffix, start, end, isDynamic, isSideEffect, key }) => {
+      let nestedFilePath: string | null;
+      try {
+        nestedFilePath = await input.fetchAndCacheModule(
+          path,
+          input.parentBasePath ?? input.normalizedPath,
+        );
+      } catch (error) {
+        if (!isDynamic || !isMissingModuleError(error)) throw error;
+        nestedFilePath = null;
+      }
+
+      return {
+        original,
+        start,
+        end,
+        suffix,
+        isDynamic,
+        isSideEffect,
+        nestedFilePath,
+        [key]: path,
+      };
+    },
     {
       semaphore: new Semaphore(MAX_MDX_MODULE_TRANSFORM_CONCURRENCY),
     },

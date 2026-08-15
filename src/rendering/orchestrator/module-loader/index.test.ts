@@ -413,6 +413,29 @@ describe("module-loader/loadModule build-failure tagging", () => {
     );
   });
 
+  it("tags a missing project alias import with an explicit source extension", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import { label } from "@/components/Missing.tsx";`,
+          `export default function Page() { return label; }`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const error = await assertRejects(
+            () => loadModule(join(projectDir, "app/page.tsx"), config),
+            Error,
+          );
+
+          assertEquals(isMissingModuleError(error), true);
+          assertEquals(isBuildFailure(error), true);
+          assertEquals(isTenantBuildFailure(error), true);
+        });
+      },
+    );
+  });
+
   it("tags missing side-effect imports in every legal declaration position", async () => {
     for (
       const source of [
@@ -739,6 +762,21 @@ describe("module-loader/isUnresolvedTenantImport", () => {
 
     assertEquals(
       isUnresolvedTenantImport(aliasMissing, new Set(["@/components/Foo"]), REBUILT),
+      true,
+    );
+  });
+
+  it("classifies an explicit project alias source extension after its SSR rewrite", () => {
+    const aliasMissing = Object.assign(
+      new TypeError(
+        'Module not found "file:///tmp/out/veryfront-modules/proj-a/_vf_modules/components/Missing.js".\n' +
+          `    at file://${REBUILT}:1:23`,
+      ),
+      { code: "ERR_MODULE_NOT_FOUND" },
+    );
+
+    assertEquals(
+      isUnresolvedTenantImport(aliasMissing, new Set(["@/components/Missing.tsx"]), REBUILT),
       true,
     );
   });

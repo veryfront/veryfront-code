@@ -13,6 +13,7 @@ import {
   MAX_MDX_MODULE_TRANSFORM_CONCURRENCY,
   ModuleImportLimitError,
 } from "./limits.ts";
+import { buildMissingModuleError } from "../missing-module.ts";
 
 describe("transforms/mdx/esm-module-loader/module-fetcher/nested-imports", () => {
   describe("findNestedImports", () => {
@@ -386,6 +387,53 @@ import { bar } from "./local.js";
       } finally {
         await remove(esmCacheDir, { recursive: true });
       }
+    });
+
+    it("defers missing dynamic imports in strict mode until they execute", async () => {
+      const source = [
+        `export async function loadOptional(enabled) {`,
+        `  if (enabled) return await import("./optional.js");`,
+        `  return null;`,
+        `}`,
+      ].join("\n");
+      const calls: string[] = [];
+
+      const result = await resolveNestedModuleImports({
+        moduleCode: source,
+        esmCacheDir: "/tmp/veryfront-unused",
+        normalizedPath: "_vf_modules/pages/index.js",
+        projectSlug: "docs",
+        strictMissingModules: true,
+        fetchAndCacheModule: (path) => {
+          calls.push(path);
+          throw buildMissingModuleError({
+            modulePath: path,
+            importer: "_vf_modules/pages/index.js",
+            importStatement: `import("./optional.js")`,
+            code: source,
+            projectSlug: "docs",
+          });
+        },
+      });
+
+      assertEquals(calls, ["./optional.js"]);
+      assertEquals(result, source);
+    });
+
+    it("still rejects missing static imports in strict mode", async () => {
+      await assertRejects(
+        () =>
+          resolveNestedModuleImports({
+            moduleCode: `import optional from "./optional.js";\nexport default optional;`,
+            esmCacheDir: "/tmp/veryfront-unused",
+            normalizedPath: "_vf_modules/pages/index.js",
+            projectSlug: "docs",
+            strictMissingModules: true,
+            fetchAndCacheModule: () => Promise.resolve(null),
+          }),
+        Error,
+        "[MDX] Missing module: ./optional.js.",
+      );
     });
 
     it("resolves admitted fan-out with bounded concurrency", async () => {
