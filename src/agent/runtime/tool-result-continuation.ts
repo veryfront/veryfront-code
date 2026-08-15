@@ -131,14 +131,6 @@ export function isClientRecoverablePlaceholderToolCall(
   return toolCall.providerExecuted !== true && isRecoverablePlaceholderToolCall(toolCall);
 }
 
-export function shouldRecoverPlaceholderToolCall(
-  state: Pick<ChatStreamState, "accumulatedText">,
-  toolCall: Pick<StreamingToolCall, "arguments" | "inputAvailable" | "providerExecuted">,
-): boolean {
-  return !hasSubstantiveAssistantText(state.accumulatedText) &&
-    isClientRecoverablePlaceholderToolCall(toolCall);
-}
-
 export function shouldOmitRecoverablePlaceholderToolCall(
   state: Pick<ChatStreamState, "accumulatedText">,
   toolCall: Pick<StreamingToolCall, "arguments" | "inputAvailable" | "providerExecuted">,
@@ -151,6 +143,7 @@ export function shouldContinueAfterStreamStep(
   state:
     & Pick<ChatStreamState, "accumulatedText" | "finishReason" | "toolCalls" | "toolResults">
     & Partial<Pick<ChatStreamState, "suppressedToolCalls">>,
+  options: { recoverInterruptedToolCalls?: boolean } = {},
 ): boolean {
   const hasAssistantText = hasSubstantiveAssistantText(state.accumulatedText);
 
@@ -166,42 +159,40 @@ export function shouldContinueAfterStreamStep(
   const hasProviderExecutedToolCall = streamedToolCalls.some((toolCall) =>
     toolCall.providerExecuted === true
   );
-  // A non-finalized call whose only accumulated arguments are a bare
-  // empty-object placeholder is provisional streamed input the model never
-  // committed. The runtime can recover by re-calling the model only before the
-  // assistant has produced final text, so it must not block earlier
-  // continuation like a truncated partial-JSON call does.
-  const hasIncompleteDeadToolCall = streamedToolCalls.some(
-    (toolCall) =>
-      isStreamedToolCallIncomplete(toolCall) &&
-      !isRecoverablePlaceholderToolCall(toolCall),
-  );
-  const hasRecoverablePlaceholderToolCall = streamedToolCalls.some(
-    (toolCall) => shouldRecoverPlaceholderToolCall(state, toolCall),
-  );
+  const finalToolResults = collectFinalStreamToolResults(state);
+  const hasInterruptedClientToolCall = streamedToolCalls.some(isInterruptedClientToolCall);
+  // A finalized local call has already emitted tool-input-available. Client
+  // callbacks may have applied its side effect, so reconstructing the batch
+  // could repeat that mutation even when no result reached this stream.
+  // Provider-executed calls and results are omitted from model replay, so a
+  // retry after any provider call could also repeat provider work and billing.
+  const canRecoverInterruptedClientToolCall = options.recoverInterruptedToolCalls === true &&
+    hasInterruptedClientToolCall &&
+    !hasFinalizedClientToolCall &&
+    !hasProviderExecutedToolCall;
 
   if (state.finishReason === "tool-calls") {
-    if (hasIncompleteDeadToolCall) {
-      return false;
+    if (hasIncompleteToolCall) {
+      return canRecoverInterruptedClientToolCall;
     }
     if (hasProviderExecutedToolCall && !hasFinalizedClientToolCall) {
       return false;
     }
-    if (hasRecoverablePlaceholderToolCall && !hasFinalizedClientToolCall) {
-      return true;
-    }
-    return !hasIncompleteToolCall && hasFinalizedClientToolCall;
+    return hasFinalizedClientToolCall;
   }
 
   if (state.finishReason !== "stop") {
     return false;
   }
 
+  if (hasIncompleteToolCall) {
+    return canRecoverInterruptedClientToolCall;
+  }
+
   if (hasAssistantText) {
     return false;
   }
 
-  const finalToolResults = collectFinalStreamToolResults(state);
   if (!finalToolResults.size) {
     for (const toolCall of state.toolCalls.values()) {
       if (toolCall.inputAvailable !== true || toolCall.providerExecuted === true) {
@@ -244,6 +235,18 @@ export function isStreamedToolCallIncomplete(
   toolCall: Pick<StreamingToolCall, "inputAvailable">,
 ): boolean {
   return toolCall.inputAvailable !== true;
+}
+
+export function isInterruptedClientToolCall(
+  toolCall: Pick<
+    StreamingToolCall,
+    "arguments" | "inputAvailable" | "providerExecuted"
+  >,
+): boolean {
+  // Provider-executed calls have a separate terminalization path. Only local
+  // calls can be safely turned into a model-visible failed batch and retried.
+  return toolCall.providerExecuted !== true &&
+    isStreamedToolCallIncomplete(toolCall);
 }
 
 export function isRecoverablePlaceholderToolCall(
