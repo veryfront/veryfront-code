@@ -309,95 +309,14 @@ function isEscapedByBackslash(source: string, index: number): boolean {
   return count % 2 === 1;
 }
 
-function canStartRegexLiteralInBraceScan(
+function isControlBlockCloseBrace(
   source: string,
   index: number,
   rangeStart: number,
+  matchingOpenBraces: ReadonlyMap<number, number>,
 ): boolean {
-  const previous = previousSignificantIndex(source, index);
-  if (previous < rangeStart) return true;
-
-  const char = source[previous];
-  if (char === ")" && isControlConditionCloseParen(source, previous, rangeStart)) return true;
-  if (
-    (char === "+" || char === "-") &&
-    previous - 1 >= rangeStart &&
-    source[previous - 1] === char
-  ) {
-    return false;
-  }
-  if (char !== undefined && "([{=,:;!~?&|+-*%^<>".includes(char)) return true;
-
-  return [
-    "case",
-    "delete",
-    "do",
-    "else",
-    "in",
-    "instanceof",
-    "of",
-    "await",
-    "return",
-    "throw",
-    "typeof",
-    "void",
-    "yield",
-  ].includes(keywordBefore(source, index) ?? "");
-}
-
-function skipBraceScanIgnored(source: string, index: number, rangeStart: number): number {
-  const char = source[index];
-  const next = source[index + 1];
-
-  if (
-    (char === "/" && (next === "/" || next === "*")) ||
-    char === '"' ||
-    char === "'" ||
-    char === "`"
-  ) {
-    return skipIgnored(source, index);
-  }
-
-  if (char === "/" && canStartRegexLiteralInBraceScan(source, index, rangeStart)) {
-    return skipRegexLiteral(source, index);
-  }
-
-  return index;
-}
-
-function matchingOpenBraceIndex(source: string, index: number, rangeStart: number): number | null {
-  const openBraces: number[] = [];
-  let cursor = rangeStart;
-
-  while (cursor <= index) {
-    const skipped = skipBraceScanIgnored(source, cursor, rangeStart);
-    if (skipped !== cursor) {
-      cursor = skipped;
-      continue;
-    }
-
-    if (source[cursor] === "{") {
-      openBraces.push(cursor);
-      cursor++;
-      continue;
-    }
-
-    if (source[cursor] === "}") {
-      const openBrace = openBraces.pop();
-      if (cursor === index) return openBrace ?? null;
-      cursor++;
-      continue;
-    }
-
-    cursor++;
-  }
-
-  return null;
-}
-
-function isControlBlockCloseBrace(source: string, index: number, rangeStart: number): boolean {
-  const openBrace = matchingOpenBraceIndex(source, index, rangeStart);
-  if (openBrace === null) return false;
+  const openBrace = matchingOpenBraces.get(index);
+  if (openBrace === undefined) return false;
 
   const beforeOpenBrace = previousSignificantIndex(source, openBrace);
   return beforeOpenBrace >= rangeStart &&
@@ -405,13 +324,21 @@ function isControlBlockCloseBrace(source: string, index: number, rangeStart: num
     isControlConditionCloseParen(source, beforeOpenBrace, rangeStart);
 }
 
-function canStartRegexLiteral(source: string, index: number, rangeStart: number): boolean {
+function canStartRegexLiteral(
+  source: string,
+  index: number,
+  rangeStart: number,
+  matchingOpenBraces: ReadonlyMap<number, number>,
+): boolean {
   const previous = previousSignificantIndex(source, index);
   if (previous < rangeStart) return true;
 
   const char = source[previous];
   if (char === ")" && isControlConditionCloseParen(source, previous, rangeStart)) return true;
-  if (char === "}" && isControlBlockCloseBrace(source, previous, rangeStart)) return true;
+  if (
+    char === "}" &&
+    isControlBlockCloseBrace(source, previous, rangeStart, matchingOpenBraces)
+  ) return true;
   if (
     (char === "+" || char === "-") &&
     previous - 1 >= rangeStart &&
@@ -479,6 +406,7 @@ function skipExpressionIgnored(
   index: number,
   rangeStart: number,
   depth: number,
+  matchingOpenBraces: ReadonlyMap<number, number>,
 ): number {
   const char = source[index];
   const next = source[index + 1];
@@ -495,7 +423,7 @@ function skipExpressionIgnored(
 
   if (char === '"' || char === "'") return skipIgnored(source, index);
   if (char === "`") return skipFullTemplateLiteral(source, index, depth + 1);
-  if (char === "/" && canStartRegexLiteral(source, index, rangeStart)) {
+  if (char === "/" && canStartRegexLiteral(source, index, rangeStart, matchingOpenBraces)) {
     return skipRegexLiteral(source, index);
   }
 
@@ -511,15 +439,24 @@ function findTemplateExpressionEnd(
 
   let cursor = expressionIndex;
   let braceDepth = 1;
+  const openBraces: number[] = [];
+  const matchingOpenBraces = new Map<number, number>();
 
   while (cursor < source.length) {
-    const skipped = skipExpressionIgnored(source, cursor, expressionIndex, depth);
+    const skipped = skipExpressionIgnored(
+      source,
+      cursor,
+      expressionIndex,
+      depth,
+      matchingOpenBraces,
+    );
     if (skipped !== cursor) {
       cursor = skipped;
       continue;
     }
 
     if (source[cursor] === "{") {
+      openBraces.push(cursor);
       braceDepth++;
       cursor++;
       continue;
@@ -528,6 +465,8 @@ function findTemplateExpressionEnd(
     if (source[cursor] === "}") {
       braceDepth--;
       if (braceDepth === 0) return cursor;
+      const openBrace = openBraces.pop();
+      if (openBrace !== undefined) matchingOpenBraces.set(cursor, openBrace);
       cursor++;
       continue;
     }
@@ -690,6 +629,8 @@ function scanDynamicImportRange(
   spans: StaticImportSpan[],
 ): void {
   let cursor = rangeStart;
+  const openBraces: number[] = [];
+  const matchingOpenBraces = new Map<number, number>();
 
   while (cursor < rangeEnd) {
     const char = source[cursor];
@@ -704,7 +645,7 @@ function scanDynamicImportRange(
       continue;
     }
 
-    if (char === "/" && canStartRegexLiteral(source, cursor, rangeStart)) {
+    if (char === "/" && canStartRegexLiteral(source, cursor, rangeStart, matchingOpenBraces)) {
       cursor = skipRegexLiteral(source, cursor);
       continue;
     }
@@ -719,6 +660,19 @@ function scanDynamicImportRange(
         spans,
       );
       if (spans.length >= maxMatches) return;
+      continue;
+    }
+
+    if (char === "{") {
+      openBraces.push(cursor);
+      cursor++;
+      continue;
+    }
+
+    if (char === "}") {
+      const openBrace = openBraces.pop();
+      if (openBrace !== undefined) matchingOpenBraces.set(cursor, openBrace);
+      cursor++;
       continue;
     }
 

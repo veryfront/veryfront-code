@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   findDynamicImportSpans,
@@ -349,6 +349,21 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           'const html = `${constValue = {} / 2} ${import("./after-object-division.js")}`;',
         ),
         ["./after-object-division.js"],
+      );
+    });
+
+    it("keeps brace-heavy division scans within a bounded runtime", () => {
+      const source = "x={a:1}/2;\n".repeat(7_200);
+      const startedAt = performance.now();
+
+      assertEquals(specifiers(source), []);
+
+      const durationMs = performance.now() - startedAt;
+      assert(
+        durationMs < 750,
+        `Expected an 86 KB brace-heavy scan to finish within 750 ms, got ${
+          durationMs.toFixed(1)
+        } ms`,
       );
     });
 
