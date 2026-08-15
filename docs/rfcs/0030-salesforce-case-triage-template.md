@@ -548,15 +548,16 @@ per-CRUD arrays are not enforced.
 logical disposal. V1 must make that logical disposal either atomic at the hosted
 integration boundary, for example through a Salesforce Composite request with
 `allOrNone: true`, or deterministically reconciled after any partial success. The
-hosted adapter must also recheck the target Case's open state immediately before
-the logical disposal writes, or bind the writes to an optimistic-concurrency
-condition that proves the Case is still open. The earlier `list_cases`
-`IsClosed = false` predicate is only selection-time evidence; if a human or
-automation closes the Case before disposal, the adapter must abort before writing
-`Reason` or the internal comment. The atomic path still needs a stable request
-identity for the logical disposal, or read-after-timeout reconciliation, because
-Salesforce can commit the
-composite request and lose the response before the client observes success. Any
+hosted adapter must also guard every disposal write with a write-time version or
+open-state condition, a transactionally locked open-state check, or an equivalent
+atomic guard that proves the Case is still open at the point Salesforce accepts
+the write. A separate pre-write read is not sufficient by itself. The earlier
+`list_cases` `IsClosed = false` predicate is only selection-time evidence; if a
+human or automation closes the Case before or during disposal, the adapter must
+abort before writing `Reason` or the internal comment. The atomic path still
+needs a stable request identity for the logical disposal, or read-after-timeout
+reconciliation, because Salesforce can commit the composite request and lose the
+response before the client observes success. Any
 retry after an ambiguous committed timeout must find the already-created internal
 comment for the same case ID, taxonomy version, selected reason, and comment
 content instead of creating another `CaseComment`. If the implementation cannot
@@ -688,13 +689,15 @@ denial tests. Successful `204 No Content` writes, including
 instead of an empty string, and tests must prove the agent-visible result cannot be
 misread as failure. Dispose write consistency needs explicit retry and
 partial-failure coverage: one test must prove the atomic composite path rolls back
-both `Reason` and `CaseComment` when either subrequest fails, another must prove a
-Case closed after selection but before disposal aborts before either write, and
-another must prove a retry after a committed composite response timeout uses
-stable request identity or read-after-timeout reconciliation without creating a
-duplicate `CaseComment`. If the implementation uses optimistic concurrency
-instead of a pre-write Case read, the stale-closure fixture must prove the version
-or open-state condition rejects the disposal write. For the reconciled path,
+both `Reason` and `CaseComment` when either subrequest fails, another must close
+the Case after the last read or open-state check but before Salesforce accepts the
+first disposal write and prove the disposal fails without writing either `Reason`
+or `CaseComment`, and another must prove a retry after a committed composite
+response timeout uses stable request identity or read-after-timeout
+reconciliation without creating a duplicate `CaseComment`. Every implementation
+branch must prove its write-time version or open-state condition, transactional
+lock, or equivalent atomic guard rejects the same stale-closure race. For the
+reconciled path,
 retries after each half-succeeded order and after a post-comment timeout must
 converge without duplicate comments, must query only the matching case's internal
 comments through the fixed `CaseComment` Read adapter, and must produce a
