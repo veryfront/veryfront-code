@@ -4,6 +4,7 @@ import {
   getRequestPeerProvenance,
   inheritRequestPeerProvenance,
   isRequestFromLoopbackPeer,
+  recordDenoServeRequestPeer,
   recordRequestPeerFromTransport,
   type RequestPeerRuntime,
 } from "./request-peer.ts";
@@ -17,6 +18,27 @@ function requestFromPeer(hostname?: string, runtime: RequestPeerRuntime = "node"
 }
 
 describe("runtime request peer provenance", () => {
+  it("records a Deno.serve peer before a portable handler reads the request", () => {
+    const request = new Request("http://localhost/_projects");
+
+    assertEquals(
+      recordDenoServeRequestPeer(request, {
+        remoteAddr: {
+          transport: "tcp",
+          hostname: "::1",
+          port: 52_000,
+        },
+      }),
+      true,
+    );
+    assertEquals(getRequestPeerProvenance(request), {
+      runtime: "deno",
+      transport: "tcp",
+      hostname: "::1",
+    });
+    assertEquals(isRequestFromLoopbackPeer(request), true);
+  });
+
   it("recognizes loopback peers across canonical transport representations", () => {
     for (
       const hostname of [

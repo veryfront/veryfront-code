@@ -36,6 +36,7 @@ import {
 } from "./production-server.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { isWebSocketUpgradeResponse } from "#veryfront/platform/adapters/base.ts";
+import { recordDenoServeRequestPeer } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { bootstrapProd } from "./bootstrap.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
@@ -244,7 +245,10 @@ export async function createHandler(
     const adapter = await runtime.get();
     const bootstrap = await bootstrapProd(projectDir, adapter);
     const internalHandler = createVeryfrontHandler(projectDir, bootstrap.adapter, { projectDir });
-    const handler = async (req: Request) => toNativeResponse(await internalHandler(req));
+    const handler = async (req: Request, info?: unknown) => {
+      recordDenoServeRequestPeer(req, info);
+      return toNativeResponse(await internalHandler(req));
+    };
     const dispose = createRetryableHandlerDisposer(async () => {
       await bootstrap.dispose?.();
     });
@@ -272,7 +276,8 @@ export async function createHandler(
   const internalFetch = devServer.handler;
   const nodeWebSocketServerProvider = devServer.nodeWebSocketServerProvider;
   let disposalStarted = false;
-  const fetch = async (req: Request) => {
+  const fetch = async (req: Request, info?: unknown) => {
+    recordDenoServeRequestPeer(req, info);
     if (disposalStarted) {
       return new _NativeResponse("Handler is shutting down", {
         status: 503,

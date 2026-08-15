@@ -88,6 +88,36 @@ export function recordRequestPeerFromTransport(
   return true;
 }
 
+/** @internal Record the native peer supplied to a Deno.serve handler. */
+export function recordDenoServeRequestPeer(
+  request: Request,
+  info: unknown,
+): boolean {
+  if (typeof info !== "object" || info === null) return false;
+
+  try {
+    const remoteAddress = (info as {
+      readonly remoteAddr?: {
+        readonly transport?: unknown;
+        readonly hostname?: unknown;
+      };
+    }).remoteAddr;
+    if (
+      remoteAddress?.transport !== "tcp" ||
+      typeof remoteAddress.hostname !== "string"
+    ) {
+      return false;
+    }
+    return recordRequestPeerFromTransport(request, {
+      runtime: "deno",
+      transport: "tcp",
+      hostname: remoteAddress.hostname,
+    });
+  } catch {
+    return false;
+  }
+}
+
 /** @internal Read immutable transport provenance without consulting headers. */
 export function getRequestPeerProvenance(
   request: Request,
