@@ -36,10 +36,12 @@ import {
 type ProviderCacheTtl = boolean | "5m" | "1h";
 
 const apply = Reflect.apply;
+const NativeArray = Array;
 const ArrayIsArray = Array.isArray;
 const booleanValueOf = Boolean.prototype.valueOf;
 const NativeSet = Set;
 const numberValueOf = Number.prototype.valueOf;
+const objectAssign = Object.assign;
 const objectDefineProperty = Object.defineProperty;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectGetPrototypeOf = Object.getPrototypeOf;
@@ -1554,7 +1556,7 @@ function snapshotAnthropicCacheArray<T>(
   label: string,
 ): T[] {
   assertNoAnthropicCacheJsonHook(value);
-  const snapshot = new Array<T>(value.length);
+  const snapshot = new NativeArray<T>(value.length);
   for (let index = 0; index < value.length; index += 1) {
     let descriptor: PropertyDescriptor | undefined;
     try {
@@ -1671,7 +1673,7 @@ function retainLatestAnthropicMessageCacheBreakpoints(
     return messages;
   }
 
-  const normalizedMessages = new Array<AnthropicCompatibleMessage>(messages.length);
+  const normalizedMessages = new NativeArray<AnthropicCompatibleMessage>(messages.length);
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
     const message = readAnthropicArrayDataElement(
       messages,
@@ -1955,7 +1957,7 @@ function retainLatestAnthropicCacheBreakpoints(
   values: Array<Record<string, unknown>>,
   maximum: number,
 ): Array<Record<string, unknown>> {
-  const breakpointIndexes = new Array<number>(values.length);
+  const breakpointIndexes = new NativeArray<number>(values.length);
   let breakpointCount = 0;
   for (let index = 0; index < values.length; index += 1) {
     const descriptor = objectGetOwnPropertyDescriptor(values, `${index}`);
@@ -1973,7 +1975,7 @@ function retainLatestAnthropicCacheBreakpoints(
     return values;
   }
 
-  const retained = new Array<Record<string, unknown>>(values.length);
+  const retained = new NativeArray<Record<string, unknown>>(values.length);
   for (let index = 0; index < values.length; index += 1) {
     const descriptor = objectGetOwnPropertyDescriptor(values, `${index}`);
     if (descriptor !== undefined) {
@@ -2081,6 +2083,32 @@ function assertAnthropicCacheableRequestFields(
   }
   if (body.tools !== undefined && !ArrayIsArray(body.tools)) {
     throw new TypeError("Anthropic tools must be an array");
+  }
+
+  const keys = objectKeys(body);
+  let lastCacheFieldIndex = -1;
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index];
+    if (key === "messages" || key === "system" || key === "tools") {
+      lastCacheFieldIndex = index;
+    }
+  }
+  for (let index = 0; index <= lastCacheFieldIndex; index += 1) {
+    const key = keys[index]!;
+    if (key === "messages" || key === "system" || key === "tools") {
+      continue;
+    }
+    const descriptor = objectGetOwnPropertyDescriptor(body, key);
+    if (!descriptor || !objectHasOwn(descriptor, "value")) {
+      throw new TypeError("Anthropic request fields must use enumerable data properties");
+    }
+    const value = descriptor.value;
+    if (
+      value !== null &&
+      (typeof value === "object" || typeof value === "function")
+    ) {
+      assertNoNestedAnthropicCacheJsonHooks(value, "Anthropic request fields");
+    }
   }
 }
 
@@ -2357,7 +2385,7 @@ export function buildAnthropicMessagesRequestWithCorrelationState(
     ...(options.anthropicContainer !== undefined ? { container: options.anthropicContainer } : {}),
   };
 
-  Object.assign(body, rawProviderOptions);
+  apply(objectAssign, Object, [body, rawProviderOptions]);
   if (thinkingBudget !== undefined || providerThinkingBudget !== undefined) {
     body.thinking = { type: "enabled", budget_tokens: effectiveThinkingBudget };
   }
