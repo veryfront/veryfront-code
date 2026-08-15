@@ -221,6 +221,13 @@ function isLineTerminator(char: string): boolean {
   return char === "\r" || char === "\n" || char === "\u2028" || char === "\u2029";
 }
 
+function containsLineTerminator(source: string, start: number, end: number): boolean {
+  for (let cursor = start; cursor < end; cursor++) {
+    if (isLineTerminator(source[cursor]!)) return true;
+  }
+  return false;
+}
+
 function decodeLiteralContents(
   source: string,
   start: number,
@@ -478,8 +485,13 @@ function isDeclarationBlockCloseBrace(
     /\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g,
     " ",
   );
-  return /^(?:async\s+)?function(?:\s*\*)?(?:\s+[$A-Za-z_][$\w]*)?\s*\(/.test(prefix) ||
-    /^class(?:\s+[$A-Za-z_][$\w]*)?(?:\s+extends\s+[\s\S]+)?\s*$/.test(prefix);
+  return /^(?:export\s+(?:default\s+)?)?(?:async\s+)?function(?:\s*\*)?(?:\s+[$A-Za-z_][$\w]*)?\s*\(/
+    .test(
+      prefix,
+    ) ||
+    /^(?:export\s+(?:default\s+)?)?class(?:\s+[$A-Za-z_][$\w]*)?(?:\s+extends\s+[\s\S]+)?\s*$/.test(
+      prefix,
+    );
 }
 
 function isStatementBlockCloseBrace(
@@ -918,7 +930,9 @@ export function findStaticImportFromSpans(
     );
     if (skipped !== cursor) {
       if (char === "/" && source[cursor + 1] === "/") atStatementStart = true;
-      else if (!(char === "/" && source[cursor + 1] === "*")) atStatementStart = false;
+      else if (char === "/" && source[cursor + 1] === "*") {
+        atStatementStart = atStatementStart || containsLineTerminator(source, cursor, skipped);
+      } else atStatementStart = false;
       previousTokenIndex = tokenIndexAfterIgnored(
         source,
         cursor,
@@ -1288,7 +1302,9 @@ export function findStaticSideEffectImportSpans(
     );
     if (skipped !== cursor) {
       if (char === "/" && source[cursor + 1] === "/") atStatementStart = true;
-      else if (!(char === "/" && source[cursor + 1] === "*")) atStatementStart = false;
+      else if (char === "/" && source[cursor + 1] === "*") {
+        atStatementStart = atStatementStart || containsLineTerminator(source, cursor, skipped);
+      } else atStatementStart = false;
       previousTokenIndex = tokenIndexAfterIgnored(
         source,
         cursor,

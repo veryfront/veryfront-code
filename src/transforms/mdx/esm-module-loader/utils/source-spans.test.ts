@@ -484,6 +484,33 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("ignores import-looking regex text after exported declarations at ASI boundaries", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'export function f() {}\n/import("\\/_vf_modules\\/fake-function.js")/.test(value);',
+        ),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'export class C {}\n/import("\\/_vf_modules\\/fake-class.js")/.test(value);',
+        ),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'export default function () {}\n/import("\\/_vf_modules\\/fake-default-function.js")/.test(value);',
+        ),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'export default class {}\n/import("\\/_vf_modules\\/fake-default-class.js")/.test(value);',
+        ),
+        [],
+      );
+    });
+
     it("recognizes Unicode line terminators in declaration comments", () => {
       for (const lineTerminator of ["\u2028", "\u2029"]) {
         assertEquals(
@@ -988,6 +1015,17 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           ["/_vf_modules/real.js"],
         );
       }
+    });
+
+    it("finds side-effect imports after block comments with line terminators", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'const ready = true /* note\n */ import "/_vf_modules/after-comment.js";',
+          (specifier) => specifier.startsWith("/_vf_modules/") ? specifier : null,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["/_vf_modules/after-comment.js"],
+      );
     });
 
     it("ignores side-effect import text inside regex literals", () => {
