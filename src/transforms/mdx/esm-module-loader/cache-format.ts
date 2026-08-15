@@ -13,6 +13,7 @@ const ALL_FILE_URL_PATTERN_SOURCE = /file:\/\/([^"'\s]+)/.source;
 const MJS_FILE_URL_PATTERN_SOURCE = /file:\/\/([^"'\s]+\.mjs)/.source;
 const CACHE_NAMESPACE_SENTINEL = "__vf_cache_namespace__";
 export const UNRESOLVED_IMPORTS_SIDECAR_SUFFIX = ".unresolved-imports.json";
+const MDX_ESM_PATH_CACHE_ATTRIBUTION_SCHEMA = "unresolved-import-sidecars-v1";
 const PUBLIC_RUNTIME_SPECIFIERS = [
   "veryfront/head",
   "veryfront/router",
@@ -116,6 +117,7 @@ function buildMdxEsmCacheSchemaSample() {
     unresolvedVfModulesPattern: UNRESOLVED_VF_MODULES_PATTERN.source,
     allFileUrlPattern: ALL_FILE_URL_PATTERN_SOURCE,
     mjsFileUrlPattern: MJS_FILE_URL_PATTERN_SOURCE,
+    pathCacheAttributionSchema: MDX_ESM_PATH_CACHE_ATTRIBUTION_SCHEMA,
     sourceHashing: [
       hashString("_vf_modules/pages/index.jsexport default 1;"),
       hashString("/tmp/project/Button.tsx\0export default function Button() {}"),

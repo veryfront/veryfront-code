@@ -327,9 +327,12 @@ describe("module-loader/module-persistence", () => {
         contentSourceId: "preview-main",
         reactVersion: "19.1.1",
         unresolvedSpecifiers: ["./missing"],
+        isCycleTarget: true,
       });
 
       assertEquals(await Deno.readTextFile(result), transformedCode);
+      const aliasCode = await Deno.readTextFile(join(tmpDir, "lib/evidence.js"));
+      assertStringIncludes(aliasCode, `export * from "./${basename(result)}";`);
       assertEquals(moduleCache.has("evidence"), false);
       assertEquals(await readPersistedUnresolvedSpecifiers(result, stubAdapter), []);
 

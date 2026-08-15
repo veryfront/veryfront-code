@@ -271,7 +271,7 @@ export async function persistTransformedModule(
     input.moduleCache.set(input.cacheKey, tempFilePath);
   }
 
-  if (shouldPublishReusableCache && input.isCycleTarget) {
+  if (input.isCycleTarget) {
     const hashedFileName = jsPath.slice(jsPath.lastIndexOf("/") + 1);
     await writeCycleTargetAlias(input, outputRelativePath, hashedFileName);
   }

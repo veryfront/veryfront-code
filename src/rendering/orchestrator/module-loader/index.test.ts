@@ -10,7 +10,8 @@ import {
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { basename, dirname, join } from "#veryfront/compat/path/index.ts";
-import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { getMdxEsmCacheDir, runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { buildMdxEsmPathCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import {
   isMissingModuleError,
   isUnresolvedTenantImport,
@@ -566,6 +567,57 @@ describe("module-loader/loadModule build-failure tagging", () => {
           const second = await assertRejects(() => loadModule(pagePath, restartedConfig), Error);
           assertEquals(isBuildFailure(second), true);
           assertEquals(isTenantBuildFailure(second), true);
+        });
+      },
+    );
+  });
+
+  it("ignores legacy disk cache entries that predate unresolved-import sidecars", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import { label } from "./dep";`,
+          `export default function Page() { return label; }`,
+        ].join("\n"),
+        "app/dep.tsx": [
+          `import { gone } from "./gone";`,
+          `export const label = gone;`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const diskConfig = {
+            ...config,
+            projectId: "legacy-cache-project",
+            contentSourceId: "main",
+          };
+          const legacyCacheDir = join(
+            getMdxEsmCacheDir(),
+            encodeURIComponent(diskConfig.projectId),
+            encodeURIComponent(diskConfig.contentSourceId),
+          );
+          await Deno.mkdir(join(legacyCacheDir, "app"), { recursive: true });
+          const legacyDepArtifact = join(legacyCacheDir, "app/dep.legacy.js");
+          await Deno.writeTextFile(
+            legacyDepArtifact,
+            [`import { gone } from "./gone";`, `export const label = gone;`].join("\n"),
+          );
+          const legacyPathKey = `mdx-esm-ec841873:19.1.1:_vf_modules/app/dep.js`;
+          assertEquals(
+            legacyPathKey === buildMdxEsmPathCacheKey("_vf_modules/app/dep.js", "19.1.1"),
+            false,
+          );
+          await Deno.writeTextFile(
+            join(legacyCacheDir, "_index.json"),
+            JSON.stringify({ [legacyPathKey]: legacyDepArtifact }),
+          );
+
+          const error = await assertRejects(
+            () => loadModule(join(projectDir, "app/page.tsx"), diskConfig),
+            Error,
+          );
+          assertEquals(isBuildFailure(error), true);
+          assertEquals(isTenantBuildFailure(error), true);
         });
       },
     );
