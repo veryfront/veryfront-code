@@ -213,7 +213,14 @@ export async function validateToken(
       return null;
     }
 
-    return (await response.json()) as UserInfo;
+    try {
+      return (await response.json()) as UserInfo;
+    } catch (error) {
+      if (options.throwOnCredentialValidationUnavailable) {
+        throw new CredentialValidationUnavailableError("service", response.status);
+      }
+      throw error;
+    }
   } catch (e) {
     if (options.throwOnCredentialValidationUnavailable) {
       if (e instanceof CredentialValidationUnavailableError) {
