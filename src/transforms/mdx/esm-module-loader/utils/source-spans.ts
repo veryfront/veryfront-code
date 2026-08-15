@@ -47,7 +47,9 @@ const MAX_TEMPLATE_LITERAL_DEPTH = 512;
 const StringFromCodePoint = String.fromCodePoint;
 const IDENTIFIER_START_PATTERN = /^[$_\p{ID_Start}]$/u;
 const IDENTIFIER_PART_PATTERN = /^[$_\p{ID_Continue}\u200C\u200D]$/u;
-const IDENTIFIER_NAME_SOURCE = String.raw`[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*`;
+const IDENTIFIER_ESCAPE_SOURCE = String.raw`\\u(?:[0-9A-Fa-f]{4}|\{[0-9A-Fa-f]+\})`;
+const IDENTIFIER_NAME_SOURCE = String
+  .raw`(?:[$_\p{ID_Start}]|${IDENTIFIER_ESCAPE_SOURCE})(?:[$\p{ID_Continue}\u200C\u200D]|${IDENTIFIER_ESCAPE_SOURCE})*`;
 const FUNCTION_DECLARATION_PREFIX_PATTERN = new RegExp(
   String
     .raw`^(?:export\s+(?:default\s+)?)?(?:async\s+)?function(?:\s*\*)?(?:\s+${IDENTIFIER_NAME_SOURCE})?\s*$`,
@@ -1622,7 +1624,7 @@ function scanDynamicImportRange(
     const next = source[cursor + 1];
 
     const jsxTag = readRawJsxTag(source, cursor, {
-      allowClosingTagAfterText: rawJsxTextDepth > 0,
+      allowClosingTagAfterText: rawJsxTextDepth > 0 && openBraces.length === 0,
     });
     if (jsxTag !== null) {
       for (const range of jsxTag.expressionRanges) {

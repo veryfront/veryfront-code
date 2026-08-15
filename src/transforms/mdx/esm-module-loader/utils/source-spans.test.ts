@@ -564,6 +564,12 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         specifiers('const x = left </foo/.test(s); import("./comparison-lazy.js") > 0;'),
         ["./comparison-lazy.js"],
       );
+      assertEquals(
+        specifiers(
+          '<Comp>{left </foo/.test(s) && import("./jsx-expression-comparison-lazy.js") > 0}</Comp>',
+        ),
+        ["./jsx-expression-comparison-lazy.js"],
+      );
     });
 
     it("finds imports after quoted greater-than signs in raw JSX tags", () => {
@@ -626,6 +632,18 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           'const html = `${(() => { function α() {} /}/.test(x); })() && import("/_vf_modules/unicode-function-lazy.js")}`;',
         ),
         ["/_vf_modules/unicode-function-lazy.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'function \\u0061() {} /import("\\/_vf_modules\\/fake.js")/.test(value); import("/_vf_modules/escaped-function-lazy.js")',
+        ),
+        ["/_vf_modules/escaped-function-lazy.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'class \\u0043 {} /import("\\/_vf_modules\\/fake.js")/.test(value); import("/_vf_modules/escaped-class-lazy.js")',
+        ),
+        ["/_vf_modules/escaped-class-lazy.js"],
       );
     });
 
