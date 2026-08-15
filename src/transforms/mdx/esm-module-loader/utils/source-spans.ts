@@ -243,7 +243,7 @@ function skipJsxTag(source: string, index: number): JsxTagEnd | null {
   let nameStart = index + 1;
   if (source[nameStart] === "/") nameStart++;
   let nameEnd = nameStart;
-  while (/[A-Za-z0-9_$.-]/.test(source[nameEnd] ?? "")) nameEnd++;
+  while (/[A-Za-z0-9_$.:.-]/.test(source[nameEnd] ?? "")) nameEnd++;
 
   let cursor = index + 1;
   let expressionDepth = 0;
@@ -293,11 +293,39 @@ function hasClosingJsxTag(source: string, index: number, name: string): boolean 
     if (
       source.startsWith(prefix, cursor) &&
       (name === "" || /[\s>]/.test(source[cursor + prefix.length] ?? ""))
-    ) return true;
+    ) {
+      if (name !== "" && isRegexClosingTagLookalike(source, cursor)) {
+        cursor = skipRegexLiteral(source, cursor + 1);
+        continue;
+      }
+      return true;
+    }
     cursor++;
   }
 
   return false;
+}
+
+function isRegexClosingTagLookalike(source: string, index: number): boolean {
+  const regexStart = index + 1;
+  const regexEnd = skipRegexLiteral(source, regexStart);
+  let closingSlash = regexEnd - 1;
+  while (/[A-Za-z]/.test(source[closingSlash] ?? "")) closingSlash--;
+
+  if (closingSlash <= regexStart || source[closingSlash] !== "/") return false;
+  if (containsLineTerminator(source, regexStart, closingSlash)) return false;
+
+  const flags = source.slice(closingSlash + 1, regexEnd);
+  const uniqueFlags = new Set(flags);
+  if (
+    uniqueFlags.size !== flags.length ||
+    [...uniqueFlags].some((flag) => !"dgimsuvy".includes(flag)) ||
+    (uniqueFlags.has("u") && uniqueFlags.has("v"))
+  ) return false;
+
+  const afterRegex = skipWhitespaceAndComments(source, regexEnd);
+  const next = source[afterRegex];
+  return next === undefined || ".([?;,)]}:".includes(next);
 }
 
 function canStartJsxElement(

@@ -1253,10 +1253,32 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("ignores side-effect import text in namespaced JSX children", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'export function Example() { return <svg:path>{label}import "./example.js";</svg:path>; } import "./real.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./real.js"],
+      );
+    });
+
     it("keeps scanning after a TypeScript angle-bracket assertion", () => {
       assertEquals(
         findStaticSideEffectImportSpans(
           'const value = <Value>"</Value>"; import "./after-assertion.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-assertion.js"],
+      );
+    });
+
+    it("does not treat regex syntax as an assertion closing JSX tag", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'const value = <Value>thing; import "./after-assertion.js"; const ok = x </Value>foo/.test(source);',
           matchRelative,
           UNBOUNDED,
         ).map((span) => span.path),
