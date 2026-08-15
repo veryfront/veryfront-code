@@ -21,10 +21,12 @@ const FAILED_QUERY_HEAD_MAX_LENGTH = 200;
 const SQL_DOLLAR_QUOTE_START_PATTERN = /^\$(?:[_\p{ID_Start}][_\p{ID_Continue}]*)?\$/u;
 // PostgreSQL's lexer accepts any high byte in a dollar-quote tag and imposes no length limit, so
 // tags outside ECMAScript `ID_Start` (an emoji tag, for example) are still treated as literals and
-// their contents cannot reach the title. The tag must nonetheless look like a tag — free of
-// whitespace, quotes and further dollar signs — because without that shape check a `$` inside an
-// ordinary identifier such as `col$a` swallows the rest of the query.
-const SQL_UNRECOGNIZED_DOLLAR_QUOTE_START_PATTERN = /^\$[^\s'"$]+\$/u;
+// their contents cannot reach the title. The tag must nonetheless look like a tag: free of
+// PostgreSQL lexer whitespace, quotes and further dollar signs. PostgreSQL lexer whitespace is
+// ASCII-only, so a high byte that ECMAScript classifies as whitespace remains a legal tag byte.
+// Without the shape check, a `$` inside an ordinary identifier such as `col$a` swallows the rest
+// of the query.
+const SQL_UNRECOGNIZED_DOLLAR_QUOTE_START_PATTERN = /^\$[^ \t\n\r\f\v'"$]+\$/u;
 // A dollar quote cannot open straight after an identifier character: PostgreSQL prefers the longer
 // identifier match, so `col$tag$inner$tag$` is one identifier rather than `col` followed by a
 // literal. `$` is deliberately absent from this class so that adjacent literals such as

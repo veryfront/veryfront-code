@@ -582,6 +582,25 @@ it("policy redacts unrecognized dollar-quoted SQL literal tags", () => {
   );
 });
 
+it("policy redacts dollar-quoted SQL tags containing Unicode whitespace", () => {
+  const tag = "\u00A0";
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value: `Failed query: select $${tag}$customer@example.test$${tag}$ from "orders"`,
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  const value = event.exception?.values?.[0]?.value ?? "";
+  assertEquals(value, 'Failed query: select ? from "orders"');
+  assertEquals(value.includes("customer@example.test"), false);
+});
+
 it("policy redacts unterminated unrecognized dollar-quoted SQL literal tags", () => {
   const event = prepareSentryEvent(
     {
