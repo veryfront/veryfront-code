@@ -524,6 +524,14 @@ function canStartRegexLiteral(
   ) {
     return false;
   }
+  if (
+    char === "." &&
+    previous - 2 >= rangeStart &&
+    source[previous - 1] === "." &&
+    source[previous - 2] === "."
+  ) {
+    return true;
+  }
   if (char !== undefined && "([{=,:;!~?&|+-*%^<>".includes(char)) return true;
 
   const keyword = keywordBefore(source, index);
@@ -1000,6 +1008,7 @@ function scanDynamicImportRange(
       !source.startsWith("import", cursor) ||
       isIdentifierChar(source[cursor - 1]) ||
       source[cursor - 1] === "." ||
+      source[cursor - 1] === "#" ||
       isIdentifierChar(source[cursor + "import".length])
     ) {
       cursor++;

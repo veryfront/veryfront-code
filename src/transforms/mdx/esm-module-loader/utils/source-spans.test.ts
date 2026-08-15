@@ -365,6 +365,15 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("ignores import-looking regex text after spread syntax", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'const values = [.../import("\\/_vf_modules\\/fake.js")/];',
+        ),
+        [],
+      );
+    });
+
     it("ignores import-looking regex text after plain and labeled blocks", () => {
       assertEquals(
         vfModuleSpecifiers('{} /import("\\/_vf_modules\\/plain.js")/.test(value);'),
@@ -623,6 +632,15 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
     it("ignores a static import and a property called import", () => {
       assertEquals(specifiers(`import x from "./foo.js";`), []);
       assertEquals(specifiers(`obj.import("./foo.js");`), []);
+    });
+
+    it("ignores private methods named import", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'class Loader { #import(value) { return value; } load() { return this.#import("/_vf_modules/fake.js"); } }',
+        ),
+        [],
+      );
     });
 
     it("ignores an import-looking string or comment", () => {
