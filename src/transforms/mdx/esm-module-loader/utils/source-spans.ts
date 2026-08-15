@@ -427,17 +427,41 @@ function keywordBefore(
   return source.slice(start, end);
 }
 
+function isForAwaitHeader(
+  source: string,
+  previousTokenIndex: number,
+): boolean {
+  const awaitStart = previousTokenIndex - "await".length + 1;
+  let forStart = source.lastIndexOf("for", awaitStart - 1);
+
+  while (forStart >= 0) {
+    const isStandaloneKeyword = !isIdentifierPartAt(source, forStart - 1) &&
+      source[forStart - 1] !== "." &&
+      !isIdentifierPartAt(source, forStart + "for".length);
+    if (
+      isStandaloneKeyword &&
+      skipWhitespaceAndComments(source, forStart + "for".length) === awaitStart
+    ) return true;
+
+    forStart = source.lastIndexOf("for", forStart - 1);
+  }
+
+  return false;
+}
+
 function openParenContext(
   source: string,
   index: number,
   previousTokenIndex: number,
 ): OpenParenContext {
   const keyword = keywordBefore(source, index, previousTokenIndex);
+  const isForHeader = keyword === "for" ||
+    (keyword === "await" && isForAwaitHeader(source, previousTokenIndex));
   return {
     index,
-    isControlCondition: keyword === "if" || keyword === "while" || keyword === "for" ||
+    isControlCondition: keyword === "if" || keyword === "while" || isForHeader ||
       keyword === "with" || keyword === "switch" || keyword === "catch",
-    isForHeader: keyword === "for",
+    isForHeader,
     hasSemicolon: false,
   };
 }

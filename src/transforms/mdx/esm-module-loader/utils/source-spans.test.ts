@@ -562,6 +562,21 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("ignores import-looking regex text after for-await loops", () => {
+      assertEquals(
+        specifiers(
+          'for await (const value of []) {}\n/import("\\.\\/fake.js")/.test(value);',
+        ),
+        [],
+      );
+      assertEquals(
+        specifiers(
+          'for /* stream */ await (const value of []) {}\n/import("\\.\\/commented-fake.js")/.test(value);',
+        ),
+        [],
+      );
+    });
+
     it("ignores import-looking regex text inside template substitutions", () => {
       assertEquals(
         specifiers(
