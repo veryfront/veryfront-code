@@ -19,11 +19,6 @@ import { isTenantSourceBuildError } from "#veryfront/errors/tenant-classificatio
 const BUILD_FAILURE = Symbol.for("veryfront.module-loader.build-failure");
 const TENANT_BUILD_FAILURE = Symbol.for("veryfront.module-loader.tenant-build-failure");
 
-type TaggedError = Error & {
-  [BUILD_FAILURE]?: true;
-  [TENANT_BUILD_FAILURE]?: true;
-};
-
 /**
  * Modules are strict mode, so a plain assignment onto a frozen error throws.
  * These taggers run inside `catch` blocks, where a throw would replace the
@@ -36,6 +31,12 @@ function defineTag(error: Error, tag: symbol): void {
     // Sealed or non-configurable: the error stays untagged, which degrades to
     // the pre-classification behavior rather than destroying the error.
   }
+}
+
+function hasOwnTrueTag(error: Error, tag: symbol): boolean {
+  const descriptor = Reflect.getOwnPropertyDescriptor(error, tag);
+  return descriptor !== undefined && !descriptor.get && !descriptor.set &&
+    "value" in descriptor && descriptor.value === true;
 }
 
 /** Tag `error` as a build failure and return it. */
@@ -64,10 +65,10 @@ export function markTenantBuildFailure(error: unknown): unknown {
 
 /** True when `error` was raised while compiling or resolving project source. */
 export function isBuildFailure(error: unknown): boolean {
-  return error instanceof Error && (error as TaggedError)[BUILD_FAILURE] === true;
+  return error instanceof Error && hasOwnTrueTag(error, BUILD_FAILURE);
 }
 
 /** True only for a build failure explicitly classified as tenant source. */
 export function isTenantBuildFailure(error: unknown): boolean {
-  return error instanceof Error && (error as TaggedError)[TENANT_BUILD_FAILURE] === true;
+  return error instanceof Error && hasOwnTrueTag(error, TENANT_BUILD_FAILURE);
 }

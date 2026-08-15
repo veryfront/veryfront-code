@@ -233,6 +233,12 @@ const TENANT_BUILD_ERROR_CLASS = "tenant-build";
  */
 const TENANT_BUILD_FAILURE_TAG = Symbol.for("veryfront.module-loader.tenant-build-failure");
 
+function hasOwnTrueSymbol(value: object, key: symbol): boolean {
+  const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+  return descriptor !== undefined && !descriptor.get && !descriptor.set &&
+    "value" in descriptor && descriptor.value === true;
+}
+
 /**
  * Whether `error` describes tenant build/content failing to compile (a page
  * that does not build, MDX that does not parse) rather than a framework fault.
@@ -245,11 +251,7 @@ const TENANT_BUILD_FAILURE_TAG = Symbol.for("veryfront.module-loader.tenant-buil
 function isTenantBuildError(error: unknown): boolean {
   try {
     if (error instanceof Error) {
-      if (
-        (error as { [TENANT_BUILD_FAILURE_TAG]?: unknown })[TENANT_BUILD_FAILURE_TAG] === true
-      ) {
-        return true;
-      }
+      if (hasOwnTrueSymbol(error, TENANT_BUILD_FAILURE_TAG)) return true;
     }
     return isTenantSourceBuildError(error);
   } catch {

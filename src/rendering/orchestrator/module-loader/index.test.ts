@@ -285,6 +285,64 @@ describe("module-loader/transformModuleWithDeps", () => {
 });
 
 describe("module-loader/loadModule build-failure tagging", () => {
+  it("ignores inherited build-failure tags", () => {
+    const buildFailureTag = Symbol.for("veryfront.module-loader.build-failure");
+    const tenantBuildFailureTag = Symbol.for("veryfront.module-loader.tenant-build-failure");
+    const previousBuildDescriptor = Object.getOwnPropertyDescriptor(
+      Error.prototype,
+      buildFailureTag,
+    );
+    const previousTenantDescriptor = Object.getOwnPropertyDescriptor(
+      Error.prototype,
+      tenantBuildFailureTag,
+    );
+    Object.defineProperty(Error.prototype, buildFailureTag, { configurable: true, value: true });
+    Object.defineProperty(Error.prototype, tenantBuildFailureTag, {
+      configurable: true,
+      value: true,
+    });
+
+    try {
+      const frameworkError = new Error("framework failed");
+      assertEquals(isBuildFailure(frameworkError), false);
+      assertEquals(isTenantBuildFailure(frameworkError), false);
+
+      const accessorTagError = new Error("framework failed");
+      let buildGetterRead = false;
+      let tenantGetterRead = false;
+      Object.defineProperty(accessorTagError, buildFailureTag, {
+        configurable: true,
+        get() {
+          buildGetterRead = true;
+          return true;
+        },
+      });
+      Object.defineProperty(accessorTagError, tenantBuildFailureTag, {
+        configurable: true,
+        get() {
+          tenantGetterRead = true;
+          return true;
+        },
+      });
+
+      assertEquals(isBuildFailure(accessorTagError), false);
+      assertEquals(isTenantBuildFailure(accessorTagError), false);
+      assertEquals(buildGetterRead, false);
+      assertEquals(tenantGetterRead, false);
+    } finally {
+      if (previousBuildDescriptor) {
+        Object.defineProperty(Error.prototype, buildFailureTag, previousBuildDescriptor);
+      } else {
+        delete (Error.prototype as { [buildFailureTag]?: unknown })[buildFailureTag];
+      }
+      if (previousTenantDescriptor) {
+        Object.defineProperty(Error.prototype, tenantBuildFailureTag, previousTenantDescriptor);
+      } else {
+        delete (Error.prototype as { [tenantBuildFailureTag]?: unknown })[tenantBuildFailureTag];
+      }
+    }
+  });
+
   // Compiling a real page module starts esbuild's child process; stop it so the
   // test does not leak the handle rather than opting out of the sanitizer.
   afterAll(async () => {

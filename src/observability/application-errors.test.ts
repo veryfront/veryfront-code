@@ -307,6 +307,61 @@ it("application error reporter downgrades tenant build errors to tagged warnings
   assertEquals(captures[14]?.context.errorClass, undefined);
   assertEquals(captures[14]?.context.level, undefined);
 });
+
+it("application error reporter ignores inherited tenant build tags", () => {
+  const tenantBuildFailureTag = Symbol.for("veryfront.module-loader.tenant-build-failure");
+  const previousDescriptor = Object.getOwnPropertyDescriptor(
+    Error.prototype,
+    tenantBuildFailureTag,
+  );
+  Object.defineProperty(Error.prototype, tenantBuildFailureTag, {
+    configurable: true,
+    value: true,
+  });
+
+  try {
+    const captures: Array<{ error: unknown; context: SharedApplicationErrorContext }> = [];
+    setApplicationErrorReporter({
+      capture(error, context) {
+        captures.push({ error, context });
+        return "event-id";
+      },
+      flush: () => Promise.resolve(true),
+    });
+
+    assertEquals(
+      captureApplicationError(new Error("framework failed"), { boundary: "ssr.render" }),
+      "event-id",
+    );
+    assertEquals(captures[0]?.context.errorClass, undefined);
+    assertEquals(captures[0]?.context.level, undefined);
+
+    const accessorTagError = new Error("framework failed");
+    let getterRead = false;
+    Object.defineProperty(accessorTagError, tenantBuildFailureTag, {
+      configurable: true,
+      get() {
+        getterRead = true;
+        return true;
+      },
+    });
+
+    assertEquals(
+      captureApplicationError(accessorTagError, { boundary: "ssr.render" }),
+      "event-id",
+    );
+    assertEquals(getterRead, false);
+    assertEquals(captures[1]?.context.errorClass, undefined);
+    assertEquals(captures[1]?.context.level, undefined);
+  } finally {
+    if (previousDescriptor) {
+      Object.defineProperty(Error.prototype, tenantBuildFailureTag, previousDescriptor);
+    } else {
+      delete (Error.prototype as { [tenantBuildFailureTag]?: unknown })[tenantBuildFailureTag];
+    }
+  }
+});
+
 it("application error capture failures never replace application control flow", () => {
   const hostile = new Proxy({}, {
     getPrototypeOf() {

@@ -12,6 +12,29 @@ import {
 // it collects, opt out of the bound explicitly.
 const UNBOUNDED = Number.MAX_SAFE_INTEGER;
 
+function countStartsWithCalls(callback: () => void): number {
+  const original = String.prototype.startsWith;
+  let calls = 0;
+  Object.defineProperty(String.prototype, "startsWith", {
+    configurable: true,
+    writable: true,
+    value(this: string, searchString: string, position?: number) {
+      calls++;
+      return original.call(this, searchString, position);
+    },
+  });
+  try {
+    callback();
+  } finally {
+    Object.defineProperty(String.prototype, "startsWith", {
+      configurable: true,
+      writable: true,
+      value: original,
+    });
+  }
+  return calls;
+}
+
 describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
   describe("replaceSourceSpans", () => {
     it("replaces a single span", () => {
@@ -177,6 +200,48 @@ import real from "./real.js";`,
           UNBOUNDED,
         ).map((span) => span.path),
         ["./real.js"],
+      );
+    });
+
+    it("keeps JSX closing-tag checks linear for repeated angle assertions", () => {
+      const repeatedAssertions = Array.from(
+        { length: 3_000 },
+        (_, index) => `const value${index} = <Type${index}>input${index};`,
+      ).join("\n");
+      const source = `${repeatedAssertions}\nimport real from "./real.js";`;
+      let paths: string[] = [];
+
+      const startsWithCalls = countStartsWithCalls(() => {
+        paths = findStaticImportFromSpans(source, matchRelative, UNBOUNDED)
+          .map((span) => span.path);
+      });
+
+      assertEquals(paths, ["./real.js"]);
+      assert(
+        startsWithCalls < source.length * 3,
+        `Expected a linear static import scan, got ${startsWithCalls} startsWith calls ` +
+          `for ${source.length} source characters`,
+      );
+    });
+
+    it("keeps side-effect JSX closing-tag checks linear for repeated angle assertions", () => {
+      const repeatedAssertions = Array.from(
+        { length: 3_000 },
+        (_, index) => `const value${index} = <Type${index}>input${index};`,
+      ).join("\n");
+      const source = `${repeatedAssertions}\nimport "./real.js";`;
+      let paths: string[] = [];
+
+      const startsWithCalls = countStartsWithCalls(() => {
+        paths = findStaticSideEffectImportSpans(source, matchRelative, UNBOUNDED)
+          .map((span) => span.path);
+      });
+
+      assertEquals(paths, ["./real.js"]);
+      assert(
+        startsWithCalls < source.length * 3,
+        `Expected a linear side-effect import scan, got ${startsWithCalls} startsWith calls ` +
+          `for ${source.length} source characters`,
       );
     });
 
