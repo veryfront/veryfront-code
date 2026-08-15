@@ -451,6 +451,7 @@ async function describeExistingSession(
     } catch (error) {
       if (error instanceof CredentialValidationUnavailableError) {
         unavailable ??= error;
+        if (source === "environment") break;
       }
       continue;
     }
