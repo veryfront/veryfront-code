@@ -1,10 +1,23 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createDevUiAssetProvider } from "#veryfront/extensions/dev-ui";
-import type { HandlerContext } from "../../types.ts";
+import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import type { HandlerContext } from "#veryfront/types";
 import { ProjectsHandler } from "./index.ts";
 
 const PROVIDER = createDevUiAssetProvider("globalThis.__projectsMethodPolicy = true;");
+
+function projectsRequest(pathname: string, init: RequestInit = {}): Request {
+  const headers = new Headers(init.headers);
+  if (!headers.has("host")) headers.set("host", "localhost");
+  const request = new Request(`http://localhost${pathname}`, { ...init, headers });
+  recordRequestPeerFromTransport(request, {
+    runtime: "deno",
+    transport: "tcp",
+    hostname: "127.0.0.1",
+  });
+  return request;
+}
 
 function projectsContext(): HandlerContext {
   return {
@@ -32,7 +45,7 @@ describe("ProjectsHandler method policy", () => {
       }),
       duplex: "half",
     };
-    const request = new Request("http://localhost/_projects", init);
+    const request = projectsRequest("/_projects", init);
     let responseSettled = false;
     const responsePromise = new ProjectsHandler(PROVIDER).handle(request, projectsContext());
     void responsePromise.then(() => {
@@ -53,11 +66,11 @@ describe("ProjectsHandler method policy", () => {
     const handler = new ProjectsHandler(PROVIDER);
     for (const path of ["/_projects", "/_projects/ui/index.js", "/_projects/api/config"]) {
       const getResponse = (await handler.handle(
-        new Request(`http://localhost${path}`),
+        projectsRequest(path),
         projectsContext(),
       )).response!;
       const headResponse = (await handler.handle(
-        new Request(`http://localhost${path}`, { method: "HEAD" }),
+        projectsRequest(path, { method: "HEAD" }),
         projectsContext(),
       )).response!;
 
@@ -71,7 +84,7 @@ describe("ProjectsHandler method policy", () => {
     }
 
     const unavailable = (await new ProjectsHandler().handle(
-      new Request("http://localhost/_projects", { method: "HEAD" }),
+      projectsRequest("/_projects", { method: "HEAD" }),
       projectsContext(),
     )).response!;
     assertEquals(unavailable.status, 503);

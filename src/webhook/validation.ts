@@ -1,5 +1,11 @@
 import { VeryfrontError, WEBHOOK_CONFIG_INVALID } from "#veryfront/errors";
-import { snapshotTriggerTarget, type TriggerTarget } from "#veryfront/trigger/target.ts";
+import {
+  agentConversationDiagnostic,
+  conversationConflictDiagnostic,
+  type ResolvedTriggerTarget,
+  resolveTriggerTarget,
+  triggerTargetKeys,
+} from "#veryfront/trigger/target.ts";
 import { snapshotSerializable, validateTriggerId } from "#veryfront/trigger/validation.ts";
 import type {
   WebhookAgentConversationMode,
@@ -17,11 +23,6 @@ const EVENT_FILTER_OPERATORS = new Set<WebhookEventFilterOperator>([
   "exists",
   "contains",
 ]);
-const AGENT_CONVERSATION_MODES = new Set<WebhookAgentConversationMode>([
-  "create_new",
-  "existing",
-  "none",
-]);
 const WEBHOOK_KEYS = [
   "id",
   "name",
@@ -30,7 +31,6 @@ const WEBHOOK_KEYS = [
   "eventFilter",
   "agentMessage",
 ] as const;
-const TARGET_KEYS = ["kind", "id"] as const;
 const EVENT_FILTER_KEYS = ["mode", "conditions"] as const;
 const EVENT_FILTER_CONDITION_KEYS = ["path", "operator", "value"] as const;
 const AGENT_MESSAGE_KEYS = [
@@ -47,7 +47,6 @@ const MAX_EVENT_FILTER_PATH_LENGTH = 255;
 const MAX_PROMPT_TEMPLATE_LENGTH = 20_000;
 const MAX_DIAGNOSTIC_KEY_LENGTH = 80;
 const SIMPLE_DIAGNOSTIC_KEY_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$-]*$/;
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function invalid(detail: string, cause?: unknown): never {
   throw WEBHOOK_CONFIG_INVALID.create({
@@ -256,18 +255,29 @@ export function isWebhookId(value: unknown): value is string {
   }
 }
 
-function normalizeTarget(value: unknown): TriggerTarget {
-  const target = snapshotDataRecord(value, "Webhook target", TARGET_KEYS);
-  const candidate = snapshotTriggerTarget({
-    kind: target.kind,
-    id: target.id,
-  });
-  if (candidate === null || candidate.id.length > MAX_TARGET_ID_LENGTH) {
+function normalizeTarget(value: unknown): ResolvedTriggerTarget {
+  const target = snapshotDataRecord(
+    value,
+    "Webhook target",
+    triggerTargetKeys(value),
+  );
+  const conversationDetail = agentConversationDiagnostic(
+    "Webhook target",
+    target.conversationMode,
+    target.conversationId,
+  );
+  if (conversationDetail !== null) invalid(conversationDetail);
+
+  const resolution = resolveTriggerTarget("Webhook target", target);
+  if (
+    resolution.target === undefined ||
+    resolution.target.id.length > MAX_TARGET_ID_LENGTH
+  ) {
     invalid(
       `Webhook target must specify a task, workflow, or agent id of at most ${MAX_TARGET_ID_LENGTH} characters using the canonical trigger id format.`,
     );
   }
-  return candidate;
+  return resolution.target;
 }
 
 function snapshotFilterValue(value: unknown, label: string): unknown {
@@ -331,17 +341,9 @@ function normalizeFilter(value: unknown): WebhookEventFilter | undefined {
   ) as unknown as WebhookEventFilter;
 }
 
-function normalizeConversationId(value: unknown): string | null | undefined {
-  if (value === undefined || value === null) return value;
-  if (typeof value !== "string" || !UUID_PATTERN.test(value)) {
-    invalid("Webhook agentMessage.conversationId must be a UUID or null.");
-  }
-  return value;
-}
-
 function normalizeAgentMessage(
   value: unknown,
-  target: TriggerTarget,
+  target: ResolvedTriggerTarget,
 ): WebhookAgentMessageMapping | undefined {
   if (value === undefined) {
     if (target.kind === "agent") {
@@ -359,36 +361,38 @@ function normalizeAgentMessage(
     AGENT_MESSAGE_KEYS,
   );
   const promptTemplate = requirePromptTemplate(mapping.promptTemplate);
-  const conversationMode = mapping.conversationMode;
-  if (
-    conversationMode !== undefined &&
-    !AGENT_CONVERSATION_MODES.has(
-      conversationMode as WebhookAgentConversationMode,
-    )
-  ) {
-    invalid(
-      "Webhook agentMessage.conversationMode must be create_new, existing, or none.",
-    );
-  }
-  const conversationId = normalizeConversationId(mapping.conversationId);
-  const effectiveMode = conversationMode ?? "none";
-  if (effectiveMode === "existing" && typeof conversationId !== "string") {
-    invalid(
-      "Webhook agentMessage.conversationId is required when conversationMode is existing.",
-    );
-  }
-  if (effectiveMode !== "existing" && typeof conversationId === "string") {
-    invalid(
-      "Webhook agentMessage.conversationId is allowed only when conversationMode is existing.",
-    );
-  }
 
+  // Declaring the same value in both places is how one definition stays
+  // correct across a platform upgrade, so only a disagreement is rejected:
+  // honoring one copy and dropping the other would silently detach the
+  // deployed webhook from the conversation the other copy names.
+  const conflictDetail = conversationConflictDiagnostic(
+    "Webhook",
+    "agentMessage",
+    target,
+    mapping.conversationMode,
+    mapping.conversationId,
+  );
+  if (conflictDetail !== null) invalid(conflictDetail);
+
+  const conversationDetail = agentConversationDiagnostic(
+    "Webhook agentMessage",
+    mapping.conversationMode,
+    mapping.conversationId,
+  );
+  if (conversationDetail !== null) invalid(conversationDetail);
+
+  // The legacy agentMessage pair is preserved verbatim: a platform that
+  // predates target-level addressing reads it, and it agrees with the target
+  // whenever both are declared.
   return {
     promptTemplate,
-    ...(conversationMode === undefined
+    ...(mapping.conversationMode === undefined ? {} : {
+      conversationMode: mapping.conversationMode as WebhookAgentConversationMode,
+    }),
+    ...(mapping.conversationId === undefined
       ? {}
-      : { conversationMode: conversationMode as WebhookAgentConversationMode }),
-    ...(conversationId === undefined ? {} : { conversationId }),
+      : { conversationId: mapping.conversationId as string | null }),
   };
 }
 

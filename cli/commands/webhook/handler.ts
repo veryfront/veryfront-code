@@ -46,7 +46,9 @@ export function toWebhookAgentOptions(
 } {
   const webhook = invocation.definition;
   if (webhook.target.kind !== "agent") return {};
-  if (webhook.agentMessage?.conversationMode === "existing") {
+  const conversationMode = webhook.target.conversationMode ??
+    webhook.agentMessage?.conversationMode;
+  if (conversationMode === "existing") {
     throw INVALID_ARGUMENT.create({
       detail: "Local agent webhook runs cannot attach to an existing cloud conversation.",
     });

@@ -36,6 +36,110 @@ function countStartsWithCalls(callback: () => void): number {
 }
 
 describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
+  it("keeps static imports inside regexes hidden after local type export lists", () => {
+    const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
+    const source = "export type { T as U }\n" +
+      '/import fake from "\\.\\/fake.js"/.test(value); import real from "./real.js";';
+
+    assertEquals(
+      findStaticImportFromSpans(source, matchRelative, UNBOUNDED).map((span) => span.path),
+      ["./real.js"],
+    );
+  });
+
+  it("keeps side-effect imports inside regexes hidden after commented type exports", () => {
+    const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
+    const source = "export /* keep */ type { T, U as V }\n" +
+      '/;import "\\.\\/fake.js"/.test(value); import "./real.js";';
+
+    assertEquals(
+      findStaticSideEffectImportSpans(source, matchRelative, UNBOUNDED).map((span) => span.path),
+      ["./real.js"],
+    );
+  });
+
+  it("keeps dynamic imports inside regexes hidden after multiline type exports", () => {
+    const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
+    const source = "export type {\n  T,\n  U as V,\n}\n" +
+      '/import("\\.\\/fake.js")/.test(value); import("./real.js");';
+
+    assertEquals(
+      findDynamicImportSpans(source, matchRelative, UNBOUNDED).map((span) => span.path),
+      ["./real.js"],
+    );
+  });
+
+  it("keeps repeated regex ASI checks bounded across import scanners", () => {
+    const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
+    const repeatedRegexBlocks = "/x/\n{}\n".repeat(800);
+    const maxMillis = 500;
+
+    const cases = [
+      {
+        name: "static",
+        source: `${repeatedRegexBlocks}import value from "./real.js";`,
+        scan: (source: string) => findStaticImportFromSpans(source, matchRelative, UNBOUNDED),
+      },
+      {
+        name: "side-effect",
+        source: `${repeatedRegexBlocks}import "./real.js";`,
+        scan: (source: string) => findStaticSideEffectImportSpans(source, matchRelative, UNBOUNDED),
+      },
+      {
+        name: "dynamic",
+        source: `${repeatedRegexBlocks}import("./real.js");`,
+        scan: (source: string) => findDynamicImportSpans(source, matchRelative, UNBOUNDED),
+      },
+    ];
+
+    for (const scanner of cases) {
+      const start = performance.now();
+      const paths = scanner.scan(scanner.source).map((span) => span.path);
+      const elapsed = performance.now() - start;
+
+      assertEquals(paths, ["./real.js"]);
+      assert(
+        elapsed < maxMillis,
+        `${scanner.name} scanner took ${elapsed.toFixed(1)}ms for repeated regex ASI blocks`,
+      );
+    }
+  });
+
+  it("keeps large brace-heavy division scans bounded across import scanners", () => {
+    const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
+    const source = "x={a:1}/2;\n".repeat(51_600);
+    const maxMillis = 1_500;
+
+    const cases = [
+      {
+        name: "static",
+        scan: (source: string) => findStaticImportFromSpans(source, matchRelative, UNBOUNDED),
+      },
+      {
+        name: "side-effect",
+        scan: (source: string) => findStaticSideEffectImportSpans(source, matchRelative, UNBOUNDED),
+      },
+      {
+        name: "dynamic",
+        scan: (source: string) => findDynamicImportSpans(source, matchRelative, UNBOUNDED),
+      },
+    ];
+
+    for (const scanner of cases) {
+      const start = performance.now();
+      const spans = scanner.scan(source);
+      const elapsed = performance.now() - start;
+
+      assertEquals(spans, []);
+      assert(
+        elapsed < maxMillis,
+        `${scanner.name} scanner took ${elapsed.toFixed(1)}ms for a ${
+          Math.round(source.length / 1024)
+        } KB brace-heavy division scan`,
+      );
+    }
+  });
+
   describe("replaceSourceSpans", () => {
     it("replaces a single span", () => {
       const source = 'from "./old.js"';
@@ -245,6 +349,71 @@ import real from "./real.js";`,
       );
     });
 
+    it("finds static imports after ambient TypeScript declarations", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          'declare const value: number\n/import(".\\/fake-static.js")/.test(source); ' +
+            'import real from "./after-ambient-declaration.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-ambient-declaration.js"],
+      );
+    });
+
+    it("finds static imports after raw JSX text children", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          '<Component>Hello</Component>\nimport value from "./after-jsx-text.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-jsx-text.js"],
+      );
+      assertEquals(
+        findStaticImportFromSpans(
+          '<Component>Hello; world</Component>; import value from "./after-jsx-semicolon-text.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-jsx-semicolon-text.js"],
+      );
+    });
+
+    it("finds static imports after TypeScript instantiation expressions before division", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          'const ratio = factory<Config> / divisor; import value from "./after-instantiation.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-instantiation.js"],
+      );
+    });
+
+    it("finds static imports after JSX text inside template substitutions", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          'const rendered = `${<Comp>Hello</Comp>}`; import value from "./after-template-jsx.js"',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-template-jsx.js"],
+      );
+    });
+
+    it("ignores static import-from text inside raw JSX text children", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          '<Component>import value from "./fake-jsx-text.js"</Component>\n' +
+            'import value from "./after-jsx-text.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-jsx-text.js"],
+      );
+    });
+
     it("recognizes every ECMAScript line terminator", () => {
       for (const lineTerminator of ["\r", "\u2028", "\u2029"]) {
         assertEquals(
@@ -281,6 +450,14 @@ import real from "./real.js";`,
         findStaticImportFromSpans(
           'const r = /;import value from "\\/_vf_modules\\/fake.js"/;',
           (specifier) => specifier.startsWith("/_vf_modules/") ? specifier : null,
+          UNBOUNDED,
+        ),
+        [],
+      );
+      assertEquals(
+        findStaticImportFromSpans(
+          'const x=1; export default /foo from "\\.\\/fake.js"/;',
+          matchRelative,
           UNBOUNDED,
         ),
         [],
@@ -339,6 +516,36 @@ import real from "./real.js";`,
           UNBOUNDED,
         ).map((span) => span.path),
         ["./after-division.js"],
+      );
+      assertEquals(
+        findStaticImportFromSpans(
+          'const ratio = value! / 2; import value from "./after-non-null-division.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-non-null-division.js"],
+      );
+    });
+
+    it("finds static imports after division in class extends arguments", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          'class C extends foo({} / 2) {}; import value from "./after-class-extends-arg.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-class-extends-arg.js"],
+      );
+    });
+
+    it("honors line terminators inside block comments before static imports", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          'const value = 1 /*\n*/ import value from "./after-block-comment.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-block-comment.js"],
       );
     });
   });
@@ -487,6 +694,13 @@ import real from "./real.js";`,
       );
     });
 
+    it("finds imports after JSX text inside template substitutions", () => {
+      assertEquals(
+        specifiers('const rendered = `${<Comp>Hello</Comp>}`; import("./after-template-jsx.js")'),
+        ["./after-template-jsx.js"],
+      );
+    });
+
     it("finds executable imports after regex literals following new", () => {
       assertEquals(
         vfModuleSpecifiers(
@@ -521,14 +735,99 @@ import real from "./real.js";`,
       );
     });
 
+    it("ignores import-looking regex text after module declarations", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'import value from "./dep.js"\n/import("\\/_vf_modules\\/after-import.js")/.test(value);',
+        ),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'export { value } from "./dep.js"\n/import("\\/_vf_modules\\/after-export.js")/.test(value);',
+        ),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'export { value }\n/import("\\/_vf_modules\\/after-local-export-list.js")/.test(value);',
+        ),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'import value from "./dep.js"\nvalue\n/import("\\/_vf_modules\\/after-expression.js")/.test(value);',
+        ),
+        ["/_vf_modules/after-expression.js"],
+      );
+    });
+
     it("ignores import-looking regex text after plain and labeled blocks", () => {
       assertEquals(
         vfModuleSpecifiers('{} /import("\\/_vf_modules\\/plain.js")/.test(value);'),
         [],
       );
       assertEquals(
+        vfModuleSpecifiers('let x = 1\n{} /import("\\/_vf_modules\\/asi-block.js")/.test(value);'),
+        [],
+      );
+      assertEquals(
         vfModuleSpecifiers('label: {} /import("\\/_vf_modules\\/labeled.js")/.test(value);'),
         [],
+      );
+      assertEquals(
+        vfModuleSpecifiers('α: {} /import("\\/_vf_modules\\/unicode-labeled.js")/.test(value);'),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          '\\u0061: {} /import("\\/_vf_modules\\/escaped-labeled.js")/.test(value);',
+        ),
+        [],
+      );
+    });
+
+    it("keeps newline-continued object literals distinct from statement blocks", () => {
+      assertEquals(
+        vfModuleSpecifiers('const value =\n{} / 2; import("/_vf_modules/after-object.js");'),
+        ["/_vf_modules/after-object.js"],
+      );
+    });
+
+    it("recognizes newline blocks after completed regex literals", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'const pattern = /done/\n{} /import("\\/_vf_modules\\/fake-regex-block.js")/.test(value); ' +
+            'import("/_vf_modules/after-regex-block.js");',
+        ),
+        ["/_vf_modules/after-regex-block.js"],
+      );
+    });
+
+    it("ignores import-looking regex text after switch clause blocks", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'switch (value) { case 1: {} /import("\\/_vf_modules\\/case.js")/.test(value) }',
+        ),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'switch (value) { default: {} /import("\\/_vf_modules\\/default.js")/.test(value) }',
+        ),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'switch (value) { case foo({}): {} /import("\\/_vf_modules\\/nested-case.js")/.test(value) }',
+        ),
+        [],
+      );
+      assertEquals(
+        specifiers(
+          'switch (value) { case ok ? {} / divisor : fallback: import("./after-case.js") }',
+        ),
+        ["./after-case.js"],
       );
     });
 
@@ -550,12 +849,135 @@ import real from "./real.js";`,
       );
     });
 
+    it("finds imports after raw JSX closing tags", () => {
+      assertEquals(
+        specifiers('<Component></Component>\n\n{import("./lazy.ts")}'),
+        ["./lazy.ts"],
+      );
+      assertEquals(
+        specifiers('<><Component /></>\n\n{import("./fragment-lazy.ts")}'),
+        ["./fragment-lazy.ts"],
+      );
+      assertEquals(
+        specifiers('<Component>Hello</Component>\n\n{import("./text-child-lazy.ts")}'),
+        ["./text-child-lazy.ts"],
+      );
+      assertEquals(
+        specifiers(
+          'const x = <Component>Hello\nworld</Component>; import("./multiline-text-lazy.ts")',
+        ),
+        ["./multiline-text-lazy.ts"],
+      );
+      assertEquals(
+        specifiers(
+          'function f() { return <Component>Hello</Component>; }\nimport("./function-jsx-text-lazy.ts")',
+        ),
+        ["./function-jsx-text-lazy.ts"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          '<Outer>{<Inner>text</Inner> && import("/_vf_modules/nested-jsx-expression-lazy.js")}</Outer>',
+        ),
+        ["/_vf_modules/nested-jsx-expression-lazy.js"],
+      );
+    });
+
+    it("ignores import-looking text inside raw JSX text children", () => {
+      assertEquals(
+        specifiers(
+          '<Component>import("./fake-jsx-text.js")</Component>\nimport("./after-jsx-text.js")',
+        ),
+        ["./after-jsx-text.js"],
+      );
+    });
+
+    it("keeps comparisons distinct from raw JSX tags", () => {
+      assertEquals(
+        vfModuleSpecifiers('const x = left<Right && import("/_vf_modules/lazy.js")>0;'),
+        ["/_vf_modules/lazy.js"],
+      );
+      assertEquals(
+        specifiers('const x = left </foo/.test(s); import("./comparison-lazy.js") > 0;'),
+        ["./comparison-lazy.js"],
+      );
+      assertEquals(
+        specifiers(
+          '<Comp>{left </foo/.test(s) && import("./jsx-expression-comparison-lazy.js") > 0}</Comp>',
+        ),
+        ["./jsx-expression-comparison-lazy.js"],
+      );
+    });
+
+    it("keeps TypeScript angle constructs distinct from raw JSX tags", () => {
+      assertEquals(
+        specifiers('const f = <T>(x: T) => import("./generic-arrow-lazy.js");'),
+        ["./generic-arrow-lazy.js"],
+      );
+      assertEquals(
+        specifiers('const value = <Foo>input; import("./assertion-lazy.js");'),
+        ["./assertion-lazy.js"],
+      );
+    });
+
+    it("finds imports after TypeScript instantiation expressions before division", () => {
+      assertEquals(
+        specifiers('const ratio = factory<Config> / divisor; import("./after-instantiation.js");'),
+        ["./after-instantiation.js"],
+      );
+    });
+
+    it("finds imports after quoted greater-than signs in raw JSX tags", () => {
+      assertEquals(
+        specifiers('<Comp title=">">{import("./quoted-lazy.ts")}</Comp>'),
+        ["./quoted-lazy.ts"],
+      );
+      assertEquals(
+        specifiers('<Comp title={left > right}>{import("./expression-lazy.ts")}</Comp>'),
+        ["./expression-lazy.ts"],
+      );
+    });
+
+    it("finds imports inside raw JSX attribute expressions", () => {
+      assertEquals(
+        specifiers('<Comp loader={import("./attribute-lazy.ts")} />'),
+        ["./attribute-lazy.ts"],
+      );
+    });
+
     it("treats of as an identifier in a classic for-loop initializer", () => {
       assertEquals(
         vfModuleSpecifiers(
           'let of = 4; for (of / 2; shouldRun;) { import("/_vf_modules/classic-for-lazy.js") }',
         ),
         ["/_vf_modules/classic-for-lazy.js"],
+      );
+    });
+
+    it("finds imports after division in class extends arguments", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'class C extends foo({} / 2) {}; import("/_vf_modules/class-extends-arg.js")',
+        ),
+        ["/_vf_modules/class-extends-arg.js"],
+      );
+    });
+
+    it("ignores import-looking regex text after computed class extends expressions", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          "class C extends bases[foo({} / 2)] {} " +
+            '/import("\\/_vf_modules\\/fake-computed-extends.js")/.test(value); ' +
+            'import("/_vf_modules/after-computed-extends.js")',
+        ),
+        ["/_vf_modules/after-computed-extends.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          "class C extends mixin({ value: {} / 2 }) {} " +
+            '/import("\\/_vf_modules\\/fake-object-extends.js")/.test(value); ' +
+            'import("/_vf_modules/after-object-extends.js")',
+        ),
+        ["/_vf_modules/after-object-extends.js"],
       );
     });
 
@@ -571,6 +993,183 @@ import real from "./real.js";`,
           'const html = `${(() => { class C {} /}/.test(x); })() && import("/_vf_modules/class-lazy.js")}`;',
         ),
         ["/_vf_modules/class-lazy.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'const html = `${(() => { function f(value = {}) {} /}/.test(x); })() && import("/_vf_modules/default-parameter-lazy.js")}`;',
+        ),
+        ["/_vf_modules/default-parameter-lazy.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'const html = `${(() => { function α() {} /}/.test(x); })() && import("/_vf_modules/unicode-function-lazy.js")}`;',
+        ),
+        ["/_vf_modules/unicode-function-lazy.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'function \\u0061() {} /import("\\/_vf_modules\\/fake.js")/.test(value); import("/_vf_modules/escaped-function-lazy.js")',
+        ),
+        ["/_vf_modules/escaped-function-lazy.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'function f(): void {} /import("\\/_vf_modules\\/fake-typed-function.js")/.test(value); ' +
+            'import("/_vf_modules/after-typed-function.js")',
+        ),
+        ["/_vf_modules/after-typed-function.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'function f<T extends {}>(value: T): T {} /import("\\/_vf_modules\\/fake-generic-function.js")/.test(value); ' +
+            'import("/_vf_modules/after-generic-function.js")',
+        ),
+        ["/_vf_modules/after-generic-function.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'class \\u0043 {} /import("\\/_vf_modules\\/fake.js")/.test(value); import("/_vf_modules/escaped-class-lazy.js")',
+        ),
+        ["/_vf_modules/escaped-class-lazy.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'class C<T> implements I {} /import("\\/_vf_modules\\/fake-ts-class.js")/.test(value); ' +
+            'import("/_vf_modules/after-ts-class.js")',
+        ),
+        ["/_vf_modules/after-ts-class.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          '@sealed class C {} /import("\\/_vf_modules\\/fake-decorated-class.js")/.test(value); ' +
+            'import("/_vf_modules/after-decorated-class.js")',
+        ),
+        ["/_vf_modules/after-decorated-class.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'interface I<T> extends Base {} /import("\\/_vf_modules\\/fake-ts-interface.js")/.test(value); ' +
+            'import("/_vf_modules/after-ts-interface.js")',
+        ),
+        ["/_vf_modules/after-ts-interface.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'interface I<T extends {}> {} /import("\\/_vf_modules\\/fake-ts-interface-constraint.js")/.test(value); ' +
+            'import("/_vf_modules/after-ts-interface-constraint.js")',
+        ),
+        ["/_vf_modules/after-ts-interface-constraint.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'interface I extends Record<string, { value: number }> {} /import("\\/_vf_modules\\/fake-ts-interface-extends.js")/.test(value); ' +
+            'import("/_vf_modules/after-ts-interface-extends.js")',
+        ),
+        ["/_vf_modules/after-ts-interface-extends.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'type T = string\n/import("\\/_vf_modules\\/fake-ts-type-alias.js")/.test(value); ' +
+            'import("/_vf_modules/after-ts-type-alias.js")',
+        ),
+        ["/_vf_modules/after-ts-type-alias.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'declare const value: number\n/import("\\/_vf_modules\\/fake-ambient.js")/.test(value); ' +
+            'import("/_vf_modules/after-ambient-declaration.js")',
+        ),
+        ["/_vf_modules/after-ambient-declaration.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'const enum Mode { On } /import("\\/_vf_modules\\/fake-ts-enum.js")/.test(value); ' +
+            'import("/_vf_modules/after-ts-enum.js")',
+        ),
+        ["/_vf_modules/after-ts-enum.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'namespace Store.Core { export const ready = true } /import("\\/_vf_modules\\/fake-ts-namespace.js")/.test(value); ' +
+            'import("/_vf_modules/after-ts-namespace.js")',
+        ),
+        ["/_vf_modules/after-ts-namespace.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'declare module "pkg" {} /import("\\/_vf_modules\\/fake-ts-module.js")/.test(value); ' +
+            'import("/_vf_modules/after-ts-module.js")',
+        ),
+        ["/_vf_modules/after-ts-module.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'declare module "pkg" { export interface Config<T extends {}> {} } /import("\\/_vf_modules\\/fake-ts-module-nested.js")/.test(value); ' +
+            'import("/_vf_modules/after-ts-module-nested.js")',
+        ),
+        ["/_vf_modules/after-ts-module-nested.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'declare global {} /import("\\/_vf_modules\\/fake-ts-global.js")/.test(value); ' +
+            'import("/_vf_modules/after-ts-global.js")',
+        ),
+        ["/_vf_modules/after-ts-global.js"],
+      );
+    });
+
+    it("ignores import-looking regex text after an ambient class body", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'declare class C {} /import("\\/_vf_modules\\/fake-ambient-class.js")/.test(value); ' +
+            'import("/_vf_modules/after-ambient-class.js")',
+        ),
+        ["/_vf_modules/after-ambient-class.js"],
+      );
+    });
+
+    it("recognizes an exported abstract ambient class after an ASI boundary", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          "const ready = true\nexport declare abstract class C {} " +
+            '/import("\\/_vf_modules\\/fake-asi-ambient-class.js")/.test(value); ' +
+            'import("/_vf_modules/after-asi-ambient-class.js")',
+        ),
+        ["/_vf_modules/after-asi-ambient-class.js"],
+      );
+    });
+
+    it("ignores import-looking regex text after exported declarations across ASI", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'export function load() {}\n/import("\\/_vf_modules\\/fake-export-function.js")/.test(value);\n' +
+            'import("/_vf_modules/after-export-function.js")',
+        ),
+        ["/_vf_modules/after-export-function.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'export class Loader {}\n/import("\\/_vf_modules\\/fake-export-class.js")/.test(value);\n' +
+            'import("/_vf_modules/after-export-class.js")',
+        ),
+        ["/_vf_modules/after-export-class.js"],
+      );
+    });
+
+    it("recognizes declaration blocks after semicolon-free ASI boundaries", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'const ready = true\nfunction load() {}\n/import("\\/_vf_modules\\/fake-asi-function.js")/.test(value);\n' +
+            'import("/_vf_modules/after-asi-function.js")',
+        ),
+        ["/_vf_modules/after-asi-function.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'const ready = true\nclass Loader {}\n/import("\\/_vf_modules\\/fake-asi-class.js")/.test(value);\n' +
+            'import("/_vf_modules/after-asi-class.js")',
+        ),
+        ["/_vf_modules/after-asi-class.js"],
       );
     });
 
@@ -740,58 +1339,6 @@ import real from "./real.js";`,
       );
     });
 
-    const REGEX_PREFIX_KEYWORDS = [
-      "of",
-      "case",
-      "default",
-      "delete",
-      "do",
-      "else",
-      "extends",
-      "in",
-      "instanceof",
-      "new",
-      "await",
-      "break",
-      "continue",
-      "debugger",
-      "return",
-      "throw",
-      "typeof",
-      "void",
-      "yield",
-    ];
-
-    for (const keyword of REGEX_PREFIX_KEYWORDS) {
-      it(`divides after a \`.${keyword}\` property instead of opening a regex`, () => {
-        assertEquals(
-          specifiers(
-            `const ratio = metrics.${keyword} / 2; import("./after-${keyword}-property.js");`,
-          ),
-          [`./after-${keyword}-property.js`],
-        );
-      });
-
-      it(`divides after an optionally chained \`?.${keyword}\` property`, () => {
-        assertEquals(
-          specifiers(
-            `const ratio = metrics?.${keyword} / 2; import("./after-${keyword}-optional.js");`,
-          ),
-          [`./after-${keyword}-optional.js`],
-        );
-      });
-
-      it(`divides after a \`#${keyword}\` private field`, () => {
-        assertEquals(
-          specifiers(
-            `class C { #${keyword} = 1; m() { const r = this.#${keyword} / 2; ` +
-              `return import("./after-${keyword}-private.js"); } }`,
-          ),
-          [`./after-${keyword}-private.js`],
-        );
-      });
-    }
-
     it("still treats genuine keyword positions as regex prefixes", () => {
       assertEquals(
         specifiers('const t = typeof /re/; import("./after-typeof-keyword.js");'),
@@ -881,6 +1428,23 @@ import real from "./real.js";`,
         specifiers('const html = `${x-- / 2} ${import("./inside-minus-minus.js")}`;'),
         ["./inside-minus-minus.js"],
       );
+      assertEquals(
+        specifiers('const ratio = value! / 2; import("./after-non-null-division.js");'),
+        ["./after-non-null-division.js"],
+      );
+      assertEquals(
+        specifiers('const html = `${value! / 2} ${import("./inside-non-null.js")}`;'),
+        ["./inside-non-null.js"],
+      );
+    });
+
+    it("preserves prefix not before regex literals", () => {
+      assertEquals(
+        specifiers(
+          'const ok = ! /import\\("\\.\\/fake\\.js"\\)/.test(source); import("./after-not-regex.js");',
+        ),
+        ["./after-not-regex.js"],
+      );
     });
 
     it("bounds nested template substitution traversal", () => {
@@ -917,6 +1481,159 @@ import real from "./real.js";`,
           'const html = `${constValue = {} / 2} ${import("./after-object-division.js")}`;',
         ),
         ["./after-object-division.js"],
+      );
+    });
+
+    // Every keyword the classifier accepts as a regex prefix is also a legal
+    // property name in ES5+, so `metrics.in / 2` is ordinary code in which the
+    // slash divides. Reading it as a regex opens a literal that never closes,
+    // and the scan swallows the rest of the module — every later import
+    // vanishes from materialization and from dependency collection alike.
+    //
+    // The list is iterated rather than spelled out case by case, so a keyword
+    // added to the classifier cannot arrive without coverage.
+    const REGEX_PREFIX_KEYWORDS = [
+      "of",
+      "case",
+      "default",
+      "delete",
+      "do",
+      "else",
+      "extends",
+      "in",
+      "instanceof",
+      "new",
+      "await",
+      "break",
+      "continue",
+      "debugger",
+      "return",
+      "throw",
+      "typeof",
+      "void",
+      "yield",
+    ];
+
+    for (const keyword of REGEX_PREFIX_KEYWORDS) {
+      it(`divides after a \`.${keyword}\` property instead of opening a regex`, () => {
+        assertEquals(
+          specifiers(
+            `const ratio = metrics.${keyword} / 2; import("./after-${keyword}-property.js");`,
+          ),
+          [`./after-${keyword}-property.js`],
+        );
+      });
+
+      it(`divides after an optionally chained \`?.${keyword}\` property`, () => {
+        assertEquals(
+          specifiers(
+            `const ratio = metrics?.${keyword} / 2; import("./after-${keyword}-optional.js");`,
+          ),
+          [`./after-${keyword}-optional.js`],
+        );
+      });
+
+      it(`divides after a \`#${keyword}\` private field`, () => {
+        assertEquals(
+          specifiers(
+            `class C { #${keyword} = 1; m() { const r = this.#${keyword} / 2; ` +
+              `return import("./after-${keyword}-private.js"); } }`,
+          ),
+          [`./after-${keyword}-private.js`],
+        );
+      });
+    }
+
+    // The opposite direction, tabled over the same list so the two cannot drift
+    // apart: in genuine keyword position the slash must still open a regex. The
+    // assertion is discriminating — a fake specifier sits *inside* the regex, so
+    // treating the slash as division would surface it. Finding only the real
+    // import afterwards proves the regex was consumed as a regex.
+    //
+    // `of` is deliberately absent: `isForOfKeywordBefore` requires a real
+    // `for (… of …)` header, so a bare `of /…/` is division. Its regex form is
+    // asserted separately below.
+    for (const keyword of REGEX_PREFIX_KEYWORDS.filter((word) => word !== "of")) {
+      it(`opens a regex after the \`${keyword}\` keyword`, () => {
+        assertEquals(
+          specifiers(
+            `${keyword} /import("\\/_vf_modules\\/fake-after-${keyword}.js")/;\n` +
+              `import("./real-after-${keyword}.js");`,
+          ),
+          [`./real-after-${keyword}.js`],
+        );
+      });
+    }
+
+    it("opens a regex after `of` only inside a for-of header", () => {
+      // Genuine for-of position: the slash opens a regex, so the fake specifier
+      // inside it is not surfaced.
+      assertEquals(
+        specifiers(
+          'for (const x of /import("\\/_vf_modules\\/fake-for-of.js")/.exec(s) ?? []) {}\n' +
+            'import("./real-after-for-of.js");',
+        ),
+        ["./real-after-for-of.js"],
+      );
+      // Bare `of` is an ordinary identifier, so the slash divides.
+      assertEquals(
+        specifiers('const ratio = of / 2; import("./real-after-of-identifier.js");'),
+        ["./real-after-of-identifier.js"],
+      );
+    });
+
+    it("opens a regex after `of` inside a for-await-of header", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'async function f() { for await (const x of /import("\\/_vf_modules\\/fake-for-await.js")/.exec(s) ?? []) {} }\n' +
+            'import("/_vf_modules/real-after-for-await.js");',
+        ),
+        ["/_vf_modules/real-after-for-await.js"],
+      );
+    });
+
+    it("opens a regex after `of` inside a commented for-await-of header", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'async function f() { for /* comment */ await (const x of /import("\\/_vf_modules\\/fake-commented-for-await.js")/.exec(s) ?? []) {} }\n' +
+            'import("/_vf_modules/real-after-commented-for-await.js");',
+        ),
+        ["/_vf_modules/real-after-commented-for-await.js"],
+      );
+    });
+
+    it("reads keyword positions in ordinary code as regex prefixes", () => {
+      assertEquals(
+        specifiers('const t = typeof /re/; import("./after-typeof-keyword.js");'),
+        ["./after-typeof-keyword.js"],
+      );
+      assertEquals(
+        specifiers('function f() { return /re/.test(x); } import("./after-return-keyword.js");'),
+        ["./after-return-keyword.js"],
+      );
+      assertEquals(
+        specifiers('switch (v) { case /re/.source: break; } import("./after-case-keyword.js");'),
+        ["./after-case-keyword.js"],
+      );
+      assertEquals(
+        specifiers('for (const x of /re/.exec(s) ?? []) {} import("./after-for-of-regex.js");'),
+        ["./after-for-of-regex.js"],
+      );
+    });
+
+    // The shape from the Sentry issue this PR closes: a standard interop
+    // property beside standard React code-splitting. Reading `.default` as a
+    // keyword swallowed everything to the next slash, so the `@/` specifier
+    // reached the runtime unrewritten and resolved against the page origin.
+    it("finds a code-split alias import after a `.default` division", () => {
+      assertEquals(
+        findDynamicImportSpans(
+          "const half = mod.default / 2;\n" +
+            'const L = lazy(() => import("@/components/Chart"));',
+          (specifier) => specifier.startsWith("@/") ? specifier : null,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["@/components/Chart"],
       );
     });
 
@@ -963,6 +1680,78 @@ import real from "./real.js";`,
         durationMs < 750,
         `Expected a ${Math.round(source.length / 1024)} KB closing-delimiter scan to finish ` +
           `within 750 ms, got ${durationMs.toFixed(1)} ms`,
+      );
+    });
+
+    it("keeps line-broken division scans within a bounded runtime", () => {
+      const source = "x\n/2/x;\n".repeat(4_000);
+      const startedAt = performance.now();
+
+      assertEquals(specifiers(source), []);
+
+      const durationMs = performance.now() - startedAt;
+      assert(
+        durationMs < 1_500,
+        `Expected a ${Math.round(source.length / 1024)} KB line-broken division scan to ` +
+          `finish within 1500 ms, got ${durationMs.toFixed(1)} ms`,
+      );
+    });
+
+    it("keeps shift-expression tag lookahead within a bounded runtime", () => {
+      const source = "x<<y;\n".repeat(12_000);
+      const startedAt = performance.now();
+
+      assertEquals(specifiers(source), []);
+
+      const durationMs = performance.now() - startedAt;
+      assert(
+        durationMs < 750,
+        `Expected a ${Math.round(source.length / 1024)} KB shift-expression scan to finish ` +
+          `within 750 ms, got ${durationMs.toFixed(1)} ms`,
+      );
+    });
+
+    it("keeps repeated TypeScript assertion lookahead within a bounded runtime", () => {
+      const source = `const values = [${"<T>value,".repeat(10_000)}value];`;
+      const startedAt = performance.now();
+
+      assertEquals(specifiers(source), []);
+
+      const durationMs = performance.now() - startedAt;
+      assert(
+        durationMs < 750,
+        `Expected a ${Math.round(source.length / 1024)} KB TypeScript assertion scan to finish ` +
+          `within 750 ms, got ${durationMs.toFixed(1)} ms`,
+      );
+    });
+
+    it("keeps distinct TypeScript assertion lookahead within a bounded runtime", () => {
+      const source = "type Value = unknown;\nconst values = [" +
+        Array.from({ length: 8_000 }, (_, index) => `<T${index}>value`).join(",") +
+        "];";
+      const startedAt = performance.now();
+
+      assertEquals(specifiers(source), []);
+
+      const durationMs = performance.now() - startedAt;
+      assert(
+        durationMs < 200,
+        `Expected a ${Math.round(source.length / 1024)} KB distinct TypeScript assertion scan ` +
+          `to finish within 200 ms, got ${durationMs.toFixed(1)} ms`,
+      );
+    });
+
+    it("keeps per-statement TypeScript assertion lookahead within a bounded runtime", () => {
+      const source = "<T>value;\n".repeat(16_000);
+      const startedAt = performance.now();
+
+      assertEquals(specifiers(source), []);
+
+      const durationMs = performance.now() - startedAt;
+      assert(
+        durationMs < 750,
+        `Expected a ${Math.round(source.length / 1024)} KB per-statement TypeScript assertion ` +
+          `scan to finish within 750 ms, got ${durationMs.toFixed(1)} ms`,
       );
     });
 
@@ -1081,6 +1870,10 @@ import real from "./real.js";`,
           'try /* note */ {} finally /* note */ {} /import("\\/_vf_modules\\/fake.js")/.test(value);',
           'function /* note */ load() {} /import("\\/_vf_modules\\/fake.js")/.test(value);',
           'class /* note */ Loader {} /import("\\/_vf_modules\\/fake.js")/.test(value);',
+          'export function load() {} /import("\\/_vf_modules\\/fake.js")/.test(value);',
+          'export default function load() {} /import("\\/_vf_modules\\/fake.js")/.test(value);',
+          'export class Loader {} /import("\\/_vf_modules\\/fake.js")/.test(value);',
+          'export default class Loader {} /import("\\/_vf_modules\\/fake.js")/.test(value);',
         ]
       ) {
         assertEquals(vfModuleSpecifiers(source), []);
@@ -1103,6 +1896,8 @@ import real from "./real.js";`,
           'function importα(value) { return value; } importα("/_vf_modules/fake.js");',
           'function 𝒜import(value) { return value; } 𝒜import("/_vf_modules/fake.js");',
           'function import𝒜(value) { return value; } import𝒜("/_vf_modules/fake.js");',
+          'function \\u0061import(value) { return value; } \\u0061import("/_vf_modules/fake.js");',
+          'function \\u{61}import(value) { return value; } \\u{61}import("/_vf_modules/fake.js");',
         ]
       ) {
         assertEquals(vfModuleSpecifiers(source), []);
@@ -1114,6 +1909,8 @@ import real from "./real.js";`,
         const source of [
           'while (ready) { break\n/import("\\/_vf_modules\\/fake.js")/.test(value); }',
           'while (ready) { continue\n/import("\\/_vf_modules\\/fake.js")/.test(value); }',
+          'outer: while (ready) { break outer\n/import("\\/_vf_modules\\/fake.js")/.test(value); }',
+          'outer: while (ready) { continue outer\n/import("\\/_vf_modules\\/fake.js")/.test(value); }',
           'debugger\n/import("\\/_vf_modules\\/fake.js")/.test(value);',
         ]
       ) {
@@ -1128,6 +1925,17 @@ import real from "./real.js";`,
         ),
         [],
       );
+    });
+
+    it("does not read keyword suffixes in longer identifiers as regex prefixes", () => {
+      for (
+        const source of [
+          'const x1return = 4; x1return / 2; import("/_vf_modules/real.js");',
+          'const αreturn = 4; αreturn / 2; import("/_vf_modules/real.js");',
+        ]
+      ) {
+        assertEquals(vfModuleSpecifiers(source), ["/_vf_modules/real.js"]);
+      }
     });
 
     it("ignores an import-looking string or comment", () => {
@@ -1287,6 +2095,59 @@ import real from "./real.js";`,
       assertEquals(spans.map((span) => span.path), ["./a.js", "./b.js"]);
     });
 
+    it("finds side-effect imports after raw JSX text children", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          '<Component>Hello</Component>\nimport "./after-jsx-text-side-effect.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-jsx-text-side-effect.js"],
+      );
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          '<Component>Hello; world</Component>; import "./after-jsx-semicolon-text-side-effect.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-jsx-semicolon-text-side-effect.js"],
+      );
+    });
+
+    it("finds side-effect imports after TypeScript instantiation expressions before division", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'const ratio = factory<Config> / divisor; import "./after-instantiation.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-instantiation.js"],
+      );
+    });
+
+    it("finds side-effect imports after JSX text inside template substitutions", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'const rendered = `${<Comp>Hello</Comp>}`; import "./after-template-jsx.js"',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-template-jsx.js"],
+      );
+    });
+
+    it("ignores side-effect import text inside raw JSX text children", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          '<Component>import "./fake-jsx-text-side-effect.js"</Component>\n' +
+            'import "./after-jsx-text-side-effect.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-jsx-text-side-effect.js"],
+      );
+    });
+
     it("finds side-effect imports after top-level block declarations", () => {
       assertEquals(
         findStaticSideEffectImportSpans(
@@ -1303,6 +2164,18 @@ import real from "./real.js";`,
           UNBOUNDED,
         ).map((span) => span.path),
         ["./after-class.js"],
+      );
+    });
+
+    it("finds side-effect imports after ambient TypeScript declarations", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'declare const value: number\n/import(".\\/fake-side-effect.js")/.test(source); ' +
+            'import "./after-ambient-declaration.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-ambient-declaration.js"],
       );
     });
 
@@ -1469,6 +2342,50 @@ import real from "./real.js";`,
           UNBOUNDED,
         ),
         [],
+      );
+    });
+
+    it("finds side-effect imports after postfix non-null assertion division", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'const ratio = value! / 2; import "./after-non-null-division.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-non-null-division.js"],
+      );
+    });
+
+    it("honors line terminators inside block comments before side-effect imports", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'const value = 1 /*\n*/ import "./after-block-comment.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-block-comment.js"],
+      );
+    });
+
+    it("treats a block-comment newline as statement start for side-effect imports", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'const value = 1/*\n*/import "./after-compact-block-comment.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-compact-block-comment.js"],
+      );
+    });
+
+    it("finds side-effect imports after division in class extends arguments", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'class C extends foo({} / 2) {}; import "./after-class-extends-arg.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-class-extends-arg.js"],
       );
     });
   });

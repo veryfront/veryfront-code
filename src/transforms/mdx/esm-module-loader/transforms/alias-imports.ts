@@ -9,13 +9,13 @@
  */
 
 import { join } from "#veryfront/compat/path";
+import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { ESBUILD_JSX_FACTORY, ESBUILD_JSX_FRAGMENT, LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import type { FSAdapter } from "../types.ts";
 import { hashString } from "../utils/hash.ts";
 import { resolveFileWithExtension } from "../resolution/file-finder.ts";
 import { parseImports, replaceSpecifiers } from "../../../esm/lexer.ts";
-import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 
 type ImportType = "project-alias" | "vf-modules";
 

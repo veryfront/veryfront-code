@@ -42,11 +42,11 @@ const runtimeTools = await getRemoteIntegrationToolDefinitions();
 | Name                                         | Description                        | Source                                                                                          |
 | -------------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------- |
 | `EnvVarSchema`                               | Zod schema for env var.            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L235) |
-| `IntegrationConfigSchema`                    | Zod schema for integration config. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L477) |
-| `IntegrationEndpointHistoricalSummarySchema` |                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L376) |
+| `IntegrationConfigSchema`                    | Zod schema for integration config. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L480) |
+| `IntegrationEndpointHistoricalSummarySchema` |                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L379) |
 | `IntegrationNameSchema`                      | Zod schema for integration name.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L214) |
-| `IntegrationPromptSchema`                    | Zod schema for integration prompt. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L450) |
-| `IntegrationToolSchema`                      | Zod schema for integration tool.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L418) |
+| `IntegrationPromptSchema`                    | Zod schema for integration prompt. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L453) |
+| `IntegrationToolSchema`                      | Zod schema for integration tool.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L421) |
 | `OAuthConfigSchema`                          | Zod schema for oauth config.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L300) |
 | `OAuthFieldSchema`                           | Zod schema for oauth field.        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L248) |
 
@@ -67,14 +67,14 @@ const runtimeTools = await getRemoteIntegrationToolDefinitions();
 
 | Name                                   | Description                                                                           | Source                                                                                               |
 | -------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `EnvVarConfig`                         | Configuration used by env var.                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L482)      |
-| `IntegrationConfig`                    | Configuration used by integration.                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L496)      |
-| `IntegrationConnector`                 | Public API contract for integration connector.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/types.ts#L75)        |
-| `IntegrationEndpointHistoricalSummary` | Provider-declared summary contract for old tool outputs kept actionable across turns. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L490)      |
-| `IntegrationName`                      | Public API contract for integration name.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L480)      |
-| `IntegrationPrompt`                    | Public API contract for integration prompt.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L494)      |
-| `IntegrationTool`                      | Public API contract for integration tool.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/types.ts#L66)        |
-| `IntegrationToolMeta`                  | Public API contract for integration tool meta.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L488)      |
-| `OAuthConfig`                          | Configuration used by oauth.                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L486)      |
-| `OAuthField`                           | Public API contract for oauth field.                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L484)      |
+| `EnvVarConfig`                         | Configuration used by env var.                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L485)      |
+| `IntegrationConfig`                    | Configuration used by integration.                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L499)      |
+| `IntegrationConnector`                 | Public API contract for integration connector.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/types.ts#L77)        |
+| `IntegrationEndpointHistoricalSummary` | Provider-declared summary contract for old tool outputs kept actionable across turns. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L493)      |
+| `IntegrationName`                      | Public API contract for integration name.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L483)      |
+| `IntegrationPrompt`                    | Public API contract for integration prompt.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L497)      |
+| `IntegrationTool`                      | Public API contract for integration tool.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/types.ts#L68)        |
+| `IntegrationToolMeta`                  | Public API contract for integration tool meta.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L491)      |
+| `OAuthConfig`                          | Configuration used by oauth.                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L489)      |
+| `OAuthField`                           | Public API contract for oauth field.                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L487)      |
 | `RemoteIntegrationToolDiscoveryResult` | Result of listing the integration tools available to the current run.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts#L84) |

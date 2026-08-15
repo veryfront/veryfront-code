@@ -82,10 +82,9 @@ pretty-printed complete payload or `{{payload.dot.path}}` for one nested value:
 ```ts
 export default webhook({
   id: "support-escalation",
-  target: { kind: "agent", id: "support-agent" },
+  target: { kind: "agent", id: "support-agent", conversationMode: "create_new" },
   agentMessage: {
     promptTemplate: "Triage {{payload.summary}} for account {{payload.account.id}}.",
-    conversationMode: "none",
   },
 });
 ```
@@ -98,9 +97,39 @@ Payload text is inserted verbatim. Template rendering is not an input-safety or
 prompt-injection boundary. Agents that act on untrusted event fields should
 apply an explicit input policy and keep authorization in application code.
 
-Hosted agent webhooks may use `create_new`, `existing`, or `none` conversation
-mode. `existing` requires a conversation UUID. Local runs execute standalone
-and therefore reject attempts to attach to an existing cloud conversation.
+## Agent conversation addressing
+
+Conversation addressing belongs on the target. `conversationMode` may be
+`create_new`, `existing`, or `none`, and `existing` requires a `conversationId`
+UUID on the target. `none` is the default, and it is the wrong choice for an
+agent that delegates: `invoke_agent` needs a hosted conversation to attach the
+child run to. Local runs execute standalone and therefore reject attempts to
+attach to an existing cloud conversation.
+
+`agentMessage.conversationMode` and `agentMessage.conversationId` are the
+legacy location for the same pair. They still work unchanged, and they are
+removed in the next major release.
+
+Declaring the pair in both places with the same value is accepted. That is how
+one definition spans a platform upgrade: a hosted platform that predates
+target-level addressing reads `agentMessage`, a platform that reads the target
+reads the target, and both find the value you wrote.
+
+```ts
+export default webhook({
+  id: "support-escalation",
+  target: { kind: "agent", id: "support-agent", conversationMode: "create_new" },
+  agentMessage: {
+    promptTemplate: "Triage {{payload.summary}} for account {{payload.account.id}}.",
+    conversationMode: "create_new",
+  },
+});
+```
+
+The two declarations must agree. `webhook()` rejects a disagreement with
+`webhook-config-invalid` instead of choosing a winner, because honoring one
+copy would detach the deployed webhook from the conversation the other copy
+names.
 
 For API details, see
 [veryfront/webhook](../api-reference/veryfront/webhook.md).

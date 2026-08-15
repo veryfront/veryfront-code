@@ -8,16 +8,16 @@
  */
 
 import { basename } from "#veryfront/compat/path/index.ts";
-import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
-import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 import { BUILD_FAILED } from "#veryfront/errors";
 import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
+import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
+import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 import {
   appendSameOriginSSRDependencyPinningKey,
   normalizeExtension,
 } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
-import { splitSpecifierSuffix } from "../shared/specifier-suffix.ts";
 import { isServerOnlyPackage } from "../shared/server-only-packages.ts";
 import { parseImports, replaceSpecifiers } from "./lexer.ts";
 
@@ -36,8 +36,13 @@ import {
 } from "./http-cache-helpers.ts";
 
 const ReflectApply = Reflect.apply;
+const RegExpTest = RegExp.prototype.test;
 const StringSlice = String.prototype.slice;
 const StringStartsWith = String.prototype.startsWith;
+
+function regexpTest(pattern: RegExp, value: string): boolean {
+  return ReflectApply(RegExpTest, pattern, [value]) as boolean;
+}
 
 function stringSlice(value: string, start: number, end?: number): string {
   return ReflectApply(StringSlice, value, end === undefined ? [start] : [start, end]) as string;
@@ -80,7 +85,7 @@ function classifyAuthoredPackageFetchError(
 export type CacheHttpModuleFn = (url: string, options: CacheOptions) => Promise<string | null>;
 
 function parseHttpBase(value?: string): URL | undefined {
-  if (!value || !/^https?:\/\//i.test(value)) return undefined;
+  if (!value || !regexpTest(/^https?:\/\//i, value)) return undefined;
 
   try {
     return new URL(value);
@@ -94,7 +99,7 @@ function canonicalizeHttpSpecifier(
   baseUrl?: string,
   moduleServerOrigin?: string,
 ): string {
-  if (/^https?:\/\//i.test(specifier)) return new URL(specifier).toString();
+  if (regexpTest(/^https?:\/\//i, specifier)) return new URL(specifier).toString();
   if (!stringStartsWith(specifier, "//")) return specifier;
 
   const resolutionBase = parseHttpBase(baseUrl) ?? parseHttpBase(moduleServerOrigin);
@@ -151,12 +156,24 @@ async function resolveSpecifier(
   // result already ends in a JS-like or CSS extension. A different shape here
   // would resolve one specifier to two different module URLs.
   if (stringStartsWith(specifier, "@/")) {
+    const mappedAlias = resolveImport(specifier, options.importMap);
+    if (mappedAlias !== specifier && isLocalMappedSpecifier(mappedAlias)) return mappedAlias;
+
     const { path: pathOnly, suffix } = splitSpecifierSuffix(stringSlice(specifier, 2));
     const normalizedPath = normalizeExtension(pathOnly);
-    const jsPath = /\.(js|mjs|cjs|css)$/.test(normalizedPath)
+    const jsPath = regexpTest(/\.(js|mjs|cjs|css)$/, normalizedPath)
       ? normalizedPath
       : `${normalizedPath}.js`;
-    return `/_vf_modules/${jsPath}${suffix}`;
+    const projectModulePath = `/_vf_modules/${jsPath}${suffix}`;
+    const moduleServerOrigin = parseHttpBase(options.moduleServerOrigin);
+    if (!moduleServerOrigin) return projectModulePath;
+
+    return resolveSpecifier(
+      new URL(projectModulePath, moduleServerOrigin).toString(),
+      baseUrl,
+      options,
+      cacheHttpModule,
+    );
   }
 
   // Server-only packages (`redis`, `pg`, …), including their explicit `npm:`

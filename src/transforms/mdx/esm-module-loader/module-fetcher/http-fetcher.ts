@@ -291,7 +291,6 @@ export async function fetchModuleViaHTTP(
             { failOnImport: options.strictMissingModules ?? true, deferredError },
           );
         }
-
         return {
           original,
           start,

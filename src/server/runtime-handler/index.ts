@@ -550,7 +550,12 @@ export function createVeryfrontHandler(
 
           // Handle projects discovery UI
           if (
-            shouldHandleProjectsUI(url.pathname, projectRes.projectSlug, projectRes.parsedDomain)
+            shouldHandleProjectsUI(
+              request,
+              url.pathname,
+              projectRes.projectSlug,
+              projectRes.parsedDomain,
+            )
           ) {
             const response = await handleProjectsRequest(
               request,

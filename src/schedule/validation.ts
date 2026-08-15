@@ -1,8 +1,16 @@
 import { SCHEDULE_CONFIG_INVALID, VeryfrontError } from "#veryfront/errors";
-import { snapshotTriggerTarget, type TriggerTarget } from "#veryfront/trigger/target.ts";
+import {
+  agentConversationDiagnostic,
+  conversationConflictDiagnostic,
+  declarationConflictDiagnostic,
+  type ResolvedTriggerTarget,
+  resolveTriggerTarget,
+  triggerTargetKeys,
+} from "#veryfront/trigger/target.ts";
 import { snapshotSerializable, validateTriggerId } from "#veryfront/trigger/validation.ts";
 import { isSupportedIanaTimezone, normalizeCronExpression } from "./calendar.ts";
 import type {
+  ScheduleAgentMessage,
   ScheduleConcurrencyPolicy,
   ScheduleDefinition,
   ScheduleHealth,
@@ -29,8 +37,10 @@ const MAX_NAME_LENGTH = 256;
 const MAX_DESCRIPTION_LENGTH = 4_096;
 const MAX_SCHEDULE_EXPRESSION_LENGTH = 256;
 const MAX_TIMEZONE_LENGTH = 255;
+const MAX_AGENT_PROMPT_LENGTH = 20_000;
 const MAX_DIAGNOSTIC_KEY_LENGTH = 80;
 const SIMPLE_DIAGNOSTIC_KEY_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$-]*$/;
+const LEGACY_TARGET_KEYS = new Set(["conversationMode", "conversationId"]);
 
 const CONFIG_KEYS = [
   "id",
@@ -40,6 +50,7 @@ const CONFIG_KEYS = [
   "cron",
   "timezone",
   "target",
+  "agentMessage",
   "input",
   "timeoutSeconds",
   "backoffLimit",
@@ -307,13 +318,108 @@ function normalizeTimezone(
   return timezone;
 }
 
-function normalizeTarget(value: unknown): TriggerTarget {
-  const target = snapshotDataRecord(value, "Schedule target", ["kind", "id"]);
-  const candidate = snapshotTriggerTarget(target);
-  if (candidate === null) {
+function normalizeTarget(value: unknown): ResolvedTriggerTarget {
+  const target = snapshotDataRecord(
+    value,
+    "Schedule target",
+    triggerTargetKeys(value),
+  );
+  const conversationDetail = agentConversationDiagnostic(
+    "Schedule target",
+    target.conversationMode,
+    target.conversationId,
+  );
+  if (conversationDetail !== null) invalid(conversationDetail);
+
+  const resolution = resolveTriggerTarget("Schedule target", target);
+  if (resolution.target === undefined) {
     invalid("Schedule target must specify a valid task, workflow, or agent id.");
   }
-  return candidate;
+  return resolution.target;
+}
+
+function normalizeAgentMessage(
+  value: unknown,
+  target: ResolvedTriggerTarget,
+): ScheduleAgentMessage | undefined {
+  if (value === undefined) return undefined;
+  if (target.kind !== "agent") {
+    invalid("Schedule agentMessage is supported only for agent targets.");
+  }
+
+  const message = snapshotDataRecord(value, "Schedule agentMessage", ["prompt"]);
+  // An agentMessage carrying no prompt says nothing. Emitting `{}` into the
+  // shipped definition would ship that nothing as a field.
+  if (message.prompt === undefined) return undefined;
+
+  const prompt = message.prompt;
+  if (typeof prompt !== "string" || prompt.trim().length === 0) {
+    invalid("Schedule agentMessage.prompt must be a non-empty string.");
+  }
+  if (prompt.length > MAX_AGENT_PROMPT_LENGTH) {
+    invalid(`Schedule agentMessage.prompt must be at most ${MAX_AGENT_PROMPT_LENGTH} characters.`);
+  }
+  return { prompt };
+}
+
+/**
+ * Read the conversation pair from the legacy `input._schedule_target` channel.
+ *
+ * Older SDKs addressed a scheduled agent conversation through run input. The
+ * value is already a serializable snapshot, so plain property reads are safe.
+ */
+function legacyScheduleConversation(
+  input: Record<string, unknown> | undefined,
+): { conversationMode: unknown; conversationId: unknown } {
+  const legacyTarget = input?._schedule_target;
+  if (
+    !legacyTarget || typeof legacyTarget !== "object" || Array.isArray(legacyTarget)
+  ) {
+    return { conversationMode: undefined, conversationId: undefined };
+  }
+  const record = legacyTarget as Record<string, unknown>;
+  return {
+    conversationMode: record.conversationMode,
+    conversationId: record.conversationId,
+  };
+}
+
+/**
+ * Describe why the legacy `input._schedule_target` channel is invalid, or
+ * return `null`.
+ *
+ * The legacy channel addresses the same hosted conversation as the canonical
+ * target, so it earns the same guarantees. Validating only the canonical copy
+ * would leave an author who addresses a conversation through the legacy
+ * channel alone with none of them: a misspelled key would disappear and the
+ * schedule would ship addressing nothing.
+ *
+ * The value is already a serializable snapshot, so plain key enumeration and
+ * property reads are safe.
+ */
+export function legacyScheduleTargetDiagnostic(
+  input: Record<string, unknown> | undefined,
+  conversation: { conversationMode: unknown; conversationId: unknown },
+): string | null {
+  const legacyTarget = input?._schedule_target;
+  const label = "Schedule input._schedule_target";
+  if (legacyTarget === undefined) return null;
+  if (
+    legacyTarget === null || typeof legacyTarget !== "object" ||
+    Array.isArray(legacyTarget)
+  ) {
+    return `${label} must be an object.`;
+  }
+  for (const key of Object.keys(legacyTarget)) {
+    if (!LEGACY_TARGET_KEYS.has(key)) {
+      return `${formatDiagnosticProperty(label, key)} is not supported.`;
+    }
+  }
+  return agentConversationDiagnostic(
+    label,
+    conversation.conversationMode,
+    conversation.conversationId,
+  );
 }
 
 function normalizeInput(value: unknown): Record<string, unknown> | undefined {
@@ -542,7 +648,34 @@ function normalizeScheduleUnsafe(value: unknown, mode: ValidationMode): Schedule
   );
   const timezone = normalizeTimezone(config.timezone, mode);
   const target = normalizeTarget(config.target);
+  const agentMessage = normalizeAgentMessage(config.agentMessage, target);
   const input = normalizeInput(config.input);
+
+  // Declaring the same value in both places is how one definition stays
+  // correct across a platform upgrade, so only a disagreement is rejected:
+  // silently preferring one copy would detach the deployed schedule from what
+  // the other copy names. Prompt content follows the identical rule.
+  const legacyConversation = legacyScheduleConversation(input);
+  const conflictDetail = conversationConflictDiagnostic(
+    "Schedule",
+    "input._schedule_target",
+    target,
+    legacyConversation.conversationMode,
+    legacyConversation.conversationId,
+  ) ??
+    declarationConflictDiagnostic(
+      "Schedule",
+      "agentMessage.prompt",
+      "input.prompt",
+      agentMessage?.prompt,
+      input?.prompt,
+    );
+  if (conflictDetail !== null) invalid(conflictDetail);
+
+  const legacyTargetDetail = target.kind === "agent"
+    ? legacyScheduleTargetDiagnostic(input, legacyConversation)
+    : null;
+  if (legacyTargetDetail !== null) invalid(legacyTargetDetail);
 
   const timeoutSeconds = optionalPositiveInteger(
     config.timeoutSeconds,
@@ -578,6 +711,7 @@ function normalizeScheduleUnsafe(value: unknown, mode: ValidationMode): Schedule
     schedule,
     ...(timezone === undefined ? {} : { timezone }),
     target,
+    ...(agentMessage === undefined ? {} : { agentMessage }),
     ...(input === undefined ? {} : { input }),
     ...(timeoutSeconds === undefined ? {} : { timeoutSeconds }),
     ...(backoffLimit === undefined ? {} : { backoffLimit }),

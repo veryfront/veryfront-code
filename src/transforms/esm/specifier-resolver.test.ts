@@ -152,6 +152,34 @@ describe("transforms/esm/specifier-resolver", () => {
       }
     });
 
+    it("rewrites escaped project aliases without mutable regex test hooks", async () => {
+      const regexpPrototypeDescriptors = Object.getOwnPropertyDescriptors(RegExp.prototype);
+
+      try {
+        Object.defineProperty(RegExp.prototype, "test", {
+          configurable: true,
+          value() {
+            throw new Error("poisoned RegExp.prototype.test");
+          },
+          writable: true,
+        });
+
+        const result = await buildReplacements(
+          `import Foo from "@/components/Foo.tsx?raw#hero";`,
+          undefined,
+          defaultOptions,
+          noopCache,
+        );
+
+        assertEquals(
+          result.replacements.get("@/components/Foo.tsx?raw#hero"),
+          "/_vf_modules/components/Foo.js?raw#hero",
+        );
+      } finally {
+        Object.defineProperties(RegExp.prototype, regexpPrototypeDescriptors);
+      }
+    });
+
     it("rewrites http URL when cache returns a path", async () => {
       const code = `import lodash from "https://esm.sh/lodash@4";`;
       const mockCache: CacheHttpModuleFn = async () => "/tmp/cache/http-99999.mjs";
@@ -244,6 +272,48 @@ describe("transforms/esm/specifier-resolver", () => {
       assertEquals(
         result.replacements.get("@/components/ResponsiveImage"),
         "/_vf_modules/components/ResponsiveImage.js",
+      );
+    });
+
+    it("preserves safe configured @/ module prefix mappings", async () => {
+      const code = `import ResponsiveImage from "@/components/ResponsiveImage";`;
+      const cacheCalls: string[] = [];
+      const result = await buildReplacements(
+        code,
+        undefined,
+        { ...defaultOptions, importMap: { imports: { "@/": "/_vf_modules/custom-root/" } } },
+        async (url) => {
+          cacheCalls.push(url);
+          return "/_vf_modules/unexpected-http-alias.mjs";
+        },
+      );
+
+      assertEquals(cacheCalls, []);
+      assertEquals(
+        result.replacements.get("@/components/ResponsiveImage"),
+        "/_vf_modules/custom-root/components/ResponsiveImage",
+      );
+    });
+
+    it("materializes escaped @/ alias imports when a module-server origin is available", async () => {
+      const code = `import ResponsiveImage from "@/components/ResponsiveImage";`;
+      const cacheCalls: string[] = [];
+      const result = await buildReplacements(
+        code,
+        undefined,
+        { ...defaultOptions, moduleServerOrigin: "https://preview.example" },
+        async (url) => {
+          cacheCalls.push(url);
+          return "/tmp/cache/http-alias.mjs";
+        },
+      );
+
+      assertEquals(cacheCalls, [
+        "https://preview.example/_vf_modules/components/ResponsiveImage.js",
+      ]);
+      assertEquals(
+        result.replacements.get("@/components/ResponsiveImage"),
+        "file:///tmp/cache/http-alias.mjs",
       );
     });
 

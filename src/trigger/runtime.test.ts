@@ -8,6 +8,7 @@ import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { discoverSourceTriggers as discoverSourceTriggersRaw } from "./discovery.ts";
 import { runTriggerTarget } from "./local-runner.ts";
+import type { TaskTriggerTarget } from "./target.ts";
 
 interface FixtureTrigger {
   id: string;
@@ -433,6 +434,33 @@ describe("trigger runtime", () => {
       Error,
       "Trigger target must specify a canonical task, workflow, or agent id.",
     );
+    await assertRejects(
+      () =>
+        runTriggerTarget({
+          projectDir: "/project",
+          adapter,
+          config: { fs: { type: "veryfront-api" } },
+          target: { kind: "agent", id: "triage", conversationMode: "resume" } as never,
+        }),
+      Error,
+      "Trigger target.conversationMode must be create_new, existing, or none.",
+    );
+    await assertRejects(
+      () =>
+        runTriggerTarget({
+          projectDir: "/project",
+          adapter,
+          config: { fs: { type: "veryfront-api" } },
+          target: {
+            kind: "agent",
+            id: "triage",
+            conversationMode: "existing",
+            conversationId: "11111111-1111-4111-8111-111111111111",
+          },
+        }),
+      Error,
+      "Local agent trigger runs cannot attach to an existing cloud conversation.",
+    );
     assertEquals(existsCalls, 0);
 
     const controller = new AbortController();
@@ -450,6 +478,38 @@ describe("trigger runtime", () => {
       "trigger cancelled before discovery",
     );
     assertEquals(existsCalls, 0);
+  });
+
+  it("runs extended trigger targets through the generic runtime helper", async () => {
+    interface OwnedTaskTarget extends TaskTriggerTarget {
+      metadata: string;
+    }
+
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/extended-target.ts": [
+        "export default {",
+        '  name: "Extended target",',
+        '  run() { return "accepted"; },',
+        "};",
+        "",
+      ].join("\n"),
+    });
+    const target: OwnedTaskTarget = {
+      kind: "task",
+      id: "extended-target",
+      metadata: "owned-by-consumer",
+    };
+
+    const result = await runTriggerTarget({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } },
+      target,
+    });
+
+    assertEquals(result.kind, "task");
+    assertEquals(result.id, "extended-target");
+    assertEquals(result.output, "accepted");
   });
 
   it("executes from an input snapshot captured before discovery yields", async () => {

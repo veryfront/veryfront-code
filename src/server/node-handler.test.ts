@@ -1,4 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isRequestFromLoopbackPeer } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { toNodeHandler } from "./node-handler.ts";
 
 type FakeRes = {
@@ -47,12 +49,18 @@ function createFakeRes(): FakeRes {
 }
 
 function createFakeReq(
-  init: { method?: string; url?: string; headers?: Record<string, string | string[] | undefined> },
+  init: {
+    method?: string;
+    url?: string;
+    headers?: Record<string, string | string[] | undefined>;
+    remoteAddress?: string;
+  },
 ): import("node:http").IncomingMessage {
   return {
     method: init.method ?? "GET",
     url: init.url ?? "/",
     headers: { host: "localhost", ...(init.headers ?? {}) },
+    socket: { remoteAddress: init.remoteAddress },
   } as unknown as import("node:http").IncomingMessage;
 }
 
@@ -79,88 +87,107 @@ function collectSetCookies(res: FakeRes): string[] {
   return cookies;
 }
 
-Deno.test("toNodeHandler preserves multiple Set-Cookie headers as distinct values", async () => {
-  const handler = () => {
-    const headers = new Headers();
-    headers.append("Set-Cookie", "a=1; Path=/");
-    headers.append("Set-Cookie", "b=2; Path=/");
-    return new Response("ok", { status: 200, headers });
-  };
+describe("toNodeHandler", () => {
+  it("preserves multiple Set-Cookie headers as distinct values", async () => {
+    const handler = () => {
+      const headers = new Headers();
+      headers.append("Set-Cookie", "a=1; Path=/");
+      headers.append("Set-Cookie", "b=2; Path=/");
+      return new Response("ok", { status: 200, headers });
+    };
 
-  const nodeHandler = toNodeHandler(handler);
-  const res = createFakeRes();
-  await nodeHandler(
-    createFakeReq({ url: "/" }),
-    res as unknown as import("node:http").ServerResponse,
-  );
+    const nodeHandler = toNodeHandler(handler);
+    const res = createFakeRes();
+    await nodeHandler(
+      createFakeReq({ url: "/" }),
+      res as unknown as import("node:http").ServerResponse,
+    );
 
-  const cookies = collectSetCookies(res);
-  assertEquals(cookies.length, 2);
-  assertEquals(cookies.includes("a=1; Path=/"), true);
-  assertEquals(cookies.includes("b=2; Path=/"), true);
-});
+    const cookies = collectSetCookies(res);
+    assertEquals(cookies.length, 2);
+    assertEquals(cookies.includes("a=1; Path=/"), true);
+    assertEquals(cookies.includes("b=2; Path=/"), true);
+  });
 
-Deno.test("toNodeHandler does not throw when a Headers adapter omits getSetCookie", async () => {
-  // Simulate a compatible Headers adapter that omits getSetCookie. We wrap a
-  // real Headers in a Proxy that hides getSetCookie
-  // while still exposing an iterator that yields each Set-Cookie as a distinct
-  // entry (matching undici's iteration behaviour). A real Response is returned
-  // but with its `headers` accessor pointed at the legacy-like object.
-  const realHeaders = new Headers();
-  realHeaders.append("Set-Cookie", "a=1; Path=/");
-  realHeaders.append("Set-Cookie", "b=2; Path=/");
-  realHeaders.set("content-type", "text/plain");
+  it("does not throw when a Headers adapter omits getSetCookie", async () => {
+    // Simulate a compatible Headers adapter that omits getSetCookie. We wrap a
+    // real Headers in a Proxy that hides getSetCookie
+    // while still exposing an iterator that yields each Set-Cookie as a distinct
+    // entry (matching undici's iteration behaviour). A real Response is returned
+    // but with its `headers` accessor pointed at the legacy-like object.
+    const realHeaders = new Headers();
+    realHeaders.append("Set-Cookie", "a=1; Path=/");
+    realHeaders.append("Set-Cookie", "b=2; Path=/");
+    realHeaders.set("content-type", "text/plain");
 
-  const legacyHeaders = new Proxy(realHeaders, {
-    get(target, prop, receiver) {
-      // Pretend getSetCookie does not exist on this runtime.
-      if (prop === "getSetCookie") return undefined;
-      const value = Reflect.get(target, prop, receiver);
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-  }) as unknown as Headers;
+    const legacyHeaders = new Proxy(realHeaders, {
+      get(target, prop, receiver) {
+        // Pretend getSetCookie does not exist on this runtime.
+        if (prop === "getSetCookie") return undefined;
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as unknown as Headers;
 
-  const handler = () => {
-    const response = new Response("ok", { status: 200 });
-    Object.defineProperty(response, "headers", {
-      get: () => legacyHeaders,
-      configurable: true,
-    });
-    return response;
-  };
+    const handler = () => {
+      const response = new Response("ok", { status: 200 });
+      Object.defineProperty(response, "headers", {
+        get: () => legacyHeaders,
+        configurable: true,
+      });
+      return response;
+    };
 
-  const nodeHandler = toNodeHandler(handler);
-  const res = createFakeRes();
-  await nodeHandler(
-    createFakeReq({ url: "/" }),
-    res as unknown as import("node:http").ServerResponse,
-  );
+    const nodeHandler = toNodeHandler(handler);
+    const res = createFakeRes();
+    await nodeHandler(
+      createFakeReq({ url: "/" }),
+      res as unknown as import("node:http").ServerResponse,
+    );
 
-  // Must not have fallen into the catch block and emitted a 500.
-  assertEquals(res.statusCode, 200);
-  assertEquals(res.ended, true);
+    // Must not have fallen into the catch block and emitted a 500.
+    assertEquals(res.statusCode, 200);
+    assertEquals(res.ended, true);
 
-  // Fallback preserves both cookies when the iterator exposes them separately.
-  const cookies = collectSetCookies(res);
-  assertEquals(cookies.length, 2);
-  assertEquals(cookies.includes("a=1; Path=/"), true);
-  assertEquals(cookies.includes("b=2; Path=/"), true);
-});
+    // Fallback preserves both cookies when the iterator exposes them separately.
+    const cookies = collectSetCookies(res);
+    assertEquals(cookies.length, 2);
+    assertEquals(cookies.includes("a=1; Path=/"), true);
+    assertEquals(cookies.includes("b=2; Path=/"), true);
+  });
 
-Deno.test("toNodeHandler passes array-valued request headers through to the Request", async () => {
-  let seen: string | null = null;
-  const handler = (req: Request) => {
-    seen = req.headers.get("x-multi");
-    return new Response("ok", { status: 200 });
-  };
+  it("passes array-valued request headers through to the Request", async () => {
+    let seen: string | null = null;
+    const handler = (req: Request) => {
+      seen = req.headers.get("x-multi");
+      return new Response("ok", { status: 200 });
+    };
 
-  const nodeHandler = toNodeHandler(handler);
-  const res = createFakeRes();
-  await nodeHandler(
-    createFakeReq({ url: "/", headers: { "x-multi": ["one", "two"] } }),
-    res as unknown as import("node:http").ServerResponse,
-  );
+    const nodeHandler = toNodeHandler(handler);
+    const res = createFakeRes();
+    await nodeHandler(
+      createFakeReq({ url: "/", headers: { "x-multi": ["one", "two"] } }),
+      res as unknown as import("node:http").ServerResponse,
+    );
 
-  // A collapsed-to-first-element bug would yield only "one".
-  assertEquals(seen, "one, two");
+    // A collapsed-to-first-element bug would yield only "one".
+    assertEquals(seen, "one, two");
+  });
+
+  it("records the native socket peer on the Web Request", async () => {
+    let sawLoopbackPeer = false;
+    const handler = (req: Request) => {
+      sawLoopbackPeer = isRequestFromLoopbackPeer(req);
+      return new Response("ok", { status: 200 });
+    };
+
+    const nodeHandler = toNodeHandler(handler);
+    const res = createFakeRes();
+    await nodeHandler(
+      createFakeReq({ url: "/_projects", remoteAddress: "127.0.0.1" }),
+      res as unknown as import("node:http").ServerResponse,
+    );
+
+    assertEquals(sawLoopbackPeer, true);
+  });
 });

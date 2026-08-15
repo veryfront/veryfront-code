@@ -23,7 +23,7 @@ import { createDefaultHostedProjectSteeringRefresh } from "./default-project-ste
 import type { HostedChatContextBudgetOptions } from "./chat-preparation.ts";
 import { applyAgentProjectContextChange } from "../project/context.ts";
 import { runWithProjectAgentRuntime } from "../project/agent-runtime.ts";
-import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
+import { buildInteractiveVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
 import {
   type AgentServiceRuntimeConfig,
   type CreateAgentServiceRuntimeOptions,
@@ -125,7 +125,7 @@ export function createProjectSteeringRefresh(context: NodeVeryfrontCloudAgentSer
   return createDefaultHostedProjectSteeringRefresh({
     fetchProjectInstructions: (lookup) => getProjectInstructions(context, lookup),
     fetchSkills: (lookup) => getSkillsConfig(context, lookup),
-    buildInstructions: buildVeryfrontCloudRuntimeInstructions,
+    buildInstructions: buildInteractiveVeryfrontCloudRuntimeInstructions,
     projectScopedRemoteToolOptions: {
       projectNavigationToolNames: DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES,
     },
@@ -341,7 +341,7 @@ export async function prepareChatExecutionWithinProjectRuntime(
       },
     },
     fetchSteering: (steeringInput) => fetchProjectSteering(context, steeringInput),
-    buildInstructions: buildVeryfrontCloudRuntimeInstructions,
+    buildInstructions: buildInteractiveVeryfrontCloudRuntimeInstructions,
     contextBudget: createHostedChatContextBudgetOptions(
       context,
       req,

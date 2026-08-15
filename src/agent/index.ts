@@ -284,6 +284,7 @@ export {
 
 export {
   buildVeryfrontCloudRuntimeInstructions,
+  type BuildVeryfrontCloudRuntimeInstructionsOptions,
   createVeryfrontCloudRuntimeSystemMessages,
   type CreateVeryfrontCloudRuntimeSystemMessagesInput,
 } from "./hosted/cloud-runtime-system-messages.ts";

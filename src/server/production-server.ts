@@ -40,6 +40,7 @@ import {
 import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import { getIsolationPosture } from "#veryfront/security/sandbox/worker-pool.ts";
 import { runStartupDiscovery } from "./startup-discovery.ts";
+import { runRequestInterceptor } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 const serverLog = logger.component("server");
 const globalLog = logger.component("global");
@@ -320,7 +321,7 @@ export function startProductionServer(
             async (req: Request) => {
               const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
               if (isWebSocketUpgrade) return coreHandler(req);
-              return coreHandler(await requestInterceptor(req));
+              return coreHandler(await runRequestInterceptor(req, requestInterceptor));
             },
             { ready: coreHandler.ready },
           )

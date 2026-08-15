@@ -113,11 +113,15 @@ it also contains `nextCursor`, call
 `load_skill({ inventory: { cursor: nextCursor } })` until the response omits
 `nextCursor`. Then call `load_skill({ load: { skillId } })` with a listed ID.
 
-Direct local and project tool consumers use flat input forms. Call
+Direct local tool consumers use flat load input. Call
 `load_skill({ skillId: "<SKILL_ID>" })` to load a skill. After loading it, call
 `load_skill_reference({ skillId: "<SKILL_ID>", reference: "<PATH>" })` to read
-a listed reference, resource, or asset. Direct local and project tools do not
-support inventory paging through `load_skill`.
+a listed reference, resource, or asset.
+
+Standalone project runtime consumers can page the authorized inventory with
+flat input. Call `load_skill({})` for the first page, then call
+`load_skill({ cursor: <CURSOR> })` when the response includes `nextCursor`.
+Load a listed skill with `load_skill({ skillId: "<SKILL_ID>" })`.
 
 Discovered skills visible to the agent are advertised by default:
 

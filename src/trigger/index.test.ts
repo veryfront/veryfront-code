@@ -8,7 +8,13 @@ import * as publicTriggerModule from "veryfront/trigger";
 import * as targetModule from "./target.ts";
 import * as validationModule from "./validation.ts";
 
+// The two diagnostics are public because the CLI enforces the same
+// two-declaration agreement on a `--input` file that never passes through
+// `schedule()`, and `cli/` may reach framework code only through package
+// surfaces.
 const expectedRuntimeExports = [
+  "conversationConflictDiagnostic",
+  "declarationConflictDiagnostic",
   "discoverSourceTriggers",
   "isTriggerId",
   "isTriggerTarget",
@@ -28,6 +34,14 @@ describe("trigger/index.ts exports", () => {
     );
     assertStrictEquals(triggerModule.runTriggerTarget, localRunnerModule.runTriggerTarget);
     assertStrictEquals(triggerModule.isTriggerTarget, targetModule.isTriggerTarget);
+    assertStrictEquals(
+      triggerModule.conversationConflictDiagnostic,
+      targetModule.conversationConflictDiagnostic,
+    );
+    assertStrictEquals(
+      triggerModule.declarationConflictDiagnostic,
+      targetModule.declarationConflictDiagnostic,
+    );
     assertStrictEquals(triggerModule.isTriggerId, validationModule.isTriggerId);
     assertStrictEquals(
       publicTriggerModule.discoverSourceTriggers,
@@ -35,6 +49,14 @@ describe("trigger/index.ts exports", () => {
     );
     assertStrictEquals(publicTriggerModule.runTriggerTarget, triggerModule.runTriggerTarget);
     assertStrictEquals(publicTriggerModule.isTriggerTarget, triggerModule.isTriggerTarget);
+    assertStrictEquals(
+      publicTriggerModule.conversationConflictDiagnostic,
+      triggerModule.conversationConflictDiagnostic,
+    );
+    assertStrictEquals(
+      publicTriggerModule.declarationConflictDiagnostic,
+      triggerModule.declarationConflictDiagnostic,
+    );
     assertStrictEquals(publicTriggerModule.isTriggerId, triggerModule.isTriggerId);
   });
 });

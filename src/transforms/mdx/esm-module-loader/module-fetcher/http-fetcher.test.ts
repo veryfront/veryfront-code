@@ -275,7 +275,6 @@ describe("module-fetcher/http-fetcher", () => {
       await remove(esmCacheDir, { recursive: true });
     }
   });
-
   // A single-quoted specifier may legally contain a double quote, and a cache
   // path may contain a backslash. Interpolating either into a hand-written
   // double-quoted literal emits a module that fails to parse, which takes down

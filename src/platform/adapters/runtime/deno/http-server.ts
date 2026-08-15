@@ -9,7 +9,7 @@ import { getEnvOverlayStorage } from "../../../compat/process.ts";
 import { isErrorAcrossRealms } from "../../../compat/error-introspection.ts";
 import { INITIALIZATION_ERROR, NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
-import { recordRequestPeerFromTransport } from "../shared/request-peer.ts";
+import { recordDenoServeRequestPeer } from "../shared/request-peer.ts";
 
 type DenoRequestHandler = (
   request: Request,
@@ -180,17 +180,7 @@ export async function createDenoServerWithRuntime(
     signal: controller.signal,
     handler: async (request, info) => {
       try {
-        const remoteAddress = info?.remoteAddr;
-        if (
-          remoteAddress?.transport === "tcp" &&
-          typeof remoteAddress.hostname === "string"
-        ) {
-          recordRequestPeerFromTransport(request, {
-            runtime: "deno",
-            transport: "tcp",
-            hostname: remoteAddress.hostname,
-          });
-        }
+        recordDenoServeRequestPeer(request, info);
         const response = await wrappedHandler(request);
         return toNativeResponse(response, NativeResponse);
       } catch (error) {

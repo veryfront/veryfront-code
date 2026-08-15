@@ -8,7 +8,6 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 import type { Plugin } from "veryfront/extensions/bundler";
 import { replaceSpecifiers } from "./lexer.ts";
-import { describeHtmlModuleResponse } from "./http-cache-helpers.ts";
 import { DEFAULT_REACT_VERSION, getReactUrls } from "./react-cdn.ts";
 import {
   type EnvironmentConfig,
@@ -21,6 +20,7 @@ import { readHttpModuleText } from "../shared/http-module-response.ts";
 import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/constants/limits.ts";
+import { describeHtmlModuleResponse } from "./http-cache-helpers.ts";
 
 const LOG_PREFIX = "[HTTP-HANDLER]";
 

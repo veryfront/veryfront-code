@@ -12,6 +12,7 @@ import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { VeryfrontError } from "veryfront/errors";
 import { withCwd } from "#veryfront/testing/cwd.ts";
 import type { CreateScheduleRunFromSourceResult, Run, VeryfrontRunsClient } from "veryfront/runs";
+import type { ScheduleDefinition } from "veryfront/schedule";
 import { setJsonMode } from "../../shared/json-output.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
 import {
@@ -20,6 +21,7 @@ import {
   handleScheduleCommand,
   normalizeLocalScheduleInput,
   resolveRemoteScheduleTarget,
+  toScheduleAgentOptions,
   waitForRemoteScheduleRun,
 } from "./handler.ts";
 
@@ -375,6 +377,26 @@ describe("remote schedule polling", () => {
         ),
       Error,
       "Remote schedule returned an invalid target.",
+    );
+  });
+
+  it("preserves fallback conversation addressing when the run target matches", () => {
+    const fallback = {
+      kind: "agent" as const,
+      id: "job-submission-orchestrator",
+      conversationMode: "create_new" as const,
+    };
+
+    assertEquals(
+      resolveRemoteScheduleTarget(
+        makeRun({ target: "agent:job-submission-orchestrator" }),
+        fallback,
+      ),
+      fallback,
+    );
+    assertEquals(
+      resolveRemoteScheduleTarget(makeRun({ target: "agent:different-orchestrator" }), fallback),
+      { kind: "agent", id: "different-orchestrator" },
     );
   });
 
@@ -743,5 +765,212 @@ describe("local schedule execution boundaries", () => {
     assertEquals(cleared, [17]);
     assertEquals(timeout.signal?.aborted, false);
     assertEquals(createLocalScheduleTimeout(undefined).signal, undefined);
+  });
+});
+
+describe("schedule/handler agent run options", () => {
+  const agentSchedule = {
+    id: "triage-new-cases",
+    schedule: "*/10 * * * *",
+    target: { kind: "agent", id: "case-triage" },
+  } as const satisfies ScheduleDefinition;
+
+  it("reads the conversation mode from the canonical target", () => {
+    const error = assertThrows(
+      () =>
+        toScheduleAgentOptions(
+          {
+            ...agentSchedule,
+            target: {
+              kind: "agent",
+              id: "case-triage",
+              conversationMode: "existing",
+              conversationId: "11111111-1111-4111-8111-111111111111",
+            },
+          },
+          {},
+        ),
+      VeryfrontError,
+      "Local scheduled agent runs cannot attach to an existing cloud conversation.",
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "invalid-argument");
+  });
+
+  it("still reads the legacy input._schedule_target conversation mode", () => {
+    const error = assertThrows(
+      () =>
+        toScheduleAgentOptions(agentSchedule, {
+          _schedule_target: {
+            conversationMode: "existing",
+            conversationId: "11111111-1111-4111-8111-111111111111",
+          },
+        }),
+      VeryfrontError,
+      "Local scheduled agent runs cannot attach to an existing cloud conversation.",
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "invalid-argument");
+  });
+
+  it("rejects a misspelled legacy key in an operator --input file", () => {
+    const error = assertThrows(
+      () =>
+        toScheduleAgentOptions(agentSchedule, {
+          _schedule_target: { converstionMode: "existing" },
+        }),
+      VeryfrontError,
+      "Schedule input._schedule_target.converstionMode is not supported.",
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "invalid-argument");
+  });
+
+  it("rejects an unusable legacy conversation mode in an operator --input file", () => {
+    const error = assertThrows(
+      () =>
+        toScheduleAgentOptions(agentSchedule, {
+          _schedule_target: { conversationMode: "bogus" },
+        }),
+      VeryfrontError,
+      "Schedule input._schedule_target.conversationMode must be create_new, existing, or none.",
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "invalid-argument");
+  });
+
+  it("keeps a well-formed legacy declaration working", () => {
+    const options = toScheduleAgentOptions(agentSchedule, {
+      _schedule_target: { conversationMode: "create_new" },
+    });
+
+    assertEquals(typeof options.agentInput, "string");
+  });
+
+  it("allows every other conversation mode", () => {
+    const options = toScheduleAgentOptions(
+      {
+        ...agentSchedule,
+        target: { kind: "agent", id: "case-triage", conversationMode: "create_new" },
+      },
+      {},
+    );
+
+    assertEquals(options.agentInput, "Run scheduled agent case-triage for triage-new-cases");
+  });
+
+  // A `--input` file replaces the authored input without passing through
+  // `schedule()`, so the agreement both fallbacks rely on is re-established
+  // here instead of assumed.
+  it("rejects an input prompt that disagrees with the definition prompt", () => {
+    const error = assertThrows(
+      () =>
+        toScheduleAgentOptions(
+          { ...agentSchedule, agentMessage: { prompt: "DEFINITION PROMPT" } },
+          { prompt: "OPERATOR OVERRIDE" },
+        ),
+      VeryfrontError,
+      "Schedule agentMessage.prompt and input.prompt are both set to different values. Declare it in one place.",
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "invalid-argument");
+  });
+
+  it("rejects an input conversation mode that disagrees with the definition target", () => {
+    const error = assertThrows(
+      () =>
+        toScheduleAgentOptions(
+          {
+            ...agentSchedule,
+            target: { kind: "agent", id: "case-triage", conversationMode: "create_new" },
+          },
+          {
+            _schedule_target: {
+              conversationMode: "existing",
+              conversationId: "11111111-1111-4111-8111-111111111111",
+            },
+          },
+        ),
+      VeryfrontError,
+      "Schedule target.conversationMode and input._schedule_target.conversationMode are both set to different values. Declare it in one place.",
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "invalid-argument");
+  });
+
+  it("rejects an input conversation id that disagrees with the definition target", () => {
+    const error = assertThrows(
+      () =>
+        toScheduleAgentOptions(
+          {
+            ...agentSchedule,
+            target: {
+              kind: "agent",
+              id: "case-triage",
+              conversationMode: "existing",
+              conversationId: "22222222-2222-4222-8222-222222222222",
+            },
+          },
+          {
+            _schedule_target: {
+              conversationMode: "existing",
+              conversationId: "11111111-1111-4111-8111-111111111111",
+            },
+          },
+        ),
+      VeryfrontError,
+      "Schedule target.conversationId and input._schedule_target.conversationId are both set to different values. Declare it in one place.",
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "invalid-argument");
+  });
+
+  it("accepts a conversation mode declared identically in both places", () => {
+    const options = toScheduleAgentOptions(
+      {
+        ...agentSchedule,
+        target: { kind: "agent", id: "case-triage", conversationMode: "create_new" },
+        agentMessage: { prompt: "Triage every open case." },
+      },
+      {
+        _schedule_target: { conversationMode: "create_new" },
+        prompt: "Triage every open case.",
+      },
+    );
+
+    assertEquals(options.agentInput, "Triage every open case.");
+  });
+
+  // Reading either copy yields the authored prompt: a disagreement is rejected
+  // above, so the fallback can never drop author-supplied content.
+  it("reads the prompt from either declaration", () => {
+    assertEquals(
+      toScheduleAgentOptions(
+        { ...agentSchedule, agentMessage: { prompt: "Triage every open case." } },
+        { prompt: "Triage every open case." },
+      ).agentInput,
+      "Triage every open case.",
+    );
+    assertEquals(
+      toScheduleAgentOptions(
+        { ...agentSchedule, agentMessage: { prompt: "Triage every open case." } },
+        {},
+      ).agentInput,
+      "Triage every open case.",
+    );
+    assertEquals(
+      toScheduleAgentOptions(agentSchedule, { prompt: "Legacy prompt." }).agentInput,
+      "Legacy prompt.",
+    );
+  });
+
+  it("returns no agent options for non-agent targets", () => {
+    assertEquals(
+      toScheduleAgentOptions(
+        { ...agentSchedule, target: { kind: "workflow", id: "escalate-ticket" } },
+        { _schedule_target: { conversationMode: "existing" } },
+      ),
+      {},
+    );
   });
 });
