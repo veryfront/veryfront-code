@@ -208,136 +208,17 @@ function maskMarkdownRegions(source: string): string {
   return maskHtmlComments(parts.join(""));
 }
 
-function readHexDigit(char: string | undefined): number {
-  if (char === undefined) return -1;
-  const code = char.charCodeAt(0);
-  if (code >= 0x30 && code <= 0x39) return code - 0x30;
-  if (code >= 0x41 && code <= 0x46) return code - 0x41 + 10;
-  if (code >= 0x61 && code <= 0x66) return code - 0x61 + 10;
-  return -1;
-}
-
-function readFixedHex(
-  value: string,
-  start: number,
-  length: number,
-): { readonly value: number; readonly end: number } {
-  let parsed = 0;
-  for (let index = 0; index < length; index++) {
-    const digit = readHexDigit(value[start + index]);
-    if (digit === -1) {
-      throw new SyntaxError("Invalid escaped module specifier");
-    }
-    parsed = parsed * 16 + digit;
-  }
-  return { value: parsed, end: start + length };
-}
-
-function decodeModuleSpecifier(value: string): string {
-  if (!value.includes("\\")) return value;
-
-  let decoded = "";
-  let cursor = 0;
-  while (cursor < value.length) {
-    const char = value[cursor++]!;
-    if (char !== "\\") {
-      if (char === "\n" || char === "\r") {
-        throw new SyntaxError("Module specifiers cannot contain line terminators");
-      }
-      decoded += char;
-      continue;
-    }
-    if (cursor >= value.length) {
-      throw new SyntaxError("Invalid escaped module specifier");
-    }
-
-    const escaped = value[cursor++]!;
-    const simple = {
-      b: "\b",
-      f: "\f",
-      n: "\n",
-      r: "\r",
-      t: "\t",
-      v: "\v",
-      "\\": "\\",
-      "'": "'",
-      '"': '"',
-    } as const;
-    if (Object.hasOwn(simple, escaped)) {
-      decoded += simple[escaped as keyof typeof simple];
-      continue;
-    }
-    if (escaped === "\n") continue;
-    if (escaped === "\r") {
-      if (value[cursor] === "\n") cursor++;
-      continue;
-    }
-    if (escaped === "0") {
-      if (/[0-9]/.test(value[cursor] ?? "")) {
-        throw new SyntaxError(
-          "Legacy octal escapes are not valid in module specifiers",
-        );
-      }
-      decoded += "\0";
-      continue;
-    }
-    if (escaped === "x") {
-      const parsed = readFixedHex(value, cursor, 2);
-      decoded += String.fromCharCode(parsed.value);
-      cursor = parsed.end;
-      continue;
-    }
-    if (escaped === "u") {
-      if (value[cursor] === "{") {
-        const closing = value.indexOf("}", cursor + 1);
-        if (closing === -1 || closing === cursor + 1) {
-          throw new SyntaxError("Invalid Unicode escape in module specifier");
-        }
-        let codePoint = 0;
-        for (let index = cursor + 1; index < closing; index++) {
-          const digit = readHexDigit(value[index]);
-          if (digit === -1) {
-            throw new SyntaxError("Invalid Unicode escape in module specifier");
-          }
-          codePoint = codePoint * 16 + digit;
-          if (codePoint > 0x10ffff) {
-            throw new SyntaxError(
-              "Module specifier Unicode escape is out of range",
-            );
-          }
-        }
-        decoded += String.fromCodePoint(codePoint);
-        cursor = closing + 1;
-        continue;
-      }
-      const parsed = readFixedHex(value, cursor, 4);
-      decoded += String.fromCharCode(parsed.value);
-      cursor = parsed.end;
-      continue;
-    }
-    if (escaped >= "1" && escaped <= "9") {
-      throw new SyntaxError(
-        "Legacy numeric escapes are not valid in module specifiers",
-      );
-    }
-
-    decoded += escaped;
-  }
-  return decoded;
-}
-
 function validateImportSpecifier(value: string): string {
-  const decoded = decodeModuleSpecifier(value);
   if (
-    decoded.length === 0 ||
-    decoded.length > MAX_IMPORT_SPECIFIER_CHARS ||
-    hasControlCharacter(decoded)
+    value.length === 0 ||
+    value.length > MAX_IMPORT_SPECIFIER_CHARS ||
+    hasControlCharacter(value)
   ) {
     throw new TypeError(
       `Chunk analysis import specifiers must contain between 1 and ${MAX_IMPORT_SPECIFIER_CHARS} characters without control characters`,
     );
   }
-  return decoded;
+  return value;
 }
 
 /**

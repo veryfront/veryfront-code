@@ -56,6 +56,9 @@ export interface NestedImportResult {
   original: string;
   start: number;
   end: number;
+  isDynamic?: boolean;
+  isSideEffect?: boolean;
+  suffix?: string;
   nestedFilePath: string | null;
   nestedPath?: string;
   relativePath?: string;

@@ -113,6 +113,115 @@ describe("module-fetcher/http-fetcher", () => {
     }
   });
 
+  it("preserves side-effect import syntax in the HTTP fallback", async () => {
+    const fetchedPaths: string[] = [];
+    const result = await fetchModuleViaHTTP(
+      "_vf_modules/pages/index.js",
+      { env: { get: () => undefined } } as unknown as RuntimeAdapter,
+      (path) => {
+        fetchedPaths.push(path);
+        return Promise.resolve(`/cache/${path.replaceAll("/", "__")}.mjs`);
+      },
+      { debug: () => {}, warn: () => {} } as unknown as Logger,
+      "docs",
+      true,
+      undefined,
+      {
+        fetchFn: (() =>
+          Promise.resolve(
+            new Response([
+              `import "/_vf_modules/setup.js";`,
+              `export const ready = true;`,
+            ].join("\n")),
+          )) as typeof fetch,
+      },
+    );
+
+    assertEquals(fetchedPaths, ["_vf_modules/setup.js"]);
+    assertEquals(
+      result,
+      [
+        `import "file:///cache/_vf_modules__setup.js.mjs";`,
+        `export const ready = true;`,
+      ].join("\n"),
+    );
+  });
+
+  it("preserves suffixes while mapping nested HTTP fallback imports", async () => {
+    const fetchedPaths: string[] = [];
+    const result = await fetchModuleViaHTTP(
+      "_vf_modules/pages/index.js",
+      { env: { get: () => undefined } } as unknown as RuntimeAdapter,
+      (path) => {
+        fetchedPaths.push(path);
+        return Promise.resolve(`/cache/${path.replaceAll("/", "__")}.mjs`);
+      },
+      { debug: () => {}, warn: () => {} } as unknown as Logger,
+      "docs",
+      true,
+      undefined,
+      {
+        fetchFn: (() =>
+          Promise.resolve(
+            new Response([
+              `import data from "/_vf_modules/data.json?raw#payload";`,
+              `import "/_vf_modules/setup.js#bootstrap";`,
+              `export const lazy = () => import("./Lazy.js?client");`,
+            ].join("\n")),
+          )) as typeof fetch,
+      },
+    );
+
+    assertEquals(fetchedPaths, [
+      "_vf_modules/data.json",
+      "_vf_modules/setup.js",
+      "./Lazy.js",
+    ]);
+    assertEquals(
+      result,
+      [
+        `import data from "file:///cache/_vf_modules__data.json.mjs?raw#payload";`,
+        `import "file:///cache/_vf_modules__setup.js.mjs#bootstrap";`,
+        `export const lazy = () => import("file:///cache/.__Lazy.js.mjs?client");`,
+      ].join("\n"),
+    );
+  });
+
+  // A single-quoted specifier may legally contain a double quote, and a cache
+  // path may contain a backslash. Interpolating either into a hand-written
+  // double-quoted literal emits a module that fails to parse, which takes down
+  // every other import in the file, not just the offending one.
+  it("escapes quotes and backslashes in emitted HTTP fallback import literals", async () => {
+    const result = await fetchModuleViaHTTP(
+      "_vf_modules/pages/index.js",
+      { env: { get: () => undefined } } as unknown as RuntimeAdapter,
+      () => Promise.resolve(`/cache/we"ird\\path.mjs`),
+      { debug: () => {}, warn: () => {} } as unknown as Logger,
+      "docs",
+      true,
+      undefined,
+      {
+        fetchFn: (() =>
+          Promise.resolve(
+            new Response([
+              `import a from '/_vf_modules/a.js?label="x"';`,
+              `import '/_vf_modules/b.js?label="y"';`,
+              `export const lazy = () => import('./c.js?label="z"');`,
+            ].join("\n")),
+          )) as typeof fetch,
+      },
+    );
+
+    assertEquals(
+      result,
+      [
+        `import a from "file:///cache/we\\"ird\\\\path.mjs?label=\\"x\\"";`,
+        `import "file:///cache/we\\"ird\\\\path.mjs?label=\\"y\\"";`,
+        `export const lazy = () => import("file:///cache/we\\"ird\\\\path.mjs?label=\\"z\\"");`,
+      ].join("\n"),
+    );
+  });
+
   it("uses the request origin for pinned local module fetches", async () => {
     const logger = { debug: () => {}, warn: () => {} } as unknown as Logger;
     const adapter = {

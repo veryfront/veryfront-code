@@ -50,6 +50,7 @@ import {
   buildHttpCacheIdentityMetadata,
   type CacheOptions,
   deriveHttpCacheRequestOptions,
+  describeHtmlModuleResponse,
   ensureAbsoluteDir,
   ensurePreparedHttpCacheRequestOptions,
   getEffectiveHttpCacheRequest,
@@ -573,15 +574,14 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
 
     if (isHtmlContent) {
       logger.error(
-        "[HTTP-CACHE] Received HTML instead of JavaScript, likely an esm.sh error page",
+        "[HTTP-CACHE] Received HTML instead of JavaScript",
         {
           url: safeUrl,
           contentType,
         },
       );
       throw BUNDLE_ERROR.create({
-        detail:
-          `Received HTML instead of JavaScript from ${safeUrl}. The package may not exist or failed to build on esm.sh.`,
+        detail: describeHtmlModuleResponse(safeUrl),
       });
     }
 

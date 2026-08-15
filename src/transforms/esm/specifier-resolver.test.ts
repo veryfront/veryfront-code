@@ -5,6 +5,7 @@ import type { CacheHttpModuleFn } from "./specifier-resolver.ts";
 import { buildReplacements, rewriteModuleImports } from "./specifier-resolver.ts";
 import type { CacheOptions } from "./http-cache-helpers.ts";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
+import { aliasStrategy } from "#veryfront/transforms/import-rewriter/strategies/alias-strategy.ts";
 
 describe("transforms/esm/specifier-resolver", () => {
   const defaultOptions: CacheOptions = {
@@ -115,6 +116,70 @@ describe("transforms/esm/specifier-resolver", () => {
       }
     });
 
+    it("rewrites escaped project aliases without mutable search hooks", async () => {
+      const stringPrototypeDescriptors = Object.getOwnPropertyDescriptors(String.prototype);
+      const regexpSearch = Object.getOwnPropertyDescriptor(RegExp.prototype, Symbol.search)!;
+
+      try {
+        Object.defineProperty(String.prototype, "search", {
+          configurable: true,
+          value() {
+            throw new Error("poisoned String.prototype.search");
+          },
+          writable: true,
+        });
+        Object.defineProperty(RegExp.prototype, Symbol.search, {
+          configurable: true,
+          value() {
+            throw new Error("poisoned RegExp @@search");
+          },
+        });
+
+        const result = await buildReplacements(
+          `import Foo from "@/components/Foo.tsx?raw#hero";`,
+          undefined,
+          defaultOptions,
+          noopCache,
+        );
+
+        assertEquals(
+          result.replacements.get("@/components/Foo.tsx?raw#hero"),
+          "/_vf_modules/components/Foo.js?raw#hero",
+        );
+      } finally {
+        Object.defineProperties(String.prototype, stringPrototypeDescriptors);
+        Object.defineProperty(RegExp.prototype, Symbol.search, regexpSearch);
+      }
+    });
+
+    it("rewrites escaped project aliases without mutable regex test hooks", async () => {
+      const regexpPrototypeDescriptors = Object.getOwnPropertyDescriptors(RegExp.prototype);
+
+      try {
+        Object.defineProperty(RegExp.prototype, "test", {
+          configurable: true,
+          value() {
+            throw new Error("poisoned RegExp.prototype.test");
+          },
+          writable: true,
+        });
+
+        const result = await buildReplacements(
+          `import Foo from "@/components/Foo.tsx?raw#hero";`,
+          undefined,
+          defaultOptions,
+          noopCache,
+        );
+
+        assertEquals(
+          result.replacements.get("@/components/Foo.tsx?raw#hero"),
+          "/_vf_modules/components/Foo.js?raw#hero",
+        );
+      } finally {
+        Object.defineProperties(RegExp.prototype, regexpPrototypeDescriptors);
+      }
+    });
+
     it("rewrites http URL when cache returns a path", async () => {
       const code = `import lodash from "https://esm.sh/lodash@4";`;
       const mockCache: CacheHttpModuleFn = async () => "/tmp/cache/http-99999.mjs";
@@ -189,6 +254,190 @@ describe("transforms/esm/specifier-resolver", () => {
         "/_vf_modules/_veryfront/chat/index.js?ssr=true",
       );
       assertEquals(cacheCalls, []);
+    });
+
+    it("rewrites @/ alias imports to the project-module form without fetching", async () => {
+      // The "@/" project alias is framework-supported (the default import map
+      // maps "@/" -> "/_vf_modules/"). If one escapes the MDX loader's alias
+      // rewrite and reaches this resolver, it must land on the project-module
+      // transport, never on esm.sh as a bogus scoped package.
+      const code = `import ResponsiveImage from "@/components/ResponsiveImage";`;
+      const cacheCalls: string[] = [];
+      const result = await buildReplacements(code, undefined, defaultOptions, async (url) => {
+        cacheCalls.push(url);
+        return "/tmp/cache/http-alias.mjs";
+      });
+
+      assertEquals(cacheCalls, []);
+      assertEquals(
+        result.replacements.get("@/components/ResponsiveImage"),
+        "/_vf_modules/components/ResponsiveImage.js",
+      );
+    });
+
+    it("preserves safe configured @/ module prefix mappings", async () => {
+      const code = `import ResponsiveImage from "@/components/ResponsiveImage";`;
+      const cacheCalls: string[] = [];
+      const result = await buildReplacements(
+        code,
+        undefined,
+        { ...defaultOptions, importMap: { imports: { "@/": "/_vf_modules/custom-root/" } } },
+        async (url) => {
+          cacheCalls.push(url);
+          return "/_vf_modules/unexpected-http-alias.mjs";
+        },
+      );
+
+      assertEquals(cacheCalls, []);
+      assertEquals(
+        result.replacements.get("@/components/ResponsiveImage"),
+        "/_vf_modules/custom-root/components/ResponsiveImage",
+      );
+    });
+
+    it("materializes escaped @/ alias imports when a module-server origin is available", async () => {
+      const code = `import ResponsiveImage from "@/components/ResponsiveImage";`;
+      const cacheCalls: string[] = [];
+      const result = await buildReplacements(
+        code,
+        undefined,
+        { ...defaultOptions, moduleServerOrigin: "https://preview.example" },
+        async (url) => {
+          cacheCalls.push(url);
+          return "/tmp/cache/http-alias.mjs";
+        },
+      );
+
+      assertEquals(cacheCalls, [
+        "https://preview.example/_vf_modules/components/ResponsiveImage.js",
+      ]);
+      assertEquals(
+        result.replacements.get("@/components/ResponsiveImage"),
+        "file:///tmp/cache/http-alias.mjs",
+      );
+    });
+
+    it("normalizes explicit source extensions in escaped @/ alias imports", async () => {
+      const code = `import Card from "@/components/Card.tsx";`;
+      const cacheCalls: string[] = [];
+      const result = await buildReplacements(code, undefined, defaultOptions, async (url) => {
+        cacheCalls.push(url);
+        return "/tmp/cache/http-alias.mjs";
+      });
+
+      assertEquals(cacheCalls, []);
+      assertEquals(
+        result.replacements.get("@/components/Card.tsx"),
+        "/_vf_modules/components/Card.js",
+      );
+    });
+
+    it("preserves query and fragment suffixes in escaped @/ alias imports", async () => {
+      const code =
+        `import raw from "@/components/Card.tsx?raw"; import icon from "@/components/Icon.svg#glyph";`;
+      const cacheCalls: string[] = [];
+      const result = await buildReplacements(code, undefined, defaultOptions, async (url) => {
+        cacheCalls.push(url);
+        return "/tmp/cache/http-alias.mjs";
+      });
+
+      assertEquals(cacheCalls, []);
+      assertEquals(
+        result.replacements.get("@/components/Card.tsx?raw"),
+        "/_vf_modules/components/Card.js?raw",
+      );
+      assertEquals(
+        result.replacements.get("@/components/Icon.svg#glyph"),
+        "/_vf_modules/components/Icon.svg.js#glyph",
+      );
+    });
+
+    // The URL shape is not chosen here. `AliasStrategy` is the framework's
+    // canonical "@/" rewriter and emits this exact shape for both its `ssr` and
+    // its browser target, so this resolver — a late fallback for an alias that
+    // escaped every earlier rewrite — must agree with it byte for byte or one
+    // specifier resolves to two different module URLs.
+    it("matches AliasStrategy for every extension class", async () => {
+      const paths = [
+        "components/ResponsiveImage",
+        "components/Card.tsx",
+        "components/Card.ts",
+        "components/Card.jsx",
+        "post.mdx",
+        "post.md",
+        "lib/data.json",
+        "components/Icon.svg",
+        "styles/globals.css",
+        "vendor/bundle.mjs",
+        "vendor/bundle.cjs",
+        "vendor/bundle.js",
+      ];
+
+      const code = paths.map((path, index) => `import m${index} from "@/${path}";`).join("\n");
+      const result = await buildReplacements(code, undefined, defaultOptions, async () => {
+        throw new Error("an @/ alias must never be fetched");
+      });
+
+      for (const path of paths) {
+        const expected = aliasStrategy.rewrite(
+          { specifier: `@/${path}` } as Parameters<typeof aliasStrategy.rewrite>[0],
+          { target: "ssr" } as Parameters<typeof aliasStrategy.rewrite>[1],
+        ).specifier;
+
+        assertEquals(result.replacements.get(`@/${path}`), expected, `@/${path}`);
+      }
+    });
+
+    // `.json` and `.md` reach the module server as `<path>.<ext>.js`, which it
+    // strips before source lookup (`module-server.ts` `filePathWithoutExt`), so
+    // the doubled extension resolves to the real file. `.svg` and `.css` are not
+    // servable through `/_vf_modules/` with or without the `.js`, so appending
+    // it costs nothing.
+    it("appends .js to non-JS source extensions and passes JS-like ones through", async () => {
+      const expectations: ReadonlyArray<readonly [string, string]> = [
+        ["@/lib/data.json", "/_vf_modules/lib/data.json.js"],
+        ["@/post.md", "/_vf_modules/post.md.js"],
+        ["@/post.mdx", "/_vf_modules/post.js"],
+        ["@/components/Icon.svg", "/_vf_modules/components/Icon.svg.js"],
+        ["@/components/Button", "/_vf_modules/components/Button.js"],
+        ["@/styles/globals.css", "/_vf_modules/styles/globals.css"],
+        ["@/vendor/bundle.mjs", "/_vf_modules/vendor/bundle.mjs"],
+        ["@/vendor/bundle.cjs", "/_vf_modules/vendor/bundle.cjs"],
+      ];
+
+      const code = expectations
+        .map(([specifier], index) => `import m${index} from "${specifier}";`)
+        .join("\n");
+      const result = await buildReplacements(code, undefined, defaultOptions, async () => {
+        throw new Error("an @/ alias must never be fetched");
+      });
+
+      for (const [specifier, expected] of expectations) {
+        assertEquals(result.replacements.get(specifier), expected, specifier);
+      }
+    });
+
+    it("never resolves an @/ alias against the page origin via an import-map prefix", async () => {
+      // A project import map commonly maps "@/" to "./". Resolving that mapped
+      // relative path against the page origin fetches the tenant's own public
+      // site, which answers with HTML (VERYFRONT-SERVER-G).
+      const code = `import ResponsiveImage from "@/components/ResponsiveImage";`;
+      const cacheCalls: string[] = [];
+      const result = await buildReplacements(
+        code,
+        "https://responsive-image.example.com/foo",
+        { ...defaultOptions, importMap: { imports: { "@/": "./" } } },
+        async (url) => {
+          cacheCalls.push(url);
+          return "/tmp/cache/http-origin.mjs";
+        },
+      );
+
+      assertEquals(cacheCalls, []);
+      assertEquals(
+        result.replacements.get("@/components/ResponsiveImage"),
+        "/_vf_modules/components/ResponsiveImage.js",
+      );
     });
 
     it("uses relative path when parent is an HTTP module", async () => {
@@ -324,7 +573,7 @@ describe("transforms/esm/specifier-resolver", () => {
     it("leaves a server-only package external instead of routing it to esm.sh", async () => {
       // `redis` and its explicit npm: form only run server-side. They must be
       // left in place for the runtime to resolve (node_modules / npm:), never
-      // fetched from esm.sh — so the cache function is never called and nothing
+      // fetched from esm.sh, so the cache function is never called and nothing
       // is degraded or aborted.
       for (const specifier of ["redis", "npm:redis", "npm:redis@5.11.0"]) {
         const code = `export const load = () => import(${JSON.stringify(specifier)});`;
