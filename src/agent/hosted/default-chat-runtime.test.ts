@@ -1,6 +1,12 @@
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { clearModelProviders, type ModelRuntime, registerModelProvider } from "#veryfront/provider";
@@ -10,6 +16,7 @@ import type {
   ToolExecutionContext,
 } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool";
+import { registerSkill, skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { runWithRequestContext as runWithProjectRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { defineSchema } from "../../schemas/define.ts";
@@ -86,6 +93,212 @@ function restoreEnv(key: string, value: string | undefined): void {
   }
   setEnv(key, value);
 }
+
+it("preserves layered cache metadata through hosted provider dispatch", async () => {
+  clearModelProviders();
+  let capturedPrompt: unknown;
+  registerModelProvider("test", () => ({
+    provider: "test",
+    modelId: "test/layered-system",
+    doGenerate: () => Promise.reject(new Error("unused")),
+    doStream(options: unknown) {
+      capturedPrompt = (options as { prompt?: unknown }).prompt;
+      return Promise.resolve({ stream: createTextStream() });
+    },
+  }));
+
+  try {
+    const staticMessage = {
+      role: "system" as const,
+      content: "Shared prompt",
+      providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+    };
+    const dynamicMessage = {
+      role: "system" as const,
+      content: '<project_context>\nproject_reference: "project-1"\n</project_context>',
+    };
+    const runtime = await createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+      options: {
+        projectId: "project-1",
+        authToken: "token-1",
+        instructions: [staticMessage, dynamicMessage],
+        model: "test/layered-system",
+        allowedTools: [],
+      },
+      config: {
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+      },
+      buildLocalTools: () => ({}),
+      createRemoteToolSource: emptyRemoteSource,
+      preloadLatestConversationUserText: false,
+    });
+
+    await withMockFetch(
+      () => Promise.resolve(Response.json({ tools: [] })),
+      async () => {
+        const result = await runtime.agent.stream({
+          messages: [],
+          abortSignal: new AbortController().signal,
+        });
+        for await (const _chunk of result.toUIMessageStream()) {
+          // Consume the stream so provider dispatch completes.
+        }
+      },
+    );
+
+    const prompt = capturedPrompt as Array<Record<string, unknown>>;
+    assertEquals(prompt[0], staticMessage);
+    assertEquals(prompt[1], dynamicMessage);
+  } finally {
+    clearModelProviders();
+  }
+});
+
+it("assembles registry skill context when live steering is absent", async () => {
+  clearModelProviders();
+  skillRegistryInternal.clearAll();
+  let capturedPrompt: unknown;
+  registerSkill("deploy", {
+    id: "deploy",
+    metadata: { name: "Deploy", description: "Deploy the project" },
+    rootPath: "/test/skills/deploy",
+  });
+  registerModelProvider("test", () => ({
+    provider: "test",
+    modelId: "test/plain-hosted-system",
+    doGenerate: () => Promise.reject(new Error("unused")),
+    doStream(options: unknown) {
+      capturedPrompt = (options as { prompt?: unknown }).prompt;
+      return Promise.resolve({ stream: createTextStream() });
+    },
+  }));
+
+  try {
+    const runtime = await createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+      options: {
+        projectId: "project-1",
+        authToken: "token-1",
+        instructions: "Plain hosted instructions",
+        model: "test/plain-hosted-system",
+        allowedTools: ["load_skill"],
+      },
+      config: {
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+      },
+      buildLocalTools: () => ({ load_skill: localTool("Load a skill") }),
+      createRemoteToolSource: emptyRemoteSource,
+      preloadLatestConversationUserText: false,
+    });
+
+    await withMockFetch(
+      () => Promise.resolve(Response.json({ tools: [] })),
+      async () => {
+        const result = await runtime.agent.stream({
+          messages: [],
+          abortSignal: new AbortController().signal,
+        });
+        for await (const _chunk of result.toUIMessageStream()) {
+          // Consume the stream so provider dispatch completes.
+        }
+      },
+    );
+
+    const systemPrompt = (capturedPrompt as Array<{ role?: string; content?: unknown }>)
+      .filter((message) => message.role === "system" && typeof message.content === "string")
+      .map((message) => message.content)
+      .join("\n\n");
+    assertStringIncludes(systemPrompt, "<available_skills>");
+    assertStringIncludes(systemPrompt, '"skillId":"deploy"');
+  } finally {
+    skillRegistryInternal.clearAll();
+    clearModelProviders();
+  }
+});
+
+it("applies refreshed structured system messages in hosted chat", async () => {
+  clearModelProviders();
+  let capturedPrompt: unknown;
+  let taskContext: DefaultHostedChatRuntimeTaskContext | undefined;
+  registerModelProvider("test", () => ({
+    provider: "test",
+    modelId: "test/refreshed-layered-system",
+    doGenerate: () => Promise.reject(new Error("unused")),
+    doStream(options: unknown) {
+      capturedPrompt = (options as { prompt?: unknown }).prompt;
+      return Promise.resolve({ stream: createTextStream() });
+    },
+  }));
+
+  try {
+    const runtime = await createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+      options: {
+        projectId: "project-1",
+        authToken: "token-1",
+        instructions: [{ role: "system", content: "Original structured prompt" }],
+        model: "test/refreshed-layered-system",
+        allowedTools: [],
+        liveProjectSteering: {
+          agent: {
+            id: "agent-1",
+            name: "Agent",
+            description: "Agent description",
+            instructions: "Original structured prompt",
+            tools: true,
+          },
+          environmentContext: "Editor context",
+          initialProjectInstructions: "Original structured prompt",
+          initialSkills: [],
+        },
+      },
+      config: {
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+      },
+      createTaskContext: (input) => {
+        taskContext = {
+          authToken: input.options.authToken,
+          projectId: input.options.projectId ?? "",
+          branchId: input.options.branchId ?? null,
+          model: input.modelId,
+          steeringRevision: 0,
+        };
+        return taskContext;
+      },
+      refreshSystem: () => [{ role: "system", content: "Refreshed structured prompt" }],
+      buildLocalTools: () => ({}),
+      createRemoteToolSource: emptyRemoteSource,
+      preloadLatestConversationUserText: false,
+    });
+    assertExists(taskContext);
+    taskContext.steeringRevision = 1;
+
+    await withMockFetch(
+      () => Promise.resolve(Response.json({ tools: [] })),
+      async () => {
+        const result = await runtime.agent.stream({
+          messages: [],
+          abortSignal: new AbortController().signal,
+        });
+        for await (const _chunk of result.toUIMessageStream()) {
+          // Consume the stream so provider dispatch completes.
+        }
+      },
+    );
+
+    const systemContents = (capturedPrompt as Array<{ role?: string; content?: unknown }>)
+      .filter((message) => message.role === "system")
+      .map((message) => message.content);
+    assertEquals(systemContents[0], "Refreshed structured prompt");
+    assertEquals(systemContents.includes("Original structured prompt"), false);
+  } finally {
+    clearModelProviders();
+  }
+});
 
 Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime", async () => {
   let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;

@@ -51,6 +51,8 @@ function createQueueController(): ConversationRunEventQueueController & {
   };
 }
 
+const RETRY_LOG_MESSAGE = "Durable run mirror flush failed; queued for retry";
+
 describe("agent/conversation-run-chunk-mirror", () => {
   it("prepares UI chunks into durable events and enqueues them", async () => {
     const queueController = createQueueController();
@@ -298,6 +300,52 @@ describe("agent/conversation-run-chunk-mirror", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  // VERYFRONT-AGENT-3: every retry_scheduled flush logged at error level, so a
+  // degraded append endpoint emitted a Sentry error per ~5s retry per run. The
+  // per-attempt log must stay at warn and escalate to error only once the
+  // failure streak signals the condition is not self-healing.
+  it("warns on early retry attempts and escalates to error at the failure threshold", async () => {
+    const logs: Array<{ level: "warn" | "error"; message: string; consecutiveFailures: unknown }> =
+      [];
+    const failingFetch = (() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ detail: "upstream unavailable" }),
+          { status: 503, headers: { "Content-Type": "application/json" } },
+        ),
+      )) as typeof fetch;
+    const mirror = createHostedConversationRunChunkMirror({
+      authToken: "token",
+      apiUrl: "https://api.example.test",
+      conversationId: "11111111-1111-4111-8111-111111111111",
+      runId: "run-1",
+      latestEventId: 0,
+      fetch: failingFetch,
+      instrumentation: {
+        warn: (message, metadata) => {
+          logs.push({ level: "warn", message, consecutiveFailures: metadata.consecutiveFailures });
+        },
+        error: (message, metadata) => {
+          logs.push({ level: "error", message, consecutiveFailures: metadata.consecutiveFailures });
+        },
+      },
+    });
+
+    await mirror.appendEvents([{ type: "TEXT_MESSAGE_CONTENT", delta: "persisted" }]);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await mirror.flush();
+    }
+    mirror.dispose();
+
+    assertEquals(logs, [
+      { level: "warn", message: RETRY_LOG_MESSAGE, consecutiveFailures: 1 },
+      { level: "warn", message: RETRY_LOG_MESSAGE, consecutiveFailures: 2 },
+      { level: "warn", message: RETRY_LOG_MESSAGE, consecutiveFailures: 3 },
+      { level: "warn", message: RETRY_LOG_MESSAGE, consecutiveFailures: 4 },
+      { level: "error", message: RETRY_LOG_MESSAGE, consecutiveFailures: 5 },
+    ]);
   });
 
   it("records a terminal auth rejection instead of retrying forever", async () => {

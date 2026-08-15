@@ -16,7 +16,7 @@
   "src/platform/adapters/token/veryfront/api-client.test.ts": 1,
   "src/server/services/rsc/endpoints/handler-registry.test.ts": 1,
   "tests/docs/guide-code-examples.test.ts": 1,
-  "tests/docs/guide-content.test.ts": 29,
+  "tests/docs/guide-content.test.ts": 28,
   "tests/unit/build/compile-binary-includes.test.ts": 1,
   "tests/validation/005-router-divergence/005.2-ssg-app-router-pages.test.ts": 1,
   "tests/validation/014-deployment-modes/014.1-node-env-validation.test.ts": 2

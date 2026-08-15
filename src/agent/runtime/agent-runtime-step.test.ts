@@ -1,14 +1,20 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { ModelRuntime } from "#veryfront/provider";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
-import type { AgentConfig, Message } from "../types.ts";
+import type { AgentConfig, AgentSystem, Message } from "../types.ts";
 import type { AgentRuntimeStepState, RuntimeStepToolLoader } from "./agent-runtime-step.ts";
 import {
   prepareAgentRuntimeStep,
   withIntegrationToolDiscoveryStatus,
 } from "./agent-runtime-step.ts";
 import { createToolExposureState } from "./tool-exposure.ts";
+import { flattenSystemInstructions } from "./tool-inventory.ts";
+
+function systemText(system: AgentSystem): string {
+  return typeof system === "string" ? system : flattenSystemInstructions(system);
+}
 
 function toolDefinition(name: string): ToolDefinition {
   return {
@@ -27,6 +33,61 @@ function remoteToolSource(id: string): RemoteToolSource {
 }
 
 describe("agent/runtime-step", () => {
+  it("passes the configured provider alias to runtime-state cloning", async () => {
+    let providerOptionKey: unknown;
+    await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "bedrock/claude-sonnet", system: "Base" } as AgentConfig,
+      effectiveModel: "bedrock/claude-sonnet",
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async () => [],
+      supportsToolCalling: true,
+      messages: [],
+      mode: "generate",
+      remoteToolSources: undefined,
+      resolveRuntimeState: async (...args: unknown[]) => {
+        providerOptionKey = args[5];
+        return { systemPrompt: "Base" };
+      },
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+    });
+
+    assertEquals(providerOptionKey, "bedrock");
+  });
+
+  it("derives runtime-state provider keys from the effective runtime", async () => {
+    let providerOptionKey: unknown;
+    await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "bedrock/claude-sonnet", system: "Base" } as AgentConfig,
+      effectiveModel: "bedrock/claude-sonnet",
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async () => [],
+      supportsToolCalling: true,
+      messages: [],
+      mode: "generate",
+      modelRuntime: { provider: "AWS-Anthropic" } as unknown as ModelRuntime,
+      remoteToolSources: undefined,
+      resolveRuntimeState: async (...args: unknown[]) => {
+        providerOptionKey = args[5];
+        return { systemPrompt: "Base" };
+      },
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+    });
+
+    assertEquals(providerOptionKey, "AWS-Anthropic");
+  });
+
   it("exposes only bootstrap and loaded schemas in deferred mode", async () => {
     const state = createToolExposureState(["get_release"]);
     const prepared = await prepareAgentRuntimeStep({
@@ -92,7 +153,7 @@ describe("agent/runtime-step", () => {
       toolExposureState: state,
     });
 
-    assertEquals(prepared.systemPrompt.includes("- web_search"), true);
+    assertEquals(systemText(prepared.systemPrompt).includes("- web_search"), true);
     assertEquals(prepared.tools.map((tool) => tool.name), ["tool_search"]);
     assertEquals(
       prepared.toolExposurePlan.authorized.map((tool) => tool.name),
@@ -195,7 +256,7 @@ describe("agent/runtime-step", () => {
       resolveRuntimeState: async () => ({ systemPrompt: firstSystemPrompt }),
     });
     const secondSystemPrompt = withIntegrationToolDiscoveryStatus(
-      second.systemPrompt,
+      systemText(second.systemPrompt),
       second.integrationToolDiscovery,
     );
 

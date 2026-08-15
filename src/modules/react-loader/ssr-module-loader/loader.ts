@@ -30,7 +30,6 @@ import {
   getMaxConcurrentTransforms,
   MAX_TRANSFORM_DEPTH,
   TRANSFORM_ACQUIRE_TIMEOUT_MS,
-  TRANSFORM_BATCH_SIZE,
   TRANSFORM_IN_PROGRESS_STALE_EVICTION_MS,
   TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS,
 } from "./constants.ts";
@@ -787,7 +786,6 @@ export class SSRModuleLoader {
       // Each recursive child acquires its own slot for its own transform only.
       // This prevents hierarchical deadlock where parent holds a slot while
       // children also need slots (10 batch x 2 depth = 21 slots, but limit is 17).
-      const crossProjectPaths = new Map<string, string>();
       const localFs = createFileSystem();
 
       const localImportPaths = await this.depValidator.processLocalImports(
@@ -798,25 +796,10 @@ export class SSRModuleLoader {
         dependencyHashCache,
       );
 
-      for (let i = 0; i < parseResult.crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
-        const batch = parseResult.crossProjectImports.slice(i, i + TRANSFORM_BATCH_SIZE);
-        await Promise.all(
-          batch.map(async (crossImport) => {
-            try {
-              const tempPath = await this.transformCrossProjectImport(crossImport);
-              crossProjectPaths.set(crossImport.specifier, tempPath);
-            } catch (error) {
-              this.depValidator.missingDependencies.push({
-                specifier: crossImport.specifier,
-                fromFile: filePath,
-                reason: `Failed to fetch cross-project import: ${
-                  error instanceof Error ? error.message : String(error)
-                }`,
-              });
-            }
-          }),
-        );
-      }
+      const crossProjectPaths = await this.depValidator.processCrossProjectImports(
+        parseResult.crossProjectImports,
+        filePath,
+      );
 
       // Hold project slots only around the actual transform and file write.
       const entry = await this.withTransformCapacity(filePath, "build", async () => {

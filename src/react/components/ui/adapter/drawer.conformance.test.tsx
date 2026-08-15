@@ -61,6 +61,7 @@ function render(el: React.ReactElement): { doc: Document; unmount: () => void } 
   const host = dom.window.document.getElementById("root")!;
   const root = createRoot(host);
   flushSync(() => root.render(el));
+  flushSync(() => {});
   return {
     doc: dom.window.document as unknown as Document,
     unmount: () => {
@@ -78,6 +79,18 @@ function click(node: Element): void {
   flushSync(() =>
     node.dispatchEvent(new MouseEventCtor("click", { bubbles: true, cancelable: true }))
   );
+}
+
+async function waitFor(
+  condition: () => boolean,
+  message: string,
+  timeoutMs = 3_000,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (!condition()) {
+    if (Date.now() - startedAt > timeoutMs) throw new Error(message);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 function runDrawerConformance(label: string, Wrap: React.FC<{ children: React.ReactNode }>): void {
@@ -114,6 +127,37 @@ function runDrawerConformance(label: string, Wrap: React.FC<{ children: React.Re
           h.textContent === "Sheet"
         );
         assert(!stillThere, "Close dismisses the sheet");
+      } finally {
+        unmount();
+      }
+    });
+
+    it("keeps a default-open drawer without a trigger inside the token scope", async () => {
+      const { doc, unmount } = render(
+        <Wrap>
+          <div data-vf-ui="" data-testid="scope">
+            <Drawer defaultOpen>
+              <DrawerContent>
+                <DrawerTitle>Sheet</DrawerTitle>
+              </DrawerContent>
+            </Drawer>
+          </div>
+        </Wrap>,
+      );
+      try {
+        await waitFor(
+          () => Array.from(doc.querySelectorAll("h2")).some((h) => h.textContent === "Sheet"),
+          "default-open drawer did not render without a trigger",
+        );
+        const title = Array.from(doc.querySelectorAll("h2")).find((h) => h.textContent === "Sheet");
+        assert(title, "default-open drawer renders without a trigger");
+        const panel = title!.closest('[role="dialog"]');
+        assert(panel, "drawer title is contained by the dialog panel");
+        assertEquals(
+          panel!.closest("[data-vf-ui],[data-vf-chat]"),
+          doc.querySelector('[data-testid="scope"]'),
+          "no-trigger drawer portal stays inside the token scope",
+        );
       } finally {
         unmount();
       }
@@ -217,9 +261,12 @@ const altDrawer: DrawerParts = {
       open: ctx?.open ?? false,
       setOpen: (next: boolean) => ctx?.setOpen(next),
       defaultTitleId: "alt-drawer-title",
+      defaultContentId: "alt-drawer-content",
       defaultDescriptionId: "alt-drawer-description",
+      contentId: "alt-drawer-content",
       descriptionId: "alt-drawer-description",
       descriptionPresent: false,
+      setContentId: () => {},
       setTitleId: () => {},
       setDescriptionId: () => {},
       setTitlePresent: () => {},

@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import type {
   RemoteMCPToolSourceConfig,
   RemoteToolSource,
@@ -47,6 +48,44 @@ function remoteSourceFromConfig(config: RemoteMCPToolSourceConfig): RemoteToolSo
       Promise.resolve({ ok: true }),
   };
 }
+
+describe("structured system messages", () => {
+  it("preserves cache metadata while adding tool inventory", async () => {
+    const staticMessage = {
+      role: "system" as const,
+      content: "Shared prompt",
+      providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+    };
+    const dynamicMessage = {
+      role: "system" as const,
+      content: '<project_context>\nproject_reference: "project-1"\n</project_context>',
+    };
+
+    const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext: {
+        authToken: "token",
+        projectId: "project-1",
+        model: "anthropic/claude-sonnet-4-6",
+      },
+      instructions: [staticMessage, dynamicMessage],
+      localTools: {},
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      allowedToolNames: [],
+      createRemoteToolSource: remoteSourceFromConfig,
+      preloadLatestConversationUserText: false,
+    });
+
+    assertExists(toolAssembly.systemMessages);
+    assertEquals(toolAssembly.systemMessages[0], staticMessage);
+    assertEquals(toolAssembly.systemMessages[1], dynamicMessage);
+    assertStringIncludes(
+      toolAssembly.systemMessages.at(-1)?.content ?? "",
+      "Current run tool inventory:",
+    );
+  });
+});
 
 Deno.test("filterHostedChatRuntimeLocalTools filters and sorts local tools", () => {
   const result = filterHostedChatRuntimeLocalTools({

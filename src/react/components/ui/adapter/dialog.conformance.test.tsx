@@ -83,6 +83,18 @@ function mount(element: React.ReactElement): {
   };
 }
 
+async function waitFor(
+  condition: () => boolean,
+  message: string,
+  timeoutMs = 3_000,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (!condition()) {
+    if (Date.now() - startedAt > timeoutMs) throw new Error(message);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 function runDialogConformance(
   label: string,
   Wrap: React.FC<{ children: React.ReactNode }>,
@@ -107,6 +119,31 @@ function runDialogConformance(
         assert(
           panel.className.includes("rounded-xl"),
           "default panel classes preserved",
+        );
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("keeps a default-open dialog without a trigger inside the token scope", async () => {
+      const { scope, cleanup } = mount(
+        <Wrap>
+          <Dialog defaultOpen>
+            <DialogContent>Body</DialogContent>
+          </Dialog>
+        </Wrap>,
+      );
+      try {
+        await waitFor(
+          () => scope.querySelector('[role="dialog"]') !== null,
+          "default-open dialog did not render without a trigger",
+        );
+        const panel = scope.querySelector('[role="dialog"]');
+        assert(panel, "default-open dialog renders without a trigger");
+        assertEquals(
+          panel!.closest("[data-vf-ui],[data-vf-chat]"),
+          scope,
+          "no-trigger dialog portal stays inside the token scope",
         );
       } finally {
         cleanup();

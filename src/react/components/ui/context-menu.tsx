@@ -117,10 +117,23 @@ export interface ContextMenuTriggerProps extends React.HTMLAttributes<HTMLDivEle
  * the child element, which must forward `ref` to its DOM node.
  */
 export function ContextMenuTrigger(
-  { asChild, onContextMenu, onKeyDown, children, ref, ...props }: ContextMenuTriggerProps,
+  {
+    asChild,
+    onContextMenu,
+    onKeyDown,
+    children,
+    ref,
+    role,
+    tabIndex,
+    "aria-haspopup": ariaHasPopup,
+    ...props
+  }: ContextMenuTriggerProps,
 ): React.ReactElement {
   const ctx = React.useContext(ContextMenuContext);
   const Comp = asChild ? Slot : "div";
+  const triggerProps = asChild
+    ? { role, tabIndex, "aria-haspopup": ariaHasPopup }
+    : { role: role ?? "button", tabIndex: tabIndex ?? 0, "aria-haspopup": ariaHasPopup ?? "menu" };
   const setTriggerRef = React.useCallback((element: HTMLElement | null) => {
     if (ctx) ctx.triggerRef.current = element;
   }, [ctx]);
@@ -131,6 +144,7 @@ export function ContextMenuTrigger(
   return (
     <Comp
       ref={composedRef}
+      {...triggerProps}
       data-state={ctx?.open ? "open" : "closed"}
       onContextMenu={(e: React.MouseEvent<HTMLDivElement>) => {
         onContextMenu?.(e);

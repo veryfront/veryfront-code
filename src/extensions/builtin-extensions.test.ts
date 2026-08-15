@@ -7,11 +7,11 @@ import type { Extension } from "./types.ts";
 import type { SchemaValidator } from "./schema/index.ts";
 import {
   createBuiltinExtensions,
+  createDeferredBuiltinExtension,
   createEvalCliBuiltinExtensions,
-  createOptionalBuiltinExtension,
+  DEFERRED_BUILTIN_EXTENSIONS,
   ensureBuiltinEvalReportExporterRegistry,
   ensureBuiltinSchemaValidator,
-  OPTIONAL_BUILTIN_EXTENSIONS,
 } from "./builtin-extensions.ts";
 import { mergeExtensions } from "./discovery.ts";
 import { getDeferredExtensionState } from "./deferred-extension.ts";
@@ -98,7 +98,7 @@ describe("ensureBuiltinEvalReportExporterRegistry", () => {
 });
 
 describe("createBuiltinExtensions", () => {
-  async function loadOptionalBuiltin(name: string): Promise<Extension> {
+  async function loadDeferredBuiltin(name: string): Promise<Extension> {
     const candidate = createBuiltinExtensions().find((entry) => entry.extension.name === name);
     assert(candidate);
     const deferred = getDeferredExtensionState(candidate);
@@ -109,7 +109,7 @@ describe("createBuiltinExtensions", () => {
   }
 
   it("uses the loaded AuthProvider extension contract as runtime metadata", async () => {
-    const authExtension = await loadOptionalBuiltin("ext-auth-jwt");
+    const authExtension = await loadDeferredBuiltin("ext-auth-jwt");
 
     assertEquals(
       Object.hasOwn(authExtension.provides ?? {}, "AuthProvider") ||
@@ -119,7 +119,7 @@ describe("createBuiltinExtensions", () => {
   });
 
   it("uses the loaded OpenTelemetry contracts as runtime metadata", async () => {
-    const otelExtension = await loadOptionalBuiltin(
+    const otelExtension = await loadDeferredBuiltin(
       "ext-observability-opentelemetry",
     );
 
@@ -134,7 +134,7 @@ describe("createBuiltinExtensions", () => {
   });
 
   it("loads the generic HTTP eval exporter as a deferred builtin", async () => {
-    const httpExtension = await loadOptionalBuiltin("ext-eval-report-http");
+    const httpExtension = await loadDeferredBuiltin("ext-eval-report-http");
 
     assertEquals(
       httpExtension.contracts?.requires?.includes(EvalReportExporterRegistryName),
@@ -142,7 +142,7 @@ describe("createBuiltinExtensions", () => {
     );
   });
 
-  it("keeps optional candidates deferred until the loader selects them", () => {
+  it("keeps candidates deferred until the loader selects them", () => {
     const authCandidate = createBuiltinExtensions().find((entry) =>
       entry.extension.name === "ext-auth-jwt"
     );
@@ -153,7 +153,7 @@ describe("createBuiltinExtensions", () => {
 
   it("ships baseline CSS and Node WebSocket providers as deferred builtins", () => {
     for (const name of ["ext-css-tailwind", "ext-node-websocket-ws"]) {
-      const definition = OPTIONAL_BUILTIN_EXTENSIONS.find((entry) => entry.name === name);
+      const definition = DEFERRED_BUILTIN_EXTENSIONS.find((entry) => entry.name === name);
       const candidate = createBuiltinExtensions().find((entry) => entry.extension.name === name);
 
       assert(definition, `${name} must be part of the default runtime composition`);
@@ -163,7 +163,7 @@ describe("createBuiltinExtensions", () => {
   });
 
   it("keeps builtin package discovery metadata auto-activated", async () => {
-    for (const definition of OPTIONAL_BUILTIN_EXTENSIONS) {
+    for (const definition of DEFERRED_BUILTIN_EXTENSIONS) {
       const manifest = JSON.parse(
         await Deno.readTextFile(
           new URL(
@@ -257,11 +257,12 @@ describe("createBuiltinExtensions", () => {
     );
   });
 
-  it("skips unavailable optional built-in implementations", async () => {
-    const candidate = createOptionalBuiltinExtension({
+  it("skips unavailable package-backed deferred implementations", async () => {
+    const candidate = createDeferredBuiltinExtension({
       name: "ext-missing",
       origin: "veryfront/ext-missing",
       sourceDirectory: "ext-missing",
+      availability: "package",
     });
 
     const logs: string[] = [];
@@ -278,11 +279,12 @@ describe("createBuiltinExtensions", () => {
     assertEquals(logs.some((message) => message.includes("ext-missing")), true);
   });
 
-  it("rejects an invalid optional built-in factory result", async () => {
-    const candidate = createOptionalBuiltinExtension({
+  it("rejects an invalid root-bundled deferred factory result", async () => {
+    const candidate = createDeferredBuiltinExtension({
       name: "ext-invalid",
       origin: "veryfront/ext-invalid",
       sourceDirectory: "ext-invalid",
+      availability: "root-bundled",
       factory: () => null as unknown as Extension,
     });
 
@@ -293,11 +295,12 @@ describe("createBuiltinExtensions", () => {
     );
   });
 
-  it("rejects optional factory identity drift", async () => {
-    const candidate = createOptionalBuiltinExtension({
+  it("rejects deferred factory identity drift", async () => {
+    const candidate = createDeferredBuiltinExtension({
       name: "ext-expected",
       origin: "veryfront/ext-expected",
       sourceDirectory: "ext-expected",
+      availability: "root-bundled",
       factory: () => ({
         name: "ext-unexpected",
         version: "1.0.0",
@@ -314,10 +317,11 @@ describe("createBuiltinExtensions", () => {
 
   it("does not materialize a builtin hidden by a higher-priority extension", async () => {
     let factoryCalls = 0;
-    const deferred = createOptionalBuiltinExtension({
+    const deferred = createDeferredBuiltinExtension({
       name: "ext-overridden",
       origin: "veryfront/ext-overridden",
       sourceDirectory: "ext-overridden",
+      availability: "root-bundled",
       factory: () => {
         factoryCalls++;
         return {
@@ -348,16 +352,28 @@ describe("createBuiltinExtensions", () => {
     await loader.teardownAll();
   });
 
-  it("declares eval CLI selectors for optional exporter builtins", () => {
-    const http = OPTIONAL_BUILTIN_EXTENSIONS.find((definition) =>
+  it("declares eval CLI selectors for deferred exporter builtins", () => {
+    const http = DEFERRED_BUILTIN_EXTENSIONS.find((definition) =>
       definition.name === "ext-eval-report-http"
     );
-    const mlflow = OPTIONAL_BUILTIN_EXTENSIONS.find((definition) =>
+    const mlflow = DEFERRED_BUILTIN_EXTENSIONS.find((definition) =>
       definition.name === "ext-eval-report-mlflow"
     );
 
     assertEquals(http?.evalExporterSelection, { kind: "any-selected" });
     assertEquals(mlflow?.evalExporterSelection, { kind: "id", id: "mlflow" });
+  });
+
+  it("distinguishes deferred activation from implementation availability", () => {
+    const http = DEFERRED_BUILTIN_EXTENSIONS.find((definition) =>
+      definition.name === "ext-eval-report-http"
+    );
+    const mlflow = DEFERRED_BUILTIN_EXTENSIONS.find((definition) =>
+      definition.name === "ext-eval-report-mlflow"
+    );
+
+    assertEquals(http?.availability, "package");
+    assertEquals(mlflow?.availability, "root-bundled");
   });
 
   it("builds a minimal eval CLI builtin set for selected eval exporters", () => {
@@ -372,7 +388,7 @@ describe("createBuiltinExtensions", () => {
     assertEquals(names.includes("ext-observability-opentelemetry"), false);
   });
 
-  it("does not load optional eval exporter builtins when no exporters are selected", () => {
+  it("does not load deferred eval exporter builtins when no exporters are selected", () => {
     const names = createEvalCliBuiltinExtensions([]).map((entry) => entry.extension.name);
 
     assertEquals(names.includes("ext-eval-report-http"), false);

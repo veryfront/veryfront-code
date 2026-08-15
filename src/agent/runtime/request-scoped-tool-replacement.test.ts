@@ -6,6 +6,7 @@ import { type ModelRuntime } from "#veryfront/provider";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool, toolRegistry } from "#veryfront/tool";
 import { agent } from "../index.ts";
+import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
 
 function toolNamesFromGenerateOptions(options: unknown): string[] {
   const tools = (options as { tools?: Record<string, unknown> | Array<{ name?: string }> })
@@ -152,6 +153,64 @@ describe("request-scoped tool replacement for generate()", () => {
       source: "replacement",
       query: "current",
     });
+  });
+
+  it("keeps request replacement agent-write tools eager after a successful write", async () => {
+    const observedToolNames: string[][] = [];
+    let step = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/request-agent-write-tools",
+      async doGenerate(options: unknown) {
+        observedToolNames.push(toolNamesFromGenerateOptions(options));
+        step++;
+        if (step === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "create-agent-replacement",
+              toolName: "create_agent",
+              input: '{"id":"replacement-agent"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+
+    const assistant = agent(
+      {
+        model: "hosted/request-agent-write-tools",
+        system: "Create the replacement agent.",
+        maxSteps: 2,
+        resolveModelTransport: async () => ({ model }),
+        __vfToolLoadingMode: "deferred",
+      } as Parameters<typeof agent>[0] & RuntimeToolFilterConfig,
+    );
+
+    const result = await assistant.generate({
+      input: "Create an agent",
+      tools: {
+        create_agent: tool({
+          id: "create_agent",
+          description: "Create a project agent",
+          inputSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+          execute: async ({ id }) => ({ id }),
+        }),
+      },
+    });
+
+    assertEquals(observedToolNames, [["create_agent"], []]);
+    assertEquals(result.toolCalls[0]?.status, "completed");
   });
 
   it("does not fall through to configured, registry, remote, integration, or provider-native tools", async () => {

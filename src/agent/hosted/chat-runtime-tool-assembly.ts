@@ -80,6 +80,8 @@ export type HostedChatRuntimeToolAssemblyResult = {
   toolLoadingMode: RuntimeToolLoadingMode;
   compatibleRemoteToolNames: string[];
   systemInstructions: string;
+  /** Structured system messages preserved for provider dispatch. */
+  systemMessages?: ChatSystemMessage[];
 };
 
 /** Input payload for prepare hosted chat runtime tool assembly. */
@@ -393,9 +395,14 @@ export async function prepareHostedChatRuntimeToolAssembly<
   input.taskContext.availableToolNames = modelVisibleToolNames;
   const modelInstructions = input.renderInstructions?.(modelVisibleToolNames) ??
     input.instructions;
-  const systemInstructions = flattenSystemInstructions(
-    withRuntimeToolInventory(modelInstructions, modelVisibleToolNames),
+  const instructionsWithToolInventory = withRuntimeToolInventory(
+    modelInstructions,
+    modelVisibleToolNames,
   );
+  const systemInstructions = flattenSystemInstructions(instructionsWithToolInventory);
+  const systemMessages = typeof modelInstructions === "string"
+    ? undefined
+    : instructionsWithToolInventory;
 
   if (input.preloadLatestConversationUserText !== false) {
     const latestUserText = await fetchLatestConversationUserText({
@@ -422,5 +429,6 @@ export async function prepareHostedChatRuntimeToolAssembly<
     toolLoadingMode,
     compatibleRemoteToolNames,
     systemInstructions,
+    ...(systemMessages === undefined ? {} : { systemMessages }),
   };
 }

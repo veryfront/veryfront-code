@@ -303,7 +303,7 @@ await build({
 			);
 		}
 
-		// Note: Templates are now embedded in manifest.json which is bundled by dnt
+		// Templates are embedded in a compressed generated module bundled by dnt.
 		// No need to copy template files separately
 
 		// Copy bin wrapper

@@ -19,6 +19,8 @@ import {
   isRuntimeAgentMarkdownAgent,
 } from "../runtime/agent-markdown-adapter.ts";
 import type { Agent, AgentConfig } from "../types.ts";
+import type { AgentSystem } from "#veryfront/agent/types.ts";
+import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-inventory.ts";
 import {
   normalizeSourceIntegrationPolicy,
   type SourceIntegrationPolicyManifest,
@@ -65,8 +67,8 @@ export function runWithProjectAgentRuntime<T>(
   return runWithEffectiveSourceIntegrationPolicy(runtime.sourceIntegrationPolicy, fn);
 }
 
-function resolveAgentSystem(system: AgentConfig["system"]): Promise<string> | string {
-  return typeof system === "function" ? system() : system;
+async function resolveAgentSystem(system: AgentConfig["system"]): Promise<AgentSystem> {
+  return typeof system === "function" ? await system() : system;
 }
 
 function resolveAgentToolNames(tools: AgentConfig["tools"]): true | string[] | undefined {
@@ -190,6 +192,7 @@ export async function createRuntimeAgentDefinitionFromAgent(
   }
   const toolNames = resolveAgentToolNames(runtimeAgent.config.tools);
   const mcpServers = resolveSerializableMcpServers(runtimeAgent.config.mcpServers);
+  const system = await resolveAgentSystem(runtimeAgent.config.system);
 
   return {
     id: runtimeAgent.id,
@@ -198,7 +201,8 @@ export async function createRuntimeAgentDefinitionFromAgent(
     ...(runtimeAgent.config.avatarUrl ?? runtimeAgent.config.avatar_url
       ? { avatarUrl: runtimeAgent.config.avatarUrl ?? runtimeAgent.config.avatar_url }
       : {}),
-    instructions: await resolveAgentSystem(runtimeAgent.config.system),
+    instructions: typeof system === "string" ? system : flattenSystemInstructions(system),
+    ...(typeof system === "string" ? {} : { system }),
     model: runtimeAgent.config.model,
     ...(runtimeAgent.config.temperature === undefined
       ? {}

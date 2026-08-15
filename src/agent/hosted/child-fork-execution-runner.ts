@@ -1,4 +1,6 @@
 import type { HostToolTraceAttributes } from "#veryfront/tool";
+import type { AgentSystem } from "#veryfront/agent/types.ts";
+import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { buildChildRunFailureResult } from "../child-run/execution-snapshot.ts";
 import {
   createHostedDurableChildForkRunContext,
@@ -151,7 +153,7 @@ export type ExecuteHostedChildForkWithPreparedToolsInput<
   sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   maxContinuationSteps?: number;
   resolveSystem?: HostedChildForkRuntimeStepSystemResolver;
-  buildInstructions?: () => string;
+  buildInstructions?: () => AgentSystem;
   onBeforeStop?: StartHostedChildForkRuntimeWithHostToolsInput<TAttributes>["onBeforeStop"];
   runStep?: AgentRuntimeForkStepRunner;
   createRunContext?: (
@@ -208,14 +210,17 @@ function createForkRunContext<
 
 function defaultResolveSystem(input: {
   system: string;
+  structuredSystem?: readonly ChatSystemMessage[];
   compactedMessages: Parameters<HostedChildForkRuntimeStepSystemResolver>[0]["compactedMessages"];
-}): string {
+}): AgentSystem {
+  const currentSystem: AgentSystem = input.structuredSystem
+    ? [...input.structuredSystem]
+    : input.system;
   if (!shouldReinforceLoadSkillContinuation([...input.compactedMessages])) {
-    return input.system;
+    return currentSystem;
   }
 
-  const remindedSystem = addLoadSkillContinuationReminder(input.system);
-  return typeof remindedSystem === "string" ? remindedSystem : input.system;
+  return addLoadSkillContinuationReminder(currentSystem);
 }
 
 /**
@@ -445,6 +450,7 @@ async function executeHostedChildForkWithoutWriterAuthority<
             messages,
             buildInstructions: prepareBuildInstructions,
             forkToolNames,
+            providerOptionKey: input.provider,
             resolveSystem: input.resolveSystem ?? defaultResolveSystem,
           }),
         runStep: input.runStep ?? runAgentRuntimeForkStep,

@@ -516,33 +516,52 @@ describe("project-env/fetcher", () => {
     }
   });
 
-  it("rejects masked values returned by the internal endpoint", async () => {
+  it("rejects masked values without exposing the tenant-defined key", async () => {
+    const tenantDefinedKey = "TENANT_PRIVATE_INVENTORY_KEY";
     const { server, port } = createMockServer((req: Request) => {
       if (new URL(req.url).pathname === "/projects/my-project/environment-variables") {
         return Response.json({ data: [] });
       }
-      return Response.json({ data: [{ key: "API_KEY", value: "********" }] });
+      return Response.json({ data: [{ key: tenantDefinedKey, value: "********" }] });
     });
 
     try {
-      await assertRejects(() =>
+      const error = await assertRejects(() =>
         fetchFromMockApi(port, {
           username: "runtime-user",
           password: "runtime-pass",
         })
       );
+      assertEquals((error as { slug?: string }).slug, "network-error");
+      assertEquals(
+        (error as Error).message,
+        "Refusing masked environment variable response: the internal endpoint returned a masked value",
+      );
+      assertEquals((error as Error).message.includes(tenantDefinedKey), false);
     } finally {
       await server.shutdown();
     }
   });
 
-  it("rejects masked values returned by the management endpoint", async () => {
+  it("explains the missing internal credentials when the management endpoint returns masked values", async () => {
     const { server, port } = createMockServer(() => {
       return Response.json({ data: [{ key: "API_KEY", value: "********" }] });
     });
 
     try {
-      await assertRejects(() => fetchFromMockApi(port));
+      // No internal credentials configured: the fetcher parsed the management
+      // response, which masks every value by contract. The refusal must state
+      // the operator-actionable cause, not a generic masked-response error.
+      const error = await assertRejects(() => fetchFromMockApi(port));
+      assertEquals((error as { slug?: string }).slug, "network-error");
+      assertEquals(
+        (error as Error).message.includes("VERYFRONT_API_INTERNAL_USER"),
+        true,
+      );
+      assertEquals(
+        (error as Error).message.includes("VERYFRONT_API_INTERNAL_PASS"),
+        true,
+      );
     } finally {
       await server.shutdown();
     }

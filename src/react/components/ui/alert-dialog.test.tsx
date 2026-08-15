@@ -179,6 +179,42 @@ describe("AlertDialog", () => {
     }
   });
 
+  it("preserves consumer title and description ids in panel wiring", async () => {
+    const { doc, click, unmount } = render(
+      <AlertDialog>
+        <AlertDialogTrigger id="confirm-trigger">Open confirmation</AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogTitle id="custom-title">Confirm action</AlertDialogTitle>
+          <AlertDialogDescription id="custom-description">
+            This action needs confirmation.
+          </AlertDialogDescription>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+        </AlertDialogContent>
+      </AlertDialog>,
+    );
+    try {
+      click(doc.getElementById("confirm-trigger")!);
+      await waitFor(
+        () => doc.querySelector('[role="alertdialog"]') !== null,
+        "alert dialog did not open",
+      );
+      const panel = doc.querySelector<HTMLElement>('[role="alertdialog"]')!;
+      await waitFor(
+        () => panel.getAttribute("aria-labelledby") === "custom-title",
+        "alert dialog did not adopt the custom title id",
+      );
+      assertEquals(panel.getAttribute("aria-labelledby"), "custom-title");
+      assertEquals(panel.getAttribute("aria-describedby"), "custom-description");
+      assertEquals(doc.getElementById("custom-title")?.textContent, "Confirm action");
+      assertEquals(
+        doc.getElementById("custom-description")?.textContent?.trim(),
+        "This action needs confirmation.",
+      );
+    } finally {
+      unmount();
+    }
+  });
+
   it("traps focus and restores it to the trigger after closing", async () => {
     const { doc, click, unmount } = render(
       <div data-vf-ui="">

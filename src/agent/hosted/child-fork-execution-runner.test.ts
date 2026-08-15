@@ -24,6 +24,13 @@ import {
 import { streamText } from "../../runtime/runtime-bridge.ts";
 import { createStreamModel } from "../../runtime/runtime-bridge.test-helpers.ts";
 import type { ForkPart } from "../streaming/fork-runtime-stream.ts";
+import type { AgentSystem } from "#veryfront/agent/types.ts";
+
+function systemIncludes(system: AgentSystem, text: string): boolean {
+  return typeof system === "string"
+    ? system.includes(text)
+    : system.some((message) => message.content.includes(text));
+}
 
 function createRuntimeEventStream(
   events: readonly Record<string, unknown>[],
@@ -147,8 +154,8 @@ Deno.test("executeHostedChildForkWithPreparedTools executes a prepared child for
       assertEquals(input.temperature, 0.2);
       assertEquals(input.forkToolNames, ["noop"]);
       assertEquals(input.providerOptions, undefined);
-      assertEquals(input.system.includes('project_reference: "project-1"'), true);
-      assertEquals(input.system.includes("Available Skills"), true);
+      assertEquals(systemIncludes(input.system, 'project_reference: "project-1"'), true);
+      assertEquals(systemIncludes(input.system, "Available Skills"), true);
       return {
         stream: createRuntimeEventStream([{ type: "text-delta", delta: "Done." }]),
         responsePromise: Promise.resolve(createResponse()),

@@ -21,6 +21,7 @@ import {
   LOAD_SKILL_ROOT_OWNERSHIP,
 } from "../conversation/delegation-policy.ts";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
+import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import {
   SKILL_DOCUMENT_MAX_CHARACTERS,
   SKILL_ID_MAX_LENGTH,
@@ -37,6 +38,57 @@ import type {
 import { createRuntimeProjectSkillLoader } from "./project-skill-loader.ts";
 import { getRuntimeProjectSkillCatalog } from "./project-skill-catalog.ts";
 import type { RuntimeLoadedSkillResponse } from "./skill-metadata.ts";
+import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
+import { buildRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
+import { it } from "#veryfront/testing/bdd.ts";
+
+// The advertised input schema is intentionally STATIC and project-independent
+// (RFC 0001, layered context): skill IDs are surfaced in generated skill context,
+// baked into the tool definition, so the tools array can join the shared cache
+// prefix. Per-project validation (valid IDs, reload/body rules) still runs at
+// `.parse()` time and is covered by the execute() tests below. Every load state
+// must advertise this same schema. That invariance is what these assertions guard.
+const STATIC_LOAD_SKILL_INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    inventory: {
+      type: "object",
+      properties: {
+        cursor: {
+          type: "integer",
+          minimum: 0,
+          maximum: 1_000,
+          description: "Pagination cursor from the prompt or a previous skill inventory response.",
+        },
+      },
+      additionalProperties: false,
+    },
+    load: {
+      type: "object",
+      properties: {
+        skillId: {
+          type: "string",
+          maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
+          pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
+          description:
+            'The listed skill ID to load. A lowercase ".md" suffix is accepted for a listed ID.',
+        },
+        file: {
+          type: "string",
+          minLength: 1,
+          maxLength: SKILL_RELATIVE_PATH_MAX_LENGTH,
+          description:
+            "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+        },
+      },
+      required: ["skillId"],
+      additionalProperties: false,
+    },
+  },
+  minProperties: 1,
+  maxProperties: 1,
+  additionalProperties: false,
+} as const;
 
 const PROJECT_CONTEXT: RuntimeProjectSkillContext = {
   projectId: "project-1",
@@ -332,7 +384,7 @@ Deno.test("a claimed project reference never falls through to a builtin referenc
   );
 });
 
-Deno.test("createRuntimeLoadSkillTool accepts a lowercase .md skill alias at the boundary", async () => {
+it("createRuntimeLoadSkillTool accepts a lowercase .md skill alias at the boundary", async () => {
   const loaderCalls: string[] = [];
   const context = createProjectContext({
     availableSkillIds: ["plan"],
@@ -367,7 +419,7 @@ Deno.test("createRuntimeLoadSkillTool accepts a lowercase .md skill alias at the
   assertStringIncludes(reload.instructions, 'Skill "plan" is already loaded');
 });
 
-Deno.test("createRuntimeLoadSkillTool preserves canonical .md skill IDs", async () => {
+it("createRuntimeLoadSkillTool preserves canonical .md skill IDs", async () => {
   const loaderCalls: string[] = [];
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext({
@@ -389,24 +441,7 @@ Deno.test("createRuntimeLoadSkillTool preserves canonical .md skill IDs", async 
     builtinStore: createBuiltinStore({}),
   });
 
-  assertEquals(tool.inputSchemaJson, {
-    type: "object",
-    properties: {
-      skillId: {
-        type: "string",
-        enum: ["plan", "plan.md"],
-        description: "Unloaded skill ID to load. Available unloaded skill IDs: plan, plan.md",
-      },
-      file: {
-        type: "string",
-        minLength: 1,
-        maxLength: 1024,
-        description:
-          "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
-      },
-    },
-    required: ["skillId"],
-  });
+  assertEquals(tool.inputSchemaJson, STATIC_LOAD_SKILL_INPUT_SCHEMA);
 
   const markdownNamed = expectLoadedSkillResponse(await tool.execute({ skillId: "plan.md" }));
   const extensionless = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
@@ -421,7 +456,101 @@ Deno.test("createRuntimeLoadSkillTool preserves canonical .md skill IDs", async 
   );
 });
 
-Deno.test("createRuntimeLoadSkillTool normalizes .md aliases without a known skill manifest", async () => {
+it("keeps supported .md IDs valid in the static provider schema", () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["plan.md"] }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  const parameters = toolToProviderDefinition(tool).parameters as {
+    properties?: {
+      load?: { properties?: { skillId?: { maxLength?: number; pattern?: string } } };
+    };
+  };
+  assertEquals(
+    parameters.properties?.load?.properties?.skillId?.maxLength,
+    SKILL_ID_MAX_LENGTH + ".md".length,
+  );
+  assertEquals(
+    parameters.properties?.load?.properties?.skillId?.pattern,
+    "^[a-zA-Z0-9_-]+(?:\\.md)?$",
+  );
+});
+
+it("keeps the static provider schema constraints after provider sanitization", () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["plan.md"] }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+  for (
+    const model of [
+      "veryfront-cloud/anthropic/claude-opus-4-6",
+      "google-ai-studio/gemini-2.5-pro",
+    ]
+  ) {
+    const runtimeTools = convertToolsToRuntimeTools([toolToProviderDefinition(tool)], { model });
+    const sanitized = (runtimeTools?.load_skill as {
+      inputSchema?: { jsonSchema?: unknown };
+    })?.inputSchema?.jsonSchema as {
+      anyOf?: unknown;
+      oneOf?: unknown;
+      allOf?: unknown;
+      minProperties?: unknown;
+      maxProperties?: unknown;
+      properties?: Record<string, {
+        properties?: Record<string, unknown>;
+        required?: string[];
+      }>;
+      dependentRequired?: unknown;
+      dependentSchemas?: unknown;
+    };
+    assertEquals(sanitized !== undefined, true);
+    assertEquals(sanitized.anyOf, undefined);
+    assertEquals(sanitized.oneOf, undefined);
+    assertEquals(sanitized.allOf, undefined);
+    assertEquals(sanitized.dependentRequired, undefined);
+    assertEquals(sanitized.dependentSchemas, undefined);
+    assertEquals(sanitized.minProperties, 1);
+    assertEquals(sanitized.maxProperties, 1);
+    assertEquals(Object.keys(sanitized.properties ?? {}), ["inventory", "load"]);
+    assertEquals(Object.keys(sanitized.properties?.inventory?.properties ?? {}), ["cursor"]);
+    assertEquals(Object.keys(sanitized.properties?.load?.properties ?? {}), ["skillId", "file"]);
+    assertEquals(sanitized.properties?.load?.required, ["skillId"]);
+  }
+});
+
+it("returns an independent static provider schema snapshot", () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["plan"] }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+  const first = tool.inputSchemaJson as {
+    properties?: Record<string, unknown>;
+  };
+  const originalLoad = first.properties?.load;
+
+  try {
+    Reflect.deleteProperty(first.properties ?? {}, "load");
+    assertEquals(tool.inputSchemaJson, STATIC_LOAD_SKILL_INPUT_SCHEMA);
+  } finally {
+    if (originalLoad !== undefined) {
+      Object.defineProperty(first.properties ?? {}, "load", {
+        configurable: true,
+        enumerable: true,
+        value: originalLoad,
+        writable: true,
+      });
+    }
+  }
+});
+
+it("keeps legacy .md alias execution when no manifest is available", async () => {
   const loaderCalls: string[] = [];
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext(),
@@ -439,10 +568,7 @@ Deno.test("createRuntimeLoadSkillTool normalizes .md aliases without a known ski
     builtinStore: createBuiltinStore({}),
   });
 
-  assertStringIncludes(
-    JSON.stringify(tool.inputSchemaJson),
-    'A lowercase \\".md\\" suffix is accepted',
-  );
+  assertEquals(tool.inputSchemaJson, STATIC_LOAD_SKILL_INPUT_SCHEMA);
   const result = expectLoadedSkillResponse(await tool.execute({ skillId: "plan.md" }));
   const reload = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
 
@@ -1833,24 +1959,7 @@ Deno.test("runtime skill availability snapshots do not invoke cache accessors", 
     builtinStore: createBuiltinStore({}),
   });
 
-  assertEquals(tool.inputSchemaJson, {
-    type: "object",
-    properties: {
-      skillId: {
-        type: "string",
-        enum: ["writer", "writer.md"],
-        description: "Unloaded skill ID to load. Available unloaded skill IDs: writer, writer.md",
-      },
-      file: {
-        type: "string",
-        minLength: 1,
-        maxLength: 1024,
-        description:
-          "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
-      },
-    },
-    required: ["skillId"],
-  });
+  assertEquals(tool.inputSchemaJson, STATIC_LOAD_SKILL_INPUT_SCHEMA);
   assertEquals(recordGetterCalls, 0);
   assertEquals(responseGetterCalls, 0);
 });
@@ -1910,50 +2019,10 @@ Deno.test("createRuntimeLoadSkillTool schema disallows body reloads for already-
     builtinStore: createBuiltinStore({}),
   });
 
-  assertEquals(tool.inputSchemaJson, {
-    anyOf: [
-      {
-        type: "object",
-        properties: {
-          skillId: {
-            type: "string",
-            enum: ["plan", "plan.md"],
-            description: "Unloaded skill ID to load. Available unloaded skill IDs: plan, plan.md",
-          },
-          file: {
-            type: "string",
-            minLength: 1,
-            maxLength: 1024,
-            description:
-              "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
-          },
-        },
-        required: ["skillId"],
-      },
-      {
-        type: "object",
-        properties: {
-          skillId: {
-            type: "string",
-            enum: ["veryfront", "veryfront.md"],
-            description:
-              "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: veryfront, veryfront.md",
-          },
-          file: {
-            type: "string",
-            minLength: 1,
-            maxLength: 1024,
-            description:
-              "Required reference file to load from an already-loaded skill. Do not call load_skill again for the skill body.",
-          },
-        },
-        required: ["skillId", "file"],
-      },
-    ],
-  });
+  assertEquals(tool.inputSchemaJson, STATIC_LOAD_SKILL_INPUT_SCHEMA);
 });
 
-Deno.test("createRuntimeLoadSkillTool refreshes its provider schema after a skill body load", async () => {
+it("createRuntimeLoadSkillTool advertises a static provider schema unchanged across a skill body load", async () => {
   const context = createProjectContext({
     availableSkillIds: ["veryfront"],
   });
@@ -1973,52 +2042,18 @@ Deno.test("createRuntimeLoadSkillTool refreshes its provider schema after a skil
   });
 
   const beforeLoad = toolToProviderDefinition(tool).parameters;
-  assertEquals(beforeLoad, {
-    type: "object",
-    properties: {
-      skillId: {
-        type: "string",
-        enum: ["veryfront", "veryfront.md"],
-        description:
-          "Unloaded skill ID to load. Available unloaded skill IDs: veryfront, veryfront.md",
-      },
-      file: {
-        type: "string",
-        minLength: 1,
-        maxLength: 1024,
-        description:
-          "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
-      },
-    },
-    required: ["skillId"],
-  });
+  assertEquals(beforeLoad, STATIC_LOAD_SKILL_INPUT_SCHEMA);
 
   await tool.execute({ skillId: "veryfront" });
 
+  // The advertised schema is state-independent; the body-reload guard stays at runtime.
   const afterLoad = toolToProviderDefinition(tool).parameters;
-  assertEquals(afterLoad, {
-    type: "object",
-    properties: {
-      skillId: {
-        type: "string",
-        enum: ["veryfront", "veryfront.md"],
-        description:
-          "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: veryfront, veryfront.md",
-      },
-      file: {
-        type: "string",
-        minLength: 1,
-        maxLength: 1024,
-        description:
-          "Required reference file to load from an already-loaded skill. Do not call load_skill again for the skill body.",
-      },
-    },
-    required: ["skillId", "file"],
-  });
+  assertEquals(afterLoad, STATIC_LOAD_SKILL_INPUT_SCHEMA);
+  assertEquals(afterLoad, beforeLoad);
   await assertRejects(() => tool.execute({ skillId: "veryfront" }));
 });
 
-Deno.test("createRuntimeLoadSkillTool schema only permits reference loads when all known skills are loaded", async () => {
+it("createRuntimeLoadSkillTool advertises a static schema even when all known skills are loaded", async () => {
   const context = createProjectContext({
     availableSkillIds: ["veryfront"],
     loadedSkillResponses: {
@@ -2036,28 +2071,11 @@ Deno.test("createRuntimeLoadSkillTool schema only permits reference loads when a
     builtinStore: createBuiltinStore({}),
   });
 
-  assertEquals(tool.inputSchemaJson, {
-    type: "object",
-    properties: {
-      skillId: {
-        type: "string",
-        enum: ["veryfront", "veryfront.md"],
-        description:
-          "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: veryfront, veryfront.md",
-      },
-      file: {
-        type: "string",
-        minLength: 1,
-        maxLength: 1024,
-        description:
-          "Required reference file to load from an already-loaded skill. Do not call load_skill again for the skill body.",
-      },
-    },
-    required: ["skillId", "file"],
-  });
+  // Reference-only-when-loaded is enforced at runtime (.parse/execute), not advertised.
+  assertEquals(tool.inputSchemaJson, STATIC_LOAD_SKILL_INPUT_SCHEMA);
 });
 
-Deno.test("createRuntimeLoadSkillTool exposes a no-file no-op schema after loading a skill without references", async () => {
+it("createRuntimeLoadSkillTool advertises a static schema after loading a skill without references (reload/extra-file guarded at runtime)", async () => {
   const context = createProjectContext({
     availableSkillIds: ["veryfront"],
   });
@@ -2082,19 +2100,7 @@ Deno.test("createRuntimeLoadSkillTool exposes a no-file no-op schema after loadi
     delete loadedResponse.references;
   }
 
-  assertEquals(toolToProviderDefinition(tool).parameters, {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      skillId: {
-        type: "string",
-        enum: ["veryfront", "veryfront.md"],
-        description:
-          "Already-loaded skill ID with no advertised reference files. Calling load_skill again is a no-op. Loaded skill IDs: veryfront, veryfront.md",
-      },
-    },
-    required: ["skillId"],
-  });
+  assertEquals(toolToProviderDefinition(tool).parameters, STATIC_LOAD_SKILL_INPUT_SCHEMA);
 
   const reloadResult = expectLoadedSkillResponse(await tool.execute({ skillId: "veryfront" }));
   assertStringIncludes(reloadResult.instructions, 'Skill "veryfront" is already loaded');
@@ -2108,7 +2114,7 @@ Deno.test("createRuntimeLoadSkillTool exposes a no-file no-op schema after loadi
   assertEquals(rejectedUnexpectedFile, true);
 });
 
-Deno.test("createRuntimeLoadSkillTool exposes only referenceable skills when every skill is loaded", async () => {
+it("createRuntimeLoadSkillTool advertises a static schema when every skill is loaded", async () => {
   const context = createProjectContext({
     availableSkillIds: ["plain", "with-reference"],
   });
@@ -2130,28 +2136,10 @@ Deno.test("createRuntimeLoadSkillTool exposes only referenceable skills when eve
   await tool.execute({ skillId: "plain" });
   await tool.execute({ skillId: "with-reference" });
 
-  assertEquals(toolToProviderDefinition(tool).parameters, {
-    type: "object",
-    properties: {
-      skillId: {
-        type: "string",
-        enum: ["with-reference", "with-reference.md"],
-        description:
-          "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: with-reference, with-reference.md",
-      },
-      file: {
-        type: "string",
-        minLength: 1,
-        maxLength: 1024,
-        description:
-          "Required reference file to load from an already-loaded skill. Do not call load_skill again for the skill body.",
-      },
-    },
-    required: ["skillId", "file"],
-  });
+  assertEquals(toolToProviderDefinition(tool).parameters, STATIC_LOAD_SKILL_INPUT_SCHEMA);
 });
 
-Deno.test("createRuntimeLoadSkillTool omits loaded skills without references from productive schema branches", async () => {
+it("createRuntimeLoadSkillTool loads references and bodies under a static advertised schema", async () => {
   const context = createProjectContext({
     availableSkillIds: ["create", "plain", "with-reference"],
   });
@@ -2177,48 +2165,7 @@ Deno.test("createRuntimeLoadSkillTool omits loaded skills without references fro
   await tool.execute({ skillId: "plain" });
   await tool.execute({ skillId: "with-reference" });
 
-  assertEquals(tool.inputSchemaJson, {
-    anyOf: [
-      {
-        type: "object",
-        properties: {
-          skillId: {
-            type: "string",
-            enum: ["create", "create.md"],
-            description:
-              "Unloaded skill ID to load. Available unloaded skill IDs: create, create.md",
-          },
-          file: {
-            type: "string",
-            minLength: 1,
-            maxLength: 1024,
-            description:
-              "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
-          },
-        },
-        required: ["skillId"],
-      },
-      {
-        type: "object",
-        properties: {
-          skillId: {
-            type: "string",
-            enum: ["with-reference", "with-reference.md"],
-            description:
-              "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: with-reference, with-reference.md",
-          },
-          file: {
-            type: "string",
-            minLength: 1,
-            maxLength: 1024,
-            description:
-              "Required reference file to load from an already-loaded skill. Do not call load_skill again for the skill body.",
-          },
-        },
-        required: ["skillId", "file"],
-      },
-    ],
-  });
+  assertEquals(tool.inputSchemaJson, STATIC_LOAD_SKILL_INPUT_SCHEMA);
 
   assertEquals(
     await tool.execute({ skillId: "with-reference", file: "references/guide.md" }),
@@ -2234,7 +2181,7 @@ Deno.test("createRuntimeLoadSkillTool omits loaded skills without references fro
   );
 });
 
-Deno.test("createRuntimeLoadSkillTool schema ignores stale loaded skills outside the current manifest", async () => {
+it("createRuntimeLoadSkillTool advertises a static schema, ignoring stale loaded skills outside the current manifest", async () => {
   const context = createProjectContext({
     availableSkillIds: ["veryfront"],
     loadedSkillResponses: {
@@ -2251,25 +2198,7 @@ Deno.test("createRuntimeLoadSkillTool schema ignores stale loaded skills outside
     builtinStore: createBuiltinStore({}),
   });
 
-  assertEquals(tool.inputSchemaJson, {
-    type: "object",
-    properties: {
-      skillId: {
-        type: "string",
-        enum: ["veryfront", "veryfront.md"],
-        description:
-          "Unloaded skill ID to load. Available unloaded skill IDs: veryfront, veryfront.md",
-      },
-      file: {
-        type: "string",
-        minLength: 1,
-        maxLength: 1024,
-        description:
-          "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
-      },
-    },
-    required: ["skillId"],
-  });
+  assertEquals(tool.inputSchemaJson, STATIC_LOAD_SKILL_INPUT_SCHEMA);
 });
 
 Deno.test("createRuntimeLoadSkillTool reloads same skill after project context changes", async () => {
@@ -2321,11 +2250,11 @@ Deno.test("createRuntimeLoadSkillTool rejects reference files before the skill b
 
   assertEquals(await tool.execute({ skillId: "veryfront", file: "references/ROUTES.md" }), {
     error:
-      'Skill "veryfront" must be loaded before reference file "references/ROUTES.md". Call load_skill with only {"skillId":"veryfront"} first, then request one of the listed reference files.',
+      'Skill "veryfront" must be loaded before reference file "references/ROUTES.md". Call load_skill with {"load":{"skillId":"veryfront"}} first, then request one of the listed reference files.',
   });
   assertEquals(await tool.execute({ skillId: "veryfront", file: "references/does-not-exist.md" }), {
     error:
-      'Skill "veryfront" must be loaded before reference file "references/does-not-exist.md". Call load_skill with only {"skillId":"veryfront"} first, then request one of the listed reference files.',
+      'Skill "veryfront" must be loaded before reference file "references/does-not-exist.md". Call load_skill with {"load":{"skillId":"veryfront"}} first, then request one of the listed reference files.',
   });
 });
 
@@ -2390,7 +2319,7 @@ Deno.test("createRuntimeLoadSkillTool authorizes an advertised reference after a
     ),
     {
       error:
-        'Skill "research" must be loaded before reference file "assets/template.txt". Call load_skill with only {"skillId":"research"} first, then request one of the listed reference files.',
+        'Skill "research" must be loaded before reference file "assets/template.txt". Call load_skill with {"load":{"skillId":"research"}} first, then request one of the listed reference files.',
     },
   );
   assertEquals(
@@ -2400,7 +2329,7 @@ Deno.test("createRuntimeLoadSkillTool authorizes an advertised reference after a
     ),
     {
       error:
-        'Skill "research" must be loaded before reference file "assets/template.txt". Call load_skill with only {"skillId":"research"} first, then request one of the listed reference files.',
+        'Skill "research" must be loaded before reference file "assets/template.txt". Call load_skill with {"load":{"skillId":"research"}} first, then request one of the listed reference files.',
     },
   );
 });
@@ -2679,7 +2608,7 @@ Deno.test("createRuntimeLoadSkillTool bounds and sanitizes schema input strings"
   );
 });
 
-Deno.test("createRuntimeLoadSkillTool advertises the runtime skill manifest instead of inviting invented skill IDs", () => {
+it("createRuntimeLoadSkillTool keeps IDs out of the description and points to runtime context", () => {
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext({
       availableSkillIds: ["daily-briefing"],
@@ -2690,8 +2619,182 @@ Deno.test("createRuntimeLoadSkillTool advertises the runtime skill manifest inst
     builtinStore: createBuiltinStore({}),
   });
 
-  assertStringIncludes(tool.description, "Available skill IDs: daily-briefing.");
-  assertStringIncludes(tool.description, "Do not invent skill IDs");
+  // Static description: per-project IDs live in generated skill context, not the tool
+  // definition, so the description is byte-identical across projects (RFC 0001).
+  assertEquals(tool.description.includes("daily-briefing"), false);
+  assertStringIncludes(tool.description, "<available_skills>");
+  assertStringIncludes(tool.description, "<authorized_skill_ids>");
+  assertStringIncludes(tool.description, "Direct consumers can omit skillId");
+  assertStringIncludes(tool.description, "You must not invent IDs");
+  assertStringIncludes(tool.description, "inventory object");
+});
+
+it("createRuntimeLoadSkillTool pages authorized IDs for standalone consumers", async () => {
+  const availableSkillIds = Array.from(
+    { length: 65 },
+    (_, index) => `skill-${index.toString().padStart(3, "0")}`,
+  );
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  const first = await tool.execute({});
+  assertEquals(first, {
+    skillIds: availableSkillIds.slice(0, 60),
+    nextCursor: 60,
+  });
+  const second = await tool.execute({ cursor: 60 });
+  assertEquals(second, {
+    skillIds: availableSkillIds.slice(60),
+  });
+});
+
+it("createRuntimeLoadSkillTool accepts provider-safe inventory and load requests", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["plan"] }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([["plan", { instructions: "# Plan", references: [] }]]),
+    }),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  assertEquals(await tool.execute({ inventory: {} }), { skillIds: ["plan"] });
+  assertEquals(
+    expectLoadedSkillResponse(await tool.execute({ load: { skillId: "plan" } })).skillId,
+    "plan",
+  );
+  await assertRejects(
+    () => tool.execute({ inventory: {}, load: { skillId: "plan" } }),
+    Error,
+    "input validation failed",
+  );
+});
+
+it("createRuntimeLoadSkillTool pages authorized IDs without inherited slice", async () => {
+  const availableSkillIds = Array.from(
+    { length: 65 },
+    (_, index) => `skill-${index.toString().padStart(3, "0")}`,
+  );
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+  const originalSlice = Array.prototype.slice;
+  let sliceCalls = 0;
+  Object.defineProperty(Array.prototype, "slice", {
+    configurable: true,
+    value() {
+      sliceCalls += 1;
+      return ["forged"];
+    },
+    writable: true,
+  });
+  try {
+    const page = await tool.execute({ cursor: 1 }) as {
+      skillIds: string[];
+      nextCursor?: number;
+    };
+
+    assertEquals(sliceCalls, 0);
+    assertEquals(page.skillIds.length, 60);
+    assertEquals(page.skillIds[0], "skill-001");
+    assertEquals(page.skillIds[59], "skill-060");
+    assertEquals(page.nextCursor, 61);
+  } finally {
+    Object.defineProperty(Array.prototype, "slice", {
+      configurable: true,
+      value: originalSlice,
+      writable: true,
+    });
+  }
+});
+
+it("createRuntimeLoadSkillTool discovers the maximum catalog within the default step budget", async () => {
+  const availableSkillIds = Array.from(
+    { length: 1_000 },
+    (_, index) => `skill-${index.toString().padStart(8, "0")}`,
+  );
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  const discoveredSkillIds: string[] = [];
+  let cursor: number | undefined;
+  let calls = 0;
+  do {
+    const page = await tool.execute(cursor === undefined ? {} : { cursor }) as {
+      skillIds: string[];
+      nextCursor?: number;
+    };
+    discoveredSkillIds.push(...page.skillIds);
+    cursor = page.nextCursor;
+    calls += 1;
+  } while (cursor !== undefined);
+
+  assertEquals(discoveredSkillIds, availableSkillIds);
+  assertEquals(calls <= 17, true);
+});
+
+it("createRuntimeLoadSkillTool continues after the IDs embedded in the prompt", async () => {
+  const availableSkillIds = Array.from(
+    { length: 1_000 },
+    (_, index) => `skill-${(999 - index).toString().padStart(8, "0")}`,
+  );
+  const skills: RuntimeSkillDefinition[] = availableSkillIds.map((id) => ({
+    id,
+    name: id,
+    description: `Description for ${id}`,
+    instructions: `Instructions for ${id}`,
+  }));
+  const prompt = buildRuntimeAvailableSkillsPromptBlock(skills);
+  const cursorMatch = /load_skill\(\{ inventory: \{ cursor: (\d+) \} \}\)/.exec(prompt);
+
+  assertEquals(cursorMatch !== null, true);
+  if (cursorMatch === null) return;
+  const cursor = Number(cursorMatch[1]);
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+  const page = await tool.execute({ cursor }) as {
+    skillIds: string[];
+    nextCursor?: number;
+  };
+
+  assertEquals(page.skillIds[0], availableSkillIds[cursor]);
+  assertEquals(page.skillIds, availableSkillIds.slice(cursor));
+  assertEquals(page.nextCursor, undefined);
+});
+
+it("createRuntimeLoadSkillTool rejects mixed load and inventory inputs", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["plan"] }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  await assertRejects(
+    () => tool.execute({ skillId: "plan", cursor: 0 }),
+    Error,
+    "input validation failed",
+  );
+  await assertRejects(
+    () => tool.execute({ file: "references/guide.md" }),
+    Error,
+    "input validation failed",
+  );
 });
 
 Deno.test("createRuntimeLoadSkillTool snapshots skill inventories without invoking iterators", () => {
@@ -2733,8 +2836,10 @@ Deno.test("createRuntimeLoadSkillTool snapshots skill inventories without invoki
     builtinStore: createBuiltinStore({}),
   });
 
-  assertStringIncludes(projectTool.description, "Available skill IDs: daily-briefing.");
-  assertStringIncludes(builtinTool.description, "Available skill IDs: builtin-writer.");
+  // The static description never enumerates skill IDs, so it cannot have walked
+  // the fabricated iterators, which is exactly what this test guards.
+  assertEquals(projectTool.description.includes("daily-briefing"), false);
+  assertEquals(builtinTool.description.includes("builtin-writer"), false);
   assertEquals(availableIteratorCalls, 0);
   assertEquals(builtinIteratorCalls, 0);
   assertEquals(projectTool.description.length < 2_000, true);

@@ -282,7 +282,8 @@ boundary for `load_skill`, not just a prompt filter.
 
 Local and project runtimes also expose `load_skill_reference` and
 `execute_skill_script`. Hosted chat reads an advertised reference through
-`load_skill({ skillId, file })` and does not execute skill scripts directly.
+`load_skill({ load: { skillId, file } })` and does not execute skill scripts
+directly.
 
 See [Project structure](./project-structure.md) for `skills/` conventions and
 [Configuration](./configuration.md) for discovery paths.
@@ -291,9 +292,9 @@ See [Project structure](./project-structure.md) for `skills/` conventions and
 
 When an agent uses a skill, the flow is:
 
-1. Call `load_skill({ skillId })` to load the skill instructions and policy.
+1. Call `load_skill({ load: { skillId } })` to load the skill instructions and policy.
 2. Read an advertised reference with `load_skill_reference(...)` on local and
-   project runtimes, or `load_skill({ skillId, file })` in hosted chat.
+   project runtimes, or `load_skill({ load: { skillId, file } })` in hosted chat.
 3. On local and project runtimes, optionally call
    `execute_skill_script(...)` to run scripts from `scripts/`.
 4. Continue with normal tool calls. Loading a skill does not change which
@@ -411,6 +412,11 @@ export default agent({
 For step-boundary refresh during a long-lived run, use `resolveRuntimeState`
 instead of relying on `system()` to run again mid-turn.
 
+`request.system` is always a string, so existing text transformations remain
+compatible. When the runtime has structured system messages, use
+`request.structuredSystem` to read their provider metadata and return
+`structuredSystem` to replace them without flattening that metadata.
+
 ```ts
 import { agent } from "veryfront/agent";
 
@@ -435,7 +441,7 @@ export default agent({
 | `name`                | `string`                                                                                               | Human-readable display name for listings                                                              |
 | `description`         | `string`                                                                                               | Optional summary for listings                                                                         |
 | `model`               | `string`                                                                                               | Optional provider/model override. Omit for `openai/gpt-5.4-nano`; use `"auto"` for runtime selection. |
-| `system`              | `string \| () => string \| Promise<string>`                                                            | System prompt                                                                                         |
+| `system`              | `AgentSystem \| () => AgentSystem \| Promise<AgentSystem>`                                             | Text or structured system instructions                                                                |
 | `resolveRuntimeState` | `(request: RuntimeStateRequest) => ResolvedRuntimeState \| Promise<ResolvedRuntimeState \| undefined>` | Refresh system/context before later model steps in the same run                                       |
 | `tools`               | `true \| Record<string, boolean \| Tool>`                                                              | Omit for no project tools, use `true` for deferred scoped discovery, or select eager tools explicitly |
 | `delegates`           | `string[]`                                                                                             | Exact agent ids exposed as scoped `agent_<id>` tools                                                  |

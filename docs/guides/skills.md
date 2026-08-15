@@ -94,14 +94,30 @@ skills/
 Every agent gets `load_skill`. Local and project runtimes also expose the two
 supporting skill tools:
 
-| Tool                   | Availability               | Description                                                |
-| ---------------------- | -------------------------- | ---------------------------------------------------------- |
-| `load_skill`           | Every runtime              | Load a skill's full instructions by ID                     |
-| `load_skill_reference` | Local and project runtimes | Read a file from `references/`, `resources/`, or `assets/` |
-| `execute_skill_script` | Local and project runtimes | Execute a script from a skill (5-minute timeout)           |
+| Tool                   | Availability               | Description                                                            |
+| ---------------------- | -------------------------- | ---------------------------------------------------------------------- |
+| `load_skill`           | Every runtime              | Load full instructions by ID. Hosted chat can also list authorized IDs |
+| `load_skill_reference` | Local and project runtimes | Read a file from `references/`, `resources/`, or `assets/`             |
+| `execute_skill_script` | Local and project runtimes | Execute a script from a skill (5-minute timeout)                       |
 
-Hosted chat reads an advertised reference through
-`load_skill({ skillId, file })`. It does not execute skill scripts directly.
+Hosted chat providers use nested `load_skill` input. After loading a skill,
+hosted chat can read only a reference listed by that skill through
+`load_skill({ load: { skillId, file } })`. It does not execute skill scripts
+directly.
+
+When a hosted chat prompt provides a discovery cursor, call
+`load_skill({ inventory: { cursor: <CURSOR> } })`. Otherwise, call
+`load_skill({ inventory: {} })` when the prompt does not show the complete
+authorized skill inventory. The result contains a bounded `skillIds` page. If
+it also contains `nextCursor`, call
+`load_skill({ inventory: { cursor: nextCursor } })` until the response omits
+`nextCursor`. Then call `load_skill({ load: { skillId } })` with a listed ID.
+
+Direct local and project tool consumers use flat input forms. Call
+`load_skill({ skillId: "<SKILL_ID>" })` to load a skill. After loading it, call
+`load_skill_reference({ skillId: "<SKILL_ID>", reference: "<PATH>" })` to read
+a listed reference, resource, or asset. Direct local and project tools do not
+support inventory paging through `load_skill`.
 
 Discovered skills visible to the agent are advertised by default:
 

@@ -146,6 +146,30 @@ describe("ContextMenu behaviour (builtin)", () => {
     }
   });
 
+  it("makes the default trigger focusable and opens from Shift+F10", () => {
+    const { scope, cleanup } = mountInScope(<Menu />);
+    try {
+      const trigger = scope.querySelector<HTMLElement>('[data-testid="trigger"]')!;
+      assertEquals(trigger.getAttribute("role"), "button");
+      assertEquals(trigger.tabIndex, 0);
+      trigger.focus();
+      assertEquals(document.activeElement, trigger, "default trigger is reachable by focus");
+      flushSync(() => {
+        trigger.dispatchEvent(
+          new globalThis.KeyboardEvent("keydown", {
+            bubbles: true,
+            cancelable: true,
+            key: "F10",
+            shiftKey: true,
+          }),
+        );
+      });
+      assert(scope.querySelector('[role="menu"]'), "Shift+F10 opens the menu");
+    } finally {
+      cleanup();
+    }
+  });
+
   it("renders items as role=menuitem with their labels", () => {
     const { scope, rightClickTrigger, cleanup } = mountInScope(<Menu />);
     try {

@@ -53,6 +53,237 @@ function createWarningCollector() {
 }
 
 describe("ext-llm-anthropic/anthropic-request-builder", () => {
+  it("keeps a cached static system block separate from the uncached dynamic tail", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-5-20250929",
+      "anthropic",
+      {
+        prompt: [
+          {
+            role: "system",
+            content: "Shared prompt",
+            providerOptions: {
+              anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+            },
+          },
+          { role: "system", content: "Dynamic tail" },
+          { role: "user", content: [{ type: "text", text: "Hello" }] },
+        ],
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.system, [
+      {
+        type: "text",
+        text: "Shared prompt",
+        cache_control: { type: "ephemeral", ttl: "1h" },
+      },
+      { type: "text", text: "Dynamic tail" },
+    ]);
+  });
+
+  it("uses the provider alias and normalizes the default cache TTL", () => {
+    const buildSystem = (providerName: string) =>
+      buildAnthropicMessagesRequest(
+        "claude-sonnet-4-5-20250929",
+        providerName,
+        {
+          prompt: [
+            {
+              role: "system",
+              content: "Shared prompt",
+              providerOptions: {
+                anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } },
+                bedrock: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+              },
+            },
+            { role: "user", content: [{ type: "text", text: "Hello" }] },
+          ],
+        },
+        false,
+        createWarningCollector(),
+      ).system;
+
+    assertEquals(buildSystem("anthropic"), [{
+      type: "text",
+      text: "Shared prompt",
+      cache_control: { type: "ephemeral" },
+    }]);
+    assertEquals(buildSystem("bedrock"), [{
+      type: "text",
+      text: "Shared prompt",
+      cache_control: { type: "ephemeral", ttl: "1h" },
+    }]);
+  });
+
+  it("does not let an undefined provider alias hide the canonical cache control", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-5-20250929",
+      "bedrock",
+      {
+        prompt: [
+          {
+            role: "system",
+            content: "Shared prompt",
+            providerOptions: {
+              anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+              bedrock: { cacheControl: undefined },
+            },
+          },
+          { role: "user", content: [{ type: "text", text: "Hello" }] },
+        ],
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.system, [{
+      type: "text",
+      text: "Shared prompt",
+      cache_control: { type: "ephemeral", ttl: "1h" },
+    }]);
+  });
+
+  it("applies the call-level cache breakpoint to the final system block", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-5-20250929",
+      "anthropic",
+      {
+        prompt: [
+          {
+            role: "system",
+            content: "Shared prompt",
+            providerOptions: {
+              anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+            },
+          },
+          { role: "system", content: "Dynamic tail" },
+          { role: "user", content: [{ type: "text", text: "Hello" }] },
+        ],
+        cacheControl: { system: true },
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.system, [
+      {
+        type: "text",
+        text: "Shared prompt",
+        cache_control: { type: "ephemeral", ttl: "1h" },
+      },
+      {
+        type: "text",
+        text: "Dynamic tail",
+        cache_control: { type: "ephemeral" },
+      },
+    ]);
+  });
+
+  it("rejects system cache metadata accessors without invoking them", () => {
+    let accessed = false;
+    const cacheControl = Object.defineProperty({}, "type", {
+      enumerable: true,
+      get() {
+        accessed = true;
+        return "ephemeral";
+      },
+    });
+
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-5-20250929",
+          "anthropic",
+          {
+            prompt: [
+              {
+                role: "system",
+                content: "Shared prompt",
+                providerOptions: { anthropic: { cacheControl } },
+              },
+              { role: "user", content: [{ type: "text", text: "Hello" }] },
+            ],
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "only enumerable data properties",
+    );
+    assertEquals(accessed, false);
+  });
+
+  it("rejects system provider-options accessors without invoking them", () => {
+    let accessed = 0;
+    const systemMessage = Object.defineProperty(
+      { role: "system", content: "Shared prompt" },
+      "providerOptions",
+      {
+        enumerable: true,
+        get() {
+          accessed += 1;
+          return { anthropic: { cacheControl: { type: "ephemeral" } } };
+        },
+      },
+    ) as ModelRuntimePromptMessage;
+
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-5-20250929",
+          "anthropic",
+          {
+            prompt: [
+              systemMessage,
+              { role: "user", content: [{ type: "text", text: "Hello" }] },
+            ],
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "providerOptions must be an own enumerable data property",
+    );
+    assertEquals(accessed, 0);
+  });
+
+  it("rejects provider cache-control accessors without invoking them", () => {
+    let accessed = false;
+    const anthropicOptions = Object.defineProperty({}, "cacheControl", {
+      enumerable: true,
+      get() {
+        accessed = true;
+        return { type: "ephemeral", ttl: "1h" };
+      },
+    });
+
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-5-20250929",
+          "anthropic",
+          {
+            prompt: [
+              {
+                role: "system",
+                content: "Shared prompt",
+                providerOptions: { anthropic: anthropicOptions },
+              },
+              { role: "user", content: [{ type: "text", text: "Hello" }] },
+            ],
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "enumerable data propert",
+    );
+    assertEquals(accessed, false);
+  });
+
   it("preserves Messages request shaping, provider option merge order, and warnings", () => {
     const prompt: RuntimePromptMessage[] = [
       { role: "system", content: "You are careful." },

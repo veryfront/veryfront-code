@@ -88,6 +88,51 @@ export interface StreamingToolResult {
   preliminary?: boolean;
 }
 
+/**
+ * Flush a tool call's buffered `tool-input-start` and input deltas to the
+ * client.
+ *
+ * The start event is withheld until the call commits — `tool-input-end`,
+ * `tool-input-available` or `tool-call`. `tool-call` rebuilds the entry from
+ * its own `toolName` and announces from there, so a name that supersedes the
+ * one seen at `tool-input-start` is the one the client is given, and the
+ * superseded name never reaches the wire.
+ *
+ * Idempotent via `inputAnnounced`, which is also what gates the terminal
+ * `tool-output-error`. A call whose stream ended before any commit event was
+ * never announced, so it must be announced here before its failure can
+ * render. Such a call has no superseding name to wait for: the event that
+ * would carry one never arrived, and `inputAvailable` stays false, which is
+ * what makes that terminal path reachable at all.
+ */
+export function announceStreamedToolCallInput(
+  controller: ReadableStreamDefaultController,
+  encoder: TextEncoder,
+  toolCall: StreamingToolCall,
+): void {
+  if (toolCall.inputAnnounced === true) {
+    return;
+  }
+
+  const dynamic = toolCall.dynamic ?? isDynamicTool(toolCall.name);
+  sendSSE(controller, encoder, {
+    type: "tool-input-start",
+    toolCallId: toolCall.id,
+    toolName: toolCall.name,
+    ...(dynamic ? { dynamic: true } : {}),
+  });
+
+  for (const delta of toolCall.inputDeltas ?? []) {
+    sendSSE(controller, encoder, {
+      type: "tool-input-delta",
+      toolCallId: toolCall.id,
+      inputTextDelta: delta,
+    });
+  }
+
+  toolCall.inputAnnounced = true;
+}
+
 export interface StreamingReasoningPart {
   id: string;
   text: string;
@@ -772,27 +817,7 @@ export function processStreamInternal(
     };
 
     const announceToolInputStart = (toolCall: StreamingToolCall) => {
-      if (toolCall.inputAnnounced === true) {
-        return;
-      }
-
-      const dynamic = toolCall.dynamic ?? isDynamicTool(toolCall.name);
-      sendSSE(controller, encoder, {
-        type: "tool-input-start",
-        toolCallId: toolCall.id,
-        toolName: toolCall.name,
-        ...(dynamic ? { dynamic: true } : {}),
-      });
-
-      for (const delta of toolCall.inputDeltas ?? []) {
-        sendSSE(controller, encoder, {
-          type: "tool-input-delta",
-          toolCallId: toolCall.id,
-          inputTextDelta: delta,
-        });
-      }
-
-      toolCall.inputAnnounced = true;
+      announceStreamedToolCallInput(controller, encoder, toolCall);
     };
 
     const ensureToolLifecycle = (part: {

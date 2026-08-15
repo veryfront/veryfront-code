@@ -4,6 +4,7 @@ import type {
   AgentMiddleware,
   AgentResponse,
   AgentStreamResult,
+  AgentSystem,
   Message,
   ResolvedAgentConfig,
 } from "./types.ts";
@@ -28,8 +29,16 @@ import { agentLogger } from "#veryfront/utils";
 import { createError, INVALID_ARGUMENT, toError } from "#veryfront/errors";
 import { COMMON_BLOCKED_PATTERNS, securityMiddleware } from "./middleware/security/validator.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { resolveConfiguredAgentModel } from "./runtime/model-resolution.ts";
-import { setEffectiveAgentSystem } from "./runtime/effective-agent-system.ts";
+import {
+  resolveConfiguredAgentModel,
+  resolveModelProviderOptionKey,
+  resolveRuntimeModel,
+} from "./runtime/model-resolution.ts";
+import {
+  createProviderAwareAgentSystemResolver,
+  type ResolveAgentSystemFromResolvedBaseOptions,
+  setEffectiveAgentSystem,
+} from "./runtime/effective-agent-system.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { getMessageSchema } from "./schemas/agent.schema.ts";
 import {
@@ -44,9 +53,11 @@ import {
   INVOKE_AGENT_TOOL_ID,
 } from "./runtime/agent-delegation.ts";
 import { normalizeAgentDelegateIds } from "./runtime/agent-delegation-names.ts";
-import { buildAgentCallContext } from "./runtime/call-context.ts";
+import {
+  buildAgentCallContext,
+  buildAgentCallContextPreservingRuntimeMarker,
+} from "./runtime/call-context.ts";
 import type { RuntimeSkillDefinition } from "./runtime/skill-metadata.ts";
-import { flattenSystemInstructions } from "./runtime/tool-inventory.ts";
 
 const STREAMING_HEADERS: Record<string, string> = {
   "Content-Type": "text/event-stream",
@@ -365,26 +376,53 @@ function resolveToolsConfiguration(input: {
 function createAugmentedSystem(input: {
   config: AgentConfig;
   resolveSkillSnapshot: () => Pick<ResolvedSkillSelectorSnapshot<Skill>, "definitions">;
-}): () => Promise<string> {
+}): () => Promise<AgentSystem> {
   const { config, resolveSkillSnapshot } = input;
   const originalSystem = config.system;
 
-  return async () => {
+  const augmentSystem = (
+    resolvedBase: AgentSystem,
+    providerOptionKey: string | undefined,
+    options?: ResolveAgentSystemFromResolvedBaseOptions,
+  ): AgentSystem => {
     // Owner-aware: omitted selectors advertise every skill visible to this
     // agent (unowned project skills plus its own). Explicit lists, including
     // an empty list, retain their authored catalog selection.
     const snapshot = resolveSkillSnapshot();
-    const basePrompt =
-      (typeof originalSystem === "function" ? await originalSystem() : originalSystem) ??
-        "You are a helpful assistant.";
+    const basePrompt = resolvedBase ?? "You are a helpful assistant.";
+    const preassembledSkillContext = (config as AgentConfig & {
+      __vfPreassembledSkillContext?: boolean;
+    }).__vfPreassembledSkillContext === true;
+    const anthropicProviderAlias = providerOptionKey ??
+      resolveModelProviderOptionKey(resolveRuntimeModel(config.model));
 
-    return flattenSystemInstructions(buildAgentCallContext({
-      instructions: basePrompt,
-      skills: snapshot.definitions.map(toRuntimeSkillDefinition),
+    const contextInput = {
+      ...(preassembledSkillContext
+        ? {}
+        : { skills: snapshot.definitions.map(toRuntimeSkillDefinition) }),
       ...(config.projectContext ? { projectContext: config.projectContext } : {}),
       ...(config.environmentContext ? { environmentContext: config.environmentContext } : {}),
-    }));
+    };
+
+    const buildCallContext = options?.preserveRuntimeContextMarker
+      ? buildAgentCallContextPreservingRuntimeMarker
+      : buildAgentCallContext;
+    return buildCallContext({
+      instructions: basePrompt,
+      ...(anthropicProviderAlias ? { anthropicProviderAlias } : {}),
+      ...contextInput,
+    });
   };
+
+  return createProviderAwareAgentSystemResolver(
+    async (providerOptionKey) =>
+      augmentSystem(
+        typeof originalSystem === "function" ? await originalSystem() : originalSystem,
+        providerOptionKey,
+      ),
+    (resolvedBase, providerOptionKey, options) =>
+      Promise.resolve(augmentSystem(resolvedBase, providerOptionKey, options)),
+  );
 }
 
 /** Agent helper. */

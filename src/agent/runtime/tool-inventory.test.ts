@@ -1,8 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatSystemMessage } from "../../chat/types.ts";
-import { flattenSystemInstructions, withRuntimeToolInventory } from "./tool-inventory.ts";
+import {
+  flattenSystemInstructions,
+  hasRuntimeToolInventory,
+  withRuntimeToolInventory,
+} from "./tool-inventory.ts";
 
 describe("runtime tool inventory instructions", () => {
   it("appends visible tool inventory to string instructions", () => {
@@ -70,9 +74,11 @@ Do NOT infer tool availability from examples, skills, or the base prompt.`,
   });
 
   it("replaces stale inventory messages when instructions are already materialized", () => {
+    const [staleInventory] = withRuntimeToolInventory([], ["stale"]);
+    assertExists(staleInventory);
     const instructions: ChatSystemMessage[] = [
       { role: "system", content: "Base system" },
-      { role: "system", content: "Current run tool inventory:\n\n- stale" },
+      staleInventory,
     ];
 
     assertEquals(withRuntimeToolInventory(instructions, []), [
@@ -82,6 +88,60 @@ Do NOT infer tool availability from examples, skills, or the base prompt.`,
         content: `Current run tool inventory:
 
 - none
+
+Only treat the tools listed above as actually available in this run.
+If the list is "- none", say plainly that no tools are available.
+Do NOT infer tool availability from examples, skills, or the base prompt.`,
+      },
+    ]);
+  });
+
+  it("preserves authored messages that mention the inventory header", () => {
+    const authoredMessage: ChatSystemMessage = {
+      role: "system",
+      content:
+        'Explain the literal label "Current run tool inventory:" without changing this instruction.',
+      providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+    };
+
+    assertEquals(hasRuntimeToolInventory(authoredMessage.content), false);
+    assertEquals(hasRuntimeToolInventory([authoredMessage]), false);
+    assertEquals(withRuntimeToolInventory([authoredMessage], ["read_file"]), [
+      authoredMessage,
+      {
+        role: "system",
+        content: `Current run tool inventory:
+
+- read_file
+
+Only treat the tools listed above as actually available in this run.
+If the list is "- none", say plainly that no tools are available.
+Do NOT infer tool availability from examples, skills, or the base prompt.`,
+      },
+    ]);
+  });
+
+  it("replaces only a generated inventory suffix on an authored message", () => {
+    const structuredMessage: ChatSystemMessage = {
+      role: "system",
+      content: flattenSystemInstructions(
+        withRuntimeToolInventory("Keep this instruction.", ["stale_tool"]),
+      ),
+      providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+    };
+
+    assertEquals(hasRuntimeToolInventory([structuredMessage]), true);
+    assertEquals(withRuntimeToolInventory([structuredMessage], ["current_tool"]), [
+      {
+        role: "system",
+        content: "Keep this instruction.",
+        providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+      },
+      {
+        role: "system",
+        content: `Current run tool inventory:
+
+- current_tool
 
 Only treat the tools listed above as actually available in this run.
 If the list is "- none", say plainly that no tools are available.

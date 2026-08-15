@@ -341,7 +341,7 @@ export function createModalSurfaceParts(name: string) {
     const document = trigger?.ownerDocument ?? globalThis.document;
     if (!document?.body) return null;
     const container = trigger?.closest<HTMLElement>("[data-vf-modal-content]") ??
-      trigger?.closest<HTMLElement>(UI_SCOPE_SELECTOR) ?? document.body;
+      getModalTokenScope(document, trigger);
     return createPortal(
       <div className="fixed inset-0 z-50">
         <div

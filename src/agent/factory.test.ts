@@ -16,6 +16,7 @@ import { getAvailableTools } from "./runtime/tool-helpers.ts";
 import { agentRegistry } from "./composition/index.ts";
 import { agent } from "./factory.ts";
 import type { AgentConfig, AgentResponse } from "./types.ts";
+import { flattenSystemInstructions } from "./runtime/tool-inventory.ts";
 import { registerSkill } from "#veryfront/skill/registry.ts";
 import { reset as resetExtensionContracts, tryResolve } from "#veryfront/extensions/contracts.ts";
 import { createSkillTestAdapter } from "#veryfront/skill/testing.ts";
@@ -27,6 +28,11 @@ function createSkill(id: string, description: string) {
     metadata: { name: id, description },
     rootPath: `/test/skills/${id}`,
   };
+}
+
+async function resolveSystemText(system: AgentConfig["system"]): Promise<string> {
+  const resolved = typeof system === "function" ? await system() : system;
+  return typeof resolved === "string" ? resolved : flattenSystemInstructions(resolved);
 }
 
 function createLoadSkillModel(skillId: string): ModelRuntime {
@@ -112,9 +118,7 @@ describe("agent factory", () => {
     ]);
     assertEquals(toolRegistry.has("load_skill"), true);
     const effectiveSystem = getEffectiveAgentSystem(assistant);
-    const prompt = typeof effectiveSystem === "function"
-      ? await effectiveSystem()
-      : effectiveSystem ?? "";
+    const prompt = await resolveSystemText(effectiveSystem);
     assertStringIncludes(
       prompt,
       '- {"skillId":"support-triage","description":"Triage incoming support requests"}',
@@ -128,10 +132,29 @@ describe("agent factory", () => {
     });
     assertEquals(explicitlyEmpty.config.tools, undefined);
     const explicitlyEmptySystem = getEffectiveAgentSystem(explicitlyEmpty);
-    const explicitlyEmptyPrompt = typeof explicitlyEmptySystem === "function"
-      ? await explicitlyEmptySystem()
-      : explicitlyEmptySystem ?? "";
+    const explicitlyEmptyPrompt = await resolveSystemText(explicitlyEmptySystem);
     assertEquals(explicitlyEmptyPrompt.includes("<available_skills>"), false);
+  });
+
+  it("preserves pre-rendered generated skill catalogs when no selector replaces them", async () => {
+    const hostedSystem = [{
+      role: "system" as const,
+      content:
+        'Base\n\n<available_skills>\n- {"skillId":"deploy","description":"Deploy the project"}\n</available_skills>',
+    }];
+    const assistant = agent(
+      {
+        id: "hosted-pre-rendered-skills",
+        system: hostedSystem,
+        __vfPreassembledSkillContext: true,
+      } as AgentConfig & { __vfPreassembledSkillContext: boolean },
+    );
+
+    const effectiveSystem = getEffectiveAgentSystem(assistant);
+    const prompt = await resolveSystemText(effectiveSystem);
+
+    assertStringIncludes(prompt, "Deploy the project");
+    assertStringIncludes(prompt, "<available_skills>");
   });
 
   it("uses the same selector snapshot for prompt disclosure and direct skill tools", async () => {
@@ -159,7 +182,7 @@ describe("agent factory", () => {
     assertEquals(Object.keys(none.config.tools ?? {}).sort(), ["ordinary_tool"]);
     const noneSystem = getEffectiveAgentSystem(none);
     assertEquals(
-      (typeof noneSystem === "function" ? await noneSystem() : noneSystem ?? "").includes(
+      (await resolveSystemText(noneSystem)).includes(
         "available_skills",
       ),
       false,
@@ -171,9 +194,7 @@ describe("agent factory", () => {
       skills: ["draft", "global-plan"],
     });
     const allowlistedSystem = getEffectiveAgentSystem(allowlisted);
-    const prompt = typeof allowlistedSystem === "function"
-      ? await allowlistedSystem()
-      : allowlistedSystem ?? "";
+    const prompt = await resolveSystemText(allowlistedSystem);
 
     assertStringIncludes(prompt, '- {"skillId":"writer--draft","description":"Draft copy"}');
     assertStringIncludes(prompt, '- {"skillId":"global-plan","description":"Plan the work"}');
@@ -449,9 +470,7 @@ description: Excluded skill
 
     const assistant = agent({ id: "default-system-with-skills" } as AgentConfig);
     const effectiveSystem = getEffectiveAgentSystem(assistant);
-    const prompt = typeof effectiveSystem === "function"
-      ? await effectiveSystem()
-      : effectiveSystem ?? "";
+    const prompt = await resolveSystemText(effectiveSystem);
 
     assertEquals(prompt.startsWith("You are a helpful assistant."), true);
     assertEquals(prompt.includes("undefined"), false);
@@ -475,9 +494,7 @@ description: Excluded skill
       skills: ["release-manager"],
     } as AgentConfig);
     const effectiveSystem = getEffectiveAgentSystem(assistant);
-    const prompt = typeof effectiveSystem === "function"
-      ? await effectiveSystem()
-      : effectiveSystem ?? "";
+    const prompt = await resolveSystemText(effectiveSystem);
 
     assertStringIncludes(prompt, "release-manager");
     assertEquals(prompt.includes("create_release"), false);

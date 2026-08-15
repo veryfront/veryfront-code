@@ -6,6 +6,7 @@ import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { Memory } from "./memory/memory-interface.ts";
+import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 
 // Re-export schema-based types
 export type {
@@ -137,6 +138,9 @@ export interface AgentHttpMcpServerConfig {
 /** MCP server available to an agent. */
 export type AgentMcpServerConfig = AgentHttpMcpServerConfig | AgentVeryfrontMcpServerConfig;
 
+/** System instructions accepted by an agent runtime. */
+export type AgentSystem = string | ChatSystemMessage[];
+
 /** Configuration used by agent. */
 export interface AgentConfig {
   id?: string;
@@ -156,7 +160,11 @@ export interface AgentConfig {
    * configured direct provider key when one exists.
    */
   model?: ModelString;
-  system: string | (() => string) | (() => Promise<string>);
+  /**
+   * System instructions as text or structured messages. Structured messages
+   * preserve provider-specific metadata such as prompt-cache breakpoints.
+   */
+  system: AgentSystem | (() => AgentSystem) | (() => Promise<AgentSystem>);
   /**
    * Project this agent runs against. Rendered as a `<project_context>` block so
    * the agent knows the project reference and branch instead of asking for
@@ -303,14 +311,20 @@ export interface RuntimeStateRequest {
   agentId: string;
   mode: "generate" | "stream";
   step: number;
+  /** Flattened system instructions kept for backward-compatible text transforms. */
   system: string;
+  /** Structured system instructions, when the runtime has provider-specific metadata. */
+  structuredSystem?: ChatSystemMessage[];
   messages: Message[];
   context?: Record<string, unknown>;
 }
 
 /** State for resolved runtime. */
 export interface ResolvedRuntimeState {
+  /** Replacement system instructions as text. */
   system?: string;
+  /** Replacement structured system instructions with provider-specific metadata. */
+  structuredSystem?: ChatSystemMessage[];
   context?: Record<string, unknown>;
 }
 

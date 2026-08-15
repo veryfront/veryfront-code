@@ -49,8 +49,12 @@ import { useIsomorphicLayoutEffect } from "./use-isomorphic-layout-effect.ts";
 
 /** Title / Description element ids, published by Content so the labelled parts adopt them. */
 interface AlertDialogIds {
+  defaultTitleId: string;
+  defaultDescriptionId: string;
   titleId: string;
   descriptionId: string;
+  setTitleId: React.Dispatch<React.SetStateAction<string>>;
+  setDescriptionId: React.Dispatch<React.SetStateAction<string>>;
 }
 
 const AlertDialogContext = React.createContext<AlertDialogIds | null>(null);
@@ -145,8 +149,10 @@ export function AlertDialogContent({
   const { dialog } = useAdapter();
   const modal = dialog.useDialog();
   const root = useAlertDialogRoot();
-  const titleId = React.useId();
-  const descriptionId = React.useId();
+  const defaultTitleId = React.useId();
+  const defaultDescriptionId = React.useId();
+  const [titleId, setTitleId] = React.useState(defaultTitleId);
+  const [descriptionId, setDescriptionId] = React.useState(defaultDescriptionId);
   const panelRef = React.useRef<HTMLDivElement>(null);
   const [portalReady, setPortalReady] = React.useState(false);
   React.useEffect(() => setPortalReady(true), []);
@@ -169,7 +175,16 @@ export function AlertDialogContent({
     root.triggerRef,
     false,
   );
-  const ids = React.useMemo<AlertDialogIds>(() => ({ titleId, descriptionId }), [
+  const ids = React.useMemo<AlertDialogIds>(() => ({
+    defaultTitleId,
+    defaultDescriptionId,
+    titleId,
+    descriptionId,
+    setTitleId,
+    setDescriptionId,
+  }), [
+    defaultTitleId,
+    defaultDescriptionId,
     titleId,
     descriptionId,
   ]);
@@ -217,15 +232,23 @@ export interface AlertDialogTitleProps extends React.HTMLAttributes<HTMLHeadingE
 /** Required accessible name - adopts the Content-generated `aria-labelledby` id. */
 export function AlertDialogTitle({
   className,
+  id,
   ref,
   ...props
 }: AlertDialogTitleProps): React.ReactElement {
-  const { titleId } = useAlertDialogIds();
+  const ids = useAlertDialogIds();
+  const resolvedId = id ?? ids.defaultTitleId;
+  useIsomorphicLayoutEffect(() => {
+    ids.setTitleId(resolvedId);
+    return () => {
+      ids.setTitleId((current) => current === resolvedId ? ids.defaultTitleId : current);
+    };
+  }, [ids.defaultTitleId, ids.setTitleId, resolvedId]);
   return (
     <h2
       ref={ref}
       {...props}
-      id={titleId}
+      id={resolvedId}
       className={cn("text-lg font-semibold text-[var(--foreground)]", className)}
     />
   );
@@ -240,15 +263,25 @@ export interface AlertDialogDescriptionProps extends React.HTMLAttributes<HTMLPa
 /** Required supporting copy - adopts the Content-generated `aria-describedby` id. */
 export function AlertDialogDescription({
   className,
+  id,
   ref,
   ...props
 }: AlertDialogDescriptionProps): React.ReactElement {
-  const { descriptionId } = useAlertDialogIds();
+  const ids = useAlertDialogIds();
+  const resolvedId = id ?? ids.defaultDescriptionId;
+  useIsomorphicLayoutEffect(() => {
+    ids.setDescriptionId(resolvedId);
+    return () => {
+      ids.setDescriptionId((current) =>
+        current === resolvedId ? ids.defaultDescriptionId : current
+      );
+    };
+  }, [ids.defaultDescriptionId, ids.setDescriptionId, resolvedId]);
   return (
     <p
       ref={ref}
       {...props}
-      id={descriptionId}
+      id={resolvedId}
       className={cn("text-sm font-normal text-[var(--muted-foreground)]", className)}
     />
   );
