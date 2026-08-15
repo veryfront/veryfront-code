@@ -491,6 +491,40 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("says an environment session takes precedence over an existing stored login", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const output: string[] = [];
+      await saveToken("stored-valid-token", testEnv);
+
+      try {
+        setNonInteractive(true);
+        globalThis.fetch = (() =>
+          Promise.resolve(
+            new Response(JSON.stringify({ data: [], page_info: {} }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          )) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+
+        const { login } = await import("./login.ts");
+        const result = await login(undefined, { ...testEnv, apiToken: "vf_env_wins" });
+
+        assertEquals(result, { authenticated: true, type: "apiKey" });
+        const printed = output.join("\n");
+        assertStringIncludes(printed, "takes precedence over the stored login");
+        assertEquals(printed.includes("no stored login"), false);
+        assertEquals(printed.includes("vf_env_wins"), false);
+        assertEquals(printed.includes("stored-valid-token"), false);
+      } finally {
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
     it("does not claim the environment when the session is a stored login", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;

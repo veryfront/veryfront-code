@@ -335,7 +335,14 @@ async function describeExistingSession(
     // the case `whoami` now names — so the session ends at the directory
     // boundary. Say so rather than let them discover it elsewhere.
     if (source === "environment") {
-      console.log("  " + dim("Using VERYFRONT_API_TOKEN; no stored login was created."));
+      console.log(
+        "  " +
+          dim(
+            storedToken
+              ? "Using VERYFRONT_API_TOKEN; it takes precedence over the stored login."
+              : "Using VERYFRONT_API_TOKEN; no stored login was created.",
+          ),
+      );
       console.log(
         "  " +
           dim(
