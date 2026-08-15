@@ -18,6 +18,14 @@ import {
   Card,
   CardContent,
   CardHeader,
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  type ContextMenuItemProps,
+  ContextMenuTrigger,
+  type ContextMenuTriggerProps,
+  DrawerContent,
+  type DrawerContentProps,
   useAppShell,
 } from "veryfront/ui";
 
@@ -71,3 +79,77 @@ export function CardsDemo(): React.ReactElement {
     </Card>
   );
 }
+
+/** Drawer content keeps its public prop type aligned with the component surface. */
+export function DrawerContentPublicPropsDemo(): React.ReactElement {
+  const ref = React.createRef<HTMLDivElement>();
+  const props: DrawerContentProps = {
+    ref,
+    className: "vf-consumer-drawer",
+    children: "Drawer body",
+  };
+  return <DrawerContent {...props} />;
+}
+
+const contextMenuTriggerRef = React.createRef<HTMLAnchorElement>();
+const contextMenuItemRef = React.createRef<HTMLAnchorElement>();
+const conditionalContextMenuSlot: boolean = true;
+
+interface ConsumerContextMenuTriggerProps extends ContextMenuTriggerProps {
+  analyticsId?: string;
+}
+
+interface ConsumerContextMenuItemProps extends ContextMenuItemProps {
+  analyticsId?: string;
+}
+
+const compatibleContextMenuTriggerProps: ContextMenuTriggerProps = {
+  asChild: conditionalContextMenuSlot,
+};
+const compatibleContextMenuItemProps: ContextMenuItemProps = {
+  asChild: conditionalContextMenuSlot,
+};
+
+/** Existing wrappers keep the broad boolean ContextMenu contracts. */
+export function ConsumerContextMenuTrigger({
+  analyticsId,
+  ...props
+}: ConsumerContextMenuTriggerProps): React.ReactElement {
+  return <ContextMenuTrigger {...props} data-analytics-id={analyticsId} />;
+}
+
+export function ConsumerContextMenuItem({
+  analyticsId,
+  ...props
+}: ConsumerContextMenuItemProps): React.ReactElement {
+  return <ContextMenuItem {...props} data-analytics-id={analyticsId} />;
+}
+
+/** Literal ContextMenu slots expose refs and events for the rendered anchor. */
+export function ContextMenuSlottedRefsDemo(): React.ReactElement {
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger
+        asChild
+        ref={contextMenuTriggerRef}
+        onContextMenu={(event) => event.currentTarget.href}
+      >
+        <a href="#context-menu">Open context menu</a>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ConsumerContextMenuItem {...compatibleContextMenuItemProps}>
+          Conditional item
+        </ConsumerContextMenuItem>
+        <ContextMenuItem
+          asChild
+          ref={contextMenuItemRef}
+          onClick={(event) => event.currentTarget.href}
+        >
+          <a href="#archive">Archive</a>
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+void compatibleContextMenuTriggerProps;

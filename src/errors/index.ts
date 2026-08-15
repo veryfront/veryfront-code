@@ -205,6 +205,8 @@ export {
   withErrorContextSync,
 } from "./error-context.ts";
 
+export { sanitizeTerminalDiagnosticText } from "./safe-diagnostics.ts";
+
 export type { ErrorContext, ErrorHandlingOptions, LogLevel } from "./error-context.ts";
 
 export {

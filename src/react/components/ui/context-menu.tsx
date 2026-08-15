@@ -1,0 +1,375 @@
+/**
+ * ContextMenu - a menu opened by right-click (the native `contextmenu` event) at
+ * the pointer position, rather than by clicking a trigger button. It shares the
+ * exact item / surface look of {@link ./dropdown-menu.tsx DropdownMenu} (classes
+ * ported 1:1 from Studio, token names remapped to veryfront's `[var(--token)]`
+ * vocabulary) and reuses the shared {@link ./floating.tsx Floating} portal +
+ * fixed-positioning helper for dismissal (outside-click / `Escape`), scroll
+ * following, viewport clamping, and portalling into the `[data-vf-ui]` token
+ * scope. The only behavioural difference from DropdownMenu is the trigger: it
+ * captures `onContextMenu`, calls `preventDefault()`, and opens the surface at
+ * the pointer's `clientX` / `clientY` via a zero-size virtual anchor.
+ *
+ * A11y work (roving focus, typeahead, focus trap) is tracked in
+ * anchored-surface.tsx and shared with the other menu surfaces.
+ *
+ * @example
+ * ```tsx
+ * <ContextMenu>
+ *   <ContextMenuTrigger className="rounded-md border border-[var(--edge-medium)] p-8">
+ *     Right-click here
+ *   </ContextMenuTrigger>
+ *   <ContextMenuContent>
+ *     <ContextMenuLabel>Actions</ContextMenuLabel>
+ *     <ContextMenuGroup>
+ *       <ContextMenuItem onSelect={() => console.log("cut")}>Cut</ContextMenuItem>
+ *       <ContextMenuItem onSelect={() => console.log("copy")}>Copy</ContextMenuItem>
+ *     </ContextMenuGroup>
+ *     <ContextMenuSeparator />
+ *     <ContextMenuItem onSelect={() => console.log("delete")}>Delete</ContextMenuItem>
+ *   </ContextMenuContent>
+ * </ContextMenu>
+ * ```
+ *
+ * @module react/components/ui/context-menu
+ */
+import * as React from "react";
+import { cx as cn } from "./cva.ts";
+import { composeRefs, type PolymorphicButtonAttributes, Slot } from "./slot.tsx";
+import { Floating } from "./floating.tsx";
+import { focusWithoutScroll } from "./focus-management.ts";
+import { useMenuContentKeyboard } from "./menu-keyboard.ts";
+import { type DisclosureOptions, useDisclosure } from "./disclosure.ts";
+
+/** Context shared between a ContextMenu root and its parts. */
+interface ContextMenuState {
+  /** Whether the menu surface is currently open. */
+  open: boolean;
+  /** Set the open state (also fires `onOpenChange`). */
+  setOpen: (open: boolean) => void;
+  /** The zero-size virtual anchor `Floating` positions the surface against. */
+  anchorRef: React.RefObject<HTMLElement | null>;
+  /** The trigger that opened the menu from the keyboard, used for focus return. */
+  triggerRef: React.RefObject<HTMLElement | null>;
+  /** Move the virtual anchor to `(x, y)` (viewport coords) and open. */
+  openAt: (x: number, y: number) => void;
+}
+
+const ContextMenuContext = React.createContext<ContextMenuState | null>(null);
+
+/** Props accepted by `<ContextMenu>`. */
+export interface ContextMenuProps extends DisclosureOptions {
+  /** The trigger and content parts to compose. */
+  children: React.ReactNode;
+}
+
+/**
+ * ContextMenu root - owns open state and the pointer position. Renders a
+ * zero-size, `position: fixed` virtual anchor (kept inside the token scope so
+ * the portalled surface resolves `var(--…)`), which `Floating` measures to place
+ * the surface at the last right-click.
+ */
+export function ContextMenu(
+  { children, open, defaultOpen, onOpenChange }: ContextMenuProps,
+): React.ReactElement {
+  const { open: isOpen, setOpen } = useDisclosure({ open, defaultOpen, onOpenChange });
+  const anchorRef = React.useRef<HTMLElement | null>(null);
+  const triggerRef = React.useRef<HTMLElement | null>(null);
+  const [pos, setPos] = React.useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const openAt = React.useCallback((x: number, y: number) => {
+    setPos({ x, y });
+    setOpen(true);
+  }, [setOpen]);
+  const ctx = React.useMemo<ContextMenuState>(
+    () => ({ open: isOpen, setOpen, anchorRef, triggerRef, openAt }),
+    [isOpen, setOpen, openAt],
+  );
+  return (
+    <ContextMenuContext.Provider value={ctx}>
+      <span
+        ref={anchorRef as React.Ref<HTMLSpanElement>}
+        aria-hidden="true"
+        style={{
+          position: "fixed",
+          left: pos.x,
+          top: pos.y,
+          width: 0,
+          height: 0,
+          pointerEvents: "none",
+        }}
+      />
+      {children}
+    </ContextMenuContext.Provider>
+  );
+}
+
+/** Props accepted by `<ContextMenuTrigger>`. */
+export interface ContextMenuTriggerProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** Merge the trigger behaviour onto your own element instead of a wrapper `div`. */
+  asChild?: boolean;
+  /** React 19: ref is a regular prop, forwarded to the trigger node. */
+  ref?: React.Ref<HTMLDivElement>;
+}
+
+/** Literal slotted trigger contract with an element-specific ref and events. */
+export type ContextMenuSlottedTriggerProps<T extends HTMLElement = HTMLElement> =
+  & Omit<React.HTMLAttributes<T>, "children" | "ref">
+  & {
+    asChild: true;
+    children: React.ReactElement;
+    ref?: React.Ref<T>;
+  };
+
+/**
+ * Trigger - the region a right-click opens the menu over. Captures
+ * `onContextMenu`, calls `preventDefault()` (suppressing the browser's native
+ * menu), and opens the surface at the pointer coordinates. `asChild` merges onto
+ * the child element, which must forward `ref` to its DOM node.
+ */
+export function ContextMenuTrigger<T extends HTMLElement = HTMLElement>(
+  props: ContextMenuSlottedTriggerProps<T>,
+): React.ReactElement;
+export function ContextMenuTrigger(props: ContextMenuTriggerProps): React.ReactElement;
+export function ContextMenuTrigger<T extends HTMLElement = HTMLElement>(
+  {
+    asChild,
+    onContextMenu,
+    onKeyDown,
+    children,
+    ref,
+    role,
+    tabIndex,
+    "aria-haspopup": ariaHasPopup,
+    ...props
+  }: ContextMenuTriggerProps | ContextMenuSlottedTriggerProps<T>,
+): React.ReactElement {
+  const ctx = React.useContext(ContextMenuContext);
+  const triggerProps = asChild
+    ? { role, tabIndex, "aria-haspopup": ariaHasPopup }
+    : { role: role ?? "button", tabIndex: tabIndex ?? 0, "aria-haspopup": ariaHasPopup ?? "menu" };
+  const setTriggerRef = React.useCallback((element: HTMLElement | null) => {
+    if (ctx) ctx.triggerRef.current = element;
+  }, [ctx]);
+  const composedRef = React.useMemo(
+    () => composeRefs<HTMLElement>(setTriggerRef, ref as React.Ref<HTMLElement> | undefined),
+    [ref, setTriggerRef],
+  );
+  const stateProps = {
+    "data-state": ctx?.open ? "open" : "closed",
+    onContextMenu: (event: React.MouseEvent<HTMLElement>) => {
+      (onContextMenu as React.MouseEventHandler<HTMLElement> | undefined)?.(event);
+      if (event.defaultPrevented) return;
+      event.preventDefault();
+      ctx?.openAt(event.clientX, event.clientY);
+    },
+    onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => {
+      (onKeyDown as React.KeyboardEventHandler<HTMLElement> | undefined)?.(event);
+      if (event.defaultPrevented || !ctx) return;
+      if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
+      event.preventDefault();
+      const rect = event.currentTarget.getBoundingClientRect();
+      ctx.openAt(rect.left, rect.bottom);
+    },
+  };
+  if (asChild) {
+    return (
+      <Slot
+        ref={composedRef}
+        {...triggerProps}
+        {...stateProps}
+        {...(props as React.HTMLAttributes<HTMLElement>)}
+      >
+        {children}
+      </Slot>
+    );
+  }
+  return (
+    <div
+      ref={composedRef as React.Ref<HTMLDivElement>}
+      {...triggerProps}
+      {...stateProps}
+      {...(props as React.HTMLAttributes<HTMLDivElement>)}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** Props accepted by `<ContextMenuContent>`. */
+export interface ContextMenuContentProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** Horizontal edge of the surface aligned to the pointer. @default "start" */
+  align?: "start" | "end";
+  /** Consumer ref for the surface node (forwarded through `Floating`). */
+  ref?: React.Ref<HTMLDivElement>;
+}
+
+/** Menu surface - portalled to the pointer position while open. No border (Studio). */
+export function ContextMenuContent({
+  children,
+  className,
+  align = "start",
+  onKeyDown,
+  ref,
+  ...props
+}: ContextMenuContentProps): React.ReactElement | null {
+  const ctx = React.useContext(ContextMenuContext);
+  if (!ctx) return null;
+  const handleKeyDown = useMenuContentKeyboard({
+    onKeyDown,
+    setOpen: ctx.setOpen,
+    triggerRef: ctx.triggerRef,
+  });
+  return (
+    <Floating
+      anchorRef={ctx.anchorRef}
+      open={ctx.open}
+      align={align}
+      onDismiss={() => ctx.setOpen(false)}
+      initialFocus="[role='menuitem']:not([aria-disabled='true'])"
+      returnFocusRef={ctx.triggerRef}
+      contentRef={ref}
+      role="menu"
+      aria-orientation="vertical"
+      onKeyDown={handleKeyDown}
+      className={cn(
+        "z-50 min-w-[260px] overflow-hidden rounded-lg bg-[var(--popover)] p-2.5 text-[var(--foreground)] shadow-sm outline-none",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+    </Floating>
+  );
+}
+
+/** Groups related items with a tight inner gap (Studio: `gap-px p-0.5`). */
+export function ContextMenuGroup(
+  { children, className }: { children: React.ReactNode; className?: string },
+): React.ReactElement {
+  return (
+    <div role="group" className={cn("flex flex-col gap-px p-0.5", className)}>
+      {children}
+    </div>
+  );
+}
+
+/** Props accepted by `<ContextMenuItem>`. */
+export interface ContextMenuItemProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  /** Called when the item is chosen (also closes the menu). */
+  onSelect?: () => void;
+  /** `asChild` merges item styling onto your own element. */
+  asChild?: boolean;
+  /** Consumer ref for the item node. */
+  ref?: React.Ref<HTMLButtonElement>;
+}
+
+/** Literal slotted item contract with element-specific refs and events. */
+export type ContextMenuSlottedItemProps<T extends HTMLElement = HTMLElement> =
+  & Omit<PolymorphicButtonAttributes<T>, "children" | "ref" | "onSelect">
+  & {
+    /** Called when the item is chosen (also closes the menu). */
+    onSelect?: () => void;
+    asChild: true;
+    children: React.ReactElement;
+    disabled?: boolean;
+    ref?: React.Ref<T>;
+  };
+
+/** A selectable menu item. Icons render at `size-3.5` (14px). Closes on select. */
+export function ContextMenuItem<T extends HTMLElement = HTMLElement>(
+  props: ContextMenuSlottedItemProps<T>,
+): React.ReactElement;
+export function ContextMenuItem(props: ContextMenuItemProps): React.ReactElement;
+export function ContextMenuItem<T extends HTMLElement = HTMLElement>({
+  children,
+  className,
+  onSelect,
+  onClick,
+  onKeyDown,
+  disabled,
+  asChild,
+  ref,
+  ...props
+}: ContextMenuItemProps | ContextMenuSlottedItemProps<T>): React.ReactElement {
+  const ctx = React.useContext(ContextMenuContext);
+  const closeAndRestoreFocus = React.useCallback(() => {
+    ctx?.setOpen(false);
+    const trigger = ctx?.triggerRef.current;
+    queueMicrotask(() => {
+      if (trigger?.isConnected) focusWithoutScroll(trigger);
+    });
+  }, [ctx]);
+  const itemProps = {
+    role: "menuitem",
+    "aria-disabled": disabled || undefined,
+    disabled,
+    className: cn(
+      "relative flex w-full cursor-pointer select-none items-center gap-2.5 rounded-md px-3 h-[36px] text-base font-normal text-left text-[var(--foreground)] outline-none transition-colors",
+      "hover:bg-[var(--tertiary)] focus:bg-[var(--tertiary)] dark:hover:bg-[var(--accent)] dark:focus:bg-[var(--accent)]",
+      "disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-3.5 [&_svg]:shrink-0",
+      className,
+    ),
+    onClick: (event: React.MouseEvent<HTMLElement>) => {
+      if (disabled) return;
+      (onClick as React.MouseEventHandler<HTMLElement> | undefined)?.(event);
+      if (event.defaultPrevented) return;
+      onSelect?.();
+      closeAndRestoreFocus();
+    },
+    onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => {
+      (onKeyDown as React.KeyboardEventHandler<HTMLElement> | undefined)?.(event);
+      if (event.defaultPrevented) return;
+      if (disabled || (event.key !== "Enter" && event.key !== " ")) return;
+      event.preventDefault();
+      event.currentTarget.click();
+    },
+  };
+  if (asChild) {
+    return (
+      <Slot
+        ref={ref as React.Ref<HTMLElement>}
+        {...itemProps}
+        {...(props as React.HTMLAttributes<HTMLElement>)}
+      >
+        {children}
+      </Slot>
+    );
+  }
+  return (
+    <button
+      type="button"
+      ref={ref as React.Ref<HTMLButtonElement>}
+      {...itemProps}
+      {...(props as React.ButtonHTMLAttributes<HTMLButtonElement>)}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Full-width divider between groups (Studio: `-mx-2.5 my-2`). */
+export function ContextMenuSeparator(
+  { className }: { className?: string },
+): React.ReactElement {
+  return <div className={cn("-mx-2.5 my-2 h-px bg-[var(--separator)]", className)} />;
+}
+
+/** Non-interactive section label - full-strength foreground (Studio). */
+export function ContextMenuLabel({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}): React.ReactElement {
+  return (
+    <div
+      className={cn(
+        "px-3 py-1.5 mb-0.5 text-sm font-medium text-[var(--foreground)]",
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
+}

@@ -171,6 +171,17 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "fails closed",
     ],
   },
+  "guides/ui-components.md": {
+    references: ["../api-reference/veryfront/ui.md"],
+    snippets: [
+      "veryfront/ui",
+      "UIAdapterProvider",
+      "useTokenScope",
+      "builtin",
+      "asChild",
+      "baseUiAdapter",
+    ],
+  },
   "guides/cli-knowledge-ingestion.md": {
     references: ["../api-reference/veryfront/cli.md"],
     snippets: [

@@ -131,7 +131,7 @@ describe("RichCodeBlock — block mode", () => {
       const button = rootElement.querySelector("button");
       assert(button, "copy control renders");
       button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
-      await settle();
+      await waitFor(() => button.textContent?.trim() === "Copy failed");
 
       assertEquals(fallbackCalls, 1);
       assertEquals(button.textContent?.trim(), "Copy failed");

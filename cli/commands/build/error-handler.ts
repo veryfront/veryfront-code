@@ -1,6 +1,6 @@
 import { brand, dim } from "#cli/ui";
 import { cliLogger, isVerbose, logError } from "#cli/utils";
-import { sanitizeTerminalDiagnosticText } from "#veryfront/errors/safe-diagnostics.ts";
+import { sanitizeTerminalDiagnosticText } from "veryfront/errors";
 import { exit, getStdout } from "veryfront/platform";
 
 const STACK_FRAME_WITH_PARENS =
