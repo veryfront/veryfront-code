@@ -426,6 +426,45 @@ describe("integration endpoint specs", () => {
     );
   });
 
+  it("opts only scoped Salesforce SOQL defaults into model-facing schemas", () => {
+    const connector = getConnector("salesforce");
+    const exposedToolIds: string[] = [];
+    let exposedDefaults = 0;
+
+    for (const tool of connector.tools) {
+      const query = tool.endpoint?.params?.q;
+      if (query?.default === undefined) continue;
+
+      if (tool.id === "salesforce__list_case_activity") {
+        assertEquals(
+          query.exposeDefault,
+          undefined,
+          "Expected unscoped CaseComment query to stay out of model-facing schemas",
+        );
+        continue;
+      }
+
+      assertEquals(
+        query.exposeDefault,
+        true,
+        `Expected ${tool.id} to expose its safe SOQL default`,
+      );
+      assertExists(tool.id, "Expected exposed Salesforce tools to declare an id");
+      exposedToolIds.push(tool.id);
+      exposedDefaults += 1;
+    }
+
+    assertEquals(exposedToolIds, [
+      "salesforce__find_customer",
+      "salesforce__search_accounts",
+      "salesforce__search_contacts",
+      "salesforce__list_cases",
+      "salesforce__search_knowledge_articles",
+      "salesforce__list_opportunities",
+    ]);
+    assertEquals(exposedDefaults, 6);
+  });
+
   it("declares Service Cloud support tools", () => {
     const expected = [
       "find_customer",

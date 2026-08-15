@@ -47525,6 +47525,7 @@ export const connectors: IntegrationConfig[] = [
               "SOQL Contact query. Include Account fields when the agent needs customer context.",
             "default":
               "SELECT Id, FirstName, LastName, Email, Phone, Title, AccountId, Account.Name, Account.Type, Account.Industry FROM Contact ORDER BY LastModifiedDate DESC LIMIT 25",
+            "exposeDefault": true,
           },
         },
         "response": { "transform": "records" },
@@ -47544,6 +47545,7 @@ export const connectors: IntegrationConfig[] = [
             "description": "SOQL Account query",
             "default":
               "SELECT Id, Name, Type, Industry, Phone, Website, OwnerId, LastModifiedDate FROM Account ORDER BY LastModifiedDate DESC LIMIT 50",
+            "exposeDefault": true,
           },
         },
         "response": { "transform": "records" },
@@ -47580,6 +47582,7 @@ export const connectors: IntegrationConfig[] = [
             "description": "SOQL query for contacts",
             "default":
               "SELECT Id, FirstName, LastName, Email, Phone, Title, AccountId, Account.Name FROM Contact ORDER BY LastModifiedDate DESC LIMIT 50",
+            "exposeDefault": true,
           },
         },
         "response": { "transform": "records" },
@@ -47617,6 +47620,7 @@ export const connectors: IntegrationConfig[] = [
               "SOQL Case query. Filter by ContactId, AccountId, Status, OwnerId, Priority, or CreatedDate as needed.",
             "default":
               "SELECT Id, CaseNumber, Subject, Status, Priority, Origin, ContactId, AccountId, OwnerId, CreatedDate, LastModifiedDate FROM Case ORDER BY LastModifiedDate DESC LIMIT 50",
+            "exposeDefault": true,
           },
         },
         "response": { "transform": "records" },
@@ -47676,6 +47680,7 @@ export const connectors: IntegrationConfig[] = [
               "SOQL KnowledgeArticleVersion query. Filter by Title, Summary, DataCategory, or language when needed.",
             "default":
               "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE PublishStatus = 'Online' ORDER BY LastPublishedDate DESC LIMIT 25",
+            "exposeDefault": true,
           },
         },
         "response": { "transform": "records" },
@@ -47695,6 +47700,7 @@ export const connectors: IntegrationConfig[] = [
             "description": "SOQL query for opportunities",
             "default":
               "SELECT Id, Name, StageName, Amount, CloseDate, AccountId, OwnerId, LastModifiedDate FROM Opportunity ORDER BY CloseDate DESC LIMIT 50",
+            "exposeDefault": true,
           },
         },
         "response": { "transform": "records" },
