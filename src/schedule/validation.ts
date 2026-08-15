@@ -5,7 +5,6 @@ import {
   declarationConflictDiagnostic,
   type ResolvedTriggerTarget,
   resolveTriggerTarget,
-  type TriggerTarget,
   triggerTargetKeys,
 } from "#veryfront/trigger/target.ts";
 import { snapshotSerializable, validateTriggerId } from "#veryfront/trigger/validation.ts";
@@ -341,7 +340,7 @@ function normalizeTarget(value: unknown): ResolvedTriggerTarget {
 
 function normalizeAgentMessage(
   value: unknown,
-  target: TriggerTarget,
+  target: ResolvedTriggerTarget,
 ): ScheduleAgentMessage | undefined {
   if (value === undefined) return undefined;
   if (target.kind !== "agent") {

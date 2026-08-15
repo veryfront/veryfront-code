@@ -4,7 +4,6 @@ import {
   conversationConflictDiagnostic,
   type ResolvedTriggerTarget,
   resolveTriggerTarget,
-  type TriggerTarget,
   triggerTargetKeys,
 } from "#veryfront/trigger/target.ts";
 import { snapshotSerializable, validateTriggerId } from "#veryfront/trigger/validation.ts";
@@ -344,7 +343,7 @@ function normalizeFilter(value: unknown): WebhookEventFilter | undefined {
 
 function normalizeAgentMessage(
   value: unknown,
-  target: TriggerTarget,
+  target: ResolvedTriggerTarget,
 ): WebhookAgentMessageMapping | undefined {
   if (value === undefined) {
     if (target.kind === "agent") {

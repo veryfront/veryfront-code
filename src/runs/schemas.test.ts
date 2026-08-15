@@ -57,10 +57,9 @@ describe("runs/schemas", () => {
     assertEquals(RunSchema.parse(run), run);
   });
 
-  // `isTriggerTarget` rejects unknown target keys. A schedules-list response is
-  // the one place a target crosses the wire from the platform, so this pins the
-  // coupling: the response schema strips keys the SDK does not model, and a
-  // platform that starts sending a new one must not fail local resolution.
+  // A schedules-list response is the one place a target crosses the wire from
+  // the platform, so the response schema normalizes known fields and strips
+  // extension fields the SDK does not model before local resolution.
   it("maps known schedule target fields and strips unknown fields", () => {
     const parsed = getScheduleReferenceListSchema().parse({
       schedules: [

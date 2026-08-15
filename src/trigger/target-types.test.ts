@@ -10,6 +10,7 @@ import type {
   WorkflowTriggerTarget,
 } from "#veryfront/trigger";
 import type { WebhookConfig, WebhookDefinition } from "#veryfront/webhook";
+import { resolveTriggerTarget } from "./target.ts";
 
 const adapter = {} as RuntimeAdapter;
 
@@ -158,5 +159,11 @@ describe("trigger target public type contracts", () => {
     assertEquals(readScheduleConversationMode(target), "create_new");
     assertEquals(readWebhookConversationMode(target), "create_new");
     assertEquals(readRemoteScheduleConversationMode(target), "create_new");
+
+    const resolution = resolveTriggerTarget("Trigger target", target);
+    if (resolution.target?.kind !== "agent") {
+      throw new Error("expected a resolved agent target");
+    }
+    assertEquals(resolution.target.conversationMode, "create_new");
   });
 });

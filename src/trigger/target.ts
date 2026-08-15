@@ -47,7 +47,7 @@ export interface TriggerTarget {
   id: string;
 }
 
-/** Author-facing target shape with conversation fields narrowed by kind. */
+/** Author-facing target shape accepting stored base values and kind-specific literals. */
 export type TriggerTargetConfig =
   | TriggerTarget
   | TaskTriggerTarget
@@ -170,16 +170,15 @@ export function declarationConflictDiagnostic(
 export function conversationConflictDiagnostic(
   label: string,
   legacyLabel: string,
-  target: TriggerTargetConfig,
+  target: ResolvedTriggerTarget,
   legacyConversationMode: unknown,
   legacyConversationId: unknown,
 ): string | null {
   if (target.kind !== "agent") return null;
-  const agentTarget = target as AgentTriggerTarget;
   for (
     const [field, targetValue, legacyValue] of [
-      ["conversationMode", agentTarget.conversationMode, legacyConversationMode],
-      ["conversationId", agentTarget.conversationId, legacyConversationId],
+      ["conversationMode", target.conversationMode, legacyConversationMode],
+      ["conversationId", target.conversationId, legacyConversationId],
     ] as const
   ) {
     const detail = declarationConflictDiagnostic(
