@@ -113,4 +113,81 @@ describe("runs/schemas", () => {
 
     assertEquals(result.success, false);
   });
+
+  it("rejects existing agent schedule targets without a conversation id", () => {
+    const result = getScheduleReferenceListSchema().safeParse({
+      schedules: [
+        {
+          id: "schedule_1",
+          name: "Resume triage",
+          status: "active",
+          target: {
+            kind: "agent",
+            id: "case-triage",
+            conversation_mode: "existing",
+          },
+          definition_source: "source",
+          source_trigger_id: "resume-triage",
+          timeout_seconds: 900,
+        },
+      ],
+    });
+
+    assertEquals(result.success, false);
+  });
+
+  for (const conversationMode of ["none", "create_new"] as const) {
+    it(`rejects ${conversationMode} agent schedule targets with a conversation id`, () => {
+      const result = getScheduleReferenceListSchema().safeParse({
+        schedules: [
+          {
+            id: "schedule_1",
+            name: "Start triage",
+            status: "active",
+            target: {
+              kind: "agent",
+              id: "case-triage",
+              conversation_mode: conversationMode,
+              conversation_id: "11111111-1111-4111-8111-111111111111",
+            },
+            definition_source: "source",
+            source_trigger_id: "start-triage",
+            timeout_seconds: 900,
+          },
+        ],
+      });
+
+      assertEquals(result.success, false);
+    });
+  }
+
+  it("maps existing agent schedule targets with a valid conversation id", () => {
+    const parsed = getScheduleReferenceListSchema().parse({
+      schedules: [
+        {
+          id: "schedule_1",
+          name: "Resume triage",
+          status: "active",
+          target: {
+            kind: "agent",
+            id: "case-triage",
+            conversation_mode: "existing",
+            conversation_id: "11111111-1111-4111-8111-111111111111",
+          },
+          definition_source: "source",
+          source_trigger_id: "resume-triage",
+          timeout_seconds: 900,
+        },
+      ],
+    });
+
+    const target = parsed.schedules[0]?.target;
+    assertEquals(target, {
+      kind: "agent",
+      id: "case-triage",
+      conversationMode: "existing",
+      conversationId: "11111111-1111-4111-8111-111111111111",
+    });
+    assertEquals(isTriggerTarget(target), true);
+  });
 });

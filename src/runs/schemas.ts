@@ -1,5 +1,6 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import { agentConversationDiagnostic } from "#veryfront/trigger/target.ts";
 
 export const getRunKindSchema = defineSchema((v) =>
   v.enum(["agent", "workflow", "task", "eval"] as const)
@@ -107,6 +108,16 @@ export const getScheduleReferenceListSchema = defineSchema((v) =>
               code: "custom",
               message: "Schedule target conversation fields are valid only for agent targets.",
             });
+          }
+          if (kind === "agent") {
+            const detail = agentConversationDiagnostic(
+              "Schedule target",
+              conversation_mode,
+              conversation_id,
+            );
+            if (detail !== null) {
+              context.addIssue({ code: "custom", message: detail });
+            }
           }
         }).transform(({ kind, id, conversation_mode, conversation_id }) => {
           if (kind !== "agent") return { kind, id };
