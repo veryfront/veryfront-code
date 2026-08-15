@@ -331,6 +331,25 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("finds imports after division when literal contents look like control conditions", () => {
+      assertEquals(
+        specifiers('foo("if(") / 2 && import("./after-string-division.js");'),
+        ["./after-string-division.js"],
+      );
+      assertEquals(
+        specifiers("foo('while(') / 2 && import('./after-single-string-division.js');"),
+        ["./after-single-string-division.js"],
+      );
+      assertEquals(
+        specifiers("foo(`for(`) / 2 && import('./after-template-string-division.js');"),
+        ["./after-template-string-division.js"],
+      );
+      assertEquals(
+        specifiers("foo(/* switch( */ value) / 2 && import('./after-comment-division.js');"),
+        ["./after-comment-division.js"],
+      );
+    });
+
     it("finds imports after regex literals following control statement conditions", () => {
       assertEquals(
         specifiers('if (ok) /"/.test(x); import("./after-if-quote.js");'),

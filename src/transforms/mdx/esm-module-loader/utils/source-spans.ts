@@ -253,6 +253,17 @@ function isControlConditionCloseParen(source: string, index: number, rangeStart:
   while (cursor >= rangeStart) {
     const char = source[cursor];
 
+    if (char === '"' || char === "'" || char === "`") {
+      cursor = previousStringLiteralStart(source, cursor, rangeStart) - 1;
+      continue;
+    }
+
+    if (char === "/" && source[cursor - 1] === "*") {
+      const commentStart = source.lastIndexOf("/*", cursor - 2);
+      cursor = commentStart >= rangeStart ? commentStart - 1 : rangeStart - 1;
+      continue;
+    }
+
     if (char === ")") {
       depth++;
       cursor--;
@@ -274,6 +285,28 @@ function isControlConditionCloseParen(source: string, index: number, rangeStart:
   }
 
   return false;
+}
+
+function previousStringLiteralStart(source: string, index: number, rangeStart: number): number {
+  const quote = source[index];
+  let cursor = index - 1;
+
+  while (cursor >= rangeStart) {
+    if (source[cursor] === quote && !isEscapedByBackslash(source, cursor)) return cursor;
+    cursor--;
+  }
+
+  return rangeStart;
+}
+
+function isEscapedByBackslash(source: string, index: number): boolean {
+  let cursor = index - 1;
+  let count = 0;
+  while (cursor >= 0 && source[cursor] === "\\") {
+    count++;
+    cursor--;
+  }
+  return count % 2 === 1;
 }
 
 function matchingOpenBraceIndex(source: string, index: number, rangeStart: number): number | null {
