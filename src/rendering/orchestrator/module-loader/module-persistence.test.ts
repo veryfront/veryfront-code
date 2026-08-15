@@ -167,6 +167,41 @@ describe("module-loader/module-persistence", () => {
     }
   });
 
+  it("does not infer a default cycle alias from regex contents", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+
+    const cases = [
+      `export const pattern = /export default/;`,
+      `if (enabled) /export default/.test(source); export const value = 1;`,
+      `function read() { return /* keep the comment */ /export default/.source; }`,
+      `function read() { return // keep the comment\n/export default/.source; }`,
+    ] as const;
+
+    try {
+      for (const [index, transformedCode] of cases.entries()) {
+        const filePath = join(projectDir, `app/page-${index}.ts`);
+        const result = await persistTransformedModule({
+          filePath,
+          projectDir,
+          tmpDir,
+          transformedCode,
+          localAdapter,
+          moduleCache: new Map<string, string>(),
+          cacheKey: `regex-default-${index}`,
+          isCycleTarget: true,
+        });
+
+        const aliasCode = await Deno.readTextFile(join(dirname(result), `page-${index}.js`));
+        assertEquals(aliasCode, `export * from "./${basename(result)}";`);
+      }
+    } finally {
+      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
   it("writes default cycle aliases only when an export exposes default", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
     const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
@@ -177,6 +212,11 @@ describe("module-loader/module-persistence", () => {
       {
         path: "app/default-declaration.ts",
         transformedCode: `export default function Page() { return null; }`,
+        exposesDefault: true,
+      },
+      {
+        path: "app/division-before-default.ts",
+        transformedCode: `const ratio = total / count; export default ratio;`,
         exposesDefault: true,
       },
       {

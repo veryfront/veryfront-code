@@ -187,6 +187,35 @@ describe("module-loader/dependency-resolver", () => {
     );
   });
 
+  it("does not resolve import-looking JSX display text", async () => {
+    await withDependencyFixture(
+      {
+        "app/page.tsx": [
+          `const label = "Example: ";`,
+          `export default function Page() {`,
+          `  return <code>{label}import "./example"</code>;`,
+          `}`,
+        ].join("\n"),
+        "app/example.ts": `export const example = true;`,
+      },
+      async ({ projectDir }) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.tsx");
+        const fileContent = await Deno.readTextFile(filePath);
+
+        const deps = await resolveModuleDependencies({
+          adapter,
+          fileContent,
+          filePath,
+          projectDir,
+        });
+
+        assertEquals(deps, []);
+        assertEquals(rewriteResolvedDependencyImports(fileContent, deps), fileContent);
+      },
+    );
+  });
+
   it("resolves alias and relative imports while ignoring already transformed file imports", async () => {
     await withDependencyFixture(
       {

@@ -207,6 +207,32 @@ function nextStatementCursor(source: string, index: number): number {
   return source.length;
 }
 
+function isSideEffectImportTerminated(source: string, index: number): boolean {
+  let cursor = index;
+
+  while (cursor < source.length) {
+    const char = source[cursor]!;
+    if (isLineTerminator(char)) return true;
+    if (char === " " || char === "\t" || char === "\f") {
+      cursor++;
+      continue;
+    }
+    if (char === ";") return true;
+    if (char === "/" && source[cursor + 1] === "/") return true;
+    if (char === "/" && source[cursor + 1] === "*") {
+      const commentEnd = skipIgnored(source, cursor);
+      if (containsLineTerminator(source, cursor, commentEnd)) return true;
+      cursor = commentEnd;
+      continue;
+    }
+    // Import attributes are part of the same declaration and follow the
+    // specifier before its terminator.
+    return source.startsWith("with", cursor) || source.startsWith("assert", cursor);
+  }
+
+  return true;
+}
+
 function hexDigitValue(char: string | undefined): number {
   if (char === undefined) return -1;
   const code = char.charCodeAt(0);
@@ -1488,6 +1514,13 @@ export function findStaticSideEffectImportSpans(
       atStatementStart = true;
       cursor = nextStatementCursor(source, literalIndex);
       previousTokenIndex = Math.max(previousTokenIndex, cursor - 1);
+      continue;
+    }
+
+    if (!isSideEffectImportTerminated(source, literal.end)) {
+      atStatementStart = false;
+      previousTokenIndex = literal.end - 1;
+      cursor = literal.end;
       continue;
     }
 

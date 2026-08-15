@@ -117,6 +117,10 @@ export async function readPersistedUnresolvedSpecifiers(
  * `export { default } from …` forms.
  */
 function hasDefaultExport(code: string): boolean {
+  let previousTokenIndex = -1;
+  const controlConditionCloseParens = new Set<number>();
+  const openParens: boolean[] = [];
+
   for (let index = 0; index < code.length;) {
     index = skipTrivia(code, index);
     if (index >= code.length) break;
@@ -137,8 +141,35 @@ function hasDefaultExport(code: string): boolean {
       continue;
     }
 
-    const next = skipTextToken(code, index);
-    index = next === index ? index + 1 : next;
+    const next = skipTextToken(code, index, {
+      previousTokenIndex,
+      controlConditionCloseParens,
+    });
+    if (next !== index) {
+      previousTokenIndex = next - 1;
+      index = next;
+      continue;
+    }
+
+    if (isIdentifierStart(code[index])) {
+      index++;
+      while (index < code.length && isIdentifierPart(code[index])) index++;
+      previousTokenIndex = index - 1;
+      continue;
+    }
+
+    if (code[index] === "(") {
+      const keyword = identifierBefore(code, previousTokenIndex);
+      openParens.push(
+        keyword === "if" || keyword === "while" || keyword === "for" ||
+          keyword === "with" || keyword === "switch" || keyword === "catch",
+      );
+    } else if (code[index] === ")" && openParens.pop() === true) {
+      controlConditionCloseParens.add(index);
+    }
+
+    previousTokenIndex = index;
+    index++;
   }
 
   return false;
@@ -238,9 +269,21 @@ function skipTrivia(source: string, index: number): number {
   return index;
 }
 
-function skipTextToken(source: string, index: number): number {
+interface RegexScanContext {
+  previousTokenIndex: number;
+  controlConditionCloseParens: ReadonlySet<number>;
+}
+
+function skipTextToken(
+  source: string,
+  index: number,
+  context?: RegexScanContext,
+): number {
   const commentEnd = skipComment(source, index);
   if (commentEnd !== index) return commentEnd;
+
+  const regexEnd = skipRegexToken(source, index, context);
+  if (regexEnd !== index) return regexEnd;
 
   const char = source[index];
   if (char !== '"' && char !== "'" && char !== "`") return index;
@@ -254,6 +297,87 @@ function skipTextToken(source: string, index: number): number {
   }
 
   return source.length;
+}
+
+function skipRegexToken(
+  source: string,
+  index: number,
+  context?: RegexScanContext,
+): number {
+  if (source[index] !== "/" || source[index + 1] === "/" || source[index + 1] === "*") {
+    return index;
+  }
+
+  const previous = context?.previousTokenIndex ?? previousSignificantIndex(source, index);
+  if (previous >= 0) {
+    const char = source[previous]!;
+    if (char === ")" && context?.controlConditionCloseParens.has(previous)) {
+      // A statement can start with a regex immediately after a control
+      // condition, for example `if (ready) /pattern/.test(value)`.
+    } else if (!"([{=,:;!~?&|+-*%^<>".includes(char)) {
+      const keyword = identifierBefore(source, previous);
+      if (
+        ![
+          "case",
+          "delete",
+          "do",
+          "else",
+          "extends",
+          "in",
+          "instanceof",
+          "new",
+          "await",
+          "return",
+          "throw",
+          "typeof",
+          "void",
+          "yield",
+        ].includes(keyword ?? "")
+      ) return index;
+    }
+  }
+
+  let cursor = index + 1;
+  let inCharacterClass = false;
+  while (cursor < source.length) {
+    const char = source[cursor]!;
+    if (char === "\\") {
+      cursor += 2;
+      continue;
+    }
+    if (char === "[" && !inCharacterClass) {
+      inCharacterClass = true;
+      cursor++;
+      continue;
+    }
+    if (char === "]" && inCharacterClass) {
+      inCharacterClass = false;
+      cursor++;
+      continue;
+    }
+    if (char === "/" && !inCharacterClass) {
+      cursor++;
+      while (isIdentifierPart(source[cursor])) cursor++;
+      return cursor;
+    }
+    if (char === "\n" || char === "\r") return index;
+    cursor++;
+  }
+
+  return index;
+}
+
+function previousSignificantIndex(source: string, index: number): number {
+  let cursor = index - 1;
+  while (cursor >= 0 && /\s/.test(source[cursor] ?? "")) cursor--;
+  return cursor;
+}
+
+function identifierBefore(source: string, endIndex: number): string | null {
+  const end = endIndex + 1;
+  let start = end;
+  while (start > 0 && isIdentifierPart(source[start - 1])) start--;
+  return start === end ? null : source.slice(start, end);
 }
 
 function skipComment(source: string, index: number): number {
