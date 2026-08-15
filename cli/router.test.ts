@@ -863,18 +863,20 @@ describe("cli/router helpers", () => {
       stubLogger();
       try {
         for (const command of ["project", "projects"]) {
-          infoMessages.length = 0;
-          const code = await runAndCaptureExit(parseCliArgs([
-            "veryfront",
-            command,
-            "delete",
-            "private-project-target",
-          ]));
-          assertEquals(code, 2);
-          assertEquals(infoMessages, [
-            '  You already included "veryfront". Use:',
-            `    veryfront ${command} delete '<REDACTED>'`,
-          ]);
+          for (const subcommand of ["delete", "rm"]) {
+            infoMessages.length = 0;
+            const code = await runAndCaptureExit(parseCliArgs([
+              "veryfront",
+              command,
+              subcommand,
+              "private-project-target",
+            ]));
+            assertEquals(code, 2);
+            assertEquals(infoMessages, [
+              '  You already included "veryfront". Use:',
+              `    veryfront ${command} ${subcommand} '<REDACTED>'`,
+            ]);
+          }
         }
       } finally {
         restoreAll();
