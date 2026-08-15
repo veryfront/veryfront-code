@@ -55,7 +55,7 @@ await server.fetch(new Request("https://example.com/health"));
 | `startDevServer`                     | Starts dev server.                                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/dev-server/index.ts#L15)     |
 | `startNodeVeryfrontServer`           | Starts node veryfront server.                                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/service-server.ts#L575)      |
 | `startProductionServer`              | Starts production server.                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/production-server.ts#L182)   |
-| `startServer`                        | Start a Veryfront server in development or production mode.                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/index.ts#L531)               |
+| `startServer`                        | Start a Veryfront server in development or production mode.                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/index.ts#L530)               |
 | `startVeryfrontServer`               | Starts veryfront server.                                                                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/service-server.ts#L555)      |
 | `toNodeHandler`                      | Convert a Web API request handler into a Node.js HTTP listener.                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/node-handler.ts#L5)          |
 
@@ -63,7 +63,7 @@ await server.fetch(new Request("https://example.com/health"));
 
 | Name             | Description           | Source                                                                                                       |
 | ---------------- | --------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `DevServer`      | Implement dev server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/dev-server/server.ts#L71)          |
+| `DevServer`      | Implement dev server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/dev-server/server.ts#L74)          |
 | `RouteDiscovery` |                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/dev-server/route-discovery.ts#L33) |
 
 ### Types
@@ -75,11 +75,11 @@ await server.fetch(new Request("https://example.com/health"));
 | `CreateVeryfrontServerOptions`         | Options accepted by create veryfront server.                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/service-server.ts#L32)      |
 | `DevServerOptions`                     | Options accepted by dev server.                                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/dev-server/types.ts#L2)     |
 | `DiscoveryOptions`                     | Configuration for AI primitives discovery during server startup                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/production-server.ts#L120)  |
-| `FileWatcherMetrics`                   | Public API contract for file watcher metrics.                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/dev-server/types.ts#L33)    |
+| `FileWatcherMetrics`                   | Public API contract for file watcher metrics.                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/dev-server/types.ts#L37)    |
 | `GracefulProductionShutdownOptions`    | Inputs required to drain and stop a production server process.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/graceful-shutdown.ts#L25)   |
 | `HostedEnvironmentName`                |                                                                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/utils/domain-parser.ts#L49) |
 | `NodeVeryfrontServiceServer`           | Public API contract for node veryfront service server.                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/service-server.ts#L83)      |
-| `RouteDirectory`                       | Public API contract for route directory.                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/dev-server/types.ts#L27)    |
+| `RouteDirectory`                       | Public API contract for route directory.                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/dev-server/types.ts#L31)    |
 | `ServerHandle`                         | Public API contract for server handle.                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/production-server.ts#L157)  |
 | `StartDevModeOptions`                  | Options accepted by start dev mode.                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/index.ts#L119)              |
 | `StartNodeVeryfrontServerOptions`      | Options accepted by start node veryfront server.                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/service-server.ts#L47)      |

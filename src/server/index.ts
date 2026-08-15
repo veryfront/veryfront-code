@@ -278,14 +278,13 @@ export async function createHandler(
   const nodeWebSocketServerProvider = devServer.nodeWebSocketServerProvider;
   let disposalStarted = false;
   const fetch = async (req: Request, info?: unknown) => {
-    recordHandlerRequestPeer(req, info);
     if (disposalStarted) {
       return new _NativeResponse("Handler is shutting down", {
         status: 503,
         headers: { "cache-control": "no-store" },
       });
     }
-    return toNativeResponse(await internalFetch(req));
+    return toNativeResponse(await internalFetch(req, info));
   };
   const hmrRateLimiter = new RateLimiter(HMR_MAX_MESSAGES_PER_MINUTE);
   const nodeUpgradeLifecycle = new NodeUpgradeLifecycle();
