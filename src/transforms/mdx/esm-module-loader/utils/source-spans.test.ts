@@ -1275,6 +1275,17 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("ignores side-effect import text in Unicode-leading JSX children", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'export function Example() { return <路径>{label}import "./example.js";</路径>; } import "./real.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./real.js"],
+      );
+    });
+
     it("keeps scanning after a TypeScript angle-bracket assertion", () => {
       assertEquals(
         findStaticSideEffectImportSpans(
@@ -1298,7 +1309,15 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
     });
 
     it("recognizes regex syntax followed by binary operators", () => {
-      for (const continuation of ["&& ready", "+ offset", "=== expected"]) {
+      for (
+        const continuation of [
+          "&& ready",
+          "+ offset",
+          "=== expected",
+          "in expressions",
+          "instanceof RegExp",
+        ]
+      ) {
         assertEquals(
           findStaticSideEffectImportSpans(
             `const value = <Value>thing; import "./after-assertion.js"; const ok = x </Value>foo/ ${continuation};`,

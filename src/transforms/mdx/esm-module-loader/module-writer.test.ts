@@ -12,6 +12,7 @@ import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import type { MDXModule } from "../types.ts";
+import { MAX_MDX_MODULE_CODE_BYTES } from "./module-fetcher/limits.ts";
 
 function cacheKeyForDependencies(
   dependencies: Readonly<Record<string, string>>,
@@ -199,6 +200,55 @@ describe("MDX root dynamic imports", () => {
         Error,
         `Missing module: _vf_modules/${missingModule}.js`,
       );
+    } finally {
+      mdxRenderer.clearCache();
+      await Deno.remove(projectDir, { recursive: true });
+      const esbuild = await import("veryfront/extensions/bundler");
+      await esbuild.stop();
+    }
+  });
+
+  it("defers a typed dependency failure until the root import executes", async () => {
+    const oversizedModule = `OversizedRoot-${crypto.randomUUID()}.js`;
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-mdx-root-dynamic-limit-" });
+
+    try {
+      const mod = await withMockFetch(
+        () =>
+          Promise.resolve(
+            new Response("x".repeat(MAX_MDX_MODULE_CODE_BYTES + 1), {
+              headers: { "content-type": "application/javascript" },
+            }),
+          ),
+        () =>
+          mdxRenderer.loadModuleESM(
+            `export async function loadOptional(enabled) {
+              if (!enabled) return "SKIPPED";
+              return await import("@/${oversizedModule}");
+            }
+            export default function Root() { return null; }`,
+            {
+              adapter: denoAdapter,
+              projectId: `project-${crypto.randomUUID()}`,
+              projectDir,
+              projectSlug: "root-dynamic-limit",
+              contentSourceId: `source-${crypto.randomUUID()}`,
+              isLocalProject: true,
+            },
+          ),
+      );
+      const loadOptional = (mod as unknown as {
+        loadOptional(enabled: boolean): Promise<unknown>;
+      }).loadOptional;
+
+      assertEquals(await loadOptional(false), "SKIPPED");
+      const error = await assertRejects(
+        () => loadOptional(true),
+        Error,
+        "module source exceeds the allowed size",
+      );
+      if (!(error instanceof Error)) throw new Error("expected Error");
+      assertEquals(error.name, "ModuleSourceLimitError");
     } finally {
       mdxRenderer.clearCache();
       await Deno.remove(projectDir, { recursive: true });

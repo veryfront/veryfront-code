@@ -27,6 +27,7 @@ import {
   MAX_MDX_MODULE_TRANSFORM_CONCURRENCY,
 } from "./limits.ts";
 import { VeryfrontError } from "#veryfront/errors";
+import { isTenantSourceBuildError } from "#veryfront/errors/tenant-classification.ts";
 
 function matchUnresolvedVfModuleSpecifier(specifier: string): string | null {
   return specifier.match(/^((?:file:\/\/)?\/?\/?_vf_modules\/.+)$/)?.[1] ?? null;
@@ -70,7 +71,10 @@ export function dynamicDependencyFailure(
     };
   }
 
-  if (error.name === "ModuleSourceLimitError") {
+  if (
+    error.name === "ModuleSourceLimitError" ||
+    error.name === "HttpModuleBodyTooLargeError"
+  ) {
     return {
       name: "ModuleSourceLimitError",
       message:
@@ -82,6 +86,17 @@ export function dynamicDependencyFailure(
     return {
       name: "MdxCompileError",
       message: `[Veryfront] Dynamic import failed for ${modulePath}: MDX compilation failed.`,
+    };
+  }
+
+  if (
+    error instanceof VeryfrontError && error.slug === "compilation-error" &&
+    isTenantSourceBuildError(error)
+  ) {
+    return {
+      name: "CompilationError",
+      message:
+        `[Veryfront] Dynamic import failed for ${modulePath}: TypeScript compilation failed.`,
     };
   }
 

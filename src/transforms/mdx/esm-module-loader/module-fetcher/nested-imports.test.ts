@@ -3,7 +3,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import { join, toFileUrl } from "#veryfront/compat/path/index.ts";
-import { MDX_COMPILE_ERROR } from "#veryfront/errors";
+import { COMPILATION_ERROR, MDX_COMPILE_ERROR } from "#veryfront/errors";
 import {
   findNestedImports,
   hasUnresolvedImports,
@@ -514,6 +514,46 @@ import { bar } from "./local.js";
         );
         if (!(error instanceof Error)) throw new Error("expected Error");
         assertEquals(error.name, "MdxCompileError");
+        assertEquals(error.message.includes("<PROJECT_DIR>"), false);
+        assertEquals(error.message.includes("<raw source>"), false);
+      } finally {
+        await remove(esmCacheDir, { recursive: true });
+      }
+    });
+
+    it("defers tenant TypeScript compilation failures until the branch executes", async () => {
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-dynamic-ts-cache-" });
+      const source =
+        `export const load = (enabled) => enabled ? import("./broken.ts") : Promise.resolve("skipped");`;
+
+      try {
+        const result = await resolveNestedModuleImports({
+          moduleCode: source,
+          esmCacheDir,
+          normalizedPath: "_vf_modules/pages/index.js",
+          projectSlug: "docs",
+          strictMissingModules: true,
+          fetchAndCacheModule: () => {
+            throw COMPILATION_ERROR.create({
+              detail: "ESM transform failed for <PROJECT_DIR>/broken.ts: <raw source>",
+              context: { tenantBuildFailure: true },
+            });
+          },
+        });
+        const parentPath = join(esmCacheDir, "dynamic-ts-parent.mjs");
+        await Deno.writeTextFile(parentPath, result);
+        const loaded = await import(
+          `${toFileUrl(parentPath).href}?test=${crypto.randomUUID()}`
+        ) as { load(enabled: boolean): Promise<unknown> };
+
+        assertEquals(await loaded.load(false), "skipped");
+        const error = await assertRejects(
+          () => loaded.load(true),
+          Error,
+          "TypeScript compilation failed",
+        );
+        if (!(error instanceof Error)) throw new Error("expected Error");
+        assertEquals(error.name, "CompilationError");
         assertEquals(error.message.includes("<PROJECT_DIR>"), false);
         assertEquals(error.message.includes("<raw source>"), false);
       } finally {

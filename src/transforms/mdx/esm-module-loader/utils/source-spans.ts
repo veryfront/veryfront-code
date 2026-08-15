@@ -334,7 +334,10 @@ function isRegexClosingTagLookalike(source: string, index: number): boolean {
 
   const afterRegex = skipWhitespaceAndComments(source, regexEnd);
   const next = source[afterRegex];
-  return next === undefined || ".([?;,)]}:+-*/%<>=!&|^~".includes(next);
+  return next === undefined || ".([?;,)]}:+-*/%<>=!&|^~".includes(next) ||
+    (source.startsWith("in", afterRegex) && !isIdentifierPartAt(source, afterRegex + 2)) ||
+    (source.startsWith("instanceof", afterRegex) &&
+      !isIdentifierPartAt(source, afterRegex + "instanceof".length));
 }
 
 function canStartJsxElement(
@@ -343,7 +346,7 @@ function canStartJsxElement(
   previousTokenIndex: number,
 ): boolean {
   const next = source[index + 1];
-  if (next !== ">" && !/[A-Za-z_$]/.test(next ?? "")) return false;
+  if (next !== ">" && jsxTagNameCharacterLength(source, index + 1) === 0) return false;
   if (previousTokenIndex < 0) return true;
 
   const previous = source[previousTokenIndex]!;
