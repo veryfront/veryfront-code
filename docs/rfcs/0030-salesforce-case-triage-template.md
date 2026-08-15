@@ -70,7 +70,10 @@ Two artefacts that must stay 1:1:
     performs the mandatory `Reason` preflight; `add_internal_case_comment` omits
     `IsPublished` and its server-owned request body always sets
     `IsPublished: false`. The target grant keeps separate fixed `Case` Update
-    and `CaseComment` Create authorization checks.
+    and `CaseComment` Create authorization checks. Any read-after-timeout
+    reconciliation path also needs a separate fixed `CaseComment` Read check
+    scoped to the same case and idempotency fields; Create permission alone is
+    not enough to inspect already-written comments.
 - **Companion example repository** (currently private). Mirrors the four agents
   as `agents/*.ts`, ships the taxonomy in `knowledge/`, ships
   **evals** (`evals/*.eval.ts` + `evals/mock-tools.ts`), and runs locally via
@@ -351,12 +354,17 @@ as `Subject`, `SuppliedEmail`, and `SuppliedPhone`, free text, and custom `__c`
 fields; if the agent runtime persists those tool results before `case-ingest`
 builds the sanitized child payload, durable run history already contains customer
 text. V1 must either return a hosted allowlisted projection before persistence or
-suppress persistence of the raw tool result and persist only the sanitized
-projection. Redacting only `Subject`, `Description`, and `CommentBody` is
+suppress persistence of the raw tool result and expose only the sanitized
+projection to the ingest model and to later persistence. The raw-result
+suppression alternative is not a permission to let `case-ingest` consume raw
+Salesforce responses and redact them afterward; the hosted executor or runtime
+boundary must build the projection before any agent-visible tool-result message
+is delivered. Redacting only `Subject`, `Description`, and `CommentBody` is
 insufficient because unprojected sObject responses can contain other customer
 data. Do not reveal the template until tests prove every non-allowlisted field is
 dropped or redacted before stored run messages, streaming tool-result history,
-errors, logs, or telemetry can observe it.
+the ingest model input, child-run payloads, errors, logs, or telemetry can
+observe it.
 
 `case-ingest` must construct a new downstream object rather than spread or rename
 the Salesforce response. The only free-text fields accepted by `case-classify`
@@ -486,7 +494,7 @@ dependencies, not static-schema details:
 | Fixed object/Read authorization for retained direct reads | Hosted integration executor, using the Configure permission policy | Retaining direct sObject tools such as `get_case`, `get_contact`, and `get_account` while per-CRUD arrays are not generally enforced |
 | Fixed object/operation authorization for curated writes | Hosted integration executor, using the Configure permission policy | Shipping `update_case_reason`, `add_internal_case_comment`, retained `create_case`, retained `create_lead`, or any temporary retained `update_case` |
 | Fixed owner lookup adapters for `User`, Case queues, and Lead queues | Hosted integration executor / tools API, using server-owned SOQL and typed filters | Discovering owner candidates for Case and Lead while arbitrary `run_soql_query` and `q` remain hidden. Opportunity uses `User` candidates only. Lead and Opportunity assignment writes remain gated until scoped write tools or generic CRUD enforcement exist |
-| Pre-persistence PII redaction or raw-result persistence suppression | Hosted integration executor plus agent runtime persistence/streaming boundary | Revealing `get_case`, `list_cases`, `list_case_activity`, or the case-ingest template against customer text |
+| Pre-persistence PII projection or raw-result suppression before any agent-visible message | Hosted integration executor plus agent runtime persistence/streaming boundary | Revealing `get_case`, `list_cases`, `list_case_activity`, or the case-ingest template against customer text |
 | Fixed metadata-helper authorization | Hosted integration executor, using the Configure permission policy | Retaining `describe_object` or `get_picklist_values_for_record_type` for an object while per-CRUD arrays are not generally enforced |
 | Referenced-object parser/enforcer for arbitrary SOQL/SOSL | Hosted integration executor and authorization layer | Re-enabling `run_soql_query`, SOSL `search`, or any arbitrary curated `q` override |
 | Per-CRUD enforcement against runtime `sobjectType` | Configure policy storage plus hosted authorization enforcement | Shipping any generic CRUD tool |
@@ -495,8 +503,9 @@ dependencies, not static-schema details:
 
 Sequence v1 conservatively: first land the hosted curated-query adapter, fixed
 direct-read authorization, fixed owner lookup adapters, fixed curated-write
-authorization, pre-persistence PII redaction or raw-result persistence
-suppression, fixed metadata-helper authorization, path validators, and
+authorization, pre-persistence PII projection or raw-result suppression before
+any agent-visible message, fixed metadata-helper authorization, path validators,
+and
 write-status plus Knowledge/picklist adapter contracts with fail-closed tests;
 then reveal the curated v1 tool surface. Keep generic CRUD and arbitrary
 SOQL/SOSL hidden until the per-CRUD matrix and referenced-object query parser are
@@ -554,6 +563,14 @@ another comment. A retry after `Reason` succeeds but `CaseComment` fails, or
 after `CaseComment` succeeds but the client times out before observing the
 result, must not create duplicate comments or leave the agent to infer state from
 an empty write response.
+
+Any reconciliation read must be a fixed hosted query, not `run_soql_query` or an
+agent-supplied `q`. It requires an explicit `CaseComment` Read grant in addition
+to `CaseComment` Create, must filter by the target `ParentId`, and must compare
+only the stable idempotency fields for the same logical disposal (taxonomy
+version, selected reason, and internal comment content or derived key). Without
+that fixed `CaseComment` Read grant, the timeout path must fail closed and report
+that operator reconciliation is required instead of retrying a second write.
 
 Retained direct reads need the same concrete-operation treatment for Read:
 `get_case`, `get_contact`, and `get_account` stay in v1 only if the hosted
@@ -656,8 +673,11 @@ key other than `caseId` and comment text, while its server-owned Salesforce body
 must include `IsPublished: false`. Tests must prove that prompts, model output,
 and caller input cannot publish the comment. `case-dispose` must not receive the
 generic `add_case_comment` tool, and the internal helper still needs an independent
-`CaseComment` Create grant and denial test. Retained curated writes need the same
-fixed object/operation denial tests. Successful `204 No Content` writes, including
+`CaseComment` Create grant and denial test. Any read-after-timeout reconciliation
+path must also have a separate `CaseComment` Read grant and denial test proving
+the fixed query cannot run with Create-only permission and cannot read comments
+for another Case. Retained curated writes need the same fixed object/operation
+denial tests. Successful `204 No Content` writes, including
 `update_case_reason`, must return an explicit `{ success: true }` adapter result
 instead of an empty string, and tests must prove the agent-visible result cannot be
 misread as failure. Dispose write consistency needs explicit retry and
@@ -666,8 +686,10 @@ both `Reason` and `CaseComment` when either subrequest fails, and another must
 prove a retry after a committed composite response timeout uses stable request
 identity or read-after-timeout reconciliation without creating a duplicate
 `CaseComment`. For the reconciled path, retries after each half-succeeded order
-and after a post-comment timeout must converge without duplicate comments and
-with a deterministic operator-visible failure when convergence is impossible.
+and after a post-comment timeout must converge without duplicate comments, must
+query only the matching case's internal comments through the fixed
+`CaseComment` Read adapter, and must produce a deterministic operator-visible
+failure when convergence is impossible or the read grant is absent.
 Every immutable-query
 adapter entry must prove that `q` is
 absent from the published schema, a supplied `q` and unknown filters are rejected,
@@ -708,7 +730,8 @@ logs, or telemetry; the corresponding bounded `sanitizedSubject`,
 `case-classify`, and `RecordTypeId` must remain available to `case-dispose` for
 record-type-scoped picklist validation. Unknown fields, over-limit text, and
 redactor or post-redaction validation failures must prevent persistence of raw
-tool output and prevent the child run. Add a non-default Case record-type fixture
+tool output, prevent raw tool output from reaching the ingest model, and prevent
+the child run. Add a non-default Case record-type fixture
 that proves `case-dispose` calls
 `get_picklist_values_for_record_type` with the Case's actual `RecordTypeId` and
 does not use the connected profile default.
