@@ -3030,6 +3030,427 @@ describe("agent runtime refresh hooks", () => {
     );
   });
 
+  it("does not retry a truncated non-placeholder tool call after exposing reasoning", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        return {
+          stream: createRuntimeStream([
+            { type: "reasoning-start", id: "reasoning-before-interruption" },
+            {
+              type: "reasoning-delta",
+              id: "reasoning-before-interruption",
+              delta: "Check hidden state.",
+            },
+            { type: "reasoning-end", id: "reasoning-before-interruption" },
+            {
+              type: "tool-input-start",
+              id: "toolu_interrupted_after_reasoning",
+              toolName: "studio_suggestions",
+            },
+            {
+              type: "tool-input-delta",
+              id: "toolu_interrupted_after_reasoning",
+              delta: '{"suggestions":[',
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Reasoning recovery replay regression test",
+      tools: { studio_suggestions: studioSuggestions },
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const body = await (await assistant.stream({
+      input: "Check before acting",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse().text();
+
+    assertEquals(callCount, 1);
+    assertEquals(body.match(/Check hidden state\./g)?.length ?? 0, 1);
+    assertExists(finishedResponse);
+    assertEquals(
+      finishedResponse.messages
+        .filter((message) => message.role === "assistant")
+        .flatMap((message) => message.parts)
+        .filter((part) => part.type === "reasoning")
+        .flatMap((part) => "text" in part && typeof part.text === "string" ? [part.text] : []),
+      ["Check hidden state."],
+    );
+
+    // Terminal state. Declining recovery ends the run here, so the truncated
+    // call has to reach the client as a failed tool card: its tool-input-start
+    // was buffered awaiting a commit that never came, and without flushing it
+    // the stream would stop after the reasoning block with nothing rendered.
+    assertEquals(body.match(/"type":"message-finish"/g)?.length ?? 0, 1);
+    assertEquals(body.includes('"finishReason":"tool-calls"'), true);
+    assertEquals(body.match(/"type":"tool-input-start"/g)?.length ?? 0, 1);
+    assertEquals(body.match(/"type":"tool-input-available"/g)?.length ?? 0, 0);
+    assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 1);
+    // Both terminal error events key off `inputAnnounced`, and only statement
+    // order keeps the incomplete-tool loop from firing before the announce.
+    // Exactly one failure event must reach the client, never two.
+    assertEquals(body.match(/"type":"tool-input-error"/g)?.length ?? 0, 0);
+    assertEquals(
+      body.includes(
+        'Stream terminated before tool-call event fired for \\"studio_suggestions\\"',
+      ),
+      true,
+    );
+    assertEquals(
+      finishedResponse.toolCalls.map((toolCall) => [toolCall.name, toolCall.status]),
+      [["studio_suggestions", "error"]],
+    );
+  });
+
+  it("announces a truncated delegated remote tool under its namespaced name", async () => {
+    // The announce on the declined-recovery path is only reachable when
+    // `tool-call` never fired — that event sets `inputAvailable: true`, which
+    // makes `recordIncompleteLocalToolError` return at its guard. So no later
+    // event can supersede the name, and the name on the card must equal both
+    // the one the provider streamed and the one written to history.
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    const gmailSource: RemoteToolSource = {
+      id: "gmail",
+      listTools: () =>
+        Promise.resolve([{
+          name: "gmail__list_emails",
+          description: "List Gmail messages",
+          parameters: { type: "object", properties: {} },
+        }]),
+      executeTool: () => Promise.resolve({ messages: [] }),
+    };
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount > 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Unexpected recovery." },
+              { type: "finish", finishReason: "stop" },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "reasoning-start", id: "reasoning-before-remote" },
+            {
+              type: "reasoning-delta",
+              id: "reasoning-before-remote",
+              delta: "Check the inbox first.",
+            },
+            { type: "reasoning-end", id: "reasoning-before-remote" },
+            {
+              type: "tool-input-start",
+              id: "toolu_remote_truncated",
+              toolName: "gmail__list_emails",
+            },
+            {
+              type: "tool-input-delta",
+              id: "toolu_remote_truncated",
+              delta: '{"query":"is:unread',
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent(
+      {
+        model: "anthropic/claude-sonnet-4-6",
+        system: "Remote tool truncation regression test",
+        tools: { gmail__list_emails: true },
+        __vfRemoteToolSources: [gmailSource],
+        __vfAllowedRemoteTools: ["gmail__list_emails"],
+        maxSteps: 3,
+        resolveModelTransport: async () => ({ model }),
+      } as AgentConfig & RuntimeRemoteToolConfig,
+    );
+
+    const body = await (await assistant.stream({
+      input: "Summarize my inbox",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse().text();
+
+    assertEquals(callCount, 1);
+    assertEquals(body.includes("Unexpected recovery."), false);
+    assertExists(finishedResponse);
+
+    // The card is announced under the exact namespaced name the provider sent.
+    // No bare `list_emails`, and no placeholder for an unresolved namespace.
+    assertEquals(body.match(/"type":"tool-input-start"/g)?.length ?? 0, 1);
+    assertEquals(
+      body.match(
+        /"type":"tool-input-start","toolCallId":"toolu_remote_truncated","toolName":"gmail__list_emails"/g,
+      )
+        ?.length ?? 0,
+      1,
+    );
+    assertEquals(body.match(/"toolName":"list_emails"/g)?.length ?? 0, 0);
+    assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 1);
+    assertEquals(body.match(/"type":"tool-input-error"/g)?.length ?? 0, 0);
+    assertEquals(body.match(/"type":"tool-input-available"/g)?.length ?? 0, 0);
+
+    // The name on the wire matches the name persisted to history, so a reload
+    // renders the same tool as the live stream did.
+    const persistedToolNames = finishedResponse.messages
+      .flatMap((message) => message.parts)
+      .flatMap((part) =>
+        "toolCallId" in part && part.toolCallId === "toolu_remote_truncated" &&
+          "toolName" in part && typeof part.toolName === "string"
+          ? [part.toolName]
+          : []
+      );
+    assertEquals(persistedToolNames.every((name) => name === "gmail__list_emails"), true);
+    assertEquals(persistedToolNames.length > 0, true);
+    assertEquals(
+      finishedResponse.toolCalls.map((toolCall) => [toolCall.name, toolCall.status]),
+      [["gmail__list_emails", "error"]],
+    );
+  });
+
+  it("announces the finalized name when tool-call supersedes the buffered one", async () => {
+    // The buffered-name concern in the abstract: a `tool-call` carrying a
+    // different name than its `tool-input-start`. It is handled where the
+    // rename happens — `tool-call` announces the final name itself — and it
+    // also sets `inputAvailable: true`, so the terminal announce on the
+    // declined-recovery path can never see a superseded name.
+    let callCount = 0;
+    const renamed = tool({
+      id: "summarize_inbox",
+      description: "Summarize the inbox",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ messages: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount > 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Done." },
+              { type: "finish", finishReason: "stop" },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "reasoning-start", id: "reasoning-before-rename" },
+            {
+              type: "reasoning-delta",
+              id: "reasoning-before-rename",
+              delta: "Check the inbox.",
+            },
+            { type: "reasoning-end", id: "reasoning-before-rename" },
+            {
+              type: "tool-input-start",
+              id: "toolu_renamed",
+              toolName: "list_emails",
+            },
+            { type: "tool-input-delta", id: "toolu_renamed", delta: "{}" },
+            {
+              type: "tool-call",
+              toolCallId: "toolu_renamed",
+              toolName: "summarize_inbox",
+              input: "{}",
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Tool rename regression test",
+      tools: { summarize_inbox: renamed },
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const body = await (await assistant.stream({ input: "Summarize my inbox" }))
+      .toDataStreamResponse().text();
+
+    // Announced once, under the finalized name, by the `tool-call` branch.
+    assertEquals(body.match(/"type":"tool-input-start"/g)?.length ?? 0, 1);
+    assertEquals(
+      body.match(
+        /"type":"tool-input-start","toolCallId":"toolu_renamed","toolName":"summarize_inbox"/g,
+      )
+        ?.length ?? 0,
+      1,
+    );
+    assertEquals(body.match(/"toolName":"list_emails"/g)?.length ?? 0, 0);
+    // Finalized, so it is not an incomplete call: the terminal announce path
+    // is not reached and no failure is fabricated for it.
+    assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 0);
+    assertEquals(body.match(/"type":"tool-input-error"/g)?.length ?? 0, 0);
+  });
+
+  it("preserves a bare placeholder tool call when reasoning blocks recovery", async () => {
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount > 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Unexpected recovery." },
+              { type: "finish", finishReason: "stop" },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "reasoning-start", id: "reasoning-before-placeholder" },
+            {
+              type: "reasoning-delta",
+              id: "reasoning-before-placeholder",
+              delta: "Plan the suggestions.",
+            },
+            { type: "reasoning-end", id: "reasoning-before-placeholder" },
+            { type: "text-delta", text: "Created the Outlook assistant." },
+            {
+              type: "tool-input-start",
+              id: "toolu_placeholder_after_reasoning",
+              toolName: "studio_suggestions",
+            },
+            { type: "tool-input-delta", id: "toolu_placeholder_after_reasoning", delta: "{}" },
+            {
+              type: "finish",
+              finishReason: "tool-calls",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
+          ]),
+        };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Reasoning recovery placeholder regression test",
+      tools: { studio_suggestions: studioSuggestions },
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const body = await (await assistant.stream({
+      input: "Create an Outlook assistant",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse().text();
+
+    assertEquals(callCount, 1);
+    assertEquals(body.includes("Unexpected recovery."), false);
+    assertExists(finishedResponse);
+
+    // A bare `{}` placeholder is normally dropped from the assistant message
+    // when substantive text accompanies it. Terminalizing the step passes
+    // `preserveRecoverablePlaceholderToolCalls`, so the call and its error are
+    // kept in history and go back to the model on the next turn — the same
+    // outcome as maxSteps exhaustion.
+    const assistantParts = finishedResponse.messages
+      .filter((message) => message.role === "assistant")
+      .flatMap((message) => message.parts);
+    assertEquals(
+      assistantParts.filter((part) => part.type === "reasoning")
+        .flatMap((part) => "text" in part && typeof part.text === "string" ? [part.text] : []),
+      ["Plan the suggestions."],
+    );
+    assertEquals(
+      assistantParts.flatMap((part) => part.type === "text" && "text" in part ? [part.text] : []),
+      ["Created the Outlook assistant."],
+    );
+    assertExists(
+      assistantParts.find((part) =>
+        "toolCallId" in part && part.toolCallId === "toolu_placeholder_after_reasoning"
+      ),
+    );
+    assertEquals(
+      finishedResponse.toolCalls.map((toolCall) => [toolCall.name, toolCall.status]),
+      [["studio_suggestions", "error"]],
+    );
+    assertEquals(
+      finishedResponse.messages
+        .flatMap((message) => message.parts)
+        .filter((part) =>
+          part.type === "tool-result" && "toolCallId" in part &&
+          part.toolCallId === "toolu_placeholder_after_reasoning"
+        ).length,
+      1,
+    );
+    assertEquals(body.match(/"type":"tool-input-start"/g)?.length ?? 0, 1);
+    assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 1);
+    assertEquals(body.match(/"type":"tool-input-error"/g)?.length ?? 0, 0);
+  });
+
   it("streams provider events before recovery replay text begins", async () => {
     let finishedResponse: AgentResponse | undefined;
     let callCount = 0;

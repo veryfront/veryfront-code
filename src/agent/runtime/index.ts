@@ -47,6 +47,7 @@ import {
 } from "./mcp-server-tool-sources.ts";
 import { runWithRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
 import {
+  announceStreamedToolCallInput,
   createStreamState,
   processStream,
   type StreamingToolCall,
@@ -104,7 +105,10 @@ import {
   prepareAgentRuntimeStep,
   withIntegrationToolDiscoveryStatus,
 } from "./agent-runtime-step.ts";
-import { buildStreamedAssistantMessage } from "./streamed-assistant-message.ts";
+import {
+  buildStreamedAssistantMessage,
+  isPersistedReasoningPart,
+} from "./streamed-assistant-message.ts";
 import {
   type DeferredToolSummary,
   flattenSystemInstructions,
@@ -2256,14 +2260,41 @@ export class AgentRuntime {
 
       const streamedToolCalls = Array.from(state.toolCalls.values());
       const finalToolResults = collectFinalStreamToolResults(state);
+      // Recovery replays the whole step, so it also re-emits this step's
+      // reasoning — duplicating it in the live stream and in history, with a
+      // signature that no longer matches the replayed content. Reasoning that
+      // was persisted is reasoning the client already saw, so fail closed.
+      // This is a stopgap: reasoning is default-on across the hosted catalog,
+      // which makes recovery inert on most hosted paths. See #3736 for the
+      // reconciliation protocol that would let it run again.
+      const hasExposedReasoning = state.reasoningParts.some(isPersistedReasoningPart);
       const canRecoverInterruptedLocalToolBatch = !recoveredInterruptedLocalToolBatch &&
-        step + 1 < maxSteps;
+        step + 1 < maxSteps &&
+        !hasExposedReasoning;
       const shouldContinue = shouldContinueAfterStreamStep(state, {
         recoverInterruptedToolCalls: canRecoverInterruptedLocalToolBatch,
       });
       const shouldRecoverInterruptedLocalToolBatch = canRecoverInterruptedLocalToolBatch &&
         shouldContinue &&
         streamedToolCalls.some(isInterruptedClientToolCall);
+      // Exactly `shouldRecoverInterruptedLocalToolBatch` with the reasoning
+      // gate lifted: the batch this step would have replayed had it not
+      // already exposed reasoning. Re-asking is what separates "recovery was
+      // declined" from "this step merely carried reasoning";
+      // `shouldContinueAfterStreamStep` only reads state, so asking twice has
+      // no side effects, and the cheap conditions short-circuit ahead of it.
+      const declinedRecoveryForExposedReasoning = hasExposedReasoning &&
+        !recoveredInterruptedLocalToolBatch &&
+        step + 1 < maxSteps &&
+        streamedToolCalls.some(isInterruptedClientToolCall) &&
+        shouldContinueAfterStreamStep(state, { recoverInterruptedToolCalls: true });
+      if (declinedRecoveryForExposedReasoning) {
+        logger.warn("Declined interrupted local tool batch recovery after exposed reasoning", {
+          step,
+          toolName: streamedToolCalls.find(isInterruptedClientToolCall)?.name,
+          reasoningPartCount: state.reasoningParts.filter(isPersistedReasoningPart).length,
+        });
+      }
       const assistantMessage = buildStreamedAssistantMessage({
         ...state,
         accumulatedText: recoveryPresentationText,
@@ -2361,7 +2392,7 @@ export class AgentRuntime {
 
       const recordIncompleteLocalToolError = async (
         toolCall: StreamingToolCall,
-        options: { includeInResponse?: boolean } = {},
+        options: { includeInResponse?: boolean; announceInput?: boolean } = {},
       ): Promise<boolean> => {
         if (
           toolCall.providerExecuted === true ||
@@ -2369,6 +2400,22 @@ export class AgentRuntime {
           finalToolResults.has(toolCall.id)
         ) {
           return false;
+        }
+        if (options.announceInput === true) {
+          // An interrupted call never reached `tool-input-end`, so its
+          // `tool-input-start` is still buffered and `inputAnnounced` is false
+          // — which would suppress the `tool-output-error` below. On the
+          // declined-recovery path that leaves the client with a reasoning
+          // block and then nothing at all.
+          //
+          // The name is safe to publish here. `tool-call` is what can supersede
+          // a name, and it also sets `inputAvailable`, which fails the guard
+          // above — so reaching this line means no such event arrived and the
+          // buffered name is the only one this call will ever have. It is the
+          // same name recorded below and in the persisted assistant message,
+          // so the card matches a reload. Announcing is idempotent, so a call
+          // surfaced upstream is not reported twice.
+          announceStreamedToolCallInput(controller, encoder, toolCall);
         }
         const incompleteToolCall: ToolCall = {
           id: toolCall.id,
@@ -2398,7 +2445,9 @@ export class AgentRuntime {
           await persistToolResult(toolResult);
         }
         for (const toolCall of streamedToolCalls) {
-          await recordIncompleteLocalToolError(toolCall);
+          await recordIncompleteLocalToolError(toolCall, {
+            announceInput: declinedRecoveryForExposedReasoning,
+          });
         }
         sendSSE(controller, encoder, { type: "step-end" });
         break;
