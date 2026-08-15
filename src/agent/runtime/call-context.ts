@@ -425,6 +425,12 @@ function getStructuredCacheProviderBuckets(
     const cacheControl = descriptor?.enumerable && isOwnDataPropertyDescriptor(descriptor)
       ? descriptor.value
       : undefined;
+    if (
+      typeof key === "string" && !isAnthropicCacheProviderKey(key) &&
+      !isAnthropicCacheControl(cacheControl)
+    ) {
+      continue;
+    }
     buckets.push({
       key,
       cacheControl,
