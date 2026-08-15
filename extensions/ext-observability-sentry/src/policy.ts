@@ -5,16 +5,25 @@ import type {
 export const DEFAULT_FINGERPRINT = "{{ default }}";
 
 const DB_ERROR_FINGERPRINT = "veryfront-db-error";
-const DB_CONNECTION_ERROR_CODES = [
+// pgbouncer reports these through the wire protocol, so postgres.js surfaces them as a
+// PostgresError whose message ends with "(<code>)".
+const PGBOUNCER_CONNECTION_ERROR_CODES = [
   "server_login_retry",
   "query_wait_timeout",
-  "CONNECTION_CLOSED",
 ] as const;
-const POSTGRES_JS_CONNECTION_CLOSED_PATTERN = /^write CONNECTION_CLOSED(?:\s|$)/;
+// postgres.js `Errors.connection()` builds a plain Error with the message
+// `write <CODE> <host>:<port>` for every client-side connection failure.
+const POSTGRES_JS_CONNECTION_ERROR_PATTERN =
+  /^write (CONNECTION_CLOSED|CONNECTION_DESTROYED|CONNECTION_ENDED|CONNECT_TIMEOUT)(?:\s|$)/;
 const FAILED_QUERY_PREFIX = "Failed query: ";
 const FAILED_QUERY_PARAMS_DELIMITER = "\nparams:";
 const FAILED_QUERY_HEAD_MAX_LENGTH = 200;
 const SQL_DOLLAR_QUOTE_START_PATTERN = /^\$(?:[_\p{ID_Start}][_\p{ID_Continue}]*)?\$/u;
+// A tag PostgreSQL itself would reject (an emoji tag, for example) is still treated as a literal
+// so its contents cannot reach the title, but it has to look like a tag: short, and free of
+// whitespace, quotes and further dollar signs. Without that shape check a `$` inside an ordinary
+// identifier such as `col$a` swallows the rest of the query.
+const SQL_UNRECOGNIZED_DOLLAR_QUOTE_START_PATTERN = /^\$[^\s'"$]{1,63}\$/u;
 const SQL_NUMERIC_LITERAL_PATTERN =
   /^(?:0[xX]_?[0-9A-Fa-f](?:_?[0-9A-Fa-f])*|0[oO]_?[0-7](?:_?[0-7])*|0[bB]_?[01](?:_?[01])*|(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)(?:[eE][+-]?\d(?:_?\d)*)?)/;
 const SQL_IDENTIFIER_CHAR_PATTERN = /[A-Za-z0-9_$]/;
@@ -130,7 +139,7 @@ export function prepareSentryEvent<TEvent extends SentryPolicyEvent>(
   };
   const dbConnectionErrorCode = detectDbConnectionErrorCode(event);
   event.fingerprint = dbConnectionErrorCode
-    ? [DB_ERROR_FINGERPRINT, dbConnectionErrorCode]
+    ? [serviceName, DB_ERROR_FINGERPRINT, dbConnectionErrorCode]
     : [serviceName, ...(event.fingerprint ?? [DEFAULT_FINGERPRINT])];
 
   delete event.breadcrumbs;
@@ -159,30 +168,22 @@ function detectDbConnectionErrorCode(event: SentryPolicyEvent): string | undefin
     const message = exceptionValue.value ?? "";
     if (exceptionValue.type === "PostgresError") {
       const trimmedMessage = message.trimEnd();
-      const code = DB_CONNECTION_ERROR_CODES.find((candidate) => {
-        const writeMarker = `write ${candidate}`;
-        const afterWriteMarker = message.charAt(writeMarker.length);
-        return (
-          message.startsWith(writeMarker) &&
-          (afterWriteMarker === "" || /\s/.test(afterWriteMarker))
-        ) || trimmedMessage.endsWith(`(${candidate})`);
-      });
+      const code = PGBOUNCER_CONNECTION_ERROR_CODES.find((candidate) =>
+        trimmedMessage.endsWith(`(${candidate})`)
+      );
       if (code) return code;
     }
-    if (
-      exceptionValue.type === "Error" &&
-      POSTGRES_JS_CONNECTION_CLOSED_PATTERN.test(message)
-    ) {
-      return "CONNECTION_CLOSED";
+    if (exceptionValue.type === "Error") {
+      const code = POSTGRES_JS_CONNECTION_ERROR_PATTERN.exec(message)?.[1];
+      if (code) return code;
     }
   }
   return undefined;
 }
 
-export function normalizeFailedQueryValue(value: string): string {
+function normalizeFailedQueryValue(value: string): string {
   if (!value.startsWith(FAILED_QUERY_PREFIX.trimEnd())) return value;
   const remainder = value.slice(FAILED_QUERY_PREFIX.trimEnd().length);
-  if (!/^\s*\n/.test(remainder)) return value;
   const paramsDelimiterIndex = remainder.indexOf(FAILED_QUERY_PARAMS_DELIMITER);
   const query = paramsDelimiterIndex === -1 ? remainder : remainder.slice(0, paramsDelimiterIndex);
   const titleQuery = redactSqlLiteralsForTitle(query)
@@ -207,7 +208,7 @@ function redactSqlLiteralsForTitle(query: string): string {
       query[index + 1] === "'" &&
       isSqlStringPrefixBoundary(query, index)
     ) {
-      index = findQuotedSqlTokenEnd(query, index + 1, "'", { allowBackslashEscapes: true });
+      index = findQuotedSqlTokenEnd(query, index + 1, "'", { allowBackslashEscapes: true }).end;
       redacted += "?";
       continue;
     }
@@ -218,20 +219,23 @@ function redactSqlLiteralsForTitle(query: string): string {
       query[index + 2] === "'" &&
       isSqlStringPrefixBoundary(query, index)
     ) {
-      index = findQuotedSqlTokenEnd(query, index + 2, "'");
+      index = findQuotedSqlTokenEnd(query, index + 2, "'").end;
       redacted += "?";
       continue;
     }
 
     if (character === '"') {
-      const end = findQuotedSqlTokenEnd(query, index, '"');
-      redacted += query.slice(index, end);
+      // Deliberate non-redaction: a double-quoted token is a schema identifier, not data, and
+      // keeping it verbatim is what makes titles group by query shape. An unterminated identifier
+      // is malformed SQL, so redact it rather than emit the rest of the query untouched.
+      const { end, terminated } = findQuotedSqlTokenEnd(query, index, '"');
+      redacted += terminated ? query.slice(index, end) : "?";
       index = end;
       continue;
     }
 
     if (character === "'") {
-      index = findQuotedSqlTokenEnd(query, index, "'");
+      index = findQuotedSqlTokenEnd(query, index, "'").end;
       redacted += "?";
       continue;
     }
@@ -301,11 +305,11 @@ function findDollarQuotedSqlTokenEnd(query: string, start: number): number | und
   }
 
   if (/[0-9]/.test(query[start + 1] ?? "")) return undefined;
-  const delimiterEnd = query.indexOf("$", start + 1);
-  if (delimiterEnd === -1) return undefined;
+  const delimiter = query.slice(start).match(SQL_UNRECOGNIZED_DOLLAR_QUOTE_START_PATTERN)?.[0];
+  if (!delimiter) return undefined;
 
-  const delimiter = query.slice(start, delimiterEnd + 1);
-  const closingDelimiter = query.indexOf(delimiter, delimiterEnd + 1);
+  const contentStart = start + delimiter.length;
+  const closingDelimiter = query.indexOf(delimiter, contentStart);
   return closingDelimiter === -1 ? query.length : closingDelimiter + delimiter.length;
 }
 
@@ -318,7 +322,7 @@ function findQuotedSqlTokenEnd(
   start: number,
   quote: string,
   options: { allowBackslashEscapes?: boolean } = {},
-): number {
+): { end: number; terminated: boolean } {
   let index = start + 1;
   while (index < query.length) {
     if (options.allowBackslashEscapes && query[index] === "\\" && index + 1 < query.length) {
@@ -333,9 +337,9 @@ function findQuotedSqlTokenEnd(
       index += 2;
       continue;
     }
-    return index + 1;
+    return { end: index + 1, terminated: true };
   }
-  return query.length;
+  return { end: query.length, terminated: false };
 }
 
 export function redactSensitiveText(value: string): string {

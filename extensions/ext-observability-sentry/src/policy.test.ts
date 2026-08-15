@@ -190,23 +190,24 @@ it("policy groups pgbouncer connection PostgresErrors by stable db-error fingerp
     "veryfront-api",
   );
 
-  assertEquals(event.fingerprint, ["veryfront-db-error", "server_login_retry"]);
+  assertEquals(event.fingerprint, ["veryfront-api", "veryfront-db-error", "server_login_retry"]);
 });
 
 it("policy groups each pgbouncer connection code into its own db-error issue", () => {
-  for (
-    const code of ["server_login_retry", "query_wait_timeout", "CONNECTION_CLOSED"]
-  ) {
+  for (const code of ["server_login_retry", "query_wait_timeout"]) {
     const event = prepareSentryEvent(
       {
         exception: {
-          values: [{ type: "PostgresError", value: `write ${code} db.example.test:6432` }],
+          values: [{
+            type: "PostgresError",
+            value: `pgbouncer cannot connect to server (${code})`,
+          }],
         },
       },
       "veryfront-api",
     );
 
-    assertEquals(event.fingerprint, ["veryfront-db-error", code]);
+    assertEquals(event.fingerprint, ["veryfront-api", "veryfront-db-error", code]);
   }
 });
 
@@ -241,7 +242,56 @@ it("policy groups client-side postgres.js connection closures reported as plain 
     "veryfront-api",
   );
 
-  assertEquals(event.fingerprint, ["veryfront-db-error", "CONNECTION_CLOSED"]);
+  assertEquals(event.fingerprint, ["veryfront-api", "veryfront-db-error", "CONNECTION_CLOSED"]);
+});
+
+it("policy groups every postgres.js client connection code into its own db-error issue", () => {
+  for (
+    const code of [
+      "CONNECTION_CLOSED",
+      "CONNECTION_DESTROYED",
+      "CONNECTION_ENDED",
+      "CONNECT_TIMEOUT",
+    ]
+  ) {
+    const event = prepareSentryEvent(
+      {
+        exception: {
+          values: [{ type: "Error", value: `write ${code} db.example.test:6432` }],
+        },
+        fingerprint: ["POST /api/graphql"],
+      },
+      "veryfront-api",
+    );
+
+    assertEquals(event.fingerprint, ["veryfront-api", "veryfront-db-error", code]);
+  }
+});
+
+it("policy ignores unix-socket postgres.js connection errors only when the code is unknown", () => {
+  const socketEvent = prepareSentryEvent(
+    {
+      exception: {
+        values: [{ type: "Error", value: "write CONNECT_TIMEOUT /var/run/postgresql" }],
+      },
+    },
+    "veryfront-api",
+  );
+  assertEquals(socketEvent.fingerprint, [
+    "veryfront-api",
+    "veryfront-db-error",
+    "CONNECT_TIMEOUT",
+  ]);
+
+  const unknownCodeEvent = prepareSentryEvent(
+    {
+      exception: {
+        values: [{ type: "Error", value: "write CONNECTION_PAUSED db.example.test:6432" }],
+      },
+    },
+    "veryfront-api",
+  );
+  assertEquals(unknownCodeEvent.fingerprint, ["veryfront-api", "{{ default }}"]);
 });
 
 it("policy leaves unrelated plain connection-closed errors on the default fingerprint", () => {
@@ -311,6 +361,85 @@ it("policy collapses leading sql whitespace in Failed query titles", () => {
   assertEquals(
     event.exception?.values?.[0]?.value,
     'Failed query: select "id", "email" from "users"',
+  );
+});
+
+it("policy normalizes single-line query builder Failed query values", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value:
+            'Failed query: select "id", "email" from "users" where "users"."email" = $1 limit $2\nparams: customer@example.test,500',
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  assertEquals(
+    event.exception?.values?.[0]?.value,
+    'Failed query: select "id", "email" from "users" where "users"."email" = $1 limit $2',
+  );
+});
+
+it("policy redacts literals in single-line Failed query values", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value:
+            'Failed query: select "id" from "users" where "email" = \'customer@example.test\' limit 500\nparams: []',
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  assertEquals(
+    event.exception?.values?.[0]?.value,
+    'Failed query: select "id" from "users" where "email" = ? limit ?',
+  );
+});
+
+it("policy caps single-line Failed query values", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value: `Failed query: select ${"c, ".repeat(200)}from t\nparams: customer@example.test`,
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  const collapsed = event.exception?.values?.[0]?.value ?? "";
+  assertEquals(collapsed.startsWith("Failed query: select c, c,"), true);
+  assertEquals(collapsed.length <= "Failed query: ".length + 201, true);
+  assertEquals(collapsed.includes("params:"), false);
+});
+
+it("policy normalizes Failed query values whose sql starts on the prefix line", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value:
+            'Failed query: select "id" from "users"\n  where "email" = \'customer@example.test\'\nparams: []',
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  assertEquals(
+    event.exception?.values?.[0]?.value,
+    'Failed query: select "id" from "users" where "email" = ?',
   );
 });
 
@@ -449,6 +578,62 @@ it("policy redacts unterminated unrecognized dollar-quoted SQL literal tags", ()
     event.exception?.values?.[0]?.value,
     "Failed query: select ?",
   );
+});
+
+it("policy keeps dollar signs inside identifiers from swallowing the rest of the query", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value:
+            "Failed query: \n  select col$a, 'customer@example.test' as e, other$b from t where id = $1",
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  assertEquals(
+    event.exception?.values?.[0]?.value,
+    "Failed query: select col$a, ? as e, other$b from t where id = $1",
+  );
+});
+
+it("policy keeps a bare dollar sign from swallowing the rest of the query", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value: "Failed query: \n  select a, $ , 'customer@example.test', $1 from t",
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  assertEquals(
+    event.exception?.values?.[0]?.value,
+    "Failed query: select a, $ , ?, $1 from t",
+  );
+});
+
+it("policy redacts the remainder of a query with an unterminated quoted identifier", () => {
+  const event = prepareSentryEvent(
+    {
+      exception: {
+        values: [{
+          type: "DrizzleQueryError",
+          value:
+            "Failed query: \n  select \"id from t where email = 'customer@example.test' and n = 42",
+        }],
+      },
+    },
+    "veryfront-studio",
+  );
+
+  assertEquals(event.exception?.values?.[0]?.value, "Failed query: select ?");
 });
 
 it("policy redacts PostgreSQL radix integer literals", () => {
