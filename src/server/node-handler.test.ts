@@ -1,4 +1,5 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { isRequestFromLoopbackPeer } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { toNodeHandler } from "./node-handler.ts";
 
 type FakeRes = {
@@ -47,12 +48,18 @@ function createFakeRes(): FakeRes {
 }
 
 function createFakeReq(
-  init: { method?: string; url?: string; headers?: Record<string, string | string[] | undefined> },
+  init: {
+    method?: string;
+    url?: string;
+    headers?: Record<string, string | string[] | undefined>;
+    remoteAddress?: string;
+  },
 ): import("node:http").IncomingMessage {
   return {
     method: init.method ?? "GET",
     url: init.url ?? "/",
     headers: { host: "localhost", ...(init.headers ?? {}) },
+    socket: { remoteAddress: init.remoteAddress },
   } as unknown as import("node:http").IncomingMessage;
 }
 
@@ -163,4 +170,21 @@ Deno.test("toNodeHandler passes array-valued request headers through to the Requ
 
   // A collapsed-to-first-element bug would yield only "one".
   assertEquals(seen, "one, two");
+});
+
+Deno.test("toNodeHandler records the native socket peer on the Web Request", async () => {
+  let sawLoopbackPeer = false;
+  const handler = (req: Request) => {
+    sawLoopbackPeer = isRequestFromLoopbackPeer(req);
+    return new Response("ok", { status: 200 });
+  };
+
+  const nodeHandler = toNodeHandler(handler);
+  const res = createFakeRes();
+  await nodeHandler(
+    createFakeReq({ url: "/_projects", remoteAddress: "127.0.0.1" }),
+    res as unknown as import("node:http").ServerResponse,
+  );
+
+  assertEquals(sawLoopbackPeer, true);
 });
