@@ -1677,7 +1677,7 @@ function normalizeAnthropicCacheTtls(
       requiresOneHourPrefix = true;
     } else if (ttl === "5m" && requiresOneHourPrefix) {
       if (normalized === values) {
-        normalized = [...values];
+        normalized = snapshotAnthropicCacheArray(values, "Anthropic cache blocks");
       }
       normalized[index] = upgradeEmittedAnthropicCacheTtl(value);
     }
@@ -1711,14 +1711,20 @@ function normalizeAnthropicMessageCacheTtls(
         requiresOneHourPrefix = true;
       } else if (ttl === "5m" && requiresOneHourPrefix) {
         if (normalizedContent === content) {
-          normalizedContent = [...content];
+          normalizedContent = snapshotAnthropicCacheArray(
+            content,
+            "Anthropic message content",
+          );
         }
         normalizedContent[contentIndex] = upgradeEmittedAnthropicCacheTtl(block);
       }
     }
     if (normalizedContent !== content) {
       if (normalizedMessages === messages) {
-        normalizedMessages = [...messages];
+        normalizedMessages = snapshotAnthropicCacheArray(
+          messages,
+          "Anthropic messages",
+        );
       }
       normalizedMessages[messageIndex] = {
         ...message,

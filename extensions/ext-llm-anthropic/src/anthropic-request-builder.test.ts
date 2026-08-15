@@ -502,6 +502,83 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     });
   });
 
+  it("uses descriptor snapshots during TTL normalization", async () => {
+    const result = await runNoBrandEval(`
+      const { buildAnthropicMessagesRequest } = await import(
+        "./extensions/ext-llm-anthropic/src/anthropic-request-builder.ts"
+      );
+      const originalIterator = Array.prototype[Symbol.iterator];
+      Object.defineProperty(Array.prototype, Symbol.iterator, {
+        configurable: true,
+        writable: true,
+        value() {
+          if (this.length === 2 && this[0]?.name === "cached-tool") {
+            return Reflect.apply(originalIterator, [], []);
+          }
+          return Reflect.apply(originalIterator, this, []);
+        },
+      });
+
+      let body;
+      try {
+        body = buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [
+              {
+                role: "system",
+                content: "Interactive system prompt",
+                providerOptions: {
+                  anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+                },
+              },
+              { role: "user", content: [{ type: "text", text: "Hello" }] },
+            ],
+            providerOptions: {
+              anthropic: {
+                tools: [
+                  {
+                    name: "cached-tool",
+                    input_schema: { type: "object", properties: {} },
+                    cache_control: { type: "ephemeral", ttl: "5m" },
+                  },
+                  {
+                    name: "uncached-tool",
+                    input_schema: { type: "object", properties: {} },
+                  },
+                ],
+              },
+            },
+          },
+          false,
+          { push() {}, drain() { return []; } },
+        );
+      } finally {
+        Object.defineProperty(Array.prototype, Symbol.iterator, {
+          configurable: true,
+          writable: true,
+          value: originalIterator,
+        });
+      }
+      console.log(JSON.stringify({ tools: body.tools }));
+    `);
+
+    assertEquals(result, {
+      tools: [
+        {
+          name: "cached-tool",
+          input_schema: { type: "object", properties: {} },
+          cache_control: { type: "ephemeral", ttl: "1h" },
+        },
+        {
+          name: "uncached-tool",
+          input_schema: { type: "object", properties: {} },
+        },
+      ],
+    });
+  });
+
   it("rejects edge-runtime Proxy cache fields without invoking traps", async () => {
     const result = await runNoBrandEval(`
       Object.defineProperty(globalThis, "caches", {
