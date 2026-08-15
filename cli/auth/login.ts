@@ -12,7 +12,9 @@ import {
   DEFAULT_CALLBACK_PORT,
   DEFAULT_LOGIN_TIMEOUT_MS,
   getApiUrl,
+  resolveCliApiUrl,
 } from "../shared/constants.ts";
+import { readConfigFile } from "../shared/config.ts";
 import {
   createErrorEnvelope,
   createSuccessEnvelope,
@@ -21,8 +23,8 @@ import {
 } from "../shared/json-output.ts";
 import { isInteractive } from "../shared/interactive.ts";
 import { getEnvSource } from "veryfront/utils/env-loader";
-import { basename, isAbsolute, join, relative } from "veryfront/platform/path";
-import { createFileSystem, cwd, getEnv } from "veryfront/platform";
+import { basename, isAbsolute, relative } from "veryfront/platform/path";
+import { cwd, getEnv } from "veryfront/platform";
 
 /**
  * Describe where an API-token credential actually came from.
@@ -61,18 +63,19 @@ function describeApiTokenSource(token: string): string {
   return `(via VERYFRONT_API_TOKEN from ${formatEnvSourcePathForDisplay(origin.file)})`;
 }
 
-async function readProjectConfigApiToken(): Promise<string | null> {
-  const fs = createFileSystem();
-  const configPath = join(cwd(), "veryfront.json");
+async function readProjectConfigPreflight(
+  env: EnvironmentConfig,
+): Promise<{ token: string; env: EnvironmentConfig } | null> {
+  const config = await readConfigFile(cwd());
+  if (!config?.apiToken) return null;
 
-  try {
-    if (!(await fs.exists(configPath))) return null;
-    const parsed = JSON.parse(await fs.readTextFile(configPath)) as { apiToken?: unknown };
-    return typeof parsed.apiToken === "string" && parsed.apiToken.trim() ? parsed.apiToken : null;
-  } catch (cause) {
-    cliLogger.debug("Failed to read veryfront.json for login preflight:", cause);
-    return null;
-  }
+  return {
+    token: config.apiToken,
+    env: {
+      ...env,
+      apiUrl: resolveCliApiUrl(env, config.apiUrl),
+    },
+  };
 }
 
 export type AuthMethod = "google" | "github" | "microsoft" | "token";
@@ -527,13 +530,19 @@ async function describeExistingSession(
     token: string;
     source: "config-file" | "environment" | "stored";
     authoritative?: boolean;
+    env?: EnvironmentConfig;
   }[] = [];
   if (env.apiToken && environmentTokenIsAuthoritative) {
     candidates.push({ token: env.apiToken, source: "environment", authoritative: true });
   }
-  const configToken = await readProjectConfigApiToken();
-  if (configToken) {
-    candidates.push({ token: configToken, source: "config-file", authoritative: true });
+  const configPreflight = await readProjectConfigPreflight(env);
+  if (configPreflight) {
+    candidates.push({
+      token: configPreflight.token,
+      source: "config-file",
+      authoritative: true,
+      env: configPreflight.env,
+    });
   }
   const storedToken = await readToken(env);
   if (storedToken) candidates.push({ token: storedToken, source: "stored" });
@@ -544,14 +553,14 @@ async function describeExistingSession(
   const signal = AbortSignal.timeout(existingSessionTimeoutMs);
   let unavailable: CredentialValidationUnavailableError | null = null;
 
-  for (const { token, source, authoritative } of candidates) {
+  for (const { token, source, authoritative, env: validationEnv = env } of candidates) {
     let identity: AuthIdentity | null;
     try {
       // Bounded: this preflight only decides whether to say "already logged in"
       // instead of prompting. An API that accepts the connection and never
       // answers would otherwise block sign-in entirely, so a stall falls
       // through to the normal flow rather than holding the command open.
-      identity = await validateCredential(token, env, {
+      identity = await validateCredential(token, validationEnv, {
         signal,
         throwOnCredentialValidationUnavailable: true,
       });

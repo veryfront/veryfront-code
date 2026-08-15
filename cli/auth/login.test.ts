@@ -1028,6 +1028,128 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("validates a veryfront.json token against the configured API URL in JSON mode", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const originalError = console.error;
+      const output: string[] = [];
+      const errors: string[] = [];
+      const requestedUrls: string[] = [];
+      const requestedAuth: string[] = [];
+      const projectDir = await makeTempDir({ prefix: "login-config-api-url-" });
+
+      try {
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.json`,
+          JSON.stringify({
+            apiToken: "config-valid-token",
+            apiUrl: "https://control.example.test/api",
+            projectSlug: "test-project",
+          }) + "\n",
+        );
+
+        globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+          requestedUrls.push(String(input));
+          requestedAuth.push(String(new Headers(init?.headers).get("authorization") ?? ""));
+          if (String(input) === "https://control.example.test/api/me") {
+            return Promise.resolve(
+              Response.json({ id: "config-user", email: "config@example.com" }),
+            );
+          }
+          return Promise.resolve(new Response(null, { status: 401 }));
+        }) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+        console.error = (message?: unknown) => errors.push(String(message));
+
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        const { withCwd } = await import("#veryfront/testing/cwd.ts");
+        const { login } = await import("./login.ts");
+        setJsonMode(true);
+
+        const result = await withCwd(projectDir, () => login(undefined, testEnv));
+        const envelope = JSON.parse(output.join("\n"));
+
+        assertEquals(result, { id: "config-user", email: "config@example.com" });
+        assertEquals(envelope.data, {
+          id: "config-user",
+          email: "config@example.com",
+          source: "config-file",
+        });
+        assertEquals(requestedUrls, ["https://control.example.test/api/me"]);
+        assertEquals(requestedAuth, ["Bearer config-valid-token"]);
+        assertEquals(output.join("\n").includes("config-valid-token"), false);
+        assertEquals(errors, []);
+      } finally {
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        setJsonMode(false);
+        console.log = originalLog;
+        console.error = originalError;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("ignores a schema-invalid veryfront.json token before reporting a stored login in JSON mode", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const originalError = console.error;
+      const output: string[] = [];
+      const errors: string[] = [];
+      const requestedAuth: string[] = [];
+      const projectDir = await makeTempDir({ prefix: "login-invalid-config-schema-" });
+      await saveToken("stored-valid-token", testEnv);
+
+      try {
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.json`,
+          JSON.stringify({ apiToken: "config-invalid-token", projectSlug: 123 }) + "\n",
+        );
+
+        globalThis.fetch = ((_: string | URL | Request, init?: RequestInit) => {
+          const auth = String(new Headers(init?.headers).get("authorization") ?? "");
+          requestedAuth.push(auth);
+          if (auth === "Bearer stored-valid-token") {
+            return Promise.resolve(
+              Response.json({ id: "stored-user", email: "stored@example.com" }),
+            );
+          }
+          return Promise.resolve(new Response(null, { status: 401 }));
+        }) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+        console.error = (message?: unknown) => errors.push(String(message));
+
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        const { withCwd } = await import("#veryfront/testing/cwd.ts");
+        const { login } = await import("./login.ts");
+        setJsonMode(true);
+
+        const result = await withCwd(projectDir, () => login(undefined, testEnv));
+        const envelope = JSON.parse(output.join("\n"));
+
+        assertEquals(result, { id: "stored-user", email: "stored@example.com" });
+        assertEquals(envelope.data, {
+          id: "stored-user",
+          email: "stored@example.com",
+          source: "token-store",
+        });
+        assertEquals(requestedAuth, ["Bearer stored-valid-token"]);
+        assertEquals(output.join("\n").includes("config-invalid-token"), false);
+        assertEquals(output.join("\n").includes("stored-valid-token"), false);
+        assertEquals(errors, []);
+      } finally {
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        setJsonMode(false);
+        console.log = originalLog;
+        console.error = originalError;
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
     it("preserves a malformed environment validation response over a valid stored login in JSON mode", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;
