@@ -1036,11 +1036,15 @@ function isSwitchClauseBlockOpenBrace(
 function canEndStatementBeforeLineTerminator(
   source: string,
   previousTokenIndex: number,
+  completedRegexLiteralEnds?: ReadonlySet<number>,
 ): boolean {
   const char = source[previousTokenIndex];
   if (char === ")" || char === "]" || char === "}") return true;
   if (char === '"' || char === "'" || char === "`") return true;
-  if (char === "/" && isCompletedRegexLiteralEnd(source, previousTokenIndex)) return true;
+  if (char === "/") {
+    return completedRegexLiteralEnds?.has(previousTokenIndex) === true ||
+      isCompletedRegexLiteralEnd(source, previousTokenIndex);
+  }
   if (char === "+" && source[previousTokenIndex - 1] === "+") return true;
   if (char === "-" && source[previousTokenIndex - 1] === "-") return true;
   return isIdentifierPartAt(source, previousTokenIndex) ||
@@ -1157,12 +1161,17 @@ function isPlainStatementBlockOpenBrace(
   openBraceIndex: number,
   previousTokenIndex: number,
   enclosingOpenBrace: OpenBraceContext | undefined,
+  completedRegexLiteralEnds?: ReadonlySet<number>,
 ): boolean {
   if (previousTokenIndex < rangeStart) return true;
   if (source[previousTokenIndex] === ";" || source[previousTokenIndex] === "}") return true;
   if (
     hasLineTerminatorBetween(source, previousTokenIndex + 1, openBraceIndex) &&
-    canEndStatementBeforeLineTerminator(source, previousTokenIndex)
+    canEndStatementBeforeLineTerminator(
+      source,
+      previousTokenIndex,
+      completedRegexLiteralEnds,
+    )
   ) {
     return true;
   }
@@ -1193,6 +1202,7 @@ function openBraceContext(
   matchingOpenParens: ReadonlyMap<number, OpenParenContext>,
   currentParen: OpenParenContext | undefined,
   enclosingOpenBrace: OpenBraceContext | undefined,
+  completedRegexLiteralEnds?: ReadonlySet<number>,
 ): OpenBraceContext {
   return {
     index,
@@ -1210,6 +1220,7 @@ function openBraceContext(
       index,
       previousTokenIndex,
       enclosingOpenBrace,
+      completedRegexLiteralEnds,
     ),
   };
 }
@@ -1926,6 +1937,7 @@ function skipExpressionIgnored(
     end: number,
   ) => { keyword: "import" | "export"; index: number } | null,
   rawJsxLookaheadCache?: RawJsxLookaheadCache,
+  completedRegexLiteralEnds?: Set<number>,
 ): number {
   const char = source[index];
   const next = source[index + 1];
@@ -1957,7 +1969,9 @@ function skipExpressionIgnored(
       moduleDeclarationBefore,
     )
   ) {
-    return skipRegexLiteral(source, index);
+    const end = skipRegexLiteral(source, index);
+    completedRegexLiteralEnds?.add(end - 1);
+    return end;
   }
 
   return index;
@@ -2004,6 +2018,7 @@ function findTemplateExpressionEnd(
   let previousTokenIndex = expressionIndex - 1;
   const moduleDeclarationBefore = createModuleDeclarationTracker(source, expressionIndex);
   const rawJsxLookaheadCache = createRawJsxLookaheadCache();
+  const completedRegexLiteralEnds = new Set<number>();
   let rawJsxTextDepth = 0;
   let rawJsxExpressionBraceDepth = 0;
   const rawJsxExpressionBraceStack: boolean[] = [];
@@ -2043,6 +2058,7 @@ function findTemplateExpressionEnd(
       previousTokenIndex,
       moduleDeclarationBefore,
       rawJsxLookaheadCache,
+      completedRegexLiteralEnds,
     );
     if (skipped !== cursor) {
       previousTokenIndex = tokenIndexAfterIgnored(
@@ -2071,6 +2087,7 @@ function findTemplateExpressionEnd(
           matchingOpenParens,
           openParens.at(-1),
           openBraces.at(-1),
+          completedRegexLiteralEnds,
         ),
       );
       braceDepth++;
@@ -2221,6 +2238,7 @@ export function findStaticImportFromSpans(
   const matchingOpenParens = new Map<number, OpenParenContext>();
   let previousTokenIndex = -1;
   const moduleDeclarationBefore = createModuleDeclarationTracker(source, 0);
+  const completedRegexLiteralEnds = new Set<number>();
   let rawJsxTextDepth = 0;
   let rawJsxExpressionBraceDepth = 0;
   const rawJsxExpressionBraceStack: boolean[] = [];
@@ -2264,6 +2282,7 @@ export function findStaticImportFromSpans(
       previousTokenIndex,
       moduleDeclarationBefore,
       rawJsxLookaheadCache,
+      completedRegexLiteralEnds,
     );
     if (skipped !== cursor) {
       if (char === "/" && source[cursor + 1] === "/") atStatementStart = true;
@@ -2296,6 +2315,7 @@ export function findStaticImportFromSpans(
           matchingOpenParens,
           openParens.at(-1),
           openBraces.at(-1),
+          completedRegexLiteralEnds,
         ),
       );
       atStatementStart = false;
@@ -2441,6 +2461,7 @@ function scanDynamicImportRange(
   const rawJsxExpressionBraceStack: boolean[] = [];
   const moduleDeclarationBefore = createModuleDeclarationTracker(source, rangeStart);
   const rawJsxLookaheadCache = createRawJsxLookaheadCache();
+  const completedRegexLiteralEnds = new Set<number>();
 
   while (cursor < rangeEnd) {
     const char = source[cursor];
@@ -2504,6 +2525,7 @@ function scanDynamicImportRange(
     ) {
       cursor = skipRegexLiteral(source, cursor);
       previousTokenIndex = cursor - 1;
+      completedRegexLiteralEnds.add(previousTokenIndex);
       continue;
     }
 
@@ -2537,6 +2559,7 @@ function scanDynamicImportRange(
           matchingOpenParens,
           openParens.at(-1),
           openBraces.at(-1),
+          completedRegexLiteralEnds,
         ),
       );
       previousTokenIndex = cursor;
@@ -2698,6 +2721,7 @@ export function findStaticSideEffectImportSpans(
   const matchingOpenParens = new Map<number, OpenParenContext>();
   let previousTokenIndex = -1;
   const moduleDeclarationBefore = createModuleDeclarationTracker(source, 0);
+  const completedRegexLiteralEnds = new Set<number>();
   let rawJsxTextDepth = 0;
   let rawJsxExpressionBraceDepth = 0;
   const rawJsxExpressionBraceStack: boolean[] = [];
@@ -2741,6 +2765,7 @@ export function findStaticSideEffectImportSpans(
       previousTokenIndex,
       moduleDeclarationBefore,
       rawJsxLookaheadCache,
+      completedRegexLiteralEnds,
     );
     if (skipped !== cursor) {
       if (char === "/" && source[cursor + 1] === "/") atStatementStart = true;
@@ -2773,6 +2798,7 @@ export function findStaticSideEffectImportSpans(
           matchingOpenParens,
           openParens.at(-1),
           openBraces.at(-1),
+          completedRegexLiteralEnds,
         ),
       );
       atStatementStart = false;

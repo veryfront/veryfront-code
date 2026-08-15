@@ -13,6 +13,42 @@ import {
 const UNBOUNDED = Number.MAX_SAFE_INTEGER;
 
 describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
+  it("keeps repeated regex ASI checks bounded across import scanners", () => {
+    const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
+    const repeatedRegexBlocks = "/x/\n{}\n".repeat(800);
+    const maxMillis = 500;
+
+    const cases = [
+      {
+        name: "static",
+        source: `${repeatedRegexBlocks}import value from "./real.js";`,
+        scan: (source: string) => findStaticImportFromSpans(source, matchRelative, UNBOUNDED),
+      },
+      {
+        name: "side-effect",
+        source: `${repeatedRegexBlocks}import "./real.js";`,
+        scan: (source: string) => findStaticSideEffectImportSpans(source, matchRelative, UNBOUNDED),
+      },
+      {
+        name: "dynamic",
+        source: `${repeatedRegexBlocks}import("./real.js");`,
+        scan: (source: string) => findDynamicImportSpans(source, matchRelative, UNBOUNDED),
+      },
+    ];
+
+    for (const scanner of cases) {
+      const start = performance.now();
+      const paths = scanner.scan(scanner.source).map((span) => span.path);
+      const elapsed = performance.now() - start;
+
+      assertEquals(paths, ["./real.js"]);
+      assert(
+        elapsed < maxMillis,
+        `${scanner.name} scanner took ${elapsed.toFixed(1)}ms for repeated regex ASI blocks`,
+      );
+    }
+  });
+
   describe("replaceSourceSpans", () => {
     it("replaces a single span", () => {
       const source = 'from "./old.js"';
