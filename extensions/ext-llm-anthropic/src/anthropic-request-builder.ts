@@ -40,6 +40,7 @@ const ArrayIsArray = Array.isArray;
 const booleanValueOf = Boolean.prototype.valueOf;
 const NativeSet = Set;
 const numberValueOf = Number.prototype.valueOf;
+const objectDefineProperty = Object.defineProperty;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectGetPrototypeOf = Object.getPrototypeOf;
 const objectHasOwn = Object.hasOwn;
@@ -60,6 +61,19 @@ function addSetValue<T>(set: Set<T>, value: T): void {
 
 function deleteSetValue<T>(set: Set<T>, value: T): void {
   apply(setDelete, set, [value]);
+}
+
+function defineOwnEnumerableDataProperty(
+  target: object,
+  key: PropertyKey,
+  value: unknown,
+): void {
+  apply(objectDefineProperty, Object, [target, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  }]);
 }
 
 function boxedPrimitiveKind(value: object): "boolean" | "number" | "string" | undefined {
@@ -1438,6 +1452,25 @@ function assertNoAnthropicCacheRecordSerializationHooks(value: object): void {
   }
 }
 
+function cloneAnthropicCacheRecord(
+  value: Record<string, unknown>,
+): Record<string, unknown> {
+  assertNoAnthropicCacheRecordSerializationHooks(value);
+  const clone: Record<string, unknown> = {};
+  const keys = objectKeys(value);
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index]!;
+    const descriptor = objectGetOwnPropertyDescriptor(value, key);
+    if (!descriptor || !objectHasOwn(descriptor, "value")) {
+      throw new TypeError(
+        "Anthropic cache records must contain only enumerable data properties",
+      );
+    }
+    defineOwnEnumerableDataProperty(clone, key, descriptor.value);
+  }
+  return clone;
+}
+
 const ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4;
 
 function assertNoInheritedAnthropicArrayElement(
@@ -1500,7 +1533,7 @@ function snapshotAnthropicCacheArray<T>(
     if (!objectHasOwn(descriptor, "value")) {
       throw new TypeError(`${label} must contain only indexed data properties`);
     }
-    snapshot[index] = descriptor.value as T;
+    defineOwnEnumerableDataProperty(snapshot, `${index}`, descriptor.value as T);
   }
   return snapshot;
 }
@@ -1636,14 +1669,24 @@ function retainLatestAnthropicMessageCacheBreakpoints(
           "Anthropic message content",
         );
       }
-      const next = { ...block };
+      const next = cloneAnthropicCacheRecord(block);
       reflectDeleteProperty(next, "cache_control");
-      content[contentIndex] = next;
+      defineOwnEnumerableDataProperty(content, `${contentIndex}`, next);
       remainingToRemove -= 1;
     }
-    normalizedMessages[messageIndex] = content === originalContent
-      ? message
-      : { ...message, content } as AnthropicCompatibleMessage;
+    if (content === originalContent) {
+      defineOwnEnumerableDataProperty(normalizedMessages, `${messageIndex}`, message);
+    } else {
+      const nextMessage = cloneAnthropicCacheRecord(
+        message as Record<string, unknown>,
+      );
+      defineOwnEnumerableDataProperty(nextMessage, "content", content);
+      defineOwnEnumerableDataProperty(
+        normalizedMessages,
+        `${messageIndex}`,
+        nextMessage as AnthropicCompatibleMessage,
+      );
+    }
   }
   return normalizedMessages;
 }
@@ -1776,10 +1819,13 @@ function readEmittedAnthropicCacheTtl(
 function upgradeEmittedAnthropicCacheTtl(
   value: Record<string, unknown>,
 ): Record<string, unknown> {
-  return {
-    ...value,
-    cache_control: { type: "ephemeral", ttl: "1h" },
-  };
+  const upgraded = cloneAnthropicCacheRecord(value);
+  defineOwnEnumerableDataProperty(
+    upgraded,
+    "cache_control",
+    { type: "ephemeral", ttl: "1h" },
+  );
+  return upgraded;
 }
 
 function normalizeAnthropicCacheTtls(
@@ -1799,7 +1845,11 @@ function normalizeAnthropicCacheTtls(
       if (normalized === values) {
         normalized = snapshotAnthropicCacheArray(values, "Anthropic cache blocks");
       }
-      normalized[index] = upgradeEmittedAnthropicCacheTtl(value);
+      defineOwnEnumerableDataProperty(
+        normalized,
+        `${index}`,
+        upgradeEmittedAnthropicCacheTtl(value),
+      );
     }
   }
   return { values: normalized, requiresOneHourPrefix };
@@ -1836,7 +1886,11 @@ function normalizeAnthropicMessageCacheTtls(
             "Anthropic message content",
           );
         }
-        normalizedContent[contentIndex] = upgradeEmittedAnthropicCacheTtl(block);
+        defineOwnEnumerableDataProperty(
+          normalizedContent,
+          `${contentIndex}`,
+          upgradeEmittedAnthropicCacheTtl(block),
+        );
       }
     }
     if (normalizedContent !== content) {
@@ -1846,10 +1900,15 @@ function normalizeAnthropicMessageCacheTtls(
           "Anthropic messages",
         );
       }
-      normalizedMessages[messageIndex] = {
-        ...message,
-        content: normalizedContent,
-      } as AnthropicCompatibleMessage;
+      const nextMessage = cloneAnthropicCacheRecord(
+        message as Record<string, unknown>,
+      );
+      defineOwnEnumerableDataProperty(nextMessage, "content", normalizedContent);
+      defineOwnEnumerableDataProperty(
+        normalizedMessages,
+        `${messageIndex}`,
+        nextMessage as AnthropicCompatibleMessage,
+      );
     }
   }
 
@@ -1868,7 +1927,7 @@ function retainLatestAnthropicCacheBreakpoints(
       descriptor !== undefined &&
       hasEmittedAnthropicCacheBreakpoint(descriptor.value)
     ) {
-      breakpointIndexes[breakpointCount] = index;
+      defineOwnEnumerableDataProperty(breakpointIndexes, `${breakpointCount}`, index);
       breakpointCount += 1;
     }
   }
@@ -1882,14 +1941,14 @@ function retainLatestAnthropicCacheBreakpoints(
   for (let index = 0; index < values.length; index += 1) {
     const descriptor = objectGetOwnPropertyDescriptor(values, `${index}`);
     if (descriptor !== undefined) {
-      retained[index] = descriptor.value;
+      defineOwnEnumerableDataProperty(retained, `${index}`, descriptor.value);
     }
   }
   for (let position = 0; position < removalCount; position += 1) {
     const index = breakpointIndexes[position]!;
-    const next = { ...retained[index] };
+    const next = cloneAnthropicCacheRecord(retained[index]!);
     reflectDeleteProperty(next, "cache_control");
-    retained[index] = next;
+    defineOwnEnumerableDataProperty(retained, `${index}`, next);
   }
   return retained;
 }

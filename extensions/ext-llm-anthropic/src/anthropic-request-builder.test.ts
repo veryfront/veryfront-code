@@ -2004,6 +2004,91 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     });
   });
 
+  it("does not invoke symbol accessors while trimming cache records", () => {
+    let getterCalls = 0;
+    const system = Array.from({ length: 6 }, (_, index) => ({
+      type: "text",
+      text: `System ${index}`,
+      ...(index < 5 ? { cache_control: { type: "ephemeral" } } : {}),
+    })) as Array<Record<string, unknown>>;
+    Object.defineProperty(system[0], Symbol("mutate-later-breakpoint"), {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        system[5]!.cache_control = { type: "ephemeral" };
+        return "omitted by JSON";
+      },
+    });
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+        providerOptions: { anthropic: { system } },
+      },
+      false,
+      createWarningCollector(),
+    );
+    const emitted = body.system as Array<Record<string, unknown>>;
+
+    assertEquals(getterCalls, 0);
+    assertEquals(emitted.filter((block) => block.cache_control).length, 4);
+  });
+
+  it("defines cache snapshot elements past inherited setters", async () => {
+    const result = await runNoBrandEval(`
+      const { buildAnthropicMessagesRequest } = await import(
+        "./extensions/ext-llm-anthropic/src/anthropic-request-builder.ts"
+      );
+      const system = Array.from({ length: 5 }, (_, index) => ({
+        type: "text",
+        text: \`System \${index}\`,
+        ...(index < 4 ? { cache_control: { type: "ephemeral" } } : {}),
+      }));
+      const originalDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "4");
+      const originalDeleteProperty = Reflect.deleteProperty;
+      let interceptedTargetWrites = 0;
+      Object.defineProperty(Array.prototype, "4", {
+        configurable: true,
+        set(value) {
+          if (value === system[4]) interceptedTargetWrites += 1;
+        },
+      });
+
+      let body;
+      try {
+        body = buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+            providerOptions: { anthropic: { system } },
+          },
+          false,
+          { push() {}, drain() { return []; } },
+        );
+      } finally {
+        if (originalDescriptor) {
+          Object.defineProperty(Array.prototype, "4", originalDescriptor);
+        } else {
+          Reflect.apply(originalDeleteProperty, Reflect, [Array.prototype, "4"]);
+        }
+      }
+      console.log(JSON.stringify({
+        hasFinalElement: Object.hasOwn(body.system, "4"),
+        interceptedTargetWrites,
+        text: body.system[4]?.text,
+      }));
+    `);
+
+    assertEquals(result, {
+      hasFinalElement: true,
+      interceptedTargetWrites: 0,
+      text: "System 4",
+    });
+  });
+
   it("uses captured key enumeration when validating cache records", () => {
     let getterCalls = 0;
     const tool: Record<string, unknown> = {
