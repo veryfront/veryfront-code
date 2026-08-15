@@ -2089,6 +2089,46 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     });
   });
 
+  it("rejects inherited nested array accessors before budgeting", () => {
+    let getterCalls = 0;
+    const tools = Array.from({ length: 5 }, (_, index) => {
+      const tool: Record<string, unknown> = {
+        name: `nested-array-${index}`,
+        input_schema: { type: "object", properties: {} },
+        cache_control: () => "omitted",
+      };
+      const metadata = new Array(1);
+      const prototype = Object.create(Array.prototype);
+      Object.defineProperty(prototype, "0", {
+        get() {
+          getterCalls += 1;
+          tool.cache_control = { type: "ephemeral" };
+          return "mutated";
+        },
+      });
+      Object.setPrototypeOf(metadata, prototype);
+      tool.metadata = metadata;
+      return tool;
+    });
+
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+            providerOptions: { anthropic: { tools } },
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic cache records must not contain inherited indexed properties",
+    );
+    assertEquals(getterCalls, 0);
+  });
+
   it("uses captured key enumeration when validating cache records", () => {
     let getterCalls = 0;
     const tool: Record<string, unknown> = {

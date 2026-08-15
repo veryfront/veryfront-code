@@ -1366,6 +1366,37 @@ function assertNoNestedAnthropicCacheJsonHooks(
   assertNoAnthropicCacheJsonHook(value);
   addSetValue(ancestors, value);
   try {
+    if (ArrayIsArray(value)) {
+      for (let index = 0; index < value.length; index += 1) {
+        const key = `${index}`;
+        let descriptor: PropertyDescriptor | undefined;
+        try {
+          descriptor = objectGetOwnPropertyDescriptor(value, key);
+        } catch {
+          throw new TypeError(`${label} could not be inspected`);
+        }
+        if (descriptor === undefined) {
+          assertNoInheritedAnthropicArrayElement(value, index, label);
+          continue;
+        }
+        if (!objectHasOwn(descriptor, "value")) {
+          throw new TypeError(`${label} must contain only indexed data properties`);
+        }
+        const nested = descriptor.value;
+        if (
+          nested !== null &&
+          (typeof nested === "object" || typeof nested === "function")
+        ) {
+          assertNoNestedAnthropicCacheJsonHooks(
+            nested,
+            label === "Anthropic message content" ? "Anthropic cache records" : label,
+            ancestors,
+            depth + 1,
+          );
+        }
+      }
+      return;
+    }
     let keys: string[];
     try {
       keys = objectKeys(value);
@@ -1444,9 +1475,14 @@ function assertNoAnthropicCacheRecordSerializationHooks(value: object): void {
       nested !== null &&
       (typeof nested === "object" || typeof nested === "function")
     ) {
+      const nestedLabel = key === "cache_control"
+        ? "Anthropic cache_control"
+        : key === "content" && ArrayIsArray(nested)
+        ? "Anthropic message content"
+        : "Anthropic cache records";
       assertNoNestedAnthropicCacheJsonHooks(
         nested,
-        key === "cache_control" ? "Anthropic cache_control" : "Anthropic cache records",
+        nestedLabel,
       );
     }
   }
