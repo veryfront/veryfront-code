@@ -1613,6 +1613,43 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     assertEquals(getterCalls, 0);
   });
 
+  it("rejects enumerable sibling accessors before budgeting tool breakpoints", () => {
+    let getterCalls = 0;
+    const tools = Array.from({ length: 5 }, (_, index) => {
+      const tool: Record<string, unknown> = {
+        name: `accessor-${index}`,
+        input_schema: { type: "object", properties: {} },
+      };
+      Object.defineProperty(tool, "mutate", {
+        enumerable: true,
+        get() {
+          getterCalls += 1;
+          tool.cache_control = { type: "ephemeral" };
+          return "mutated";
+        },
+      });
+      tool.cache_control = () => "omitted";
+      return tool;
+    });
+
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+            providerOptions: { anthropic: { tools } },
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic cache records must contain only enumerable data properties",
+    );
+    assertEquals(getterCalls, 0);
+  });
+
   it("rejects nested cache-control accessors without invoking them", () => {
     for (const [placement, field] of [["tool", "type"], ["message", "ttl"]] as const) {
       let getterCalls = 0;

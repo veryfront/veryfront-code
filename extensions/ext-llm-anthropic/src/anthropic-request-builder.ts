@@ -1319,6 +1319,34 @@ function assertNoNestedAnthropicCacheJsonHooks(
   }
 }
 
+function assertNoAnthropicCacheRecordAccessors(value: object): void {
+  assertNoAnthropicCacheJsonHook(value);
+  let keys: string[];
+  try {
+    keys = Object.keys(value);
+  } catch {
+    throw new TypeError("Anthropic cache records could not be inspected");
+  }
+  for (const key of keys) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
+      throw new TypeError("Anthropic cache records could not be inspected");
+    }
+    if (!descriptor || !Object.hasOwn(descriptor, "value")) {
+      if (key === "cache_control") {
+        throw new TypeError(
+          "Anthropic cache_control must be an own enumerable data property",
+        );
+      }
+      throw new TypeError(
+        "Anthropic cache records must contain only enumerable data properties",
+      );
+    }
+  }
+}
+
 const ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4;
 
 function assertNoInheritedAnthropicArrayElement(
@@ -1387,7 +1415,7 @@ function snapshotAnthropicCacheArray<T>(
 }
 
 function hasEmittedAnthropicCacheBreakpoint(value: Record<string, unknown>): boolean {
-  assertNoAnthropicCacheJsonHook(value);
+  assertNoAnthropicCacheRecordAccessors(value);
   let descriptor: PropertyDescriptor | undefined;
   try {
     descriptor = Object.getOwnPropertyDescriptor(value, "cache_control");
