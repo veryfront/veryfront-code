@@ -677,6 +677,30 @@ function declarationStatementStartBefore(source: string, index: number): number 
   ) + 1;
 }
 
+function classDeclarationStatementStartBefore(source: string, index: number): number {
+  let cursor = index - 1;
+  let parenDepth = 0;
+  let braceDepth = 0;
+  let bracketDepth = 0;
+
+  while (cursor >= 0) {
+    const char = source[cursor];
+    if (char === ")") parenDepth++;
+    else if (char === "(" && parenDepth > 0) parenDepth--;
+    else if (char === "}") braceDepth++;
+    else if (char === "{" && braceDepth > 0) braceDepth--;
+    else if (char === "]") bracketDepth++;
+    else if (char === "[" && bracketDepth > 0) bracketDepth--;
+    else if (parenDepth === 0 && braceDepth === 0 && bracketDepth === 0) {
+      if (char === ";" || char === "{" || char === "}") return cursor + 1;
+    }
+
+    cursor--;
+  }
+
+  return 0;
+}
+
 function isFunctionDeclarationBlockOpenBrace(
   source: string,
   previousTokenIndex: number,
@@ -697,7 +721,7 @@ function isClassDeclarationBlockOpenBrace(
   index: number,
   currentParen: OpenParenContext | undefined,
 ): boolean {
-  const declarationStart = declarationStatementStartBefore(source, index);
+  const declarationStart = classDeclarationStatementStartBefore(source, index);
   if (currentParen !== undefined && currentParen.index >= declarationStart) return false;
 
   const prefix = normalizedDeclarationPrefix(source, declarationStart, index);
@@ -794,11 +818,13 @@ function isSwitchClauseBlockOpenBrace(
 function isPlainStatementBlockOpenBrace(
   source: string,
   rangeStart: number,
+  openBraceIndex: number,
   previousTokenIndex: number,
   enclosingOpenBrace: OpenBraceContext | undefined,
 ): boolean {
   if (previousTokenIndex < rangeStart) return true;
   if (source[previousTokenIndex] === ";" || source[previousTokenIndex] === "}") return true;
+  if (hasLineTerminatorBetween(source, previousTokenIndex + 1, openBraceIndex)) return true;
   if (source[previousTokenIndex] !== ":") return false;
 
   const labelEnd = previousSignificantIndex(source, previousTokenIndex) + 1;
@@ -838,6 +864,7 @@ function openBraceContext(
     isPlainStatementBlock: isPlainStatementBlockOpenBrace(
       source,
       rangeStart,
+      index,
       previousTokenIndex,
       enclosingOpenBrace,
     ),
@@ -1008,7 +1035,8 @@ function isCompletedModuleDeclarationBeforeRegex(
       /^import\b[\s\S]*\bfrom\s*["'`][\s\S]*["'`]$/.test(declarationSource)
     ) && !/^import\s*[.(]/.test(declarationSource);
   }
-  return /^export\b[\s\S]*\bfrom\s*["'`][\s\S]*["'`]$/.test(declarationSource);
+  return /^export\b[\s\S]*\bfrom\s*["'`][\s\S]*["'`]$/.test(declarationSource) ||
+    /^export\s*\{[\s\S]*\}$/.test(declarationSource);
 }
 
 function canStartRegexLiteral(
@@ -1216,6 +1244,14 @@ function readRawJsxTag(
 
 function skipRawJsxTag(source: string, index: number): number {
   return readRawJsxTag(source, index)?.end ?? index;
+}
+
+function skipRawJsxText(source: string, index: number): number {
+  const nextTag = source.indexOf("<", index);
+  const nextExpression = source.indexOf("{", index);
+  if (nextTag === -1) return nextExpression === -1 ? source.length : nextExpression;
+  if (nextExpression === -1) return nextTag;
+  return Math.min(nextTag, nextExpression);
 }
 
 function skipExpressionIgnored(
@@ -1463,9 +1499,36 @@ export function findStaticImportFromSpans(
   const matchingOpenParens = new Map<number, OpenParenContext>();
   let previousTokenIndex = -1;
   const moduleDeclarationBefore = createModuleDeclarationTracker(source, 0);
+  let rawJsxTextDepth = 0;
+  let rawJsxExpressionBraceDepth = 0;
+  const rawJsxExpressionBraceStack: boolean[] = [];
 
   while (cursor < source.length) {
     const char = source[cursor];
+    const jsxTag = readRawJsxTag(source, cursor, {
+      allowClosingTagAfterText: rawJsxTextDepth > 0 && rawJsxExpressionBraceDepth === 0,
+    });
+    if (jsxTag !== null) {
+      if (jsxTag.isClosingTag) {
+        rawJsxTextDepth = Math.max(0, rawJsxTextDepth - 1);
+      } else if (!jsxTag.isSelfClosingTag) {
+        rawJsxTextDepth++;
+      }
+      atStatementStart = false;
+      previousTokenIndex = jsxTag.end - 1;
+      cursor = jsxTag.end;
+      continue;
+    }
+
+    if (rawJsxTextDepth > 0 && rawJsxExpressionBraceDepth === 0) {
+      const textEnd = skipRawJsxText(source, cursor);
+      if (textEnd !== cursor) {
+        atStatementStart = false;
+        cursor = textEnd;
+        continue;
+      }
+    }
+
     const skipped = skipExpressionIgnored(
       source,
       cursor,
@@ -1493,6 +1556,9 @@ export function findStaticImportFromSpans(
     }
 
     if (char === "{") {
+      const isRawJsxExpressionBrace = rawJsxTextDepth > 0;
+      rawJsxExpressionBraceStack.push(isRawJsxExpressionBrace);
+      if (isRawJsxExpressionBrace) rawJsxExpressionBraceDepth++;
       openBraces.push(
         openBraceContext(
           source,
@@ -1510,6 +1576,10 @@ export function findStaticImportFromSpans(
       continue;
     }
     if (char === "}") {
+      const isRawJsxExpressionBrace = rawJsxExpressionBraceStack.pop();
+      if (isRawJsxExpressionBrace) {
+        rawJsxExpressionBraceDepth = Math.max(0, rawJsxExpressionBraceDepth - 1);
+      }
       const openBrace = openBraces.pop();
       if (openBrace !== undefined) matchingOpenBraces.set(cursor, openBrace);
       atStatementStart = true;
@@ -1639,6 +1709,8 @@ function scanDynamicImportRange(
   const matchingOpenParens = new Map<number, OpenParenContext>();
   let previousTokenIndex = rangeStart - 1;
   let rawJsxTextDepth = 0;
+  let rawJsxExpressionBraceDepth = 0;
+  const rawJsxExpressionBraceStack: boolean[] = [];
   const moduleDeclarationBefore = createModuleDeclarationTracker(source, rangeStart);
 
   while (cursor < rangeEnd) {
@@ -1646,7 +1718,7 @@ function scanDynamicImportRange(
     const next = source[cursor + 1];
 
     const jsxTag = readRawJsxTag(source, cursor, {
-      allowClosingTagAfterText: rawJsxTextDepth > 0 && openBraces.length === 0,
+      allowClosingTagAfterText: rawJsxTextDepth > 0 && rawJsxExpressionBraceDepth === 0,
     });
     if (jsxTag !== null) {
       for (const range of jsxTag.expressionRanges) {
@@ -1661,6 +1733,14 @@ function scanDynamicImportRange(
       previousTokenIndex = jsxTag.end - 1;
       cursor = jsxTag.end;
       continue;
+    }
+
+    if (rawJsxTextDepth > 0 && rawJsxExpressionBraceDepth === 0) {
+      const textEnd = skipRawJsxText(source, cursor);
+      if (textEnd !== cursor) {
+        cursor = textEnd;
+        continue;
+      }
     }
 
     if (
@@ -1712,6 +1792,9 @@ function scanDynamicImportRange(
     }
 
     if (char === "{") {
+      const isRawJsxExpressionBrace = rawJsxTextDepth > 0;
+      rawJsxExpressionBraceStack.push(isRawJsxExpressionBrace);
+      if (isRawJsxExpressionBrace) rawJsxExpressionBraceDepth++;
       openBraces.push(
         openBraceContext(
           source,
@@ -1729,6 +1812,10 @@ function scanDynamicImportRange(
     }
 
     if (char === "}") {
+      const isRawJsxExpressionBrace = rawJsxExpressionBraceStack.pop();
+      if (isRawJsxExpressionBrace) {
+        rawJsxExpressionBraceDepth = Math.max(0, rawJsxExpressionBraceDepth - 1);
+      }
       const openBrace = openBraces.pop();
       if (openBrace !== undefined) matchingOpenBraces.set(cursor, openBrace);
       previousTokenIndex = cursor;
@@ -1878,9 +1965,36 @@ export function findStaticSideEffectImportSpans(
   const matchingOpenParens = new Map<number, OpenParenContext>();
   let previousTokenIndex = -1;
   const moduleDeclarationBefore = createModuleDeclarationTracker(source, 0);
+  let rawJsxTextDepth = 0;
+  let rawJsxExpressionBraceDepth = 0;
+  const rawJsxExpressionBraceStack: boolean[] = [];
 
   while (cursor < source.length) {
     const char = source[cursor];
+    const jsxTag = readRawJsxTag(source, cursor, {
+      allowClosingTagAfterText: rawJsxTextDepth > 0 && rawJsxExpressionBraceDepth === 0,
+    });
+    if (jsxTag !== null) {
+      if (jsxTag.isClosingTag) {
+        rawJsxTextDepth = Math.max(0, rawJsxTextDepth - 1);
+      } else if (!jsxTag.isSelfClosingTag) {
+        rawJsxTextDepth++;
+      }
+      atStatementStart = false;
+      previousTokenIndex = jsxTag.end - 1;
+      cursor = jsxTag.end;
+      continue;
+    }
+
+    if (rawJsxTextDepth > 0 && rawJsxExpressionBraceDepth === 0) {
+      const textEnd = skipRawJsxText(source, cursor);
+      if (textEnd !== cursor) {
+        atStatementStart = false;
+        cursor = textEnd;
+        continue;
+      }
+    }
+
     const skipped = skipExpressionIgnored(
       source,
       cursor,
@@ -1908,6 +2022,9 @@ export function findStaticSideEffectImportSpans(
     }
 
     if (char === "{") {
+      const isRawJsxExpressionBrace = rawJsxTextDepth > 0;
+      rawJsxExpressionBraceStack.push(isRawJsxExpressionBrace);
+      if (isRawJsxExpressionBrace) rawJsxExpressionBraceDepth++;
       openBraces.push(
         openBraceContext(
           source,
@@ -1925,6 +2042,10 @@ export function findStaticSideEffectImportSpans(
       continue;
     }
     if (char === "}") {
+      const isRawJsxExpressionBrace = rawJsxExpressionBraceStack.pop();
+      if (isRawJsxExpressionBrace) {
+        rawJsxExpressionBraceDepth = Math.max(0, rawJsxExpressionBraceDepth - 1);
+      }
       const openBrace = openBraces.pop();
       if (openBrace !== undefined) matchingOpenBraces.set(cursor, openBrace);
       atStatementStart = true;

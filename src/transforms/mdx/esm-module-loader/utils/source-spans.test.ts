@@ -155,6 +155,29 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("finds static imports after raw JSX text children", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          '<Component>Hello</Component>\nimport value from "./after-jsx-text.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-jsx-text.js"],
+      );
+    });
+
+    it("ignores static import-from text inside raw JSX text children", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          '<Component>import value from "./fake-jsx-text.js"</Component>\n' +
+            'import value from "./after-jsx-text.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-jsx-text.js"],
+      );
+    });
+
     it("recognizes every ECMAScript line terminator", () => {
       for (const lineTerminator of ["\r", "\u2028", "\u2029"]) {
         assertEquals(
@@ -468,6 +491,12 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
       assertEquals(
         vfModuleSpecifiers(
+          'export { value }\n/import("\\/_vf_modules\\/after-local-export-list.js")/.test(value);',
+        ),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
           'import value from "./dep.js"\nvalue\n/import("\\/_vf_modules\\/after-expression.js")/.test(value);',
         ),
         ["/_vf_modules/after-expression.js"],
@@ -477,6 +506,10 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
     it("ignores import-looking regex text after plain and labeled blocks", () => {
       assertEquals(
         vfModuleSpecifiers('{} /import("\\/_vf_modules\\/plain.js")/.test(value);'),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers('let x = 1\n{} /import("\\/_vf_modules\\/asi-block.js")/.test(value);'),
         [],
       );
       assertEquals(
@@ -553,6 +586,21 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         specifiers('<Component>Hello</Component>\n\n{import("./text-child-lazy.ts")}'),
         ["./text-child-lazy.ts"],
       );
+      assertEquals(
+        specifiers(
+          'function f() { return <Component>Hello</Component>; }\nimport("./function-jsx-text-lazy.ts")',
+        ),
+        ["./function-jsx-text-lazy.ts"],
+      );
+    });
+
+    it("ignores import-looking text inside raw JSX text children", () => {
+      assertEquals(
+        specifiers(
+          '<Component>import("./fake-jsx-text.js")</Component>\nimport("./after-jsx-text.js")',
+        ),
+        ["./after-jsx-text.js"],
+      );
     });
 
     it("keeps comparisons distinct from raw JSX tags", () => {
@@ -608,6 +656,25 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("ignores import-looking regex text after computed class extends expressions", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          "class C extends bases[foo({} / 2)] {} " +
+            '/import("\\/_vf_modules\\/fake-computed-extends.js")/.test(value); ' +
+            'import("/_vf_modules/after-computed-extends.js")',
+        ),
+        ["/_vf_modules/after-computed-extends.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          "class C extends mixin({ value: {} / 2 }) {} " +
+            '/import("\\/_vf_modules\\/fake-object-extends.js")/.test(value); ' +
+            'import("/_vf_modules/after-object-extends.js")',
+        ),
+        ["/_vf_modules/after-object-extends.js"],
+      );
+    });
+
     it("finds imports after regex literals following declaration blocks", () => {
       assertEquals(
         vfModuleSpecifiers(
@@ -644,6 +711,23 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           'class \\u0043 {} /import("\\/_vf_modules\\/fake.js")/.test(value); import("/_vf_modules/escaped-class-lazy.js")',
         ),
         ["/_vf_modules/escaped-class-lazy.js"],
+      );
+    });
+
+    it("ignores import-looking regex text after exported declarations across ASI", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'export function load() {}\n/import("\\/_vf_modules\\/fake-export-function.js")/.test(value);\n' +
+            'import("/_vf_modules/after-export-function.js")',
+        ),
+        ["/_vf_modules/after-export-function.js"],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'export class Loader {}\n/import("\\/_vf_modules\\/fake-export-class.js")/.test(value);\n' +
+            'import("/_vf_modules/after-export-class.js")',
+        ),
+        ["/_vf_modules/after-export-class.js"],
       );
     });
 
@@ -1298,6 +1382,29 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       assertEquals(spans.map((span) => span.path), ["./a.js", "./b.js"]);
     });
 
+    it("finds side-effect imports after raw JSX text children", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          '<Component>Hello</Component>\nimport "./after-jsx-text-side-effect.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-jsx-text-side-effect.js"],
+      );
+    });
+
+    it("ignores side-effect import text inside raw JSX text children", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          '<Component>import "./fake-jsx-text-side-effect.js"</Component>\n' +
+            'import "./after-jsx-text-side-effect.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-jsx-text-side-effect.js"],
+      );
+    });
+
     it("finds side-effect imports after top-level block declarations", () => {
       assertEquals(
         findStaticSideEffectImportSpans(
@@ -1393,6 +1500,17 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           UNBOUNDED,
         ).map((span) => span.path),
         ["./after-block-comment.js"],
+      );
+    });
+
+    it("treats a block-comment newline as statement start for side-effect imports", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'const value = 1/*\n*/import "./after-compact-block-comment.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-compact-block-comment.js"],
       );
     });
 
