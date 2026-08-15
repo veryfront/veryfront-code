@@ -162,6 +162,32 @@ describe("trigger target public type contracts", () => {
       target: { kind: "task", id: "sync-helpdesk", conversationMode: "none" },
     });
 
+    const storedWorkflowConversation = {
+      kind: "workflow" as const,
+      id: "billing/sync",
+      conversationMode: "create_new" as const,
+    };
+
+    acceptScheduleConfig({
+      id: "stored-bad-workflow-schedule",
+      schedule: "0 * * * *",
+      // @ts-expect-error Stored workflow schedule targets cannot carry conversation fields.
+      target: storedWorkflowConversation,
+    });
+
+    acceptWebhookConfig({
+      id: "stored-bad-workflow-webhook",
+      // @ts-expect-error Stored workflow webhook targets cannot carry conversation fields.
+      target: storedWorkflowConversation,
+    });
+
+    acceptRunTriggerTargetOptions({
+      projectDir: "project",
+      adapter,
+      // @ts-expect-error Stored workflow runtime targets cannot carry conversation fields.
+      target: storedWorkflowConversation,
+    });
+
     assertEquals(agentSchedule.target.kind, "agent");
     assertEquals(invalidTaskMessage.target.kind, "task");
     assertEquals(invalidWorkflowMessage.target.kind, "workflow");

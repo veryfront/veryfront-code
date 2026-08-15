@@ -49,7 +49,10 @@ export interface TriggerTarget {
 
 /** Author-facing target shape accepting stored base values and kind-specific literals. */
 export type TriggerTargetConfig =
-  | TriggerTarget
+  | (TriggerTarget & {
+    conversationMode?: never;
+    conversationId?: never;
+  })
   | TaskTriggerTarget
   | WorkflowTriggerTarget
   | AgentTriggerTarget;
