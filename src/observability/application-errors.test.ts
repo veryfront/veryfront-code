@@ -181,8 +181,8 @@ it("application error reporter downgrades tenant build errors to tagged warnings
     detail: "TypeScript syntax failed in /pages/index.tsx",
     context: { tenantBuildFailure: true },
   });
-  const missingPackageError = IMPORT_RESOLUTION_ERROR.create({
-    detail: "Could not resolve authored package import: missing-authored-package",
+  const frameworkImportError = IMPORT_RESOLUTION_ERROR.create({
+    detail: "Could not resolve framework import: #veryfront/missing",
   });
   const frameworkError = INITIALIZATION_ERROR.create({
     detail: "renderer failed to initialize",
@@ -226,7 +226,7 @@ it("application error reporter downgrades tenant build errors to tagged warnings
     "event-id",
   );
   assertEquals(
-    captureApplicationError(missingPackageError, { boundary: "ssr.render" }),
+    captureApplicationError(frameworkImportError, { boundary: "ssr.render" }),
     "event-id",
   );
   assertEquals(
@@ -283,9 +283,11 @@ it("application error reporter downgrades tenant build errors to tagged warnings
   assertEquals(captures[3]?.context.level, "warning");
   assertEquals(captures[4]?.context.errorClass, "tenant-build");
   assertEquals(captures[4]?.context.level, "warning");
-  assertEquals(captures[5]?.context.errorClass, "tenant-build");
-  assertEquals(captures[5]?.context.level, "warning");
-  // Genuine framework failures keep their default error-level capture.
+  // Generic import-resolution and other framework failures keep their default
+  // error-level capture. Source-aware resolver seams add tenant context when
+  // project code is actually responsible.
+  assertEquals(captures[5]?.context.errorClass, undefined);
+  assertEquals(captures[5]?.context.level, undefined);
   assertEquals(captures[6]?.context.errorClass, undefined);
   assertEquals(captures[6]?.context.level, undefined);
   assertEquals(captures[7]?.context.errorClass, undefined);
