@@ -205,6 +205,12 @@ import {
 | `RuntimeResponseFormat`       | Provider-neutral structured-output request.                                                                                                                                                                                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L157)                       |
 | `RuntimeUsage`                | Canonical provider-neutral usage reported by text-generation runtimes.                                                                                                                                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-usage.ts#L21)                |
 
+#### Constants
+
+| Name                           | Description                                                                                                                                                                                                                | Source                                                                                                         |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `canIdentifyProxyWithoutHooks` | Whether this runtime can distinguish Proxy values without evaluating a trap. Callers that need a fail-closed guarantee must not treat a `false` result from `isProxyWithoutHooks` as proof when this capability is absent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/error-introspection.ts#L64) |
+
 ### `veryfront/provider/types`
 
 ```ts

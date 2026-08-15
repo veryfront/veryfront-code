@@ -1,8 +1,10 @@
 import {
+  canIdentifyProxyWithoutHooks,
   isProxyWithoutHooks,
   jsonValuesEqual,
   readProviderOptions,
   readRecord,
+  snapshotProviderJsonValue,
   stringifyToolResultValue,
   unwrapToolInputSchema,
 } from "veryfront/provider/shared";
@@ -32,6 +34,9 @@ import {
 } from "./anthropic-native-content.ts";
 
 type ProviderCacheTtl = boolean | "5m" | "1h";
+
+const apply = Reflect.apply;
+const stringValueOf = String.prototype.valueOf;
 
 type ProviderCacheControlOption = {
   system?: ProviderCacheTtl;
@@ -1526,11 +1531,32 @@ function readJsonSerializedAnthropicString(value: unknown): string | undefined {
 
   assertNoAnthropicCacheJsonHook(value);
   try {
-    String.prototype.valueOf.call(value);
+    apply(stringValueOf, value, []);
   } catch {
     return undefined;
   }
   throw new TypeError("Anthropic cache strings must use primitive string values");
+}
+
+function prepareAnthropicProviderOptions(
+  providerOptions: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (providerOptions === undefined || canIdentifyProxyWithoutHooks) {
+    return providerOptions;
+  }
+
+  try {
+    const snapshot = snapshotProviderJsonValue(providerOptions, {
+      dropUndefinedMembers: true,
+      sortObjectKeys: false,
+    });
+    if (snapshot === null || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+      throw new TypeError("Anthropic provider options could not be inspected");
+    }
+    return snapshot as Record<string, unknown>;
+  } catch {
+    throw new TypeError("Anthropic provider options could not be inspected");
+  }
 }
 
 function readEmittedAnthropicCacheTtl(
@@ -1916,7 +1942,7 @@ export function buildAnthropicMessagesRequestWithCorrelationState(
     toolsCacheControl,
   );
   const rawProviderOptions = readProviderOptions(
-    options.providerOptions,
+    prepareAnthropicProviderOptions(options.providerOptions),
     "anthropic",
     providerName,
   );

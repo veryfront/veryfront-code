@@ -52,6 +52,18 @@ function createWarningCollector() {
   };
 }
 
+async function runNoBrandEval(script: string): Promise<unknown> {
+  const output = await new Deno.Command(Deno.execPath(), {
+    args: ["eval", "--config=deno.json", script],
+    cwd: new URL("../../../", import.meta.url),
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  const stderr = new TextDecoder().decode(output.stderr);
+  assertEquals(output.code, 0, stderr);
+  return JSON.parse(new TextDecoder().decode(output.stdout));
+}
+
 describe("ext-llm-anthropic/anthropic-request-builder", () => {
   it("keeps a cached static system block separate from the uncached dynamic tail", () => {
     const body = buildAnthropicMessagesRequest(
@@ -390,6 +402,144 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       );
       assertEquals(hookCalls, 0);
     }
+  });
+
+  it("uses the captured boxed-string brand check", async () => {
+    const result = await runNoBrandEval(`
+      const { buildAnthropicMessagesRequest } = await import(
+        "./extensions/ext-llm-anthropic/src/anthropic-request-builder.ts"
+      );
+      let hookCalls = 0;
+      Object.defineProperty(String.prototype, "valueOf", {
+        configurable: true,
+        value() {
+          hookCalls += 1;
+          throw new Error("mutable prototype hook");
+        },
+        writable: true,
+      });
+
+      let error;
+      try {
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+            providerOptions: {
+              anthropic: {
+                tools: [{
+                  name: "lookup",
+                  input_schema: { type: "object", properties: {} },
+                  cache_control: { type: "ephemeral", ttl: new String("5m") },
+                }],
+              },
+            },
+          },
+          false,
+          { push() {}, drain() { return []; } },
+        );
+      } catch (thrown) {
+        error = thrown instanceof Error ? thrown.message : String(thrown);
+      }
+      console.log(JSON.stringify({ error, hookCalls }));
+    `);
+
+    assertEquals(result, {
+      error: "Anthropic cache strings must use primitive string values",
+      hookCalls: 0,
+    });
+  });
+
+  it("rejects edge-runtime Proxy cache fields without invoking traps", async () => {
+    const result = await runNoBrandEval(`
+      Object.defineProperty(globalThis, "caches", {
+        configurable: true,
+        value: {},
+      });
+      Object.defineProperty(globalThis, "WebSocketPair", {
+        configurable: true,
+        value: function WebSocketPair() {},
+      });
+
+      const { canIdentifyProxyWithoutHooks } = await import(
+        "./src/platform/compat/error-introspection.ts"
+      );
+      const { buildAnthropicMessagesRequest } = await import(
+        "./extensions/ext-llm-anthropic/src/anthropic-request-builder.ts"
+      );
+      const warnings = { push() {}, drain() { return []; } };
+      const prompt = [{ role: "user", content: [{ type: "text", text: "Hello" }] }];
+      const plain = buildAnthropicMessagesRequest(
+        "claude-sonnet-4-6",
+        "anthropic",
+        {
+          prompt,
+          providerOptions: {
+            anthropic: {
+              messages: [{
+                role: "user",
+                content: [{
+                  type: "text",
+                  text: "Cached",
+                  cache_control: { type: "ephemeral" },
+                }],
+              }],
+            },
+          },
+        },
+        false,
+        warnings,
+      );
+
+      let trapCalls = 0;
+      const block = new Proxy(
+        {
+          type: "text",
+          text: "Cached",
+          cache_control: { type: "ephemeral" },
+        },
+        {
+          getOwnPropertyDescriptor(target, property) {
+            trapCalls += 1;
+            return Reflect.getOwnPropertyDescriptor(target, property);
+          },
+        },
+      );
+      let error;
+      try {
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt,
+            providerOptions: {
+              anthropic: {
+                messages: [{ role: "user", content: [block] }],
+              },
+            },
+          },
+          false,
+          warnings,
+        );
+      } catch (thrown) {
+        error = thrown instanceof Error ? thrown.message : String(thrown);
+      }
+
+      console.log(JSON.stringify({
+        canIdentifyProxyWithoutHooks,
+        error,
+        plainCacheControl: plain.messages[0].content[0].cache_control,
+        trapCalls,
+      }));
+    `);
+
+    assertEquals(result, {
+      canIdentifyProxyWithoutHooks: false,
+      error: "Anthropic provider options could not be inspected",
+      plainCacheControl: { type: "ephemeral" },
+      trapCalls: 0,
+    });
   });
 
   it("ignores non-emitted cache metadata when normalizing mixed TTLs", () => {
