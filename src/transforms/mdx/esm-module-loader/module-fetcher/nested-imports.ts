@@ -50,6 +50,10 @@ type NestedImportSpan = {
   isSideEffect?: boolean;
 };
 
+function toImportStringLiteral(url: string): string {
+  return JSON.stringify(url);
+}
+
 /**
  * Find nested module imports in code.
  * Matches both /_vf_modules/... and file:///_vf_modules/... patterns.
@@ -229,15 +233,16 @@ export async function processNestedImports(
     } of results
   ) {
     if (nestedFilePath) {
+      const importTarget = toImportStringLiteral(`file://${nestedFilePath}${suffix ?? ""}`);
       replacements.push({
         start,
         end,
         expected: original,
         replacement: isDynamic
-          ? `"file://${nestedFilePath}${suffix ?? ""}"`
+          ? importTarget
           : isSideEffect
-          ? `import "file://${nestedFilePath}${suffix ?? ""}"`
-          : `from "file://${nestedFilePath}${suffix ?? ""}"`,
+          ? `import ${importTarget}`
+          : `from ${importTarget}`,
       });
       continue;
     }
@@ -255,15 +260,16 @@ export async function processNestedImports(
 
     const stubPath = await createStubModule(modulePath, moduleCode, original, esmCacheDir);
     if (stubPath) {
+      const importTarget = toImportStringLiteral(`file://${stubPath}${suffix ?? ""}`);
       replacements.push({
         start,
         end,
         expected: original,
         replacement: isDynamic
-          ? `"file://${stubPath}${suffix ?? ""}"`
+          ? importTarget
           : isSideEffect
-          ? `import "file://${stubPath}${suffix ?? ""}"`
-          : `from "file://${stubPath}${suffix ?? ""}"`,
+          ? `import ${importTarget}`
+          : `from ${importTarget}`,
       });
     }
   }

@@ -250,6 +250,25 @@ import { bar } from "./local.js";
       );
     });
 
+    it("escapes preserved suffixes when materializing dynamic import literals", async () => {
+      const result = await resolveNestedModuleImports({
+        moduleCode:
+          'export const load = () => import(`/_vf_modules/components/Lazy.js#client" + globalThis.bad + "`);',
+        esmCacheDir: "/tmp/veryfront-unused",
+        normalizedPath: "_vf_modules/pages/index.js",
+        projectSlug: "docs",
+        strictMissingModules: true,
+        fetchAndCacheModule: (path) => {
+          return Promise.resolve(`/cache/${path.replaceAll("/", "__")}.mjs`);
+        },
+      });
+
+      assertEquals(
+        result,
+        'export const load = () => import("file:///cache/_vf_modules__components__Lazy.js.mjs#client\\" + globalThis.bad + \\"");',
+      );
+    });
+
     it("materializes dynamic _vf_modules imports inside template substitutions", async () => {
       const calls: Array<{ path: string; parent?: string }> = [];
       const result = await resolveNestedModuleImports({

@@ -309,27 +309,87 @@ function isEscapedByBackslash(source: string, index: number): boolean {
   return count % 2 === 1;
 }
 
+function canStartRegexLiteralInBraceScan(
+  source: string,
+  index: number,
+  rangeStart: number,
+): boolean {
+  const previous = previousSignificantIndex(source, index);
+  if (previous < rangeStart) return true;
+
+  const char = source[previous];
+  if (char === ")" && isControlConditionCloseParen(source, previous, rangeStart)) return true;
+  if (
+    (char === "+" || char === "-") &&
+    previous - 1 >= rangeStart &&
+    source[previous - 1] === char
+  ) {
+    return false;
+  }
+  if (char !== undefined && "([{=,:;!~?&|+-*%^<>".includes(char)) return true;
+
+  return [
+    "case",
+    "delete",
+    "do",
+    "else",
+    "in",
+    "instanceof",
+    "of",
+    "await",
+    "return",
+    "throw",
+    "typeof",
+    "void",
+    "yield",
+  ].includes(keywordBefore(source, index) ?? "");
+}
+
+function skipBraceScanIgnored(source: string, index: number, rangeStart: number): number {
+  const char = source[index];
+  const next = source[index + 1];
+
+  if (
+    (char === "/" && (next === "/" || next === "*")) ||
+    char === '"' ||
+    char === "'" ||
+    char === "`"
+  ) {
+    return skipIgnored(source, index);
+  }
+
+  if (char === "/" && canStartRegexLiteralInBraceScan(source, index, rangeStart)) {
+    return skipRegexLiteral(source, index);
+  }
+
+  return index;
+}
+
 function matchingOpenBraceIndex(source: string, index: number, rangeStart: number): number | null {
-  let depth = 1;
-  let cursor = index - 1;
+  const openBraces: number[] = [];
+  let cursor = rangeStart;
 
-  while (cursor >= rangeStart) {
-    const char = source[cursor];
-
-    if (char === "}") {
-      depth++;
-      cursor--;
+  while (cursor <= index) {
+    const skipped = skipBraceScanIgnored(source, cursor, rangeStart);
+    if (skipped !== cursor) {
+      cursor = skipped;
       continue;
     }
 
-    if (char === "{") {
-      depth--;
-      if (depth === 0) return cursor;
-      cursor--;
+    if (source[cursor] === "{") {
+      openBraces.push(cursor);
+      cursor++;
       continue;
     }
 
-    cursor--;
+    if (source[cursor] === "}") {
+      const openBrace = openBraces.pop();
+      if (cursor === index) return openBrace ?? null;
+      cursor++;
+      continue;
+    }
+
+    cursor++;
   }
 
   return null;

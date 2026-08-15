@@ -365,6 +365,15 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("finds imports after regex literals following noisy control blocks", () => {
+      assertEquals(
+        specifiers(
+          'const html = `${(() => { if (ok) { const marker = "}"; /* { */ } /}/.test(x); return import("./after-noisy-block-regex.js"); })()}`;',
+        ),
+        ["./after-noisy-block-regex.js"],
+      );
+    });
+
     it("ignores a static import and a property called import", () => {
       assertEquals(specifiers(`import x from "./foo.js";`), []);
       assertEquals(specifiers(`obj.import("./foo.js");`), []);
