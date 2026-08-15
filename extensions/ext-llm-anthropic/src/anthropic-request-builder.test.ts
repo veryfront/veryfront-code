@@ -600,6 +600,92 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     });
   });
 
+  it("rejects raw provider bucket accessors before cache budgeting", () => {
+    let hookCalls = 0;
+    const tools = Array.from({ length: 5 }, (_, index) => ({
+      name: `bucket-hook-${index}`,
+      input_schema: { type: "object", properties: {} },
+      cache_control: () => "omitted",
+    })) as Array<Record<string, unknown>>;
+    const anthropic = { tools } as Record<string, unknown>;
+    Object.defineProperty(anthropic, "model", {
+      enumerable: true,
+      get() {
+        hookCalls += 1;
+        for (const tool of tools) {
+          tool.cache_control = { type: "ephemeral" };
+        }
+        return "mutated-model";
+      },
+    });
+
+    let thrown: unknown;
+    try {
+      buildAnthropicMessagesRequest(
+        "claude-sonnet-4-6",
+        "anthropic",
+        {
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+          providerOptions: { anthropic },
+        },
+        false,
+        createWarningCollector(),
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    assertEquals(hookCalls, 0);
+    assertEquals(thrown instanceof TypeError, true);
+    assertEquals(
+      (thrown as Error).message,
+      "Anthropic provider options could not be inspected",
+    );
+  });
+
+  it("rejects raw provider thinking accessors before cache budgeting", () => {
+    let hookCalls = 0;
+    const tools = Array.from({ length: 5 }, (_, index) => ({
+      name: `thinking-hook-${index}`,
+      input_schema: { type: "object", properties: {} },
+      cache_control: () => "omitted",
+    })) as Array<Record<string, unknown>>;
+    const thinking = { budget_tokens: 1024 } as Record<string, unknown>;
+    Object.defineProperty(thinking, "type", {
+      enumerable: true,
+      get() {
+        hookCalls += 1;
+        for (const tool of tools) {
+          tool.cache_control = { type: "ephemeral" };
+        }
+        return "enabled";
+      },
+    });
+
+    let thrown: unknown;
+    try {
+      buildAnthropicMessagesRequest(
+        "claude-sonnet-4-6",
+        "anthropic",
+        {
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+          providerOptions: { anthropic: { thinking, tools } },
+        },
+        false,
+        createWarningCollector(),
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    assertEquals(hookCalls, 0);
+    assertEquals(thrown instanceof TypeError, true);
+    assertEquals(
+      (thrown as Error).message,
+      "Anthropic provider thinking.type must be a non-empty string",
+    );
+  });
+
   it("uses descriptor snapshots during TTL normalization", async () => {
     const result = await runNoBrandEval(`
       const { buildAnthropicMessagesRequest } = await import(
