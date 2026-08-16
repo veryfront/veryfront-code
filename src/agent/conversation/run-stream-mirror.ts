@@ -10,6 +10,7 @@ import {
 } from "./run-mirror.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
 import { type ConversationRunEventQueueController } from "./durable.ts";
+import { createAgentRunEventTimingAnchor } from "../../runtime/model-call-context.ts";
 
 /** Public API contract for conversation run stream mirror. */
 export interface ConversationRunStreamMirror {
@@ -32,7 +33,8 @@ export function createConversationRunStreamMirror(input: {
   onRetryScheduled?: (state: ConversationRunMirrorRetryScheduledState) => Promise<void> | void;
   onStopped?: (state: ConversationRunMirrorStoppedState) => Promise<void> | void;
 }): ConversationRunStreamMirror {
-  const encoder = input.encoder ?? new ConversationRunEventEncoder();
+  const encoder = input.encoder ??
+    new ConversationRunEventEncoder(createAgentRunEventTimingAnchor());
   const mirror = createConversationRunMirror({
     queueController: input.queueController,
     immediateFlushEventCount: input.immediateFlushEventCount,

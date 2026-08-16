@@ -751,11 +751,31 @@ describe("runtime-bridge", () => {
           }),
       );
       assertEquals(recorded?.model, { id: bareModelId, modelProvider });
-      assertEquals(recorded?.request?.reasoning, {
-        enabled: true,
-        effort: "high",
-        budgetTokens: 2048,
+      assertEquals(
+        recorded?.request?.reasoning,
+        modelProvider === "openai"
+          ? { enabled: true, effort: "high" }
+          : { enabled: true, effort: "high", budgetTokens: 2048 },
+      );
+    }
+  });
+
+  it("persists default OpenAI transport reasoning for direct reasoning models", async () => {
+    for (const modelId of ["o1", "o3-mini", "o4-mini", "gpt-5.4-nano"]) {
+      let recorded: AgentRunEvent | undefined;
+      const model = createGenerateModel("openai", modelId, async (options) => {
+        assertEquals(options.reasoning, undefined);
+        return { content: [], finishReason: "stop", usage: {} };
       });
+
+      await runWithRunEventSink(
+        (event) => {
+          recorded = event;
+        },
+        () => generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
+      );
+
+      assertEquals(recorded?.request?.reasoning, { enabled: true, effort: "medium" });
     }
   });
 

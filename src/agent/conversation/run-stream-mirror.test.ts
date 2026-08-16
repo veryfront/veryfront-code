@@ -4,6 +4,7 @@ import { FakeTime } from "#std/testing/time";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createConversationRunStreamMirror } from "./run-stream-mirror.ts";
 import { type ConversationRunEventQueueController } from "./durable.ts";
+import { ConversationRunEventEncoder } from "./run-events.ts";
 
 function createMockQueueController(initial?: {
   latestEventId?: number;
@@ -68,6 +69,7 @@ describe("agent/conversation-run-stream-mirror", () => {
     const mirror = createConversationRunStreamMirror({
       queueController: controller,
       immediateFlushEventCount: 2,
+      encoder: new ConversationRunEventEncoder(),
     });
 
     mirror.handleStreamEvent({ type: "text-start", id: "msg-1" });
@@ -77,6 +79,31 @@ describe("agent/conversation-run-stream-mirror", () => {
       [{ type: "TEXT_MESSAGE_START", messageId: "msg-1", contentId: "text:0", role: "assistant" }],
       [{ type: "TEXT_MESSAGE_CONTENT", messageId: "msg-1", contentId: "text:0", delta: "hello" }],
     ]);
+    mirror.dispose();
+  });
+
+  it("stamps elapsed and epoch time with its default run-scoped encoder", () => {
+    const controller = createMockQueueController();
+    const mirror = createConversationRunStreamMirror({
+      queueController: controller,
+      immediateFlushEventCount: 10,
+    });
+
+    mirror.handleStreamEvent({ type: "text-start", id: "msg-1" });
+
+    const event = controller.enqueued[0]?.[0] as
+      | { elapsedMs?: number; emittedAt?: number }
+      | undefined;
+    assertEquals(
+      typeof event?.elapsedMs === "number" && Number.isFinite(event.elapsedMs) &&
+        event.elapsedMs >= 0,
+      true,
+    );
+    assertEquals(
+      typeof event?.emittedAt === "number" && Number.isInteger(event.emittedAt) &&
+        event.emittedAt > 0,
+      true,
+    );
     mirror.dispose();
   });
 

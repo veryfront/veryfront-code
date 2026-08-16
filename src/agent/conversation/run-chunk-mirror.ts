@@ -170,7 +170,10 @@ export function createConversationRunChunkMirror(
   // headless -- a scheduled run has no client attached -- so this is the only
   // point that observes emission time. Callers injecting their own encoder
   // choose their own clock, or none.
-  const timing = createAgentRunEventTimingAnchor();
+  const getEncoderTimingAnchor = input.encoder?.getTimingAnchor;
+  const timing = typeof getEncoderTimingAnchor === "function"
+    ? getEncoderTimingAnchor.call(input.encoder) ?? createAgentRunEventTimingAnchor()
+    : createAgentRunEventTimingAnchor();
   const encoder = input.encoder ?? new ConversationRunEventEncoder(timing);
   const immediateFlushEventCount = input.immediateFlushEventCount ??
     DEFAULT_IMMEDIATE_FLUSH_EVENT_COUNT;

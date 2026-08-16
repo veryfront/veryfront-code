@@ -9,6 +9,7 @@ import {
   createHostedConversationRunChunkMirror,
   type HostedConversationRunChunkMirrorTraceAttributes,
 } from "./run-chunk-mirror.ts";
+import { createDurableRunEventSink } from "../hosted/durable-run-event-sink.ts";
 
 type ConversationRunEventQueueFlushResult = Awaited<
   ReturnType<ConversationRunEventQueueController["flush"]>
@@ -57,10 +58,12 @@ describe("agent/conversation-run-chunk-mirror", () => {
   it("prepares UI chunks into durable events and enqueues them", async () => {
     const queueController = createQueueController();
     const preparedTypes: string[] = [];
+    const legacyEncoder = new ConversationRunEventEncoder();
+    Object.defineProperty(legacyEncoder, "getTimingAnchor", { value: undefined });
     const mirror = createConversationRunChunkMirror({
       queueController,
-      // Exact-event assertions: an unclocked encoder keeps them free of elapsedMs.
-      encoder: new ConversationRunEventEncoder(),
+      // Encoders created before timing-anchor introspection remain accepted.
+      encoder: legacyEncoder,
       immediateFlushEventCount: 99,
       flushDelayMs: 10_000,
       onChunkPrepared: ({ events }) => {
@@ -79,7 +82,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
 
   // The other mirror tests pin an unclocked encoder so their exact-event
   // assertions stay deterministic, which leaves the default unproven. This
-  // covers it: omitting `encoder` must yield durable events that carry elapsed.
+  // covers it: omitting `encoder` must yield durable events that carry producer timing.
   it("installs a clock on the encoder it creates by default", async () => {
     const queueController = createQueueController();
     const prepared: ConversationRunEvent[] = [];
@@ -100,6 +103,50 @@ describe("agent/conversation-run-chunk-mirror", () => {
       typeof elapsedMs === "number" && Number.isFinite(elapsedMs) && elapsedMs >= 0,
       true,
       `elapsed must be a finite, nonnegative reading, got ${String(elapsedMs)}`,
+    );
+    const emittedAt = prepared[0]?.emittedAt;
+    assertEquals(
+      typeof emittedAt === "number" && Number.isInteger(emittedAt) && emittedAt > 0,
+      true,
+      `emittedAt must be a positive epoch timestamp, got ${String(emittedAt)}`,
+    );
+    mirror.dispose();
+  });
+
+  it("shares a custom encoder anchor with the private durable event sink", async () => {
+    const queueController = createQueueController();
+    let now = 100;
+    let epoch = 1_000;
+    const encoder = new ConversationRunEventEncoder({
+      nowMs: () => now,
+      epochMs: () => epoch,
+    });
+    const publicEvents: ConversationRunEvent[] = [];
+    const privateEvents: ConversationRunEvent[] = [];
+    const mirror = createConversationRunChunkMirror({
+      queueController,
+      encoder,
+      immediateFlushEventCount: 99,
+      flushDelayMs: 10_000,
+      onChunkPrepared: ({ events }) => publicEvents.push(...events),
+      onExternalEventsPrepared: ({ events }) => privateEvents.push(...events),
+    });
+    now = 142;
+    epoch = 1_042;
+
+    await mirror.handleChunk({ type: "text-delta", id: "m1", delta: "hello" });
+    await createDurableRunEventSink({ mirror })({
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      messages: [],
+    });
+
+    assertEquals(
+      publicEvents.map(({ elapsedMs, emittedAt }) => ({ elapsedMs, emittedAt })),
+      [{ elapsedMs: 42, emittedAt: 1_042 }],
+    );
+    assertEquals(
+      privateEvents.map(({ elapsedMs, emittedAt }) => ({ elapsedMs, emittedAt })),
+      [{ elapsedMs: 42, emittedAt: 1_042 }],
     );
     mirror.dispose();
   });

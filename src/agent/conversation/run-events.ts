@@ -1,6 +1,7 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { type ChatStreamEvent } from "#veryfront/chat/protocol.ts";
+import type { AgentRunEventTimingOptions } from "../../runtime/model-call-context.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
 
 /** Shared conversation run event types value. */
@@ -98,6 +99,16 @@ export class ConversationRunEventEncoder {
       this.startedMs = options.startedMs ?? options.nowMs();
     }
     this.epochMs = options.epochMs;
+  }
+
+  /** Return the run timing anchor owned by this encoder, when it has one. */
+  getTimingAnchor(): AgentRunEventTimingOptions | undefined {
+    if (!this.nowMs && !this.epochMs) return undefined;
+    return {
+      ...(this.nowMs ? { nowMs: this.nowMs } : {}),
+      ...(this.epochMs ? { epochMs: this.epochMs } : {}),
+      ...(this.startedMs !== undefined ? { startedMs: this.startedMs } : {}),
+    };
   }
 
   private nextStepName(): string {

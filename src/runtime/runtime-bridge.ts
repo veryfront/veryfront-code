@@ -21,6 +21,7 @@ import type {
   ModelRuntimeGenerateResult,
 } from "#veryfront/provider/types.ts";
 import type { RuntimeReasoningOption } from "#veryfront/agent/types.ts";
+import { resolveOpenAIReasoningConfig } from "#veryfront/provider/shared/openai-reasoning.ts";
 import { DurableRunEventPersistenceError } from "#veryfront/agent/conversation/private-run-event.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import type {
@@ -680,9 +681,15 @@ function resolvePersistedReasoning(
   model: ModelRuntime,
   options: DirectModelOptions,
 ): RuntimeReasoningOption | undefined {
+  const modelProvider = resolveModelProvider(model);
+  if (modelProvider === "openai" && typeof model.modelId === "string") {
+    const reasoning = resolveOpenAIReasoningConfig(model.modelId, modelProvider, options.reasoning);
+    return reasoning ? { enabled: true, effort: reasoning.effort } : options.reasoning;
+  }
+
   // The Anthropic request builder only gives neutral reasoning precedence when
   // it enables thinking; otherwise a raw provider thinking config remains effective.
-  if (resolveModelProvider(model) !== "anthropic" || options.reasoning?.enabled === true) {
+  if (modelProvider !== "anthropic" || options.reasoning?.enabled === true) {
     return options.reasoning;
   }
 

@@ -18,6 +18,7 @@ import type {
 } from "../hosted/child-lifecycle.ts";
 import type { HostedLifecycleAdapter, HostedLifecycleTerminalState } from "../hosted/lifecycle.ts";
 import { agentLogger } from "#veryfront/utils";
+import { createAgentRunEventTimingAnchor } from "../../runtime/model-call-context.ts";
 
 /** Input payload for conversation hosted lifecycle finalize. */
 export interface ConversationHostedLifecycleFinalizeInput {
@@ -151,7 +152,7 @@ export function createConversationHostedStreamLifecycleAdapter(
   // creation is also the anchor `elapsedMs` is measured from, so a fresh encoder
   // would reset elapsed to zero on every event.
   const encoder = options.encoder ??
-    new ConversationRunEventEncoder({ nowMs: () => performance.now() });
+    new ConversationRunEventEncoder(createAgentRunEventTimingAnchor());
 
   return createConversationHostedLifecycleAdapter({
     ...options,

@@ -206,6 +206,14 @@ describe("agent/conversation-hosted-lifecycle", () => {
       true,
       `every persisted event must carry elapsedMs, got ${JSON.stringify(elapsed)}`,
     );
+    const emittedAt = fetchCalls.map((call) =>
+      JSON.parse(String(call[1]?.body)).events[0].emittedAt
+    );
+    assertEquals(
+      emittedAt.every((value) => typeof value === "number" && Number.isInteger(value) && value > 0),
+      true,
+      `every persisted event must carry epoch emittedAt, got ${JSON.stringify(emittedAt)}`,
+    );
   });
 
   it("finalizes and cancels conversation-backed root runs with host-supplied model metadata", async () => {

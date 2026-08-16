@@ -340,6 +340,7 @@ describe("agent/conversation-run-events", () => {
 
   it("omits elapsedMs entirely when no clock is supplied", () => {
     const encoder = new ConversationRunEventEncoder();
+    assertEquals(encoder.getTimingAnchor(), undefined, "legacy unclocked encoders stay unclocked");
     encoder.encode({ type: "start", messageId: "msg-no-clock" });
     const encoded = encoder.encode({ type: "text-delta", id: "text:0", delta: "hi" });
 
