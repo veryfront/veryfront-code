@@ -359,9 +359,6 @@ describe("server/runtime-handler/request-tracker", () => {
         requestTracker.start("slow-req", "proj", "/slow", "GET");
         requestTracker.complete("slow-req", 200);
       } finally {
-        requestTracker.complete("expected-long-run", 500);
-        requestTracker.complete("non-execute-method", 500);
-        requestTracker.complete("lookalike-path", 500);
         globalThis.setTimeout = originalSetTimeout;
       }
 
@@ -402,6 +399,9 @@ describe("server/runtime-handler/request-tracker", () => {
         assertEquals(scheduledDelays.includes(10_000), true);
         requestTracker.complete("lookalike-path", 404);
       } finally {
+        requestTracker.complete("expected-long-run", 500);
+        requestTracker.complete("non-execute-method", 500);
+        requestTracker.complete("lookalike-path", 500);
         globalThis.setTimeout = originalSetTimeout;
       }
     });
