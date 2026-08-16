@@ -167,7 +167,7 @@ async function warnIfMdxExtensionMissing(
     // Lockfile-aware: hard-coding `npm install` in a pnpm/yarn/bun project
     // writes a competing package-lock.json and leaves the real lockfile stale.
     const { detectProjectInstallTarget, formatInstallCommand } = await import(
-      "#veryfront/extensions/install-command.ts"
+      "veryfront/extensions"
     );
     const install = formatInstallCommand(
       MDX_EXTENSION_PACKAGE,
