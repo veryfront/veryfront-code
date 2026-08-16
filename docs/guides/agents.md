@@ -457,17 +457,28 @@ export default agent({
 
 ## Verify it worked
 
-Save the agent file, restart `veryfront dev`, and invoke it from server code:
+Save the agent file and restart `veryfront dev`. The quickest server-side
+check is a throwaway debug route:
 
 ```ts
+// app/api/debug/agent/route.ts
 import { getAgent } from "veryfront/agent";
 
-const agent = getAgent("assistant");
-if (!agent) throw new Error("Agent not found: assistant");
+export async function GET() {
+  const agent = getAgent("assistant");
+  if (!agent) throw new Error("Agent not found: assistant");
 
-const result = await agent.generate({ input: "Hello" });
-console.log(result.text);
+  const result = await agent.generate({ input: "Hello" });
+  return Response.json({ text: result.text });
+}
 ```
+
+```bash
+curl http://localhost:3000/api/debug/agent
+```
+
+The response carries the model's reply. Remove the debug route before
+deploying.
 
 If generation fails, check the dev-server log for agent registration or provider
 errors. If AG-UI routing fails, use the route verification in

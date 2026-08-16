@@ -75,7 +75,13 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "guides/agents.md": {
     references: ["../api-reference/veryfront/agent.md"],
-    snippets: ["createAgUiHandler", "load_skill_reference", "RunFinished"],
+    snippets: [
+      "createAgUiHandler",
+      "load_skill_reference",
+      "RunFinished",
+      "// app/api/debug/agent/route.ts",
+      "curl http://localhost:3000/api/debug/agent",
+    ],
   },
   "guides/build-a-rag-app.md": {
     references: [
