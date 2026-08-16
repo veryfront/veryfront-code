@@ -1839,6 +1839,75 @@ describe("push divergence guard", () => {
     }
   });
 
+  it("lets --force overwrite a newly created preview branch that changed during creation", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        let branchCreated = false;
+        const putBodies: unknown[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/branches") {
+            return Response.json({
+              data: branchCreated
+                ? [{ id: "branch-123", name: "feature-x", project_id: "project-123" }]
+                : [],
+            });
+          }
+          if (request.method === "POST" && url.pathname === "/projects/my-project/branches") {
+            branchCreated = true;
+            return Response.json({
+              id: "branch-123",
+              name: "feature-x",
+              projectId: "project-123",
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            const isBranch = url.searchParams.get("branch") === "feature-x";
+            return Response.json({
+              data: [{
+                path: "app.ts",
+                content: isBranch
+                  ? "export const value = 'studio';\n"
+                  : "export const value = 0;\n",
+                version_id: isBranch
+                  ? "00000000-0000-4000-8000-000000000011"
+                  : "00000000-0000-4000-8000-000000000010",
+              }],
+              page_info: {},
+            });
+          }
+          if (request.method === "PUT" && url.pathname.endsWith("/files/app.ts")) {
+            putBodies.push(await request.json());
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir, branch: "feature-x", force: true, quiet: true });
+
+        assertEquals(branchCreated, true);
+        assertEquals(putBodies, [{ content: "export const value = 1;\n" }]);
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("creates a missing preview branch even when it already matches local source", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
@@ -2094,6 +2163,76 @@ describe("push divergence guard", () => {
         assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
         assertStringIncludes(error.message, '"app.ts"');
         assertStringIncludes(error.message, "veryfront push --force");
+        assertEquals(putCalled, false);
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("rejects a remote change made after planning a no-op push", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+        await writeSyncTarget(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-123",
+          projectSlug: "my-project",
+          branch: "main",
+          files: {
+            "app.ts": { digest: await computeContentDigest("export const value = 1;\n") },
+          },
+        });
+
+        let fileListCalls = 0;
+        let putCalled = false;
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            fileListCalls++;
+            return Response.json({
+              data: [{
+                path: "app.ts",
+                content: fileListCalls === 1
+                  ? "export const value = 1;\n"
+                  : "export const value = 2;\n",
+                version_id: fileListCalls === 1
+                  ? "00000000-0000-4000-8000-000000000010"
+                  : "00000000-0000-4000-8000-000000000011",
+              }],
+              page_info: {},
+            });
+          }
+          if (request.method === "PUT") {
+            putCalled = true;
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        const error = await assertRejects(
+          () => pushCommand({ projectDir, quiet: true }),
+          Error,
+          "Push rejected",
+        );
+
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertStringIncludes(error.message, '"app.ts"');
+        assertEquals(fileListCalls, 2);
         assertEquals(putCalled, false);
       });
     } finally {

@@ -882,7 +882,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             projectApiReference(config),
             branchSource,
           );
-          if (preparedBranch.created) {
+          if (preparedBranch.created && !force) {
             const conflicts = findRemoteSnapshotChanges(
               await buildManagedRemoteSnapshot(mainFiles, ignoreChecker, false),
               await buildManagedRemoteSnapshot(branchRemoteFiles, ignoreChecker, false),
@@ -954,6 +954,28 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       }
       const uploadOps = plan.uploads;
       const deleteOps = plan.deletes;
+
+      if (!dryRun && !force) {
+        spinner = quiet || jsonOutput
+          ? createNoopSpinner()
+          : createSpinner("Checking remote files...");
+        try {
+          const latestRemoteFiles = await listAllFiles(
+            client,
+            projectApiReference(config),
+            target.source,
+          );
+          const conflicts = findRemoteSnapshotChanges(
+            await buildManagedRemoteSnapshot(managedRemoteFiles, ignoreChecker),
+            await buildManagedRemoteSnapshot(latestRemoteFiles, ignoreChecker),
+          );
+          if (conflicts.length > 0) {
+            throw pushConflictError(conflicts);
+          }
+        } finally {
+          spinner.stop();
+        }
+      }
 
       if (uploadOps.length === 0 && deleteOps.length === 0) {
         try {
@@ -1030,28 +1052,6 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           logInfo(`Dry run complete. Would ${parts.join(" and ")} files.`);
         }
         return;
-      }
-
-      if (!force) {
-        spinner = quiet || jsonOutput
-          ? createNoopSpinner()
-          : createSpinner("Checking remote files...");
-        try {
-          const latestRemoteFiles = await listAllFiles(
-            client,
-            projectApiReference(config),
-            target.source,
-          );
-          const conflicts = findRemoteSnapshotChanges(
-            await buildManagedRemoteSnapshot(managedRemoteFiles, ignoreChecker),
-            await buildManagedRemoteSnapshot(latestRemoteFiles, ignoreChecker),
-          );
-          if (conflicts.length > 0) {
-            throw pushConflictError(conflicts);
-          }
-        } finally {
-          spinner.stop();
-        }
       }
 
       await clearPushReceipt(projectDir);
