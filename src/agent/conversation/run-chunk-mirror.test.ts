@@ -128,8 +128,12 @@ describe("agent/conversation-run-chunk-mirror", () => {
       encoder,
       immediateFlushEventCount: 99,
       flushDelayMs: 10_000,
-      onChunkPrepared: ({ events }) => publicEvents.push(...events),
-      onExternalEventsPrepared: ({ events }) => privateEvents.push(...events),
+      onChunkPrepared: ({ events }) => {
+        publicEvents.push(...events);
+      },
+      onExternalEventsPrepared: ({ events }) => {
+        privateEvents.push(...events);
+      },
     });
     now = 142;
     epoch = 1_042;

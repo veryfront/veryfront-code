@@ -51,6 +51,10 @@ async function settle(): Promise<void> {
   flushSync(() => {});
 }
 
+function hasRequestHeaders(value: unknown): value is { headers?: HeadersInit } {
+  return typeof value === "object" && value !== null && "headers" in value;
+}
+
 /** Drive one `sendMessage` turn and hand back the headers the transport sent. */
 async function captureSendHeaders(
   options: Parameters<typeof useChat>[0],
@@ -58,7 +62,7 @@ async function captureSendHeaders(
   const originalFetch = globalThis.fetch;
   let sent = new Headers();
   globalThis.fetch = (_input, init) => {
-    sent = new Headers(init?.headers);
+    sent = new Headers(hasRequestHeaders(init) ? init.headers : undefined);
     return Promise.resolve(
       new Response("event: RunFinished\ndata: {}\n\n", {
         status: 200,
