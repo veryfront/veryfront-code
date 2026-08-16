@@ -1271,6 +1271,47 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             );
             throw pushConflictError(conflicts);
           }
+        } else if (pruneRemoteMissing) {
+          const latestRemoteFiles = await listAllFiles(
+            client,
+            projectApiReference(config),
+            target.source,
+          );
+          const plannedPaths = new Set(Object.keys(plan.nextFiles));
+          const alreadyPlannedDeletes = new Set(deleteOps.map((op) => op.path));
+          const lateRemoteOnlyDeletes = latestRemoteFiles
+            .filter((file) =>
+              ignoreChecker.isSupportedExtension(file.path) &&
+              !ignoreChecker.isIgnored(file.path) &&
+              !alreadyPlannedDeletes.has(file.path) &&
+              !plannedPaths.has(file.path)
+            )
+            .map((file) => ({ path: file.path }));
+          if (lateRemoteOnlyDeletes.length > 0) {
+            const lateDeleteResult = await deleteFiles(
+              client,
+              projectApiReference(config),
+              branchId,
+              lateRemoteOnlyDeletes,
+              false,
+            );
+            deleteResult = {
+              deleted: deleteResult.deleted + lateDeleteResult.deleted,
+              failed: deleteResult.failed + lateDeleteResult.failed,
+              conflicts: [...deleteResult.conflicts, ...lateDeleteResult.conflicts],
+              applied: [...deleteResult.applied, ...lateDeleteResult.applied],
+            };
+            if (lateDeleteResult.conflicts.length > 0) {
+              throw pushConflictError(lateDeleteResult.conflicts);
+            }
+            if (lateDeleteResult.failed > 0) {
+              throw new Error(
+                `Push failed for ${lateDeleteResult.failed} file${
+                  lateDeleteResult.failed === 1 ? "" : "s"
+                } during forced prune reconciliation`,
+              );
+            }
+          }
         }
         const writePlannedSyncTarget = async () => {
           if (!project) return;
