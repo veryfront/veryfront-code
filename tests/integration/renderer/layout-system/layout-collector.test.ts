@@ -697,6 +697,39 @@ export default function BarePage() {
     }
   });
 
+  it("does not treat frontmatter layout as final before a later spread", async () => {
+    const projectDir = await createTestProjectDir();
+
+    try {
+      await writeTextFile(
+        join(projectDir, "pages/layout.tsx"),
+        `export default function RootLayout({ children }) { return children; }`,
+      );
+
+      const pageInfo = createPageInfo(
+        projectDir,
+        "pages/example.tsx",
+        {},
+        `const defaults = { layout: "special" };
+export const frontmatter = { layout: false, ...defaults };
+
+export default function ExamplePage() {
+  return <div>Example</div>;
+}`,
+      );
+      const collector = await createCollector(projectDir);
+
+      const result = await collector.collectLayouts(pageInfo);
+
+      assertEquals(
+        result.nestedLayouts.map((layout) => layout.path),
+        [join(projectDir, "pages/layout.tsx")],
+      );
+    } finally {
+      await cleanupTestDir(projectDir);
+    }
+  });
+
   it("ignores layout exports inside block comments and template literals", async () => {
     const projectDir = await createTestProjectDir();
 

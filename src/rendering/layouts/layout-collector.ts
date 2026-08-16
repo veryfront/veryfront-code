@@ -87,21 +87,38 @@ function getObjectLayoutValue(node: unknown): boolean | string | undefined {
   const object = unwrapTsExpression(node);
   if (object.type !== "ObjectExpression" || !Array.isArray(object.properties)) return undefined;
 
+  let layoutValue: boolean | string | undefined;
   for (const property of object.properties) {
-    if (
-      !isAstNode(property) || (property.type !== "ObjectProperty" && property.type !== "Property")
-    ) {
+    if (isAstNode(property) && property.type === "SpreadElement") {
+      layoutValue = undefined;
       continue;
     }
-    const key = getIdentifierName(property.key) ??
-      (isAstNode(property.key) && typeof property.key.value === "string"
-        ? property.key.value
-        : undefined);
+    if (
+      !isAstNode(property) ||
+      (property.type !== "ObjectProperty" && property.type !== "Property" &&
+        property.type !== "ObjectMethod")
+    ) {
+      layoutValue = undefined;
+      continue;
+    }
+
+    const literalKey = isAstNode(property.key) && typeof property.key.value === "string"
+      ? property.key.value
+      : undefined;
+    const key = property.computed === true
+      ? literalKey
+      : getIdentifierName(property.key) ?? literalKey;
+    if (property.computed === true && key === undefined) {
+      layoutValue = undefined;
+      continue;
+    }
     if (key !== "layout") continue;
-    return getLiteralLayoutValue(property.value);
+    layoutValue = property.type === "ObjectMethod"
+      ? undefined
+      : getLiteralLayoutValue(property.value);
   }
 
-  return undefined;
+  return layoutValue;
 }
 
 async function extractTsxLayoutSignal(
