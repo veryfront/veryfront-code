@@ -10,7 +10,7 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd";
 import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
 import { join } from "#veryfront/compat/path";
-import { LayoutCollector } from "../../../../src/rendering/layouts/layout-collector.ts";
+import { LayoutCollector } from "#veryfront/rendering/layouts/layout-collector.ts";
 import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import type { EntityInfo, Frontmatter, MdxBundle } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
