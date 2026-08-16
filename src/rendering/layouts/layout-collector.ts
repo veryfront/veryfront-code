@@ -10,7 +10,9 @@ import { LAYOUT_EXTENSIONS, type LayoutExtension } from "./types.ts";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { LAYOUT_NOT_FOUND } from "#veryfront/errors";
-import { extractFrontmatter } from "#veryfront/transforms/mdx/esm-module-loader/index.ts";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import { ensureDefaultParserContracts } from "#veryfront/extensions/parser/defaults.ts";
+import type { ASTNode, CodeParser } from "#veryfront/extensions/parser/index.ts";
 
 const logger = rendererLogger.component("layout-collector");
 
@@ -35,93 +37,114 @@ function getLayoutKind(path: string): "mdx" | "tsx" {
   return path.endsWith(".mdx") || path.endsWith(".md") ? "mdx" : "tsx";
 }
 
-// Strict, line-anchored patterns for the per-page layout signal on tsx pages.
-// Only genuine `export const …` declarations qualify: comments and literals
-// are masked before matching, while their original offsets stay intact.
-const TSX_LAYOUT_EXPORT_RE = /^[ \t]*export\s+const\s+layout\s*=/m;
-const TSX_FRONTMATTER_EXPORT_RE = /^[ \t]*export\s+const\s+frontmatter\s*=/m;
-
-function maskCommentsAndLiterals(source: string): string {
-  const masked = source.split("");
-  let state: "code" | "line-comment" | "block-comment" | "string" = "code";
-  let quote = "";
-
-  const mask = (index: number): void => {
-    if (masked[index] !== "\n" && masked[index] !== "\r") masked[index] = " ";
-  };
-
-  for (let index = 0; index < source.length; index++) {
-    const char = source[index]!;
-    const next = source[index + 1];
-
-    if (state === "line-comment") {
-      if (char === "\n" || char === "\r") state = "code";
-      else mask(index);
-      continue;
-    }
-
-    if (state === "block-comment") {
-      mask(index);
-      if (char === "*" && next === "/") {
-        mask(++index);
-        state = "code";
-      }
-      continue;
-    }
-
-    if (state === "string") {
-      mask(index);
-      if (char === "\\") {
-        if (next !== undefined) mask(++index);
-      } else if (char === quote) {
-        state = "code";
-      }
-      continue;
-    }
-
-    if (char === "/" && next === "/") {
-      mask(index);
-      mask(++index);
-      state = "line-comment";
-    } else if (char === "/" && next === "*") {
-      mask(index);
-      mask(++index);
-      state = "block-comment";
-    } else if (char === '"' || char === "'" || char === "`") {
-      mask(index);
-      quote = char;
-      state = "string";
-    }
-  }
-
-  return masked.join("");
+function isAstNode(value: unknown): value is ASTNode {
+  return typeof value === "object" && value !== null &&
+    typeof (value as { type?: unknown }).type === "string";
 }
 
-function parseExportedLayoutValue(raw: string): boolean | string {
-  if (raw === "true") return true;
-  if (raw === "false") return false;
-  return raw.slice(1, -1);
+function getProgramBody(ast: ASTNode): ASTNode[] {
+  const program = isAstNode(ast.program) ? ast.program : ast;
+  return Array.isArray(program.body) ? program.body.filter(isAstNode) : [];
 }
 
-function extractTsxLayoutSignal(source: string): boolean | string | undefined {
-  const maskedSource = maskCommentsAndLiterals(source);
-  const frontmatterMatch = TSX_FRONTMATTER_EXPORT_RE.exec(maskedSource);
-  const frontmatterSource = frontmatterMatch ? source.slice(frontmatterMatch.index) : undefined;
-  if (frontmatterSource && /^\s*export\s+const\s+frontmatter\s*=\s*\{/.test(frontmatterSource)) {
-    // Slice so extractFrontmatter parses this exported object rather than an
-    // arbitrary `const frontmatter` appearing elsewhere in the module.
-    const layout = extractFrontmatter(frontmatterSource)?.layout;
-    if (layout !== undefined) return layout as boolean | string;
-  }
+function getIdentifierName(node: unknown): string | undefined {
+  if (!isAstNode(node) || node.type !== "Identifier") return undefined;
+  return typeof node.name === "string" ? node.name : undefined;
+}
 
-  const layoutMatch = TSX_LAYOUT_EXPORT_RE.exec(maskedSource);
-  if (layoutMatch) {
-    const initializer = source.slice(layoutMatch.index + layoutMatch[0].length);
-    const valueMatch = /^\s*(true|false|"[^"\n]*"|'[^'\n]*')/.exec(initializer);
-    if (valueMatch) return parseExportedLayoutValue(valueMatch[1]!);
+function unwrapTsExpression(node: ASTNode): ASTNode {
+  let current = node;
+  while (
+    current.type === "TSAsExpression" ||
+    current.type === "TSSatisfiesExpression" ||
+    current.type === "TSTypeAssertion" ||
+    current.type === "TSNonNullExpression" ||
+    current.type === "TypeCastExpression" ||
+    current.type === "ParenthesizedExpression"
+  ) {
+    if (!isAstNode(current.expression)) break;
+    current = current.expression;
+  }
+  return current;
+}
+
+function getLiteralLayoutValue(node: unknown): boolean | string | undefined {
+  if (!isAstNode(node)) return undefined;
+  const literal = unwrapTsExpression(node);
+  if (
+    literal.type !== "BooleanLiteral" && literal.type !== "StringLiteral" &&
+    literal.type !== "Literal"
+  ) {
+    return undefined;
+  }
+  return typeof literal.value === "boolean" || typeof literal.value === "string"
+    ? literal.value
+    : undefined;
+}
+
+function getObjectLayoutValue(node: unknown): boolean | string | undefined {
+  if (!isAstNode(node)) return undefined;
+  const object = unwrapTsExpression(node);
+  if (object.type !== "ObjectExpression" || !Array.isArray(object.properties)) return undefined;
+
+  for (const property of object.properties) {
+    if (
+      !isAstNode(property) || (property.type !== "ObjectProperty" && property.type !== "Property")
+    ) {
+      continue;
+    }
+    const key = getIdentifierName(property.key) ??
+      (isAstNode(property.key) && typeof property.key.value === "string"
+        ? property.key.value
+        : undefined);
+    if (key !== "layout") continue;
+    return getLiteralLayoutValue(property.value);
   }
 
   return undefined;
+}
+
+async function extractTsxLayoutSignal(
+  source: string,
+  filePath: string,
+): Promise<boolean | string | undefined> {
+  await ensureDefaultParserContracts();
+  const parser = tryResolve<CodeParser>("CodeParser");
+  if (!parser) return undefined;
+
+  let ast: ASTNode;
+  try {
+    ast = await parser.parse({ code: source, filePath });
+  } catch {
+    return undefined;
+  }
+
+  let directLayout: boolean | string | undefined;
+  let frontmatterLayout: boolean | string | undefined;
+  for (const statement of getProgramBody(ast)) {
+    if (statement.type !== "ExportNamedDeclaration" || !isAstNode(statement.declaration)) {
+      continue;
+    }
+    const declaration = statement.declaration;
+    if (
+      declaration.type !== "VariableDeclaration" || declaration.kind !== "const" ||
+      !Array.isArray(declaration.declarations)
+    ) {
+      continue;
+    }
+
+    for (const declarator of declaration.declarations) {
+      if (!isAstNode(declarator) || declarator.type !== "VariableDeclarator") continue;
+      const name = getIdentifierName(declarator.id);
+      if (name === "frontmatter" && frontmatterLayout === undefined) {
+        frontmatterLayout = getObjectLayoutValue(declarator.init);
+      } else if (name === "layout" && directLayout === undefined) {
+        directLayout = getLiteralLayoutValue(declarator.init);
+      }
+    }
+  }
+
+  return frontmatterLayout ?? directLayout;
 }
 
 /**
@@ -132,14 +155,14 @@ function extractTsxLayoutSignal(source: string): boolean | string | undefined {
  * `export const layout = false | "Name"` or
  * `export const frontmatter = { layout: … }`.
  */
-function withModuleLayoutSignal(pageInfo: EntityInfo): EntityInfo {
+async function withModuleLayoutSignal(pageInfo: EntityInfo): Promise<EntityInfo> {
   if (pageInfo.entity.frontmatter.layout !== undefined) return pageInfo;
   if (getLayoutKind(pageInfo.entity.path) !== "tsx") return pageInfo;
 
   const source = pageInfo.entity.content;
   if (!source || !source.includes("layout")) return pageInfo;
 
-  const layout = extractTsxLayoutSignal(source);
+  const layout = await extractTsxLayoutSignal(source, pageInfo.entity.path);
   if (layout === undefined) return pageInfo;
 
   return {
@@ -259,7 +282,7 @@ export class LayoutCollector {
           return { layoutBundle: undefined, nestedLayouts: [] };
         }
 
-        const resolvedPageInfo = withModuleLayoutSignal(pageInfo);
+        const resolvedPageInfo = await withModuleLayoutSignal(pageInfo);
         const layoutValue = resolvedPageInfo.entity.frontmatter.layout as
           | string
           | boolean

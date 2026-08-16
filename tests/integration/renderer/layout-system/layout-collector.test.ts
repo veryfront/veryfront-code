@@ -734,6 +734,71 @@ export default function ExamplePage() {
     }
   });
 
+  it("ignores layout-looking text inside JSX children", async () => {
+    const projectDir = await createTestProjectDir();
+
+    try {
+      await writeTextFile(
+        join(projectDir, "pages/layout.tsx"),
+        `export default function RootLayout({ children }) { return children; }`,
+      );
+
+      const pageInfo = createPageInfo(
+        projectDir,
+        "pages/example.tsx",
+        {},
+        `export default function ExamplePage() {
+  return <pre>
+export const layout = false
+</pre>;
+}`,
+      );
+      const collector = await createCollector(projectDir);
+
+      const result = await collector.collectLayouts(pageInfo);
+
+      assertEquals(
+        result.nestedLayouts.map((layout) => layout.path),
+        [join(projectDir, "pages/layout.tsx")],
+      );
+    } finally {
+      await cleanupTestDir(projectDir);
+    }
+  });
+
+  it("ignores layout initializers that only start with a boolean literal", async () => {
+    const projectDir = await createTestProjectDir();
+
+    try {
+      await writeTextFile(
+        join(projectDir, "pages/layout.tsx"),
+        `export default function RootLayout({ children }) { return children; }`,
+      );
+
+      const pageInfo = createPageInfo(
+        projectDir,
+        "pages/example.tsx",
+        {},
+        `const falseLayout = "marketing";
+export const layout = falseLayout;
+
+export default function ExamplePage() {
+  return <div>Example</div>;
+}`,
+      );
+      const collector = await createCollector(projectDir);
+
+      const result = await collector.collectLayouts(pageInfo);
+
+      assertEquals(
+        result.nestedLayouts.map((layout) => layout.path),
+        [join(projectDir, "pages/layout.tsx")],
+      );
+    } finally {
+      await cleanupTestDir(projectDir);
+    }
+  });
+
   it("honors formatted frontmatter exports with trailing commas", async () => {
     const projectDir = await createTestProjectDir();
 
